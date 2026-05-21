@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "Bash(curl -s https://api.github.com/repos/keyuchen1735-boop/Calderyn-Shopify)",
+      "Bash(curl -s https://api.github.com/users/keyuchen1735-boop/repos)",
+      "Bash(brew --version)",
+      "Bash(brew install *)",
+      "Bash(gh *)",
+      "Bash(vercel whoami *)",
+      "mcp__plugin_supabase_supabase__list_projects",
+      "mcp__plugin_supabase_supabase__list_tables",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git -c user.email=claude@anthropic.com -c user.name=claude commit -q -m \"baseline: shopify-app before supabase wiring\")"
+    ]
+  }
+}

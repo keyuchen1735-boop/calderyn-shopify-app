@@ -1,0 +1,400 @@
+import { useEffect, useState } from "react";
+import {
+  Form,
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Button,
+  ButtonGroup,
+  Card,
+  Checkbox,
+  FormLayout,
+  InlineStack,
+  Layout,
+  Page,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
+import {
+  CalderynError,
+  calderynClient,
+  type IntegrationProvider,
+} from "~/lib/calderyn.server";
+import { useActionToast } from "~/lib/toast";
+import { fmtMoney } from "~/lib/format";
+import type { GuardrailConfig, Integration } from "~/lib/types";
+
+type LoaderPayload = {
+  guardrails: GuardrailConfig | null;
+  integrations: Record<string, Integration>;
+  error: { code: string; message: string } | null;
+};
+
+type ActionPayload = {
+  ok: boolean;
+  toast?: { message: string; isError?: boolean };
+  error?: { code: string; message: string };
+};
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const client = calderynClient(session.shop);
+  try {
+    const [guardrails, integrations] = await Promise.all([
+      client.guardrails.get(request.signal),
+      client.integrations.list(request.signal),
+    ]);
+    return json<LoaderPayload>({ guardrails, integrations, error: null });
+  } catch (err) {
+    const e = err as CalderynError;
+    return json<LoaderPayload>({
+      guardrails: null,
+      integrations: {},
+      error: { code: e.code ?? "ERROR", message: e.message },
+    });
+  }
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const client = calderynClient(session.shop);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+
+  try {
+    if (intent === "update_guardrails") {
+      const patch: Partial<GuardrailConfig> = {};
+      const setIfPresent = <K extends keyof GuardrailConfig>(
+        key: K,
+        parser: (raw: string) => GuardrailConfig[K] | undefined,
+      ) => {
+        const raw = formData.get(key as string);
+        if (raw === null) return;
+        const value = parser(String(raw));
+        if (value !== undefined) patch[key] = value;
+      };
+      setIfPresent("daily_action_budget_cents", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+      setIfPresent("dollar_cap_cents", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+      setIfPresent("cooldown_minutes", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+
+      await client.guardrails.update(patch, request.signal);
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: "Guardrails updated" },
+      });
+    }
+
+    if (intent === "connect_integration") {
+      const provider = String(formData.get("provider") || "") as IntegrationProvider;
+      if (!["google", "meta", "quickbooks"].includes(provider)) {
+        throw new CalderynError({
+          code: "INVALID_PROVIDER",
+          status: 400,
+          message: `Unknown provider: ${provider}`,
+        });
+      }
+      const { redirectUrl } = await client.integrations.startOAuth(provider, request.signal);
+      return redirect(redirectUrl);
+    }
+
+    if (intent === "disconnect_integration") {
+      const provider = String(formData.get("provider") || "");
+      await client.integrations.disconnect(provider, request.signal);
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: `Disconnected ${provider}` },
+      });
+    }
+
+    return json<ActionPayload>(
+      {
+        ok: false,
+        error: { code: "INVALID_INTENT", message: `Unknown intent: ${intent}` },
+        toast: { message: "Unknown intent", isError: true },
+      },
+      { status: 400 },
+    );
+  } catch (err) {
+    if (err instanceof Response) throw err;
+    const e = err as CalderynError;
+    return json<ActionPayload>(
+      {
+        ok: false,
+        error: { code: e.code ?? "ERROR", message: e.message },
+        toast: { message: e.message, isError: true },
+      },
+      { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+    );
+  }
+};
+
+export default function Settings() {
+  const navigate = useNavigate();
+  const { guardrails, integrations, error } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  useActionToast(actionData);
+
+  return (
+    <Page
+      title="Settings"
+      subtitle="Guardrails, integrations, notifications, privacy"
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+    >
+      <BlockStack gap="500">
+        {error && (
+          <Banner tone="critical" title="Couldn't load settings">
+            <p>
+              {error.code}: {error.message}
+            </p>
+          </Banner>
+        )}
+        {actionData?.error && (
+          <Banner tone="critical" title="Settings update failed">
+            <p>
+              {actionData.error.code}: {actionData.error.message}
+            </p>
+          </Banner>
+        )}
+
+        <Layout>
+          <Layout.AnnotatedSection
+            id="guardrails"
+            title="Guardrails"
+            description="Enforced inside the action gateway before any external API call."
+          >
+            {guardrails ? (
+              <GuardrailsCard guardrails={guardrails} />
+            ) : (
+              <Card>
+                <Text as="p" tone="subdued">
+                  Guardrails are unavailable.
+                </Text>
+              </Card>
+            )}
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="integrations"
+            title="Integrations"
+            description="Connect ad-spend and accounting data sources."
+          >
+            <BlockStack gap="300">
+              {Object.entries(integrations).map(([k, v]) => (
+                <IntegrationCard key={k} provider={k} integration={v} />
+              ))}
+              {Object.keys(integrations).length === 0 && (
+                <Card>
+                  <Text as="p" tone="subdued">
+                    No integrations available.
+                  </Text>
+                </Card>
+              )}
+            </BlockStack>
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="notifications"
+            title="Notifications"
+            description="When Calderyn alerts you, and how."
+          >
+            <Card>
+              <BlockStack gap="200">
+                <Checkbox label="Email me a 6:00am ET digest of overnight alerts" checked />
+                <Checkbox label="Email me immediately for Critical alerts" checked />
+                <Checkbox label="Email me when an automatic action fails" checked />
+                <Checkbox
+                  label="Slack notifications"
+                  helpText="Requires Slack connection."
+                />
+              </BlockStack>
+            </Card>
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="privacy"
+            title="Privacy & data residency"
+            description="How Calderyn handles your shop data."
+          >
+            <Card>
+              <BlockStack gap="300">
+                <Banner tone="info" title="Peer-baseline consent: Enabled">
+                  Your shop_id is hashed with HMAC-SHA256 before any peer aggregate is read.
+                  Withdraw consent at any time; your contribution is purged within 30 days.
+                </Banner>
+                <ButtonGroup>
+                  <Button>Withdraw consent</Button>
+                  <Button>Download my data (GDPR)</Button>
+                </ButtonGroup>
+              </BlockStack>
+            </Card>
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="uninstall"
+            title="Uninstall"
+            description="Remove Calderyn from your store."
+          >
+            <Card>
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued" variant="bodySm">
+                  When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
+                  cascade purge of all merchant data within 30 days.
+                </Text>
+                <Button tone="critical">Uninstall Calderyn</Button>
+              </BlockStack>
+            </Card>
+          </Layout.AnnotatedSection>
+        </Layout>
+      </BlockStack>
+    </Page>
+  );
+}
+
+function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
+  const fetcher = useFetcher<typeof action>();
+  const submitting = fetcher.state !== "idle";
+  const [budget, setBudget] = useState(String(Math.round(guardrails.daily_action_budget_cents / 100)));
+  const [cap, setCap] = useState(String(Math.round(guardrails.dollar_cap_cents / 100)));
+  const [cooldown, setCooldown] = useState(String(guardrails.cooldown_minutes));
+
+  useEffect(() => {
+    setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
+    setCap(String(Math.round(guardrails.dollar_cap_cents / 100)));
+    setCooldown(String(guardrails.cooldown_minutes));
+  }, [guardrails]);
+
+  return (
+    <Card>
+      <fetcher.Form method="post">
+        <input type="hidden" name="intent" value="update_guardrails" />
+        <input
+          type="hidden"
+          name="daily_action_budget_cents"
+          value={String(Math.max(0, Number(budget) * 100))}
+        />
+        <input
+          type="hidden"
+          name="dollar_cap_cents"
+          value={String(Math.max(0, Number(cap) * 100))}
+        />
+        <input
+          type="hidden"
+          name="cooldown_minutes"
+          value={String(Math.max(0, Number(cooldown)))}
+        />
+        <FormLayout>
+          <FormLayout.Group>
+            <TextField
+              label="Daily action budget cap (USD)"
+              type="number"
+              value={budget}
+              autoComplete="off"
+              onChange={setBudget}
+              helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
+            />
+            <TextField
+              label="Per-action dollar cap (USD)"
+              type="number"
+              value={cap}
+              autoComplete="off"
+              onChange={setCap}
+              helpText="Single-action impact above this prompts re-authentication."
+            />
+          </FormLayout.Group>
+          <FormLayout.Group>
+            <TextField
+              label="Cooldown (minutes)"
+              type="number"
+              value={cooldown}
+              autoComplete="off"
+              onChange={setCooldown}
+              helpText="Prevents thrash on the same campaign / SKU."
+            />
+            <TextField
+              label="Business hours"
+              value={`${guardrails.business_hours.start}–${guardrails.business_hours.end}`}
+              autoComplete="off"
+              disabled
+              helpText={`Timezone: ${guardrails.business_hours.tz}`}
+            />
+          </FormLayout.Group>
+          <InlineStack align="end">
+            <Button submit variant="primary" loading={submitting} disabled={submitting}>
+              Save guardrails
+            </Button>
+          </InlineStack>
+        </FormLayout>
+      </fetcher.Form>
+    </Card>
+  );
+}
+
+function IntegrationCard({
+  provider,
+  integration,
+}: {
+  provider: string;
+  integration: Integration;
+}) {
+  const navigation = useNavigation();
+  const submitting = navigation.state !== "idle";
+  const canConnect = ["google", "meta", "quickbooks"].includes(provider);
+
+  return (
+    <Card>
+      <InlineStack align="space-between" blockAlign="center">
+        <BlockStack gap="100">
+          <Text as="p" variant="bodyMd" fontWeight="semibold">
+            {integration.name}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {integration.detail}
+          </Text>
+        </BlockStack>
+        <InlineStack gap="200" blockAlign="center">
+          <Badge tone={integration.status === "connected" ? "success" : "attention"}>
+            {integration.status === "connected" ? "Connected" : "Not connected"}
+          </Badge>
+          {integration.status === "connected" ? (
+            <Form method="post">
+              <input type="hidden" name="intent" value="disconnect_integration" />
+              <input type="hidden" name="provider" value={provider} />
+              <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                Disconnect
+              </Button>
+            </Form>
+          ) : canConnect ? (
+            <Form method="post">
+              <input type="hidden" name="intent" value="connect_integration" />
+              <input type="hidden" name="provider" value={provider} />
+              <Button submit variant="primary" loading={submitting} disabled={submitting}>
+                Connect
+              </Button>
+            </Form>
+          ) : (
+            <Badge>Managed by Shopify</Badge>
+          )}
+        </InlineStack>
+      </InlineStack>
+    </Card>
+  );
+}

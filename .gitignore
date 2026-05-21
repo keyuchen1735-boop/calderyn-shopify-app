@@ -1,0 +1,12 @@
+node_modules
+/.cache
+/build
+.env
+.shopify
+*.local
+.DS_Store
+dev.sqlite
+dev.sqlite-journal
+prisma/migrations/dev
+.dev.vars
+.wrangler

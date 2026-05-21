@@ -1,0 +1,94 @@
+// Type definitions for the Calderyn prototype.
+
+export type Severity = "critical" | "high" | "medium" | "low";
+export type AlertStatus = "open" | "acknowledged" | "resolved";
+export type ActionKind =
+  | "pause_campaign"
+  | "reduce_campaign_budget"
+  | "exclude_geo"
+  | "reallocate_inventory"
+  | "create_po_draft"
+  | "snooze_alert";
+export type DetectorId =
+  | "ad_tax_overload"
+  | "campaign_below_breakeven"
+  | "cogs_drift"
+  | "margin_erosion"
+  | "negative_unit_economics"
+  | "regional_shortage_risk"
+  | "regional_spend_starved_stock"
+  | "reorder_timing"
+  | "return_rate_hidden_loss"
+  | "scaling_sku_fulfillment_risk"
+  | "sku_stockout_vs_spend"
+  | "wrong_location_concentration";
+
+export interface Alert {
+  id: string;
+  detector_id: DetectorId;
+  severity: Severity;
+  status: AlertStatus;
+  dollar_impact: number;
+  claude_rank: number;
+  created_at: string;
+  title: string;
+  narrative: string;
+  campaign: string | null;
+  sku: string | null;
+  evidence: Record<string, any>;
+}
+
+export interface AuditEntry {
+  id: string;
+  action_kind: ActionKind;
+  outcome: "succeeded" | "failed";
+  target: string;
+  dollar_impact_at_exec: number;
+  pre_state: any;
+  post_state: any;
+  created_at: string;
+  actor: string;
+  undo_eligible: boolean;
+  alert_id: string | null;
+  detector_id: DetectorId;
+  requires_2fa?: boolean;
+  failure_code?: string;
+  failure_reason?: string;
+  undo_of?: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  platform: "Meta" | "Google";
+  status: "active" | "paused";
+  daily_budget_cents: number;
+  roas_7d: number;
+  contribution_margin: number;
+  spend_7d: number;
+}
+
+export interface SKU {
+  id: string;
+  title: string;
+  on_hand: number;
+  days_of_cover: number;
+  velocity: number;
+  locations: Record<string, number>;
+}
+
+export interface Integration {
+  name: string;
+  status: "connected" | "pending" | "disconnected";
+  detail: string;
+  logoCls: string;
+}
+
+export interface GuardrailConfig {
+  daily_action_budget_cents: number;
+  daily_action_budget_used_cents: number;
+  dollar_cap_cents: number;
+  cooldown_minutes: number;
+  business_hours: { start: string; end: string; tz: string };
+  in_business_hours: boolean;
+}
