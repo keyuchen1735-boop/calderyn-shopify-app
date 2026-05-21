@@ -7,6 +7,8 @@ import type {
   Integration,
   SKU,
 } from "./types";
+import { getSupabase, resolveShopId } from "./supabase.server";
+import { newIdempotencyKey } from "./ids";
 
 export class CalderynError extends Error {
   code: string;
@@ -18,99 +20,6 @@ export class CalderynError extends Error {
     this.code = opts.code;
     this.status = opts.status;
     this.details = opts.details;
-  }
-}
-
-type FetchOpts = {
-  signal?: AbortSignal;
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
-  body?: unknown;
-  query?: Record<string, string | undefined>;
-};
-
-function baseUrl(): string {
-  const url = process.env.CALDERYN_API_URL;
-  if (!url) {
-    throw new CalderynError({
-      code: "BACKEND_NOT_CONFIGURED",
-      status: 500,
-      message: "CALDERYN_API_URL is not set",
-    });
-  }
-  return url.replace(/\/$/, "");
-}
-
-function serviceToken(): string {
-  const token = process.env.CALDERYN_SERVICE_TOKEN;
-  if (!token) {
-    throw new CalderynError({
-      code: "BACKEND_NOT_CONFIGURED",
-      status: 500,
-      message: "CALDERYN_SERVICE_TOKEN is not set",
-    });
-  }
-  return token;
-}
-
-async function request<T>(shop: string, path: string, opts: FetchOpts = {}): Promise<T> {
-  const url = new URL(baseUrl() + path);
-  if (opts.query) {
-    for (const [k, v] of Object.entries(opts.query)) {
-      if (v !== undefined && v !== "" && v !== "all") url.searchParams.set(k, v);
-    }
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url.toString(), {
-      method: opts.method ?? "GET",
-      signal: opts.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${serviceToken()}`,
-        "X-Shop-Domain": shop,
-      },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    });
-  } catch (err) {
-    if ((err as { name?: string }).name === "AbortError") throw err;
-    throw new CalderynError({
-      code: "NETWORK_ERROR",
-      status: 0,
-      message: `Failed to reach Calderyn backend: ${(err as Error).message}`,
-      details: err,
-    });
-  }
-
-  if (response.status === 204) return undefined as T;
-
-  const text = await response.text();
-  const payload = text ? safeJson(text) : null;
-
-  if (!response.ok) {
-    const code = (payload && typeof payload === "object" && "code" in (payload as object))
-      ? String((payload as { code?: unknown }).code)
-      : `HTTP_${response.status}`;
-    const message = (payload && typeof payload === "object" && "message" in (payload as object))
-      ? String((payload as { message?: unknown }).message)
-      : response.statusText || "Calderyn backend error";
-    throw new CalderynError({
-      code,
-      status: response.status,
-      message,
-      details: payload,
-    });
-  }
-
-  return payload as T;
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
   }
 }
 
@@ -131,108 +40,504 @@ export type IntegrationProvider = "google" | "meta" | "quickbooks";
 
 export type OnboardingState = { step: number; done: boolean };
 
+const ONBOARDING_STEPS = [
+  "shopify",
+  "meta",
+  "google",
+  "quickbooks",
+  "guardrails",
+  "consent",
+  "creative_mapping",
+  "complete",
+] as const;
+
+type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+function rethrow(prefix: string, err: unknown): never {
+  if (err instanceof CalderynError) throw err;
+  const e = err as { message?: string; code?: string; details?: unknown };
+  throw new CalderynError({
+    code: e.code ?? "SUPABASE_ERROR",
+    status: 500,
+    message: `${prefix}: ${e.message ?? String(err)}`,
+    details: e.details ?? err,
+  });
+}
+
+function rowToAlert(r: Record<string, unknown>): Alert {
+  return {
+    id: String(r.id),
+    detector_id: r.detector_id as Alert["detector_id"],
+    severity: r.severity as Alert["severity"],
+    status: r.status as Alert["status"],
+    dollar_impact: Number(r.dollar_impact ?? 0),
+    claude_rank: Number(r.claude_rank ?? 999),
+    created_at: String(r.created_at),
+    title: String(r.title ?? ""),
+    narrative: String(r.narrative ?? ""),
+    campaign: (r.campaign as string | null) ?? null,
+    sku: (r.sku as string | null) ?? null,
+    evidence: (r.evidence as Record<string, unknown>) ?? {},
+  };
+}
+
+function rowToAudit(r: Record<string, unknown>): AuditEntry {
+  return {
+    id: String(r.id),
+    action_kind: r.action_kind as ActionKind,
+    outcome: r.outcome as AuditEntry["outcome"],
+    target: String(r.target ?? ""),
+    dollar_impact_at_exec: Number(r.dollar_impact_at_exec ?? 0),
+    pre_state: r.pre_state,
+    post_state: r.post_state,
+    created_at: String(r.created_at),
+    actor: String(r.actor ?? "system"),
+    undo_eligible: Boolean(r.undo_eligible),
+    alert_id: (r.alert_id as string | null) ?? null,
+    detector_id: r.detector_id as AuditEntry["detector_id"],
+    failure_reason: (r.failure_reason as string | undefined) ?? undefined,
+    undo_of: (r.undo_of as string | undefined) ?? undefined,
+  };
+}
+
+function rowToCampaign(r: Record<string, unknown>): Campaign {
+  const platform = String(r.platform ?? "").toLowerCase();
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    platform: platform === "google" ? "Google" : "Meta",
+    status: r.status === "paused" ? "paused" : "active",
+    daily_budget_cents: Number(r.daily_budget_cents ?? 0),
+    roas_7d: Number(r.roas_7d ?? 0),
+    contribution_margin: Number(r.contribution_margin ?? 0),
+    spend_7d: Number(r.spend_7d_cents ?? 0),
+  };
+}
+
+function rowToSku(r: Record<string, unknown>): SKU {
+  return {
+    id: String(r.id),
+    title: String(r.title),
+    on_hand: Number(r.on_hand ?? 0),
+    days_of_cover: Number(r.days_of_cover ?? 0),
+    velocity: Number(r.velocity ?? 0),
+    locations: (r.locations as Record<string, number>) ?? {},
+  };
+}
+
+function rowToGuardrails(r: Record<string, unknown>): GuardrailConfig {
+  return {
+    daily_action_budget_cents: Number(r.daily_action_budget ?? 0) * 100,
+    daily_action_budget_used_cents: 0,
+    dollar_cap_cents: Math.round(Number(r.dollar_impact_cap_without_2fa ?? 0) * 100),
+    cooldown_minutes: Number(r.cooldown_minutes_per_campaign ?? 30),
+    business_hours: {
+      start: `${String(r.business_hours_start_utc ?? 14).padStart(2, "0")}:00`,
+      end: `${String(r.business_hours_end_utc ?? 0).padStart(2, "0")}:00`,
+      tz: String(r.timezone ?? "America/New_York"),
+    },
+    in_business_hours: true,
+  };
+}
+
+const INTEGRATION_LOGO_CLS: Record<string, string> = {
+  shopify: "logo-shopify",
+  meta_ads: "logo-meta",
+  google_ads: "logo-google",
+  quickbooks: "logo-quickbooks",
+};
+
+const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
+  shopify: "Shopify",
+  meta_ads: "Meta Ads",
+  google_ads: "Google Ads",
+  quickbooks: "QuickBooks",
+};
+
 export function calderynClient(shop: string) {
+  const supabase = getSupabase();
+  const shopIdP = resolveShopId(shop);
+
   return {
     alerts: {
-      list(filters: AlertFilters = {}, signal?: AbortSignal): Promise<Alert[]> {
-        return request<Alert[]>(shop, "/v1/alerts", { signal, query: filters });
+      async list(filters: AlertFilters = {}, _signal?: AbortSignal): Promise<Alert[]> {
+        try {
+          const shopId = await shopIdP;
+          let q = supabase
+            .from("v_alerts_view")
+            .select("*")
+            .eq("shop_id", shopId)
+            .order("claude_rank", { ascending: true });
+          if (filters.status && filters.status !== "all") q = q.eq("status", filters.status);
+          if (filters.severity && filters.severity !== "all") q = q.eq("severity", filters.severity);
+          if (filters.detector && filters.detector !== "all") q = q.eq("detector_id", filters.detector);
+          const { data, error } = await q;
+          if (error) throw error;
+          return (data ?? []).map(rowToAlert);
+        } catch (err) {
+          rethrow("alerts.list", err);
+        }
       },
-      get(id: string, signal?: AbortSignal): Promise<Alert> {
-        return request<Alert>(shop, `/v1/alerts/${encodeURIComponent(id)}`, { signal });
+      async get(id: string, _signal?: AbortSignal): Promise<Alert> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_alerts_view")
+            .select("*")
+            .eq("shop_id", shopId)
+            .eq("id", id)
+            .maybeSingle();
+          if (error) throw error;
+          if (!data) {
+            throw new CalderynError({ code: "ALERT_NOT_FOUND", status: 404, message: `Alert ${id} not found` });
+          }
+          return rowToAlert(data);
+        } catch (err) {
+          rethrow("alerts.get", err);
+        }
       },
     },
+
     audit: {
-      list(signal?: AbortSignal): Promise<AuditEntry[]> {
-        return request<AuditEntry[]>(shop, "/v1/audit", { signal });
+      async list(_signal?: AbortSignal): Promise<AuditEntry[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_audit_view")
+            .select("*")
+            .eq("shop_id", shopId)
+            .order("created_at", { ascending: false })
+            .limit(100);
+          if (error) throw error;
+          return (data ?? []).map(rowToAudit);
+        } catch (err) {
+          rethrow("audit.list", err);
+        }
       },
-      undo(auditId: string, signal?: AbortSignal): Promise<AuditEntry> {
-        return request<AuditEntry>(shop, `/v1/audit/${encodeURIComponent(auditId)}/undo`, {
-          method: "POST",
-          signal,
-        });
+      async undo(auditId: string, _signal?: AbortSignal): Promise<AuditEntry> {
+        try {
+          const shopId = await shopIdP;
+          const { data: orig, error: oErr } = await supabase
+            .from("action_audit")
+            .select("*")
+            .eq("shop_id", shopId)
+            .eq("id", auditId)
+            .maybeSingle();
+          if (oErr) throw oErr;
+          if (!orig) {
+            throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
+          }
+
+          const undoRow = {
+            shop_id: shopId,
+            alert_id: orig.alert_id,
+            action_kind: orig.action_kind,
+            params: { ...(orig.params ?? {}), undo_of: orig.id },
+            outcome: "succeeded",
+            pre_state: orig.post_state,
+            post_state: orig.pre_state,
+            dollar_impact_at_exec: orig.dollar_impact_at_exec ? -Number(orig.dollar_impact_at_exec) : 0,
+            undo_of: orig.id,
+            actor_user_id: "demo@calderyn.app",
+            completed_at: new Date().toISOString(),
+          };
+
+          const { data: ins, error: iErr } = await supabase
+            .from("action_audit")
+            .insert(undoRow)
+            .select()
+            .single();
+          if (iErr) throw iErr;
+
+          const { data: view, error: vErr } = await supabase
+            .from("v_audit_view")
+            .select("*")
+            .eq("id", ins.id)
+            .single();
+          if (vErr) throw vErr;
+          return rowToAudit(view);
+        } catch (err) {
+          rethrow("audit.undo", err);
+        }
       },
     },
+
     actions: {
-      execute(opts: ExecuteActionOpts, signal?: AbortSignal): Promise<AuditEntry> {
-        return request<AuditEntry>(shop, "/v1/actions/execute", {
-          method: "POST",
-          signal,
-          body: {
-            alert_id: opts.alertId,
-            kind: opts.kind,
-            params: opts.params,
-            idempotency_key: opts.idempotencyKey,
-          },
-        });
+      async execute(opts: ExecuteActionOpts, _signal?: AbortSignal): Promise<AuditEntry> {
+        try {
+          const shopId = await shopIdP;
+
+          // Idempotency: return existing audit if key already used.
+          const { data: prior, error: pErr } = await supabase
+            .from("action_idempotency")
+            .select("audit_id")
+            .eq("shop_id", shopId)
+            .eq("idempotency_key", opts.idempotencyKey)
+            .maybeSingle();
+          if (pErr) throw pErr;
+          if (prior?.audit_id) {
+            const { data: view, error: vErr } = await supabase
+              .from("v_audit_view")
+              .select("*")
+              .eq("id", prior.audit_id)
+              .single();
+            if (vErr) throw vErr;
+            return rowToAudit(view);
+          }
+
+          const target =
+            (opts.params.campaign_name as string | undefined) ??
+            (opts.params.sku as string | undefined) ??
+            (opts.params.target as string | undefined) ??
+            "";
+
+          // For Phase 1 (no Python engines) executions just record an audit row.
+          // The detector + action gateway will own the real pre/post state once wired.
+          const { data: ins, error: iErr } = await supabase
+            .from("action_audit")
+            .insert({
+              shop_id: shopId,
+              alert_id: opts.alertId,
+              action_kind: opts.kind,
+              params: { ...opts.params, target },
+              outcome: "succeeded",
+              pre_state: null,
+              post_state: opts.params,
+              actor_user_id: "demo@calderyn.app",
+              completed_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+          if (iErr) throw iErr;
+
+          await supabase
+            .from("action_idempotency")
+            .insert({
+              shop_id: shopId,
+              idempotency_key: opts.idempotencyKey,
+              audit_id: ins.id,
+            });
+
+          const { data: view, error: vErr } = await supabase
+            .from("v_audit_view")
+            .select("*")
+            .eq("id", ins.id)
+            .single();
+          if (vErr) throw vErr;
+          return rowToAudit(view);
+        } catch (err) {
+          rethrow("actions.execute", err);
+        }
       },
     },
+
     campaigns: {
-      list(signal?: AbortSignal): Promise<Campaign[]> {
-        return request<Campaign[]>(shop, "/v1/campaigns", { signal });
+      async list(_signal?: AbortSignal): Promise<Campaign[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_campaigns_flat")
+            .select("*")
+            .eq("shop_id", shopId)
+            .order("spend_7d_cents", { ascending: false });
+          if (error) throw error;
+          return (data ?? []).map(rowToCampaign);
+        } catch (err) {
+          rethrow("campaigns.list", err);
+        }
       },
     },
+
     skus: {
-      list(signal?: AbortSignal): Promise<SKU[]> {
-        return request<SKU[]>(shop, "/v1/skus", { signal });
+      async list(_signal?: AbortSignal): Promise<SKU[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_skus_flat")
+            .select("*")
+            .eq("shop_id", shopId)
+            .order("on_hand", { ascending: false });
+          if (error) throw error;
+          return (data ?? []).map(rowToSku);
+        } catch (err) {
+          rethrow("skus.list", err);
+        }
       },
     },
+
     guardrails: {
-      get(signal?: AbortSignal): Promise<GuardrailConfig> {
-        return request<GuardrailConfig>(shop, "/v1/guardrails", { signal });
+      async get(_signal?: AbortSignal): Promise<GuardrailConfig> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("guardrail_config")
+            .select("*")
+            .eq("shop_id", shopId)
+            .maybeSingle();
+          if (error) throw error;
+          if (!data) {
+            throw new CalderynError({
+              code: "GUARDRAILS_NOT_FOUND",
+              status: 404,
+              message: `No guardrail config for shop ${shop}`,
+            });
+          }
+          return rowToGuardrails(data);
+        } catch (err) {
+          rethrow("guardrails.get", err);
+        }
       },
-      update(patch: Partial<GuardrailConfig>, signal?: AbortSignal): Promise<GuardrailConfig> {
-        return request<GuardrailConfig>(shop, "/v1/guardrails", {
-          method: "PATCH",
-          signal,
-          body: patch,
-        });
+      async update(patch: Partial<GuardrailConfig>, _signal?: AbortSignal): Promise<GuardrailConfig> {
+        try {
+          const shopId = await shopIdP;
+          const updates: Record<string, unknown> = {};
+          if (patch.daily_action_budget_cents !== undefined) {
+            updates.daily_action_budget = Math.round(patch.daily_action_budget_cents / 100);
+          }
+          if (patch.dollar_cap_cents !== undefined) {
+            updates.dollar_impact_cap_without_2fa = patch.dollar_cap_cents / 100;
+          }
+          if (patch.cooldown_minutes !== undefined) {
+            updates.cooldown_minutes_per_campaign = patch.cooldown_minutes;
+          }
+          if (patch.business_hours?.tz) updates.timezone = patch.business_hours.tz;
+
+          if (Object.keys(updates).length > 0) {
+            const { error } = await supabase
+              .from("guardrail_config")
+              .update(updates)
+              .eq("shop_id", shopId);
+            if (error) throw error;
+          }
+
+          const { data, error } = await supabase
+            .from("guardrail_config")
+            .select("*")
+            .eq("shop_id", shopId)
+            .single();
+          if (error) throw error;
+          return rowToGuardrails(data);
+        } catch (err) {
+          rethrow("guardrails.update", err);
+        }
       },
     },
+
     integrations: {
-      list(signal?: AbortSignal): Promise<Record<string, Integration>> {
-        return request<Record<string, Integration>>(shop, "/v1/integrations", { signal });
+      async list(_signal?: AbortSignal): Promise<Record<string, Integration>> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("shop_integrations")
+            .select("kind, sync_status, sync_error, connected_at, external_account_id")
+            .eq("shop_id", shopId);
+          if (error) throw error;
+
+          const out: Record<string, Integration> = {
+            shopify: { name: "Shopify", status: "connected", detail: shop, logoCls: "logo-shopify" },
+            meta_ads: { name: "Meta Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-meta" },
+            google_ads: { name: "Google Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-google" },
+            quickbooks: { name: "QuickBooks", status: "disconnected", detail: "Not connected", logoCls: "logo-quickbooks" },
+          };
+
+          for (const r of data ?? []) {
+            const kind = String(r.kind);
+            const status: Integration["status"] =
+              r.sync_status === "ready" || r.sync_status === "ok"
+                ? "connected"
+                : r.sync_status === "pending"
+                  ? "pending"
+                  : "disconnected";
+            out[kind] = {
+              name: INTEGRATION_DISPLAY_NAME[kind] ?? kind,
+              status,
+              detail: r.sync_error ?? r.external_account_id ?? (r.connected_at ? `Connected ${r.connected_at}` : "Pending"),
+              logoCls: INTEGRATION_LOGO_CLS[kind] ?? "logo-default",
+            };
+          }
+          return out;
+        } catch (err) {
+          rethrow("integrations.list", err);
+        }
       },
-      startOAuth(
-        provider: IntegrationProvider,
-        signal?: AbortSignal,
-      ): Promise<{ redirectUrl: string }> {
-        return request<{ redirectUrl: string }>(
-          shop,
-          `/v1/integrations/${provider}/oauth/start`,
-          { method: "POST", signal },
-        );
-      },
-      disconnect(provider: string, signal?: AbortSignal): Promise<void> {
-        return request<void>(shop, `/v1/integrations/${encodeURIComponent(provider)}`, {
-          method: "DELETE",
-          signal,
+      async startOAuth(provider: IntegrationProvider, _signal?: AbortSignal): Promise<{ redirectUrl: string }> {
+        // OAuth handshakes are not wired in Phase 1.
+        throw new CalderynError({
+          code: "OAUTH_NOT_WIRED",
+          status: 501,
+          message: `${provider} OAuth is not yet wired. Connect via the provider's dashboard or run the integration's Python connector when available.`,
         });
       },
+      async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
+        try {
+          const shopId = await shopIdP;
+          const kind = provider === "meta" ? "meta_ads" : provider === "google" ? "google_ads" : provider;
+          const { error } = await supabase
+            .from("shop_integrations")
+            .delete()
+            .eq("shop_id", shopId)
+            .eq("kind", kind);
+          if (error) throw error;
+        } catch (err) {
+          rethrow("integrations.disconnect", err);
+        }
+      },
     },
+
     onboarding: {
-      getState(signal?: AbortSignal): Promise<OnboardingState> {
-        return request<OnboardingState>(shop, "/v1/onboarding", { signal });
+      async getState(_signal?: AbortSignal): Promise<OnboardingState> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("shops")
+            .select("onboarding_step, onboarding_completed_at")
+            .eq("id", shopId)
+            .single();
+          if (error) throw error;
+          const stepIdx = ONBOARDING_STEPS.indexOf(data.onboarding_step as OnboardingStep);
+          return {
+            step: stepIdx >= 0 ? stepIdx : 0,
+            done: Boolean(data.onboarding_completed_at) || data.onboarding_step === "complete",
+          };
+        } catch (err) {
+          rethrow("onboarding.getState", err);
+        }
       },
-      advance(step: number, signal?: AbortSignal): Promise<void> {
-        return request<void>(shop, "/v1/onboarding/advance", {
-          method: "POST",
-          signal,
-          body: { step },
-        });
+      async advance(step: number, _signal?: AbortSignal): Promise<void> {
+        try {
+          const shopId = await shopIdP;
+          const clamped = Math.min(Math.max(step, 0), ONBOARDING_STEPS.length - 1);
+          const stepName = ONBOARDING_STEPS[clamped];
+          const updates: Record<string, unknown> = { onboarding_step: stepName };
+          if (stepName === "complete") updates.onboarding_completed_at = new Date().toISOString();
+          const { error } = await supabase.from("shops").update(updates).eq("id", shopId);
+          if (error) throw error;
+        } catch (err) {
+          rethrow("onboarding.advance", err);
+        }
       },
     },
+
     internal: {
-      forwardWebhook(
+      async forwardWebhook(
         path: string,
         payload: unknown,
         headers: Record<string, string> = {},
-        signal?: AbortSignal,
+        _signal?: AbortSignal,
       ): Promise<void> {
-        return request<void>(shop, path, {
-          method: "POST",
-          signal,
-          body: { headers, payload },
-        });
+        try {
+          const shopId = await shopIdP;
+          const topic = headers["X-Shopify-Topic"] ?? path.split("/").pop() ?? "unknown";
+          await supabase.from("raw_shopify_webhook").insert({
+            shop_id: shopId,
+            topic,
+            webhook_id: headers["X-Shopify-Webhook-Id"] ?? `${topic}-${Date.now()}-${newIdempotencyKey()}`,
+            hmac_verified: true,
+            payload: payload as object,
+          });
+        } catch (err) {
+          rethrow("internal.forwardWebhook", err);
+        }
       },
     },
   };

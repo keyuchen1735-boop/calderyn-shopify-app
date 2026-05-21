@@ -1,8 +1,10 @@
-// This is your Prisma schema file, learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma schema — Postgres (Supabase). The session table is managed by Supabase
+// migrations (table name `shopify_sessions`); Prisma is used only as the client
+// for @shopify/shopify-app-session-storage-prisma.
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -10,19 +12,23 @@ generator client {
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id @db.VarChar
+  shop                String    @db.VarChar
+  state               String    @db.VarChar
+  isOnline            Boolean   @default(false)
+  scope               String?   @db.VarChar
+  expires             DateTime? @db.Timestamptz
+  accessToken         String?   @db.VarChar
+  userId              BigInt?
+  firstName           String?   @db.VarChar
+  lastName            String?   @db.VarChar
+  email               String?   @db.VarChar
+  accountOwner        Boolean   @default(false)
+  locale              String?   @db.VarChar
+  collaborator        Boolean?
+  emailVerified       Boolean?
+  refreshToken        String?   @db.VarChar
+  refreshTokenExpires BigInt?
+
+  @@map("shopify_sessions")
 }

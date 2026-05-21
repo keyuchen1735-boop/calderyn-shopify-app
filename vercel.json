@@ -1,0 +1,6 @@
+{
+  "framework": "remix",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install && npx prisma generate",
+  "regions": ["iad1"]
+}
