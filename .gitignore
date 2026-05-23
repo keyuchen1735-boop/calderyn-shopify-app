@@ -10,3 +10,7 @@ dev.sqlite-journal
 prisma/migrations/dev
 .dev.vars
 .wrangler
+.vercel
+.env*.local
+SECRETS.local.txt
+secrets.local.txt
