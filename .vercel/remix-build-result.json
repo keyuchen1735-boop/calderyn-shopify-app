@@ -15,6 +15,7 @@
       "routes/webhooks.products.update": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
       "routes/webhooks.gdpr": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
       "routes/auth.login": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
+      "routes/healthz": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
       "routes/_index": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
       "routes/auth.$": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
       "routes/app.alerts._index": "nodejs-eyJydW50aW1lIjoibm9kZWpzIn0",
@@ -74,6 +75,15 @@
         "parentId": "root",
         "file": "app/routes/auth.login.tsx",
         "path": "auth/login",
+        "config": {
+          "runtime": "nodejs"
+        }
+      },
+      "routes/healthz": {
+        "id": "routes/healthz",
+        "parentId": "root",
+        "file": "app/routes/healthz.tsx",
+        "path": "healthz",
         "config": {
           "runtime": "nodejs"
         }
@@ -228,6 +238,12 @@
         "parentId": "root",
         "file": "routes/auth.login.tsx",
         "path": "auth/login"
+      },
+      "routes/healthz": {
+        "id": "routes/healthz",
+        "parentId": "root",
+        "file": "routes/healthz.tsx",
+        "path": "healthz"
       },
       "routes/_index": {
         "id": "routes/_index",
