@@ -1,0 +1,108 @@
+// app/lib/mcp_tokens.server.ts
+//
+// Server-only CRUD for the mcp_tokens table.
+// The raw token is returned ONCE from createMcpToken(); thereafter only the
+// prefix and hash live in the DB.
+
+import { createHmac, randomBytes } from "node:crypto";
+import { getSupabase, resolveShopId } from "./supabase.server";
+
+export interface McpTokenRow {
+  id: string;
+  shop_id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string[];
+  created_by_user: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface CreatedToken {
+  row: McpTokenRow;
+  raw: string; // mcp_live_<32-char-base32> — shown once, never persisted.
+}
+
+function pepper(): string {
+  const p = process.env.MCP_TOKEN_PEPPER;
+  if (!p || p.length < 32) {
+    throw new Error("MCP_TOKEN_PEPPER must be set to a 32+ char secret");
+  }
+  return p;
+}
+
+export function hashToken(raw: string): string {
+  return createHmac("sha256", pepper()).update(raw).digest("hex");
+}
+
+const BASE32_ALPHA = "abcdefghijklmnopqrstuvwxyz234567";
+
+function generateRaw(): { raw: string; prefix: string } {
+  const bytes = randomBytes(20); // 20 bytes → 32 base32 chars
+  let body = "";
+  for (let i = 0; i < bytes.length; i++) {
+    body += BASE32_ALPHA[bytes[i] % 32];
+  }
+  // pad/trim to exactly 32 chars
+  body = (body + body).slice(0, 32);
+  const raw = `mcp_live_${body}`;
+  const prefix = raw.slice(0, 13); // "mcp_live_" + first 4 body chars
+  return { raw, prefix };
+}
+
+export async function listMcpTokens(
+  shopDomain: string,
+): Promise<McpTokenRow[]> {
+  const shopId = await resolveShopId(shopDomain);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .select(
+      "id, shop_id, name, token_prefix, scopes, created_by_user, created_at, last_used_at, revoked_at",
+    )
+    .eq("shop_id", shopId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as McpTokenRow[];
+}
+
+export async function createMcpToken(opts: {
+  shopDomain: string;
+  name: string;
+  createdByUser: string | null;
+  scopes?: string[];
+}): Promise<CreatedToken> {
+  const shopId = await resolveShopId(opts.shopDomain);
+  const { raw, prefix } = generateRaw();
+  const token_hash = hashToken(raw);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .insert({
+      shop_id: shopId,
+      name: opts.name,
+      token_hash,
+      token_prefix: prefix,
+      scopes: opts.scopes ?? ["read"],
+      created_by_user: opts.createdByUser,
+    })
+    .select(
+      "id, shop_id, name, token_prefix, scopes, created_by_user, created_at, last_used_at, revoked_at",
+    )
+    .single();
+  if (error) throw error;
+  return { row: data as McpTokenRow, raw };
+}
+
+export async function revokeMcpToken(opts: {
+  shopDomain: string;
+  tokenId: string;
+}): Promise<void> {
+  const shopId = await resolveShopId(opts.shopDomain);
+  const { error } = await getSupabase()
+    .from("mcp_tokens")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
+    .eq("id", opts.tokenId)
+    .is("revoked_at", null);
+  if (error) throw error;
+}
