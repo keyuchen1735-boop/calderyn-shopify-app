@@ -122,3 +122,12 @@ shopify-app/
 - The Calderyn business state is **client-side only**. A page refresh resets it. This is intentional for the demo — the auth flow, embedded host, App Bridge, OAuth callbacks, and webhook subscriptions are all real Shopify infrastructure; only the detector results and audit log are mocked.
 - The 2FA modal flow was removed by design iteration — Execute commits immediately.
 - Guardrail checks display as advisory cues; they never block execution in the prototype.
+
+## MCP server
+
+External agents (Claude.ai connectors, custom agents) can query this shop's
+read-only calderyn state — alerts, audit log, campaigns, SKUs, guardrails,
+integrations — via the hosted [`calderyn-mcp`](../calderyn-mcp) server. Merchants
+mint per-shop bearer tokens at `/app/mcp` in this admin and paste them into any
+MCP client. See `docs/adr/0001-mcp-server-split.md` for the split rationale and
+`docs/superpowers/specs/2026-05-25-mcp-server-design.md` for the full design.
