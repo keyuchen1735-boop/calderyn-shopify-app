@@ -190,7 +190,7 @@ export default function McpTokens() {
           <p>
             Generate a token below, then paste it into your MCP client (Claude.ai connector,
             custom agent, etc.) as a bearer token. The server endpoint is{" "}
-            <code>https://mcp.calderyn.app/mcp</code>. Each token is scoped to this shop and
+            <code>https://calderyn-mcp.vercel.app/mcp</code>. Each token is scoped to this shop and
             grants read-only access to your alerts, audit log, campaigns, SKUs, guardrails,
             and integration status.
           </p>
