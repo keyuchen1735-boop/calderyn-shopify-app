@@ -33,3 +33,33 @@ export async function resolveShopId(shopDomain: string): Promise<string> {
   }
   return data.id;
 }
+
+/**
+ * Ensure a shops row exists for this domain. Idempotent.
+ * If the shop was previously uninstalled, reactivate it (clear uninstalled_at,
+ * bump updated_at) — guarded so routine token-exchanges don't churn updated_at.
+ */
+export async function provisionShop(shopDomain: string): Promise<void> {
+  const sb = getSupabase();
+  const ins = await sb
+    .from("shops")
+    .upsert({ shop_domain: shopDomain }, { onConflict: "shop_domain", ignoreDuplicates: true });
+  if (ins.error) throw ins.error;
+
+  const react = await sb
+    .from("shops")
+    .update({ uninstalled_at: null, updated_at: new Date().toISOString() })
+    .eq("shop_domain", shopDomain)
+    .not("uninstalled_at", "is", null);
+  if (react.error) throw react.error;
+}
+
+/** Soft-mark a shop uninstalled (inverse of provisionShop's reactivation). */
+export async function markShopUninstalled(shopDomain: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await getSupabase()
+    .from("shops")
+    .update({ uninstalled_at: now, updated_at: now })
+    .eq("shop_domain", shopDomain);
+  if (error) throw error;
+}
