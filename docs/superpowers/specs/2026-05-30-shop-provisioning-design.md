@@ -186,6 +186,20 @@ scaffolding a framework:
 - Onboarding state, consent, and other `shops` columns are left at their DB
   defaults on provision; managing them is existing functionality, untouched here.
 
+## Deployment (mandatory order)
+
+`afterAuth` fires only on token exchange — i.e. when no active offline session
+exists (verified against `@shopify/shopify-app-remix` token-exchange strategy:
+the hook runs inside the `if (!session || !session.isActive())` branch). A shop
+installed *before* this ships, whose Prisma session is still valid, never
+triggers a token exchange and so is **not** provisioned by the live hook. The
+backfill is therefore the sole mechanism covering those shops:
+
+1. Deploy the app (afterAuth hook live).
+2. **Run `node scripts/backfill-shops.mjs` once** — mandatory release-gate step,
+   not optional. Until it runs, pre-existing valid-session shops keep hitting
+   "Shop not found" on reads.
+
 ## Files touched
 
 - `app/lib/supabase.server.ts` (add `provisionShop`, `markShopUninstalled`)
