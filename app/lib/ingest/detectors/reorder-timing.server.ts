@@ -1,3 +1,5 @@
+import { getSupabase } from "../../supabase.server";
+
 export type SkuFlat = {
   id: string;
   sku: string | null;
@@ -73,8 +75,6 @@ export function scoreReorderTiming(
   drafts.forEach((d, i) => (d.claude_rank = i + 1));
   return drafts;
 }
-
-import { getSupabase } from "../../supabase.server";
 
 export type DetectorRunResult = { upserted: number; resolved: number };
 
