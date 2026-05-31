@@ -87,6 +87,10 @@ export async function backfillShop(shopDomain: string): Promise<BackfillResult> 
     const since = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
     for await (const order of fetchRecentOrders(shopDomain, since)) {
       const orderRow = mapOrder(shopId, order);
+      // Slice-1 deviation from spec §7.1 ("newer source_version only"): plain
+      // last-writer-wins upsert. supabase-js can't express a conditional
+      // ON CONFLICT … WHERE excluded.source_version > … guard; orders are
+      // effectively immutable post-creation, so this is accepted for Slice 1.
       const { data: oUp, error: oErr } = await sb
         .from("order_fact")
         .upsert(orderRow, { onConflict: "shop_id,external_id" })

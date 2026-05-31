@@ -57,6 +57,9 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
           pageInfo { hasNextPage endCursor }
           nodes {
             id title
+            # Slice-1 cap: variants/inventoryLevels are single-page (not
+            # paginated). Products with >100 variants or variants stocked in
+            # >50 locations are truncated; revisit if real catalogs exceed this.
             variants(first: 100) {
               nodes {
                 id sku title

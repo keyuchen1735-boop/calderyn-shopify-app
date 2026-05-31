@@ -2,7 +2,10 @@ import { getSupabase, resolveShopId } from "../supabase.server";
 
 /**
  * Mark a shop's Shopify integration as pending so the backfill cron picks it up.
- * Idempotent: keeps an existing 'ready' row pending only if it has never synced.
+ * Called from afterAuth, so it fires on every (re-)auth and unconditionally
+ * resets sync_status to 'pending' — i.e. a re-auth re-triggers a full backfill.
+ * That is acceptable for Slice 1 because the backfill upserts are idempotent
+ * (no duplicate facts); the cost is a redundant re-sync, not bad data.
  */
 export async function enqueueShopifyBackfill(shopDomain: string): Promise<void> {
   const shopId = await resolveShopId(shopDomain);

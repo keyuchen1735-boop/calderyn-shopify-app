@@ -95,6 +95,7 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
   const sb = getSupabase();
   const { order, lines } = parseOrderWebhook(payload as Parameters<typeof parseOrderWebhook>[0]);
 
+  // Slice-1: last-writer-wins (see backfill.server.ts note on §7.1 deviation).
   const { data: oUp, error: oErr } = await sb
     .from("order_fact")
     .upsert({ shop_id: shopId, ...order }, { onConflict: "shop_id,external_id" })

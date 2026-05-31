@@ -153,25 +153,36 @@ export async function runReorderTimingDetector(shopId: string, now = new Date())
         .eq("id", (existing as { id: string }).id);
       await sb.from("alert_context").upsert({ alert_id: (existing as { id: string }).id, shop_id: shopId, evidence: d.evidence, created_at: now.toISOString() }, { onConflict: "alert_id" });
     } else {
+      // Upsert on the real unique constraint (shop_id, detector_id, entity_ref,
+      // day_bucket) so a concurrent run (or retry) can't create a duplicate row
+      // for the same sku/day — the DB enforces idempotency atomically.
       const { data: ins, error: insErr } = await sb
         .from("alerts")
-        .insert({
-          shop_id: shopId,
-          detector_id: DETECTOR_ID,
-          entity_ref: d.entity_ref,
-          status: "open",
-          severity: d.severity,
-          dollar_impact: d.dollar_impact,
-          day_bucket: dayBucket,
-          claude_narrative: d.claude_narrative,
-          claude_rank: d.claude_rank,
-          first_seen_at: now.toISOString(),
-          last_seen_at: now.toISOString(),
-        })
+        .upsert(
+          {
+            shop_id: shopId,
+            detector_id: DETECTOR_ID,
+            entity_ref: d.entity_ref,
+            status: "open",
+            severity: d.severity,
+            dollar_impact: d.dollar_impact,
+            day_bucket: dayBucket,
+            claude_narrative: d.claude_narrative,
+            claude_rank: d.claude_rank,
+            first_seen_at: now.toISOString(),
+            last_seen_at: now.toISOString(),
+          },
+          { onConflict: "shop_id,detector_id,entity_ref,day_bucket" },
+        )
         .select("id")
         .single();
       if (insErr) throw insErr;
-      await sb.from("alert_context").insert({ alert_id: (ins as { id: string }).id, shop_id: shopId, evidence: d.evidence, created_at: now.toISOString() });
+      await sb
+        .from("alert_context")
+        .upsert(
+          { alert_id: (ins as { id: string }).id, shop_id: shopId, evidence: d.evidence, created_at: now.toISOString() },
+          { onConflict: "alert_id" },
+        );
     }
     upserted += 1;
   }
