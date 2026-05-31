@@ -19,6 +19,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     backfillErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     detect: { shops: 0, upserted: 0, resolved: 0 },
+    detectErrors: [] as string[],
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -48,10 +49,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .eq("kind", "shopify")
     .eq("sync_status", "ready");
   for (const r of ready ?? []) {
-    const res = await runReorderTimingDetector(String(r.shop_id));
-    summary.detect.shops += 1;
-    summary.detect.upserted += res.upserted;
-    summary.detect.resolved += res.resolved;
+    const shopId = String(r.shop_id);
+    try {
+      const res = await runReorderTimingDetector(shopId);
+      summary.detect.shops += 1;
+      summary.detect.upserted += res.upserted;
+      summary.detect.resolved += res.resolved;
+    } catch (err) {
+      // One shop's detector failure must not deny other shops their alerts.
+      summary.detectErrors.push(shopId);
+      console.error(`[cron.ingest] reorder_timing detector failed for shop ${shopId}`, err);
+    }
   }
 
   return json(summary);
