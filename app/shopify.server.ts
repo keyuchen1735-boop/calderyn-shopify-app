@@ -7,6 +7,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { provisionShop } from "./lib/supabase.server";
+import { enqueueShopifyBackfill } from "./lib/ingest/enqueue.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -20,9 +21,10 @@ const shopify = shopifyApp({
     afterAuth: async ({ session }) => {
       try {
         await provisionShop(session.shop);
+        await enqueueShopifyBackfill(session.shop);
       } catch (err) {
         console.error(
-          `[afterAuth] failed to provision shop ${session.shop} in Supabase`,
+          `[afterAuth] failed to provision/enqueue shop ${session.shop} in Supabase`,
           err,
         );
       }

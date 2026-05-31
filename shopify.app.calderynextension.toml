@@ -1,0 +1,46 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "508429753f1e60bd48c4dadbe063a27e"
+name = "CalderynExtension"
+application_url = "https://shopify-app-rho-ruby.vercel.app"
+embedded = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,read_locations,read_orders,read_products,write_inventory"
+
+[auth]
+redirect_urls = [
+  "https://shopify-app-rho-ruby.vercel.app/auth/callback",
+  "https://shopify-app-rho-ruby.vercel.app/auth/shopify/callback",
+  "https://shopify-app-rho-ruby.vercel.app/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "products/update" ]
+  uri = "/webhooks/products/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "inventory_levels/update" ]
+  uri = "/webhooks/inventory_levels/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "/webhooks/gdpr"
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = false
