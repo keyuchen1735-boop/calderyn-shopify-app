@@ -1,11 +1,8 @@
 import { getSupabase, resolveShopId } from "../supabase.server";
 import { writeDlq } from "./dlq.server";
 import { fetchLocations, fetchProducts, fetchRecentOrders } from "./shopify-admin.server";
-import { mapLocation, mapVariantToSku, mapOrder, mapOrderLines, gidToId } from "./mappers.server";
+import { mapLocation, mapVariantToSku, mapOrder, mapOrderLines } from "./mappers.server";
 import type { InventoryRow } from "./types";
-
-// gidToId is imported for potential future use; suppress unused-import lint with a type assertion.
-void (gidToId as unknown);
 
 const BACKFILL_DAYS = 30;
 
