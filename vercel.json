@@ -2,5 +2,6 @@
   "framework": "remix",
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "crons": [{ "path": "/cron/ingest", "schedule": "*/15 * * * *" }]
 }
