@@ -92,3 +92,63 @@ export function mapOrderLines(o: OrderNode): OrderLineRow[] {
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Webhook parsers — normalize REST-shaped Shopify webhook payloads into
+// intermediate shapes the transform worker can resolve to fact rows.
+// ---------------------------------------------------------------------------
+
+export type ParsedInventory = {
+  inventory_item_external_id: string;
+  location_external_id: string;
+  available: number;
+  observed_at: string;
+  source_version: number;
+};
+
+export function parseInventoryWebhook(p: Record<string, unknown>): ParsedInventory {
+  const updatedAt = String(p.updated_at ?? new Date().toISOString());
+  return {
+    inventory_item_external_id: `gid://shopify/InventoryItem/${p.inventory_item_id}`,
+    location_external_id: `gid://shopify/Location/${p.location_id}`,
+    available: Number(p.available ?? 0),
+    observed_at: updatedAt,
+    source_version: Date.parse(updatedAt),
+  };
+}
+
+// ParsedOrderHeader excludes shop_id — the caller (transform worker) supplies it.
+export type ParsedOrderHeader = Omit<OrderRow, "shop_id">;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseOrderWebhook(p: Record<string, any>): {
+  order: ParsedOrderHeader;
+  lines: OrderLineRow[];
+} {
+  const updatedAt = String(p.updated_at ?? p.created_at);
+  const order: ParsedOrderHeader = {
+    external_id: String(p.admin_graphql_api_id),
+    order_number: String(p.name),
+    created_at_source: String(p.created_at),
+    total_cents: moneyToCents(p.total_price),
+    subtotal_cents: moneyToCents(p.subtotal_price),
+    shipping_cents: moneyToCents(p.total_shipping_price_set?.shop_money?.amount),
+    tax_cents: moneyToCents(p.total_tax),
+    discount_cents: moneyToCents(p.total_discounts),
+    currency: String(p.currency ?? "USD"),
+    financial_status: p.financial_status ?? null,
+    source_version: Date.parse(updatedAt),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines: OrderLineRow[] = (p.line_items ?? []).map((ln: Record<string, any>) => {
+    const priceCents = moneyToCents(ln.price);
+    return {
+      sku_external_id: ln.variant_id ? `gid://shopify/ProductVariant/${ln.variant_id}` : null,
+      external_line_id: String(ln.admin_graphql_api_id),
+      quantity: Number(ln.quantity ?? 0),
+      price_cents: priceCents,
+      total_cents: priceCents * Number(ln.quantity ?? 0),
+    };
+  });
+  return { order, lines };
+}

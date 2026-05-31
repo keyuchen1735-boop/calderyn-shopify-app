@@ -114,3 +114,72 @@ describe("mapOrder / mapOrderLines", () => {
     ]);
   });
 });
+
+import { parseInventoryWebhook, parseOrderWebhook } from "../mappers.server";
+
+describe("parseInventoryWebhook", () => {
+  it("normalizes an inventory_levels/update payload", () => {
+    const payload = {
+      inventory_item_id: 300,
+      location_id: 7,
+      available: 12,
+      updated_at: "2026-05-10T00:00:00Z",
+    };
+    expect(parseInventoryWebhook(payload)).toEqual({
+      inventory_item_external_id: "gid://shopify/InventoryItem/300",
+      location_external_id: "gid://shopify/Location/7",
+      available: 12,
+      observed_at: "2026-05-10T00:00:00Z",
+      source_version: Date.parse("2026-05-10T00:00:00Z"),
+    });
+  });
+});
+
+describe("parseOrderWebhook", () => {
+  it("normalizes an orders/create payload", () => {
+    const payload = {
+      admin_graphql_api_id: "gid://shopify/Order/900",
+      name: "#1001",
+      created_at: "2026-05-01T12:00:00Z",
+      updated_at: "2026-05-01T12:00:00Z",
+      financial_status: "paid",
+      currency: "USD",
+      total_price: "59.97",
+      subtotal_price: "54.00",
+      total_tax: "0.97",
+      total_discounts: "0.00",
+      total_shipping_price_set: { shop_money: { amount: "5.00" } },
+      line_items: [
+        {
+          admin_graphql_api_id: "gid://shopify/LineItem/1",
+          quantity: 3,
+          price: "18.00",
+          variant_id: 200,
+        },
+      ],
+    };
+    const parsed = parseOrderWebhook(payload);
+    expect(parsed.order).toEqual({
+      external_id: "gid://shopify/Order/900",
+      order_number: "#1001",
+      created_at_source: "2026-05-01T12:00:00Z",
+      total_cents: 5997,
+      subtotal_cents: 5400,
+      shipping_cents: 500,
+      tax_cents: 97,
+      discount_cents: 0,
+      currency: "USD",
+      financial_status: "paid",
+      source_version: Date.parse("2026-05-01T12:00:00Z"),
+    });
+    expect(parsed.lines).toEqual([
+      {
+        sku_external_id: "gid://shopify/ProductVariant/200",
+        external_line_id: "gid://shopify/LineItem/1",
+        quantity: 3,
+        price_cents: 1800,
+        total_cents: 5400,
+      },
+    ]);
+  });
+});
