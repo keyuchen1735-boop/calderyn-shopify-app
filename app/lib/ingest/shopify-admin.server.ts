@@ -123,6 +123,7 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
             totalShippingPriceSet { shopMoney { amount } }
             currentTotalTaxSet { shopMoney { amount } }
             currentTotalDiscountsSet { shopMoney { amount } }
+            # Slice-1 cap: single-page (orders with >100 line items truncate).
             lineItems(first: 100) {
               nodes { id quantity variant { id } originalUnitPriceSet { shopMoney { amount } } }
             }

@@ -18,6 +18,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     backfilled: [] as string[],
     backfillErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
+    transformError: null as string | null,
     detect: { shops: 0, upserted: 0, resolved: 0 },
     detectErrors: [] as string[],
   };
@@ -39,8 +40,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  // Phase 2: transform queued webhooks
-  summary.transform = await transformPendingWebhooks();
+  // Phase 2: transform queued webhooks (isolated so a transform-query failure
+  // can't abort Phase 3 for every ready shop).
+  try {
+    summary.transform = await transformPendingWebhooks();
+  } catch (err) {
+    summary.transformError = err instanceof Error ? err.message : String(err);
+    console.error("[cron.ingest] transform phase failed", err);
+  }
 
   // Phase 3: run the detector for every ready shop
   const { data: ready } = await sb

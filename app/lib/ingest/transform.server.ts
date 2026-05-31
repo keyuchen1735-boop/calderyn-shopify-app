@@ -4,6 +4,18 @@ import { parseInventoryWebhook, parseOrderWebhook } from "./mappers.server";
 
 const BATCH = 200;
 
+// Shopify's authenticate.webhook() returns topics in storage form
+// (topic.toUpperCase().replace(/\/|\./g, '_')) — e.g. "ORDERS_CREATE", not
+// "orders/create" — and that is what lands in raw_shopify_webhook.topic.
+// Canonicalize before dispatch so we match regardless of the stored casing.
+const TOPIC_INVENTORY_UPDATE = "INVENTORY_LEVELS_UPDATE";
+const TOPIC_ORDERS_CREATE = "ORDERS_CREATE";
+const TOPIC_PRODUCTS_UPDATE = "PRODUCTS_UPDATE";
+
+export function canonicalTopic(topic: string): string {
+  return topic.toUpperCase().replace(/[/.]/g, "_");
+}
+
 export type TransformResult = { processed: number; facts: number; dlq: number };
 
 export async function transformPendingWebhooks(): Promise<TransformResult> {
@@ -20,12 +32,17 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
 
   for (const row of rows ?? []) {
     try {
-      if (row.topic === "inventory_levels/update") {
+      const topic = canonicalTopic(String(row.topic));
+      if (topic === TOPIC_INVENTORY_UPDATE) {
         res.facts += await applyInventory(row.shop_id, row.payload as Record<string, unknown>);
-      } else if (row.topic === "orders/create") {
+      } else if (topic === TOPIC_ORDERS_CREATE) {
         res.facts += await applyOrder(row.shop_id, row.payload as Record<string, unknown>);
+      } else if (topic !== TOPIC_PRODUCTS_UPDATE) {
+        // products/update is intentionally handled by backfill upserts in Slice 1.
+        // Any other topic is unexpected — stamp it so it doesn't loop, but stay
+        // visible (rule 12) rather than silently dropping it.
+        console.warn(`[ingest] transform: skipping unhandled webhook topic ${row.topic}`);
       }
-      // products/update is handled by backfill upserts in Slice 1; skip here.
       await sb
         .from("raw_shopify_webhook")
         .update({ processed_at: new Date().toISOString() })
