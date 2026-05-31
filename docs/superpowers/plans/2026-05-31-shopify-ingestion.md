@@ -1283,12 +1283,18 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
 
   for (const row of rows ?? []) {
     try {
-      if (row.topic === "inventory_levels/update") {
+      // NOTE: authenticate.webhook() returns topics in STORAGE form
+      // (topic.toUpperCase().replace(/\/|\./g,'_')), e.g. "ORDERS_CREATE" — that
+      // is what lands in raw_shopify_webhook.topic. Canonicalize before matching.
+      const topic = row.topic.toUpperCase().replace(/[/.]/g, "_");
+      if (topic === "INVENTORY_LEVELS_UPDATE") {
         res.facts += await applyInventory(row.shop_id, row.payload);
-      } else if (row.topic === "orders/create") {
+      } else if (topic === "ORDERS_CREATE") {
         res.facts += await applyOrder(row.shop_id, row.payload);
+      } else if (topic !== "PRODUCTS_UPDATE") {
+        // products/update handled by backfill in Slice 1; log anything else (rule 12).
+        console.warn(`[ingest] transform: skipping unhandled topic ${row.topic}`);
       }
-      // products/update is handled by backfill upserts in Slice 1; skip here.
       await sb.from("raw_shopify_webhook").update({ processed_at: new Date().toISOString() }).eq("id", row.id);
       res.processed += 1;
     } catch (err) {
