@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { gidToId, moneyToCents, mapLocation, mapVariantToSku, mapOrder, mapOrderLines } from "../mappers.server";
+import {
+  gidToId,
+  moneyToCents,
+  mapLocation,
+  mapVariantToSku,
+  mapOrder,
+  mapOrderLines,
+  parseInventoryWebhook,
+  parseOrderWebhook,
+} from "../mappers.server";
 
 describe("gidToId", () => {
   it("extracts the trailing id from a Shopify GID", () => {
@@ -115,8 +124,6 @@ describe("mapOrder / mapOrderLines", () => {
   });
 });
 
-import { parseInventoryWebhook, parseOrderWebhook } from "../mappers.server";
-
 describe("parseInventoryWebhook", () => {
   it("normalizes an inventory_levels/update payload", () => {
     const payload = {
@@ -181,5 +188,46 @@ describe("parseOrderWebhook", () => {
         total_cents: 5400,
       },
     ]);
+  });
+
+  it("falls back to a current timestamp when updated_at is missing", () => {
+    const before = Date.now();
+    const parsed = parseInventoryWebhook({ inventory_item_id: 1, location_id: 2, available: 0 });
+    expect(Number.isFinite(parsed.source_version)).toBe(true);
+    expect(parsed.source_version).toBeGreaterThanOrEqual(before);
+    expect(Number.isNaN(Date.parse(parsed.observed_at))).toBe(false);
+  });
+
+  it("returns no lines for an order with no line_items", () => {
+    const parsed = parseOrderWebhook({
+      admin_graphql_api_id: "gid://shopify/Order/901",
+      name: "#1002",
+      created_at: "2026-05-02T00:00:00Z",
+      updated_at: "2026-05-02T00:00:00Z",
+      total_price: "0.00",
+      subtotal_price: "0.00",
+      total_tax: "0.00",
+      total_discounts: "0.00",
+      currency: "USD",
+    });
+    expect(parsed.lines).toEqual([]);
+  });
+
+  it("maps a line with no variant to a null sku reference", () => {
+    const parsed = parseOrderWebhook({
+      admin_graphql_api_id: "gid://shopify/Order/902",
+      name: "#1003",
+      created_at: "2026-05-03T00:00:00Z",
+      updated_at: "2026-05-03T00:00:00Z",
+      total_price: "5.00",
+      line_items: [{ admin_graphql_api_id: "gid://shopify/LineItem/9", quantity: 1, price: "5.00" }],
+    });
+    expect(parsed.lines[0].sku_external_id).toBeNull();
+  });
+});
+
+describe("moneyToCents empty string", () => {
+  it("treats empty string as 0", () => {
+    expect(moneyToCents("")).toBe(0);
   });
 });

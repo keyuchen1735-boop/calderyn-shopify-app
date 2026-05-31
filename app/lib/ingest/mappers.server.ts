@@ -88,6 +88,8 @@ export function mapOrderLines(o: OrderNode): OrderLineRow[] {
       external_line_id: ln.id,
       quantity: ln.quantity,
       price_cents: priceCents,
+      // Pre-discount extended price (unit price × qty); line-level discounts
+      // are not modeled in Slice 1.
       total_cents: priceCents * ln.quantity,
     };
   });
@@ -120,8 +122,32 @@ export function parseInventoryWebhook(p: Record<string, unknown>): ParsedInvento
 // ParsedOrderHeader excludes shop_id — the caller (transform worker) supplies it.
 export type ParsedOrderHeader = Omit<OrderRow, "shop_id">;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function parseOrderWebhook(p: Record<string, any>): {
+// Minimal shape of the REST `orders/create` webhook body — only the fields we
+// read. Typed explicitly (rather than `any`) so the parse boundary is checked;
+// every field is optional because external payloads are not guaranteed.
+type RawMoneySet = { shop_money?: { amount?: string | number | null } | null };
+type RawOrderLineItem = {
+  admin_graphql_api_id?: string | number;
+  quantity?: number;
+  price?: string | number | null;
+  variant_id?: string | number | null;
+};
+type RawOrderWebhook = {
+  admin_graphql_api_id?: string | number;
+  name?: string | number;
+  created_at?: string;
+  updated_at?: string;
+  total_price?: string | number | null;
+  subtotal_price?: string | number | null;
+  total_shipping_price_set?: RawMoneySet | null;
+  total_tax?: string | number | null;
+  total_discounts?: string | number | null;
+  currency?: string | null;
+  financial_status?: string | null;
+  line_items?: RawOrderLineItem[];
+};
+
+export function parseOrderWebhook(p: RawOrderWebhook): {
   order: ParsedOrderHeader;
   lines: OrderLineRow[];
 } {
@@ -139,14 +165,15 @@ export function parseOrderWebhook(p: Record<string, any>): {
     financial_status: p.financial_status ?? null,
     source_version: Date.parse(updatedAt),
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines: OrderLineRow[] = (p.line_items ?? []).map((ln: Record<string, any>) => {
+  const lines: OrderLineRow[] = (p.line_items ?? []).map((ln) => {
     const priceCents = moneyToCents(ln.price);
     return {
       sku_external_id: ln.variant_id ? `gid://shopify/ProductVariant/${ln.variant_id}` : null,
       external_line_id: String(ln.admin_graphql_api_id),
       quantity: Number(ln.quantity ?? 0),
       price_cents: priceCents,
+      // Pre-discount extended price (unit price × qty); line-level discounts
+      // are not modeled in Slice 1.
       total_cents: priceCents * Number(ln.quantity ?? 0),
     };
   });
