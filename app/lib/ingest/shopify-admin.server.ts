@@ -79,7 +79,7 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
   } while (cursor);
 }
 
-export type AdminOrder = Parameters<typeof JSON.stringify>[0] & {
+export type AdminOrder = {
   id: string;
   name: string;
   createdAt: string;
