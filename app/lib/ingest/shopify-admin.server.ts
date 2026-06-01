@@ -53,20 +53,22 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
       admin,
       `#graphql
       query Products($cursor: String) {
-        products(first: 50, after: $cursor) {
+        products(first: 25, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           nodes {
             id title
-            # Slice-1 cap: variants/inventoryLevels are single-page (not
-            # paginated). Products with >100 variants or variants stocked in
-            # >50 locations are truncated; revisit if real catalogs exceed this.
-            variants(first: 100) {
+            # Slice-1 caps: page sizes kept small so the nested
+            # products×variants×inventoryLevels query stays under Shopify's
+            # 1000 single-query cost limit. variants/inventoryLevels are
+            # single-page — products with >40 variants, or variants stocked in
+            # >20 locations, are truncated; revisit if real catalogs exceed this.
+            variants(first: 40) {
               nodes {
                 id sku title
                 inventoryItem {
                   id
                   unitCost { amount }
-                  inventoryLevels(first: 50) {
+                  inventoryLevels(first: 20) {
                     nodes { location { id } quantities(names: ["available"]) { name quantity } }
                   }
                 }
