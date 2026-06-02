@@ -119,12 +119,38 @@ in Remix.
   languages make manual-only too fragile, and this closes the existing no-CI
   gap.
 
+## Database is already provisioned
+
+The shared Supabase project (`ajgrmnvzxfxxlwrxcgnu`) **already carries the full
+engine schema**, applied from the monorepo side: `alerts`, `alert_context`,
+`alert_thresholds`, all fact/dim tables (`order_fact`, `order_line_fact`,
+`inventory_level_fact`, `ad_spend_fact`, `cogs_fact`, `sku_dim`, `sku_pnl`,
+`sku_velocity`, `location_dim`, `stockout_forecast`, …), the action layer
+(`action_audit`, `undo_token`, `action_idempotency`, `guardrail_config`,
+`purchase_order_draft`), RLS enabled on every table, and the RLS helper
+functions `current_shop_id()` / `set_current_shop_id()`. The `alerts` table
+already holds output from all 12 detectors — the monorepo engine has run
+against this DB. Therefore **no schema migration is needed**; the work is
+compute (run the engine on Vercel), trigger (crons), and ingestion (workers).
+
+The `moat_keys` / `moat_events` tables do **not** exist. `pipeline.py` imports
+`calderyn_engine.moat.emitter` at load time, so the `moat/` sub-package and
+`tracing.py` must be copied along, but they stay no-ops as long as
+`MOAT_PEPPER` and OTel are unset.
+
 ## Config
 
-New env vars: `ANTHROPIC_API_KEY` (Claude layer); `GOOGLE_ADS_*` (OAuth refresh
-token + developer token) for ad-spend ingestion; Supabase service credentials
-usable from the Python function. `CRON_SECRET` already exists and guards every
-cron route. Update `.env.example` for each new key.
+The Python engine connects via a **direct Postgres connection** (asyncpg) using
+`DATABASE_URL` set to the **Supabase connection-pooler URI** — it relies on RLS
+(`set_config('app.shop_id', …)`), not the PostgREST service-role client the TS
+side uses.
+
+New env vars: `DATABASE_URL` (Supabase pooler, for the Python fn);
+`ANTHROPIC_API_KEY` (Claude layer); `CLAUDE_MODEL` (optional, defaults in
+`config.py`); `GOOGLE_ADS_*` (OAuth refresh token + developer token) for
+ad-spend ingestion. `CRON_SECRET` already exists and guards every cron route.
+Leave `MOAT_PEPPER` unset (moat stays a no-op). Update `.env.example` for each
+new key.
 
 `vercel.json` gains the Python function config and ~5 cron entries:
 
