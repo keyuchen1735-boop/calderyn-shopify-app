@@ -1,0 +1,5 @@
+asyncpg>=0.29
+anthropic>=0.25
+pydantic>=2.6
+structlog>=24
+python-dotenv>=1.0
