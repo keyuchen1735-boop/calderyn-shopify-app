@@ -3,5 +3,5 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
   "regions": ["iad1"],
-  "crons": [{ "path": "/cron/ingest", "schedule": "*/15 * * * *" }]
+  "crons": [{ "path": "/cron/ingest", "schedule": "0 6 * * *" }]
 }
