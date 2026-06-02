@@ -11,7 +11,10 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler
 
-_engine_dir = os.path.dirname(__file__)
+# The engine package + _core live at the repo-root `engine/` (NOT under api/,
+# so Vercel doesn't treat them as functions). They're bundled into this
+# function via `includeFiles: "engine/**"` in vercel.json.
+_engine_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "engine"))
 if _engine_dir not in sys.path:
     sys.path.insert(0, _engine_dir)
 

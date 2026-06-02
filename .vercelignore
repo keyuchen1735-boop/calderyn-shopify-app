@@ -1,0 +1,10 @@
+# Local-only cruft that must never ship in a deployment bundle.
+.venv
+api/engine/.venv
+engine/.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.codegraph
+.playwright-mcp
+tests
