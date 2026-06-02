@@ -9,6 +9,9 @@ import type {
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
+import { buildAuthUrl, signState } from "./meta/oauth.server";
+import { metaClientForShop } from "./meta/client.server";
+import { setCampaignStatus } from "./meta/campaigns.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -34,6 +37,8 @@ export type ExecuteActionOpts = {
   kind: ActionKind;
   params: Record<string, unknown>;
   idempotencyKey: string;
+  preState?: unknown;
+  postState?: unknown;
 };
 
 export type IntegrationProvider = "google" | "meta" | "quickbooks";
@@ -229,6 +234,24 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
+          // For real ad-platform pauses, restore the prior status on Meta first.
+          if (orig.action_kind === "pause_campaign") {
+            const priorStatus = (orig.pre_state as { status?: string } | null)?.status;
+            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+            if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
+              const restore: "ACTIVE" | "PAUSED" = priorStatus;
+              const meta = await metaClientForShop(shop);
+              if (!meta || !campaignId) {
+                throw new CalderynError({
+                  code: "UNDO_META_UNAVAILABLE",
+                  status: 400,
+                  message: "Cannot undo: Meta is not connected or campaign id missing.",
+                });
+              }
+              await setCampaignStatus(meta.client, campaignId, restore);
+            }
+          }
+
           const undoRow = {
             shop_id: shopId,
             alert_id: orig.alert_id,
@@ -302,8 +325,8 @@ export function calderynClient(shop: string) {
               action_kind: opts.kind,
               params: { ...opts.params, target },
               outcome: "succeeded",
-              pre_state: null,
-              post_state: opts.params,
+              pre_state: opts.preState ?? null,
+              post_state: opts.postState ?? opts.params,
               actor_user_id: "demo@calderyn.app",
               completed_at: new Date().toISOString(),
             })
@@ -462,11 +485,25 @@ export function calderynClient(shop: string) {
         }
       },
       async startOAuth(provider: IntegrationProvider, _signal?: AbortSignal): Promise<{ redirectUrl: string }> {
-        // OAuth handshakes are not wired in Phase 1.
+        if (provider === "meta") {
+          const appId = process.env.META_APP_ID;
+          const appSecret = process.env.META_APP_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!appId || !appSecret || !appUrl) {
+            throw new CalderynError({
+              code: "META_NOT_CONFIGURED",
+              status: 500,
+              message: "Meta OAuth is not configured (META_APP_ID/META_APP_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/meta`;
+          const state = signState(shop, appSecret);
+          return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
+        }
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
-          message: `${provider} OAuth is not yet wired. Connect via the provider's dashboard or run the integration's Python connector when available.`,
+          message: `${provider} OAuth is not yet wired.`,
         });
       },
       async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
