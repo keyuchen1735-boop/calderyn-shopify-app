@@ -16,7 +16,7 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { CalderynError, calderynClient } from "~/lib/calderyn.server";
+import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { ACTION_VERBS, DETECTOR_LABELS } from "~/lib/labels";
 import type { Alert, AuditEntry, GuardrailConfig } from "~/lib/types";
@@ -91,8 +91,20 @@ export default function Dashboard() {
         )}
 
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-          <StatCard label="Open alerts" value={String(openAlerts.length)} tone={critical.length ? "critical" : undefined} caption={`${critical.length} critical`} />
-          <StatCard label="Recovered (7d)" value={fmtMoney(recovered7d)} caption="across executed actions" tone="success" />
+          <StatCard
+            label="Open alerts"
+            value={String(openAlerts.length)}
+            tone={critical.length ? "critical" : undefined}
+            caption={`${critical.length} critical`}
+            to="/app/alerts"
+          />
+          <StatCard
+            label="Recovered (7d)"
+            value={fmtMoney(recovered7d)}
+            caption="across executed actions"
+            tone="success"
+            to="/app/audit"
+          />
           {guardrails ? (
             <StatCard
               label="Daily action budget"
@@ -104,11 +116,22 @@ export default function Dashboard() {
                     )
                   : 0
               }% used today`}
+              to="/app/settings"
             />
           ) : (
-            <StatCard label="Daily action budget" value="—" caption="unavailable" />
+            <StatCard
+              label="Daily action budget"
+              value="—"
+              caption="unavailable"
+              to="/app/settings"
+            />
           )}
-          <StatCard label="True ROAS (7d)" value="—" caption="margin-adjusted" />
+          <StatCard
+            label="True ROAS (7d)"
+            value="—"
+            caption="margin-adjusted"
+            to="/app/campaigns"
+          />
         </InlineGrid>
 
         <Layout>
@@ -211,13 +234,16 @@ function StatCard({
   value,
   caption,
   tone,
+  to,
 }: {
   label: string;
   value: string;
   caption?: string;
   tone?: "critical" | "success";
+  to?: string;
 }) {
-  return (
+  const navigate = useNavigate();
+  const inner = (
     <Card>
       <BlockStack gap="100">
         <Text as="p" variant="bodySm" tone="subdued">
@@ -233,5 +259,22 @@ function StatCard({
         )}
       </BlockStack>
     </Card>
+  );
+  if (!to) return inner;
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(to)}
+      aria-label={`${label}: ${value}. Go to ${to}`}
+      style={{
+        all: "unset",
+        display: "block",
+        width: "100%",
+        cursor: "pointer",
+        borderRadius: 8,
+      }}
+    >
+      {inner}
+    </button>
   );
 }
