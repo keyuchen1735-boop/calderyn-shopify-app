@@ -16,6 +16,7 @@
 - **UI:** compose with Polaris primitives. No raw CSS frameworks. App Bridge for navigation, toasts, modals — not `window.*`.
 - **DB:** all schema changes go through `prisma migrate dev`; never edit `migrations/` by hand. Wrap multi-step writes in `prisma.$transaction`.
 - **Secrets:** read from `process.env` server-side only. Never reference env in client bundles. Update `.env.example` when adding a key.
+- **Secret storage:** put all secrets and client IDs (Shopify API key/secret, OAuth client IDs, tokens) in `.env.local` only — never `.env`, never source. Ensure `.env.local` is listed in `.gitignore` and never committed.
 
 ## Best practices (Karpathy contract applies, plus repo-specific)
 - Loaders are read-only; mutations go in actions. Return `redirect()` after successful actions to avoid double-submit.
@@ -44,6 +45,9 @@ If any step fails: **stop, surface the failure, fix the root cause.** Do not `--
 ## Commit hygiene
 - One logical change per commit. Reference the route/module touched in the subject (e.g. `routes/app._index: fix loader error path`).
 - Never commit `.env`, `prisma/dev.sqlite`, or anything under `.shopify/`.
+
+## Tool use
+- **Always prefer available MCP/CLI tools over manual work or guessing.** Before doing a task by hand (shell scripting, reading files ad hoc, recalling API shapes), check whether an MCP server or CLI listed below covers it and use that. Asking me whether a tool exists is a last resort — discover it yourself first (e.g. `which <cli>`, the MCP/CLI lists below, `codegraph_status`). Only ask if discovery is inconclusive or the tool needs credentials/permission you can't supply.
 
 ## MCPs
 supabase, vercel, gmail, gcal, gdrive, playwright, codegraph.
