@@ -35,6 +35,8 @@ export type ExecuteActionOpts = {
   kind: ActionKind;
   params: Record<string, unknown>;
   idempotencyKey: string;
+  preState?: unknown;
+  postState?: unknown;
 };
 
 export type IntegrationProvider = "google" | "meta" | "quickbooks";
@@ -302,8 +304,8 @@ export function calderynClient(shop: string) {
               action_kind: opts.kind,
               params: { ...opts.params, target },
               outcome: "succeeded",
-              pre_state: null,
-              post_state: opts.params,
+              pre_state: opts.preState ?? null,
+              post_state: opts.postState ?? opts.params,
               actor_user_id: "demo@calderyn.app",
               completed_at: new Date().toISOString(),
             })
