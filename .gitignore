@@ -23,3 +23,8 @@ api/engine/.venv
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Secret-bearing env backups (editors/tools sometimes write timestamped .bak)
+.env*.local*
+*.bak
+.env.*.bak.*
