@@ -44,3 +44,25 @@ If any step fails: **stop, surface the failure, fix the root cause.** Do not `--
 ## Commit hygiene
 - One logical change per commit. Reference the route/module touched in the subject (e.g. `routes/app._index: fix loader error path`).
 - Never commit `.env`, `prisma/dev.sqlite`, or anything under `.shopify/`.
+
+## MCPs
+supabase, vercel, gmail, gcal, gdrive, playwright, codegraph.
+
+## CLIs
+shopify, vercel, prisma, remix, vite, eslint, tsc, graphql-codegen, gh, git, npm, brew, curl, codegraph.
+
+## CodeGraph (MCP)
+Tree-sitter AST index of every symbol/edge/file (`.codegraph/`). Prefer it for **structural** questions; use grep only for literal text. Trust results — don't re-verify with grep. Index debounces ~500ms behind writes.
+
+| Q | Tool |
+|---|---|
+| Where is X / find symbol | `codegraph_search` |
+| What calls Y / what does Y call | `codegraph_callers` / `codegraph_callees` |
+| Path from X to Y (bridges dynamic hops) | `codegraph_trace` |
+| What breaks if Z changes | `codegraph_impact` |
+| Y's signature/source | `codegraph_node` |
+| Focused context for a task | `codegraph_context` |
+| Several symbols' source at once | `codegraph_explore` |
+| Files under path / index health | `codegraph_files` / `codegraph_status` |
+
+Answer architecture Qs directly with 2–3 calls (`context` → one `explore`); for flows use `trace` → one `explore`. Don't chain `search`+`node` (use `context`) or loop `node` (use `explore`). If MCP says "not initialized," ask user to run `codegraph init -i`.
