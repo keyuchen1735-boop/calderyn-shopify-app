@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "ad_tax_overload",
+      "entity_ref": {"sku_id": "sku-05"},
+      "rank": 1,
+      "narrative_chars": 57,
+      "contains_dollar": false
+    }
+  ]
+}

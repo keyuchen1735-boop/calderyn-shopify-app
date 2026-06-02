@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "cogs_drift",
+      "entity_ref": {"sku_id": "sku-04"},
+      "rank": 1,
+      "narrative_chars": 47,
+      "contains_dollar": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "ranked": [
+    {
+      "detector_id": "ad_tax_overload",
+      "entity_ref": {"sku_id": "sku-14c"},
+      "rank": 1,
+      "narrative_chars": 57,
+      "contains_dollar": false
+    },
+    {
+      "detector_id": "margin_erosion",
+      "entity_ref": {"sku_id": "sku-14a"},
+      "rank": 2,
+      "narrative_chars": 45,
+      "contains_dollar": false
+    },
+    {
+      "detector_id": "cogs_drift",
+      "entity_ref": {"sku_id": "sku-14b"},
+      "rank": 3,
+      "narrative_chars": 47,
+      "contains_dollar": false
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "sku_stockout_vs_spend",
+      "entity_ref": {"sku_id": "sku-20"},
+      "rank": 1,
+      "narrative_chars": 62,
+      "contains_dollar": false
+    }
+  ]
+}

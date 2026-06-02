@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "scaling_sku_fulfillment_risk",
+      "entity_ref": {"sku_id": "sku-12"},
+      "rank": 1,
+      "narrative_chars": 48,
+      "contains_dollar": false
+    }
+  ]
+}

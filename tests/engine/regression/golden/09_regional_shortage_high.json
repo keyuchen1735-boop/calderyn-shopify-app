@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "regional_shortage_risk",
+      "entity_ref": {"sku_id": "sku-09"},
+      "rank": 1,
+      "narrative_chars": 70,
+      "contains_dollar": false
+    }
+  ]
+}
