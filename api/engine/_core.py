@@ -11,8 +11,11 @@ import sys
 from typing import Any
 
 # Ensure the vendored package (sibling dir) is importable when Vercel loads
-# this file as a standalone function.
-sys.path.insert(0, os.path.dirname(__file__))
+# this file as a standalone function. Guarded so repeated imports (e.g. under
+# pytest, where conftest already inserts this dir) don't pile up sys.path entries.
+_engine_dir = os.path.dirname(__file__)
+if _engine_dir not in sys.path:
+    sys.path.insert(0, _engine_dir)
 
 from calderyn_engine.config import load_config  # noqa: E402
 from calderyn_engine.db import make_pool  # noqa: E402
