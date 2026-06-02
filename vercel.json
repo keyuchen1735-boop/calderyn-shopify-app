@@ -3,5 +3,8 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
   "regions": ["iad1"],
+  "functions": {
+    "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" }
+  },
   "crons": [{ "path": "/cron/ingest", "schedule": "0 6 * * *" }]
 }
