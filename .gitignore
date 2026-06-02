@@ -16,3 +16,10 @@ SECRETS.local.txt
 secrets.local.txt
 .mcp.json
 .claude/settings.json
+
+# Python venv for engine (uv)
+.venv
+api/engine/.venv
+__pycache__/
+*.pyc
+.pytest_cache/
