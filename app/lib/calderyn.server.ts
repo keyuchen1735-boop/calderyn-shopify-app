@@ -10,6 +10,8 @@ import type {
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
 import { buildAuthUrl, signState } from "./meta/oauth.server";
+import { metaClientForShop } from "./meta/client.server";
+import { setCampaignStatus } from "./meta/campaigns.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -229,6 +231,24 @@ export function calderynClient(shop: string) {
           if (oErr) throw oErr;
           if (!orig) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
+          }
+
+          // For real ad-platform pauses, restore the prior status on Meta first.
+          if (orig.action_kind === "pause_campaign") {
+            const priorStatus = (orig.pre_state as { status?: string } | null)?.status;
+            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+            if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
+              const restore: "ACTIVE" | "PAUSED" = priorStatus;
+              const meta = await metaClientForShop(shop);
+              if (!meta || !campaignId) {
+                throw new CalderynError({
+                  code: "UNDO_META_UNAVAILABLE",
+                  status: 400,
+                  message: "Cannot undo: Meta is not connected or campaign id missing.",
+                });
+              }
+              await setCampaignStatus(meta.client, campaignId, restore);
+            }
           }
 
           const undoRow = {
