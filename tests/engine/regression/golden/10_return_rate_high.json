@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "return_rate_hidden_loss",
+      "entity_ref": {"sku_id": "sku-10"},
+      "rank": 1,
+      "narrative_chars": 64,
+      "contains_dollar": false
+    }
+  ]
+}

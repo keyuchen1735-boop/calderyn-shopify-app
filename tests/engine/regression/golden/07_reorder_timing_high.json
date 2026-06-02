@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "reorder_timing",
+      "entity_ref": {"sku_id": "sku-07"},
+      "rank": 1,
+      "narrative_chars": 60,
+      "contains_dollar": false
+    }
+  ]
+}

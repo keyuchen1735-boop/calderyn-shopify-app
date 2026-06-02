@@ -1,0 +1,11 @@
+{
+  "ranked": [
+    {
+      "detector_id": "negative_unit_economics",
+      "entity_ref": {"sku_id": "sku-06"},
+      "rank": 1,
+      "narrative_chars": 56,
+      "contains_dollar": false
+    }
+  ]
+}
