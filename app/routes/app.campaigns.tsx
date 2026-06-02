@@ -23,8 +23,10 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { CalderynError, calderynClient } from "~/lib/calderyn.server";
+import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
+import { metaClientForShop } from "~/lib/meta/client.server";
+import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import type { ActionKind, Alert, Campaign } from "~/lib/types";
@@ -50,10 +52,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [campaigns, alerts] = await Promise.all([
-      client.campaigns.list(request.signal),
-      client.alerts.list({}, request.signal),
-    ]);
+    const meta = await metaClientForShop(session.shop);
+    let campaigns: Campaign[];
+    if (meta) {
+      const live = await listCampaigns(meta.client, meta.adAccountId);
+      campaigns = live.map((c) => ({
+        id: c.id,
+        name: c.name,
+        platform: "Meta" as const,
+        status: c.status === "PAUSED" ? ("paused" as const) : ("active" as const),
+        daily_budget_cents: c.dailyBudgetCents ?? 0,
+        roas_7d: 0,
+        contribution_margin: 0,
+        spend_7d: 0,
+      }));
+    } else {
+      campaigns = await client.campaigns.list(request.signal);
+    }
+    const alerts = await client.alerts.list({}, request.signal);
     return json<LoaderPayload>({ campaigns, alerts, error: null });
   } catch (err) {
     const e = err as CalderynError;
@@ -117,6 +133,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         { status: 400 },
       );
+  }
+
+  // For pause/resume, call Meta first, then record the real pre/post status.
+  if (intent === "pause" || intent === "resume") {
+    const desired = intent === "pause" ? "PAUSED" : "ACTIVE";
+    const meta = await metaClientForShop(session.shop);
+    if (!meta) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "META_NOT_CONNECTED", message: "Connect Meta in Settings first." },
+          toast: { message: "Meta not connected", isError: true },
+        },
+        { status: 400 },
+      );
+    }
+    try {
+      // Read the campaign's true current status so the audit pre_state (and Undo)
+      // reflect reality rather than an assumption from the click intent.
+      const prior = await getCampaignStatus(meta.client, campaignId);
+      await setCampaignStatus(meta.client, campaignId, desired);
+      await client.actions.execute(
+        {
+          alertId: null,
+          kind,
+          params,
+          idempotencyKey,
+          preState: { status: prior, campaign_id: campaignId },
+          postState: { status: desired, campaign_id: campaignId },
+        },
+        request.signal,
+      );
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: intent === "pause" ? `Paused ${campaignName}` : `Resumed ${campaignName}` },
+      });
+    } catch (err) {
+      const e = err as CalderynError;
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: e.code ?? "META_ACTION_FAILED", message: e.message },
+          toast: { message: e.message, isError: true },
+        },
+        { status: e.status >= 400 && e.status < 600 ? e.status : 502 },
+      );
+    }
   }
 
   try {
