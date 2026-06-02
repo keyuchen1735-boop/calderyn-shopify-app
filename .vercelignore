@@ -1,4 +1,4 @@
-# Local-only cruft that must never ship in a deployment bundle.
+# Local-only cruft / secrets that must never ship in a deployment bundle.
 .venv
 api/engine/.venv
 engine/.venv
@@ -8,3 +8,10 @@ engine/.venv
 .codegraph
 .playwright-mcp
 tests
+# secrets — env vars come from the Vercel project, never from uploaded files
+.env
+.env.*
+*.bak
+# local db / git
+prisma/dev.sqlite
+.git
