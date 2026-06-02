@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { listCampaigns, setCampaignStatus, type MetaClient } from "../campaigns.server";
+import { listCampaigns, setCampaignStatus, getCampaignStatus, type MetaClient } from "../campaigns.server";
 
 function fakeClient(over: Partial<MetaClient> = {}): MetaClient {
   return {
@@ -44,5 +44,19 @@ describe("setCampaignStatus", () => {
   it("throws on a Graph error payload", async () => {
     const client = fakeClient({ post: vi.fn(async () => ({ error: { message: "Permission denied", code: 200 } })) });
     await expect(setCampaignStatus(client, "120", "ACTIVE")).rejects.toThrow(/Permission denied/);
+  });
+});
+
+describe("getCampaignStatus", () => {
+  it("reads the campaign's current status", async () => {
+    const get = vi.fn(async () => ({ id: "120", status: "ARCHIVED" }));
+    const status = await getCampaignStatus(fakeClient({ get }), "120");
+    expect(get).toHaveBeenCalledWith("/120", { fields: "status" });
+    expect(status).toBe("ARCHIVED");
+  });
+
+  it("throws on a Graph error payload", async () => {
+    const client = fakeClient({ get: vi.fn(async () => ({ error: { message: "Unknown id", code: 100 } })) });
+    await expect(getCampaignStatus(client, "999")).rejects.toThrow(/Unknown id/);
   });
 });

@@ -26,7 +26,7 @@ import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { metaClientForShop } from "~/lib/meta/client.server";
-import { listCampaigns, setCampaignStatus } from "~/lib/meta/campaigns.server";
+import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import type { ActionKind, Alert, Campaign } from "~/lib/types";
@@ -138,7 +138,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // For pause/resume, call Meta first, then record the real pre/post status.
   if (intent === "pause" || intent === "resume") {
     const desired = intent === "pause" ? "PAUSED" : "ACTIVE";
-    const prior = intent === "pause" ? "ACTIVE" : "PAUSED";
     const meta = await metaClientForShop(session.shop);
     if (!meta) {
       return json<ActionPayload>(
@@ -151,6 +150,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
     try {
+      // Read the campaign's true current status so the audit pre_state (and Undo)
+      // reflect reality rather than an assumption from the click intent.
+      const prior = await getCampaignStatus(meta.client, campaignId);
       await setCampaignStatus(meta.client, campaignId, desired);
       await client.actions.execute(
         {

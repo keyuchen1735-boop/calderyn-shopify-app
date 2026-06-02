@@ -57,3 +57,10 @@ export async function setCampaignStatus(
 ): Promise<void> {
   check(await client.post(`/${campaignId}`, { status }));
 }
+
+// Reads the campaign's current status from Meta so callers can record the true
+// prior status (e.g. for audit pre_state / undo) rather than assuming it.
+export async function getCampaignStatus(client: MetaClient, campaignId: string): Promise<string> {
+  const body = check(await client.get(`/${campaignId}`, { fields: "status" }));
+  return String((body as { status?: unknown }).status ?? "UNKNOWN");
+}
