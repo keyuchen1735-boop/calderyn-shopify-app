@@ -70,7 +70,8 @@ function rowToAlert(r: Record<string, unknown>): Alert {
     detector_id: r.detector_id as Alert["detector_id"],
     severity: r.severity as Alert["severity"],
     status: r.status as Alert["status"],
-    dollar_impact: Number(r.dollar_impact ?? 0),
+    // DB stores dollars; UI helpers (fmtMoney) expect cents. Convert at the boundary.
+    dollar_impact: Math.round(Number(r.dollar_impact ?? 0) * 100),
     claude_rank: Number(r.claude_rank ?? 999),
     created_at: String(r.created_at),
     title: String(r.title ?? ""),
@@ -87,7 +88,7 @@ function rowToAudit(r: Record<string, unknown>): AuditEntry {
     action_kind: r.action_kind as ActionKind,
     outcome: r.outcome as AuditEntry["outcome"],
     target: String(r.target ?? ""),
-    dollar_impact_at_exec: Number(r.dollar_impact_at_exec ?? 0),
+    dollar_impact_at_exec: Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),
     pre_state: r.pre_state,
     post_state: r.post_state,
     created_at: String(r.created_at),
