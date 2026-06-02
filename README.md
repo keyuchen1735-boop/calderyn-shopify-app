@@ -62,6 +62,8 @@ npm run deploy
 
 Pushes the app config to Shopify so the new scopes, webhook subscriptions, and redirect URLs land in production. Host the built Remix app behind any Node-compatible runtime (Fly, Cloudflare, Render, Vercel-Node).
 
+> **Pending manual steps** (Supabase migrations to apply, provider env vars/keys to set — e.g. the Meta integration) are tracked in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Check it before/after deploying.
+
 ## Routes
 
 All app routes are protected by `authenticate.admin(request)` (called via the `app.tsx` parent loader):
