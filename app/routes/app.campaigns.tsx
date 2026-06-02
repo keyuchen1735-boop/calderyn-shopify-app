@@ -23,7 +23,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { CalderynError, calderynClient } from "~/lib/calderyn.server";
+import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus } from "~/lib/meta/campaigns.server";
