@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
+import { buildAuthUrl, signState } from "./meta/oauth.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -461,11 +462,25 @@ export function calderynClient(shop: string) {
         }
       },
       async startOAuth(provider: IntegrationProvider, _signal?: AbortSignal): Promise<{ redirectUrl: string }> {
-        // OAuth handshakes are not wired in Phase 1.
+        if (provider === "meta") {
+          const appId = process.env.META_APP_ID;
+          const appSecret = process.env.META_APP_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!appId || !appSecret || !appUrl) {
+            throw new CalderynError({
+              code: "META_NOT_CONFIGURED",
+              status: 500,
+              message: "Meta OAuth is not configured (META_APP_ID/META_APP_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/meta`;
+          const state = signState(shop, appSecret);
+          return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
+        }
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
-          message: `${provider} OAuth is not yet wired. Connect via the provider's dashboard or run the integration's Python connector when available.`,
+          message: `${provider} OAuth is not yet wired.`,
         });
       },
       async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
