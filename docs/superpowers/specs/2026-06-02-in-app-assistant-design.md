@@ -28,7 +28,7 @@ execution always flows through the app's existing confirm modal and its guardrai
 | 3 | Placement | **Global slideout** mounted once in the `app.tsx` layout, present on every `/app/*` page |
 | 4 | Memory | **Persistent across sessions** — two new additive Supabase tables |
 | 5 | Data strategy | **Hybrid** — cached shop snapshot in the system prompt + live tools for drill-down |
-| 6 | Model | **Sonnet 4.6** (`claude-sonnet-4-6`), prompt caching, max-turns cap |
+| 6 | Model | **Sonnet 4.6**, prompt caching, max-turns cap. Model string is **config/env-driven**, not hardcoded (see §10.1) |
 | 7 | Turn delivery | **Sync request/response** (whole tool-use loop runs server-side per turn) |
 
 ## 3. Non-goals (v1)
@@ -88,7 +88,7 @@ which runs the entire Claude tool-use loop against `calderynClient(shop)`.
 | `app/lib/assistant/snapshot.server.ts` | new | Builds the cached shop snapshot (counts + top alerts) |
 | `app/lib/assistant/prompt.server.ts` | new | System prompt with `cache_control` blocks |
 | `app/lib/assistant/conversations.server.ts` | new | Supabase CRUD for conversations/messages (shop-scoped) |
-| `app/lib/assistant/anthropic.server.ts` | new | Anthropic SDK client singleton |
+| `app/lib/assistant/anthropic.server.ts` | new | Anthropic SDK client singleton + env-driven model resolution (§10.1) |
 | `app/lib/assistant/types.ts` | new | Chat message + drafted-action DTOs |
 | `app/components/Assistant/AssistantSlideout.tsx` | new | The panel UI (Polaris content) |
 | `app/components/Assistant/*` | new | Launcher, message bubble, drafted-action card |
@@ -96,7 +96,7 @@ which runs the entire Claude tool-use loop against `calderynClient(shop)`.
 | `app/routes/app.tsx` | edit | Mount `<AssistantSlideout/>` in the layout |
 | `app/routes/app.alerts.$id.tsx` | edit | On mount, read `?action=` and pre-open `ExecuteActionModal` |
 | `supabase/migrations/<ts>_assistant.sql` | new | Two additive tables |
-| `.env.example` | edit | Add `ANTHROPIC_API_KEY` |
+| `.env.example` | edit | Add `ANTHROPIC_API_KEY` + `ANTHROPIC_MODEL` |
 | `package.json` | edit | Add `@anthropic-ai/sdk` dependency |
 
 ## 5. Turn lifecycle
@@ -115,7 +115,8 @@ One turn, synchronous:
      (counts + top-ranked open alerts) as a separate volatile block.
    - **Messages** = prior visible history (last ~20) + the new user message.
    - **Tools** = the read + propose set (§6).
-4. **Loop** (`loop.server.ts`): call Sonnet 4.6. While `stop_reason: "tool_use"`,
+4. **Loop** (`loop.server.ts`): call the configured model (Sonnet 4.6 via
+   `ANTHROPIC_MODEL`, §10.1). While `stop_reason: "tool_use"`,
    dispatch each tool via `calderynClient(shop)` (or `propose_action` validation),
    append `tool_result`, and call again. Stop on a normal text reply **or** when the
    max-turns cap (8 tool round-trips) is reached.
@@ -214,9 +215,43 @@ needed. Result: smaller rows, no large tool payloads stored, human-readable hist
 button starts another; a light history list (titles) in the panel header switches
 between them. `updated_at` is bumped in code on each new message.
 
-**Scoping:** service-role key + mandatory `shop_id` filter in
-`conversations.server.ts` (same posture as the MCP design). There is no path that
-reads/writes these tables without a `shop_id` derived from `authenticate.admin`.
+### 8.1 Shop mapping & cross-shop isolation
+
+The only trusted source of identity is `authenticate.admin(request)`. The mapping
+chain is explicit and identical to the rest of the app:
+
+```
+authenticate.admin(request)  →  session.shop            (e.g. "acme.myshopify.com")
+resolveShopId(session.shop)  →  shops.id                (uuid)   [supabase.server.ts]
+                                 (SELECT id FROM shops WHERE shop_domain = $1)
+```
+
+`conversations.server.ts` never accepts a `shop_id` from the client. Every exported
+function takes `shopDomain` (the authenticated `session.shop`), resolves it to the
+uuid via `resolveShopId`, closes over that uuid, and applies it to **every** query:
+
+- **List conversations / messages:** `.eq("shop_id", shopId)` on every select.
+- **Load a specific conversation:** `.eq("id", conversationId).eq("shop_id", shopId)`
+  — a `conversationId` guessed from another shop resolves to zero rows and is
+  treated as not-found (404), never leaked.
+- **Append a message / send a turn:** the conversation is re-fetched with the
+  `id` + `shop_id` pair **before** any write; a mismatch aborts the turn. The new
+  row's `shop_id` is set from the resolved uuid, not from input.
+
+The raw Supabase client is not exported from `conversations.server.ts`; no tool, no
+loop step, and no route reaches these tables except through these shop-scoped
+functions. Combined with the `on delete cascade` FKs, the only way to touch a row is
+with a `shop_id` derived from the current authenticated session.
+
+**Tests make cross-shop access impossible to pass silently** (faked Supabase, two
+shops A and B):
+
+1. A conversation created under shop A is **not** returned by any list/get call
+   resolved to shop B's `shop_id`.
+2. Appending a message to shop A's `conversationId` while authenticated as shop B
+   is rejected (ownership re-check fails) — no row written.
+3. `list` returns only the calling shop's rows; a guessed foreign `conversationId`
+   yields a 404, not another shop's transcript.
 
 ## 9. The slideout UI
 
@@ -255,7 +290,26 @@ present on every `/app/*` page.
 
 ## 10. Cost guardrails
 
-- **Model:** Sonnet 4.6 (`claude-sonnet-4-6`).
+### 10.1 Model configuration (not hardcoded)
+
+The model string is **read from env**, never inlined in code:
+
+- `ANTHROPIC_MODEL` (env, server-only) selects the model; `anthropic.server.ts`
+  resolves it once, falling back to a single named default constant
+  (`DEFAULT_ASSISTANT_MODEL`) if unset. No route or loop file contains a literal
+  model string.
+- The **exact** API model string is **verified at implementation time** against the
+  Anthropic API (via the `claude-api` skill) before the default constant is set.
+  The current candidate from the environment is `claude-sonnet-4-6`, but the build
+  must confirm the live API accepts it (a one-line `models.list`/smoke check)
+  rather than trusting this doc. If the string differs, only the default constant
+  and `.env.example` change.
+- `.env.example` documents `ANTHROPIC_MODEL` with the verified value as the example.
+  Swapping models (e.g. escalating to Opus for a hard question, or a future Sonnet)
+  is then an env change, not a code edit.
+
+### 10.2 Per-turn bounds
+
 - **Caching:** `cache_control` on the static system block (instructions + tool
   defs); the volatile snapshot + history are left uncached.
 - **Bounds per turn:** max **8** tool round-trips (loop guard); `max_tokens` capped
@@ -298,8 +352,9 @@ card), consistent with the repo's server-leaning test posture.
 - **Add `@anthropic-ai/sdk`** — one new top-level dependency. Tradeoff: official,
   MIT-licensed, well-maintained; it is the supported client for tool-use + prompt
   caching. Justified per the "flag new deps" rule in `CLAUDE.md`.
-- **`.env.example`** — add `ANTHROPIC_API_KEY` (server-only; never in a client
-  bundle).
+- **`.env.example`** — add `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` (both
+  server-only; never in a client bundle). `ANTHROPIC_MODEL` is documented with the
+  verified model string as its example value (see §10.1).
 - **Pre-commit gate** (per `CLAUDE.md`): `/code-review`, patch sanity,
   `npm run typecheck` → `npm run lint` (`--max-warnings=0` on new code) →
   `npm run build`. No Prisma `schema.prisma` change and no `.graphql` change, so
