@@ -8,6 +8,7 @@ import { runMetaBackfill } from "~/lib/meta/insights/backfill.server";
 import { runMetaPoll } from "~/lib/meta/insights/poller.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
+const MAX_META_POLL_SHOPS = 25; // poll is cheap (2-day pull) but still bounded per tick
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const auth = request.headers.get("authorization");
@@ -78,12 +79,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // A failed shop keeps last_sync_at = null (runMetaBackfill sets error status,
   // not last_sync_at), so it is retried wholesale next tick -- safe because the
   // upserts are idempotent. One shop's failure is isolated (detail in ingestion_dlq).
-  const { data: metaPending } = await sb
-    .from("shop_integrations")
-    .select("shops!inner(shop_domain)")
-    .eq("kind", "meta_ads")
-    .is("last_sync_at", null)
-    .limit(MAX_BACKFILL_SHOPS);
+  // Snapshot both shop sets up front. They are disjoint (pending = last_sync_at
+  // null, ready = not null) BEFORE the backfill loop flips any pending shop to
+  // ready, so a shop backfilled this tick is not also polled this tick.
+  const [{ data: metaPending }, { data: metaReady }] = await Promise.all([
+    sb
+      .from("shop_integrations")
+      .select("shops!inner(shop_domain)")
+      .eq("kind", "meta_ads")
+      .is("last_sync_at", null)
+      .limit(MAX_BACKFILL_SHOPS),
+    sb
+      .from("shop_integrations")
+      .select("shops!inner(shop_domain)")
+      .eq("kind", "meta_ads")
+      .not("last_sync_at", "is", null)
+      .limit(MAX_META_POLL_SHOPS),
+  ]);
   for (const row of metaPending ?? []) {
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {
@@ -94,11 +106,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  const { data: metaReady } = await sb
-    .from("shop_integrations")
-    .select("shops!inner(shop_domain)")
-    .eq("kind", "meta_ads")
-    .not("last_sync_at", "is", null);
   for (const row of metaReady ?? []) {
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {

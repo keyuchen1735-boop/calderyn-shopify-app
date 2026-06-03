@@ -98,7 +98,7 @@ export function rollupCampaigns(
       byCampaign.get(r.campaign_external_id) ??
       ({
         campaign_id: r.campaign_external_id,
-        name: r.campaign_name,
+        name: r.campaign_name ?? "",
         status: "active",
         spend_cents: 0,
         impressions: 0,
