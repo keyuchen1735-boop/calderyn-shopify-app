@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   classify,
   toPerf,
+  planCuts,
+  planFeeds,
   DEFAULT_BUDGET_CONFIG,
   type CampaignPerf,
+  type Classified,
 } from "../score.server";
 import type { MetaCampaign } from "../../meta/campaigns.server";
 
@@ -72,5 +75,54 @@ describe("classify", () => {
       DEFAULT_BUDGET_CONFIG,
     );
     expect(out.map((c) => c.decision)).toEqual(["hold", "hold"]);
+  });
+});
+
+function classified(id: string, decision: Classified["decision"], over: Partial<CampaignPerf> = {}): Classified {
+  return { campaign: perf({ id, ...over }), decision };
+}
+
+describe("planCuts", () => {
+  it("cuts each loser by stepPct, clamped at the floor", () => {
+    const moves = planCuts(
+      [
+        classified("a", "negative_unit_economics", { dailyBudgetCents: 5000 }),
+        classified("b", "campaign_below_breakeven", { dailyBudgetCents: 600 }),
+        classified("w", "winner", { dailyBudgetCents: 9000 }),
+      ],
+      DEFAULT_BUDGET_CONFIG,
+    );
+    // a: 5000 - 20% = 4000 (freed 1000); b: 600 - 120 = 480 < floor 500 -> 500 (freed 100); w ignored
+    expect(moves).toEqual([
+      { campaignId: "a", name: "Camp", fromCents: 5000, toCents: 4000, deltaCents: -1000, role: "cut", roas7d: 2.5 },
+      { campaignId: "b", name: "Camp", fromCents: 600, toCents: 500, deltaCents: -100, role: "cut", roas7d: 2.5 },
+    ]);
+  });
+
+  it("skips losers already at the floor (no negative or zero cut)", () => {
+    const moves = planCuts([classified("a", "negative_unit_economics", { dailyBudgetCents: 500 })], DEFAULT_BUDGET_CONFIG);
+    expect(moves).toEqual([]);
+  });
+});
+
+describe("planFeeds", () => {
+  it("feeds winners by ROAS desc, each capped at ceilingPct, until the pool is empty", () => {
+    const moves = planFeeds(
+      [
+        classified("hi", "winner", { dailyBudgetCents: 10000, roas7d: 4 }),
+        classified("lo", "winner", { dailyBudgetCents: 10000, roas7d: 3 }),
+      ],
+      3000, // pool $30
+      DEFAULT_BUDGET_CONFIG,
+    );
+    // hi first: cap 2000, add 2000 -> pool 1000; lo: cap 2000, add 1000 -> pool 0
+    expect(moves).toEqual([
+      { campaignId: "hi", name: "Camp", fromCents: 10000, toCents: 12000, deltaCents: 2000, role: "feed", roas7d: 4 },
+      { campaignId: "lo", name: "Camp", fromCents: 10000, toCents: 11000, deltaCents: 1000, role: "feed", roas7d: 3 },
+    ]);
+  });
+
+  it("returns nothing when the pool is empty", () => {
+    expect(planFeeds([classified("hi", "winner")], 0, DEFAULT_BUDGET_CONFIG)).toEqual([]);
   });
 });

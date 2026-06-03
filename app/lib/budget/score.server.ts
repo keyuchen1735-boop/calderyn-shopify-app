@@ -96,3 +96,55 @@ export function classify(perf: CampaignPerf[], cfg: BudgetConfig): Classified[] 
     return { campaign: c, decision };
   });
 }
+
+export function planCuts(classified: Classified[], cfg: BudgetConfig): BudgetMove[] {
+  const moves: BudgetMove[] = [];
+  for (const c of classified) {
+    if (!isLoser(c.decision)) continue;
+    const budget = c.campaign.dailyBudgetCents;
+    const cut = Math.round(budget * cfg.stepPct);
+    const toCents = Math.max(cfg.floorCents, budget - cut);
+    const freed = budget - toCents;
+    if (freed <= 0) continue;
+    moves.push({
+      campaignId: c.campaign.id,
+      name: c.campaign.name,
+      fromCents: budget,
+      toCents,
+      deltaCents: -freed,
+      role: "cut",
+      roas7d: c.campaign.roas7d,
+    });
+  }
+  return moves;
+}
+
+export function planFeeds(
+  classified: Classified[],
+  realizedFreedCents: number,
+  cfg: BudgetConfig,
+): BudgetMove[] {
+  const winners = classified
+    .filter((c) => c.decision === "winner")
+    .map((c) => c.campaign)
+    .sort((a, b) => b.roas7d - a.roas7d);
+  const moves: BudgetMove[] = [];
+  let pool = realizedFreedCents;
+  for (const w of winners) {
+    if (pool <= 0) break;
+    const cap = Math.round(w.dailyBudgetCents * cfg.ceilingPct);
+    const add = Math.min(cap, pool);
+    if (add <= 0) continue;
+    moves.push({
+      campaignId: w.id,
+      name: w.name,
+      fromCents: w.dailyBudgetCents,
+      toCents: w.dailyBudgetCents + add,
+      deltaCents: add,
+      role: "feed",
+      roas7d: w.roas7d,
+    });
+    pool -= add;
+  }
+  return moves;
+}
