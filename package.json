@@ -33,6 +33,7 @@
     "@remix-run/serve": "^2.16.1",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^12.27.0",
+    "@shopify/polaris-viz": "^16.16.0",
     "@shopify/shopify-app-remix": "^3.7.0",
     "@shopify/shopify-app-session-storage-prisma": "^6.0.0",
     "@supabase/supabase-js": "^2.106.1",
