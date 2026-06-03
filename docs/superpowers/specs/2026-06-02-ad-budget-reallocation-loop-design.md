@@ -217,6 +217,26 @@ counted in the cron summary; the merchant's existing manual "Edit budget" contro
 on the Campaigns page is the approval path. (A first-class winner alert would need
 a new `DetectorId` and is a coordinated follow-up -- Section 11.)
 
+Because feeds carry no alert, the executed feed audit must be self-explanatory.
+Every budget-move audit (`reduce_campaign_budget` and `increase_campaign_budget`)
+writes these `params` so the audit log alone explains why money moved, with no
+joined alert required:
+
+```
+role:          "cut" | "feed"
+campaign_id:   <meta campaign id>
+campaign_name: <name>
+from_cents:    <prior daily_budget>
+to_cents:      <new daily_budget>
+delta_cents:   <signed change>
+roas7d:        <observed ROAS>
+target_roas:   <merchant setting at exec time>
+tick_hour:     <UTC tick bucket, e.g. "2026-06-02T15">
+```
+
+`pre_state` / `post_state` stay `{ campaign_id, daily_budget_cents }` (Section 9,
+what Undo restores); the richer context lives in `params`.
+
 ### 6.4 Loser alerts and lifecycle
 
 Loser `dollar_impact` (dollars, drives `claude_rank` + narrative):
@@ -398,6 +418,9 @@ exact migration filename/timestamp is posted for agreement before writing
   and that a Meta failure writes no inverse row.
 - Audit dollar impact -- `actions.execute` persists `dollar_impact_at_exec` for a
   budget move, and the gate reads it back.
+- Feed audit context -- an executed feed writes `params` with
+  `role/campaign_id/campaign_name/from_cents/to_cents/delta_cents/roas7d/target_roas/tick_hour`,
+  so the audit is self-explanatory without a joined alert.
 
 Test runner: Vitest (already present -- see `app/lib/**/__tests__`).
 
