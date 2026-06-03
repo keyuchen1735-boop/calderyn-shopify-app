@@ -16,3 +16,4 @@ SECRETS.local.txt
 secrets.local.txt
 .mcp.json
 .claude/settings.json
+.claude/worktrees
