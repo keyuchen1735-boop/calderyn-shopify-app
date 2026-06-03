@@ -1,9 +1,10 @@
 import type { MetaCampaign } from "../meta/campaigns.server";
 
-// Defined here (not imported from meta) so this module typechecks standalone at
-// this task's commit. `fetchCampaignInsights` (Task 5) returns this exact shape;
-// TypeScript matches it structurally.
-export type CampaignInsight = { spend7dCents: number; roas7d: number };
+// The per-campaign spend+ROAS reading this loop consumes. Named distinctly from
+// the analytics `CampaignInsight` DTO (app/lib/types.ts) to avoid a same-name
+// clash across modules. `fetchCampaignInsights` (Task 5) returns this exact
+// shape; TypeScript matches it structurally.
+export type CampaignSpendRoas = { spend7dCents: number; roas7d: number };
 
 export type CampaignPerf = {
   id: string;
@@ -66,7 +67,7 @@ export function isLoser(d: Decision): d is LoserDetectorId {
 
 export function toPerf(
   campaigns: MetaCampaign[],
-  insights: Record<string, CampaignInsight>,
+  insights: Record<string, CampaignSpendRoas>,
 ): CampaignPerf[] {
   return campaigns.map((c) => {
     const ins = insights[c.id] ?? { spend7dCents: 0, roas7d: 0 };
