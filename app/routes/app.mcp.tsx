@@ -39,6 +39,10 @@ type ActionPayload = {
   error?: { code: string; message: string };
 };
 
+// NOTE: the external calderyn-mcp server exposes read tools backed by the same
+// Supabase views. Surfacing analytics there requires a matching `analytics_summary`
+// / `analytics_campaigns` tool (reads v_campaign_insights_daily +
+// v_ad_insights_daily); this repo owns only the token surface + scope copy.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   try {
@@ -191,8 +195,8 @@ export default function McpTokens() {
             Generate a token below, then paste it into your MCP client (Claude.ai connector,
             custom agent, etc.) as a bearer token. The server endpoint is{" "}
             <code>https://calderyn-mcp.vercel.app/mcp</code>. Each token is scoped to this shop and
-            grants read-only access to your alerts, audit log, campaigns, SKUs, guardrails,
-            and integration status.
+            grants read-only access to your alerts, audit log, campaigns, SKUs, ad-spend
+            analytics, guardrails, and integration status.
           </p>
         </Banner>
 
