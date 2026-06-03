@@ -4,6 +4,8 @@ import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { runReorderTimingDetector } from "~/lib/ingest/detectors/reorder-timing.server";
+import { runMetaBackfill } from "~/lib/meta/insights/backfill.server";
+import { runMetaPoll } from "~/lib/meta/insights/poller.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
 
@@ -21,6 +23,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     transformError: null as string | null,
     detect: { shops: 0, upserted: 0, resolved: 0 },
     detectErrors: [] as string[],
+    meta: { backfilled: [] as string[], polled: [] as string[], errors: [] as string[] },
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -66,6 +69,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // One shop's detector failure must not deny other shops their alerts.
       summary.detectErrors.push(shopId);
       console.error(`[cron.ingest] reorder_timing detector failed for shop ${shopId}`, err);
+    }
+  }
+
+  // Phase 4: Meta ad-spend ingestion. Single-pass per shop. Backfill a BOUNDED
+  // number of not-yet-synced shops per tick (resumable at SHOP granularity, like
+  // Phase 1's MAX_BACKFILL_SHOPS); poll the already-synced ones (cheap 2-day pull).
+  // A failed shop keeps last_sync_at = null (runMetaBackfill sets error status,
+  // not last_sync_at), so it is retried wholesale next tick -- safe because the
+  // upserts are idempotent. One shop's failure is isolated (detail in ingestion_dlq).
+  const { data: metaPending } = await sb
+    .from("shop_integrations")
+    .select("shops!inner(shop_domain)")
+    .eq("kind", "meta_ads")
+    .is("last_sync_at", null)
+    .limit(MAX_BACKFILL_SHOPS);
+  for (const row of metaPending ?? []) {
+    const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
+    try {
+      await runMetaBackfill(domain);
+      summary.meta.backfilled.push(domain);
+    } catch {
+      summary.meta.errors.push(domain); // detail already in ingestion_dlq
+    }
+  }
+
+  const { data: metaReady } = await sb
+    .from("shop_integrations")
+    .select("shops!inner(shop_domain)")
+    .eq("kind", "meta_ads")
+    .not("last_sync_at", "is", null);
+  for (const row of metaReady ?? []) {
+    const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
+    try {
+      await runMetaPoll(domain);
+      summary.meta.polled.push(domain);
+    } catch {
+      summary.meta.errors.push(domain); // detail already in ingestion_dlq
     }
   }
 
