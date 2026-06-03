@@ -148,3 +148,37 @@ export function planFeeds(
   }
   return moves;
 }
+
+export function scoreLosers(classified: Classified[], cfg: BudgetConfig): CampaignAlertDraft[] {
+  const drafts: CampaignAlertDraft[] = [];
+  for (const c of classified) {
+    if (!isLoser(c.decision)) continue;
+    const cam = c.campaign;
+    const dollarImpact = (cam.spend7dCents / 100) * Math.max(0, 1 - cam.roas7d / cfg.targetRoas);
+    const severity: "critical" | "high" = c.decision === "negative_unit_economics" ? "critical" : "high";
+    const narrative =
+      `${cam.name} is running at ${cam.roas7d.toFixed(2)} ROAS over 7 days against a ` +
+      `${cfg.targetRoas.toFixed(2)} target on $${(cam.spend7dCents / 100).toFixed(0)} spend. ` +
+      (c.decision === "negative_unit_economics"
+        ? "It is returning less than it costs -- cut its budget."
+        : "It is below breakeven -- cut its budget and shift it to a winner.");
+    drafts.push({
+      detectorId: c.decision,
+      entity_ref: { campaign_id: cam.id, name: cam.name },
+      severity,
+      dollar_impact: dollarImpact,
+      claude_rank: 0,
+      claude_narrative: narrative,
+      evidence: {
+        roas7d: cam.roas7d,
+        spend7d_cents: cam.spend7dCents,
+        daily_budget_cents: cam.dailyBudgetCents,
+        target_roas: cfg.targetRoas,
+        decision: c.decision,
+      },
+    });
+  }
+  drafts.sort((a, b) => b.dollar_impact - a.dollar_impact);
+  drafts.forEach((d, i) => (d.claude_rank = i + 1));
+  return drafts;
+}

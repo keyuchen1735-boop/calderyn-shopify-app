@@ -4,6 +4,7 @@ import {
   toPerf,
   planCuts,
   planFeeds,
+  scoreLosers,
   DEFAULT_BUDGET_CONFIG,
   type CampaignPerf,
   type Classified,
@@ -124,5 +125,34 @@ describe("planFeeds", () => {
 
   it("returns nothing when the pool is empty", () => {
     expect(planFeeds([classified("hi", "winner")], 0, DEFAULT_BUDGET_CONFIG)).toEqual([]);
+  });
+});
+
+describe("scoreLosers", () => {
+  it("emits one alert per loser, ranked by dollar_impact desc, with detector + severity", () => {
+    const drafts = scoreLosers(
+      [
+        classified("small", "campaign_below_breakeven", { roas7d: 1.5, spend7dCents: 10000 }),
+        classified("big", "negative_unit_economics", { roas7d: 0.5, spend7dCents: 40000 }),
+        classified("win", "winner"),
+      ],
+      DEFAULT_BUDGET_CONFIG,
+    );
+    // big: $400 * (1 - 0.5/2) = $400 * 0.75 = $300 ; small: $100 * (1 - 1.5/2) = $100 * 0.25 = $25
+    expect(drafts.map((d) => d.entity_ref.campaign_id)).toEqual(["big", "small"]);
+    expect(drafts[0]).toMatchObject({
+      detectorId: "negative_unit_economics",
+      severity: "critical",
+      claude_rank: 1,
+      entity_ref: { campaign_id: "big", name: "Camp" },
+    });
+    expect(drafts[0].dollar_impact).toBeCloseTo(300);
+    expect(drafts[1]).toMatchObject({ detectorId: "campaign_below_breakeven", severity: "high", claude_rank: 2 });
+    expect(drafts[1].dollar_impact).toBeCloseTo(25);
+    expect(drafts[0].evidence).toMatchObject({ roas7d: 0.5, spend7d_cents: 40000, target_roas: 2 });
+  });
+
+  it("returns nothing when there are no losers", () => {
+    expect(scoreLosers([classified("w", "winner"), classified("h", "hold")], DEFAULT_BUDGET_CONFIG)).toEqual([]);
   });
 });
