@@ -18,6 +18,7 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
   reduce_campaign_budget: "Reduce campaign budget",
+  increase_campaign_budget: "Increase campaign budget",
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
   create_po_draft: "Create PO draft",
@@ -27,6 +28,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
 export const ACTION_VERBS: Record<ActionKind, string> = {
   pause_campaign: "Paused campaign",
   reduce_campaign_budget: "Reduced budget",
+  increase_campaign_budget: "Increased budget",
   exclude_geo: "Excluded geo",
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",
