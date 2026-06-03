@@ -1,13 +1,31 @@
 import type {
   ActionKind,
+  AdInsight,
   Alert,
+  AnalyticsSummary,
   AuditEntry,
   Campaign,
+  CampaignInsight,
   GuardrailConfig,
   Integration,
   SKU,
+  TrendPoint,
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  computeBreakEven,
+  DEFAULT_MARGIN,
+  COVERAGE_THRESHOLD,
+  type BreakEvenResult,
+} from "./analytics/breakeven";
+import {
+  rollupTrend,
+  rollupSummary,
+  rollupCampaigns,
+  type CampaignDailyRow,
+  type AdDailyRow,
+} from "./analytics/rollup";
 import { newIdempotencyKey } from "./ids";
 import { buildAuthUrl, signState } from "./meta/oauth.server";
 import { metaClientForShop } from "./meta/client.server";
@@ -159,6 +177,59 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
   google_ads: "Google Ads",
   quickbooks: "QuickBooks",
 };
+
+export type AnalyticsWindow = 7 | 30 | 90;
+const sinceISO = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+async function loadDaily(
+  supabase: SupabaseClient,
+  shopId: string,
+  days: number,
+): Promise<{ camp: CampaignDailyRow[]; ads: AdDailyRow[] }> {
+  const since = sinceISO(days);
+  const [campRes, adsRes] = await Promise.all([
+    supabase.from("v_campaign_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
+    supabase.from("v_ad_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
+  ]);
+  if (campRes.error) throw campRes.error;
+  if (adsRes.error) throw adsRes.error;
+  return { camp: (campRes.data ?? []) as CampaignDailyRow[], ads: (adsRes.data ?? []) as AdDailyRow[] };
+}
+
+async function loadBreakEven(supabase: SupabaseClient, shopId: string, days: number): Promise<BreakEvenResult> {
+  const since = sinceISO(days);
+  const [settingsRes, lineRes] = await Promise.all([
+    supabase.from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle(),
+    supabase
+      .from("order_line_fact")
+      .select("quantity, price_cents, sku_dim!inner(unit_cost_cents), order_fact!inner(shop_id, created_at)")
+      .eq("order_fact.shop_id", shopId)
+      .gte("order_fact.created_at", since),
+  ]);
+  if (settingsRes.error) throw settingsRes.error;
+  if (lineRes.error) throw lineRes.error;
+  const lines = (lineRes.data ?? []).map((r) => {
+    const row = r as unknown as { quantity: number; price_cents: number; sku_dim: { unit_cost_cents: number | null } };
+    return { price_cents: row.price_cents, quantity: row.quantity, unit_cost_cents: row.sku_dim?.unit_cost_cents ?? null };
+  });
+  const override =
+    (settingsRes.data as { blended_margin_override?: number | null } | null)?.blended_margin_override ?? null;
+  return computeBreakEven({ lines, override, defaultMargin: DEFAULT_MARGIN, coverageThreshold: COVERAGE_THRESHOLD });
+}
+
+// Open alerts keyed by campaign NAME (matches the existing name-link in app.campaigns.tsx).
+async function loadAlertLinks(supabase: SupabaseClient, shopId: string): Promise<Record<string, string[]>> {
+  const { data, error } = await supabase
+    .from("v_alerts_view").select("id, campaign, status")
+    .eq("shop_id", shopId).eq("status", "open");
+  if (error) throw error;
+  const out: Record<string, string[]> = {};
+  for (const a of (data ?? []) as { id: string; campaign: string | null }[]) {
+    if (!a.campaign) continue;
+    (out[a.campaign] ??= []).push(a.id);
+  }
+  return out;
+}
 
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
@@ -553,6 +624,103 @@ export function calderynClient(shop: string) {
         } catch (err) {
           rethrow("onboarding.advance", err);
         }
+      },
+    },
+
+    analytics: {
+      async summary(days: AnalyticsWindow = 30): Promise<AnalyticsSummary> {
+        try {
+          const shopId = await shopIdP;
+          const [{ camp, ads }, be] = await Promise.all([
+            loadDaily(supabase, shopId, days),
+            loadBreakEven(supabase, shopId, days),
+          ]);
+          return rollupSummary(camp, ads, {
+            breakEvenRoas: be.breakEvenRoas,
+            marginPct: be.margin,
+            confidence: be.confidence,
+            windowDays: days,
+          });
+        } catch (err) {
+          rethrow("analytics.summary", err);
+        }
+      },
+      async trend(days: AnalyticsWindow = 30): Promise<TrendPoint[]> {
+        try {
+          const shopId = await shopIdP;
+          const { camp } = await loadDaily(supabase, shopId, days);
+          return rollupTrend(camp);
+        } catch (err) {
+          rethrow("analytics.trend", err);
+        }
+      },
+      async campaigns(days: AnalyticsWindow = 30): Promise<CampaignInsight[]> {
+        try {
+          const shopId = await shopIdP;
+          const [{ camp, ads }, be, links] = await Promise.all([
+            loadDaily(supabase, shopId, days),
+            loadBreakEven(supabase, shopId, days),
+            loadAlertLinks(supabase, shopId),
+          ]);
+          return rollupCampaigns(camp, ads, be.breakEvenRoas, links);
+        } catch (err) {
+          rethrow("analytics.campaigns", err);
+        }
+      },
+      async ads(campaignId: string, days: AnalyticsWindow = 30): Promise<AdInsight[]> {
+        try {
+          const shopId = await shopIdP;
+          const { ads } = await loadDaily(supabase, shopId, days);
+          const byAd = new Map<string, AdInsight & { _value_cents: number }>();
+          for (const a of ads.filter((r) => r.campaign_external_id === campaignId)) {
+            const cur =
+              byAd.get(a.ad_external_id) ?? {
+                ad_id: a.ad_external_id, campaign_id: campaignId, name: a.ad_name,
+                spend_cents: 0, roas: 0, _value_cents: 0,
+                engagement: { reactions: 0, comments: 0, shares: 0, saves: 0, post_engagement: 0 },
+              };
+            cur.spend_cents += a.spend_cents;
+            cur._value_cents += a.purchase_value_cents;
+            cur.engagement.reactions += a.reactions;
+            cur.engagement.comments += a.comments;
+            cur.engagement.shares += a.shares;
+            cur.engagement.saves += a.saves;
+            cur.engagement.post_engagement += a.post_engagement;
+            byAd.set(a.ad_external_id, cur);
+          }
+          return [...byAd.values()]
+            .map(({ _value_cents, ...ad }) => ({ ...ad, roas: ad.spend_cents > 0 ? _value_cents / ad.spend_cents : 0 }))
+            .sort((x, y) => y.spend_cents - x.spend_cents);
+        } catch (err) {
+          rethrow("analytics.ads", err);
+        }
+      },
+      settings: {
+        async get(): Promise<{ marginOverride: number | null }> {
+          try {
+            const shopId = await shopIdP;
+            const { data, error } = await supabase
+              .from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle();
+            if (error) throw error;
+            return { marginOverride: (data?.blended_margin_override as number | null) ?? null };
+          } catch (err) {
+            rethrow("analytics.settings.get", err);
+          }
+        },
+        async update(patch: { marginOverride: number | null }): Promise<void> {
+          try {
+            const shopId = await shopIdP;
+            const { error } = await supabase
+              .from("analytics_settings")
+              .upsert(
+                { shop_id: shopId, blended_margin_override: patch.marginOverride, updated_at: new Date().toISOString() },
+                { onConflict: "shop_id" },
+              );
+            if (error) throw error;
+          } catch (err) {
+            rethrow("analytics.settings.update", err);
+          }
+        },
       },
     },
 
