@@ -55,6 +55,12 @@ export async function runBudgetLoopForShop(shopDomain: string, now = new Date())
     }
 
     const { data: gc } = await sb.from("guardrail_config").select("*").eq("shop_id", shopId).maybeSingle();
+    if (!gc) {
+      // No guardrail config => no enforced caps/hours. Fail closed and say so,
+      // rather than silently blocking every move on zero-valued guardrails.
+      result.skipped = "no_guardrail_config";
+      return result;
+    }
     const cfg: BudgetConfig = {
       targetRoas: Number(gc?.target_roas ?? DEFAULT_BUDGET_CONFIG.targetRoas),
       loseBand: Number(gc?.lose_band ?? DEFAULT_BUDGET_CONFIG.loseBand),
@@ -113,7 +119,18 @@ export async function runBudgetLoopForShop(shopDomain: string, now = new Date())
       const claimMove = await sb
         .from("budget_move_ledger")
         .insert({ shop_id: shopId, idempotency_key: key, applied_at: now.toISOString() });
-      if (claimMove.error) return; // already claimed/applied this tick
+      if (claimMove.error) {
+        // 23505 = unique_violation: this move was already claimed this tick -> skip.
+        // Any other error is a real failure and must not be silently swallowed.
+        if ((claimMove.error as { code?: string }).code !== "23505") {
+          result.campaignErrors += 1;
+          console.error(
+            `[cron.budget-loop] ledger claim failed shop=${shopDomain} campaign=${m.campaignId} role=${m.role}`,
+            claimMove.error,
+          );
+        }
+        return;
+      }
 
       try {
         // Absolute write: re-applying the same toCents is a no-op, so an
