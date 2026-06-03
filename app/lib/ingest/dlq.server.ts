@@ -2,6 +2,7 @@ import { getSupabase } from "../supabase.server";
 
 export async function writeDlq(opts: {
   shopId: string | null;
+  connector?: string;
   jobKind: string;
   errorKind: string;
   errorMessage: string;
@@ -9,7 +10,7 @@ export async function writeDlq(opts: {
 }): Promise<void> {
   const { error } = await getSupabase().from("ingestion_dlq").insert({
     shop_id: opts.shopId,
-    connector: "shopify",
+    connector: opts.connector ?? "shopify",
     job_kind: opts.jobKind,
     attempts: 1,
     error_kind: opts.errorKind,
