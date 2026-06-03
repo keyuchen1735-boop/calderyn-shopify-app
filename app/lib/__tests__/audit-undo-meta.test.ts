@@ -44,6 +44,7 @@ vi.mock("../meta/client.server", () => ({
 
 vi.mock("../meta/campaigns.server", () => ({
   setCampaignStatus: (...args: unknown[]) => setStatusSpy(...args),
+  setCampaignBudget: vi.fn(),
 }));
 
 beforeEach(() => {

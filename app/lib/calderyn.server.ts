@@ -11,7 +11,7 @@ import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
 import { buildAuthUrl, signState } from "./meta/oauth.server";
 import { metaClientForShop } from "./meta/client.server";
-import { setCampaignStatus } from "./meta/campaigns.server";
+import { setCampaignStatus, setCampaignBudget } from "./meta/campaigns.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -39,6 +39,7 @@ export type ExecuteActionOpts = {
   idempotencyKey: string;
   preState?: unknown;
   postState?: unknown;
+  dollarImpactAtExec?: number;
 };
 
 export type IntegrationProvider = "google" | "meta" | "quickbooks";
@@ -252,6 +253,26 @@ export function calderynClient(shop: string) {
             }
           }
 
+          // For budget actions, restore the prior daily_budget on Meta first.
+          if (
+            orig.action_kind === "reduce_campaign_budget" ||
+            orig.action_kind === "increase_campaign_budget"
+          ) {
+            const priorCents = (orig.pre_state as { daily_budget_cents?: number } | null)?.daily_budget_cents;
+            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+            if (typeof priorCents === "number" && campaignId) {
+              const meta = await metaClientForShop(shop);
+              if (!meta) {
+                throw new CalderynError({
+                  code: "UNDO_META_UNAVAILABLE",
+                  status: 400,
+                  message: "Cannot undo: Meta is not connected.",
+                });
+              }
+              await setCampaignBudget(meta.client, campaignId, priorCents);
+            }
+          }
+
           const undoRow = {
             shop_id: shopId,
             alert_id: orig.alert_id,
@@ -328,6 +349,7 @@ export function calderynClient(shop: string) {
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
               actor_user_id: "demo@calderyn.app",
+              dollar_impact_at_exec: opts.dollarImpactAtExec ?? null,
               completed_at: new Date().toISOString(),
             })
             .select()
