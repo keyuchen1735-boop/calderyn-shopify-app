@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { listCampaigns, setCampaignStatus, getCampaignStatus, type MetaClient } from "../campaigns.server";
+import { fetchCampaignInsights, setCampaignBudget } from "../campaigns.server";
 
 function fakeClient(over: Partial<MetaClient> = {}): MetaClient {
   return {
@@ -58,5 +59,57 @@ describe("getCampaignStatus", () => {
   it("throws on a Graph error payload", async () => {
     const client = fakeClient({ get: vi.fn(async () => ({ error: { message: "Unknown id", code: 100 } })) });
     await expect(getCampaignStatus(client, "999")).rejects.toThrow(/Unknown id/);
+  });
+});
+
+describe("fetchCampaignInsights", () => {
+  it("parses spend->cents and the purchase_roas array (omni_purchase pick), missing -> 0", async () => {
+    const get = vi.fn(async () => ({
+      data: [
+        { campaign_id: "120", spend: "50.00", purchase_roas: [{ action_type: "omni_purchase", value: "3.12" }] },
+        { campaign_id: "121", spend: "12.34" },
+      ],
+    }));
+    const out = await fetchCampaignInsights(fakeClient({ get }), "act_99");
+    expect(get).toHaveBeenCalledWith("/act_99/insights", {
+      level: "campaign", date_preset: "last_7d", fields: "campaign_id,spend,purchase_roas",
+    });
+    expect(out).toEqual({
+      "120": { spend7dCents: 5000, roas7d: 3.12 },
+      "121": { spend7dCents: 1234, roas7d: 0 },
+    });
+  });
+
+  it("follows pagination cursors", async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [{ campaign_id: "1", spend: "1.00" }],
+        paging: { next: "http://next", cursors: { after: "CUR2" } },
+      })
+      .mockResolvedValueOnce({ data: [{ campaign_id: "2", spend: "2.00" }] });
+    const out = await fetchCampaignInsights(fakeClient({ get }), "act_1");
+    expect(get).toHaveBeenNthCalledWith(2, "/act_1/insights", {
+      level: "campaign", date_preset: "last_7d", fields: "campaign_id,spend,purchase_roas", after: "CUR2",
+    });
+    expect(Object.keys(out)).toEqual(["1", "2"]);
+  });
+
+  it("throws on a Graph error payload", async () => {
+    const client = fakeClient({ get: vi.fn(async () => ({ error: { message: "Bad account", code: 100 } })) });
+    await expect(fetchCampaignInsights(client, "act_99")).rejects.toThrow(/Bad account/);
+  });
+});
+
+describe("setCampaignBudget", () => {
+  it("posts the daily_budget in cents as a string", async () => {
+    const post = vi.fn(async () => ({ success: true }));
+    await setCampaignBudget(fakeClient({ post }), "120", 4000);
+    expect(post).toHaveBeenCalledWith("/120", { daily_budget: "4000" });
+  });
+
+  it("throws on a Graph error payload", async () => {
+    const client = fakeClient({ post: vi.fn(async () => ({ error: { message: "Cannot set budget", code: 200 } })) });
+    await expect(setCampaignBudget(client, "120", 4000)).rejects.toThrow(/Cannot set budget/);
   });
 });
