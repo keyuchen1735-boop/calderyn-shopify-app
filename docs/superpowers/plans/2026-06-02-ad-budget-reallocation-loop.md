@@ -29,6 +29,18 @@
 
 **Test boundary (rule 9, honest):** the pure modules (`score`, `guardrails`, `tick`) and the Meta calls + the `calderyn.server.ts` changes are unit-tested. `loop.server.ts` is thin DB/Meta orchestration with no decision logic of its own (all decisions live in `planTick`); following the existing `runReorderTimingDetector` precedent it is covered by the `planTick` tests + the typecheck/build gate, not a bespoke Supabase mock.
 
+**Per-task commit gate (CLAUDE.md):** every task ends in a commit, and every commit is a "major commit." Before each `git commit` in this plan, ALL of the following must be green -- do not commit otherwise:
+
+```
+npm run typecheck            # exit 0 (whole project, every commit)
+npm run lint                 # exit 0, no warnings on touched files
+npx vitest run <task's test> # the test(s) named in that task, green
+```
+
+Each task below is authored so the project typechecks at that task's commit (no task commits half-defined types). The heavier `npm run build`, full `npm test`, patch-sanity, and `/code-review` run once at Task 11 before the branch leaves WIP / opens a PR -- they gate the branch, the fast checks above gate each commit. If any check fails, stop and fix the root cause (no `--no-verify`, no `eslint-disable`, no type-narrowing to silence `tsc`).
+
+**Idempotency model (read before Task 9):** each budget move is reserved by an **atomic** insert into `budget_move_ledger` keyed `budget:<shopId>:<campaignId>:<tickHour>:<role>` *before* the Meta write. A PK conflict means the move is already claimed this tick -> skip. Because `setCampaignBudget` writes an **absolute** `toCents` (not a delta), replaying it is a no-op, so an at-least-once retry is safe. On any failure after the claim, the ledger row is deleted (claim released) so a later tick can re-attempt; the move is never applied twice as a net effect, and no duplicate `action_audit` row can inflate `used_today`.
+
 ---
 
 ## Task 1: ActionKind + budget scoring types & classify
@@ -146,7 +158,12 @@ Expected: FAIL -- cannot find module `../score.server`.
 Create `app/lib/budget/score.server.ts`:
 
 ```ts
-import type { MetaCampaign, CampaignInsight } from "../meta/campaigns.server";
+import type { MetaCampaign } from "../meta/campaigns.server";
+
+// Defined here (not imported from meta) so this module typechecks standalone at
+// this task's commit. `fetchCampaignInsights` (Task 5) returns this exact shape;
+// TypeScript matches it structurally.
+export type CampaignInsight = { spend7dCents: number; roas7d: number };
 
 export type CampaignPerf = {
   id: string;
@@ -245,9 +262,16 @@ export function classify(perf: CampaignPerf[], cfg: BudgetConfig): Classified[] 
 Run: `npx vitest run app/lib/budget/__tests__/score.test.ts`
 Expected: PASS (3 suites).
 
-> Note: `CampaignInsight` is added to `campaigns.server.ts` in Task 5; until then this file's import will not resolve at typecheck. That is expected -- Task 1's vitest run passes because Vitest transpiles per-file. Do not run `npm run typecheck` until Task 5 is complete.
+- [ ] **Step 6: Commit gate, then commit**
 
-- [ ] **Step 6: Commit**
+Run the per-task gate (must all be green):
+
+```bash
+npm run typecheck
+npm run lint
+npx vitest run app/lib/budget/__tests__/score.test.ts
+```
+Expected: typecheck exit 0 (this module defines `CampaignInsight` locally, so it resolves now), lint clean on touched files, tests PASS.
 
 ```bash
 git add app/lib/types.ts app/lib/budget/score.server.ts app/lib/budget/__tests__/score.test.ts
@@ -705,11 +729,9 @@ Expected: FAIL -- `fetchCampaignInsights`/`setCampaignBudget` not exported.
 
 - [ ] **Step 3: Implement in `campaigns.server.ts`**
 
-Append to `app/lib/meta/campaigns.server.ts`:
+Append to `app/lib/meta/campaigns.server.ts` (the return shape is structurally `CampaignInsight` from `score.server.ts`; meta does not import from budget to keep layering one-directional):
 
 ```ts
-export type CampaignInsight = { spend7dCents: number; roas7d: number };
-
 type RawInsight = {
   campaign_id: string;
   spend?: string;
@@ -726,8 +748,8 @@ function parsePurchaseRoas(pr: RawInsight["purchase_roas"]): number {
 export async function fetchCampaignInsights(
   client: MetaClient,
   adAccountId: string,
-): Promise<Record<string, CampaignInsight>> {
-  const out: Record<string, CampaignInsight> = {};
+): Promise<Record<string, { spend7dCents: number; roas7d: number }>> {
+  const out: Record<string, { spend7dCents: number; roas7d: number }> = {};
   let params: Record<string, string> = {
     level: "campaign",
     date_preset: "last_7d",
@@ -757,15 +779,14 @@ export async function setCampaignBudget(
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes, then full typecheck**
+- [ ] **Step 4: Commit gate, then commit**
 
-Run: `npx vitest run app/lib/meta/__tests__/campaigns.test.ts`
-Expected: PASS.
-
-Run: `npm run typecheck`
-Expected: exit 0 (Task 1's `score.server.ts` import of `CampaignInsight` now resolves).
-
-- [ ] **Step 5: Commit**
+```bash
+npm run typecheck
+npm run lint
+npx vitest run app/lib/meta/__tests__/campaigns.test.ts
+```
+Expected: typecheck exit 0, lint clean on touched files, tests PASS.
 
 ```bash
 git add app/lib/meta/campaigns.server.ts app/lib/meta/__tests__/campaigns.test.ts
@@ -865,9 +886,10 @@ import {
   type BudgetConfig,
   type BudgetMove,
   type CampaignAlertDraft,
+  type CampaignInsight,
 } from "./score.server";
 import { gateMove, type GateStatic } from "./guardrails.server";
-import type { MetaCampaign, CampaignInsight } from "../meta/campaigns.server";
+import type { MetaCampaign } from "../meta/campaigns.server";
 
 export type GatedMove = BudgetMove & { decision: "execute" | "block"; reason: string };
 
@@ -1101,6 +1123,18 @@ create table if not exists budget_loop_lock (
   shop_id   uuid primary key references shops(id) on delete cascade,
   locked_at timestamptz not null
 );
+
+-- Atomic per-move reservation. The composite PK makes the INSERT in the loop's
+-- apply() conflict (and thus skip) if the same move was already claimed this
+-- tick -- closing the check-then-act race in the idempotency path.
+-- (Rows are keyed by tick_hour, so the table grows ~slowly; prune rows older
+-- than a few days in a later housekeeping job -- tracked as a plan open item.)
+create table if not exists budget_move_ledger (
+  shop_id        uuid not null references shops(id) on delete cascade,
+  idempotency_key text not null,
+  applied_at     timestamptz not null,
+  primary key (shop_id, idempotency_key)
+);
 ```
 
 - [ ] **Step 2: Apply via Supabase tooling**
@@ -1112,7 +1146,7 @@ Expected: columns exist on `guardrail_config`; `budget_loop_lock` table exists.
 
 ```bash
 git add supabase/migrations/20260602120000_budget_loop_config.sql
-git commit -m "feat(db): budget loop config columns + budget_loop_lock"
+git commit -m "feat(db): budget loop config columns + loop lock + move ledger"
 ```
 
 ---
@@ -1151,6 +1185,7 @@ export type ShopLoopResult = {
   feedsApplied: number;
   freedCents: number;
   blocked: number;
+  campaignErrors: number;
   alertsUpserted: number;
   alertsResolved: number;
   skipped?: string;
@@ -1165,7 +1200,7 @@ export async function runBudgetLoopForShop(shopDomain: string, now = new Date())
   const shopId = await resolveShopId(shopDomain);
   const result: ShopLoopResult = {
     shop: shopDomain, cutsApplied: 0, feedsApplied: 0, freedCents: 0,
-    blocked: 0, alertsUpserted: 0, alertsResolved: 0,
+    blocked: 0, campaignErrors: 0, alertsUpserted: 0, alertsResolved: 0,
   };
 
   // Overlap guard: drop a stale lock, then claim. A live lock means another tick owns this shop.
@@ -1237,40 +1272,51 @@ export async function runBudgetLoopForShop(shopDomain: string, now = new Date())
       }
       // Deterministic key: at most one cut and one feed per campaign per UTC hour.
       const key = `budget:${shopId}:${m.campaignId}:${tickHour(now)}:${m.role}`;
-      const { data: prior } = await sb
-        .from("action_idempotency")
-        .select("audit_id")
-        .eq("shop_id", shopId)
-        .eq("idempotency_key", key)
-        .maybeSingle();
-      if (prior?.audit_id) return; // already applied this tick (retry); skip the Meta write
 
-      await setCampaignBudget(meta.client, m.campaignId, m.toCents);
-      const kind = m.role === "cut" ? "reduce_campaign_budget" : "increase_campaign_budget";
-      await client.actions.execute({
-        alertId: null,
-        kind,
-        params: {
-          role: m.role,
-          campaign_id: m.campaignId,
-          campaign_name: m.name,
-          from_cents: m.fromCents,
-          to_cents: m.toCents,
-          delta_cents: m.deltaCents,
-          roas7d: m.roas7d,
-          target_roas: cfg.targetRoas,
-          tick_hour: tickHour(now),
-        },
-        idempotencyKey: key,
-        dollarImpactAtExec: Math.abs(m.deltaCents) / 100,
-        preState: { campaign_id: m.campaignId, daily_budget_cents: m.fromCents },
-        postState: { campaign_id: m.campaignId, daily_budget_cents: m.toCents },
-      });
-      if (m.role === "cut") {
-        result.cutsApplied += 1;
-        result.freedCents += Math.abs(m.deltaCents);
-      } else {
-        result.feedsApplied += 1;
+      // ATOMIC reservation BEFORE the Meta write. A PK conflict means this move
+      // was already claimed this tick -> skip (no select-then-act race).
+      const claim = await sb
+        .from("budget_move_ledger")
+        .insert({ shop_id: shopId, idempotency_key: key, applied_at: now.toISOString() });
+      if (claim.error) return; // already claimed/applied this tick
+
+      try {
+        // Absolute write: re-applying the same toCents is a no-op, so an
+        // at-least-once retry cannot move the budget twice.
+        await setCampaignBudget(meta.client, m.campaignId, m.toCents);
+        const kind = m.role === "cut" ? "reduce_campaign_budget" : "increase_campaign_budget";
+        await client.actions.execute({
+          alertId: null,
+          kind,
+          params: {
+            role: m.role,
+            campaign_id: m.campaignId,
+            campaign_name: m.name,
+            from_cents: m.fromCents,
+            to_cents: m.toCents,
+            delta_cents: m.deltaCents,
+            roas7d: m.roas7d,
+            target_roas: cfg.targetRoas,
+            tick_hour: tickHour(now),
+          },
+          idempotencyKey: key,
+          dollarImpactAtExec: Math.abs(m.deltaCents) / 100,
+          preState: { campaign_id: m.campaignId, daily_budget_cents: m.fromCents },
+          postState: { campaign_id: m.campaignId, daily_budget_cents: m.toCents },
+        });
+        if (m.role === "cut") {
+          result.cutsApplied += 1;
+          result.freedCents += Math.abs(m.deltaCents);
+        } else {
+          result.feedsApplied += 1;
+        }
+      } catch (err) {
+        // Release the claim so a later tick can re-attempt; the absolute Meta
+        // write makes a re-attempt safe. One bad campaign must not abort the
+        // shop (spec Section 12) -> log and continue.
+        await sb.from("budget_move_ledger").delete().eq("shop_id", shopId).eq("idempotency_key", key);
+        result.campaignErrors += 1;
+        console.error(`[cron.budget-loop] move failed shop=${shopDomain} campaign=${m.campaignId} role=${m.role}`, err);
       }
     };
 
@@ -1419,6 +1465,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     feedsApplied: 0,
     freedCents: 0,
     blocked: 0,
+    campaignErrors: 0,
     alertsUpserted: 0,
     alertsResolved: 0,
     errors: [] as string[],
@@ -1440,6 +1487,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.feedsApplied += r.feedsApplied;
       summary.freedCents += r.freedCents;
       summary.blocked += r.blocked;
+      summary.campaignErrors += r.campaignErrors;
       summary.alertsUpserted += r.alertsUpserted;
       summary.alertsResolved += r.alertsResolved;
     } catch (err) {
@@ -1533,7 +1581,7 @@ git commit -m "chore(cron): schedule budget-loop hourly"
 | 2.4 gate before Meta; blocked behavior | Task 4 (gate) + Task 9 (apply/blocked count) |
 | 2.5 real Meta write + undoable audit + dollar_impact_at_exec | Task 5 (`setCampaignBudget`), Task 7, Task 9 |
 | 2.6 loser alerts + recovery | Task 3 + Task 9 (`upsertLoserAlerts`) |
-| 2.7 idempotency / overlap | Task 9 (deterministic key + lock) |
+| 2.7 idempotency / overlap | Task 9 (atomic `budget_move_ledger` reservation + shop lock) + Task 8 (ledger table) |
 | 2.8 per-shop/campaign isolation + summary | Task 9 + Task 10 |
 | 6.3 feed audit params | Task 9 (`apply` params block) |
 | 7 gate order + UTC time semantics | Task 4 |

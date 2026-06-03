@@ -155,16 +155,22 @@ exists -- two simultaneous runs could both pass cooldown. Two guards:
 1. Deterministic idempotency key per action:
    `budget:<shopId>:<campaignId>:<tickHour>:<role>` where `tickHour` is the
    current UTC hour truncated (e.g. `2026-06-02T15`) and `role` is `cut` or
-   `feed`. The existing `action_idempotency` table (unique on
-   `(shop_id, idempotency_key)`) makes a second attempt return the prior audit
-   instead of re-applying. At most one cut and one feed per campaign per hour,
-   regardless of amounts. (The amounts are deliberately not in the key: a partial
-   prior run may have already moved the budget, so a recomputed `to` value must
-   still dedup.)
+   `feed`. At most one cut and one feed per campaign per hour, regardless of
+   amounts. (The amounts are deliberately not in the key: a partial prior run may
+   have already moved the budget, so a recomputed `to` value must still dedup.)
+   The key is reserved by an **atomic** `INSERT` into a dedicated
+   `budget_move_ledger(shop_id, idempotency_key)` table **before** the Meta write
+   -- a primary-key conflict means the move is already claimed this tick, so the
+   loop skips it. This closes the check-then-act race that a plain
+   select-then-write would leave open, and because `setCampaignBudget` writes an
+   **absolute** `toCents` (not a delta), a replay is a no-op. On any failure
+   after the claim, the ledger row is deleted (claim released) so a later tick can
+   re-attempt safely; no duplicate `action_audit` row can inflate `used_today`.
 2. A shop-level advisory lock row (`budget_loop_lock(shop_id, locked_at)`,
-   acquired conditionally, released in `finally`, with a stale-lock timeout) so
-   two concurrent ticks for the same shop do not interleave phase A/B. Belt and
-   suspenders on top of the per-action key.
+   claimed by insert (PK conflict = another tick owns the shop), released in
+   `finally`, with a stale-lock timeout) so two concurrent ticks for the same
+   shop do not interleave phase A/B. Belt and suspenders on top of the per-move
+   ledger.
 
 ## 6. Scoring (`budget/score.ts`, pure)
 
@@ -355,10 +361,18 @@ lose_band                numeric  default 0.90
 win_band                 numeric  default 1.20
 min_spend_7d_cents       integer  default 2000    -- $20/7d minimum before acting
 
--- overlap guard
+-- overlap guard (one tick per shop at a time)
 create table budget_loop_lock (
   shop_id uuid primary key references shops(id) on delete cascade,
   locked_at timestamptz not null
+);
+
+-- atomic per-move reservation (idempotency, Section 5.3)
+create table budget_move_ledger (
+  shop_id uuid not null references shops(id) on delete cascade,
+  idempotency_key text not null,
+  applied_at timestamptz not null,
+  primary key (shop_id, idempotency_key)
 );
 ```
 
@@ -438,6 +452,9 @@ validate` is unaffected.
   `cron.ingest` or as a separate entry; interval tuning.
 - Stale-lock timeout value for `budget_loop_lock` (how long before a crashed run's
   lock is considered abandoned).
+- Housekeeping job to prune `budget_move_ledger` rows older than a few days (the
+  table grows ~one row per applied move; keys are tick-bucketed so old rows are
+  inert).
 - Whether `budget_floor_cents` / `min_spend_7d_cents` should be per-campaign vs
   one shop default.
 - A first-class winner ("scaling opportunity") alert -- needs a coordinated
