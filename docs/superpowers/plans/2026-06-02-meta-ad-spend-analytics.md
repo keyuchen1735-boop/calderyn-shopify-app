@@ -20,7 +20,7 @@
 
 **New -- ingestion (seam-tested with fakes):**
 - `app/lib/meta/insights/insights-client.server.ts` -- paginated Insights GET.
-- `app/lib/meta/insights/backfill.server.ts` -- per-shop 90-day backfill, resumable.
+- `app/lib/meta/insights/backfill.server.ts` -- per-shop 90-day backfill, single-pass (cron bounds shops/tick).
 - `app/lib/meta/insights/poller.server.ts` -- daily incremental poll.
 
 **New -- surface:**
@@ -35,7 +35,7 @@
 **Modified:**
 - `app/lib/types.ts` -- additive DTO types.
 - `app/lib/ingest/dlq.server.ts` -- parameterize `connector`.
-- `app/lib/calderyn.server.ts` -- add `analytics` namespace + `rowToCampaign` spend field.
+- `app/lib/calderyn.server.ts` -- add `analytics` namespace + module-private loaders.
 - `app/routes/cron.ingest.tsx` -- add Meta phase.
 - `app/routes/app.tsx` -- nav link.
 - `app/routes/app._index.tsx` -- real "True ROAS" tile.
@@ -136,7 +136,7 @@ export interface TrendPoint {
 export type MarginConfidence = "ok" | "low" | "override" | "default";
 
 export interface AnalyticsSummary {
-  window_days: 30 | 90;
+  window_days: 7 | 30 | 90;
   blended_margin_pct: number; // 0..1
   margin_confidence: MarginConfidence;
   break_even_roas: number;
@@ -948,7 +948,7 @@ export const AD_FIELDS =
   "ad_id,ad_name,adset_id,campaign_id,spend,impressions,inline_link_clicks,actions,action_values,account_currency";
 
 const PAGE_LIMIT = "200";
-const MAX_PAGES = 50; // safety bound; resume handled at the backfill layer
+const MAX_PAGES = 50; // safety bound on Insights pagination within one shop's single-pass pull
 
 export interface InsightsQuery {
   level: "campaign" | "ad";
@@ -1092,7 +1092,7 @@ git commit -m "refactor(ingest): writeDlq accepts a connector (default shopify)"
 
 ---
 
-## Task 8: `backfill.server.ts` (per-shop 90-day backfill, resumable)
+## Task 8: `backfill.server.ts` (per-shop 90-day backfill, single-pass)
 
 **Files:**
 - Create: `app/lib/meta/insights/backfill.server.ts`
@@ -1412,23 +1412,38 @@ Extend the `summary` object literal with a `meta` field:
 Then add Phase 4 immediately before `return json(summary);`:
 
 ```ts
-  // Phase 4: Meta ad-spend ingestion. Backfill never-synced meta_ads shops,
-  // poll the rest. One shop's failure is isolated (detail lands in ingestion_dlq).
-  const { data: metaShops } = await sb
+  // Phase 4: Meta ad-spend ingestion. Single-pass per shop. Backfill a BOUNDED
+  // number of not-yet-synced shops per tick (resumable at SHOP granularity, like
+  // Phase 1's MAX_BACKFILL_SHOPS); poll the already-synced ones (cheap 2-day pull).
+  // A failed shop keeps last_sync_at = null (runMetaBackfill sets error status,
+  // not last_sync_at), so it is retried wholesale next tick -- safe because the
+  // upserts are idempotent. One shop's failure is isolated (detail in ingestion_dlq).
+  const { data: metaPending } = await sb
     .from("shop_integrations")
-    .select("sync_status, last_sync_at, shops!inner(shop_domain)")
-    .eq("kind", "meta_ads");
-  for (const row of metaShops ?? []) {
-    const r = row as unknown as { sync_status: string; last_sync_at: string | null; shops: { shop_domain: string } };
-    const domain = r.shops.shop_domain;
+    .select("shops!inner(shop_domain)")
+    .eq("kind", "meta_ads")
+    .is("last_sync_at", null)
+    .limit(MAX_BACKFILL_SHOPS);
+  for (const row of metaPending ?? []) {
+    const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {
-      if (!r.last_sync_at || r.sync_status === "pending") {
-        await runMetaBackfill(domain);
-        summary.meta.backfilled.push(domain);
-      } else {
-        await runMetaPoll(domain);
-        summary.meta.polled.push(domain);
-      }
+      await runMetaBackfill(domain);
+      summary.meta.backfilled.push(domain);
+    } catch {
+      summary.meta.errors.push(domain); // detail already in ingestion_dlq
+    }
+  }
+
+  const { data: metaReady } = await sb
+    .from("shop_integrations")
+    .select("shops!inner(shop_domain)")
+    .eq("kind", "meta_ads")
+    .not("last_sync_at", "is", null);
+  for (const row of metaReady ?? []) {
+    const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
+    try {
+      await runMetaPoll(domain);
+      summary.meta.polled.push(domain);
     } catch {
       summary.meta.errors.push(domain); // detail already in ingestion_dlq
     }
@@ -1589,7 +1604,7 @@ function sumEngagement(rows: AdDailyRow[]): Engagement {
 export function rollupSummary(
   camp: CampaignDailyRow[],
   ads: AdDailyRow[],
-  opts: { breakEvenRoas: number; marginPct: number; confidence: MarginConfidence; windowDays: 30 | 90 },
+  opts: { breakEvenRoas: number; marginPct: number; confidence: MarginConfidence; windowDays: 7 | 30 | 90 },
 ): AnalyticsSummary {
   const spend = camp.reduce((s, r) => s + r.spend_cents, 0);
   const value = camp.reduce((s, r) => s + r.purchase_value_cents, 0);
@@ -1664,146 +1679,176 @@ Expected: PASS (3 tests).
 In `app/lib/calderyn.server.ts`, add imports at the top:
 
 ```ts
-import { computeBreakEven, DEFAULT_MARGIN, COVERAGE_THRESHOLD } from "./analytics/breakeven";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeBreakEven, DEFAULT_MARGIN, COVERAGE_THRESHOLD, type BreakEvenResult } from "./analytics/breakeven";
 import { rollupTrend, rollupSummary, rollupCampaigns, type CampaignDailyRow, type AdDailyRow } from "./analytics/rollup";
 import type { AnalyticsSummary, CampaignInsight, AdInsight, TrendPoint } from "./types";
 ```
 
-Add a helper above `calderynClient` (after the `rowTo*` helpers) to load margin inputs + alert links once per request:
+Add these module-level helpers above `calderynClient` (after the `rowTo*` helpers). They are free functions -- no `this`, and nothing is exposed on the client surface except real DTO methods:
 
 ```ts
-type Window = 30 | 90;
+export type AnalyticsWindow = 7 | 30 | 90;
 const sinceISO = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
-async function loadBreakEven(supabase: ReturnType<typeof getSupabase>, shopId: string, days: number) {
-  const [{ data: lines }, { data: settings }] = await Promise.all([
-    supabase.rpc("noop").then(() => ({ data: null as null })).catch(() => ({ data: null as null })), // placeholder removed below
-    supabase.from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle(),
-  ]);
-  void lines;
-  // Real margin lines: order lines in-window joined to sku cost.
+async function loadDaily(
+  supabase: SupabaseClient,
+  shopId: string,
+  days: number,
+): Promise<{ camp: CampaignDailyRow[]; ads: AdDailyRow[] }> {
   const since = sinceISO(days);
-  const { data: lineRows } = await supabase
-    .from("order_line_fact")
-    .select("quantity, price_cents, sku_dim!inner(unit_cost_cents), order_fact!inner(shop_id, created_at)")
-    .eq("order_fact.shop_id", shopId)
-    .gte("order_fact.created_at", since);
-  const marginLines = (lineRows ?? []).map((r) => {
+  const [campRes, adsRes] = await Promise.all([
+    supabase.from("v_campaign_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
+    supabase.from("v_ad_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
+  ]);
+  if (campRes.error) throw campRes.error;
+  if (adsRes.error) throw adsRes.error;
+  return { camp: (campRes.data ?? []) as CampaignDailyRow[], ads: (adsRes.data ?? []) as AdDailyRow[] };
+}
+
+async function loadBreakEven(supabase: SupabaseClient, shopId: string, days: number): Promise<BreakEvenResult> {
+  const since = sinceISO(days);
+  const [settingsRes, lineRes] = await Promise.all([
+    supabase.from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle(),
+    supabase
+      .from("order_line_fact")
+      .select("quantity, price_cents, sku_dim!inner(unit_cost_cents), order_fact!inner(shop_id, created_at)")
+      .eq("order_fact.shop_id", shopId)
+      .gte("order_fact.created_at", since),
+  ]);
+  if (settingsRes.error) throw settingsRes.error;
+  if (lineRes.error) throw lineRes.error;
+  const lines = (lineRes.data ?? []).map((r) => {
     const row = r as unknown as { quantity: number; price_cents: number; sku_dim: { unit_cost_cents: number | null } };
     return { price_cents: row.price_cents, quantity: row.quantity, unit_cost_cents: row.sku_dim?.unit_cost_cents ?? null };
   });
-  const override = (settings as { blended_margin_override?: number | null } | null)?.blended_margin_override ?? null;
-  return computeBreakEven({ lines: marginLines, override, defaultMargin: DEFAULT_MARGIN, coverageThreshold: COVERAGE_THRESHOLD });
+  const override =
+    (settingsRes.data as { blended_margin_override?: number | null } | null)?.blended_margin_override ?? null;
+  return computeBreakEven({ lines, override, defaultMargin: DEFAULT_MARGIN, coverageThreshold: COVERAGE_THRESHOLD });
+}
+
+// Open alerts keyed by campaign NAME (matches the existing name-link in
+// app.campaigns.tsx). If Task 0 shows alerts carry a Meta campaign id, switch the
+// key to the id and pass it straight to rollupCampaigns for a precise join.
+async function loadAlertLinks(supabase: SupabaseClient, shopId: string): Promise<Record<string, string[]>> {
+  const { data, error } = await supabase
+    .from("v_alerts_view").select("id, campaign, status")
+    .eq("shop_id", shopId).eq("status", "open");
+  if (error) throw error;
+  const out: Record<string, string[]> = {};
+  for (const a of (data ?? []) as { id: string; campaign: string | null }[]) {
+    if (!a.campaign) continue;
+    (out[a.campaign] ??= []).push(a.id);
+  }
+  return out;
 }
 ```
 
-> Note: the leading `supabase.rpc("noop")...` placeholder line is illustrative of
-> the parallel-load shape; **delete that first array element and the `void lines;`
-> line** when implementing -- keep only the `analytics_settings` read. It is shown
-> so the diff context is unambiguous; do not ship a `noop` RPC.
-
-Then inside the object returned by `calderynClient`, add a new `analytics` key (sibling of `campaigns`):
+Then inside the object returned by `calderynClient`, add a new `analytics` key (sibling of `campaigns`). Every method is a real DTO method; the loaders above stay module-private:
 
 ```ts
     analytics: {
-      async _daily(days: Window): Promise<{ camp: CampaignDailyRow[]; ads: AdDailyRow[] }> {
-        const shopId = await shopIdP;
-        const since = sinceISO(days);
-        const [{ data: camp, error: cErr }, { data: ads, error: aErr }] = await Promise.all([
-          supabase.from("v_campaign_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
-          supabase.from("v_ad_insights_daily").select("*").eq("shop_id", shopId).gte("day_bucket", since),
-        ]);
-        if (cErr) throw cErr;
-        if (aErr) throw aErr;
-        return { camp: (camp ?? []) as CampaignDailyRow[], ads: (ads ?? []) as AdDailyRow[] };
-      },
-      async summary(days: Window = 30): Promise<AnalyticsSummary> {
+      async summary(days: AnalyticsWindow = 30): Promise<AnalyticsSummary> {
         try {
           const shopId = await shopIdP;
-          const [{ camp, ads }, be] = await Promise.all([this._daily(days), loadBreakEven(supabase, shopId, days)]);
-          return rollupSummary(camp, ads, { breakEvenRoas: be.breakEvenRoas, marginPct: be.margin, confidence: be.confidence, windowDays: days });
+          const [{ camp, ads }, be] = await Promise.all([
+            loadDaily(supabase, shopId, days),
+            loadBreakEven(supabase, shopId, days),
+          ]);
+          return rollupSummary(camp, ads, {
+            breakEvenRoas: be.breakEvenRoas,
+            marginPct: be.margin,
+            confidence: be.confidence,
+            windowDays: days,
+          });
         } catch (err) {
           rethrow("analytics.summary", err);
         }
       },
-      async trend(days: Window = 30): Promise<TrendPoint[]> {
+      async trend(days: AnalyticsWindow = 30): Promise<TrendPoint[]> {
         try {
-          const { camp } = await this._daily(days);
+          const shopId = await shopIdP;
+          const { camp } = await loadDaily(supabase, shopId, days);
           return rollupTrend(camp);
         } catch (err) {
           rethrow("analytics.trend", err);
         }
       },
-      async campaigns(days: Window = 30): Promise<CampaignInsight[]> {
+      async campaigns(days: AnalyticsWindow = 30): Promise<CampaignInsight[]> {
         try {
           const shopId = await shopIdP;
-          const [{ camp, ads }, be, alerts] = await Promise.all([
-            this._daily(days),
+          const [{ camp, ads }, be, links] = await Promise.all([
+            loadDaily(supabase, shopId, days),
             loadBreakEven(supabase, shopId, days),
-            this.list_alerts_for_link(),
+            loadAlertLinks(supabase, shopId),
           ]);
-          return rollupCampaigns(camp, ads, be.breakEvenRoas, alerts);
+          return rollupCampaigns(camp, ads, be.breakEvenRoas, links);
         } catch (err) {
           rethrow("analytics.campaigns", err);
         }
       },
-      async ads(campaignId: string, days: Window = 30): Promise<AdInsight[]> {
+      async ads(campaignId: string, days: AnalyticsWindow = 30): Promise<AdInsight[]> {
         try {
-          const { ads } = await this._daily(days);
-          const byAd = new Map<string, AdInsight>();
+          const shopId = await shopIdP;
+          const { ads } = await loadDaily(supabase, shopId, days);
+          // Accumulate purchase value in a temp field, then derive ROAS once at the end.
+          const byAd = new Map<string, AdInsight & { _value_cents: number }>();
           for (const a of ads.filter((r) => r.campaign_external_id === campaignId)) {
-            const cur = byAd.get(a.ad_external_id) ?? {
-              ad_id: a.ad_external_id, campaign_id: campaignId, name: a.ad_name,
-              spend_cents: 0, roas: 0,
-              engagement: { reactions: 0, comments: 0, shares: 0, saves: 0, post_engagement: 0 },
-            };
+            const cur =
+              byAd.get(a.ad_external_id) ?? {
+                ad_id: a.ad_external_id, campaign_id: campaignId, name: a.ad_name,
+                spend_cents: 0, roas: 0, _value_cents: 0,
+                engagement: { reactions: 0, comments: 0, shares: 0, saves: 0, post_engagement: 0 },
+              };
             cur.spend_cents += a.spend_cents;
+            cur._value_cents += a.purchase_value_cents;
             cur.engagement.reactions += a.reactions;
             cur.engagement.comments += a.comments;
             cur.engagement.shares += a.shares;
             cur.engagement.saves += a.saves;
             cur.engagement.post_engagement += a.post_engagement;
-            cur.roas = cur.spend_cents > 0 ? (cur.roas * (cur.spend_cents - a.spend_cents) + a.purchase_value_cents) / cur.spend_cents : 0;
             byAd.set(a.ad_external_id, cur);
           }
-          return [...byAd.values()].sort((x, y) => y.spend_cents - x.spend_cents);
+          return [...byAd.values()]
+            .map(({ _value_cents, ...ad }) => ({ ...ad, roas: ad.spend_cents > 0 ? _value_cents / ad.spend_cents : 0 }))
+            .sort((x, y) => y.spend_cents - x.spend_cents);
         } catch (err) {
           rethrow("analytics.ads", err);
         }
       },
-      async list_alerts_for_link(): Promise<Record<string, string[]>> {
-        const shopId = await shopIdP;
-        const { data, error } = await supabase
-          .from("v_alerts_view").select("id, campaign, detector_id, status")
-          .eq("shop_id", shopId).eq("status", "open");
-        if (error) throw error;
-        const out: Record<string, string[]> = {};
-        for (const a of (data ?? []) as { id: string; campaign: string | null }[]) {
-          if (!a.campaign) continue;
-          (out[a.campaign] ??= []).push(a.id); // keyed by campaign name; surface joins by name
-        }
-        return out;
-      },
       settings: {
         async get(): Promise<{ marginOverride: number | null }> {
-          const shopId = await shopIdP;
-          const { data, error } = await supabase.from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle();
-          if (error) throw error;
-          return { marginOverride: (data?.blended_margin_override as number | null) ?? null };
+          try {
+            const shopId = await shopIdP;
+            const { data, error } = await supabase
+              .from("analytics_settings").select("blended_margin_override").eq("shop_id", shopId).maybeSingle();
+            if (error) throw error;
+            return { marginOverride: (data?.blended_margin_override as number | null) ?? null };
+          } catch (err) {
+            rethrow("analytics.settings.get", err);
+          }
         },
         async update(patch: { marginOverride: number | null }): Promise<void> {
-          const shopId = await shopIdP;
-          const { error } = await supabase.from("analytics_settings").upsert({ shop_id: shopId, blended_margin_override: patch.marginOverride, updated_at: new Date().toISOString() }, { onConflict: "shop_id" });
-          if (error) throw error;
+          try {
+            const shopId = await shopIdP;
+            const { error } = await supabase
+              .from("analytics_settings")
+              .upsert(
+                { shop_id: shopId, blended_margin_override: patch.marginOverride, updated_at: new Date().toISOString() },
+                { onConflict: "shop_id" },
+              );
+            if (error) throw error;
+          } catch (err) {
+            rethrow("analytics.settings.update", err);
+          }
         },
       },
     },
 ```
 
-> `linked_alert_ids` keys on campaign **name** (matching the existing
-> `app.campaigns.tsx` name-link), so `rollupCampaigns` is called with a map keyed
-> by name; pass `alerts` through a name->ids structure. If Task 0 shows alerts
-> carry a Meta campaign id, switch the key to the id for a precise join.
+> `rollupCampaigns` keys `linked_alert_ids` the same way `loadAlertLinks` does
+> (campaign name today). If Task 0 shows alerts carry a Meta campaign id, switch
+> both to the id for a precise join.
 
 - [ ] **Step 6: Typecheck**
 
@@ -2020,16 +2065,13 @@ In `app/routes/app._index.tsx`, extend the loader's `Promise.all` to also load t
       client.audit.list(request.signal),
       client.guardrails.get(request.signal),
       client.onboarding.getState(request.signal),
-      client.analytics.summary(7 as unknown as 30).catch(() => null),
+      client.analytics.summary(7).catch(() => null), // AnalyticsWindow includes 7 (Task 11)
     ]);
     return json<LoaderPayload>({ alerts, audit, guardrails, onboardingDone: onboarding.done, trueRoas: summary?.account_roas ?? null, error: null });
 ```
 
-> The dashboard wants a 7-day figure; `analytics.summary` is typed to 30|90.
-> Either add `7` to the `Window` type in Task 11 (preferred -- update the type to
-> `7 | 30 | 90`) or compute a 7-day ROAS via a dedicated `client.analytics`
-> helper. Pick one and keep the type honest (no `as unknown as`). Update the
-> error-branch payload to include `trueRoas: null`.
+> Also update the loader's `catch` branch `json<LoaderPayload>({...})` to include
+> `trueRoas: null` so both branches satisfy `LoaderPayload`.
 
 Then replace the `"True ROAS (7d)"` StatCard placeholder value (the dash literal) with:
 

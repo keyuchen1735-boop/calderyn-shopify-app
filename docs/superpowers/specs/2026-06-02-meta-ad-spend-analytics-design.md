@@ -42,9 +42,10 @@ After a merchant connects Meta and the initial backfill completes (see note on
 1. `ad_spend_fact` (campaign-level, daily) and the new `ad_insight_fact`
    (ad-level, daily, incl. engagement) populate from the merchant's real Meta
    Insights -- a 90-day backfill on connect, then daily increments.
-   **"Completes" = the resumable backfill has drained, which may take multiple
-   cron ticks for a large account (Sec 6); it is not assumed to finish in one
-   cron cycle.**
+   **"Completes" = a shop's single-pass backfill has run. The cron backfills a
+   bounded number of not-yet-synced shops per tick (resumable at SHOP
+   granularity, Sec 6.4), so with many pending shops a given shop may wait a few
+   ticks; one shop's own 90-day pull completes within its invocation.**
 2. `v_campaigns_flat` returns **real** `roas_7d` / `spend_7d` (no seed), fixing
    the Campaigns-page zeros and the dashboard "True ROAS" tile.
 3. A new **Analytics** page shows: account summary (blended margin, break-even
@@ -140,7 +141,7 @@ surface: app.analytics.tsx --client.analytics.*(window)--> filter day_bucket >= 
 |---|---|---|
 | `insights-client.server.ts` | Paginated Meta Insights `GET` (injected HTTP client, mirrors `meta/campaigns.server.ts`) | injected fake |
 | `mappers.server.ts` | **Pure** Insights JSON -> `ad_spend_fact` / `ad_insight_fact` rows, incl. `actions[]`->engagement-column mapping, cents conversion, ROAS source-field selection | pure |
-| `backfill.server.ts` | Orchestrate one shop's 90-day backfill in bounded pages, resumable | seam-tested |
+| `backfill.server.ts` | Orchestrate one shop's single-pass 90-day backfill (internal Insights paging) | seam-tested |
 | `poller.server.ts` | Daily incremental poll (yesterday/today) per shop | seam-tested |
 
 `app/lib/analytics/`:
@@ -201,8 +202,11 @@ Parsed from `actions[]` by `action_type` (missing types store `0`):
 
 ### 6.4 Batching, failures, idempotency
 
-Bounded page sizes; a large shop resumes across cron ticks (the backfill records
-its cursor/last-completed date per shop so the next tick continues, not restarts).
+Single-pass per shop with internal Insights pagination. The cron backfills a
+bounded number of not-yet-synced shops per tick (resumable at SHOP granularity,
+mirroring the Shopify ingestion's MAX_BACKFILL_SHOPS); a shop whose pull fails
+goes to ingestion_dlq and is retried wholesale next tick -- safe because the
+upserts are idempotent. Intra-shop date-chunked resume is a deferred enhancement.
 Per-shop failure -> `ingestion_dlq(connector='meta', job_kind='backfill'|'poll',
 ...)` + `shop_integrations(meta_ads).sync_error`; continue to the next shop. Cron
 returns JSON counts (`shopsProcessed`, `factsWritten`, `adsWritten`, `dlqCount`).
@@ -403,8 +407,9 @@ pull against a real ad account. Test runner is **Vitest** (already present).
 
 ## 13. Open items deferred to the plan
 
-- Exact Insights field list / pagination cursor strategy and page sizes, and the
-  per-shop resume cursor shape.
+- Exact Insights field list / pagination cursor strategy and page sizes.
+- Whether to add intra-shop date-chunked backfill resume (deferred; v1 is
+  single-pass per shop, bounded by shops-per-tick).
 - Whether the Meta poller is a phase inside `cron.ingest.tsx` or a sibling
   `cron.ingest.meta.tsx` with its own `vercel.json` schedule (config-only).
 - Whether daily-grain rollups stay views (default) or get materialized if the
