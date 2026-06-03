@@ -41,6 +41,8 @@ Each task below is authored so the project typechecks at that task's commit (no 
 
 **Idempotency model (read before Task 9):** each budget move is reserved by an **atomic** insert into `budget_move_ledger` keyed `budget:<shopId>:<campaignId>:<tickHour>:<role>` *before* the Meta write. A PK conflict means the move is already claimed this tick -> skip. Because `setCampaignBudget` writes an **absolute** `toCents` (not a delta), replaying it is a no-op, so an at-least-once retry is safe. On any failure after the claim, the ledger row is deleted (claim released) so a later tick can re-attempt; the move is never applied twice as a net effect, and no duplicate `action_audit` row can inflate `used_today`.
 
+**Naming note (applied during execution):** the budget-local spend+ROAS type below is named **`CampaignSpendRoas`** in the shipped code (not `CampaignInsight`) to avoid a same-name clash with the analytics `CampaignInsight` DTO in `app/lib/types.ts` owned by the parallel workstream. Where the code blocks below say `CampaignInsight`, read `CampaignSpendRoas`; `fetchCampaignInsights` (Task 5) returns the structurally-identical inline shape.
+
 ---
 
 ## Task 1: ActionKind + budget scoring types & classify
