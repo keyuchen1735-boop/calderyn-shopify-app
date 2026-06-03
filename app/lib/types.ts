@@ -92,3 +92,57 @@ export interface GuardrailConfig {
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
 }
+
+// --- Ad-spend analytics (session #2). Additive only. ---
+export type CampaignGrade = "winning" | "okay" | "poor";
+
+export interface Engagement {
+  reactions: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  post_engagement: number;
+}
+
+export interface CampaignInsight {
+  campaign_id: string; // Meta campaign external id
+  name: string;
+  status: "active" | "paused";
+  spend_cents: number;
+  impressions: number;
+  link_clicks: number;
+  purchases: number;
+  purchase_value_cents: number;
+  roas: number;
+  break_even_roas: number;
+  grade: CampaignGrade;
+  engagement: Engagement;
+  linked_alert_ids: string[];
+}
+
+export interface AdInsight {
+  ad_id: string;
+  campaign_id: string;
+  name: string;
+  spend_cents: number;
+  roas: number;
+  engagement: Engagement;
+}
+
+export interface TrendPoint {
+  day_bucket: string; // ISO date
+  spend_cents: number;
+  roas: number;
+}
+
+export type MarginConfidence = "ok" | "low" | "override" | "default";
+
+export interface AnalyticsSummary {
+  window_days: 7 | 30 | 90;
+  blended_margin_pct: number; // 0..1
+  margin_confidence: MarginConfidence;
+  break_even_roas: number;
+  account_roas: number;
+  total_spend_cents: number;
+  total_engagement: number; // sum(reactions+comments+shares+saves) over window
+}
