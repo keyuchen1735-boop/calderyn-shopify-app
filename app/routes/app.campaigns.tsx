@@ -56,16 +56,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let campaigns: Campaign[];
     if (meta) {
       const live = await listCampaigns(meta.client, meta.adAccountId);
-      campaigns = live.map((c) => ({
-        id: c.id,
-        name: c.name,
-        platform: "Meta" as const,
-        status: c.status === "PAUSED" ? ("paused" as const) : ("active" as const),
-        daily_budget_cents: c.dailyBudgetCents ?? 0,
-        roas_7d: 0,
-        contribution_margin: 0,
-        spend_7d: 0,
-      }));
+      const ingested = await client.campaigns.list(request.signal);
+      const byId = new Map(ingested.map((c) => [c.id, c]));
+      campaigns = live.map((c) => {
+        const hit = byId.get(c.id);
+        return {
+          id: c.id,
+          name: c.name,
+          platform: "Meta" as const,
+          status: c.status === "PAUSED" ? ("paused" as const) : ("active" as const),
+          daily_budget_cents: c.dailyBudgetCents ?? 0,
+          roas_7d: hit?.roas_7d ?? 0,
+          contribution_margin: hit?.contribution_margin ?? 0,
+          spend_7d: hit?.spend_7d ?? 0,
+        };
+      });
     } else {
       campaigns = await client.campaigns.list(request.signal);
     }

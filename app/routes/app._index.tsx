@@ -26,6 +26,7 @@ type LoaderPayload = {
   audit: AuditEntry[];
   guardrails: GuardrailConfig | null;
   onboardingDone: boolean;
+  trueRoas: number | null;
   error: { code: string; message: string } | null;
 };
 
@@ -33,17 +34,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [alerts, audit, guardrails, onboarding] = await Promise.all([
+    const [alerts, audit, guardrails, onboarding, summary] = await Promise.all([
       client.alerts.list({ status: "open" }, request.signal),
       client.audit.list(request.signal),
       client.guardrails.get(request.signal),
       client.onboarding.getState(request.signal),
+      client.analytics.summary(7).catch(() => null),
     ]);
     return json<LoaderPayload>({
       alerts,
       audit,
       guardrails,
       onboardingDone: onboarding.done,
+      trueRoas: summary?.account_roas ?? null,
       error: null,
     });
   } catch (err) {
@@ -53,6 +56,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       audit: [],
       guardrails: null,
       onboardingDone: true,
+      trueRoas: null,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -60,7 +64,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { alerts, audit, guardrails, onboardingDone, error } = useLoaderData<typeof loader>();
+  const { alerts, audit, guardrails, onboardingDone, trueRoas, error } = useLoaderData<typeof loader>();
 
   useEffect(() => {
     if (!onboardingDone) navigate("/app/onboarding");
@@ -128,7 +132,7 @@ export default function Dashboard() {
           )}
           <StatCard
             label="True ROAS (7d)"
-            value="—"
+            value={trueRoas != null ? trueRoas.toFixed(2) : "—"}
             caption="margin-adjusted"
             to="/app/campaigns"
           />
