@@ -217,16 +217,34 @@ async function loadBreakEven(supabase: SupabaseClient, shopId: string, days: num
   return computeBreakEven({ lines, override, defaultMargin: DEFAULT_MARGIN, coverageThreshold: COVERAGE_THRESHOLD });
 }
 
-// Open alerts keyed by campaign NAME (matches the existing name-link in app.campaigns.tsx).
-async function loadAlertLinks(supabase: SupabaseClient, shopId: string): Promise<Record<string, string[]>> {
+// Open alerts with their campaign label, for linking to insights.
+async function loadOpenAlertLinks(
+  supabase: SupabaseClient,
+  shopId: string,
+): Promise<{ id: string; campaign: string | null }[]> {
   const { data, error } = await supabase
     .from("v_alerts_view").select("id, campaign, status")
     .eq("shop_id", shopId).eq("status", "open");
   if (error) throw error;
+  return (data ?? []) as { id: string; campaign: string | null }[];
+}
+
+// Build {campaign_external_id -> alert ids} by matching each campaign's name
+// against the alert's campaign label (substring), mirroring the existing
+// name-link in app.campaigns.tsx. rollupCampaigns looks up by external id, so we
+// bridge name -> id here. Runtime-reconciliation item: if alerts ever carry the
+// Meta campaign id directly, key on that instead.
+function alertLinksByCampaignId(
+  alerts: { id: string; campaign: string | null }[],
+  camp: CampaignDailyRow[],
+): Record<string, string[]> {
+  const nameById = new Map<string, string>();
+  for (const c of camp) nameById.set(c.campaign_external_id, c.campaign_name);
   const out: Record<string, string[]> = {};
-  for (const a of (data ?? []) as { id: string; campaign: string | null }[]) {
-    if (!a.campaign) continue;
-    (out[a.campaign] ??= []).push(a.id);
+  for (const [externalId, name] of nameById) {
+    if (!name) continue;
+    const ids = alerts.filter((a) => a.campaign && a.campaign.includes(name)).map((a) => a.id);
+    if (ids.length) out[externalId] = ids;
   }
   return out;
 }
@@ -657,11 +675,12 @@ export function calderynClient(shop: string) {
       async campaigns(days: AnalyticsWindow = 30): Promise<CampaignInsight[]> {
         try {
           const shopId = await shopIdP;
-          const [{ camp, ads }, be, links] = await Promise.all([
+          const [{ camp, ads }, be, alerts] = await Promise.all([
             loadDaily(supabase, shopId, days),
             loadBreakEven(supabase, shopId, days),
-            loadAlertLinks(supabase, shopId),
+            loadOpenAlertLinks(supabase, shopId),
           ]);
+          const links = alertLinksByCampaignId(alerts, camp);
           return rollupCampaigns(camp, ads, be.breakEvenRoas, links);
         } catch (err) {
           rethrow("analytics.campaigns", err);
