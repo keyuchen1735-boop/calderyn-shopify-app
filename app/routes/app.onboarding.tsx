@@ -23,8 +23,8 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import {
-  CalderynError,
   calderynClient,
+  type CalderynError,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
@@ -49,6 +49,7 @@ type LoaderPayload = {
   guardrails: GuardrailConfig | null;
   integrations: Record<string, Integration>;
   error: { code: string; message: string } | null;
+  devBypass: boolean;
 };
 
 type ActionPayload = {
@@ -56,6 +57,14 @@ type ActionPayload = {
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
 };
+
+// ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
+// Renders an onboarding "skip" button in ALL environments (prod included) so we
+// can test the dashboard before Google/QuickBooks OAuth is wired. This is a
+// deliberate, known security shortcut: anyone who reaches onboarding can skip
+// setup. To kill it, set this to false (or delete the banner block below) and
+// redeploy. Tracked in agent memory: onboarding-prod-bypass.
+const ONBOARDING_DEV_BYPASS = true;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -73,6 +82,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails,
       integrations,
       error: null,
+      devBypass: ONBOARDING_DEV_BYPASS,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -83,6 +93,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails: null,
       integrations: {},
       error: { code: e.code ?? "ERROR", message: e.message },
+      devBypass: ONBOARDING_DEV_BYPASS,
     });
   }
 };
@@ -142,7 +153,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Onboarding() {
-  const { step, shopDomain, guardrails, integrations, error } =
+  const { step, shopDomain, guardrails, integrations, error, devBypass } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -155,6 +166,23 @@ export default function Onboarding() {
   return (
     <Page title="Welcome to Calderyn" subtitle="A 4-minute setup that gets Calderyn watching your store.">
       <BlockStack gap="500">
+        {devBypass && (
+          <Banner tone="warning" title="Temporary testing shortcut">
+            <BlockStack gap="200">
+              <p>
+                OAuth providers aren&apos;t fully wired yet. Skip setup to jump straight to the
+                dashboard. This is a temporary pre-launch shortcut and must be removed before
+                real merchants get access.
+              </p>
+              <Form method="post">
+                <input type="hidden" name="intent" value="finish" />
+                <Button submit loading={submitting} disabled={submitting}>
+                  Skip setup → dashboard (dev only)
+                </Button>
+              </Form>
+            </BlockStack>
+          </Banner>
+        )}
         {error && (
           <Banner tone="critical" title="Couldn't load onboarding state">
             <p>
