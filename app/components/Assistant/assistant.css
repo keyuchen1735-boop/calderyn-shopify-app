@@ -1,0 +1,43 @@
+/* app/components/Assistant/assistant.css — positioning only; all content is Polaris. */
+.calderyn-assistant-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 519;
+}
+
+.calderyn-assistant-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  max-width: 92vw;
+  z-index: 520;
+  background: var(--p-color-bg-surface, #fff);
+  border-left: 1px solid var(--p-color-border, #e1e3e5);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+
+.calderyn-assistant-header,
+.calderyn-assistant-composer {
+  padding: 12px;
+  border-bottom: 1px solid var(--p-color-border, #e1e3e5);
+}
+.calderyn-assistant-composer {
+  border-bottom: none;
+  border-top: 1px solid var(--p-color-border, #e1e3e5);
+}
+.calderyn-assistant-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+.calderyn-assistant-bubble {
+  margin-bottom: 12px;
+}
+.calderyn-assistant-bubble[data-role="user"] {
+  text-align: right;
+}

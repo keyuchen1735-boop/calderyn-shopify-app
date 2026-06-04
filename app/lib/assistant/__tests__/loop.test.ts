@@ -1,0 +1,92 @@
+import { describe, it, expect, vi } from "vitest";
+import type Anthropic from "@anthropic-ai/sdk";
+import { runAssistantTurn } from "../loop.server";
+import type { ToolDispatchResult } from "../tools.server";
+
+function textMsg(text: string): Anthropic.Message {
+  return {
+    id: "m",
+    type: "message",
+    role: "assistant",
+    model: "x",
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
+    content: [{ type: "text", text }],
+  } as unknown as Anthropic.Message;
+}
+
+function toolMsg(id: string, name: string, input: unknown): Anthropic.Message {
+  return {
+    id: "m",
+    type: "message",
+    role: "assistant",
+    model: "x",
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
+    content: [{ type: "tool_use", id, name, input }],
+  } as unknown as Anthropic.Message;
+}
+
+const base = {
+  model: "x",
+  system: [{ type: "text" as const, text: "sys" }],
+  tools: [],
+  history: [],
+  userMessage: "hi",
+};
+
+describe("runAssistantTurn", () => {
+  it("returns text on a single non-tool turn", async () => {
+    const createMessage = vi.fn(async () => textMsg("hello there"));
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: "{}" }));
+    const res = await runAssistantTurn({ ...base, createMessage, dispatchTool });
+    expect(res.text).toBe("hello there");
+    expect(res.draftedAction).toBeNull();
+    expect(dispatchTool).not.toHaveBeenCalled();
+    expect(createMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a tool then returns the follow-up text", async () => {
+    const createMessage = vi
+      .fn()
+      .mockResolvedValueOnce(toolMsg("t1", "list_alerts", { status: "open" }))
+      .mockResolvedValueOnce(textMsg("you have 3 alerts"));
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: '{"alerts":[]}' }));
+    const res = await runAssistantTurn({ ...base, createMessage, dispatchTool });
+    expect(dispatchTool).toHaveBeenCalledWith("list_alerts", { status: "open" });
+    expect(res.text).toBe("you have 3 alerts");
+  });
+
+  it("captures a draftedAction from a tool result", async () => {
+    const drafted = { alertId: "a1", actionKind: "pause_campaign" as const, label: "Pause campaign", dollarImpact: 100 };
+    const createMessage = vi
+      .fn()
+      .mockResolvedValueOnce(toolMsg("t1", "propose_action", { alert_id: "a1", action_kind: "pause_campaign" }))
+      .mockResolvedValueOnce(textMsg("done"));
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: "{}", draftedAction: drafted }));
+    const res = await runAssistantTurn({ ...base, createMessage, dispatchTool });
+    expect(res.draftedAction).toEqual(drafted);
+  });
+
+  it("stops at the max-turns cap", async () => {
+    const createMessage = vi.fn(async () => toolMsg("t1", "list_alerts", {}));
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: "{}" }));
+    const res = await runAssistantTurn({ ...base, createMessage, dispatchTool, maxToolTurns: 1 });
+    expect(res.stoppedAtCap).toBe(true);
+    expect(createMessage).toHaveBeenCalledTimes(2); // turn 0 + turn 1 (cap)
+  });
+
+  it("propagates a tool error into the tool_result (is_error)", async () => {
+    const createMessage = vi
+      .fn()
+      .mockResolvedValueOnce(toolMsg("t1", "get_alert", { id: "missing" }))
+      .mockResolvedValueOnce(textMsg("that alert does not exist"));
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: '{"code":"ALERT_NOT_FOUND"}', isError: true }));
+    await runAssistantTurn({ ...base, createMessage, dispatchTool });
+    const secondCallMessages = createMessage.mock.calls[1][0].messages;
+    const toolResultMsg = secondCallMessages[secondCallMessages.length - 1];
+    expect(toolResultMsg.content[0].is_error).toBe(true);
+  });
+});

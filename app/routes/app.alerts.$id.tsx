@@ -5,6 +5,7 @@ import {
   useLoaderData,
   useNavigate,
   useNavigation,
+  useSearchParams,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
@@ -34,6 +35,7 @@ import {
   DETECTOR_TO_ACTIONS,
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
+import { resolveActionParam } from "~/lib/assistant/action-param";
 import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
 
 type LoaderPayload = {
@@ -158,8 +160,16 @@ export default function AlertDetail() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
+  const [searchParams] = useSearchParams();
 
   useActionToast(actionData);
+
+  useEffect(() => {
+    if (!alert) return;
+    const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
+    const fromUrl = resolveActionParam(searchParams.get("action"), allowed);
+    if (fromUrl) setActionKind(fromUrl);
+  }, [alert, searchParams]);
 
   useEffect(() => {
     if (actionData?.ok) {
