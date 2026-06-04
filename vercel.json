@@ -7,7 +7,10 @@
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
   "crons": [
-    { "path": "/cron/ingest", "schedule": "0 6 * * *" },
-    { "path": "/cron/detect", "schedule": "0 7 * * *" }
+    { "path": "/cron/ingest", "schedule": "*/30 * * * *" },
+    { "path": "/cron/detect", "schedule": "15,45 * * * *" },
+    { "path": "/cron/google", "schedule": "0 * * * *" },
+    { "path": "/cron/gdpr", "schedule": "0 4 * * *" },
+    { "path": "/cron/action-retry", "schedule": "*/15 * * * *" }
   ]
 }
