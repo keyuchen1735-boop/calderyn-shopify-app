@@ -1,5 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-
 const GRAPH_VERSION = "v21.0";
 const SCOPE = "ads_management,ads_read";
 
@@ -12,23 +10,6 @@ export function buildAuthUrl(opts: { appId: string; redirectUri: string; state: 
     response_type: "code",
   });
   return `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`;
-}
-
-// state = base64url(shop) + "." + HMAC-SHA256(base64url(shop), secret)
-export function signState(shop: string, secret: string): string {
-  const payload = Buffer.from(shop, "utf8").toString("base64url");
-  const sig = createHmac("sha256", secret).update(payload).digest("base64url");
-  return `${payload}.${sig}`;
-}
-
-export function verifyState(state: string, secret: string): string | null {
-  const [payload, sig] = state.split(".");
-  if (!payload || !sig) return null;
-  const expected = createHmac("sha256", secret).update(payload).digest("base64url");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-  return Buffer.from(payload, "base64url").toString("utf8");
 }
 
 export type GraphTokenResponse = {

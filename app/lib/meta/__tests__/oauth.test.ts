@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildAuthUrl, signState, verifyState, exchangeCodeForToken } from "../oauth.server";
+import { buildAuthUrl, exchangeCodeForToken } from "../oauth.server";
 
 const SECRET = "app-secret";
 
@@ -11,15 +11,6 @@ describe("buildAuthUrl", () => {
     expect(url).toContain("redirect_uri=https%3A%2F%2Fx%2Fauth%2Fmeta");
     expect(url).toContain("scope=ads_management%2Cads_read");
     expect(url).toContain("state=st");
-  });
-});
-
-describe("state sign/verify", () => {
-  it("round-trips the shop and rejects tampering", () => {
-    const st = signState("acme.myshopify.com", SECRET);
-    expect(verifyState(st, SECRET)).toBe("acme.myshopify.com");
-    expect(verifyState(st + "x", SECRET)).toBeNull();
-    expect(verifyState(st, "wrong-secret")).toBeNull();
   });
 });
 
