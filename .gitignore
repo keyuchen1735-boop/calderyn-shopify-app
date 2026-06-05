@@ -17,6 +17,9 @@ secrets.local.txt
 .mcp.json
 .claude/settings.json
 
+# Brainstorming visual-companion scratch files
+.superpowers/
+
 # Python venv for engine (uv)
 .venv
 api/engine/.venv
