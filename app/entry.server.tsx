@@ -17,6 +17,14 @@ export default async function handleRequest(
   remixContext: EntryContext,
 ) {
   addDocumentResponseHeaders(request, responseHeaders);
+  // Defense-in-depth headers shopify-app-remix does not set. These do NOT touch
+  // the CSP frame-ancestors / HSTS that the embedded-app iframe depends on.
+  responseHeaders.set("X-Content-Type-Options", "nosniff");
+  responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  responseHeaders.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+  );
   const userAgent = request.headers.get("user-agent");
   const callbackName = isbot(userAgent ?? "")
     ? "onAllReady"

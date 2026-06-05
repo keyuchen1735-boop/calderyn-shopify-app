@@ -37,6 +37,6 @@ export const loader = async ({ request: _ }: LoaderFunctionArgs) => {
       ...(errorCode ? { errorCode } : {}),
       elapsed_ms: Date.now() - started,
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } },
   );
 };
