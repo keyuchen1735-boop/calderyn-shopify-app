@@ -2,7 +2,7 @@
   "framework": "remix",
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
-  "regions": ["iad1"],
+  "regions": ["pdx1"],
   "functions": {
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },

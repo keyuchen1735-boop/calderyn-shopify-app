@@ -21,7 +21,16 @@ export function getSupabase(): SupabaseClient {
   return _client;
 }
 
+// shop_domain → shop id is immutable (provisionShop upserts the row and only
+// toggles uninstalled_at; the id is never reassigned). Memoize it per process so
+// every loader avoids a redundant cross-region round trip to look it up. The
+// cache resets on cold start, which is fine — it's only a latency optimization.
+const shopIdCache = new Map<string, string>();
+
 export async function resolveShopId(shopDomain: string): Promise<string> {
+  const cached = shopIdCache.get(shopDomain);
+  if (cached) return cached;
+
   const { data, error } = await getSupabase()
     .from("shops")
     .select("id")
@@ -31,6 +40,7 @@ export async function resolveShopId(shopDomain: string): Promise<string> {
   if (!data) {
     throw new Error(`Shop not found in Supabase: ${shopDomain}`);
   }
+  shopIdCache.set(shopDomain, data.id);
   return data.id;
 }
 
