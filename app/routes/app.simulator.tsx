@@ -115,6 +115,20 @@ export default function Simulator() {
           </Card>
         )}
 
+        {/* A prior run left stuck in 'running' (e.g. a function timeout) — give the merchant a way out. */}
+        {!running && run?.status === "running" && (
+          <Banner tone="warning" title="A previous simulation didn't finish">
+            <p>It may have timed out. Run a new simulation to try again.</p>
+          </Banner>
+        )}
+
+        {/* Re-running while older results are still on screen. */}
+        {running && run?.model && (
+          <Banner tone="info" title="Running a new simulation">
+            <p>The results below are from your previous run until this one finishes.</p>
+          </Banner>
+        )}
+
         {run?.model && sample && (
           <>
             {sample.biggestLeak && (

@@ -72,6 +72,9 @@ export async function getLatestRun(shop: string): Promise<SimulationRun | null> 
   return data ? rowToRun(data) : null;
 }
 
+// History list for the sidebar/count. NOTE: the heavy `model` blob is intentionally
+// NOT selected, so every returned run has `model: null`. Use getLatestRun for the
+// full model; don't read `.model` off a listRuns item.
 export async function listRuns(shop: string, limit = 10): Promise<SimulationRun[]> {
   const sb = getSupabase();
   const shopId = await resolveShopId(shop);

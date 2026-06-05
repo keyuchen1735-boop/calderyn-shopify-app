@@ -17,6 +17,10 @@ export type CreateMessageFn = (
 const TOOL_NAME = "report_simulation";
 const MAX_TOKENS = 4096;
 const SEVERITIES: Severity[] = ["critical", "high", "low"];
+// Only the non-terminal stages have an "advance to next" probability. `bought` is
+// terminal — reaching it IS the conversion — so we don't ask Claude for advance.bought
+// (it would be collected but never read by the sampler).
+const ADVANCE_STAGES = FUNNEL_STAGES.slice(0, -1);
 
 /** Forced-output tool: Claude must call this with the behavior model. */
 export const REPORT_TOOL: Anthropic.Tool = {
@@ -39,8 +43,8 @@ export const REPORT_TOOL: Anthropic.Tool = {
             advance: {
               type: "object",
               description:
-                "Probability (0..1) of advancing from each stage to the next: landed, viewed_product, added_to_cart, started_checkout, shipping_reveal, bought.",
-              properties: Object.fromEntries(FUNNEL_STAGES.map((s) => [s, { type: "number" }])),
+                "Probability (0..1) of advancing FROM each stage to the next one: landed→viewed_product, viewed_product→added_to_cart, added_to_cart→started_checkout, started_checkout→shipping_reveal, shipping_reveal→bought. (bought is terminal — omit it. Put final-checkout/payment friction into shipping_reveal.)",
+              properties: Object.fromEntries(ADVANCE_STAGES.map((s) => [s, { type: "number" }])),
             },
             dropReason: {
               type: "object",

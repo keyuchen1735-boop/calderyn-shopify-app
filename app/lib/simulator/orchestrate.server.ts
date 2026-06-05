@@ -37,13 +37,32 @@ export async function executeSimulation(
   input: { shop: string; requestedN: number },
   deps: ExecuteDeps = defaultDeps(),
 ): Promise<SimulationRun> {
-  const run = await deps.startRun(input.shop, input.requestedN);
+  // startRun is inside the try so a DB blip there surfaces as an in-app error DTO
+  // (caught and shown in the route banner) rather than crashing to Remix's error boundary.
+  let run: SimulationRun | null = null;
   try {
+    run = await deps.startRun(input.shop, input.requestedN);
     const snapshot = await deps.fetchSnapshot(input.shop);
     const model = await deps.buildBehaviorModel(snapshot);
     return await deps.completeRun(run.id, model);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return await deps.failRun(run.id, message);
+    if (run) {
+      try {
+        return await deps.failRun(run.id, message);
+      } catch {
+        // failRun itself failed — fall through to a synthetic error DTO below.
+      }
+    }
+    return {
+      id: run?.id ?? "",
+      status: "error",
+      target: "whole_store",
+      requestedN: input.requestedN,
+      model: null,
+      error: message,
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
   }
 }
