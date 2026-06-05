@@ -12,7 +12,8 @@ import type {
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
-import { buildAuthUrl, signState } from "./meta/oauth.server";
+import { buildAuthUrl } from "./meta/oauth.server";
+import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
 
@@ -626,7 +627,10 @@ export function calderynClient(shop: string) {
             });
           }
           const redirectUri = `${appUrl}/auth/meta`;
-          const state = signState(shop, appSecret);
+          // Single-use, server-stored nonce bound to this shop (replaces the old
+          // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId);
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         throw new CalderynError({

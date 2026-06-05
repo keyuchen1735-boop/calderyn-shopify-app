@@ -1,11 +1,11 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import {
-  verifyState,
   exchangeCodeForToken,
   type GraphTokenResponse,
 } from "~/lib/meta/oauth.server";
-import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { consumeOAuthState } from "~/lib/meta/oauth-state.server";
+import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 
 const GRAPH_VERSION = "v21.0";
@@ -21,8 +21,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     throw new Response("Missing OAuth parameters", { status: 400 });
   }
 
-  const shop = verifyState(state, appSecret);
-  if (!shop) throw new Response("Invalid OAuth state", { status: 400 });
+  // Consume the single-use state nonce up front: this both authenticates the
+  // callback (only a nonce we minted is accepted) and resolves the destination
+  // shop. Reject before doing any token exchange if it is invalid/expired/reused.
+  const sb = getSupabase();
+  const shopId = await consumeOAuthState(sb, state);
+  if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
 
   const fetcher = async (u: string): Promise<GraphTokenResponse> =>
     (await fetch(u)).json() as Promise<GraphTokenResponse>;
@@ -45,8 +49,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const accountId = accounts.data?.[0]?.account_id;
   const adAccountId = accountId ? `act_${accountId}` : null;
 
-  const sb = getSupabase();
-  const shopId = await resolveShopId(shop);
   const now = new Date().toISOString();
   const expiresAt = expiresInSec ? new Date(Date.now() + expiresInSec * 1000).toISOString() : null;
 
