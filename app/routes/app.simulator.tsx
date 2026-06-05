@@ -37,7 +37,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
   const requestedN = clampN(form.get("requestedN"));
-  const run = await executeSimulation({ shop: session.shop, requestedN });
+  const demo = form.get("mode") === "demo";
+  const run = await executeSimulation({ shop: session.shop, requestedN, demo });
   return json(run);
 };
 
@@ -46,6 +47,8 @@ export default function Simulator() {
   const fetcher = useFetcher<typeof action>();
   const run: SimulationRun | null = (fetcher.data as SimulationRun | undefined) ?? latest;
   const running = fetcher.state !== "idle";
+  // Which button is mid-submit, so only that one shows a spinner.
+  const submittingMode = running ? fetcher.formData?.get("mode") : null;
 
   const [n, setN] = useState<number>(latest?.requestedN ?? MAX_SHOPPERS);
 
@@ -87,15 +90,36 @@ export default function Simulator() {
                 disabled
                 onChange={() => {}}
               />
-              <Box paddingBlockStart="600">
-                <fetcher.Form method="post">
-                  <input type="hidden" name="requestedN" value={n} />
-                  <Button submit variant="primary" loading={running}>
-                    {run ? "Run new simulation" : "Run first simulation"}
-                  </Button>
-                </fetcher.Form>
+              <Box paddingBlockStart="500">
+                <BlockStack gap="200">
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="requestedN" value={n} />
+                    <input type="hidden" name="mode" value="demo" />
+                    <Button submit variant="primary" loading={submittingMode === "demo"} disabled={running}>
+                      Run sample teardown
+                    </Button>
+                  </fetcher.Form>
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="requestedN" value={n} />
+                    <input type="hidden" name="mode" value="live" />
+                    <Button submit loading={submittingMode === "live"} disabled={running}>
+                      Run live simulation
+                    </Button>
+                  </fetcher.Form>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Sample teardown uses built-in data — no API key. Live uses AI.
+                  </Text>
+                </BlockStack>
               </Box>
             </InlineGrid>
+            {run?.target === "demo" && run?.model && (
+              <InlineStack gap="200" blockAlign="center">
+                <Badge tone="info">Sample data</Badge>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  This teardown uses built-in example data — no AI or API key was used.
+                </Text>
+              </InlineStack>
+            )}
             {run?.status === "error" && (
               <Banner tone="critical" title="Simulation failed">
                 <p>{run.error}</p>

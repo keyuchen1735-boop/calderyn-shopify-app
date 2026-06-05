@@ -1,6 +1,7 @@
 // app/lib/simulator/__tests__/orchestrate.test.ts
 import { describe, it, expect, vi } from "vitest";
 import { executeSimulation } from "../orchestrate.server";
+import { DEMO_MODEL } from "../demo";
 import type { BehaviorModel, SimulationRun, StoreSnapshot } from "../types";
 
 const snapshot: StoreSnapshot = {
@@ -40,5 +41,15 @@ describe("executeSimulation", () => {
     const result = await executeSimulation({ shop: "acme.myshopify.com", requestedN: 500 }, d);
     expect(d.failRun).toHaveBeenCalledWith("run-1", "api down");
     expect(result.status).toBe("error");
+  });
+
+  it("demo mode uses the built-in sample model without fetching pages or calling Claude", async () => {
+    const d = deps();
+    const result = await executeSimulation({ shop: "acme.myshopify.com", requestedN: 1000, demo: true }, d);
+    expect(d.startRun).toHaveBeenCalledWith("acme.myshopify.com", 1000, "demo");
+    expect(d.fetchSnapshot).not.toHaveBeenCalled();
+    expect(d.buildBehaviorModel).not.toHaveBeenCalled();
+    expect(d.completeRun).toHaveBeenCalledWith("run-1", DEMO_MODEL);
+    expect(result.model).toEqual(DEMO_MODEL);
   });
 });

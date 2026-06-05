@@ -14,9 +14,10 @@ vi.mock("~/lib/simulator/orchestrate.server", () => ({
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { action } from "../app.simulator";
 
-function run(n: string): Promise<Response> {
+function run(n: string, mode?: string): Promise<Response> {
   const fd = new FormData();
   fd.set("requestedN", n);
+  if (mode) fd.set("mode", mode);
   const request = new Request("http://localhost/app/simulator", { method: "POST", body: fd });
   return action({ request } as unknown as ActionFunctionArgs) as Promise<Response>;
 }
@@ -27,18 +28,23 @@ beforeEach(() => {
 });
 
 describe("simulator action", () => {
-  it("clamps requestedN into [10,1000] and runs the simulation", async () => {
+  it("clamps requestedN into [10,1000] and runs a live simulation", async () => {
     await run("999999");
-    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 1000 });
+    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 1000, demo: false });
   });
 
   it("clamps a too-small value up to the minimum", async () => {
     await run("1");
-    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 10 });
+    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 10, demo: false });
   });
 
   it("defaults non-numeric input to 1000", async () => {
     await run("abc");
-    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 1000 });
+    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 1000, demo: false });
+  });
+
+  it("passes demo=true when mode=demo (no API key path)", async () => {
+    await run("500", "demo");
+    expect(execSpy).toHaveBeenCalledWith({ shop: "acme.myshopify.com", requestedN: 500, demo: true });
   });
 });

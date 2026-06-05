@@ -1,5 +1,6 @@
 // app/lib/simulator/orchestrate.server.ts
 import { getAnthropic, assistantModel } from "../assistant/anthropic.server";
+import { DEMO_MODEL } from "./demo";
 import { fetchSnapshot as realFetchSnapshot } from "./fetch-pages.server";
 import { buildBehaviorModel as realBuildModel } from "./simulate.server";
 import {
@@ -10,7 +11,7 @@ import {
 import type { BehaviorModel, SimulationRun, StoreSnapshot } from "./types";
 
 export interface ExecuteDeps {
-  startRun: (shop: string, requestedN: number) => Promise<SimulationRun>;
+  startRun: (shop: string, requestedN: number, target?: string) => Promise<SimulationRun>;
   completeRun: (id: string, model: BehaviorModel) => Promise<SimulationRun>;
   failRun: (id: string, message: string) => Promise<SimulationRun>;
   fetchSnapshot: (shop: string) => Promise<StoreSnapshot>;
@@ -34,16 +35,20 @@ function defaultDeps(): ExecuteDeps {
 }
 
 export async function executeSimulation(
-  input: { shop: string; requestedN: number },
+  input: { shop: string; requestedN: number; demo?: boolean },
   deps: ExecuteDeps = defaultDeps(),
 ): Promise<SimulationRun> {
+  const target = input.demo ? "demo" : "whole_store";
   // startRun is inside the try so a DB blip there surfaces as an in-app error DTO
   // (caught and shown in the route banner) rather than crashing to Remix's error boundary.
   let run: SimulationRun | null = null;
   try {
-    run = await deps.startRun(input.shop, input.requestedN);
-    const snapshot = await deps.fetchSnapshot(input.shop);
-    const model = await deps.buildBehaviorModel(snapshot);
+    run = await deps.startRun(input.shop, input.requestedN, target);
+    // Demo path: skip page fetch + the Anthropic call entirely and use built-in
+    // sample data, so the teardown renders with no ANTHROPIC_API_KEY.
+    const model = input.demo
+      ? DEMO_MODEL
+      : await deps.buildBehaviorModel(await deps.fetchSnapshot(input.shop));
     return await deps.completeRun(run.id, model);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -57,7 +62,7 @@ export async function executeSimulation(
     return {
       id: run?.id ?? "",
       status: "error",
-      target: "whole_store",
+      target,
       requestedN: input.requestedN,
       model: null,
       error: message,
