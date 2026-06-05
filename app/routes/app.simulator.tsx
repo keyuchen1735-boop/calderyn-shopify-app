@@ -1,5 +1,5 @@
 // app/routes/app.simulator.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
@@ -48,6 +48,12 @@ export default function Simulator() {
   const running = fetcher.state !== "idle";
 
   const [n, setN] = useState<number>(latest?.requestedN ?? MAX_SHOPPERS);
+
+  // When a fresh run completes, snap the slider to the N it ran with. Keyed on
+  // fetcher.data so it fires only on a new run — never on a slider re-sample drag.
+  useEffect(() => {
+    if (fetcher.data?.requestedN) setN(fetcher.data.requestedN);
+  }, [fetcher.data]);
 
   const sample = useMemo(() => {
     if (!run?.model) return null;
@@ -135,12 +141,18 @@ export default function Simulator() {
                         </div>
                         <div style={{ flex: 1, background: "#f1f1f1", borderRadius: 4, overflow: "hidden" }}>
                           <div
+                            // Don't rely on colour alone: the leak bar is also marked "⚠" and
+                            // every bar carries a text label for screen readers.
+                            aria-label={`${st.label}: ${st.reached.toLocaleString()} shoppers${
+                              isLeak ? " — biggest leak" : isBought ? " — converted" : ""
+                            }`}
                             style={{
                               width: `${Math.max(pct, 2)}%`,
                               background: isBought ? "#2b9d4b" : isLeak ? "#e03b3b" : "#3b6cff",
                               color: "#fff", padding: "6px 10px", whiteSpace: "nowrap", fontSize: 13,
                             }}
                           >
+                            {isLeak ? "⚠ " : ""}
                             {st.reached.toLocaleString()}
                             {i > 0 ? ` (−${(sample.stages[i - 1].reached - st.reached).toLocaleString()})` : ""}
                           </div>
@@ -182,8 +194,8 @@ export default function Simulator() {
               <BlockStack gap="200">
                 <Text as="h2" variant="headingSm">Per-persona breakdown</Text>
                 {run.model.archetypes.map((a) => {
-                  const dropStage = a.dropReason ? Object.keys(a.dropReason)[0] : undefined;
-                  const reason = dropStage ? a.dropReason[dropStage as keyof typeof a.dropReason] : "—";
+                  // First listed drop reason, if any; empty means the persona converted.
+                  const reason = Object.values(a.dropReason ?? {})[0];
                   return (
                     <InlineStack key={a.id} align="space-between">
                       <Text as="span" variant="bodySm" fontWeight="semibold">{a.name}</Text>
