@@ -32,6 +32,7 @@ export default function App() {
         <Link to="/app/audit">Audit log</Link>
         <Link to="/app/campaigns">Campaigns</Link>
         <Link to="/app/skus">SKUs</Link>
+        <Link to="/app/simulator">Simulator</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />
