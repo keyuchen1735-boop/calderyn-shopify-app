@@ -89,7 +89,6 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
           enum: [
             "pause_campaign",
             "reduce_campaign_budget",
-            "increase_campaign_budget",
             "exclude_geo",
             "reallocate_inventory",
             "create_po_draft",
