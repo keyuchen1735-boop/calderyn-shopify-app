@@ -56,12 +56,23 @@ def test_rejects_missing_shop_id(monkeypatch):
     assert ctx.pool is None
 
 
+def test_rejects_invalid_uuid_shop_id(monkeypatch):
+    # A malformed shop_id must be rejected at the boundary (clean 400), not
+    # surface deep in the pipeline as an asyncpg cast error / 500.
+    status, payload, ctx = _run({"shop_id": "not-a-uuid"}, "Bearer s3cret", monkeypatch)
+    assert status == 400
+    assert ctx.pool is None
+
+
+_VALID_SHOP_ID = "00000000-0000-0000-0000-000000000001"
+
+
 def test_runs_pipeline_and_returns_ids(monkeypatch):
-    status, payload, ctx = _run({"shop_id": "shop-1"}, "Bearer s3cret", monkeypatch)
+    status, payload, ctx = _run({"shop_id": _VALID_SHOP_ID}, "Bearer s3cret", monkeypatch)
     assert status == 200
-    assert payload == {"shop_id": "shop-1", "alert_ids": ["a1", "a2"]}
+    assert payload == {"shop_id": _VALID_SHOP_ID, "alert_ids": ["a1", "a2"]}
     # run_for_shop received the shop id and the injected pool/cfg kwargs.
-    assert ctx.run_args[0] == "shop-1"
+    assert ctx.run_args[0] == _VALID_SHOP_ID
     assert "pool" in ctx.run_args[1]
     assert "cfg" in ctx.run_args[1]
     # The per-invocation pool is always closed (the finally block).

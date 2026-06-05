@@ -6,8 +6,10 @@ thin adapter over handle().
 """
 from __future__ import annotations
 
+import hmac
 import os
 import sys
+import uuid
 from typing import Any
 
 # Ensure the vendored package (sibling dir) is importable when Vercel loads
@@ -24,7 +26,10 @@ from calderyn_engine.pipeline import run_for_shop  # noqa: E402
 
 def _authorized(authorization: str | None) -> bool:
     secret = os.environ.get("CRON_SECRET")
-    return bool(secret) and authorization == f"Bearer {secret}"
+    if not secret:
+        return False
+    # Constant-time compare so the bearer check can't be probed byte-by-byte.
+    return hmac.compare_digest(authorization or "", f"Bearer {secret}")
 
 
 async def handle(
@@ -37,6 +42,12 @@ async def handle(
     shop_id = (body or {}).get("shop_id")
     if not shop_id or not isinstance(shop_id, str):
         return 400, {"error": "shop_id is required"}
+    # Validate at the boundary so a malformed id returns a clean 400 instead of
+    # surfacing as an asyncpg `::uuid` cast error (500 + traceback) deep in the run.
+    try:
+        uuid.UUID(shop_id)
+    except ValueError:
+        return 400, {"error": "shop_id must be a valid UUID"}
 
     cfg = load_config()
     # Fresh pool per invocation: asyncpg pools bind to the event loop, and a
