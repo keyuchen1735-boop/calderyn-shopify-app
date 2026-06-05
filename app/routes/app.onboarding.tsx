@@ -59,12 +59,13 @@ type ActionPayload = {
 };
 
 // ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
-// Renders an onboarding "skip" button in ALL environments (prod included) so we
-// can test the dashboard before Google/QuickBooks OAuth is wired. This is a
-// deliberate, known security shortcut: anyone who reaches onboarding can skip
-// setup. To kill it, set this to false (or delete the banner block below) and
-// redeploy. Tracked in agent memory: onboarding-prod-bypass.
-const ONBOARDING_DEV_BYPASS = true;
+// Renders an onboarding "skip" button that jumps straight to the dashboard,
+// bypassing guardrail setup and the privacy/peer-baseline consent step. This is
+// a deliberate, known shortcut for testing before Google/QuickBooks OAuth is
+// wired. It is now OFF by default and only enabled when ONBOARDING_DEV_BYPASS is
+// explicitly set to "true" (e.g. on preview/staging) — it must never be "true"
+// in the production merchant environment. Tracked in agent memory: onboarding-prod-bypass.
+const ONBOARDING_DEV_BYPASS = process.env.ONBOARDING_DEV_BYPASS === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
