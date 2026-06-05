@@ -12,11 +12,9 @@ import { json } from "@remix-run/node";
 import {
   Badge,
   BlockStack,
-  Box,
   Banner,
   Button,
   Card,
-  InlineGrid,
   InlineStack,
   Layout,
   Modal,
@@ -36,6 +34,13 @@ import {
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
+import {
+  DetectorTag,
+  EvidencePanel,
+  GuardrailMeter,
+  NarrativeCard,
+  SeverityBadge,
+} from "~/components/calderyn";
 import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
 
 type LoaderPayload = {
@@ -79,26 +84,63 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const idempotencyKey =
     String(formData.get("idempotencyKey") || "") || newIdempotencyKey();
 
-  const params_: Record<string, unknown> = {};
-  for (const [k, v] of formData.entries()) {
-    if (k.startsWith("param_")) {
-      params_[k.slice(6)] = typeof v === "string" ? v : null;
-    }
-  }
-
+  // SECURITY: hidden form fields (alertId aside) are attacker-controllable and
+  // must never drive an external side effect. We re-load the alert server-side
+  // (shop-scoped — get() 404s if it isn't this shop's), then derive everything
+  // — the allowed action, the dollar-impact, and the inventory mutation inputs —
+  // from that trusted record. `param_*` fields are intentionally ignored.
   try {
+    if (!alertId) {
+      throw new CalderynError({
+        code: "INVALID_REQUEST",
+        status: 400,
+        message: "alertId is required",
+      });
+    }
+
+    const alert = await client.alerts.get(alertId, request.signal);
+
+    // Only actions this detector exposes may run against this alert.
+    const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
+    if (!allowed.includes(kind)) {
+      throw new CalderynError({
+        code: "ACTION_NOT_ALLOWED",
+        status: 403,
+        message: `"${kind}" is not a permitted action for this alert.`,
+      });
+    }
+
+    // Guardrail: enforce the per-action dollar-impact cap server-side using the
+    // alert's real impact (not a form value). Snooze is harmless and exempt.
+    const guardrails = await client.guardrails.get(request.signal);
+    if (kind !== "snooze_alert" && alert.dollar_impact > guardrails.dollar_cap_cents) {
+      throw new CalderynError({
+        code: "GUARDRAIL_DOLLAR_CAP",
+        status: 403,
+        message: `This action's impact (${fmtMoney(alert.dollar_impact)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
+      });
+    }
+
+    // Server-derived audit params — sourced from the alert, never the form.
+    const execParams: Record<string, unknown> = {
+      target: alert.campaign ?? alert.sku ?? "",
+      estimate_cents: alert.dollar_impact,
+    };
+
     if (kind === "reallocate_inventory") {
-      const inventoryItemId = String(formData.get("param_inventory_item_id") || "");
-      const fromLocationId = String(formData.get("param_from_location_id") || "");
-      const toLocationId = String(formData.get("param_to_location_id") || "");
-      const delta = Number(formData.get("param_delta") || 0);
+      // Inventory mutation inputs come from the alert's evidence, not the form.
+      const ev = alert.evidence ?? {};
+      const inventoryItemId = stringOrEmpty(ev.inventory_item_id);
+      const fromLocationId = stringOrEmpty(ev.from_location_id);
+      const toLocationId = stringOrEmpty(ev.to_location_id);
+      const delta = Number(ev.recommended_delta ?? ev.delta ?? 0);
 
       if (!inventoryItemId || !fromLocationId || !toLocationId || !delta) {
         throw new CalderynError({
-          code: "INVALID_INVENTORY_PARAMS",
-          status: 400,
+          code: "INVALID_INVENTORY_EVIDENCE",
+          status: 422,
           message:
-            "reallocate_inventory requires inventory_item_id, from_location_id, to_location_id, and delta",
+            "Alert evidence is missing the inventory item, source/destination location, or delta.",
         });
       }
 
@@ -109,23 +151,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         delta,
       });
 
-      await client.actions.execute({
-        alertId,
-        kind,
-        params: {
-          ...params_,
-          shopify_operation_id: operationId,
-        },
-        idempotencyKey,
-      });
-    } else {
-      await client.actions.execute({
-        alertId,
-        kind,
-        params: params_,
-        idempotencyKey,
-      });
+      execParams.inventory_item_id = inventoryItemId;
+      execParams.from_location_id = fromLocationId;
+      execParams.to_location_id = toLocationId;
+      execParams.delta = delta;
+      execParams.shopify_operation_id = operationId;
     }
+
+    await client.actions.execute({
+      alertId,
+      kind,
+      params: execParams,
+      idempotencyKey,
+    });
 
     return json<ActionPayload>({
       ok: true,
@@ -224,18 +262,8 @@ export default function AlertDetail() {
       backAction={{ content: "Alerts", onAction: () => navigate("/app/alerts") }}
       titleMetadata={
         <InlineStack gap="200">
-          <Badge
-            tone={
-              alert.severity === "critical"
-                ? "critical"
-                : alert.severity === "high"
-                  ? "warning"
-                  : "attention"
-            }
-          >
-            {alert.severity}
-          </Badge>
-          <Badge>{DETECTOR_LABELS[alert.detector_id]}</Badge>
+          <SeverityBadge severity={alert.severity} />
+          <DetectorTag>{DETECTOR_LABELS[alert.detector_id]}</DetectorTag>
         </InlineStack>
       }
       subtitle={`Detected ${fmtAbsTime(alert.created_at)} · ${fmtRelTime(alert.created_at)}`}
@@ -250,44 +278,14 @@ export default function AlertDetail() {
                 </p>
               </Banner>
             )}
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingSm">
-                    Claude&apos;s read
-                  </Text>
-                  <Badge>{`Rank #${alert.claude_rank}`}</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodyLg">
-                  {alert.narrative}
-                </Text>
-              </BlockStack>
-            </Card>
+            <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
 
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingSm">
-                  Evidence
+                  Why this fired — evidence
                 </Text>
-                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
-                  {Object.entries(evidence).map(([k, v]) => (
-                    <Box
-                      key={k}
-                      padding="300"
-                      background="bg-surface-secondary"
-                      borderRadius="200"
-                    >
-                      <BlockStack gap="100">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {k.replace(/_/g, " ")}
-                        </Text>
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          {typeof v === "object" ? JSON.stringify(v) : String(v)}
-                        </Text>
-                      </BlockStack>
-                    </Box>
-                  ))}
-                </InlineGrid>
+                <EvidencePanel evidence={evidence} />
               </BlockStack>
             </Card>
           </BlockStack>
@@ -308,17 +306,26 @@ export default function AlertDetail() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   30-day projected impact
                 </Text>
-                <BlockStack gap="200">
-                  {allowedActions.map((kind, i) => (
-                    <Button
-                      key={kind}
-                      variant={i === 0 ? "primary" : undefined}
-                      onClick={() => setActionKind(kind)}
-                      fullWidth
-                    >
-                      {ACTION_LABELS[kind]}
-                    </Button>
-                  ))}
+                <BlockStack gap="300">
+                  {allowedActions.map((kind, i) =>
+                    i === 0 ? (
+                      <BlockStack key={kind} gap="100">
+                        <Button variant="primary" onClick={() => setActionKind(kind)} fullWidth>
+                          {ACTION_LABELS[kind]}
+                        </Button>
+                        <InlineStack gap="150" blockAlign="center">
+                          <Badge tone="success">Recommended</Badge>
+                          <Text as="span" variant="bodyXs" tone="subdued">
+                            protects {fmtMoney(alert.dollar_impact)} / 30d
+                          </Text>
+                        </InlineStack>
+                      </BlockStack>
+                    ) : (
+                      <Button key={kind} onClick={() => setActionKind(kind)} fullWidth>
+                        {ACTION_LABELS[kind]}
+                      </Button>
+                    ),
+                  )}
                 </BlockStack>
               </BlockStack>
             </Card>
@@ -327,45 +334,35 @@ export default function AlertDetail() {
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingSm">
-                    Guardrails
+                    Safety net
                   </Text>
-                  <BlockStack gap="100">
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        Daily budget remaining
-                      </Text>
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        {fmtMoney(
+                  <GuardrailMeter
+                    usedCents={guardrails.daily_action_budget_used_cents}
+                    totalCents={guardrails.daily_action_budget_cents}
+                    checks={[
+                      {
+                        label: `Within daily budget · ${fmtMoney(
                           guardrails.daily_action_budget_cents -
                             guardrails.daily_action_budget_used_cents,
-                        )}
-                      </Text>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        Per-action cap
-                      </Text>
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        {fmtMoney(guardrails.dollar_cap_cents)}
-                      </Text>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        Cooldown
-                      </Text>
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        {guardrails.cooldown_minutes}m
-                      </Text>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        Business hours
-                      </Text>
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        {guardrails.business_hours.start}–{guardrails.business_hours.end}
-                      </Text>
-                    </InlineStack>
-                  </BlockStack>
+                        )} left`,
+                        ok:
+                          guardrails.daily_action_budget_cents -
+                            guardrails.daily_action_budget_used_cents >
+                          0,
+                      },
+                      {
+                        label: `Under per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)}`,
+                        ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
+                      },
+                      {
+                        label: `Business hours · ${guardrails.business_hours.start}–${guardrails.business_hours.end}`,
+                        ok: guardrails.in_business_hours,
+                      },
+                    ]}
+                  />
+                  <Text as="p" variant="bodyXs" tone="subdued">
+                    Cooldown {guardrails.cooldown_minutes}m between actions on the same campaign.
+                  </Text>
                 </BlockStack>
               </Card>
             )}
@@ -398,12 +395,6 @@ function ExecuteActionModal({
 }) {
   const idempotencyKey = useStableIdempotencyKey(alert.id, kind);
   const evidence = alert.evidence ?? {};
-  const target =
-    kind === "pause_campaign" || kind === "reduce_campaign_budget" || kind === "exclude_geo"
-      ? alert.campaign || "Campaign"
-      : alert.sku
-        ? `${alert.sku}`
-        : "Action";
 
   const inventoryHints =
     kind === "reallocate_inventory"
@@ -426,31 +417,12 @@ function ExecuteActionModal({
     <Modal open onClose={onClose} title={ACTION_LABELS[kind]}>
       <Modal.Section>
         <Form method="post" preventScrollReset>
+          {/* The server re-loads the alert and derives the action target, dollar
+              impact, and inventory inputs from its trusted evidence — so only the
+              identifiers needed to locate the alert + dedupe are submitted. */}
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="alertId" value={alert.id} />
           <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
-          <input type="hidden" name="param_target" value={target} />
-          <input type="hidden" name="param_estimate_cents" value={String(alert.dollar_impact)} />
-          {inventoryHints && (
-            <>
-              <input
-                type="hidden"
-                name="param_inventory_item_id"
-                value={inventoryHints.inventoryItemId}
-              />
-              <input
-                type="hidden"
-                name="param_from_location_id"
-                value={inventoryHints.fromLocationId}
-              />
-              <input
-                type="hidden"
-                name="param_to_location_id"
-                value={inventoryHints.toLocationId}
-              />
-              <input type="hidden" name="param_delta" value={inventoryHints.delta} />
-            </>
-          )}
           <BlockStack gap="300">
             <Text as="p" variant="bodyMd" tone="subdued">
               {actionDescription(kind)}

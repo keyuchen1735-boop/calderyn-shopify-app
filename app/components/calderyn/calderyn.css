@@ -1,0 +1,156 @@
+/*
+ * Calderyn bespoke UI — a thin layer on top of Shopify Polaris.
+ *
+ * Polaris primitives (Card, Box, Text, Badge, Button, InlineStack, ...) carry
+ * layout and color. This file only covers the handful of visuals Polaris can't
+ * express directly: the guardrail meter bar, evidence sparklines, the location
+ * mix bar, and the semantic accent borders. Everything is scoped with a `.cdn-`
+ * prefix so it never collides with Polaris. Colors mirror the design tokens,
+ * which are themselves Polaris light-theme semantic values.
+ */
+
+:root {
+  --cdn-critical: #d72c0d;
+  --cdn-warning: #b98900;
+  --cdn-attention: #916a00;
+  --cdn-success: #008060;
+  --cdn-success-text: #0c5132;
+  --cdn-info: #00527c;
+  --cdn-subdued: #6d7175;
+  --cdn-border: #e1e3e5;
+  --cdn-divider: #ebebeb;
+  --cdn-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.cdn-tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ── MoneyDelta ─────────────────────────────────────────────── */
+.cdn-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.cdn-delta--up {
+  color: var(--cdn-success-text);
+}
+.cdn-delta--down {
+  color: var(--cdn-critical);
+}
+.cdn-delta--flat {
+  color: var(--cdn-subdued);
+}
+
+/* ── GuardrailMeter ─────────────────────────────────────────── */
+.cdn-meter-track {
+  height: 8px;
+  width: 100%;
+  border-radius: 9999px;
+  background: var(--cdn-divider);
+  overflow: hidden;
+}
+.cdn-meter-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 9999px;
+  transform-origin: left center;
+  transition:
+    transform 480ms var(--cdn-ease-out),
+    background-color 200ms ease;
+}
+.cdn-meter-fill--ok {
+  background: var(--cdn-success);
+}
+.cdn-meter-fill--warn {
+  background: var(--cdn-warning);
+}
+.cdn-meter-fill--crit {
+  background: var(--cdn-critical);
+}
+.cdn-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  flex: 0 0 auto;
+}
+.cdn-check--ok {
+  background: #ebfbf1;
+  color: var(--cdn-success-text);
+}
+.cdn-check--no {
+  background: #fff0ed;
+  color: var(--cdn-critical);
+}
+
+/* ── Accent cards (Today's focus, Claude's read) ────────────────
+ * A card surface that matches Polaris exactly (it reuses Polaris's own
+ * custom properties), plus a colored left accent Polaris can't do per-side. */
+.cdn-card {
+  background: var(--p-color-bg-surface);
+  border-radius: var(--p-border-radius-300);
+  box-shadow: var(--p-shadow-100);
+  padding: var(--p-space-400);
+}
+.cdn-accent-left {
+  border-left: 4px solid var(--cdn-border);
+}
+.cdn-accent-left--primary {
+  border-left-color: var(--cdn-success);
+}
+.cdn-accent-left--info {
+  border-left-color: var(--cdn-info);
+}
+
+/* ── Evidence sparkline / mini-chart ────────────────────────── */
+.cdn-chart {
+  display: block;
+  width: 100%;
+  height: 120px;
+}
+.cdn-spark {
+  display: block;
+  width: 100%;
+  height: 40px;
+}
+
+/* ── SKU location mix bar ───────────────────────────────────── */
+.cdn-locbar {
+  display: flex;
+  height: 8px;
+  width: 96px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: var(--cdn-divider);
+  flex: 0 0 auto;
+}
+.cdn-locbar-seg {
+  height: 100%;
+}
+
+/* Whole-tile click target reset (StatTile) */
+.cdn-tile-button {
+  all: unset;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 12px;
+}
+.cdn-tile-button:focus-visible {
+  outline: 2px solid var(--cdn-info);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cdn-meter-fill {
+    transition: background-color 200ms ease;
+  }
+}

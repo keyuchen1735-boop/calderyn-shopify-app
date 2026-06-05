@@ -5,12 +5,14 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import assistantStyles from "../components/Assistant/assistant.css?url";
+import calderynStyles from "../components/calderyn/calderyn.css?url";
 import { AssistantSlideout } from "../components/Assistant/AssistantSlideout";
 import { authenticate } from "../shopify.server";
 
 export const links = () => [
   { rel: "stylesheet", href: polarisStyles },
   { rel: "stylesheet", href: assistantStyles },
+  { rel: "stylesheet", href: calderynStyles },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

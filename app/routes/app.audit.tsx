@@ -21,10 +21,11 @@ import {
   Text,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { CalderynError, calderynClient } from "~/lib/calderyn.server";
+import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import { ACTION_LABELS, DETECTOR_LABELS } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
+import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
 
 type LoaderPayload = {
@@ -199,36 +200,19 @@ export default function Audit() {
           </Banner>
         )}
         <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">
-                Total actions
-              </Text>
-              <Text as="p" variant="heading2xl">
-                {audit.length}
-              </Text>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">
-                Success rate
-              </Text>
-              <Text as="p" variant="heading2xl">
-                {successRate}%
-              </Text>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">
-                Recovered impact
-              </Text>
-              <Text as="p" variant="heading2xl" tone="success">
-                {fmtMoney(recovered)}
-              </Text>
-            </BlockStack>
-          </Card>
+          <StatTile label="Total actions" value={String(audit.length)} caption="last 90 days" />
+          <StatTile
+            label="Success rate"
+            value={`${successRate}%`}
+            tone={successRate >= 90 ? "success" : undefined}
+            caption={`${audit.filter((a) => a.outcome === "succeeded").length} of ${audit.length} succeeded`}
+          />
+          <StatTile
+            label="Recovered impact"
+            value={fmtMoney(recovered)}
+            tone="success"
+            caption="from successful actions"
+          />
         </InlineGrid>
 
         <Card padding="0">
