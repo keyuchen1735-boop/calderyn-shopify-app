@@ -94,6 +94,8 @@ export async function fetchSnapshot(shop: string, deps?: Partial<FetchDeps>): Pr
   if (deps?.admin) {
     admin = deps.admin;
   } else {
+    // Lazy import on purpose: a static import of shopify.server pulls in Prisma at
+    // module-load, which crashes Vitest (tests inject `admin` instead). Keep it dynamic.
     const { unauthenticated } = await import("../../shopify.server");
     admin = (await unauthenticated.admin(shop)).admin;
   }
