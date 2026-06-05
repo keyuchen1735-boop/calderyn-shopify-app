@@ -1,6 +1,6 @@
 -- simulation_run: one synthetic-shopper simulation. `model` holds the Claude-built
 -- behavior model (archetypes + per-stage probabilities + findings); the slider
--- re-samples from it client-side. Shop-scoped in code (service-role); RLS deferred.
+-- re-samples from it client-side. Shop-scoped in code (service-role).
 
 create table simulation_run (
   id            uuid primary key default gen_random_uuid(),
@@ -15,6 +15,10 @@ create table simulation_run (
   created_at    timestamptz not null default now(),
   completed_at  timestamptz
 );
+
+-- Deny-by-default like the other business tables: the app reads/writes with the
+-- service-role key (which bypasses RLS), so no policies are needed.
+alter table simulation_run enable row level security;
 
 create index simulation_run_shop_created_idx
   on simulation_run (shop_id, created_at desc);
