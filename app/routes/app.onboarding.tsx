@@ -29,6 +29,7 @@ import {
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
+import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
 const STEPS = [
@@ -336,6 +337,23 @@ function GuardrailsStep({
         Calderyn will never execute an action that violates these. Every guardrail is enforced
         inside the action gateway before any external API call.
       </Text>
+      <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+        <GuardrailMeter
+          usedCents={guardrails?.daily_action_budget_used_cents ?? 0}
+          totalCents={Math.max(0, Number(budget) * 100)}
+          checks={[
+            {
+              label: `Daily action budget · ${fmtMoney(Math.max(0, Number(budget) * 100))}`,
+              ok: Number(budget) > 0,
+            },
+            {
+              label: `Per-action cap · ${fmtMoney(Math.max(0, Number(cap) * 100))}`,
+              ok: Number(cap) > 0,
+            },
+            { label: `Cooldown · ${cooldown} min between actions`, ok: true },
+          ]}
+        />
+      </Box>
       <Form method="post">
         <input type="hidden" name="intent" value="save_guardrails" />
         <input type="hidden" name="step" value={String(nextStep)} />

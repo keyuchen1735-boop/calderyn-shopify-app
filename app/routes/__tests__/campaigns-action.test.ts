@@ -50,7 +50,11 @@ vi.mock("~/lib/meta/client.server", () => ({
 vi.mock("~/lib/meta/campaigns.server", () => ({
   getCampaignStatus: (...a: unknown[]) => getStatusSpy(...a),
   setCampaignStatus: (...a: unknown[]) => setStatusSpy(...a),
-  listCampaigns: async () => [],
+  // The action verifies the campaign belongs to this shop's ad account before
+  // mutating it, so the owned-campaign list must include the one under test (120).
+  listCampaigns: async () => [
+    { id: "120", name: "Prospecting", status: "ACTIVE", dailyBudgetCents: 5800 },
+  ],
 }));
 
 function pauseRequest(): Request {

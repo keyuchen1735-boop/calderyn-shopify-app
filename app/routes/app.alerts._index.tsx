@@ -6,20 +6,17 @@ import {
   Banner,
   BlockStack,
   Box,
-  Button,
   Card,
   ChoiceList,
-  InlineStack,
   Layout,
   Page,
   Text,
-  Badge,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { CalderynError, calderynClient } from "~/lib/calderyn.server";
-import { fmtMoney, fmtRelTime } from "~/lib/format";
-import { DETECTOR_LABELS } from "~/lib/labels";
-import type { Alert, Severity } from "~/lib/types";
+import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import { fmtMoney } from "~/lib/format";
+import type { Alert, AlertStatus, Severity } from "~/lib/types";
+import { AlertCard } from "~/components/calderyn";
 
 const SEV_ORDER: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -47,24 +44,29 @@ export default function AlertList() {
   const navigate = useNavigate();
   const { alerts, error } = useLoaderData<typeof loader>();
   const [severity, setSeverity] = useState<("all" | Severity)[]>(["all"]);
-  const [status, setStatus] = useState<("open" | "all")[]>(["open"]);
+  const [status, setStatus] = useState<("all" | AlertStatus)[]>(["open"]);
 
   const sev = severity[0];
   const st = status[0];
 
   const filtered = useMemo(() => {
-    let next = alerts.filter((a) => {
+    const next = alerts.filter((a) => {
       if (sev !== "all" && a.severity !== sev) return false;
-      if (st === "open" && a.status !== "open") return false;
+      if (st !== "all" && a.status !== st) return false;
       return true;
     });
     return next.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
   }, [alerts, sev, st]);
 
+  const openAlerts = alerts.filter((a) => a.status === "open");
+  const projectedImpact = openAlerts.reduce((s, a) => s + a.dollar_impact, 0);
+
   return (
     <Page
       title="Alerts"
-      subtitle={`${filtered.length} alerts · ranked by Claude · dollar impact reflects 30-day projection`}
+      subtitle={`${openAlerts.length} open · ranked by Claude · ${fmtMoney(
+        projectedImpact,
+      )} projected 30-day impact`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && (
@@ -90,75 +92,46 @@ export default function AlertList() {
                   { label: "Low", value: "low" },
                 ]}
                 selected={severity}
-                onChange={(v) => setSeverity(v as any)}
+                onChange={(v) => setSeverity(v as ("all" | Severity)[])}
               />
               <ChoiceList
                 title="Status"
                 choices={[
-                  { label: "Open only", value: "open" },
+                  { label: "Open", value: "open" },
+                  { label: "Acknowledged", value: "acknowledged" },
+                  { label: "Resolved", value: "resolved" },
                   { label: "All", value: "all" },
                 ]}
                 selected={status}
-                onChange={(v) => setStatus(v as any)}
+                onChange={(v) => setStatus(v as ("all" | AlertStatus)[])}
               />
             </BlockStack>
           </Card>
         </Layout.Section>
 
         <Layout.Section>
-          <Card padding="0">
-            <BlockStack gap="0">
-              {filtered.length === 0 ? (
-                <Box padding="400">
-                  <Text as="p" tone="subdued">
-                    No alerts match the current filters.
+          {filtered.length === 0 ? (
+            <Card>
+              <Box padding="400">
+                <BlockStack gap="100" inlineAlign="center">
+                  <Text as="p" variant="headingMd">
+                    {st === "open" ? "All clear" : "Nothing here"}
                   </Text>
-                </Box>
-              ) : (
-                filtered.map((a) => (
-                  <Box
-                    key={a.id}
-                    padding="400"
-                    borderColor="border"
-                    borderBlockStartWidth="025"
-                    background="bg-surface"
-                  >
-                    <InlineStack align="space-between" blockAlign="start" gap="400">
-                      <BlockStack gap="100">
-                        <Button
-                          variant="plain"
-                          textAlign="left"
-                          onClick={() => navigate(`/app/alerts/${a.id}`)}
-                        >
-                          {a.title}
-                        </Button>
-                        <InlineStack gap="200">
-                          <Badge
-                            tone={
-                              a.severity === "critical"
-                                ? "critical"
-                                : a.severity === "high"
-                                  ? "warning"
-                                  : "attention"
-                            }
-                          >
-                            {a.severity}
-                          </Badge>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {DETECTOR_LABELS[a.detector_id]} · {fmtRelTime(a.created_at)}
-                          </Text>
-                          {a.status !== "open" && <Badge>{a.status}</Badge>}
-                        </InlineStack>
-                      </BlockStack>
-                      <Text as="span" variant="headingMd">
-                        {fmtMoney(a.dollar_impact)}
-                      </Text>
-                    </InlineStack>
-                  </Box>
-                ))
-              )}
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {st === "open"
+                      ? "No open alerts match these filters. Calderyn will surface the next money-losing problem the moment it appears."
+                      : "No alerts match these filters."}
+                  </Text>
+                </BlockStack>
+              </Box>
+            </Card>
+          ) : (
+            <BlockStack gap="300">
+              {filtered.map((a) => (
+                <AlertCard key={a.id} alert={a} onReview={(al) => navigate(`/app/alerts/${al.id}`)} />
+              ))}
             </BlockStack>
-          </Card>
+          )}
         </Layout.Section>
       </Layout>
     </Page>

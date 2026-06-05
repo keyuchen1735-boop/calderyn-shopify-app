@@ -13,6 +13,7 @@ import {
   Badge,
   Banner,
   BlockStack,
+  Box,
   Button,
   ButtonGroup,
   Card,
@@ -32,6 +33,7 @@ import {
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
+import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
 type LoaderPayload = {
@@ -284,8 +286,30 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
 
   return (
     <Card>
-      <fetcher.Form method="post">
-        <input type="hidden" name="intent" value="update_guardrails" />
+      <BlockStack gap="400">
+        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+          <GuardrailMeter
+            usedCents={guardrails.daily_action_budget_used_cents}
+            totalCents={guardrails.daily_action_budget_cents}
+            checks={[
+              {
+                label: `Within daily budget · ${fmtMoney(
+                  guardrails.daily_action_budget_cents - guardrails.daily_action_budget_used_cents,
+                )} left`,
+                ok:
+                  guardrails.daily_action_budget_cents -
+                    guardrails.daily_action_budget_used_cents >
+                  0,
+              },
+              {
+                label: `Business hours · ${guardrails.business_hours.start}–${guardrails.business_hours.end}`,
+                ok: guardrails.in_business_hours,
+              },
+            ]}
+          />
+        </Box>
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="update_guardrails" />
         <input
           type="hidden"
           name="daily_action_budget_cents"
@@ -342,8 +366,9 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               Save guardrails
             </Button>
           </InlineStack>
-        </FormLayout>
-      </fetcher.Form>
+          </FormLayout>
+        </fetcher.Form>
+      </BlockStack>
     </Card>
   );
 }

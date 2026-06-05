@@ -17,6 +17,7 @@ import {
   ButtonGroup,
   Card,
   DataTable,
+  InlineStack,
   Modal,
   Page,
   Text,
@@ -150,6 +151,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
     try {
+      // SECURITY: verify the campaign actually belongs to this shop's connected
+      // ad account before mutating it — never trust the campaignId/name posted in
+      // the form. Use the account's own campaign name for the audit/toast too.
+      const owned = (await listCampaigns(meta.client, meta.adAccountId)).find(
+        (c) => c.id === campaignId,
+      );
+      if (!owned) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "CAMPAIGN_NOT_FOUND", message: "Campaign not found for this ad account." },
+            toast: { message: "Unknown campaign", isError: true },
+          },
+          { status: 404 },
+        );
+      }
       // Read the campaign's true current status so the audit pre_state (and Undo)
       // reflect reality rather than an assumption from the click intent.
       const prior = await getCampaignStatus(meta.client, campaignId);
@@ -158,7 +175,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         {
           alertId: null,
           kind,
-          params,
+          params: { ...params, target: `Meta · ${owned.name}` },
           idempotencyKey,
           preState: { status: prior, campaign_id: campaignId },
           postState: { status: desired, campaign_id: campaignId },
@@ -167,7 +184,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
       return json<ActionPayload>({
         ok: true,
-        toast: { message: intent === "pause" ? `Paused ${campaignName}` : `Resumed ${campaignName}` },
+        toast: { message: intent === "pause" ? `Paused ${owned.name}` : `Resumed ${owned.name}` },
       });
     } catch (err) {
       const e = err as CalderynError;
@@ -224,28 +241,48 @@ export default function Campaigns() {
     if (actionData?.ok) setPending(null);
   }, [actionData]);
 
-  const sorted = [...campaigns].sort((a, b) => b.spend_7d - a.spend_7d);
+  // Sortable numeric columns (index → value). Default: 7d spend, descending.
+  const SORT_KEYS: Record<number, (c: Campaign) => number> = {
+    3: (c) => c.daily_budget_cents,
+    4: (c) => c.spend_7d,
+    5: (c) => c.roas_7d,
+    6: (c) => c.roas_7d * c.contribution_margin,
+  };
+  const [sortIndex, setSortIndex] = useState(4);
+  const [sortDir, setSortDir] = useState<"ascending" | "descending">("descending");
+
+  const sorted = [...campaigns].sort((a, b) => {
+    const key = SORT_KEYS[sortIndex] ?? ((c: Campaign) => c.spend_7d);
+    return sortDir === "ascending" ? key(a) - key(b) : key(b) - key(a);
+  });
 
   const rows = sorted.map((c) => {
     const linked = alerts.filter((a) => a.campaign && a.campaign.includes(c.name));
+    const hasPerf = c.roas_7d > 0 && c.contribution_margin > 0;
+    const marginAdj = c.roas_7d * c.contribution_margin;
     return [
       <Text key={`n-${c.id}`} as="span" fontWeight="semibold">
         {c.name}
       </Text>,
-      <Badge key={`p-${c.id}`}>{c.platform}</Badge>,
+      <PlatformTag key={`p-${c.id}`} platform={c.platform} />,
       <Badge key={`s-${c.id}`} tone={c.status === "active" ? "success" : "attention"}>
-        {c.status}
+        {c.status === "active" ? "Active" : "Paused"}
       </Badge>,
       c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
       fmtMoney(c.spend_7d),
-      c.roas_7d.toFixed(2),
-      <Text
-        key={`m-${c.id}`}
-        as="span"
-        tone={c.contribution_margin < 1 ? "critical" : "success"}
-      >
-        {c.contribution_margin.toFixed(2)}
-      </Text>,
+      c.roas_7d > 0 ? `${c.roas_7d.toFixed(1)}×` : "—",
+      hasPerf ? (
+        <Text
+          key={`m-${c.id}`}
+          as="span"
+          tone={marginAdj < 1 ? "critical" : undefined}
+          fontWeight="semibold"
+        >
+          {marginAdj.toFixed(1)}×
+        </Text>
+      ) : (
+        "—"
+      ),
       linked.length ? <Badge tone="warning">{String(linked.length)}</Badge> : "—",
       <ButtonGroup key={`act-${c.id}`}>
         {c.status === "active" ? (
@@ -254,6 +291,7 @@ export default function Campaigns() {
           <Button onClick={() => setPending({ kind: "resume", campaign: c })}>Resume</Button>
         )}
         <Button
+          variant="plain"
           onClick={() => {
             setBudgetInput(Math.round(c.daily_budget_cents / 100).toString());
             setPending({ kind: "edit_budget", campaign: c });
@@ -307,11 +345,18 @@ export default function Campaigns() {
               "Daily budget",
               "7d spend",
               "Reported ROAS",
-              "Margin-adj",
+              "Margin-adj ROAS",
               "Alerts",
               "Actions",
             ]}
             rows={rows}
+            sortable={[false, false, false, true, true, true, true, false, false]}
+            defaultSortDirection="descending"
+            initialSortColumnIndex={4}
+            onSort={(index, direction) => {
+              setSortIndex(index);
+              setSortDir(direction === "ascending" ? "ascending" : "descending");
+            }}
           />
         </Card>
       </BlockStack>
@@ -452,5 +497,24 @@ function CampaignActionModal({
         </Form>
       </Modal.Section>
     </Modal>
+  );
+}
+
+function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
+  return (
+    <InlineStack gap="100" blockAlign="center" wrap={false}>
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 9999,
+          display: "inline-block",
+          background: platform === "Meta" ? "var(--cdn-info)" : "var(--cdn-warning)",
+        }}
+      />
+      <Text as="span" variant="bodySm">
+        {platform}
+      </Text>
+    </InlineStack>
   );
 }
