@@ -3,9 +3,12 @@ import type {
   Alert,
   AuditEntry,
   Campaign,
+  CampaignGradeRow,
+  DailyRoasRow,
   GuardrailConfig,
   Integration,
   SKU,
+  TopAdRow,
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
@@ -67,6 +70,17 @@ function rethrow(prefix: string, err: unknown): never {
     message: `${prefix}: ${e.message ?? String(err)}`,
     details: e.details ?? err,
   });
+}
+
+/** ISO yyyy-mm-dd for `days` ago (date-only, for `day` column comparisons). */
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** PostgREST embeds a many-to-one relation as an object (array in some cases). */
+function embeddedName(rel: unknown): string {
+  const obj = Array.isArray(rel) ? rel[0] : rel;
+  return String((obj as { name?: unknown } | null)?.name ?? "");
 }
 
 function rowToAlert(r: Record<string, unknown>): Alert {
@@ -368,6 +382,121 @@ export function calderynClient(shop: string) {
           return (data ?? []).map(rowToCampaign);
         } catch (err) {
           rethrow("campaigns.list", err);
+        }
+      },
+    },
+
+    analytics: {
+      // Account-level daily spend+revenue over the window, aggregated for the
+      // ROAS trend. ad_spend_fact has real data, so this renders immediately.
+      async dailyRoasSeries(windowDays = 30, _signal?: AbortSignal): Promise<DailyRoasRow[]> {
+        try {
+          const shopId = await shopIdP;
+          const since = isoDaysAgo(windowDays);
+          const { data, error } = await supabase
+            .from("ad_spend_fact")
+            .select("day, spend_cents, revenue_attrib_cents")
+            .eq("shop_id", shopId)
+            .gte("day", since)
+            .order("day", { ascending: true });
+          if (error) throw error;
+          const byDay = new Map<string, { spend: number; revenue: number }>();
+          for (const r of data ?? []) {
+            const day = String(r.day);
+            const acc = byDay.get(day) ?? { spend: 0, revenue: 0 };
+            acc.spend += Number(r.spend_cents ?? 0);
+            acc.revenue += Number(r.revenue_attrib_cents ?? 0);
+            byDay.set(day, acc);
+          }
+          return [...byDay.entries()]
+            .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+            .map(([day, v]) => ({ day, spend_cents: v.spend, revenue_cents: v.revenue }));
+        } catch (err) {
+          rethrow("analytics.dailyRoasSeries", err);
+        }
+      },
+
+      // Latest grade per campaign (most recent day_bucket), with its name.
+      // Empty until the engine writes campaign_grade_fact.
+      async campaignGrades(_signal?: AbortSignal): Promise<CampaignGradeRow[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("campaign_grade_fact")
+            .select(
+              "campaign_id, grade, roas, break_even_roas, spend_cents, revenue_cents, day_bucket, ad_campaign_dim(name)",
+            )
+            .eq("shop_id", shopId)
+            .order("day_bucket", { ascending: false });
+          if (error) throw error;
+          const seen = new Set<string>();
+          const out: CampaignGradeRow[] = [];
+          for (const r of data ?? []) {
+            const campaignId = String(r.campaign_id);
+            if (seen.has(campaignId)) continue;
+            seen.add(campaignId);
+            out.push({
+              campaign_id: campaignId,
+              name: embeddedName(r.ad_campaign_dim),
+              grade: String(r.grade ?? ""),
+              roas: Number(r.roas ?? 0),
+              break_even_roas: Number(r.break_even_roas ?? 0),
+              spend_cents: Number(r.spend_cents ?? 0),
+              revenue_cents: Number(r.revenue_cents ?? 0),
+              day_bucket: String(r.day_bucket ?? ""),
+            });
+          }
+          return out;
+        } catch (err) {
+          rethrow("analytics.campaignGrades", err);
+        }
+      },
+
+      // Top ads by total engagement over the window. Empty until Meta
+      // engagement ingestion populates ad_engagement_fact.
+      async topAdsByEngagement(
+        windowDays = 30,
+        limit = 20,
+        _signal?: AbortSignal,
+      ): Promise<TopAdRow[]> {
+        try {
+          const shopId = await shopIdP;
+          const since = isoDaysAgo(windowDays);
+          const { data, error } = await supabase
+            .from("ad_engagement_fact")
+            .select(
+              "ad_external_id, ad_name, reactions, comments, shares, saves, ad_campaign_dim(name)",
+            )
+            .eq("shop_id", shopId)
+            .gte("day", since);
+          if (error) throw error;
+          const byAd = new Map<string, TopAdRow>();
+          for (const r of data ?? []) {
+            const id = String(r.ad_external_id);
+            const acc =
+              byAd.get(id) ??
+              ({
+                ad_external_id: id,
+                ad_name: String(r.ad_name ?? ""),
+                campaign_name: embeddedName(r.ad_campaign_dim),
+                reactions: 0,
+                comments: 0,
+                shares: 0,
+                saves: 0,
+                engagement: 0,
+              } satisfies TopAdRow);
+            acc.reactions += Number(r.reactions ?? 0);
+            acc.comments += Number(r.comments ?? 0);
+            acc.shares += Number(r.shares ?? 0);
+            acc.saves += Number(r.saves ?? 0);
+            acc.engagement = acc.reactions + acc.comments + acc.shares + acc.saves;
+            byAd.set(id, acc);
+          }
+          return [...byAd.values()]
+            .sort((a, b) => b.engagement - a.engagement)
+            .slice(0, limit);
+        } catch (err) {
+          rethrow("analytics.topAdsByEngagement", err);
         }
       },
     },

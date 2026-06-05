@@ -37,6 +37,7 @@ from typing import Any
 import structlog
 
 from calderyn_engine.alerts_repo import upsert_alert
+from calderyn_engine.campaign_grade_repo import grade_campaigns_for_shop
 from calderyn_engine.claude_layer import rank_and_narrate
 from calderyn_engine.config import Config, load_config
 from calderyn_engine.db import get_pool, with_shop_context
@@ -160,6 +161,33 @@ async def run_for_shop(
                 all_detections = await _run_detectors_in_scope(
                     conn, shop_id, now
                 )
+
+                # Campaign grade pass — derived fact, written in the same RLS
+                # scope as the alerts, and BEFORE the no-detections early return
+                # so grades are produced even for shops with zero alerts.
+                # Savepoint-guarded so a grade failure never loses alert writes.
+                gsp = conn.transaction()
+                await gsp.start()
+                try:
+                    graded = await grade_campaigns_for_shop(
+                        conn, shop_id, (day or now.date())
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    await gsp.rollback()
+                    logger.error(
+                        "campaign_grade_failed",
+                        shop_id=shop_id,
+                        error=str(exc),
+                        exc_type=type(exc).__name__,
+                    )
+                else:
+                    await gsp.commit()
+                    logger.info(
+                        "campaign_grades_written",
+                        shop_id=shop_id,
+                        count=len(graded),
+                    )
+
                 if not all_detections:
                     logger.info(
                         "pipeline_no_detections",

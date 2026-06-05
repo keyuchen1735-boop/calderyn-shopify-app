@@ -28,6 +28,7 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/alerts">Alerts</Link>
+        <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/audit">Audit log</Link>
         <Link to="/app/campaigns">Campaigns</Link>
         <Link to="/app/skus">SKUs</Link>

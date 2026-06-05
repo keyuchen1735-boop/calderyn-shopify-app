@@ -92,3 +92,33 @@ export interface GuardrailConfig {
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
 }
+
+// --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---
+
+export interface DailyRoasRow {
+  day: string; // ISO yyyy-mm-dd
+  spend_cents: number;
+  revenue_cents: number;
+}
+
+export interface CampaignGradeRow {
+  campaign_id: string;
+  name: string;
+  grade: string; // 'winning' | 'okay' | 'poor'
+  roas: number;
+  break_even_roas: number;
+  spend_cents: number;
+  revenue_cents: number;
+  day_bucket: string;
+}
+
+export interface TopAdRow {
+  ad_external_id: string;
+  ad_name: string;
+  campaign_name: string;
+  reactions: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  engagement: number;
+}
