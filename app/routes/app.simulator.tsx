@@ -13,8 +13,12 @@ import { getLatestRun, listRuns } from "~/lib/simulator/runs.server";
 import { sampleFunnel, seedFromString } from "~/lib/simulator/sample";
 import { MAX_SHOPPERS, MIN_SHOPPERS, type SimulationRun } from "~/lib/simulator/types";
 
-// Run a single structured Claude call synchronously; fits the function budget.
-export const config = { maxDuration: 60 };
+// NOTE: do NOT add `export const config = { maxDuration: ... }` here. With
+// v3_singleFetch, a per-route config makes @vercel/remix split this route into its
+// own serverless function that does NOT serve the single-fetch `/app/simulator.data`
+// path — so client-side nav 404s while the full page load works. If the live (Claude)
+// path later needs a longer timeout, set it for the whole server function in
+// vercel.json, not per-route.
 
 export function clampN(raw: FormDataEntryValue | null): number {
   const n = Math.round(Number(raw));
