@@ -17,3 +17,9 @@ create table if not exists public.oauth_state (
 );
 
 create index if not exists oauth_state_shop_idx on public.oauth_state (shop_id);
+
+-- RLS on, no policies — matches the rest of the schema. The app reaches this
+-- table only via the service-role key (which bypasses RLS); the anon/authenticated
+-- roles have no policy and are denied. This avoids leaving oauth_state exposed to
+-- the anon role the way public.mcp_tokens currently is.
+alter table public.oauth_state enable row level security;
