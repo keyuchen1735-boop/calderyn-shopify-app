@@ -1,4 +1,6 @@
 import type { LocationRow, SkuRow, OrderRow, OrderLineRow } from "./types";
+import { parseLandingSite } from "../attribution/parse";
+import type { AttributionSignals } from "../attribution/types";
 
 export function gidToId(gid: string): string {
   const m = gid.match(/\/([^/]+)$/);
@@ -77,6 +79,14 @@ export function mapOrder(shopId: string, o: OrderNode): OrderRow {
     currency: o.currentTotalPriceSet?.shopMoney?.currencyCode ?? "USD",
     financial_status: o.displayFinancialStatus ?? null,
     source_version: Date.parse(o.updatedAt),
+    // backfill (GraphQL) does not carry landing/UTM — null them.
+    landing_site: null,
+    referring_site: null,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    utm_content: null,
+    utm_term: null,
   };
 }
 
@@ -145,13 +155,19 @@ type RawOrderWebhook = {
   currency?: string | null;
   financial_status?: string | null;
   line_items?: RawOrderLineItem[];
+  landing_site?: string | null;
+  referring_site?: string | null;
 };
 
 export function parseOrderWebhook(p: RawOrderWebhook): {
   order: ParsedOrderHeader;
   lines: OrderLineRow[];
+  clickRef: AttributionSignals;
 } {
   const updatedAt = String(p.updated_at ?? p.created_at);
+  const landingSite = p.landing_site ?? null;
+  const referringSite = p.referring_site ?? null;
+  const { utm, clickIds } = parseLandingSite(landingSite);
   const order: ParsedOrderHeader = {
     external_id: String(p.admin_graphql_api_id),
     order_number: String(p.name),
@@ -164,6 +180,13 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
     currency: String(p.currency ?? "USD"),
     financial_status: p.financial_status ?? null,
     source_version: Date.parse(updatedAt),
+    landing_site: landingSite,
+    referring_site: referringSite,
+    utm_source: utm.utm_source ?? null,
+    utm_medium: utm.utm_medium ?? null,
+    utm_campaign: utm.utm_campaign ?? null,
+    utm_content: utm.utm_content ?? null,
+    utm_term: utm.utm_term ?? null,
   };
   const lines: OrderLineRow[] = (p.line_items ?? []).map((ln) => {
     const priceCents = moneyToCents(ln.price);
@@ -177,5 +200,5 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
       total_cents: priceCents * Number(ln.quantity ?? 0),
     };
   });
-  return { order, lines };
+  return { order, lines, clickRef: { utm, clickIds, referringSite } };
 }
