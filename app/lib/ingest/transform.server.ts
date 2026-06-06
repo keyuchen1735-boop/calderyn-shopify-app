@@ -1,6 +1,7 @@
 import { getSupabase } from "../supabase.server";
 import { writeDlq } from "./dlq.server";
 import { parseInventoryWebhook, parseOrderWebhook } from "./mappers.server";
+import { applyAttribution } from "../attribution/apply.server";
 
 const BATCH = 200;
 
@@ -110,7 +111,7 @@ async function applyInventory(shopId: string, payload: Record<string, unknown>):
 
 async function applyOrder(shopId: string, payload: Record<string, unknown>): Promise<number> {
   const sb = getSupabase();
-  const { order, lines } = parseOrderWebhook(payload as Parameters<typeof parseOrderWebhook>[0]);
+  const { order, lines, clickRef } = parseOrderWebhook(payload as Parameters<typeof parseOrderWebhook>[0]);
 
   // Slice-1: last-writer-wins (see backfill.server.ts note on §7.1 deviation).
   const { data: oUp, error: oErr } = await sb
@@ -121,6 +122,10 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
   if (oErr) throw oErr;
 
   const orderId = (oUp as { id: string }).id;
+
+  // Attribution: tie this order to the ad that earned it (best-effort; never
+  // aborts ingestion — failures surface via the caller's DLQ path).
+  await applyAttribution(shopId, orderId, order.total_cents, clickRef, sb);
 
   if (!lines.length) return 1;
 
