@@ -6,6 +6,7 @@
 // REST endpoint.
 
 import { getSupabase } from "../supabase.server";
+import { decrypt } from "../crypto.server";
 
 const GOOGLE_ADS_API_VERSION = "v17";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -18,36 +19,10 @@ export type GoogleAdsClient = {
 
 export type GoogleConnection = { client: GoogleAdsClient; customerId: string };
 
-type IntegrationRow = {
-  refresh_token_enc: string | null;
+type CredentialRow = {
+  access_token_encrypted: string | null;
   external_account_id: string | null;
 };
-
-/**
- * Decrypt the shop's stored Google refresh token.
- *
- * KNOWN GAP (rule 12 — fail visibly): `shop_integrations.refresh_token_enc` is
- * `bytea`. In the monorepo this was decrypted DB-side. This repo's
- * crypto.server.ts uses an incompatible text format (`ivHex:tagHex:dataHex`),
- * and there is NO Google OAuth route yet — so in practice no `google_ads`
- * integration rows exist. We therefore have no token to decrypt and no scheme
- * that round-trips against `bytea`.
- *
- * Rather than fabricate an empty/fake token (which would silently produce
- * unauthenticated API calls), this throws a clear error. The cron caller
- * catches it per-shop and records it in the error summary.
- *
- * FOLLOW-UP: wire a Google OAuth callback that persists the refresh token using
- * an encryption scheme compatible with the `bytea` column, then implement real
- * decryption here.
- */
-function decryptRefreshToken(_enc: string): string {
-  throw new Error(
-    "Google refresh-token decryption is not implemented: shop_integrations.refresh_token_enc " +
-      "is bytea and no bytea-compatible encryption scheme / Google OAuth route exists yet. " +
-      "This is a documented follow-up; see decryptRefreshToken in app/lib/google/client.server.ts.",
-  );
-}
 
 type GoogleTokenResponse = {
   access_token?: string;
@@ -145,24 +120,29 @@ function buildClient(customerId: string, refreshToken: string): GoogleAdsClient 
 }
 
 /**
- * Load the shop's google_ads integration and build a client. Returns null when
- * there is no integration row (nothing to do), or when the row lacks a refresh
- * token / customer id. Throws (via decryptRefreshToken) when a token exists but
- * cannot be decrypted — never returns a fake token.
+ * Load the shop's google_ads credentials and build a client. Returns null when
+ * there is no credential row (nothing to do), or when the row lacks a refresh
+ * token / customer id. Throws (via decrypt) if a stored token is malformed —
+ * never returns a fake token.
+ *
+ * The refresh token is stored ENCRYPTED in integration_credentials by the
+ * Google OAuth callback (app/routes/auth.google.$.tsx), using the same
+ * crypto.server text format Meta uses (closing the former `bytea` decryption
+ * gap on shop_integrations.refresh_token_enc).
  */
 export async function googleClientForShop(shopId: string): Promise<GoogleConnection | null> {
   const { data, error } = await getSupabase()
-    .from("shop_integrations")
-    .select("refresh_token_enc, external_account_id")
+    .from("integration_credentials")
+    .select("access_token_encrypted, external_account_id")
     .eq("shop_id", shopId)
     .eq("kind", "google_ads")
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
 
-  const row = data as IntegrationRow;
-  if (!row.refresh_token_enc || !row.external_account_id) return null;
+  const row = data as CredentialRow;
+  if (!row.access_token_encrypted || !row.external_account_id) return null;
 
-  const refreshToken = decryptRefreshToken(row.refresh_token_enc);
+  const refreshToken = decrypt(row.access_token_encrypted);
   return { client: buildClient(row.external_account_id, refreshToken), customerId: row.external_account_id };
 }
