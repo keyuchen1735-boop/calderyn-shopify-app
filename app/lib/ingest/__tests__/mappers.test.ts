@@ -108,6 +108,13 @@ describe("mapOrder / mapOrderLines", () => {
       currency: "USD",
       financial_status: "PAID",
       source_version: Date.parse("2026-05-01T12:00:00Z"),
+      landing_site: null,
+      referring_site: null,
+      utm_source: null,
+      utm_medium: null,
+      utm_campaign: null,
+      utm_content: null,
+      utm_term: null,
     });
   });
 
@@ -178,6 +185,13 @@ describe("parseOrderWebhook", () => {
       currency: "USD",
       financial_status: "paid",
       source_version: Date.parse("2026-05-01T12:00:00Z"),
+      landing_site: null,
+      referring_site: null,
+      utm_source: null,
+      utm_medium: null,
+      utm_campaign: null,
+      utm_content: null,
+      utm_term: null,
     });
     expect(parsed.lines).toEqual([
       {
