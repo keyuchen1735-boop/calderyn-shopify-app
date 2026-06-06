@@ -57,6 +57,16 @@ describe("runGdprAndRetentionSweep", () => {
     ]);
   });
 
+  it("purges ad_click_ref rows older than the retention window (same cutoff as raw_shopify_webhook)", async () => {
+    const { sb, deleteCalls } = makeFakeSb({ candidates: [], rawDeleted: 0 });
+    await runGdprAndRetentionSweep(sb);
+    // Exactly one lt-delete on ad_click_ref for captured_at.
+    const adClickRefTrim = deleteCalls.filter(
+      (c) => c.table === "ad_click_ref" && c.kind === "lt",
+    );
+    expect(adClickRefTrim).toHaveLength(1);
+  });
+
   it("records a failed shop (does not throw or silently pass) and keeps going", async () => {
     // A's delete fails; B (queued after it) must still be redacted —
     // per-shop isolation: one shop's failure never aborts the batch (rule 12).
