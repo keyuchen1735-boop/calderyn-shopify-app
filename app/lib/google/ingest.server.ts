@@ -46,12 +46,6 @@ const REPORT_GAQL_90D = `
   WHERE segments.date DURING LAST_90_DAYS
 `;
 
-function yesterdayISO(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
 function reportGaqlForDay(day: string): string {
   return `
     SELECT

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader } from "../cron.ingest-ads";
 
 const { adaptersForShops, backfillAds, pollAdsDaily, updateSync } = vi.hoisted(() => ({
   adaptersForShops: vi.fn(),
@@ -14,8 +15,6 @@ vi.mock("~/lib/supabase.server", () => ({
     from: () => ({ update: () => ({ eq: () => ({ eq: () => { updateSync(); return Promise.resolve({ error: null }); } }) }) }),
   }),
 }));
-
-import { loader } from "../cron.ingest-ads";
 
 function req(auth?: string): Request {
   const headers = new Headers();
