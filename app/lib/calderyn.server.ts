@@ -13,6 +13,8 @@ import type {
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
 import { buildAuthUrl } from "./meta/oauth.server";
+import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
+import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
@@ -45,7 +47,7 @@ export type ExecuteActionOpts = {
   postState?: unknown;
 };
 
-export type IntegrationProvider = "google" | "meta" | "quickbooks";
+export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks";
 
 export type OnboardingState = { step: number; done: boolean };
 
@@ -165,6 +167,7 @@ const INTEGRATION_LOGO_CLS: Record<string, string> = {
   shopify: "logo-shopify",
   meta_ads: "logo-meta",
   google_ads: "logo-google",
+  tiktok_ads: "logo-tiktok",
   quickbooks: "logo-quickbooks",
 };
 
@@ -172,6 +175,7 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
   shopify: "Shopify",
   meta_ads: "Meta Ads",
   google_ads: "Google Ads",
+  tiktok_ads: "TikTok Ads",
   quickbooks: "QuickBooks",
 };
 
@@ -591,6 +595,7 @@ export function calderynClient(shop: string) {
             shopify: { name: "Shopify", status: "connected", detail: shop, logoCls: "logo-shopify" },
             meta_ads: { name: "Meta Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-meta" },
             google_ads: { name: "Google Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-google" },
+            tiktok_ads: { name: "TikTok Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-tiktok" },
             quickbooks: { name: "QuickBooks", status: "disconnected", detail: "Not connected", logoCls: "logo-quickbooks" },
           };
 
@@ -633,6 +638,42 @@ export function calderynClient(shop: string) {
           const state = await createOAuthState(supabase, shopId);
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
+        if (provider === "google") {
+          const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!clientId || !clientSecret || !appUrl) {
+            throw new CalderynError({
+              code: "GOOGLE_NOT_CONFIGURED",
+              status: 500,
+              message:
+                "Google Ads OAuth is not configured (GOOGLE_ADS_CLIENT_ID/GOOGLE_ADS_CLIENT_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/google`;
+          // Same single-use nonce pattern as Meta; consumed once at /auth/google.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId);
+          return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
+        }
+        if (provider === "tiktok") {
+          const appId = process.env.TIKTOK_APP_ID;
+          const appSecret = process.env.TIKTOK_APP_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!appId || !appSecret || !appUrl) {
+            throw new CalderynError({
+              code: "TIKTOK_NOT_CONFIGURED",
+              status: 500,
+              message:
+                "TikTok OAuth is not configured (TIKTOK_APP_ID/TIKTOK_APP_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/tiktok`;
+          // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId);
+          return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
+        }
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
@@ -642,7 +683,14 @@ export function calderynClient(shop: string) {
       async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
         try {
           const shopId = await shopIdP;
-          const kind = provider === "meta" ? "meta_ads" : provider === "google" ? "google_ads" : provider;
+          const kind =
+            provider === "meta"
+              ? "meta_ads"
+              : provider === "google"
+                ? "google_ads"
+                : provider === "tiktok"
+                  ? "tiktok_ads"
+                  : provider;
           const { error } = await supabase
             .from("shop_integrations")
             .delete()
