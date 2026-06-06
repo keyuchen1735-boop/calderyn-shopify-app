@@ -51,6 +51,11 @@ jobs:
       # Loopback test DB — the engine suite refuses any non-local host
       # (tests/engine/conftest.py) so it can never touch a shared database.
       TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/calderyn_test
+      # The pipeline test (test_pipeline_writes_grades) calls run_for_shop ->
+      # load_config(), which requires DATABASE_URL. Point it at the same loopback
+      # test DB. conftest pools still use ONLY TEST_DATABASE_URL, so nothing can
+      # reach a shared database.
+      DATABASE_URL: postgres://postgres:test@localhost:5432/calderyn_test
     steps:
       - uses: actions/checkout@v4
 
