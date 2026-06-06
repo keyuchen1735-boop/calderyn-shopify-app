@@ -254,6 +254,8 @@ Slice 1  DATA FLOWING            ← foundation
   • Collapse cron.google → cron.ingest-ads (loops shops × adapters)
   • Security: TikTok tokens → encrypted store, least-privilege scopes;
     cron reuses constant-time bearer auth
+  • Rate limiting: per-platform backoff+jitter on 429, batch + cache metadata,
+    bounded concurrency pool across shops (no thundering herd)
     ⇡ Meta & TikTok are independent → parallel
 
 Slice 2  ATTRIBUTION             ← needs Slice 1 data
@@ -358,6 +360,48 @@ encrypted credentials, `security_invoker` views, constant-time cron auth).
 - `cron.ingest-ads` reuses the existing **constant-time bearer compare + UUID-validate
   `shop_id`** guard (commit `fcc96ec`); no unauthenticated trigger path.
 
+## Rate limiting & cost control
+
+The expensive/risky call paths fall into three buckets. Note: **as scoped, this
+feature makes no Anthropic (LLM) calls** — narratives stay templated (a non-goal).
+The Anthropic controls below are pre-defined for *if* LLM narratives are switched
+on later, so cost governance is designed in, not retrofitted after a surprise bill.
+
+### Ad-platform API polls (Meta / Google / TikTok)
+These APIs are free but **rate-limited**; abuse causes throttling, failed ingest,
+or app-flagging — not a direct bill, but it breaks the product.
+- **Respect documented limits** per platform (Meta business-use-case limits, Google
+  Ads operations/day quota, TikTok QPS). Honor `Retry-After` / throttle headers.
+- **Exponential backoff with jitter** on 429 / rate-error responses; cap retries,
+  then mark `sync_status='error'` rather than hammering.
+- **Batch** requests (GAQL/Meta batch endpoints) and **cache unchanged campaign
+  metadata** — only re-poll metrics that moved (yesterday's window), not full history.
+- **Stagger polls across shops** in `cron.ingest-ads` (no thundering herd): a
+  **bounded concurrency pool**, not a fan-out of all shops × all adapters at once.
+
+### Action / budget mutations — the real payment-spike vector
+Changing budgets is the one path that moves real money. Covered by Layer 4:
+- **Auto-pilot daily action cap**, per-guardrail size limits, and a **global
+  kill-switch** bound automated spend changes.
+- **Idempotency keys** prevent a retry storm from double-applying a budget change.
+- One-click actions are inherently human-paced; auto-pilot is the only unattended
+  path and is hard-bounded above.
+
+### Anthropic / LLM calls (only if narratives are turned on later)
+If `claude_narrative` / `claude_rank` ever become LLM-generated, they must ship with:
+- **Per-shop daily budget**: a request cap *and* a token cap; exceeding it falls back
+  to templated narratives, never silently keeps spending.
+- **Response cache** keyed on an alert-content hash — never re-narrate an unchanged
+  alert; identical inputs return the cached narrative.
+- **Bounded output** (`max_tokens`) + **batch** multiple alerts into one call rather
+  than one call per alert.
+- **Circuit breaker**: trip and disable LLM narration shop-wide if a cost threshold
+  is crossed in a window; alert the operator.
+- **Prompt caching** on the shared system prompt to cut per-call cost; pick the
+  cheapest sufficient model (e.g. Haiku for ranking).
+- Reuse the existing assistant feature's Anthropic client/guardrails — one cost-
+  control path, not two.
+
 ## Testing strategy
 
 - **Adapters:** unit tests with fake clients (the existing Meta/Google test pattern) —
@@ -373,6 +417,10 @@ encrypted credentials, `security_invoker` views, constant-time cron auth).
   key blocks double-actions; sanitizer rejects oversized/malformed click-IDs + UTM;
   consent-off path captures nothing; guardrail + kill-switch hard-block auto-actions;
   cron rejects bad/missing bearer.
+- **Rate limiting:** 429/throttle response triggers backoff (not immediate retry storm);
+  retry cap reached → `sync_status='error'`; cron concurrency pool never exceeds its
+  bound; (if LLM on) per-shop token/request cap falls back to templated, cache hit
+  skips the call, circuit breaker trips at threshold.
 
 ## Open questions / risks
 
