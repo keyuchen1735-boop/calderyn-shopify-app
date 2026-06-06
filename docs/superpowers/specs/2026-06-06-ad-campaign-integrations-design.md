@@ -252,6 +252,8 @@ Slice 1  DATA FLOWING            ← foundation
   • TikTok adapter + ingestion
   • Add 'tiktok' to ad_platform enum
   • Collapse cron.google → cron.ingest-ads (loops shops × adapters)
+  • Security: TikTok tokens → encrypted store, least-privilege scopes;
+    cron reuses constant-time bearer auth
     ⇡ Meta & TikTok are independent → parallel
 
 Slice 2  ATTRIBUTION             ← needs Slice 1 data
@@ -259,15 +261,20 @@ Slice 2  ATTRIBUTION             ← needs Slice 1 data
   • ad_click_ref table + attribution_fact confidence column
   • Matcher: click-ID → UTM → platform-reported, stamp confidence
   • Feed revenue_attrib_cents for the grader
+  • Security: consent-gated Web Pixel capture, input sanitize, ad_click_ref
+    RLS + retention purge + GDPR redact-webhook handling
 
 Slice 3  ACTIONS                 ← needs adapter from Slice 1
   • pause + cut-budget across all 3 platforms via adapter
   • action_audit pre/post + one-click undo wired end-to-end
+  • Security: campaign ownership check + idempotency key before any API call;
+    action_audit append-only
 
 Slice 4  AUTO-PILOT              ← wraps Slice 3
   • Make guardrail_config enforcing (not advisory)
   • Guardrail check wrapping the action path
   • Settings UI for the rules; off by default
+  • Security: daily action cap + global kill-switch; enabling auto-pilot is audited
 ```
 
 Grading (Layer 1) is already built; it begins producing trustworthy verdicts once
@@ -283,10 +290,73 @@ Slices 1 & 2 feed it real data + confidence.
 | `app/lib/ads/adapter.ts` | New: shared `AdPlatformAdapter` contract + registry |
 | `app/routes/cron.ingest-ads.tsx` | New: replaces `cron.google.tsx`; loops shops × adapters |
 | `supabase/migrations/` | `'tiktok'` enum value; `attribution_fact.confidence`; `ad_click_ref` table |
-| Storefront | Click-ID/UTM capture script + cart-attribute plumbing |
-| Attribution matcher | New server step in ingest pipeline |
-| Action executor | Route action kind → `adapter.pause/setBudget`; audit + undo |
-| `guardrail_config` enforcement | New check wrapping the action path |
+| Storefront | Consent-gated Web Pixel capturing click-ID/UTM + cart-attribute plumbing |
+| Attribution matcher | New server step in ingest pipeline; input sanitize on untrusted click-ID/UTM |
+| Action executor | Route action kind → `adapter.pause/setBudget`; ownership + idempotency check; audit + undo |
+| `guardrail_config` enforcement | New check wrapping the action path + daily cap + kill-switch |
+| GDPR webhooks | `shop/redact` + `customers/redact` purge `ad_click_ref`; scheduled retention purge |
+
+## Security & data safety
+
+This feature handles OAuth tokens, real ad-spend mutations, and shopper-derived
+tracking data. Controls below build on the existing posture (PR #6: RLS,
+encrypted credentials, `security_invoker` views, constant-time cron auth).
+
+### Credentials & secrets
+- TikTok tokens reuse the existing **`integration_credentials` AES-256-GCM** store —
+  no plaintext tokens at rest, never written to logs or `raw_*_poll` payloads.
+- Request **least-privilege OAuth scopes**: read metrics + manage campaigns only;
+  no account-admin or billing scopes.
+- TikTok client ID/secret live in **`.env.local` only**, never committed (CLAUDE.md rule).
+- Token refresh failures set `shop_integrations.sync_status='error'` — never silently
+  retry with a stale token.
+
+### Tenant isolation (RLS)
+- New `ad_click_ref` table gets **RLS scoped by `current_shop_id()`**; merchant
+  sessions read only their own rows.
+- Workers/ingest use the service role (bypasses RLS for writes) — every write path
+  must set `shop_id` explicitly from the authenticated context, never from request input.
+- New tables/views added under the **cross-shop tenant-isolation regression guard**.
+- Any new view stays **`security_invoker`**; any new RPC has anon `EXECUTE` revoked.
+
+### Shopper data & privacy (storefront capture — the main new surface)
+- Click-IDs (`fbclid`/`gclid`/`ttclid`) + UTM are **tracking identifiers**: capture
+  only via the **Shopify Web Pixel sandbox**, gated on **Customer Privacy / consent mode**
+  (no capture when the shopper hasn't consented to marketing tracking).
+- **Data minimization:** store click-ID + UTM only — never additional shopper PII.
+- **Retention:** `ad_click_ref` rows purged on a schedule (e.g. 90 days) once matched
+  or expired; attribution result persists in `attribution_fact`, the raw breadcrumb does not.
+- Honor deletion: `shop/redact` + `customers/redact` GDPR webhooks must purge related
+  `ad_click_ref` rows.
+
+### Untrusted input
+- Click-IDs and UTM params arrive from **attacker-controllable** URLs and cart
+  attributes. On ingest: **length-cap, allowlist-charset sanitize**, store via
+  parameterized writes only. On render: escape (Polaris escapes by default — no
+  `dangerouslySetInnerHTML`).
+- The `orders/create` webhook stays HMAC-verified via `authenticate.webhook`; cart
+  attributes within it are treated as untrusted and validated before use.
+
+### Action execution (spends/changes real money)
+- Every action path is behind **`authenticate.admin`**; auto-pilot runs server-side
+  under the shop's own service context.
+- **Ownership check:** before any platform API call, verify the target campaign's
+  `shop_id` matches the acting shop — prevents acting on another tenant's campaign.
+- **Idempotency:** actions carry an idempotency key so a retry can't double-pause or
+  double-cut budget.
+- **Audit integrity:** `action_audit` is append-only (inserts only, no updates/deletes);
+  every action records `pre_state`/`post_state` for undo + forensic trail.
+
+### Auto-pilot safety
+- Guardrails are **enforced** (not advisory): the check wrapping the action path
+  hard-blocks any auto-action outside bounds.
+- **Daily action cap** + a **global kill-switch** (disable all auto-pilot for a shop)
+  bound runaway automated spend changes.
+- Auto-pilot **off by default**; enabling it is an explicit, audited merchant action.
+
+### Cron / engine endpoints
+- `cron.ingest-ads` reuses the existing **constant-time bearer compare + UUID-validate
+  `shop_id`** guard (commit `fcc96ec`); no unauthenticated trigger path.
 
 ## Testing strategy
 
@@ -299,6 +369,10 @@ Slices 1 & 2 feed it real data + confidence.
   undo round-trips state.
 - **Guardrails:** unit tests that each guardrail blocks/permits the action path correctly.
 - **Tenant isolation:** new tables (`ad_click_ref`) get RLS + the cross-shop regression guard.
+- **Security:** ownership-check rejects acting on another shop's campaign; idempotency
+  key blocks double-actions; sanitizer rejects oversized/malformed click-IDs + UTM;
+  consent-off path captures nothing; guardrail + kill-switch hard-block auto-actions;
+  cron rejects bad/missing bearer.
 
 ## Open questions / risks
 
