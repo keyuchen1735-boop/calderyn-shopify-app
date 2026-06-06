@@ -22,10 +22,11 @@ import {
   SkeletonBodyText,
   SkeletonDisplayText,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
-import type { Alert, Severity } from "~/lib/types";
+import type { Alert, DetectorId, Severity } from "~/lib/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
-import { DETECTOR_LABELS } from "~/lib/labels";
+import { DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
 
 /* ───────────────────────────── Icon ───────────────────────────── */
 
@@ -97,8 +98,13 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
   return <Badge tone={severityTone(severity)}>{label}</Badge>;
 }
 
-export function DetectorTag({ children }: { children: string }) {
-  return <Badge>{children}</Badge>;
+/** The plain-language detector name as a Badge, with the technical term on hover. */
+export function DetectorTag({ detectorId }: { detectorId: DetectorId }) {
+  return (
+    <Tooltip content={DETECTOR_TERMS[detectorId]}>
+      <Badge>{DETECTOR_LABELS[detectorId]}</Badge>
+    </Tooltip>
+  );
 }
 
 /* ───────────────────────────── StatTile ───────────────────────────── */
@@ -244,7 +250,7 @@ export function AlertCard({
         <BlockStack gap="150">
           <InlineStack gap="150" blockAlign="center">
             <SeverityBadge severity={alert.severity} />
-            <DetectorTag>{DETECTOR_LABELS[alert.detector_id]}</DetectorTag>
+            <DetectorTag detectorId={alert.detector_id} />
             <Text as="span" variant="bodySm" tone="subdued">
               {fmtRelTime(alert.created_at)}
             </Text>

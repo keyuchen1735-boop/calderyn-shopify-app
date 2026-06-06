@@ -19,11 +19,12 @@ import {
   InlineGrid,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
-import { ACTION_LABELS, DETECTOR_LABELS } from "~/lib/labels";
+import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
@@ -152,7 +153,13 @@ export default function Audit() {
       )}
     </Box>,
     a.target,
-    <Badge key={`d-${a.id}`}>{DETECTOR_LABELS[a.detector_id] || "—"}</Badge>,
+    DETECTOR_LABELS[a.detector_id] ? (
+      <Tooltip key={`d-${a.id}`} content={DETECTOR_TERMS[a.detector_id]}>
+        <Badge>{DETECTOR_LABELS[a.detector_id]}</Badge>
+      </Tooltip>
+    ) : (
+      <Badge key={`d-${a.id}`}>—</Badge>
+    ),
     <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
       {a.actor}
     </Text>,

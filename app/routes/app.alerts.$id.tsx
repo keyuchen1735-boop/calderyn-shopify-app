@@ -29,7 +29,6 @@ import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import {
   ACTION_LABELS,
   ACTION_VERBS,
-  DETECTOR_LABELS,
   DETECTOR_TO_ACTIONS,
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
@@ -263,7 +262,7 @@ export default function AlertDetail() {
       titleMetadata={
         <InlineStack gap="200">
           <SeverityBadge severity={alert.severity} />
-          <DetectorTag>{DETECTOR_LABELS[alert.detector_id]}</DetectorTag>
+          <DetectorTag detectorId={alert.detector_id} />
         </InlineStack>
       }
       subtitle={`Detected ${fmtAbsTime(alert.created_at)} · ${fmtRelTime(alert.created_at)}`}

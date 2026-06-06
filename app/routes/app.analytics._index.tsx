@@ -14,6 +14,7 @@ import {
   Link,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -113,9 +114,9 @@ export default function Analytics() {
         )}
 
         {breakevenCount > 0 && (
-          <Banner tone="warning" title={`${breakevenCount} campaign${breakevenCount === 1 ? "" : "s"} below break-even`}>
+          <Banner tone="warning" title={`${breakevenCount} campaign${breakevenCount === 1 ? "" : "s"} losing money`}>
             <p>
-              These campaigns spent more than the gross profit they generated.{" "}
+              These campaigns spent more than the profit they made after product costs.{" "}
               <Link onClick={() => navigate("/app/alerts")}>Review and act →</Link>
             </p>
           </Banner>
@@ -150,7 +151,18 @@ export default function Analytics() {
           ) : (
             <DataTable
               columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "numeric"]}
-              headings={["Campaign", "Grade", "ROAS", "Break-even", "Spend", "Revenue"]}
+              headings={[
+                "Campaign",
+                "Grade",
+                <Tooltip key="roas" content="ROAS — return on ad spend (revenue ÷ ad spend)">
+                  <span>Ad return</span>
+                </Tooltip>,
+                <Tooltip key="be" content="Break-even — the ad return you need just to not lose money">
+                  <span>Break-even</span>
+                </Tooltip>,
+                "Spend",
+                "Revenue",
+              ]}
               rows={gradeRows}
             />
           )}

@@ -1,6 +1,26 @@
 import type { ActionKind, DetectorId } from "./types";
 
+// Plain-language names shown to merchants. The original analyst term for each
+// lives in DETECTOR_TERMS below and is surfaced as a tooltip beside the label,
+// so people who know the jargon still get it without it being the headline.
 export const DETECTOR_LABELS: Record<DetectorId, string> = {
+  ad_tax_overload: "Paying too much in ad fees",
+  campaign_below_breakeven: "Campaign is losing money",
+  cogs_drift: "Product costs creeping up",
+  margin_erosion: "Profit per sale shrinking",
+  negative_unit_economics: "Losing money on every sale",
+  regional_shortage_risk: "About to run out in some areas",
+  regional_spend_starved_stock: "Paying for ads where you're out of stock",
+  reorder_timing: "Time to reorder",
+  return_rate_hidden_loss: "Returns quietly costing you money",
+  scaling_sku_fulfillment_risk: "Best-seller may sell out",
+  sku_stockout_vs_spend: "Running ads for a sold-out product",
+  wrong_location_concentration: "Stock in the wrong warehouse",
+};
+
+// The technical term for each detector — shown as a tooltip/subtitle next to the
+// plain label so merchants fluent in the jargon can still map it back.
+export const DETECTOR_TERMS: Record<DetectorId, string> = {
   ad_tax_overload: "Ad-tax overload",
   campaign_below_breakeven: "Campaign below breakeven",
   cogs_drift: "COGS drift",

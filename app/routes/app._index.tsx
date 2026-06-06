@@ -166,9 +166,9 @@ export default function Dashboard() {
             )}
           </StatTile>
           <StatTile
-            label="True ROAS (7d)"
+            label="Real ad return (7d)"
             value={trueRoas(campaigns)}
-            caption="margin-adjusted, all campaigns"
+            caption="margin-adjusted ROAS, all campaigns"
             onClick={() => navigate("/app/campaigns")}
           />
         </InlineGrid>

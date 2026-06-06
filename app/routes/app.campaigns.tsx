@@ -22,6 +22,7 @@ import {
   Page,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -344,8 +345,12 @@ export default function Campaigns() {
               "Status",
               "Daily budget",
               "7d spend",
-              "Reported ROAS",
-              "Margin-adj ROAS",
+              <Tooltip key="roas" content="Reported ROAS — revenue ÷ ad spend, before product costs">
+                <span>Ad return</span>
+              </Tooltip>,
+              <Tooltip key="madj" content="Margin-adjusted ROAS — return after product costs are taken out">
+                <span>Real return</span>
+              </Tooltip>,
               "Alerts",
               "Actions",
             ]}
