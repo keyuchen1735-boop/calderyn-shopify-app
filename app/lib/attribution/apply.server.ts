@@ -26,18 +26,27 @@ export async function applyAttribution(
 
   const result = resolveAttribution(signals, campaigns);
 
-  const { error: aErr } = await sb.from("attribution_fact").upsert(
-    {
-      shop_id: shopId,
-      order_id: orderId,
-      campaign_id: result.campaignId,
-      platform: result.platform,
-      attributed_revenue_cents: result.campaignId ? revenueCents : 0,
-      attribution_method: result.method,
-      confidence: result.confidence,
-    },
-    { onConflict: "order_id,campaign_id" },
-  );
+  // One attribution row per order. Delete-then-insert (rather than upsert) is the
+  // idempotent, reprocessing-safe write here: the matcher yields exactly one
+  // result per order, and ON CONFLICT cannot target the partial unique index that
+  // guards the campaign_id-null (unattributed) case. The transform runs orders
+  // sequentially, so there is no concurrent writer for the same order_id.
+  const { error: dErr } = await sb
+    .from("attribution_fact")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (dErr) throw dErr;
+
+  const { error: aErr } = await sb.from("attribution_fact").insert({
+    shop_id: shopId,
+    order_id: orderId,
+    campaign_id: result.campaignId,
+    platform: result.platform,
+    attributed_revenue_cents: result.campaignId ? revenueCents : 0,
+    attribution_method: result.method,
+    confidence: result.confidence,
+  });
   if (aErr) throw aErr;
 
   // Persist captured click-ids (one upsert per click-id). Keyed (order_id, platform, click_id).

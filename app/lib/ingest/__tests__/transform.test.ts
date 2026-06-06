@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- in-memory fake supabase for transform integration tests */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { canonicalTopic } from "../transform.server";
+import { canonicalTopic, transformPendingWebhooks } from "../transform.server";
 
 // Regression guard for the topic-format mismatch: Shopify's authenticate.webhook
 // returns topics in storage form (e.g. "ORDERS_CREATE"), which is what lands in
@@ -34,6 +34,10 @@ type Row = Record<string, any>;
 const store: Record<string, Row[]> = {};
 // Records upserts made during a test run.
 const upserts: Array<{ table: string; rows: unknown; opts?: unknown }> = [];
+// Records inserts (e.g. attribution_fact) made during a test run.
+const inserts: Array<{ table: string; rows: unknown }> = [];
+// Records deletes (e.g. attribution_fact replace) made during a test run.
+const deletes: Array<{ table: string }> = [];
 // Records updates (e.g. processed_at stamps) made during a test run.
 const updates: Array<{ table: string; set: unknown }> = [];
 
@@ -64,7 +68,14 @@ function makeBuilder(table: string): any {
       updates.push({ table, set });
       return api;
     },
-    insert: () => api,
+    insert: (rows: unknown) => {
+      inserts.push({ table, rows });
+      return api;
+    },
+    delete: () => {
+      deletes.push({ table });
+      return api;
+    },
     then: (resolve: (r: { data: any; error: null }) => unknown) =>
       resolve({ data: matches(), error: null }),
   };
@@ -83,12 +94,10 @@ beforeEach(() => {
   // Clear store, upserts, updates between tests.
   for (const k of Object.keys(store)) delete store[k];
   upserts.length = 0;
+  inserts.length = 0;
+  deletes.length = 0;
   updates.length = 0;
 });
-
-// Import after mocks are registered.
-// eslint-disable-next-line import/first
-import { transformPendingWebhooks } from "../transform.server";
 
 describe("transformPendingWebhooks — attribution", () => {
   it("writes attribution_fact when an order carries a matching utm_campaign", async () => {
@@ -124,9 +133,11 @@ describe("transformPendingWebhooks — attribution", () => {
 
     await transformPendingWebhooks();
 
-    // Assert: an upsert to attribution_fact occurred with the matched campaign.
-    const af = upserts.find((u) => u.table === "attribution_fact");
-    expect(af, "expected an attribution_fact upsert").toBeDefined();
+    // Assert: an insert to attribution_fact occurred with the matched campaign
+    // (one-row-per-order: prior row deleted, then inserted).
+    expect(deletes.some((d) => d.table === "attribution_fact")).toBe(true);
+    const af = inserts.find((u) => u.table === "attribution_fact");
+    expect(af, "expected an attribution_fact insert").toBeDefined();
     expect((af?.rows as Record<string, unknown>)).toMatchObject({
       shop_id: SHOP_ID,
       order_id: ORDER_UUID,
