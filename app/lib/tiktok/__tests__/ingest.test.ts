@@ -46,8 +46,6 @@ describe("makeTikTokSource", () => {
 
 // ─── buildTikTokClient pagination tests (real impl, stubbed fetch) ────────────
 
-const API_BASE = "https://business-api.tiktok.com/open_api/v1.3";
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
