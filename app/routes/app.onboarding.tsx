@@ -421,6 +421,10 @@ function OAuthStep({
       title: "Connect Meta Ads",
       blurb: "Calderyn reads Meta Ads spend, attribution, and ad-set structure.",
     },
+    tiktok: {
+      title: "Connect TikTok Ads",
+      blurb: "Calderyn reads TikTok Ads spend and advertiser performance.",
+    },
     quickbooks: {
       title: "Connect QuickBooks (optional)",
       blurb:
