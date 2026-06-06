@@ -6,7 +6,7 @@ import { getSupabase } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 import { listCampaigns, type MetaClient, type MetaResponse } from "./campaigns.server";
 import { metaCampaignToNormalized } from "./transform";
-import { fetchMetaInsights } from "./insights.server";
+import { fetchMetaInsights, assertNotRateLimited } from "./insights.server";
 import type { AdPlatformAdapter, ShopAdSource } from "../ads/adapter";
 import { withRetry } from "../ads/backoff";
 
@@ -78,6 +78,12 @@ export const metaAdapter: AdPlatformAdapter = {
     if (!data || !data.access_token_encrypted || !data.external_account_id) return null;
     const token = decrypt(data.access_token_encrypted as string);
     const adAccountId = String(data.external_account_id);
-    return makeMetaSource(buildClient(token), adAccountId, shopId, DEFAULT_CURRENCY);
+    const builtClient = buildClient(token);
+    const acct = assertNotRateLimited(await builtClient.get(`/${adAccountId}`, { fields: "currency" }));
+    const currency =
+      typeof (acct as { currency?: unknown }).currency === "string"
+        ? (acct as { currency: string }).currency
+        : DEFAULT_CURRENCY;
+    return makeMetaSource(builtClient, adAccountId, shopId, currency);
   },
 };

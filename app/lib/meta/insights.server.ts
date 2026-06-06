@@ -30,18 +30,30 @@ export async function fetchMetaInsights(
   shopId: string,
   window: InsightsWindow,
 ): Promise<NormalizedSpendRow[]> {
-  const params: Record<string, string> = {
+  const baseParams: Record<string, string> = {
     level: "campaign",
     time_increment: "1",
     fields: "campaign_id,spend,impressions,clicks,actions,action_values",
+    limit: "500",
   };
   if (window.day) {
-    params.time_range = JSON.stringify({ since: window.day, until: window.day });
+    baseParams.time_range = JSON.stringify({ since: window.day, until: window.day });
   } else {
-    params.date_preset = window.datePreset ?? "last_90d";
+    baseParams.date_preset = window.datePreset ?? "last_90d";
   }
-  const res = assertNotRateLimited(await client.get(`/${adAccountId}/insights`, params));
-  if (res.error) throw new Error(`Meta Insights error: ${res.error.message}`);
-  const rows = (res.data as MetaInsightRow[]) ?? [];
-  return rows.map((r) => metaInsightToSpend(r, shopId));
+
+  const rows: NormalizedSpendRow[] = [];
+  let after: string | undefined;
+
+  do {
+    const params = after ? { ...baseParams, after } : baseParams;
+    const res = assertNotRateLimited(await client.get(`/${adAccountId}/insights`, params));
+    if (res.error) throw new Error(`Meta Insights error: ${res.error.message}`);
+    const page = (res.data as MetaInsightRow[]) ?? [];
+    for (const r of page) rows.push(metaInsightToSpend(r, shopId));
+    const paging = (res as { paging?: { next?: string; cursors?: { after?: string } } }).paging;
+    after = paging?.next ? paging.cursors?.after : undefined;
+  } while (after);
+
+  return rows;
 }
