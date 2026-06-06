@@ -10,13 +10,15 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GoogleAdsClient } from "./client.server";
+import { googleClientForShop } from "./client.server";
 import {
   transformCampaign,
   transformReportRow,
 } from "./transform";
 import type { GoogleCampaignPayload, GoogleReportRow } from "./types";
 import { backfillAds, pollAdsDaily } from "../ads/ingest.server";
-import type { ShopAdSource } from "../ads/adapter";
+import type { AdPlatformAdapter, ShopAdSource } from "../ads/adapter";
+import { getSupabase } from "../supabase.server";
 
 const CAMPAIGN_GAQL = `
   SELECT
@@ -162,3 +164,13 @@ export async function pollGoogleDaily(
     throw err;
   }
 }
+
+export const googleAdapter: AdPlatformAdapter = {
+  platform: "google",
+  integrationKind: "google_ads",
+  async connect(shopId: string): Promise<ShopAdSource | null> {
+    const conn = await googleClientForShop(shopId);
+    if (!conn) return null;
+    return googleSource(conn.client, shopId, getSupabase());
+  },
+};
