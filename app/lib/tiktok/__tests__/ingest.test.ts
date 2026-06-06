@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { makeTikTokSource } from "../ingest.server";
+import { buildTikTokClient } from "../client.server";
 import type { TikTokClient } from "../client.server";
 import type { TikTokReportRow, TikTokCampaignPayload } from "../types";
 
@@ -10,6 +11,7 @@ function client(report: TikTokReportRow[], campaigns: TikTokCampaignPayload[]): 
   return {
     getReport: vi.fn(async () => report),
     getCampaigns: vi.fn(async () => campaigns),
+    getAdvertiserCurrency: vi.fn(async () => "USD"),
   };
 }
 
@@ -39,5 +41,91 @@ describe("makeTikTokSource", () => {
     await src.fetchBackfillSpend();
     expect(c.getReport).toHaveBeenCalledWith(ADV, "2026-03-08", "2026-06-06");
     vi.useRealTimers();
+  });
+});
+
+// ─── buildTikTokClient pagination tests (real impl, stubbed fetch) ────────────
+
+const API_BASE = "https://business-api.tiktok.com/open_api/v1.3";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("buildTikTokClient.getReport pagination", () => {
+  it("accumulates rows across multiple pages", async () => {
+    const row1: TikTokReportRow = { dimensions: { campaign_id: "c1", stat_time_day: "2026-06-01 00:00:00" }, metrics: { spend: "1.00" } };
+    const row2: TikTokReportRow = { dimensions: { campaign_id: "c2", stat_time_day: "2026-06-02 00:00:00" }, metrics: { spend: "2.00" } };
+
+    const page1Response = {
+      code: 0,
+      message: "OK",
+      data: { list: [row1], page_info: { page: 1, page_size: 1000, total_number: 2, total_page: 2 } },
+    };
+    const page2Response = {
+      code: 0,
+      message: "OK",
+      data: { list: [row2], page_info: { page: 2, page_size: 1000, total_number: 2, total_page: 2 } },
+    };
+
+    let callCount = 0;
+    const mockFetch = vi.fn(async (url: string) => {
+      callCount += 1;
+      const body = callCount === 1 ? page1Response : page2Response;
+      return { status: 200, json: async () => body } as Response;
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    const rows = await c.getReport(ADV, "2026-06-01", "2026-06-02");
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ dimensions: { campaign_id: "c1" } });
+    expect(rows[1]).toMatchObject({ dimensions: { campaign_id: "c2" } });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // page param must increase with each call
+    const firstUrl = mockFetch.mock.calls[0][0] as string;
+    const secondUrl = mockFetch.mock.calls[1][0] as string;
+    expect(firstUrl).toContain("page=1");
+    expect(secondUrl).toContain("page=2");
+  });
+});
+
+describe("buildTikTokClient.getAdvertiserCurrency", () => {
+  it("returns the currency from the API", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 0, message: "OK", data: { list: [{ currency: "EUR" }] } }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    const currency = await c.getAdvertiserCurrency(ADV);
+    expect(currency).toBe("EUR");
+  });
+
+  it("falls back to USD when currency is missing from response", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 0, message: "OK", data: { list: [{}] } }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    const currency = await c.getAdvertiserCurrency(ADV);
+    expect(currency).toBe("USD");
+  });
+
+  it("falls back to USD when list is empty", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 0, message: "OK", data: { list: [] } }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    const currency = await c.getAdvertiserCurrency(ADV);
+    expect(currency).toBe("USD");
   });
 });

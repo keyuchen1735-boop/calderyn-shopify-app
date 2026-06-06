@@ -1,6 +1,6 @@
-// fetch-based TikTok Business API client. Testable surface (getReport/getCampaigns)
-// behind an interface so ingest is unit-testable with a fake. Rate errors
-// (HTTP 429 or body code 40100) become RateLimitError for withRetry.
+// fetch-based TikTok Business API client. Testable surface (getReport/getCampaigns/
+// getAdvertiserCurrency) behind an interface so ingest is unit-testable with a fake.
+// Rate errors (HTTP 429 or body code 40100/40016) become RateLimitError for withRetry.
 
 import type { TikTokCampaignPayload, TikTokReportRow } from "./types";
 import { RateLimitError } from "../ads/backoff";
@@ -10,14 +10,20 @@ const API_BASE = "https://business-api.tiktok.com/open_api/v1.3";
 export interface TikTokClient {
   getReport(advertiserId: string, since: string, until: string): Promise<TikTokReportRow[]>;
   getCampaigns(advertiserId: string): Promise<TikTokCampaignPayload[]>;
+  getAdvertiserCurrency(advertiserId: string): Promise<string>;
 }
 
-type TikTokEnvelope = { code?: number; message?: string; data?: { list?: unknown[] } };
+type TikTokPageInfo = { page?: number; page_size?: number; total_number?: number; total_page?: number };
+type TikTokEnvelope = { code?: number; message?: string; data?: { list?: unknown[]; page_info?: TikTokPageInfo } };
 
-function unwrap(body: TikTokEnvelope, what: string): unknown[] {
+/** Throws RateLimitError or generic Error on non-zero codes; returns list + totalPage. */
+function check(body: TikTokEnvelope, what: string): { list: unknown[]; totalPage: number } {
   if (body.code === 40100 || body.code === 40016) throw new RateLimitError(`TikTok rate limit (code ${body.code})`);
   if (body.code !== 0 && body.code !== undefined) throw new Error(`TikTok ${what} error: ${body.message ?? body.code}`);
-  return body.data?.list ?? [];
+  return {
+    list: body.data?.list ?? [],
+    totalPage: body.data?.page_info?.total_page ?? 1,
+  };
 }
 
 export function buildTikTokClient(token: string): TikTokClient {
@@ -27,23 +33,58 @@ export function buildTikTokClient(token: string): TikTokClient {
     if (res.status === 429) throw new RateLimitError("TikTok HTTP 429");
     return (await res.json()) as TikTokEnvelope;
   }
+
   return {
     async getReport(advertiserId, since, until) {
-      const body = await call("/report/integrated/get/", {
-        advertiser_id: advertiserId,
-        report_type: "BASIC",
-        data_level: "AUCTION_CAMPAIGN",
-        dimensions: JSON.stringify(["campaign_id", "stat_time_day"]),
-        metrics: JSON.stringify(["spend", "impressions", "clicks", "conversion", "total_purchase_value"]),
-        start_date: since,
-        end_date: until,
-        page_size: "1000",
-      });
-      return unwrap(body, "report") as TikTokReportRow[];
+      const all: TikTokReportRow[] = [];
+      let page = 1;
+      let totalPage = 1;
+      do {
+        const body = await call("/report/integrated/get/", {
+          advertiser_id: advertiserId,
+          report_type: "BASIC",
+          data_level: "AUCTION_CAMPAIGN",
+          dimensions: JSON.stringify(["campaign_id", "stat_time_day"]),
+          metrics: JSON.stringify(["spend", "impressions", "clicks", "conversion", "total_purchase_value"]),
+          start_date: since,
+          end_date: until,
+          page: String(page),
+          page_size: "1000",
+        });
+        const { list, totalPage: tp } = check(body, "report");
+        for (const r of list) all.push(r as TikTokReportRow);
+        totalPage = tp;
+        page += 1;
+      } while (page <= totalPage);
+      return all;
     },
+
     async getCampaigns(advertiserId) {
-      const body = await call("/campaign/get/", { advertiser_id: advertiserId, page_size: "1000" });
-      return unwrap(body, "campaign") as TikTokCampaignPayload[];
+      const all: TikTokCampaignPayload[] = [];
+      let page = 1;
+      let totalPage = 1;
+      do {
+        const body = await call("/campaign/get/", {
+          advertiser_id: advertiserId,
+          page: String(page),
+          page_size: "1000",
+        });
+        const { list, totalPage: tp } = check(body, "campaign");
+        for (const c of list) all.push(c as TikTokCampaignPayload);
+        totalPage = tp;
+        page += 1;
+      } while (page <= totalPage);
+      return all;
+    },
+
+    async getAdvertiserCurrency(advertiserId) {
+      const body = await call("/advertiser/info/", {
+        advertiser_ids: JSON.stringify([advertiserId]),
+        fields: JSON.stringify(["currency"]),
+      });
+      const { list } = check(body, "advertiser/info");
+      const first = list[0] as { currency?: unknown } | undefined;
+      return typeof first?.currency === "string" ? first.currency : "USD";
     },
   };
 }

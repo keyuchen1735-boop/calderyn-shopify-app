@@ -11,7 +11,6 @@ import type { AdPlatformAdapter, ShopAdSource } from "../ads/adapter";
 import { withRetry } from "../ads/backoff";
 
 const RETRY = { maxAttempts: 4, baseDelayMs: 500 };
-const DEFAULT_CURRENCY = "USD";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -58,6 +57,9 @@ export const tiktokAdapter: AdPlatformAdapter = {
     if (error) throw error;
     if (!data || !data.access_token_encrypted || !data.external_account_id) return null;
     const token = decrypt(data.access_token_encrypted as string);
-    return makeTikTokSource(buildTikTokClient(token), String(data.external_account_id), shopId, DEFAULT_CURRENCY);
+    const tiktokClient = buildTikTokClient(token);
+    const advertiserId = String(data.external_account_id);
+    const currency = await tiktokClient.getAdvertiserCurrency(advertiserId);
+    return makeTikTokSource(tiktokClient, advertiserId, shopId, currency);
   },
 };
