@@ -47,6 +47,7 @@ export interface QbSyncCounts {
   updated: number;
   unchanged: number;
   skippedNoMatch: number;
+  skippedCurrency: number;
 }
 
 /**
@@ -66,24 +67,37 @@ export async function syncQuickbooksCogs(
   if (rawIns.error) throw rawIns.error;
 
   const items = parseInventoryItems(raw);
+  const homeCurrency = await conn.client.queryHomeCurrency();
 
-  const { data: skuRows, error: skuErr } = await sb.from("sku_dim").select("id, sku").eq("shop_id", shopId);
+  const { data: skuRows, error: skuErr } = await sb
+    .from("sku_dim")
+    .select("id, sku, currency")
+    .eq("shop_id", shopId);
   if (skuErr) throw skuErr;
-  const skuToId = new Map<string, string>();
-  for (const r of (skuRows ?? []) as Array<{ id: string; sku: string | null }>) {
-    if (r.sku) skuToId.set(r.sku, r.id);
+  const skuToInfo = new Map<string, { id: string; currency: string | null }>();
+  for (const r of (skuRows ?? []) as Array<{ id: string; sku: string | null; currency: string | null }>) {
+    if (r.sku) skuToInfo.set(r.sku, { id: r.id, currency: r.currency });
   }
 
-  const counts: QbSyncCounts = { matched: 0, inserted: 0, updated: 0, unchanged: 0, skippedNoMatch: 0 };
+  const counts: QbSyncCounts = {
+    matched: 0, inserted: 0, updated: 0, unchanged: 0, skippedNoMatch: 0, skippedCurrency: 0,
+  };
   const now = new Date().toISOString();
 
   for (const item of items) {
-    const skuId = skuToId.get(item.sku);
-    if (!skuId) {
+    const info = skuToInfo.get(item.sku);
+    if (!info) {
       counts.skippedNoMatch++;
       continue;
     }
+    // Don't write a wrong-currency cost: when both the QB home currency and the
+    // SKU's currency are known and differ, skip it (v1 does not convert FX).
+    if (homeCurrency && info.currency && info.currency !== homeCurrency) {
+      counts.skippedCurrency++;
+      continue;
+    }
     counts.matched++;
+    const skuId = info.id;
 
     const { data: openRow, error: openErr } = await sb
       .from("cogs_fact")

@@ -6,7 +6,7 @@ import type { QboConnection } from "../client.server";
 // Scripted Supabase fake. Tracks inserts/updates per table and serves canned
 // reads for sku_dim (one .eq) and cogs_fact (.eq.eq.is.maybeSingle).
 function makeSb(opts: {
-  skuRows: Array<{ id: string; sku: string }>;
+  skuRows: Array<{ id: string; sku: string; currency?: string }>;
   openCostBySku: Record<string, { id: string; unit_cost_cents: number } | null>;
 }) {
   const inserts: Record<string, Array<Record<string, unknown>>> = {};
@@ -49,8 +49,11 @@ function makeSb(opts: {
   return { sb, inserts, updates };
 }
 
-function conn(items: unknown): QboConnection {
-  return { realmId: "r", client: { queryItems: vi.fn(async () => items) } };
+function conn(items: unknown, homeCurrency: string | null = null): QboConnection {
+  return {
+    realmId: "r",
+    client: { queryItems: vi.fn(async () => items), queryHomeCurrency: vi.fn(async () => homeCurrency) },
+  };
 }
 
 const itemsPayload = (rows: Array<{ Id: string; Sku: string; PurchaseCost: number }>) => ({
@@ -94,5 +97,27 @@ describe("syncQuickbooksCogs", () => {
     const counts = await syncQuickbooksCogs("shop-1", conn(itemsPayload([{ Id: "1", Sku: "GHOST", PurchaseCost: 8 }])), sb);
     expect(counts).toMatchObject({ matched: 0, skippedNoMatch: 1, inserted: 0 });
     expect(inserts["cogs_fact"]).toBeUndefined();
+  });
+
+  it("skips a matched SKU whose currency differs from the QuickBooks home currency", async () => {
+    const { sb, inserts } = makeSb({ skuRows: [{ id: "sku-1", sku: "MUG", currency: "CAD" }], openCostBySku: {} });
+    const counts = await syncQuickbooksCogs(
+      "shop-1",
+      conn(itemsPayload([{ Id: "1", Sku: "MUG", PurchaseCost: 8 }]), "USD"),
+      sb,
+    );
+    expect(counts).toMatchObject({ matched: 0, skippedCurrency: 1, inserted: 0 });
+    expect(inserts["cogs_fact"]).toBeUndefined();
+  });
+
+  it("writes the cost when the SKU currency matches the QuickBooks home currency", async () => {
+    const { sb, inserts } = makeSb({ skuRows: [{ id: "sku-1", sku: "MUG", currency: "USD" }], openCostBySku: {} });
+    const counts = await syncQuickbooksCogs(
+      "shop-1",
+      conn(itemsPayload([{ Id: "1", Sku: "MUG", PurchaseCost: 8 }]), "USD"),
+      sb,
+    );
+    expect(counts).toMatchObject({ matched: 1, inserted: 1, skippedCurrency: 0 });
+    expect(inserts["cogs_fact"][0]).toMatchObject({ sku_id: "sku-1", unit_cost_cents: 800 });
   });
 });
