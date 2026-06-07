@@ -144,6 +144,12 @@
   height: 100%;
   cursor: pointer;
   border-radius: 12px;
+  transition: transform 200ms var(--cdn-ease-out),
+    box-shadow 200ms var(--cdn-ease-out);
+}
+.cdn-tile-button:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
 }
 .cdn-tile-button > * {
   height: 100%;
@@ -156,5 +162,12 @@
 @media (prefers-reduced-motion: reduce) {
   .cdn-meter-fill {
     transition: background-color 200ms ease;
+  }
+  .cdn-tile-button {
+    transition: none;
+  }
+  .cdn-tile-button:hover {
+    transform: none;
+    box-shadow: none;
   }
 }
