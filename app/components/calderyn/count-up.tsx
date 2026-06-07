@@ -27,8 +27,8 @@ export function CountUp({
       return;
     }
 
+    // On value change the tween restarts from 0 → new target (intentional).
     const start = performance.now();
-    setDisplay(formatCount(0, parsed));
     const tick = (now: number) => {
       const t = Math.min((now - start) / durationMs, 1);
       setDisplay(formatCount(parsed.target * easeOutCubic(t), parsed));
