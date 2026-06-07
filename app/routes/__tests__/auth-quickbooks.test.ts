@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Subject under test. Hoisted to the top to satisfy import/first; Vitest hoists
+// the vi.mock calls below above all imports, so the mocks still apply.
+import { loader } from "../auth.quickbooks.$";
 
 // Mock collaborators so the loader can run without network/db.
 const consumeOAuthState = vi.fn();
@@ -20,8 +23,6 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 vi.mock("~/lib/crypto.server", () => ({ encrypt: (s: string) => `enc(${s})` }));
-
-import { loader } from "../auth.quickbooks.$";
 
 beforeEach(() => {
   upsertCalls.length = 0;

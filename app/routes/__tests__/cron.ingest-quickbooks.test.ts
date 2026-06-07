@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Subject under test. Hoisted to the top to satisfy import/first; Vitest hoists
+// the vi.mock calls below above all imports, so the mocks still apply.
+import { loader } from "../cron.ingest-quickbooks";
 
 const listShopIntegrations = vi.fn();
 const quickbooksClientForShop = vi.fn();
@@ -31,8 +34,6 @@ vi.mock("~/lib/quickbooks/client.server", () => ({
 vi.mock("~/lib/quickbooks/ingest.server", () => ({
   syncQuickbooksCogs: (...a: unknown[]) => syncQuickbooksCogs(...a),
 }));
-
-import { loader } from "../cron.ingest-quickbooks";
 
 beforeEach(() => {
   statusPatches.length = 0;
