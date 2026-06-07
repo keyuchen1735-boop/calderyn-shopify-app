@@ -81,6 +81,19 @@ describe("cron.ingest-quickbooks", () => {
     expect(statusPatches.some((p) => p.patch.sync_status === "error")).toBe(true);
   });
 
+  it("marks the shop disconnected (no DLQ) when the merchant revoked access", async () => {
+    listShopIntegrations.mockReturnValue([{ shop_id: "shop-1" }]);
+    // Revocation surfaces during the token refresh inside quickbooksClientForShop.
+    quickbooksClientForShop.mockRejectedValue(new Error("QuickBooks OAuth error: invalid_grant"));
+
+    const res = await loader(req("Bearer s3cret"));
+    const body = await res.json();
+    expect(body.disconnected).toContain("shop-1");
+    expect(statusPatches.some((p) => p.patch.sync_status === "disconnected")).toBe(true);
+    expect(dlqInserts).toHaveLength(0); // a revoke is an expected user action, not a failure
+    expect(body.errors).toHaveLength(0);
+  });
+
   it("skips shops with no usable credential (client is null)", async () => {
     listShopIntegrations.mockReturnValue([{ shop_id: "shop-1" }]);
     quickbooksClientForShop.mockResolvedValue(null);

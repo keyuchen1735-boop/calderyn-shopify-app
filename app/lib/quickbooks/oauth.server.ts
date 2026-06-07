@@ -106,3 +106,13 @@ export async function refreshAccessToken(
   }).toString();
   return postToken(fetcher, opts.clientId, opts.clientSecret, body);
 }
+
+/**
+ * True when an error is QBO's `invalid_grant` — i.e. the refresh token is dead
+ * because the merchant revoked the app (or it expired). Callers treat this as a
+ * clean "disconnected" state to reconnect, not a system failure to retry/DLQ.
+ */
+export function isRevokedTokenError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return /invalid_grant/i.test(message);
+}

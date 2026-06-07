@@ -1,5 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildAuthUrl, exchangeCodeForToken, refreshAccessToken } from "../oauth.server";
+import {
+  buildAuthUrl,
+  exchangeCodeForToken,
+  refreshAccessToken,
+  isRevokedTokenError,
+} from "../oauth.server";
+
+describe("isRevokedTokenError", () => {
+  it("is true for an invalid_grant error (merchant revoked / refresh token dead)", () => {
+    expect(isRevokedTokenError(new Error("QuickBooks OAuth error: invalid_grant"))).toBe(true);
+  });
+  it("is false for other failures", () => {
+    expect(isRevokedTokenError(new Error("QuickBooks API error: HTTP 500"))).toBe(false);
+    expect(isRevokedTokenError("nope")).toBe(false);
+    expect(isRevokedTokenError(null)).toBe(false);
+  });
+});
 
 describe("buildAuthUrl", () => {
   it("includes client_id, redirect_uri, scope, state, response_type", () => {

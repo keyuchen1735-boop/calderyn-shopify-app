@@ -67,6 +67,51 @@ describe("quickbooksClientForShop", () => {
     expect((httpFetch.mock.calls[0][1] as { headers: Record<string, string> }).headers.Authorization).toBe("Bearer acc");
   });
 
+  it("paginates: keeps fetching while a full page (1000) returns, then stops", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "realm-9" });
+    const fetcher = vi.fn().mockResolvedValue({
+      access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
+    });
+    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ Id: String(i), Sku: `S${i}`, PurchaseCost: 1 }));
+    const lastPage = [{ Id: "x", Sku: "LAST", PurchaseCost: 2 }];
+    const httpFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ QueryResponse: { Item: fullPage } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ QueryResponse: { Item: lastPage } }) });
+
+    const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
+    const result = (await conn!.client.queryItems()) as { QueryResponse: { Item: unknown[] } };
+
+    expect(result.QueryResponse.Item).toHaveLength(1001); // 1000 + 1, aggregated across pages
+    expect(httpFetch).toHaveBeenCalledTimes(2);
+    expect(httpFetch.mock.calls[0][0] as string).toContain("STARTPOSITION%201%20"); // page 1
+    expect(httpFetch.mock.calls[1][0] as string).toContain("STARTPOSITION%201001%20"); // page 2
+  });
+
+  it("queryHomeCurrency reads the company home currency from Preferences", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "realm-9" });
+    const fetcher = vi.fn().mockResolvedValue({
+      access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
+    });
+    const httpFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ QueryResponse: { Preferences: [{ CurrencyPrefs: { HomeCurrency: { value: "USD" } } }] } }),
+    });
+    const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
+    expect(await conn!.client.queryHomeCurrency()).toBe("USD");
+    expect(httpFetch.mock.calls[0][0] as string).toContain("Preferences");
+  });
+
+  it("queryHomeCurrency returns null when the currency can't be determined", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "realm-9" });
+    const fetcher = vi.fn().mockResolvedValue({
+      access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
+    });
+    const httpFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ QueryResponse: {} }) });
+    const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
+    expect(await conn!.client.queryHomeCurrency()).toBeNull();
+  });
+
   it("throws when the QBO query returns a non-ok status", async () => {
     const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "realm-9" });
     const fetcher = vi.fn().mockResolvedValue({

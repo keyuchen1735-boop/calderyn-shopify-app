@@ -39,8 +39,8 @@ Paste these (adjust if you prefer a different launch/disconnect target):
 - **Host domain:** `shopify-app-rho-ruby.vercel.app`
 - **Launch URL:** `https://shopify-app-rho-ruby.vercel.app/app`
 - **Connect / reconnect URL:** `https://shopify-app-rho-ruby.vercel.app/app/settings`
-- **Disconnect URL:** `https://shopify-app-rho-ruby.vercel.app/app/settings`
-  - Note: we don't yet have a dedicated Intuit-disconnect webhook handler — pointing at Settings is fine for launch. A proper disconnect callback is a nice future enhancement (not blocking).
+- **Disconnect URL:** `https://shopify-app-rho-ruby.vercel.app/auth/quickbooks/disconnect`
+  - Dedicated public landing page. Credential teardown is server-side: the next sync detects the revoked token (`invalid_grant`) and marks the integration disconnected.
 
 ### 4. Select a category
 - Choose **Accounting** (or closest: "Business management" / "Other").
