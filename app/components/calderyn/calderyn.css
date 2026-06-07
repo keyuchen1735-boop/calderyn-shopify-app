@@ -159,6 +159,36 @@
   outline-offset: 2px;
 }
 
+/* Dashboard stat-row mount stagger.
+   .cdn-stat-row wraps the InlineGrid; "> * > *" targets each tile (grid item).
+   fill-mode: backwards hides tiles during their delay, then reverts transform to
+   base after the run — leaving .cdn-tile-button:hover's transform free. */
+.cdn-stat-row > * > * {
+  animation: cdnRise 420ms var(--cdn-ease-out) backwards;
+}
+.cdn-stat-row > * > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.cdn-stat-row > * > *:nth-child(2) {
+  animation-delay: 90ms;
+}
+.cdn-stat-row > * > *:nth-child(3) {
+  animation-delay: 180ms;
+}
+.cdn-stat-row > * > *:nth-child(4) {
+  animation-delay: 270ms;
+}
+@keyframes cdnRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cdn-meter-fill {
     transition: background-color 200ms ease;
@@ -169,5 +199,8 @@
   .cdn-tile-button:hover {
     transform: none;
     box-shadow: none;
+  }
+  .cdn-stat-row > * > * {
+    animation: none;
   }
 }

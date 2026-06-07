@@ -137,41 +137,43 @@ export default function Dashboard() {
         )}
 
         {/* Stat row */}
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-          <StatTile
-            label="Open alerts"
-            value={String(openAlerts.length)}
-            tone={critical.length ? "critical" : undefined}
-            caption={critical.length ? `${critical.length} critical` : "all clear of critical"}
-            onClick={() => navigate("/app/alerts")}
-          />
-          <StatTile
-            label="Recovered (7d)"
-            value={fmtMoney(recovered7d)}
-            tone="success"
-            caption={`across ${succeeded.length} action${succeeded.length === 1 ? "" : "s"}`}
-            onClick={() => navigate("/app/audit")}
-          />
-          <StatTile
-            label="Daily action budget"
-            caption={guardrails ? `${fmtMoney(budgetLeft)} left today` : "unavailable"}
-            onClick={() => navigate("/app/settings")}
-          >
-            {guardrails && (
-              <GuardrailMeter
-                usedCents={guardrails.daily_action_budget_used_cents}
-                totalCents={guardrails.daily_action_budget_cents}
-                compact
-              />
-            )}
-          </StatTile>
-          <StatTile
-            label="Real ad return (7d)"
-            value={trueRoas(campaigns)}
-            caption="margin-adjusted ROAS, all campaigns"
-            onClick={() => navigate("/app/campaigns")}
-          />
-        </InlineGrid>
+        <div className="cdn-stat-row">
+          <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
+            <StatTile
+              label="Open alerts"
+              value={String(openAlerts.length)}
+              tone={critical.length ? "critical" : undefined}
+              caption={critical.length ? `${critical.length} critical` : "all clear of critical"}
+              onClick={() => navigate("/app/alerts")}
+            />
+            <StatTile
+              label="Recovered (7d)"
+              value={fmtMoney(recovered7d)}
+              tone="success"
+              caption={`across ${succeeded.length} action${succeeded.length === 1 ? "" : "s"}`}
+              onClick={() => navigate("/app/audit")}
+            />
+            <StatTile
+              label="Daily action budget"
+              caption={guardrails ? `${fmtMoney(budgetLeft)} left today` : "unavailable"}
+              onClick={() => navigate("/app/settings")}
+            >
+              {guardrails && (
+                <GuardrailMeter
+                  usedCents={guardrails.daily_action_budget_used_cents}
+                  totalCents={guardrails.daily_action_budget_cents}
+                  compact
+                />
+              )}
+            </StatTile>
+            <StatTile
+              label="Real ad return (7d)"
+              value={trueRoas(campaigns)}
+              caption="margin-adjusted ROAS, all campaigns"
+              onClick={() => navigate("/app/campaigns")}
+            />
+          </InlineGrid>
+        </div>
 
         {/* Today's focus */}
         {focus && focusActionKind && (
