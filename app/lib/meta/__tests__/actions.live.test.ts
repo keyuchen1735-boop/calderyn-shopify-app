@@ -12,8 +12,15 @@
  *   npx vitest run app/lib/meta/__tests__/actions.live.test.ts
  *
  * Read-only by default (resolve client → list campaigns → getState). The
- * reversible pause→resume mutation runs only with META_LIVE_MUTATE=1 and always
- * restores the campaign's original status in a finally block.
+ * reversible pause→resume and budget mutations run only with META_LIVE_MUTATE=1
+ * and always restore the campaign's original status + daily budget in a finally
+ * block.
+ *
+ * Target a specific campaign by setting META_TEST_CAMPAIGN_ID=<id>; when unset
+ * the read + mutate tests fall back to the account's first campaign
+ * (campaigns[0]). Prefer pointing META_TEST_CAMPAIGN_ID at a safe, paused,
+ * ad-set-free CBO test campaign so the full pause↔resume↔budget cycle is
+ * exercisable without risking real spend.
  */
 import { writeFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
@@ -25,6 +32,21 @@ const LIVE = process.env.META_LIVE_TEST === "1";
 const MUTATE = process.env.META_LIVE_MUTATE === "1";
 const shopDomain = process.env.META_LIVE_SHOP_DOMAIN ?? "";
 const shopId = process.env.META_LIVE_SHOP_ID ?? "";
+const targetCampaignId = process.env.META_TEST_CAMPAIGN_ID ?? "";
+
+/**
+ * Resolve the campaign id under test: the explicit META_TEST_CAMPAIGN_ID when
+ * set, otherwise the account's first listed campaign. Returns null when no
+ * campaign is available (so read-only tests can no-op gracefully).
+ */
+async function resolveTargetCampaignId(
+  client: Parameters<typeof listCampaigns>[0],
+  adAccountId: string,
+): Promise<string | null> {
+  if (targetCampaignId) return targetCampaignId;
+  const campaigns = await listCampaigns(client, adAccountId);
+  return campaigns[0]?.id ?? null;
+}
 
 describe.skipIf(!LIVE)("Meta action layer (LIVE)", () => {
   it("resolves a live client + ad account for the connected shop", async () => {
@@ -47,31 +69,51 @@ describe.skipIf(!LIVE)("Meta action layer (LIVE)", () => {
 
   it("reads campaign state through the action adapter (read-only)", async () => {
     const conn = await metaClientForShop(shopDomain);
-    const campaigns = await listCampaigns(conn!.client, conn!.adAccountId);
-    if (campaigns.length === 0) return;
+    const campaignId = await resolveTargetCampaignId(conn!.client, conn!.adAccountId);
+    if (campaignId === null) return;
     const adapter = await metaActionAdapterForShop(shopId);
     expect(adapter).not.toBeNull();
-    const state = await adapter!.getState(campaigns[0].id);
+    const state = await adapter!.getState(campaignId);
     expect(["active", "paused"]).toContain(state.status);
   });
 
   it.skipIf(!MUTATE)("pause→resume a campaign, then restore original status (reversible)", async () => {
     const conn = await metaClientForShop(shopDomain);
-    const campaigns = await listCampaigns(conn!.client, conn!.adAccountId);
-    expect(campaigns.length).toBeGreaterThan(0);
-    const target = campaigns[0];
+    const campaignId = await resolveTargetCampaignId(conn!.client, conn!.adAccountId);
+    expect(campaignId).not.toBeNull();
     const adapter = (await metaActionAdapterForShop(shopId))!;
 
-    const original = (await getCampaignStatus(conn!.client, target.id)).toUpperCase();
+    const original = (await getCampaignStatus(conn!.client, campaignId!)).toUpperCase();
     try {
-      await adapter.pause(target.id);
-      expect((await adapter.getState(target.id)).status).toBe("paused");
-      await adapter.resume(target.id);
-      expect((await adapter.getState(target.id)).status).toBe("active");
+      await adapter.pause(campaignId!);
+      expect((await adapter.getState(campaignId!)).status).toBe("paused");
+      await adapter.resume(campaignId!);
+      expect((await adapter.getState(campaignId!)).status).toBe("active");
     } finally {
-      if (original === "PAUSED") await adapter.pause(target.id);
-      else await adapter.resume(target.id);
+      if (original === "PAUSED") await adapter.pause(campaignId!);
+      else await adapter.resume(campaignId!);
     }
-    expect((await getCampaignStatus(conn!.client, target.id)).toUpperCase()).toBe(original);
+    expect((await getCampaignStatus(conn!.client, campaignId!)).toUpperCase()).toBe(original);
+  });
+
+  it.skipIf(!MUTATE)("setDailyBudget reflects via getState, then restores original budget (reversible)", async () => {
+    const conn = await metaClientForShop(shopDomain);
+    const campaignId = await resolveTargetCampaignId(conn!.client, conn!.adAccountId);
+    expect(campaignId).not.toBeNull();
+    const adapter = (await metaActionAdapterForShop(shopId))!;
+
+    // Requires a campaign-level (CBO) budget; getState returns null otherwise.
+    const before = await adapter.getState(campaignId!);
+    expect(before.dailyBudgetCents).not.toBeNull();
+    const originalCents = before.dailyBudgetCents!;
+    // Pick a clearly different value (still tiny — campaign never delivers).
+    const probeCents = originalCents === 600 ? 700 : 600;
+    try {
+      await adapter.setDailyBudget(campaignId!, probeCents);
+      expect((await adapter.getState(campaignId!)).dailyBudgetCents).toBe(probeCents);
+    } finally {
+      await adapter.setDailyBudget(campaignId!, originalCents);
+    }
+    expect((await adapter.getState(campaignId!)).dailyBudgetCents).toBe(originalCents);
   });
 });
