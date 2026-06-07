@@ -87,7 +87,7 @@ New code follows the existing per-provider layout (`app/lib/<provider>/`,
 | File | Responsibility |
 |---|---|
 | `app/lib/quickbooks/oauth.server.ts` | `buildAuthUrl`, `exchangeCodeForToken`, `refreshAccessToken`. Pure, fetcher-injected (testable like `meta/oauth.server.ts`). |
-| `app/lib/quickbooks/client.server.ts` | Authenticated QBO client. `ensureFreshToken` (refresh when `token_expires_at` within a skew window, persist rotated refresh token), then query helper against the company endpoint. |
+| `app/lib/quickbooks/client.server.ts` | Authenticated QBO client (clone of `google/client.server.ts`). Loads the stored refresh token, exchanges it for a short-lived access token each run, **persists the rotated refresh token back**, then runs the items query against the company endpoint. |
 | `app/lib/quickbooks/ingest.server.ts` | Fetch Inventory items (paginated), write raw payload to `raw_quickbooks_poll`, transform → upsert `cogs_fact`, route failures to `ingestion_dlq`. Exposes a pure `transformItemsToCogs(...)` for unit testing. |
 | `app/lib/quickbooks/types.ts` | QBO Item / token response types. |
 | `app/routes/auth.quickbooks.$.tsx` | OAuth callback. Clone of `auth.meta.$.tsx`: consume single-use state nonce → resolve `shopId` → exchange code → persist creds → upsert `shop_integrations` → `redirect("/app/settings?quickbooks=connected")`. |
@@ -114,6 +114,14 @@ Edit (not new):
   `x_refresh_token_expires_in`.
 - **Realm:** the callback receives a `realmId` query param (the QuickBooks
   company id). Store it in `integration_credentials.external_account_id`.
+- **Token storage (no new column — Google precedent):** store the rotating
+  **refresh token** (encrypted) in the existing `access_token_encrypted` column,
+  exactly as `auth.google.$.tsx` does for its long-lived refresh token. The
+  short-lived access token is never persisted — it is re-derived on every run.
+  Because QBO rotates the refresh token on each exchange, the client writes the
+  returned refresh token back to `access_token_encrypted` after every refresh.
+  `token_expires_at` holds the refresh token's ~100-day expiry so an idle
+  death can be detected and surfaced as "Reconnect".
 - **API base:** production `https://quickbooks.api.intuit.com`, sandbox
   `https://sandbox-quickbooks.api.intuit.com`; chosen by `QBO_ENV`
   (`sandbox` | `production`). Items query:
@@ -128,14 +136,15 @@ Merchant: Settings/Onboarding "Connect QuickBooks"
        consumeOAuthState(state) → shopId   (reject if invalid/expired/reused)
        exchangeCodeForToken(code)
        upsert integration_credentials {shop_id, kind:'quickbooks',
-            access_token_encrypted, refresh_token_encrypted, token_expires_at,
+            access_token_encrypted := encrypt(refresh_token),   -- Google precedent
+            token_expires_at := now + x_refresh_token_expires_in,
             external_account_id := realmId}
        upsert shop_integrations {kind:'quickbooks', sync_status:'ready', connected_at}
   → redirect /app/settings?quickbooks=connected
 
 Daily cron: GET /cron.ingest-quickbooks  (cron-auth guarded)
   for each shop_integrations where kind='quickbooks' and sync_status in ('ready','live'):
-     ensureFreshToken()  → refresh if near expiry; persist rotated refresh_token
+     exchange stored refresh_token → access_token; persist rotated refresh_token
      QBO query Inventory items (paginated) → [{ id, sku, purchaseCost }]
      insert raw_quickbooks_poll { shop_id, poll_kind:'items', payload }
      transformItemsToCogs():
@@ -150,23 +159,24 @@ Daily cron: GET /cron.ingest-quickbooks  (cron-auth guarded)
   engine → sku_pnl / contribution margin / break-even grade / cogs_drift detector
 ```
 
-## 6. Schema change (one additive migration)
+## 6. Schema change: NONE
 
-`integration_credentials` stores the access token (via the app-level `encrypt()`
-helper, text column) but has **no refresh-token column**. Meta does not need one
-(long-lived token); QuickBooks does. One additive Supabase migration:
+**No migration is required.** The Google Ads integration already stores a
+rotating long-lived secret without a dedicated column: `auth.google.$.tsx` puts
+the encrypted **refresh token** in `integration_credentials.access_token_encrypted`
+and `google/client.server.ts` exchanges it for a short-lived access token on each
+run. QuickBooks follows the same precedent:
 
-```sql
-alter table public.integration_credentials
-  add column if not exists refresh_token_encrypted text;
-```
+- `access_token_encrypted` ← encrypted QBO **refresh token** (rewritten after each
+  rotation, since QBO rotates it on every exchange).
+- `external_account_id` ← QBO `realmId`.
+- `token_expires_at` ← refresh token's ~100-day expiry (for "Reconnect" detection).
+- Encryption via the existing `encrypt()` / `decrypt()` in
+  `app/lib/crypto.server.ts` (same path Meta and Google use).
 
-- Realm/company id reuses the existing `external_account_id` column — no new column.
-- Tokens are encrypted with the existing `encrypt()` / `decrypt()` in
-  `app/lib/crypto.server.ts` (same path Meta uses), not the `pgp_sym_encrypt`
-  bytea columns on `shop_integrations`.
-- Applied to live Supabase via the Supabase migration workflow; `raw_quickbooks_poll`
-  and `cogs_fact` already exist and are unchanged.
+`raw_quickbooks_poll`, `cogs_fact`, `sku_dim`, and `ingestion_dlq` already exist
+live (verified 2026-06-06) and are unchanged. **Nothing is written to prod's
+schema for this feature.**
 
 ## 7. Error handling
 
@@ -175,9 +185,13 @@ alter table public.integration_credentials
 | Refresh token expired (~100d idle) or revoked | `shop_integrations.sync_status='error'`, `sync_error='auth_expired'`; Settings shows "Reconnect QuickBooks"; DLQ `error_kind='auth_expired'`. |
 | QBO 429 / 5xx / transient | Exponential backoff (reuse `app/lib/ads/backoff.ts`), bounded retries; if still failing, DLQ `error_kind='unknown'`. |
 | QBO 401 mid-sync (token races) | One forced refresh + retry; if still 401 → treat as `auth_expired`. |
-| Item has no `Sku` match or `PurchaseCost ≤ 0` | Counted as `skipped`, **not** an error. Downstream `derive_margin` covers coverage gaps. |
-| QB company currency ≠ shop currency | Skip writing those rows, count as `skipped_currency`, surface a one-line warning in the cron response. No silent conversion. |
+| Item has no `Sku` match or `PurchaseCost ≤ 0` | Counted as `skipped` (with a per-reason breakdown), **not** an error. Downstream `derive_margin` covers coverage gaps. |
 | Permanent/unknown failure | `ingestion_dlq` row; surfaced in cron JSON. Never silently dropped. |
+
+Currency: v1 assumes the QuickBooks company's home currency equals the shop
+currency (`sku_dim.currency`) and writes `unit_cost_cents` as-is. This is a
+documented assumption (§3), **not** enforced in v1 — multi-currency conversion is
+a separate effort.
 
 ## 8. Testing
 
