@@ -75,4 +75,11 @@ describe("executeAction", () => {
     const audit = calls.inserts.find((i) => i.table === "action_audit");
     expect((audit?.rows as Record<string, unknown>)).toMatchObject({ outcome: "failed" });
   });
+
+  it("records the actor on the audit row", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kA", actor: "autopilot" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).actor_user_id).toBe("autopilot");
+  });
 });
