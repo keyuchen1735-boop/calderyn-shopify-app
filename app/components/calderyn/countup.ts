@@ -15,6 +15,22 @@ export type ParsedCount = {
 // + optional decimals, suffix = trailing non-number chars (×, %).
 const COUNT_RE = /^(\D*?)(-?[\d,]*\.?\d+)(\D*)$/;
 
+/**
+ * Splits a display string into its prefix, numeric core, and suffix so a
+ * 0 → target tween can be driven without touching the surrounding symbols.
+ *
+ * Supported formats: plain integers (`"15"`), currency (`"$1,234"`),
+ * multipliers (`"0.8×"`), percentages (`"-5%"`), and zero-padded decimals
+ * (`"1.50"`). Returns `null` for strings that contain no number at all
+ * (e.g. `"—"`, `"N/A"`).
+ *
+ * **Limitation — currency-prefixed negatives are not supported.**
+ * A value like `"-$50"` would be parsed with the minus bound to the prefix
+ * (`prefix = "-$"`, `target = 50`), so a 0 → 50 tween animates in the wrong
+ * direction. This is intentional: the dashboard's stat values (counts,
+ * non-negative money, ROAS like `0.8×`) never take that shape. Signed deltas
+ * are handled by the separate MoneyDelta component.
+ */
 export function parseCountValue(value: string): ParsedCount | null {
   const m = COUNT_RE.exec(value.trim());
   if (!m) return null;
@@ -26,6 +42,7 @@ export function parseCountValue(value: string): ParsedCount | null {
   return { prefix, target, decimals, useGrouping: rawNum.includes(","), suffix };
 }
 
+/** Re-assembles `prefix + localized(n) + suffix`; `formatCount(p.target, p)` reproduces the original display string exactly. */
 export function formatCount(n: number, p: ParsedCount): string {
   const num = n.toLocaleString("en-US", {
     minimumFractionDigits: p.decimals,
