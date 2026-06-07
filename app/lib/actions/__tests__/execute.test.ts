@@ -56,6 +56,25 @@ describe("executeAction", () => {
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
   });
 
+  it("resume_campaign calls adapter.resume and writes a succeeded audit + idempotency", async () => {
+    const paused = { ...campaign, status: "paused" };
+    const { sb, calls } = fakeSb({ campaign: paused });
+    await executeAction(SHOP, { alertId: null, kind: "resume_campaign", campaignId: CAMP, idempotencyKey: "kr" }, sb);
+    expect(adapter.resume).toHaveBeenCalledWith("c1");
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>)).toMatchObject({
+      action_kind: "resume_campaign", outcome: "succeeded",
+      post_state: { status: "active", daily_budget_cents: 5000 },
+    });
+    expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
+  });
+
+  it("resume_campaign short-circuits on a used idempotency key (no adapter call)", async () => {
+    const { sb } = fakeSb({ idempotent: { audit_id: "prev" }, campaign });
+    await executeAction(SHOP, { alertId: null, kind: "resume_campaign", campaignId: CAMP, idempotencyKey: "kr" }, sb);
+    expect(adapter.resume).not.toHaveBeenCalled();
+  });
+
   it("reduce_campaign_budget calls setDailyBudget with the new cents", async () => {
     const { sb } = fakeSb({ campaign });
     await executeAction(SHOP, { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "k2", dailyBudgetCents: 2500 }, sb);

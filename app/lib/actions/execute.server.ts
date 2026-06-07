@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 
-export type ExecutableKind = "pause_campaign" | "reduce_campaign_budget";
+export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
 
 export interface ExecuteInput {
   alertId: string | null;
@@ -54,7 +54,9 @@ export async function executeAction(
   const postState =
     input.kind === "reduce_campaign_budget"
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
-      : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
+      : input.kind === "resume_campaign"
+        ? { status: "active", daily_budget_cents: camp.daily_budget_cents }
+        : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
 
   // 3. Resolve adapter + 4. call platform.
   let outcome: "succeeded" | "failed" = "succeeded";
@@ -67,6 +69,8 @@ export async function executeAction(
     try {
       if (input.kind === "pause_campaign") {
         await adapter.pause(externalId);
+      } else if (input.kind === "resume_campaign") {
+        await adapter.resume(externalId);
       } else {
         await adapter.setDailyBudget(externalId, input.dailyBudgetCents ?? 0);
       }

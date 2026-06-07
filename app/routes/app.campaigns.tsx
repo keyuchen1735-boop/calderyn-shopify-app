@@ -27,15 +27,16 @@ import {
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
-// NOTE (wiring gap): executeAction requires a campaignId that is the ad_campaign_dim
-// UUID, but campaigns here are loaded from the live Meta API (listCampaigns → c.id
-// is the Meta platform ID, e.g. "1234567890"). These do not match. Wiring this route
-// to executeAction requires a reverse-lookup from external_id → ad_campaign_dim.id,
-// which is out of scope for this task. The pause/resume path already calls Meta
-// directly (with ownership verification via listCampaigns) and records an audit row
-// via client.actions.execute. Google/TikTok will execute live once OAuth has stored
-// credentials (adapter resolves null → a failed audit with last_error).
-// TODO: add external_id → UUID lookup to enable executeAction here (Task 8 follow-up).
+// Campaigns load from the live Meta API, where c.id is the Meta external id (e.g.
+// "1234567890"), but executeAction keys off the ad_campaign_dim UUID. The route
+// reverse-looks-up that UUID (resolveCampaignDimId) and, when found, runs the
+// action through the orchestrator (idempotency + ownership + audit in one place).
+// When the campaign has not been ingested into ad_campaign_dim yet, it falls back
+// to the legacy direct-Meta path (ownership verified via listCampaigns) so the
+// page still works pre-ingest.
+import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
+import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
@@ -144,6 +145,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         { status: 400 },
       );
+  }
+
+  // Preferred path: if this Meta campaign has been ingested into ad_campaign_dim,
+  // run the action through the orchestrator (idempotency + cross-tenant ownership
+  // guard + single audit row live there). resolveCampaignDimId maps the posted Meta
+  // external id → dim UUID; null means "not ingested yet" → fall through to the
+  // legacy direct-Meta path below.
+  if (platform === "Meta") {
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    const dimId = await resolveCampaignDimId(sb, shopId, "meta", campaignId);
+    if (dimId) {
+      const orchestratedKind: ExecutableKind =
+        intent === "pause"
+          ? "pause_campaign"
+          : intent === "resume"
+            ? "resume_campaign"
+            : "reduce_campaign_budget";
+      try {
+        const { outcome } = await executeAction(
+          shopId,
+          {
+            alertId: null,
+            kind: orchestratedKind,
+            campaignId: dimId,
+            idempotencyKey,
+            dailyBudgetCents:
+              intent === "edit_budget"
+                ? (params.daily_budget_cents as number)
+                : undefined,
+          },
+          sb,
+        );
+        if (outcome === "failed") {
+          return json<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "ACTION_FAILED", message: `Could not ${intent} ${campaignName}` },
+              toast: { message: `Could not ${intent} ${campaignName}`, isError: true },
+            },
+            { status: 502 },
+          );
+        }
+        const messageByIntent: Record<string, string> = {
+          pause: `Paused ${campaignName}`,
+          resume: `Resumed ${campaignName}`,
+          edit_budget: `Updated budget for ${campaignName}`,
+        };
+        return json<ActionPayload>({
+          ok: true,
+          toast: { message: messageByIntent[intent] ?? "Action executed" },
+        });
+      } catch (err) {
+        const e = err as CalderynError;
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: e.code ?? "ACTION_FAILED", message: e.message },
+            toast: { message: e.message, isError: true },
+          },
+          { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+        );
+      }
+    }
   }
 
   // For pause/resume, call Meta first, then record the real pre/post status.
