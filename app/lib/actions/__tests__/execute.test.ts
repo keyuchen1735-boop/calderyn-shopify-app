@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { executeAction } from "../execute.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const { adapter, actionAdapterForShop } = vi.hoisted(() => {
   const adapter = { platform: "meta", pause: vi.fn(async () => {}), resume: vi.fn(), setDailyBudget: vi.fn(async () => {}), getState: vi.fn() };
@@ -6,9 +8,6 @@ const { adapter, actionAdapterForShop } = vi.hoisted(() => {
   return { adapter, actionAdapterForShop };
 });
 vi.mock("../../ads/action-registry.server", () => ({ actionAdapterForShop }));
-
-import { executeAction } from "../execute.server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 const CAMP = "11111111-1111-1111-1111-111111111111";

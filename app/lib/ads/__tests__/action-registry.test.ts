@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { actionAdapterForShop } from "../action-registry.server";
 
 const { meta, google, tiktok } = vi.hoisted(() => ({
   meta: vi.fn(async () => ({ platform: "meta" })),
@@ -9,8 +10,6 @@ const { meta, google, tiktok } = vi.hoisted(() => ({
 vi.mock("../../meta/actions.server", () => ({ metaActionAdapterForShop: meta }));
 vi.mock("../../google/actions.server", () => ({ googleActionAdapterForShop: google }));
 vi.mock("../../tiktok/actions.server", () => ({ tiktokActionAdapterForShop: tiktok }));
-
-import { actionAdapterForShop } from "../action-registry.server";
 
 describe("actionAdapterForShop", () => {
   it("dispatches to the platform resolver", async () => {

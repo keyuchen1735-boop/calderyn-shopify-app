@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { undoAction } from "../undo.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const { adapter, actionAdapterForShop } = vi.hoisted(() => {
   const adapter = { platform: "meta", pause: vi.fn(), resume: vi.fn(async () => {}), setDailyBudget: vi.fn(async () => {}), getState: vi.fn() };
@@ -6,9 +8,6 @@ const { adapter, actionAdapterForShop } = vi.hoisted(() => {
   return { adapter, actionAdapterForShop };
 });
 vi.mock("../../ads/action-registry.server", () => ({ actionAdapterForShop }));
-
-import { undoAction } from "../undo.server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
