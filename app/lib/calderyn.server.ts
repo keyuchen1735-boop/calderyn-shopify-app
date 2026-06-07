@@ -15,6 +15,7 @@ import { newIdempotencyKey } from "./ids";
 import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
+import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
@@ -685,6 +686,24 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           const state = await createOAuthState(supabase, shopId);
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
+        }
+        if (provider === "quickbooks") {
+          const clientId = process.env.QBO_CLIENT_ID;
+          const clientSecret = process.env.QBO_CLIENT_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!clientId || !clientSecret || !appUrl) {
+            throw new CalderynError({
+              code: "QUICKBOOKS_NOT_CONFIGURED",
+              status: 500,
+              message:
+                "QuickBooks OAuth is not configured (QBO_CLIENT_ID/QBO_CLIENT_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/quickbooks`;
+          // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId);
+          return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
