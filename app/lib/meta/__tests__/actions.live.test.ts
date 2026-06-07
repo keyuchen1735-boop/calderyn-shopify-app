@@ -48,6 +48,26 @@ async function resolveTargetCampaignId(
   return campaigns[0]?.id ?? null;
 }
 
+/**
+ * Poll getState until the daily budget reflects `expectedCents`. Meta's
+ * read-after-write is eventually consistent, so an immediate read can return the
+ * stale value. Returns the last observed value (== expected on success, or the
+ * final read on timeout so the caller's assertion shows the real mismatch).
+ */
+async function waitForBudgetCents(
+  adapter: { getState: (id: string) => Promise<{ dailyBudgetCents: number | null }> },
+  campaignId: string,
+  expectedCents: number,
+  timeoutMs = 10000,
+): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const last = (await adapter.getState(campaignId)).dailyBudgetCents;
+    if (last === expectedCents || Date.now() >= deadline) return last;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 describe.skipIf(!LIVE)("Meta action layer (LIVE)", () => {
   it("resolves a live client + ad account for the connected shop", async () => {
     const conn = await metaClientForShop(shopDomain);
@@ -110,10 +130,10 @@ describe.skipIf(!LIVE)("Meta action layer (LIVE)", () => {
     const probeCents = originalCents === 600 ? 700 : 600;
     try {
       await adapter.setDailyBudget(campaignId!, probeCents);
-      expect((await adapter.getState(campaignId!)).dailyBudgetCents).toBe(probeCents);
+      expect(await waitForBudgetCents(adapter, campaignId!, probeCents)).toBe(probeCents);
     } finally {
       await adapter.setDailyBudget(campaignId!, originalCents);
     }
-    expect((await adapter.getState(campaignId!)).dailyBudgetCents).toBe(originalCents);
+    expect(await waitForBudgetCents(adapter, campaignId!, originalCents)).toBe(originalCents);
   });
 });
