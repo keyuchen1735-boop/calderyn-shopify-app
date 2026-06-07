@@ -161,23 +161,11 @@
 
 /* Dashboard stat-row mount stagger.
    .cdn-stat-row wraps the InlineGrid; "> * > *" targets each tile (grid item).
+   Verified against Polaris InlineGrid (renders one wrapper div whose children are
+   the tiles) — re-verify after a Polaris major upgrade.
    fill-mode: backwards hides tiles during their delay, then reverts transform to
-   base after the run — leaving .cdn-tile-button:hover's transform free. */
-.cdn-stat-row > * > * {
-  animation: cdnRise 420ms var(--cdn-ease-out) backwards;
-}
-.cdn-stat-row > * > *:nth-child(1) {
-  animation-delay: 0ms;
-}
-.cdn-stat-row > * > *:nth-child(2) {
-  animation-delay: 90ms;
-}
-.cdn-stat-row > * > *:nth-child(3) {
-  animation-delay: 180ms;
-}
-.cdn-stat-row > * > *:nth-child(4) {
-  animation-delay: 270ms;
-}
+   base after the run — leaving .cdn-tile-button:hover's transform free.
+   The animation intentionally replays on every mount (Remix client nav re-mounts). */
 @keyframes cdnRise {
   from {
     opacity: 0;
@@ -187,6 +175,18 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+.cdn-stat-row > * > * {
+  animation: cdnRise 420ms var(--cdn-ease-out) backwards;
+}
+.cdn-stat-row > * > *:nth-child(2) {
+  animation-delay: 90ms;
+}
+.cdn-stat-row > * > *:nth-child(3) {
+  animation-delay: 180ms;
+}
+.cdn-stat-row > * > *:nth-child(4) {
+  animation-delay: 270ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
