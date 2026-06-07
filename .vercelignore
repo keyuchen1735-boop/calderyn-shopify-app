@@ -7,6 +7,7 @@ engine/.venv
 .pytest_cache
 .codegraph
 .playwright-mcp
+graphify-out
 tests
 # secrets — env vars come from the Vercel project, never from uploaded files
 .env
