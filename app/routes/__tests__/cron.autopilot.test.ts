@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader } from "../cron.autopilot";
 
+// vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
+// the loader import above.
 const { runAutopilotForShop, getSupabase } = vi.hoisted(() => ({
   runAutopilotForShop: vi.fn(),
   getSupabase: vi.fn(),
@@ -7,9 +10,6 @@ const { runAutopilotForShop, getSupabase } = vi.hoisted(() => ({
 
 vi.mock("~/lib/actions/autopilot.server", () => ({ runAutopilotForShop }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
-
-// eslint-disable-next-line import/first -- vi.hoisted + vi.mock must precede the module under test
-import { loader } from "../cron.autopilot";
 
 const SHOP_A = "aaaaaaaa-0000-0000-0000-000000000001";
 const SHOP_B = "bbbbbbbb-0000-0000-0000-000000000002";

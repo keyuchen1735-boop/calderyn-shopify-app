@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { runAutopilotForShop } from "../autopilot.server";
 
+// vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
+// the runAutopilotForShop import above.
 const { checkGuardrails, executeAction } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
-
-// eslint-disable-next-line import/first -- vi.hoisted + vi.mock must precede the module under test
-import { runAutopilotForShop } from "../autopilot.server";
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
