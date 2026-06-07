@@ -10,7 +10,7 @@
 import type { Integration } from "./types";
 
 /** Providers that have a wired OAuth connect flow (startOAuth handles these). */
-export const OAUTH_PROVIDERS = ["meta", "google", "tiktok"] as const;
+export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 /**
@@ -64,6 +64,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   google: "Google Ads",
   meta: "Meta Ads",
   tiktok: "TikTok Ads",
+  quickbooks: "QuickBooks",
 };
 
 /**
