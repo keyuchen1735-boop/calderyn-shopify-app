@@ -28,6 +28,7 @@ import {
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
+import { providerPaired } from "~/lib/integrations";
 import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
@@ -227,7 +228,7 @@ export default function Onboarding() {
           {(key === "google" || key === "meta" || key === "quickbooks") && (
             <OAuthStep
               provider={key}
-              connected={integrations[key]?.status === "connected"}
+              connected={providerPaired(integrations, key)}
               nextStep={safeStep + 1}
               prevStep={Math.max(0, safeStep - 1)}
               submitting={submitting}

@@ -609,8 +609,12 @@ export function calderynClient(shop: string) {
 
           for (const r of data ?? []) {
             const kind = String(r.kind);
+            // Active-sync statuses the writers actually produce: Meta callback +
+            // backfill write "ready"; the Google sync writes "live". All mean the
+            // account is paired and data is flowing -> connected. "pending" is a
+            // fresh pairing mid-backfill (still paired); anything else is not.
             const status: Integration["status"] =
-              r.sync_status === "ready" || r.sync_status === "ok"
+              r.sync_status === "ready" || r.sync_status === "ok" || r.sync_status === "live"
                 ? "connected"
                 : r.sync_status === "pending"
                   ? "pending"

@@ -6,6 +6,7 @@ import {
   useLoaderData,
   useNavigate,
   useNavigation,
+  useSearchParams,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
@@ -33,7 +34,14 @@ import {
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
-import { OAUTH_PROVIDERS, isConnectable, kindToProvider } from "~/lib/integrations";
+import {
+  OAUTH_PROVIDERS,
+  connectionNotice,
+  integrationBadge,
+  isConnectable,
+  isPaired,
+  kindToProvider,
+} from "~/lib/integrations";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
@@ -177,6 +185,10 @@ export default function Settings() {
   const { guardrails, integrations, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
+  // One-shot pairing confirmation from the OAuth callback redirect
+  // (e.g. ?google=connected or ?meta=error&reason=...).
+  const [searchParams] = useSearchParams();
+  const notice = connectionNotice(searchParams);
 
   return (
     <Page
@@ -199,6 +211,23 @@ export default function Settings() {
             </p>
           </Banner>
         )}
+        {notice &&
+          (notice.ok ? (
+            <Banner tone="success" title={`${notice.provider} connected`}>
+              <p>
+                Your {notice.provider} account is paired. We&rsquo;re syncing your recent
+                data now — this can take a few minutes.
+              </p>
+            </Banner>
+          ) : (
+            <Banner tone="critical" title={`Couldn't connect ${notice.provider}`}>
+              <p>
+                {notice.reason
+                  ? `The connection didn't complete (${notice.reason}). Try Connect again.`
+                  : "The connection was cancelled or didn't complete. Try Connect again."}
+              </p>
+            </Banner>
+          ))}
 
         <Layout>
           <Layout.AnnotatedSection
@@ -487,6 +516,10 @@ function IntegrationCard({
   // disconnect speak the OAuth provider short name (e.g. "meta").
   const oauthProvider = kindToProvider(provider);
   const canConnect = isConnectable(provider);
+  // A "pending" integration is paired (OAuth done) but still backfilling — show
+  // it as Connected with a Disconnect button, not as a fresh Connect prompt.
+  const paired = isPaired(integration.status);
+  const badge = integrationBadge(integration.status);
 
   return (
     <Card>
@@ -500,10 +533,8 @@ function IntegrationCard({
           </Text>
         </BlockStack>
         <InlineStack gap="200" blockAlign="center">
-          <Badge tone={integration.status === "connected" ? "success" : "attention"}>
-            {integration.status === "connected" ? "Connected" : "Not connected"}
-          </Badge>
-          {integration.status === "connected" ? (
+          <Badge tone={badge.tone}>{badge.label}</Badge>
+          {paired ? (
             <Form method="post">
               <input type="hidden" name="intent" value="disconnect_integration" />
               <input type="hidden" name="provider" value={oauthProvider} />
