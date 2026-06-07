@@ -1,0 +1,75 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { getSupabase } from "~/lib/supabase.server";
+import { isAuthorizedCron } from "~/lib/cron-auth.server";
+import { adaptersForShops, type AdWorkItem } from "~/lib/ads/registry.server";
+import { backfillAds, pollAdsDaily } from "~/lib/ads/ingest.server";
+import { mapWithConcurrency } from "~/lib/ads/concurrency";
+
+const CONCURRENCY = 4; // bounded fan-out across shops × adapters
+
+async function setSync(shopId: string, kind: string, patch: Record<string, unknown>): Promise<void> {
+  const sb = getSupabase();
+  const now = new Date().toISOString();
+  await sb
+    .from("shop_integrations")
+    .update({ ...patch, updated_at: now })
+    .eq("shop_id", shopId)
+    .eq("kind", kind);
+}
+
+async function runOne(item: AdWorkItem, summary: Summary): Promise<void> {
+  const { shopId, status, adapter } = item;
+  const tag = `${shopId}:${adapter.platform}`;
+  const sb = getSupabase();
+  const source = await adapter.connect(shopId);
+  if (!source) {
+    summary.skipped.push(tag);
+    return;
+  }
+  const now = new Date().toISOString();
+  try {
+    if (status === "pending") {
+      await backfillAds(source, adapter.platform, shopId, sb);
+      await setSync(shopId, adapter.integrationKind, { sync_status: "live", sync_error: null, last_sync_at: now });
+      summary.backfilled.push(tag);
+    } else {
+      await pollAdsDaily(source, adapter.platform, shopId, sb);
+      await setSync(shopId, adapter.integrationKind, { sync_error: null, last_sync_at: now });
+      summary.polled.push(tag);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await setSync(shopId, adapter.integrationKind, { sync_status: "error", sync_error: message.slice(0, 500) });
+    throw err; // re-thrown into the isolated pool slot; recorded below
+  }
+}
+
+interface Summary {
+  backfilled: string[];
+  polled: string[];
+  skipped: string[];
+  errors: string[];
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const sb = getSupabase();
+  const work = await adaptersForShops(sb);
+  const summary: Summary = { backfilled: [], polled: [], skipped: [], errors: [] };
+
+  const settled = await mapWithConcurrency(work, CONCURRENCY, (item) => runOne(item, summary));
+  settled.forEach((r, i) => {
+    if (!r.ok) {
+      const item = work[i];
+      const message = r.error instanceof Error ? r.error.message : String(r.error);
+      summary.errors.push(`${item.shopId}:${item.adapter.platform}: ${message}`);
+      console.error(`[cron.ingest-ads] sync failed for ${item.shopId}:${item.adapter.platform}`, r.error);
+    }
+  });
+
+  return json(summary);
+};

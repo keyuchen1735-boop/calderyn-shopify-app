@@ -99,6 +99,16 @@ export async function runGdprAndRetentionSweep(
     throw new Error(`gdpr sweep: raw_shopify_webhook trim failed: ${rawErr.message}`);
   }
 
+  // Tracking identifiers: purge click-id breadcrumbs past the retention window.
+  // (attribution_fact keeps the resolved result; the raw click-id does not persist.)
+  const { error: clickRefErr } = await sb
+    .from("ad_click_ref")
+    .delete()
+    .lt("captured_at", rawCutoff);
+  if (clickRefErr) {
+    throw new Error(`gdpr sweep: ad_click_ref trim failed: ${clickRefErr.message}`);
+  }
+
   return {
     shopsRedacted,
     shopsFailed,

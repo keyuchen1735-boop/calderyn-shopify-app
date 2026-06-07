@@ -39,6 +39,13 @@ export type OrderRow = {
   currency: string;
   financial_status: string | null;
   source_version: number;
+  landing_site: string | null;
+  referring_site: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
 };
 
 // sku is carried as the variant GID; the writer resolves it to sku_dim.id.

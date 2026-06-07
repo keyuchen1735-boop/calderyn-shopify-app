@@ -27,6 +27,15 @@ import {
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
+// NOTE (wiring gap): executeAction requires a campaignId that is the ad_campaign_dim
+// UUID, but campaigns here are loaded from the live Meta API (listCampaigns → c.id
+// is the Meta platform ID, e.g. "1234567890"). These do not match. Wiring this route
+// to executeAction requires a reverse-lookup from external_id → ad_campaign_dim.id,
+// which is out of scope for this task. The pause/resume path already calls Meta
+// directly (with ownership verification via listCampaigns) and records an audit row
+// via client.actions.execute. Google/TikTok will execute live once OAuth has stored
+// credentials (adapter resolves null → a failed audit with last_error).
+// TODO: add external_id → UUID lookup to enable executeAction here (Task 8 follow-up).
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";

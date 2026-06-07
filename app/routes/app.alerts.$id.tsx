@@ -24,6 +24,11 @@ import {
 import { authenticate } from "../shopify.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
+import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { resolveShopId, getSupabase } from "~/lib/supabase.server";
+// Google/TikTok execute live only once OAuth has stored credentials; if the adapter
+// resolves to null, executeAction records a failed audit with last_error set, and
+// the UI surfaces the error toast — no silent swallowing.
 import { inventoryAdjustQuantities } from "~/lib/shopify/inventory.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import {
@@ -157,6 +162,55 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       execParams.shopify_operation_id = operationId;
     }
 
+    // For pause_campaign and reduce_campaign_budget, route through the real
+    // executeAction orchestrator when the alert's evidence carries the
+    // ad_campaign_dim UUID (campaign_id). Alerts fired by the engine always
+    // include this UUID; if absent we fall back to the legacy stub so the UI
+    // never breaks on older or synthetic alerts.
+    // Google/TikTok execute live only once OAuth has stored credentials; if the
+    // adapter resolves to null, executeAction records a failed audit with
+    // last_error set — no silent swallowing.
+    const executableKinds: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget"];
+    const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
+
+    if (executableKinds.includes(kind as ExecutableKind) && evidenceCampaignId) {
+      // resolve_campaign_budget: compute the new budget as 70 % of the campaign's
+      // current daily_budget_cents recorded in evidence (30 % reduction).
+      const ev = alert.evidence ?? {};
+      let dailyBudgetCents: number | undefined;
+      if (kind === "reduce_campaign_budget") {
+        const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
+        dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
+      }
+
+      const shopId = await resolveShopId(session.shop);
+      const result = await executeAction(
+        shopId,
+        {
+          alertId: alertId || null,
+          kind: kind as ExecutableKind,
+          campaignId: evidenceCampaignId,
+          idempotencyKey,
+          dailyBudgetCents,
+        },
+        getSupabase(),
+      );
+
+      return json<ActionPayload>({
+        ok: result.outcome === "succeeded",
+        toast: {
+          message:
+            result.outcome === "succeeded"
+              ? `${ACTION_VERBS[kind] ?? "Action"} executed`
+              : "Action recorded as failed — check the audit log",
+          isError: result.outcome !== "succeeded",
+        },
+      });
+    }
+
+    // All other intents (snooze_alert, exclude_geo, reallocate_inventory,
+    // create_po_draft) and pause/budget actions without a campaign_id UUID
+    // in evidence stay on the legacy client path.
     await client.actions.execute({
       alertId,
       kind,

@@ -1,35 +1,14 @@
 // Local types for the Google Ads connector.
 //
-// The monorepo imported AdCampaignDim / AdSpendFact from `@calderyn/shared/schemas`,
-// which does not exist in this repo. They are re-declared here to match the exact
-// shapes the transforms produce (see ./transform.ts).
+// AdCampaignDim / AdSpendFact are now re-aliases of the shared normalized types
+// from the generic ads core. This keeps the transform functions unchanged while
+// routing through the platform-blind ingest pipeline.
 
-export type CampaignStatus = "active" | "paused" | "archived";
+import type { Platform, CampaignStatus, NormalizedCampaign, NormalizedSpendRow } from "../ads/adapter";
 
-export type AdCampaignDim = {
-  shop_id: string;
-  platform: "google";
-  external_id: string;
-  name: string;
-  status: CampaignStatus;
-  objective: string | null;
-  daily_budget_cents: number | null;
-  currency: string;
-  geo_targets: string[];
-  created_at_source: string | null;
-};
-
-export type AdSpendFact = {
-  shop_id: string;
-  campaign_external_id: string;
-  platform: "google";
-  day: string;
-  spend_cents: number;
-  impressions: number;
-  clicks: number;
-  conversions: number;
-  revenue_attrib_cents: number;
-};
+export type AdCampaignDim = NormalizedCampaign;   // produced shape is identical
+export type AdSpendFact = NormalizedSpendRow;
+export type { Platform, CampaignStatus };
 
 // --------------------------------------------------------------------------
 // Loose Google Ads API payload types
