@@ -12,10 +12,10 @@ describe("integration connect eligibility", () => {
     expect(isConnectable("meta_ads")).toBe(true);
     expect(isConnectable("google_ads")).toBe(true);
     expect(isConnectable("tiktok_ads")).toBe(true);
+    expect(isConnectable("quickbooks")).toBe(true); // QBO OAuth wired (auth.quickbooks.$)
   });
 
-  it("does not offer Connect for unwired or Shopify-native sources", () => {
-    expect(isConnectable("quickbooks")).toBe(false); // no OAuth backend wired yet
+  it("does not offer Connect for Shopify-native sources", () => {
     expect(isConnectable("shopify")).toBe(false); // native, managed by Shopify
   });
 });
