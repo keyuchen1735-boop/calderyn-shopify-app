@@ -20,7 +20,7 @@ import { encrypt } from "~/lib/crypto.server";
 // Google's domain without the embedded app session, so the single-use nonce
 // (minted under authenticate.admin in startOAuth) is the authenticator.
 
-const ADS_API_VERSION = "v17";
+const ADS_API_VERSION = "v23";
 
 type AccessibleCustomersResponse = {
   resourceNames?: string[]; // e.g. ["customers/1234567890"]
@@ -80,12 +80,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         },
       },
     );
-    const body = (await res.json()) as AccessibleCustomersResponse;
-    if (!res.ok || body.error) {
+    // Read as text first: a sunset/invalid API version returns an HTML 404, and
+    // calling res.json() on that throws an opaque SyntaxError -> 500. Surface the
+    // real status + body instead of crashing (rule 12: fail visibly).
+    const raw = await res.text();
+    if (!res.ok) {
       throw new Response(
-        `Google Ads error: ${body.error?.message ?? `HTTP ${res.status}`}`,
+        `Google Ads listAccessibleCustomers failed: HTTP ${res.status} ${raw.slice(0, 300)}`,
         { status: 502 },
       );
+    }
+    let body: AccessibleCustomersResponse;
+    try {
+      body = JSON.parse(raw) as AccessibleCustomersResponse;
+    } catch {
+      throw new Response(
+        `Google Ads returned non-JSON (HTTP ${res.status}): ${raw.slice(0, 200)}`,
+        { status: 502 },
+      );
+    }
+    if (body.error) {
+      throw new Response(`Google Ads error: ${body.error.message ?? "unknown"}`, {
+        status: 502,
+      });
     }
     // "customers/1234567890" -> "1234567890"
     const first = body.resourceNames?.[0];
