@@ -27,6 +27,9 @@ import {
 import type { Alert, DetectorId, Severity } from "~/lib/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
+import { CountUp } from "./count-up";
+
+export { CountUp } from "./count-up";
 
 /* ───────────────────────────── Icon ───────────────────────────── */
 
@@ -146,7 +149,9 @@ export function StatTile({
             {value !== undefined && (
               <InlineStack gap="200" blockAlign="baseline">
                 <Text as="p" variant="heading2xl" tone={tone}>
-                  <span className="cdn-tnum">{value}</span>
+                  <span className="cdn-tnum">
+                    <CountUp value={value} />
+                  </span>
                 </Text>
                 {delta !== undefined && <MoneyDelta pct={delta} invert={deltaInvert} />}
               </InlineStack>
