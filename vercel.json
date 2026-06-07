@@ -11,6 +11,7 @@
     { "path": "/cron/detect", "schedule": "15,45 * * * *" },
     { "path": "/cron/ingest-ads", "schedule": "0 * * * *" },
     { "path": "/cron/gdpr", "schedule": "0 4 * * *" },
-    { "path": "/cron/action-retry", "schedule": "*/15 * * * *" }
+    { "path": "/cron/action-retry", "schedule": "*/15 * * * *" },
+    { "path": "/cron/autopilot", "schedule": "0,30 * * * *" }
   ]
 }

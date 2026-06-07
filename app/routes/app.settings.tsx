@@ -97,6 +97,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const n = Number(v);
         return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
       });
+      // Autopilot fields
+      const rawAutopilot = formData.get("autopilot_enabled");
+      if (rawAutopilot !== null) {
+        patch.autopilot_enabled = String(rawAutopilot) === "true";
+      }
+      setIfPresent("autopilot_daily_action_cap", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+      setIfPresent("autopilot_min_spend_cents", (v) => {
+        // form submits dollars; store as cents
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : undefined;
+      });
+      setIfPresent("autopilot_max_budget_cut_pct", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
 
       await client.guardrails.update(patch, request.signal);
       return json<ActionPayload>({
@@ -277,11 +295,25 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const [budget, setBudget] = useState(String(Math.round(guardrails.daily_action_budget_cents / 100)));
   const [cap, setCap] = useState(String(Math.round(guardrails.dollar_cap_cents / 100)));
   const [cooldown, setCooldown] = useState(String(guardrails.cooldown_minutes));
+  const [autopilotEnabled, setAutopilotEnabled] = useState(guardrails.autopilot_enabled);
+  const [autopilotDailyActionCap, setAutopilotDailyActionCap] = useState(
+    String(guardrails.autopilot_daily_action_cap),
+  );
+  const [autopilotMinSpend, setAutopilotMinSpend] = useState(
+    String(Math.round(guardrails.autopilot_min_spend_cents / 100)),
+  );
+  const [autopilotMaxBudgetCutPct, setAutopilotMaxBudgetCutPct] = useState(
+    String(guardrails.autopilot_max_budget_cut_pct),
+  );
 
   useEffect(() => {
     setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
     setCap(String(Math.round(guardrails.dollar_cap_cents / 100)));
     setCooldown(String(guardrails.cooldown_minutes));
+    setAutopilotEnabled(guardrails.autopilot_enabled);
+    setAutopilotDailyActionCap(String(guardrails.autopilot_daily_action_cap));
+    setAutopilotMinSpend(String(Math.round(guardrails.autopilot_min_spend_cents / 100)));
+    setAutopilotMaxBudgetCutPct(String(guardrails.autopilot_max_budget_cut_pct));
   }, [guardrails]);
 
   return (
@@ -325,6 +357,26 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           name="cooldown_minutes"
           value={String(Math.max(0, Number(cooldown)))}
         />
+        <input
+          type="hidden"
+          name="autopilot_enabled"
+          value={autopilotEnabled ? "true" : "false"}
+        />
+        <input
+          type="hidden"
+          name="autopilot_daily_action_cap"
+          value={String(Math.max(0, Number(autopilotDailyActionCap)))}
+        />
+        <input
+          type="hidden"
+          name="autopilot_min_spend_cents"
+          value={String(Math.max(0, Number(autopilotMinSpend)))}
+        />
+        <input
+          type="hidden"
+          name="autopilot_max_budget_cut_pct"
+          value={String(Math.max(0, Number(autopilotMaxBudgetCutPct)))}
+        />
         <FormLayout>
           <FormLayout.Group>
             <TextField
@@ -359,6 +411,40 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               autoComplete="off"
               disabled
               helpText={`Timezone: ${guardrails.business_hours.tz}`}
+            />
+          </FormLayout.Group>
+          <Checkbox
+            label="Auto-pilot — automatically pause clearly money-losing campaigns"
+            checked={autopilotEnabled}
+            onChange={setAutopilotEnabled}
+            helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
+          />
+          <FormLayout.Group>
+            <TextField
+              label="Max automatic actions per day"
+              type="number"
+              value={autopilotDailyActionCap}
+              autoComplete="off"
+              onChange={setAutopilotDailyActionCap}
+              helpText="Calderyn will not take more than this many automatic actions in a single day."
+            />
+            <TextField
+              label="Don't act until a campaign has spent (USD)"
+              type="number"
+              value={autopilotMinSpend}
+              autoComplete="off"
+              onChange={setAutopilotMinSpend}
+              helpText="Campaigns with less than this trailing spend are skipped — not enough data."
+            />
+          </FormLayout.Group>
+          <FormLayout.Group>
+            <TextField
+              label="Max budget cut per action (%)"
+              type="number"
+              value={autopilotMaxBudgetCutPct}
+              autoComplete="off"
+              onChange={setAutopilotMaxBudgetCutPct}
+              helpText="Budget-reduction actions will not cut more than this percentage in a single step."
             />
           </FormLayout.Group>
           <InlineStack align="end">

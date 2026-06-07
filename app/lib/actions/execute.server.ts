@@ -15,6 +15,7 @@ export interface ExecuteInput {
   campaignId: string; // ad_campaign_dim uuid
   idempotencyKey: string;
   dailyBudgetCents?: number;
+  actor?: string;
 }
 
 export interface ExecutedAudit {
@@ -87,7 +88,7 @@ export async function executeAction(
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,
-      actor_user_id: "merchant",
+      actor_user_id: input.actor ?? "merchant",
       completed_at: new Date().toISOString(),
     })
     .select("id")
