@@ -12,6 +12,7 @@
     { "path": "/cron/ingest-ads", "schedule": "0 * * * *" },
     { "path": "/cron/gdpr", "schedule": "0 4 * * *" },
     { "path": "/cron/action-retry", "schedule": "*/15 * * * *" },
-    { "path": "/cron/autopilot", "schedule": "0,30 * * * *" }
+    { "path": "/cron/autopilot", "schedule": "0,30 * * * *" },
+    { "path": "/cron/ingest-quickbooks", "schedule": "0 5 * * *" }
   ]
 }
