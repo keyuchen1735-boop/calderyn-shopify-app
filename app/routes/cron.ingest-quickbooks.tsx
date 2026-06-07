@@ -4,6 +4,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 import { quickbooksClientForShop } from "~/lib/quickbooks/client.server";
 import { syncQuickbooksCogs, type QbSyncCounts } from "~/lib/quickbooks/ingest.server";
+import { isRevokedTokenError } from "~/lib/quickbooks/oauth.server";
 
 async function setSync(shopId: string, patch: Record<string, unknown>): Promise<void> {
   const sb = getSupabase();
@@ -32,6 +33,7 @@ async function toDlq(shopId: string, err: unknown): Promise<void> {
 interface Summary {
   synced: Array<{ shopId: string } & QbSyncCounts>;
   skipped: string[];
+  disconnected: string[];
   errors: string[];
 }
 
@@ -48,7 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .in("sync_status", ["ready", "live"]);
   if (error) throw error;
 
-  const summary: Summary = { synced: [], skipped: [], errors: [] };
+  const summary: Summary = { synced: [], skipped: [], disconnected: [], errors: [] };
 
   for (const row of (data ?? []) as Array<{ shop_id: string }>) {
     const shopId = String(row.shop_id);
@@ -63,6 +65,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.synced.push({ shopId, ...counts });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (isRevokedTokenError(err)) {
+        // Merchant revoked the app (or the refresh token expired): a clean
+        // "reconnect" state, not a system failure — mark disconnected, no DLQ.
+        await setSync(shopId, {
+          sync_status: "disconnected",
+          sync_error: "QuickBooks access was revoked — reconnect to resume syncing.",
+        });
+        summary.disconnected.push(shopId);
+        continue;
+      }
       await setSync(shopId, { sync_status: "error", sync_error: message.slice(0, 500) });
       await toDlq(shopId, err);
       summary.errors.push(`${shopId}: ${message}`);

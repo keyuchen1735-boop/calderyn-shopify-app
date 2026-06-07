@@ -30,7 +30,7 @@ Use it to fill **developer.intuit.com → Calderyn → Keys & credentials → Pr
 | Host domain | `shopify-app-rho-ruby.vercel.app` |
 | Launch URL | `https://shopify-app-rho-ruby.vercel.app/app` |
 | Connect / reconnect URL | `https://shopify-app-rho-ruby.vercel.app/app/settings` |
-| Disconnect URL | `https://shopify-app-rho-ruby.vercel.app/app/settings` |
+| Disconnect URL | `https://shopify-app-rho-ruby.vercel.app/auth/quickbooks/disconnect` |
 
 ### 4. Category
 - **Accounting** (closest fallback: *Business management*).
