@@ -8,7 +8,7 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import {
   Badge,
   Banner,
@@ -47,6 +47,8 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
+  // External OAuth URL to open at the top level (escaping the embedded iframe).
+  redirectUrl?: string;
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -134,7 +136,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
       const { redirectUrl } = await client.integrations.startOAuth(provider, request.signal);
-      return redirect(redirectUrl);
+      // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
+      // be framed. Hand the URL back so the client opens it at the top level.
+      return json<ActionPayload>({ ok: true, redirectUrl });
     }
 
     if (intent === "disconnect_integration") {
@@ -469,6 +473,16 @@ function IntegrationCard({
 }) {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
+  // Connect runs through its own fetcher so the provider's OAuth page can be
+  // opened at the top level — embedded iframes can't load third-party OAuth
+  // pages (they refuse to be framed).
+  const connectFetcher = useFetcher<ActionPayload>();
+  const connecting = connectFetcher.state !== "idle";
+  useActionToast(connectFetcher.data ?? undefined);
+  useEffect(() => {
+    const url = connectFetcher.data?.redirectUrl;
+    if (url) window.open(url, "_top");
+  }, [connectFetcher.data]);
   // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
   // disconnect speak the OAuth provider short name (e.g. "meta").
   const oauthProvider = kindToProvider(provider);
@@ -498,13 +512,13 @@ function IntegrationCard({
               </Button>
             </Form>
           ) : canConnect ? (
-            <Form method="post">
+            <connectFetcher.Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
               <input type="hidden" name="provider" value={oauthProvider} />
-              <Button submit variant="primary" loading={submitting} disabled={submitting}>
+              <Button submit variant="primary" loading={connecting} disabled={connecting}>
                 Connect
               </Button>
-            </Form>
+            </connectFetcher.Form>
           ) : (
             <Badge>Managed by Shopify</Badge>
           )}
