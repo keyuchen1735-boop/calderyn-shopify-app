@@ -33,6 +33,7 @@ import {
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
+import { OAUTH_PROVIDERS, isConnectable, kindToProvider } from "~/lib/integrations";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
@@ -125,7 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
-      if (!["google", "meta", "quickbooks"].includes(provider)) {
+      if (!(OAUTH_PROVIDERS as readonly string[]).includes(provider)) {
         throw new CalderynError({
           code: "INVALID_PROVIDER",
           status: 400,
@@ -468,7 +469,10 @@ function IntegrationCard({
 }) {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
-  const canConnect = ["google", "meta", "quickbooks"].includes(provider);
+  // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
+  // disconnect speak the OAuth provider short name (e.g. "meta").
+  const oauthProvider = kindToProvider(provider);
+  const canConnect = isConnectable(provider);
 
   return (
     <Card>
@@ -488,7 +492,7 @@ function IntegrationCard({
           {integration.status === "connected" ? (
             <Form method="post">
               <input type="hidden" name="intent" value="disconnect_integration" />
-              <input type="hidden" name="provider" value={provider} />
+              <input type="hidden" name="provider" value={oauthProvider} />
               <Button submit tone="critical" loading={submitting} disabled={submitting}>
                 Disconnect
               </Button>
@@ -496,7 +500,7 @@ function IntegrationCard({
           ) : canConnect ? (
             <Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
-              <input type="hidden" name="provider" value={provider} />
+              <input type="hidden" name="provider" value={oauthProvider} />
               <Button submit variant="primary" loading={submitting} disabled={submitting}>
                 Connect
               </Button>
