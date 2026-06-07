@@ -188,7 +188,10 @@ human approval before any live action.
 
 ## 10. Data model
 
-New table `creative_screen_run` (Prisma migration via `prisma migrate dev`):
+New **Supabase** table `creative_screen_run` (timestamped SQL migration in
+`supabase/migrations/`, mirrored in `tests/engine/schema/migrations/` — the same
+mechanism used for `simulation_run`; **not** Prisma, which only backs Shopify
+session storage):
 
 | Column | Notes |
 |---|---|
