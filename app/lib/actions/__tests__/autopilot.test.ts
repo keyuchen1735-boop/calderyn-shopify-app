@@ -8,6 +8,7 @@ const { checkGuardrails, executeAction } = vi.hoisted(() => ({
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 
+// eslint-disable-next-line import/first -- vi.hoisted + vi.mock must precede the module under test
 import { runAutopilotForShop } from "../autopilot.server";
 
 const SHOP = "00000000-0000-0000-0000-000000000010";

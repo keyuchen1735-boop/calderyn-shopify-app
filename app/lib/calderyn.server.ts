@@ -160,6 +160,10 @@ function rowToGuardrails(r: Record<string, unknown>): GuardrailConfig {
       tz: String(r.timezone ?? "America/New_York"),
     },
     in_business_hours: true,
+    autopilot_enabled: Boolean(r.autopilot_enabled),
+    autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
+    autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
+    autopilot_max_budget_cut_pct: Number(r.autopilot_max_budget_cut_pct ?? 50),
   };
 }
 
@@ -559,6 +563,10 @@ export function calderynClient(shop: string) {
             updates.cooldown_minutes_per_campaign = patch.cooldown_minutes;
           }
           if (patch.business_hours?.tz) updates.timezone = patch.business_hours.tz;
+          if (patch.autopilot_enabled !== undefined) updates.autopilot_enabled = patch.autopilot_enabled;
+          if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
+          if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
+          if (patch.autopilot_max_budget_cut_pct !== undefined) updates.autopilot_max_budget_cut_pct = patch.autopilot_max_budget_cut_pct;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase

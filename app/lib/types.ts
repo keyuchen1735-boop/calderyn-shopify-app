@@ -91,6 +91,10 @@ export interface GuardrailConfig {
   cooldown_minutes: number;
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
+  autopilot_enabled: boolean;
+  autopilot_daily_action_cap: number;
+  autopilot_min_spend_cents: number;
+  autopilot_max_budget_cut_pct: number;
 }
 
 // --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---

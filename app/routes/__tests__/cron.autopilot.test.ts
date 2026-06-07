@@ -8,6 +8,7 @@ const { runAutopilotForShop, getSupabase } = vi.hoisted(() => ({
 vi.mock("~/lib/actions/autopilot.server", () => ({ runAutopilotForShop }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
 
+// eslint-disable-next-line import/first -- vi.hoisted + vi.mock must precede the module under test
 import { loader } from "../cron.autopilot";
 
 const SHOP_A = "aaaaaaaa-0000-0000-0000-000000000001";
