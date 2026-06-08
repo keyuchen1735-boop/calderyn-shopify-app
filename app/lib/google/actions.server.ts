@@ -58,7 +58,7 @@ export async function googleActionAdapterForShop(shopId: string): Promise<Action
   const refreshToken = decrypt(data.access_token_encrypted as string);
   const customerId = String(data.external_account_id);
 
-  const apiVersion = "v17";
+  const apiVersion = "v23";
   const base = `https://googleads.googleapis.com/${apiVersion}`;
   const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
   if (!devToken) throw new ActionError("google", "GOOGLE_ADS_DEVELOPER_TOKEN must be set");
