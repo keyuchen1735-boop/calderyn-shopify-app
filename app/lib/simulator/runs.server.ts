@@ -34,24 +34,28 @@ export async function startRun(
   return rowToRun(data);
 }
 
-export async function completeRun(id: string, model: BehaviorModel): Promise<SimulationRun> {
+export async function completeRun(shop: string, id: string, model: BehaviorModel): Promise<SimulationRun> {
   const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
   const { data, error } = await sb
     .from("simulation_run")
     .update({ status: "done", model, completed_at: new Date().toISOString() })
     .eq("id", id)
+    .eq("shop_id", shopId)
     .select()
     .single();
   if (error) throw error;
   return rowToRun(data);
 }
 
-export async function failRun(id: string, message: string): Promise<SimulationRun> {
+export async function failRun(shop: string, id: string, message: string): Promise<SimulationRun> {
   const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
   const { data, error } = await sb
     .from("simulation_run")
     .update({ status: "error", error: message, completed_at: new Date().toISOString() })
     .eq("id", id)
+    .eq("shop_id", shopId)
     .select()
     .single();
   if (error) throw error;

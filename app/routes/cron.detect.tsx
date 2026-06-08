@@ -1,12 +1,12 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
+import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_DETECT_SHOPS = 10; // bounded per tick to stay under function timeout
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const auth = request.headers.get("authorization");
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
   }
 

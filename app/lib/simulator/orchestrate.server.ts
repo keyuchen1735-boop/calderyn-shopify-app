@@ -12,8 +12,8 @@ import type { BehaviorModel, SimulationRun, StoreSnapshot } from "./types";
 
 export interface ExecuteDeps {
   startRun: (shop: string, requestedN: number, target?: string) => Promise<SimulationRun>;
-  completeRun: (id: string, model: BehaviorModel) => Promise<SimulationRun>;
-  failRun: (id: string, message: string) => Promise<SimulationRun>;
+  completeRun: (shop: string, id: string, model: BehaviorModel) => Promise<SimulationRun>;
+  failRun: (shop: string, id: string, message: string) => Promise<SimulationRun>;
   fetchSnapshot: (shop: string) => Promise<StoreSnapshot>;
   buildBehaviorModel: (snapshot: StoreSnapshot) => Promise<BehaviorModel>;
 }
@@ -49,12 +49,12 @@ export async function executeSimulation(
     const model = input.demo
       ? DEMO_MODEL
       : await deps.buildBehaviorModel(await deps.fetchSnapshot(input.shop));
-    return await deps.completeRun(run.id, model);
+    return await deps.completeRun(input.shop, run.id, model);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (run) {
       try {
-        return await deps.failRun(run.id, message);
+        return await deps.failRun(input.shop, run.id, message);
       } catch {
         // failRun itself failed — fall through to a synthetic error DTO below.
       }
