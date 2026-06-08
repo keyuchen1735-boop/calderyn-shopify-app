@@ -1,6 +1,6 @@
 // app/lib/screener/runs.server.ts
 import { getSupabase, resolveShopId } from "../supabase.server";
-import type { CreativeScreenRun, RunSource, RunStatus, ScoreCard } from "./types";
+import type { CreativeInput, CreativeScreenRun, RunSource, RunStatus, ScoreCard, Variant } from "./types";
 
 export function rowToRun(r: Record<string, unknown>): CreativeScreenRun {
   return {
@@ -13,6 +13,8 @@ export function rowToRun(r: Record<string, unknown>): CreativeScreenRun {
     error: (r.error as string | null) ?? null,
     createdAt: String(r.created_at),
     completedAt: (r.completed_at as string | null) ?? null,
+    creativeInput: (r.creative_input as CreativeInput | null) ?? null,
+    variants: (r.variants as Variant[] | null) ?? [],
   };
 }
 
@@ -39,11 +41,23 @@ export async function startRun(
   return rowToRun(data);
 }
 
-export async function completeRun(id: string, scorecard: ScoreCard): Promise<CreativeScreenRun> {
+export async function completeRun(id: string, scorecard: ScoreCard, creativeInput: CreativeInput): Promise<CreativeScreenRun> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("creative_screen_run")
-    .update({ status: "done", scorecard, completed_at: new Date().toISOString() })
+    .update({ status: "done", scorecard, creative_input: creativeInput, completed_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToRun(data);
+}
+
+export async function saveVariants(id: string, variants: Variant[]): Promise<CreativeScreenRun> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("creative_screen_run")
+    .update({ variants })
     .eq("id", id)
     .select()
     .single();

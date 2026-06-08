@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampSpend, parseCreativeForm } from "../../../routes/app.screener";
+import { clampSpend, parseCreativeForm, isMetaSubmit } from "../../../routes/app.screener";
 import { parseScoreForm } from "../../../routes/app.campaigns.$campaignId.score";
 import { DEFAULT_SPEND_CENTS } from "../types";
 
@@ -89,5 +89,23 @@ describe("parseScoreForm", () => {
       destinationUrl: "https://x.test/p",
       audience: "women 25-44",
     });
+  });
+});
+
+describe("isMetaSubmit", () => {
+  it("detects the meta source mode + ad id", () => {
+    const fd = new FormData();
+    fd.set("source", "meta_ad");
+    fd.set("metaAdId", "ad-7");
+    expect(isMetaSubmit(fd)).toEqual({ metaAdId: "ad-7" });
+  });
+  it("returns null for manual submits", () => {
+    const fd = new FormData();
+    expect(isMetaSubmit(fd)).toBeNull();
+  });
+  it("returns null when meta mode lacks an ad id", () => {
+    const fd = new FormData();
+    fd.set("source", "meta_ad");
+    expect(isMetaSubmit(fd)).toBeNull();
   });
 });

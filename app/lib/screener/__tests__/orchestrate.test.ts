@@ -17,7 +17,7 @@ function deps(over: Partial<ScreenDeps> = {}): ScreenDeps {
   const run: CreativeScreenRun = {
     id: "run-1", status: "running", source: "manual", metaAdId: null,
     assumedSpendCents: 50000, scorecard: null, error: null,
-    createdAt: "t", completedAt: null,
+    createdAt: "t", completedAt: null, creativeInput: null, variants: [],
   };
   return {
     resolveSku: () => "SKU1",
@@ -48,5 +48,30 @@ describe("executeScreen", () => {
     const out = await executeScreen({ shop: "s", input, assumedSpendCents: 50000 }, failing);
     expect(out.status).toBe("error");
     expect(out.error).toContain("boom");
+  });
+
+  it("threads source and metaAdId into the run", async () => {
+    const captured: { source?: string } = {};
+    const out = await executeScreen(
+      { shop: "s", input, assumedSpendCents: 50000, source: "meta_ad", metaAdId: "ad-9" },
+      deps({
+        startRun: async (_shop, source) => {
+          captured.source = source;
+          return {
+            id: "run-9", status: "running", source, metaAdId: "ad-9",
+            assumedSpendCents: 50000, scorecard: null, error: null, createdAt: "t", completedAt: null,
+            creativeInput: null, variants: [],
+          };
+        },
+        completeRun: async (_id, scorecard) => ({
+          id: "run-9", status: "done", source: "meta_ad", metaAdId: "ad-9",
+          assumedSpendCents: 50000, scorecard, error: null, createdAt: "t", completedAt: "t2",
+          creativeInput: null, variants: [],
+        }),
+      }),
+    );
+    expect(captured.source).toBe("meta_ad");
+    expect(out.metaAdId).toBe("ad-9");
+    expect(out.status).toBe("done");
   });
 });

@@ -16,13 +16,8 @@ export interface ScreenDeps {
     input: CreativeInput,
     topAdNames: string[],
   ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: string[] }>;
-  startRun: (
-    shop: string,
-    source: RunSource,
-    assumedSpendCents: number,
-    metaAdId?: string | null,
-  ) => Promise<CreativeScreenRun>;
-  completeRun: (id: string, scorecard: ScoreCard) => Promise<CreativeScreenRun>;
+  startRun: (shop: string, source: RunSource, assumedSpendCents: number, metaAdId?: string | null) => Promise<CreativeScreenRun>;
+  completeRun: (id: string, scorecard: ScoreCard, creativeInput: CreativeInput) => Promise<CreativeScreenRun>;
   failRun: (id: string, message: string) => Promise<CreativeScreenRun>;
 }
 
@@ -46,24 +41,18 @@ function defaultDeps(): ScreenDeps {
         createMessage: (p) => getAnthropic().messages.create(p),
         model: assistantModel(),
       }),
-    startRun: (shop, source, cents, metaAdId) => realStart(shop, source, cents, metaAdId),
+    startRun: realStart,
     completeRun: realComplete,
     failRun: realFail,
   };
 }
 
 export async function executeScreen(
-  args: {
-    shop: string;
-    input: CreativeInput;
-    assumedSpendCents: number;
-    source?: RunSource;
-    metaAdId?: string | null;
-  },
+  args: { shop: string; input: CreativeInput; assumedSpendCents: number; source?: RunSource; metaAdId?: string | null },
   deps: ScreenDeps = defaultDeps(),
 ): Promise<CreativeScreenRun> {
   const source: RunSource = args.source ?? "manual";
-  const metaAdId: string | null = args.metaAdId ?? null;
+  const metaAdId = args.metaAdId ?? null;
   let run: CreativeScreenRun | null = null;
   try {
     run = await deps.startRun(args.shop, source, args.assumedSpendCents, metaAdId);
@@ -82,7 +71,7 @@ export async function executeScreen(
       outcomes,
       tips: scored.tips,
     };
-    return await deps.completeRun(run.id, scorecard);
+    return await deps.completeRun(run.id, scorecard, args.input);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (run) {
@@ -102,6 +91,8 @@ export async function executeScreen(
       error: message,
       createdAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
+      creativeInput: null,
+      variants: [],
     };
   }
 }
