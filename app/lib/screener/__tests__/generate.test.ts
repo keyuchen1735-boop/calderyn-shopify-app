@@ -64,6 +64,40 @@ describe("generateImprovements (re-score gate)", () => {
     expect(out.variants).toEqual([]);
     expect(out.discarded).toBe(3);
   });
+
+  it("survives a scoreOne failure on one candidate (keeps the rest)", async () => {
+    const out = await generateImprovements(
+      { original, originalScorecard: scorecard(64), count: 3 },
+      gateDeps({
+        scoreOne: async (input) => {
+          if (input.headline === "B") throw new Error("transient score error");
+          const map: Record<string, number> = { A: 80, C: 90 };
+          return { composite: map[input.headline] ?? 0, summary: "s", metrics: [] };
+        },
+      }),
+    );
+    expect(out.variants.map((v) => v.input.headline)).toEqual(["C", "A"]);
+    expect(out.generated).toBe(3);
+    expect(out.discarded).toBe(1); // B failed re-scoring → discarded, not crashing the batch
+  });
+
+  it("passes styleRefs through to the generator", async () => {
+    let seen: string[] = [];
+    await generateImprovements(
+      { original, originalScorecard: scorecard(64), styleRefs: ["Top Ad A", "Top Ad B"] },
+      gateDeps({
+        generator: {
+          mode: "copy",
+          available: () => true,
+          generate: async (req) => {
+            seen = req.styleRefs;
+            return [];
+          },
+        },
+      }),
+    );
+    expect(seen).toEqual(["Top Ad A", "Top Ad B"]);
+  });
 });
 
 describe("copyGenerator", () => {

@@ -31,7 +31,7 @@ export interface GateDeps {
 }
 
 export async function generateImprovements(
-  args: { original: CreativeInput; originalScorecard: ScoreCard; count?: number },
+  args: { original: CreativeInput; originalScorecard: ScoreCard; count?: number; styleRefs?: string[] },
   deps: GateDeps,
 ): Promise<{ variants: Variant[]; generated: number; discarded: number; available: boolean }> {
   if (!deps.generator.available()) {
@@ -46,13 +46,14 @@ export async function generateImprovements(
     input: args.original,
     weakMetrics,
     tips: args.originalScorecard.tips,
-    styleRefs: [],
+    styleRefs: args.styleRefs ?? [],
     count: args.count ?? 3,
   });
 
   const baseline = args.originalScorecard.composite;
-  const scored: Variant[] = await Promise.all(
-    candidates.map(async (c) => {
+  // allSettled, not all: one flaky re-score must not discard every other variant.
+  const settled = await Promise.allSettled(
+    candidates.map(async (c): Promise<Variant> => {
       const s = await deps.scoreOne(c.input);
       return {
         mode: deps.generator.mode,
@@ -64,15 +65,20 @@ export async function generateImprovements(
       };
     }),
   );
+  const scored: Variant[] = settled
+    .filter((r): r is PromiseFulfilledResult<Variant> => r.status === "fulfilled")
+    .map((r) => r.value);
 
   const winners = scored
     .filter((v) => v.composite > baseline)
     .sort((a, b) => b.composite - a.composite);
 
+  // `generated` = candidates produced; `discarded` covers both regressions and
+  // re-score failures so the count never lies about what was dropped (rule 12).
   return {
     variants: winners,
-    generated: scored.length,
-    discarded: scored.length - winners.length,
+    generated: candidates.length,
+    discarded: candidates.length - winners.length,
     available: true,
   };
 }
