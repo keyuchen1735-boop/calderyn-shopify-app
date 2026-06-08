@@ -45,6 +45,7 @@ If any step fails: **stop, surface the failure, fix the root cause.** Do not `--
 ## Commit hygiene
 - One logical change per commit. Reference the route/module touched in the subject (e.g. `routes/app._index: fix loader error path`).
 - Never commit `.env`, `prisma/dev.sqlite`, or anything under `.shopify/`.
+- **Auto-commit completed features.** Once a feature is done and verified, commit it without waiting to be asked — but only after the Pre-commit gate above is fully green (every step run, results shown). The gate is a hard precondition; never auto-commit past a failing or skipped check (rule 12). If on the default branch, branch first. Do not push or open a PR automatically — that still waits for an explicit request.
 
 ## Tool use
 - **Always prefer available MCP/CLI tools over manual work or guessing.** Before doing a task by hand (shell scripting, reading files ad hoc, recalling API shapes), check whether an MCP server or CLI listed below covers it and use that. Asking me whether a tool exists is a last resort — discover it yourself first (e.g. `which <cli>`, the MCP/CLI lists below, `codegraph_status`). Only ask if discovery is inconclusive or the tool needs credentials/permission you can't supply.
