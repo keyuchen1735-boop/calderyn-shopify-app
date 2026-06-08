@@ -93,7 +93,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const assumedSpendCents = clampSpend(form.get("assumedSpendCents"));
   const meta = isMetaSubmit(form);
   if (meta) {
-    const input = await fetchCreativeInput(session.shop, meta.metaAdId);
+    let input;
+    try {
+      input = await fetchCreativeInput(session.shop, meta.metaAdId);
+    } catch (err) {
+      // Meta read can fail if the connection was revoked between page load and
+      // submit — surface it in the in-app banner like every other failure
+      // (rule 12) instead of crashing to Remix's error boundary.
+      const message = err instanceof Error ? err.message : String(err);
+      return json({
+        id: "", status: "error", source: "meta_ad", metaAdId: meta.metaAdId,
+        assumedSpendCents, scorecard: null, error: message,
+        createdAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+      } satisfies CreativeScreenRun);
+    }
     const run = await executeScreen({
       shop: session.shop, input, assumedSpendCents, source: "meta_ad", metaAdId: meta.metaAdId,
     });
