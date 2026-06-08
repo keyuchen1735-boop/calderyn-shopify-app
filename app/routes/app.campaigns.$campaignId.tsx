@@ -94,17 +94,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const client = calderynClient(session.shop);
 
   if (!idFromUrl) {
-    return json<LoaderPayload>({
-      detail: null,
-      error: { code: "INVALID_REQUEST", message: "Missing campaign id" },
-      creatives: [],
-      creativesError: null,
-      adMetrics: [],
-      adMetricsError: null,
-      scorecards: [],
-      assumedSpendCents: DEFAULT_SPEND_CENTS,
-      campaignIdParam: idFromUrl,
-    });
+    return json<LoaderPayload>(
+      emptyPayload(idFromUrl, { code: "INVALID_REQUEST", message: "Missing campaign id" }),
+    );
   }
 
   try {
@@ -141,21 +133,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         status: campaign.status,
         performance: buildCampaignPerformance(campaign),
       };
-      const { creatives, creativesError } = await loadCreatives(session.shop, detail);
-      const { adMetrics, adMetricsError } = await loadAdMetrics(session.shop, detail);
-      const assumedSpendCents = spendBasis(detail.performance);
-      const scorecards = await loadCachedScorecards(session.shop, creatives);
-      return json<LoaderPayload>({
-        detail,
-        error: null,
-        creatives,
-        creativesError,
-        adMetrics,
-        adMetricsError,
-        scorecards,
-        assumedSpendCents,
-        campaignIdParam: idFromUrl,
-      });
+      return respondForDetail(session.shop, detail, idFromUrl);
     }
 
     // 3) Identity-only fallback from the live Meta account (no ingested metrics).
@@ -175,51 +153,71 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             status: owned.status === "PAUSED" ? "paused" : "active",
             performance: buildCampaignPerformance(null),
           };
-          const { creatives, creativesError } = await loadCreatives(session.shop, detail);
-          const { adMetrics, adMetricsError } = await loadAdMetrics(session.shop, detail);
-          const assumedSpendCents = spendBasis(detail.performance);
-          const scorecards = await loadCachedScorecards(session.shop, creatives);
-          return json<LoaderPayload>({
-            detail,
-            error: null,
-            creatives,
-            creativesError,
-            adMetrics,
-            adMetricsError,
-            scorecards,
-            assumedSpendCents,
-            campaignIdParam: idFromUrl,
-          });
+          return respondForDetail(session.shop, detail, idFromUrl);
         }
       }
     }
 
-    return json<LoaderPayload>({
-      detail: null,
-      error: { code: "CAMPAIGN_NOT_FOUND", message: `Campaign ${idFromUrl} not found` },
-      creatives: [],
-      creativesError: null,
-      adMetrics: [],
-      adMetricsError: null,
-      scorecards: [],
-      assumedSpendCents: DEFAULT_SPEND_CENTS,
-      campaignIdParam: idFromUrl,
-    });
+    return json<LoaderPayload>(
+      emptyPayload(idFromUrl, {
+        code: "CAMPAIGN_NOT_FOUND",
+        message: `Campaign ${idFromUrl} not found`,
+      }),
+    );
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
-      detail: null,
-      error: { code: e.code ?? "ERROR", message: e.message },
-      creatives: [],
-      creativesError: null,
-      adMetrics: [],
-      adMetricsError: null,
-      scorecards: [],
-      assumedSpendCents: DEFAULT_SPEND_CENTS,
-      campaignIdParam: idFromUrl,
-    });
+    return json<LoaderPayload>(
+      emptyPayload(idFromUrl, { code: e.code ?? "ERROR", message: e.message }),
+    );
   }
 };
+
+/** Resolve a detail's creatives + live ad metrics (independent Meta fetches, run
+ * in parallel) plus cached scorecards, into the LoaderPayload. Shared by the
+ * ingested and live-identity success branches so the post-resolution pipeline
+ * lives in one place. */
+async function respondForDetail(
+  shop: string,
+  detail: CampaignDetail,
+  campaignIdParam: string,
+) {
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }] = await Promise.all([
+    loadCreatives(shop, detail),
+    loadAdMetrics(shop, detail),
+  ]);
+  const assumedSpendCents = spendBasis(detail.performance);
+  const scorecards = await loadCachedScorecards(shop, creatives);
+  return json<LoaderPayload>({
+    detail,
+    error: null,
+    creatives,
+    creativesError,
+    adMetrics,
+    adMetricsError,
+    scorecards,
+    assumedSpendCents,
+    campaignIdParam,
+  });
+}
+
+/** Empty/error LoaderPayload (no detail) — every non-success return uses this so
+ * the full payload shape stays in one place. */
+function emptyPayload(
+  campaignIdParam: string,
+  error: { code: string; message: string } | null,
+): LoaderPayload {
+  return {
+    detail: null,
+    error,
+    creatives: [],
+    creativesError: null,
+    adMetrics: [],
+    adMetricsError: null,
+    scorecards: [],
+    assumedSpendCents: DEFAULT_SPEND_CENTS,
+    campaignIdParam,
+  };
+}
 
 /** Clamp the 7-day spend (or DEFAULT) to [MIN, MAX] — the per-ad score basis. */
 function spendBasis(performance: CampaignPerformance): number {
