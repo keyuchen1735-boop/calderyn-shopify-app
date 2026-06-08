@@ -106,6 +106,13 @@ describe("calderynClient enforces shop scoping on every read", () => {
     expect((await calderynClient(A).campaigns.list()).map((x) => x.id)).toEqual(["a-camp"]);
   });
 
+  it("campaigns.get cannot fetch another shop's campaign by id", async () => {
+    expect((await calderynClient(A).campaigns.get("a-camp")).id).toBe("a-camp");
+    await expect(calderynClient(A).campaigns.get("b-camp")).rejects.toMatchObject({
+      code: "CAMPAIGN_NOT_FOUND",
+    });
+  });
+
   it("skus.list returns only the calling shop's SKUs", async () => {
     expect((await calderynClient(A).skus.list()).map((x) => x.id)).toEqual(["a-sku"]);
   });

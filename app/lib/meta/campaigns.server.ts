@@ -18,7 +18,7 @@ export type MetaCampaign = {
   dailyBudgetCents: number | null;
 };
 
-function check(r: MetaResponse): MetaResponse {
+export function check(r: MetaResponse): MetaResponse {
   if (r.error) {
     const code = r.error.code != null ? ` (code ${r.error.code})` : "";
     throw new Error(`Meta API error: ${r.error.message}${code}`);

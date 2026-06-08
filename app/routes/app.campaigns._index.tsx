@@ -18,6 +18,7 @@ import {
   Card,
   DataTable,
   InlineStack,
+  Link,
   Modal,
   Page,
   Text,
@@ -336,9 +337,17 @@ export default function Campaigns() {
     const hasPerf = c.roas_7d > 0 && c.contribution_margin > 0;
     const marginAdj = c.roas_7d * c.contribution_margin;
     return [
-      <Text key={`n-${c.id}`} as="span" fontWeight="semibold">
-        {c.name}
-      </Text>,
+      <Link
+        key={`n-${c.id}`}
+        removeUnderline
+        onClick={() =>
+          navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
+        }
+      >
+        <Text as="span" fontWeight="semibold">
+          {c.name}
+        </Text>
+      </Link>,
       <PlatformTag key={`p-${c.id}`} platform={c.platform} />,
       <Badge key={`s-${c.id}`} tone={c.status === "active" ? "success" : "attention"}>
         {c.status === "active" ? "Active" : "Paused"}
