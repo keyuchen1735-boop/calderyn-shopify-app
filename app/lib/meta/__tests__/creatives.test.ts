@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseAdCreative, listCampaignCreatives } from "../creatives.server";
+import { parseAdCreative, listCampaignCreatives, CREATIVE_FIELDS } from "../creatives.server";
 import type { MetaClient } from "../campaigns.server";
 
 function fakeClient(over: Partial<MetaClient> = {}): MetaClient {
@@ -195,8 +195,7 @@ describe("listCampaignCreatives", () => {
     }));
     const rows = await listCampaignCreatives(fakeClient({ get }), "camp_99");
     expect(get).toHaveBeenCalledWith("/camp_99/ads", {
-      fields:
-        "id,name,status,creative{object_story_spec,asset_feed_spec,title,body,image_url,object_url,call_to_action_type,link_url}",
+      fields: CREATIVE_FIELDS,
     });
     expect(rows).toHaveLength(2);
     expect(rows[0].adId).toBe("ad_1");

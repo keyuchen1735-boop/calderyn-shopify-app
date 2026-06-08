@@ -34,6 +34,13 @@ type CampaignDetail = {
   /** id to use for actions: dim uuid if ingested, else the platform external id. */
   id: string;
   externalId: string;
+  /**
+   * Confirmed Meta external id, or null. Set ONLY when idFromUrl is known to be a
+   * real Meta external id (external→dim resolve, or live Meta identity match) —
+   * NOT for ingested-only rows where v_campaigns_flat.id is not a Meta id. Drives
+   * the creative fetch so we never silently show an empty creatives state.
+   */
+  metaExternalId: string | null;
   name: string;
   platform: "Meta" | "Google";
   status: "active" | "paused";
@@ -70,11 +77,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   try {
-    // 1) Ingested perf row, addressed directly by dim uuid.
+    // 1) Ingested perf row, addressed directly by dim uuid. Here idFromUrl is
+    // v_campaigns_flat.id, which is NOT guaranteed to be a Meta external id, so
+    // confirmedExternalId stays null.
     let campaign: Campaign | null = await getOrNull(client, idFromUrl);
     let actionId = idFromUrl;
+    let confirmedExternalId: string | null = null;
 
-    // 2) Live external id → dim uuid → perf row.
+    // 2) Live external id → dim uuid → perf row. idFromUrl resolved as a real
+    // external id, so it is a confirmed Meta external id.
     if (!campaign) {
       const sb = getSupabase();
       const shopId = await resolveShopId(session.shop);
@@ -82,7 +93,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       const dimId = await resolveCampaignDimId(sb, shopId, platform, idFromUrl);
       if (dimId) {
         campaign = await getOrNull(client, dimId);
-        if (campaign) actionId = dimId;
+        if (campaign) {
+          actionId = dimId;
+          confirmedExternalId = idFromUrl;
+        }
       }
     }
 
@@ -90,6 +104,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       const detail: CampaignDetail = {
         id: actionId,
         externalId: idFromUrl,
+        metaExternalId: confirmedExternalId,
         name: campaign.name,
         platform: campaign.platform,
         status: campaign.status,
@@ -110,6 +125,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           const detail: CampaignDetail = {
             id: idFromUrl,
             externalId: idFromUrl,
+            metaExternalId: idFromUrl,
             name: owned.name,
             platform: "Meta",
             status: owned.status === "PAUSED" ? "paused" : "active",
@@ -140,16 +156,27 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
 // Fetch Meta ad creatives for the detail. Isolated in its own try/catch so a
 // creative-fetch failure NEVER breaks the performance card (rule 12: surface the
-// gap honestly via creativesError rather than failing the whole loader). When a
-// campaign was resolved by dim UUID (ingested), detail.externalId may be a dim
-// UUID rather than a Meta external id, so the /ads call errors — that's expected
-// and lands here as creativesError, rendering the empty state.
+// gap honestly via creativesError rather than failing the whole loader). Only
+// fetches when we hold a CONFIRMED Meta external id — for ingested-only campaigns
+// (detail.metaExternalId == null) the URL id is not a Meta id, so we surface an
+// explicit gap rather than relying on the Graph API to error (it can return 200
+// {data:[]}, which would silently look like "no creatives").
 async function loadCreatives(
   shop: string,
   detail: CampaignDetail,
 ): Promise<{ creatives: CampaignCreative[]; creativesError: { code: string; message: string } | null }> {
   if (detail.platform !== "Meta") {
     return { creatives: [], creativesError: null };
+  }
+  if (!detail.metaExternalId) {
+    return {
+      creatives: [],
+      creativesError: {
+        code: "CREATIVE_ID_UNAVAILABLE",
+        message:
+          "Creative preview needs this campaign's live Meta id, which isn't available for ingested-only campaigns yet.",
+      },
+    };
   }
   try {
     const meta = await metaClientForShop(shop);
@@ -159,7 +186,7 @@ async function loadCreatives(
         creativesError: { code: "META_NOT_CONNECTED", message: "Meta account not connected" },
       };
     }
-    const creatives = await listCampaignCreatives(meta.client, detail.externalId);
+    const creatives = await listCampaignCreatives(meta.client, detail.metaExternalId);
     return { creatives, creativesError: null };
   } catch (err) {
     const e = err as CalderynError;
@@ -252,8 +279,8 @@ export default function CampaignDetailPage() {
             </Text>
             {creatives.length > 0 ? (
               <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
-                {creatives.map((c) => (
-                  <CreativeCard key={c.adId || c.adName} creative={c} />
+                {creatives.map((c, i) => (
+                  <CreativeCard key={c.adId || `ad-${i}`} creative={c} />
                 ))}
               </InlineGrid>
             ) : (

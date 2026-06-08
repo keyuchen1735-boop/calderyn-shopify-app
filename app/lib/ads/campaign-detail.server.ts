@@ -19,14 +19,16 @@ export interface CampaignPerformance {
 }
 
 export function buildCampaignPerformance(campaign: Campaign | null): CampaignPerformance {
-  if (!campaign) {
+  const hasMetrics =
+    campaign != null && campaign.roas_7d > 0 && campaign.contribution_margin > 0;
+  if (!campaign || !hasMetrics) {
     return {
       available: false,
-      spend7dCents: null,
+      spend7dCents: campaign && campaign.spend_7d > 0 ? campaign.spend_7d : null,
       reportedRoas: null,
       realRoas: null,
       contributionMargin: null,
-      dailyBudgetCents: null,
+      dailyBudgetCents: campaign ? campaign.daily_budget_cents : null,
     };
   }
   return {

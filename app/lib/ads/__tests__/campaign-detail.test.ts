@@ -31,4 +31,20 @@ describe("buildCampaignPerformance", () => {
     expect(perf.reportedRoas).toBeNull();
     expect(perf.realRoas).toBeNull();
   });
+
+  it("marks performance unavailable (null, never 0) when metrics are not synced (margin 0)", () => {
+    const perf = buildCampaignPerformance(camp({ contribution_margin: 0 }));
+    expect(perf.available).toBe(false);
+    expect(perf.reportedRoas).toBeNull();
+    expect(perf.realRoas).toBeNull();
+    expect(perf.contributionMargin).toBeNull();
+  });
+
+  it("marks performance unavailable (null, never 0) when metrics are not synced (roas 0)", () => {
+    const perf = buildCampaignPerformance(camp({ roas_7d: 0 }));
+    expect(perf.available).toBe(false);
+    expect(perf.reportedRoas).toBeNull();
+    expect(perf.realRoas).toBeNull();
+    expect(perf.contributionMargin).toBeNull();
+  });
 });

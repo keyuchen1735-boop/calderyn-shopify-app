@@ -2,7 +2,7 @@
 // parseAdCreative is PURE and defensive — it never throws on sparse/missing data
 // (rule 12: surface gaps as empty defaults rather than crashing the detail page).
 
-import type { MetaClient } from "./campaigns.server";
+import { check, type MetaClient, type MetaResponse } from "./campaigns.server";
 import type { CreativeInput } from "~/lib/screener/types";
 
 export interface CampaignCreative {
@@ -12,15 +12,8 @@ export interface CampaignCreative {
   creative: CreativeInput; // normalized creative content
 }
 
-const CREATIVE_FIELDS =
+export const CREATIVE_FIELDS =
   "id,name,status,creative{object_story_spec,asset_feed_spec,title,body,image_url,object_url,call_to_action_type,link_url}";
-
-function check(r: { error?: { message: string; code?: number } }): void {
-  if (r.error) {
-    const code = r.error.code != null ? ` (code ${r.error.code})` : "";
-    throw new Error(`Meta API error: ${r.error.message}${code}`);
-  }
-}
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -52,7 +45,7 @@ const EMPTY_CREATIVE: CreativeInput = {
 
 /**
  * Reads the creative blob in priority order:
- * 1) object_story_spec.link_data, 2) legacy top-level fields, 3) asset_feed_spec.
+ * 1) object_story_spec.link_data, 2) asset_feed_spec, 3) legacy top-level fields.
  * Targeting/audience is out of scope here, so audience is always "".
  */
 function parseCreative(creative: unknown): CreativeInput {
@@ -73,7 +66,7 @@ function parseCreative(creative: unknown): CreativeInput {
     };
   }
 
-  // 3) asset_feed_spec (Advantage+ — arrays; take the first element of each).
+  // 2) asset_feed_spec (Advantage+ — arrays; take the first element of each).
   // Checked before legacy because legacy top-level fields are absent on
   // Advantage+ creatives, and asset_feed_spec is the richer source.
   const afs = creative.asset_feed_spec;
@@ -92,7 +85,7 @@ function parseCreative(creative: unknown): CreativeInput {
     };
   }
 
-  // 2) Legacy top-level creative fields.
+  // 3) Legacy top-level creative fields.
   return {
     imageUrl: urlOrNull(creative.image_url),
     headline: str(creative.title),
@@ -122,7 +115,7 @@ export async function listCampaignCreatives(
   client: MetaClient,
   campaignId: string,
 ): Promise<CampaignCreative[]> {
-  const body = await client.get(`/${campaignId}/ads`, { fields: CREATIVE_FIELDS });
+  const body: MetaResponse = await client.get(`/${campaignId}/ads`, { fields: CREATIVE_FIELDS });
   check(body);
   const data = (body.data as unknown[]) ?? [];
   return data.map(parseAdCreative);
