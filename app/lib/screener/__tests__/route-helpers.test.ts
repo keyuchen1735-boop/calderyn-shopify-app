@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampSpend, parseCreativeForm } from "../../../routes/app.screener";
-import { isMetaSubmit } from "../../../routes/app.screener";
+import { clampSpend, parseCreativeForm, isMetaSubmit } from "../../../routes/app.screener";
 
 describe("clampSpend", () => {
   it("clamps to [MIN,MAX] and defaults non-numbers", () => {
