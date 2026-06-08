@@ -18,8 +18,8 @@ const run: SimulationRun = { id: "run-1", status: "running", target: "whole_stor
 function deps(over: Partial<Parameters<typeof executeSimulation>[1]> = {}) {
   return {
     startRun: vi.fn(async () => run),
-    completeRun: vi.fn(async (_id: string, m: BehaviorModel) => ({ ...run, status: "done" as const, model: m })),
-    failRun: vi.fn(async (_id: string, msg: string) => ({ ...run, status: "error" as const, error: msg })),
+    completeRun: vi.fn(async (_shop: string, _id: string, m: BehaviorModel) => ({ ...run, status: "done" as const, model: m })),
+    failRun: vi.fn(async (_shop: string, _id: string, msg: string) => ({ ...run, status: "error" as const, error: msg })),
     fetchSnapshot: vi.fn(async () => snapshot),
     buildBehaviorModel: vi.fn(async () => model),
     ...over,
@@ -31,7 +31,7 @@ describe("executeSimulation", () => {
     const d = deps();
     const result = await executeSimulation({ shop: "acme.myshopify.com", requestedN: 1000 }, d);
     expect(d.fetchSnapshot).toHaveBeenCalledWith("acme.myshopify.com");
-    expect(d.completeRun).toHaveBeenCalledWith("run-1", model);
+    expect(d.completeRun).toHaveBeenCalledWith("acme.myshopify.com", "run-1", model);
     expect(result.status).toBe("done");
     expect(result.model).toEqual(model);
   });
@@ -39,7 +39,7 @@ describe("executeSimulation", () => {
   it("records an error run when a step throws", async () => {
     const d = deps({ buildBehaviorModel: vi.fn(async () => { throw new Error("api down"); }) });
     const result = await executeSimulation({ shop: "acme.myshopify.com", requestedN: 500 }, d);
-    expect(d.failRun).toHaveBeenCalledWith("run-1", "api down");
+    expect(d.failRun).toHaveBeenCalledWith("acme.myshopify.com", "run-1", "api down");
     expect(result.status).toBe("error");
   });
 
@@ -49,7 +49,7 @@ describe("executeSimulation", () => {
     expect(d.startRun).toHaveBeenCalledWith("acme.myshopify.com", 1000, "demo");
     expect(d.fetchSnapshot).not.toHaveBeenCalled();
     expect(d.buildBehaviorModel).not.toHaveBeenCalled();
-    expect(d.completeRun).toHaveBeenCalledWith("run-1", DEMO_MODEL);
+    expect(d.completeRun).toHaveBeenCalledWith("acme.myshopify.com", "run-1", DEMO_MODEL);
     expect(result.model).toEqual(DEMO_MODEL);
   });
 });
