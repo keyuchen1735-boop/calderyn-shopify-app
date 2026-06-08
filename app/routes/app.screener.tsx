@@ -105,6 +105,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         id: "", status: "error", source: "meta_ad", metaAdId: meta.metaAdId,
         assumedSpendCents, scorecard: null, error: message,
         createdAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+        creativeInput: null, variants: [],
       } satisfies CreativeScreenRun);
     }
     const run = await executeScreen({

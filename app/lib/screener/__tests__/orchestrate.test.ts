@@ -17,7 +17,7 @@ function deps(over: Partial<ScreenDeps> = {}): ScreenDeps {
   const run: CreativeScreenRun = {
     id: "run-1", status: "running", source: "manual", metaAdId: null,
     assumedSpendCents: 50000, scorecard: null, error: null,
-    createdAt: "t", completedAt: null,
+    createdAt: "t", completedAt: null, creativeInput: null, variants: [],
   };
   return {
     resolveSku: () => "SKU1",
@@ -60,11 +60,13 @@ describe("executeScreen", () => {
           return {
             id: "run-9", status: "running", source, metaAdId: "ad-9",
             assumedSpendCents: 50000, scorecard: null, error: null, createdAt: "t", completedAt: null,
+            creativeInput: null, variants: [],
           };
         },
         completeRun: async (_id, scorecard) => ({
           id: "run-9", status: "done", source: "meta_ad", metaAdId: "ad-9",
           assumedSpendCents: 50000, scorecard, error: null, createdAt: "t", completedAt: "t2",
+          creativeInput: null, variants: [],
         }),
       }),
     );
