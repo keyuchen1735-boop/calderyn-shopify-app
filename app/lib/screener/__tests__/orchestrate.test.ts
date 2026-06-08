@@ -49,4 +49,27 @@ describe("executeScreen", () => {
     expect(out.status).toBe("error");
     expect(out.error).toContain("boom");
   });
+
+  it("threads source and metaAdId into the run", async () => {
+    const captured: { source?: string } = {};
+    const out = await executeScreen(
+      { shop: "s", input, assumedSpendCents: 50000, source: "meta_ad", metaAdId: "ad-9" },
+      deps({
+        startRun: async (_shop, source) => {
+          captured.source = source;
+          return {
+            id: "run-9", status: "running", source, metaAdId: "ad-9",
+            assumedSpendCents: 50000, scorecard: null, error: null, createdAt: "t", completedAt: null,
+          };
+        },
+        completeRun: async (_id, scorecard) => ({
+          id: "run-9", status: "done", source: "meta_ad", metaAdId: "ad-9",
+          assumedSpendCents: 50000, scorecard, error: null, createdAt: "t", completedAt: "t2",
+        }),
+      }),
+    );
+    expect(captured.source).toBe("meta_ad");
+    expect(out.metaAdId).toBe("ad-9");
+    expect(out.status).toBe("done");
+  });
 });
