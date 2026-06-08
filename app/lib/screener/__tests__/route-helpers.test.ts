@@ -1,4 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// These route modules eagerly construct the Shopify app at import (shopify.server
+// calls shopifyApp({ appUrl }) at module load), which throws "empty appUrl" when
+// SHOPIFY_APP_URL is unset — e.g. in CI. The helpers under test don't touch
+// authenticate, so stub shopify.server like the other route tests do.
+vi.mock("../../../shopify.server", () => ({
+  authenticate: { admin: async () => ({ session: { shop: "acme.myshopify.com" } }) },
+}));
+
 import { clampSpend, parseCreativeForm, isMetaSubmit } from "../../../routes/app.screener";
 import { parseScoreForm } from "../../../routes/app.campaigns.$campaignId.score";
 import { DEFAULT_SPEND_CENTS } from "../types";
