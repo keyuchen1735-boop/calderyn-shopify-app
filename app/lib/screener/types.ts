@@ -117,6 +117,8 @@ export interface CreativeScreenRun {
   error: string | null;
   createdAt: string;
   completedAt: string | null;
+  creativeInput: CreativeInput | null;
+  variants: Variant[];
 }
 
 /** One ad the merchant can pick to screen (Meta source). */
@@ -124,4 +126,22 @@ export interface ScreenableAd {
   id: string;
   name: string;
   effectiveStatus: string;
+}
+
+export type GenerationMode = "copy" | "image" | "video";
+
+/** A generator's raw output: a regenerated creative + why it addresses the flaws. */
+export interface GeneratedCandidate {
+  input: CreativeInput;
+  rationale: string;
+}
+
+/** A re-scored candidate that beat the original. */
+export interface Variant {
+  mode: GenerationMode;
+  input: CreativeInput;
+  rationale: string;
+  composite: number;
+  delta: number; // composite - original composite
+  summary: string;
 }
