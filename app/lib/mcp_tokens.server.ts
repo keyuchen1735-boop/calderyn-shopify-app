@@ -39,13 +39,14 @@ export function hashToken(raw: string): string {
 const BASE32_ALPHA = "abcdefghijklmnopqrstuvwxyz234567";
 
 function generateRaw(): { raw: string; prefix: string } {
-  const bytes = randomBytes(20); // 20 bytes → 32 base32 chars
+  // 32 random bytes → 32 base32 chars, one char per byte. 256 % 32 === 0, so
+  // `byte % 32` is unbiased. Full 160 bits of entropy with no repeated structure
+  // (the previous `(body+body).slice(0,32)` duplicated the first half).
+  const bytes = randomBytes(32);
   let body = "";
   for (let i = 0; i < bytes.length; i++) {
     body += BASE32_ALPHA[bytes[i] % 32];
   }
-  // pad/trim to exactly 32 chars
-  body = (body + body).slice(0, 32);
   const raw = `mcp_live_${body}`;
   const prefix = raw.slice(0, 13); // "mcp_live_" + first 4 body chars
   return { raw, prefix };
