@@ -394,6 +394,28 @@ export function calderynClient(shop: string) {
           rethrow("campaigns.list", err);
         }
       },
+      async get(id: string, _signal?: AbortSignal): Promise<Campaign> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_campaigns_flat")
+            .select("*")
+            .eq("shop_id", shopId)
+            .eq("id", id)
+            .maybeSingle();
+          if (error) throw error;
+          if (!data) {
+            throw new CalderynError({
+              code: "CAMPAIGN_NOT_FOUND",
+              status: 404,
+              message: `Campaign ${id} not found`,
+            });
+          }
+          return rowToCampaign(data);
+        } catch (err) {
+          rethrow("campaigns.get", err);
+        }
+      },
     },
 
     analytics: {
