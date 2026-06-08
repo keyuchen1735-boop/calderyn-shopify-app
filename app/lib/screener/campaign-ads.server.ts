@@ -67,7 +67,7 @@ async function loadOrScoreOne(
   }
   const cached = await deps.getLatestRunForAd(shop, adId);
   if (cached && cached.status === "done" && cached.scorecard) {
-    return { adId, status: "done", scorecard: cached.scorecard, error: null };
+    return runToAdScorecard(adId, cached);
   }
   const run = await deps.screen({
     shop,
@@ -85,14 +85,69 @@ export async function loadOrScoreAdScorecards(
   assumedSpendCents: number,
   deps: ScoreAdsDeps = defaultDeps(),
 ): Promise<AdScorecard[]> {
+  // Dedupe by adId so the same ad submitted twice in one batch fires ONE paid
+  // Claude run, not two. Score each distinct adId once (keeping the first
+  // creative seen for it), then map the result back to every position with that
+  // adId — preserving output order + length. Empty adIds are NOT deduped (each
+  // is independently surfaced as an error by loadOrScoreOne).
+  const firstIndexByAd = new Map<string, number>();
+  const distinct: { adId: string; creative: CreativeInput }[] = [];
+  for (const c of creatives) {
+    if (c.adId && firstIndexByAd.has(c.adId)) continue;
+    if (c.adId) firstIndexByAd.set(c.adId, distinct.length);
+    distinct.push(c);
+  }
+
   const settled = await Promise.allSettled(
-    creatives.map((c) =>
+    distinct.map((c) =>
       loadOrScoreOne(shop, c.adId, c.creative, assumedSpendCents, deps),
     ),
   );
-  return settled.map((res, i) => {
+  const scoredDistinct: AdScorecard[] = settled.map((res, i) => {
     if (res.status === "fulfilled") return res.value;
     const message = res.reason instanceof Error ? res.reason.message : String(res.reason);
-    return { adId: creatives[i].adId, status: "error", scorecard: null, error: message };
+    return { adId: distinct[i].adId, status: "error", scorecard: null, error: message };
   });
+
+  // Map each input position back to its scored result. Distinct non-empty adIds
+  // index into scoredDistinct via firstIndexByAd; empty adIds were appended in
+  // order, so consume them positionally as we encounter them.
+  let emptyCursor = 0;
+  const emptyResults = scoredDistinct.filter((s) => !s.adId);
+  return creatives.map((c) => {
+    if (c.adId) {
+      const idx = firstIndexByAd.get(c.adId);
+      if (idx !== undefined) return scoredDistinct[idx];
+    }
+    return emptyResults[emptyCursor++];
+  });
+}
+
+// Cache-only: one getLatestRunForAd per ad, NO scoring. Returns an AdScorecard
+// (status "done") only for ads that already have a persisted done run with a
+// non-null scorecard; ads without a cached run are omitted from the result.
+// Per-ad isolation (allSettled): a single failing read never throws out of the
+// batch (rule 12) — it is simply omitted, and the client will stream that ad.
+export async function loadCachedAdScorecards(
+  shop: string,
+  adIds: string[],
+  deps: { getLatestRunForAd: (shop: string, metaAdId: string) => Promise<CreativeScreenRun | null> } = {
+    getLatestRunForAd: realGetLatest,
+  },
+): Promise<AdScorecard[]> {
+  const settled = await Promise.allSettled(
+    adIds.map(async (adId): Promise<AdScorecard | null> => {
+      if (!adId) return null;
+      const cached = await deps.getLatestRunForAd(shop, adId);
+      if (cached && cached.status === "done" && cached.scorecard) {
+        return runToAdScorecard(adId, cached);
+      }
+      return null;
+    }),
+  );
+  const out: AdScorecard[] = [];
+  for (const res of settled) {
+    if (res.status === "fulfilled" && res.value) out.push(res.value);
+  }
+  return out;
 }

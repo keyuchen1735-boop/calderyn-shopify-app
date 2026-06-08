@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { clampSpend, parseCreativeForm } from "../../../routes/app.screener";
+import { parseScoreForm } from "../../../routes/app.campaigns.$campaignId.score";
+import { DEFAULT_SPEND_CENTS } from "../types";
 
 describe("clampSpend", () => {
   it("clamps to [MIN,MAX] and defaults non-numbers", () => {
@@ -23,5 +25,69 @@ describe("parseCreativeForm", () => {
     expect(out.headline).toBe("Hi");
     expect(out.imageUrl).toBeNull();
     expect(out.cta).toBe("SHOP_NOW");
+  });
+});
+
+describe("parseScoreForm", () => {
+  function form(entries: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+    return fd;
+  }
+
+  it("rejects an empty/missing adId with INVALID_REQUEST", () => {
+    const out = parseScoreForm(form({ adId: "  " }));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error.code).toBe("INVALID_REQUEST");
+    const missing = parseScoreForm(form({}));
+    expect(missing.ok).toBe(false);
+  });
+
+  it("clamps assumedSpendCents to bounds; absent/NaN → DEFAULT", () => {
+    const lo = parseScoreForm(form({ adId: "a", assumedSpendCents: "0" }));
+    const hi = parseScoreForm(form({ adId: "a", assumedSpendCents: "99999999" }));
+    const absent = parseScoreForm(form({ adId: "a" }));
+    if (!lo.ok || !hi.ok || !absent.ok) throw new Error("expected ok");
+    expect(lo.assumedSpendCents).toBe(1000);
+    expect(hi.assumedSpendCents).toBe(10_000_000);
+    expect(absent.assumedSpendCents).toBe(DEFAULT_SPEND_CENTS);
+  });
+
+  it("coerces imageUrl '' / 'null' → null and missing creative fields → ''", () => {
+    const empty = parseScoreForm(form({ adId: "a", imageUrl: "" }));
+    const literal = parseScoreForm(form({ adId: "a", imageUrl: "null" }));
+    const real = parseScoreForm(form({ adId: "a", imageUrl: "https://x.test/i.jpg" }));
+    if (!empty.ok || !literal.ok || !real.ok) throw new Error("expected ok");
+    expect(empty.creative.imageUrl).toBeNull();
+    expect(literal.creative.imageUrl).toBeNull();
+    expect(real.creative.imageUrl).toBe("https://x.test/i.jpg");
+    // Missing text fields default to "".
+    expect(empty.creative.headline).toBe("");
+    expect(empty.creative.primaryText).toBe("");
+    expect(empty.creative.cta).toBe("");
+    expect(empty.creative.destinationUrl).toBe("");
+    expect(empty.creative.audience).toBe("");
+  });
+
+  it("builds the creative from posted text fields", () => {
+    const out = parseScoreForm(
+      form({
+        adId: "ad-1",
+        headline: "H",
+        primaryText: "P",
+        cta: "SHOP_NOW",
+        destinationUrl: "https://x.test/p",
+        audience: "women 25-44",
+      }),
+    );
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.adId).toBe("ad-1");
+    expect(out.creative).toMatchObject({
+      headline: "H",
+      primaryText: "P",
+      cta: "SHOP_NOW",
+      destinationUrl: "https://x.test/p",
+      audience: "women 25-44",
+    });
   });
 });
