@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { clampSpend, parseCreativeForm } from "../../../routes/app.screener";
+import { isMetaSubmit } from "../../../routes/app.screener";
 
 describe("clampSpend", () => {
   it("clamps to [MIN,MAX] and defaults non-numbers", () => {
@@ -23,5 +24,23 @@ describe("parseCreativeForm", () => {
     expect(out.headline).toBe("Hi");
     expect(out.imageUrl).toBeNull();
     expect(out.cta).toBe("SHOP_NOW");
+  });
+});
+
+describe("isMetaSubmit", () => {
+  it("detects the meta source mode + ad id", () => {
+    const fd = new FormData();
+    fd.set("source", "meta_ad");
+    fd.set("metaAdId", "ad-7");
+    expect(isMetaSubmit(fd)).toEqual({ metaAdId: "ad-7" });
+  });
+  it("returns null for manual submits", () => {
+    const fd = new FormData();
+    expect(isMetaSubmit(fd)).toBeNull();
+  });
+  it("returns null when meta mode lacks an ad id", () => {
+    const fd = new FormData();
+    fd.set("source", "meta_ad");
+    expect(isMetaSubmit(fd)).toBeNull();
   });
 });

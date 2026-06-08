@@ -29,6 +29,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
 import { getLatestRun, listRuns } from "~/lib/screener/runs.server";
+import { listScreenableAds, fetchCreativeInput } from "~/lib/screener/meta-creative.server";
 import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
@@ -40,6 +41,7 @@ import {
   type Grade,
   type MetricGroup,
   type ScoreCard,
+  type ScreenableAd,
 } from "~/lib/screener/types";
 
 // clampSpend: if raw is absent/empty/NaN → return DEFAULT.
@@ -67,22 +69,37 @@ export function parseCreativeForm(form: FormData): CreativeInput {
   };
 }
 
-type LoaderPayload = { latest: CreativeScreenRun | null; history: CreativeScreenRun[] };
+export function isMetaSubmit(form: FormData): { metaAdId: string } | null {
+  if (String(form.get("source") ?? "") !== "meta_ad") return null;
+  const metaAdId = String(form.get("metaAdId") ?? "").trim();
+  return metaAdId ? { metaAdId } : null;
+}
+
+type LoaderPayload = { latest: CreativeScreenRun | null; history: CreativeScreenRun[]; metaAds: ScreenableAd[] };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const [latest, history] = await Promise.all([
+  const [latest, history, metaAds] = await Promise.all([
     getLatestRun(session.shop),
     listRuns(session.shop, 10),
+    listScreenableAds(session.shop).catch(() => [] as ScreenableAd[]),
   ]);
-  return json<LoaderPayload>({ latest, history });
+  return json<LoaderPayload>({ latest, history, metaAds });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
-  const input = parseCreativeForm(form);
   const assumedSpendCents = clampSpend(form.get("assumedSpendCents"));
+  const meta = isMetaSubmit(form);
+  if (meta) {
+    const input = await fetchCreativeInput(session.shop, meta.metaAdId);
+    const run = await executeScreen({
+      shop: session.shop, input, assumedSpendCents, source: "meta_ad", metaAdId: meta.metaAdId,
+    });
+    return json(run);
+  }
+  const input = parseCreativeForm(form);
   const run = await executeScreen({ shop: session.shop, input, assumedSpendCents });
   return json(run);
 };
@@ -140,7 +157,7 @@ function MetricRow({ m }: { m: ScoreCard["metrics"][number] }) {
 }
 
 export default function Screener() {
-  const { latest, history } = useLoaderData<typeof loader>();
+  const { latest, history, metaAds } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const run: CreativeScreenRun | null =
     (fetcher.data as CreativeScreenRun | undefined) ?? latest;
@@ -161,6 +178,32 @@ export default function Screener() {
       subtitle="Score an ad's potential before it goes live — a test screening before you hit publish"
     >
       <BlockStack gap="500">
+        {metaAds.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingSm">Screen a paused ad from Meta</Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Pulls the real creative + targeting from your connected Meta account.
+              </Text>
+              <BlockStack gap="200">
+                {metaAds.map((ad) => (
+                  <InlineStack key={ad.id} align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodyMd">{ad.name}</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">{ad.effectiveStatus}</Text>
+                    </BlockStack>
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="source" value="meta_ad" />
+                      <input type="hidden" name="metaAdId" value={ad.id} />
+                      <input type="hidden" name="assumedSpendCents" value={Math.round(Number(spend || 0) * 100)} />
+                      <Button submit loading={running} disabled={running}>Screen this ad</Button>
+                    </fetcher.Form>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        )}
         <Card>
           <fetcher.Form method="post">
             <FormLayout>
