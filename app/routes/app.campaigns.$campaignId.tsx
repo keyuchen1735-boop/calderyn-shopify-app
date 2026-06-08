@@ -27,6 +27,10 @@ import {
   type CampaignCreative,
 } from "~/lib/meta/creatives.server";
 import {
+  listCampaignAdInsights,
+  type AdMetrics,
+} from "~/lib/meta/ad-insights.server";
+import {
   buildCampaignPerformance,
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
@@ -65,6 +69,9 @@ type LoaderPayload = {
   error: { code: string; message: string } | null;
   creatives: CampaignCreative[];
   creativesError: { code: string; message: string } | null;
+  /** Real, live per-ad performance (last 7d) from Meta Insights at the ad level. */
+  adMetrics: AdMetrics[];
+  adMetricsError: { code: string; message: string } | null;
   /** Cache-only scorecards (no Claude in the loader); uncached ads stream in. */
   scorecards: AdScorecard[];
   /** Clamped spend basis the client passes to the score route per ad. */
@@ -92,6 +99,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: "INVALID_REQUEST", message: "Missing campaign id" },
       creatives: [],
       creativesError: null,
+      adMetrics: [],
+      adMetricsError: null,
       scorecards: [],
       assumedSpendCents: DEFAULT_SPEND_CENTS,
       campaignIdParam: idFromUrl,
@@ -133,6 +142,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         performance: buildCampaignPerformance(campaign),
       };
       const { creatives, creativesError } = await loadCreatives(session.shop, detail);
+      const { adMetrics, adMetricsError } = await loadAdMetrics(session.shop, detail);
       const assumedSpendCents = spendBasis(detail.performance);
       const scorecards = await loadCachedScorecards(session.shop, creatives);
       return json<LoaderPayload>({
@@ -140,6 +150,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         error: null,
         creatives,
         creativesError,
+        adMetrics,
+        adMetricsError,
         scorecards,
         assumedSpendCents,
         campaignIdParam: idFromUrl,
@@ -164,6 +176,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             performance: buildCampaignPerformance(null),
           };
           const { creatives, creativesError } = await loadCreatives(session.shop, detail);
+          const { adMetrics, adMetricsError } = await loadAdMetrics(session.shop, detail);
           const assumedSpendCents = spendBasis(detail.performance);
           const scorecards = await loadCachedScorecards(session.shop, creatives);
           return json<LoaderPayload>({
@@ -171,6 +184,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             error: null,
             creatives,
             creativesError,
+            adMetrics,
+            adMetricsError,
             scorecards,
             assumedSpendCents,
             campaignIdParam: idFromUrl,
@@ -184,6 +199,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: "CAMPAIGN_NOT_FOUND", message: `Campaign ${idFromUrl} not found` },
       creatives: [],
       creativesError: null,
+      adMetrics: [],
+      adMetricsError: null,
       scorecards: [],
       assumedSpendCents: DEFAULT_SPEND_CENTS,
       campaignIdParam: idFromUrl,
@@ -195,6 +212,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: e.code ?? "ERROR", message: e.message },
       creatives: [],
       creativesError: null,
+      adMetrics: [],
+      adMetricsError: null,
       scorecards: [],
       assumedSpendCents: DEFAULT_SPEND_CENTS,
       campaignIdParam: idFromUrl,
@@ -271,6 +290,39 @@ async function loadCreatives(
   }
 }
 
+// Fetch REAL per-ad performance (last 7d) from Meta Insights at the ad level.
+// Isolated in its own try/catch so a metrics-fetch failure NEVER breaks the perf
+// card, creatives, or scorecards (rule 12: on failure return [] + an HONEST
+// adMetricsError rather than silently empty). Only runs for a CONFIRMED Meta
+// external id; for ingested-only campaigns (metaExternalId == null) there is no
+// live id to query, so we return [] with no error and each ad row shows
+// "— (no data)".
+async function loadAdMetrics(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<{ adMetrics: AdMetrics[]; adMetricsError: { code: string; message: string } | null }> {
+  if (detail.platform !== "Meta" || !detail.metaExternalId) {
+    return { adMetrics: [], adMetricsError: null };
+  }
+  try {
+    const meta = await metaClientForShop(shop);
+    if (!meta) {
+      return {
+        adMetrics: [],
+        adMetricsError: { code: "META_NOT_CONNECTED", message: "Meta account not connected" },
+      };
+    }
+    const adMetrics = await listCampaignAdInsights(meta.client, detail.metaExternalId);
+    return { adMetrics, adMetricsError: null };
+  } catch (err) {
+    const e = err as CalderynError;
+    return {
+      adMetrics: [],
+      adMetricsError: { code: e.code ?? "AD_METRICS_ERROR", message: e.message },
+    };
+  }
+}
+
 /** campaigns.get but null (not throw) on CAMPAIGN_NOT_FOUND, rethrow otherwise. */
 async function getOrNull(
   client: ReturnType<typeof calderynClient>,
@@ -286,8 +338,17 @@ async function getOrNull(
 
 export default function CampaignDetailPage() {
   const navigate = useNavigate();
-  const { detail, error, creatives, creativesError, scorecards, assumedSpendCents, campaignIdParam } =
-    useLoaderData<typeof loader>();
+  const {
+    detail,
+    error,
+    creatives,
+    creativesError,
+    adMetrics,
+    adMetricsError,
+    scorecards,
+    assumedSpendCents,
+    campaignIdParam,
+  } = useLoaderData<typeof loader>();
 
   if (!detail) {
     return (
@@ -306,6 +367,7 @@ export default function CampaignDetailPage() {
 
   const perf = detail.performance;
   const scorecardByAd = new Map(scorecards.map((s) => [s.adId, s]));
+  const metricsByAd = new Map(adMetrics.map((m) => [m.adId, m]));
   return (
     <Page
       title={detail.name}
@@ -360,6 +422,8 @@ export default function CampaignDetailPage() {
                     key={c.adId || `ad-${i}`}
                     creative={c}
                     cached={c.adId ? scorecardByAd.get(c.adId) : undefined}
+                    metrics={c.adId ? metricsByAd.get(c.adId) : undefined}
+                    metricsError={adMetricsError}
                     assumedSpendCents={assumedSpendCents}
                     campaignIdParam={campaignIdParam}
                   />
@@ -392,23 +456,71 @@ export default function CampaignDetailPage() {
 function CreativeWithScorecard({
   creative,
   cached,
+  metrics,
+  metricsError,
   assumedSpendCents,
   campaignIdParam,
 }: {
   creative: CampaignCreative;
   cached: AdScorecard | undefined;
+  metrics: AdMetrics | undefined;
+  metricsError: { code: string; message: string } | null;
   assumedSpendCents: number;
   campaignIdParam: string;
 }) {
   return (
     <BlockStack gap="300">
       <CreativeCard creative={creative} />
-      <AdScorecardSlot
-        creative={creative}
-        cached={cached}
-        assumedSpendCents={assumedSpendCents}
-        campaignIdParam={campaignIdParam}
-      />
+      <LiveMetricsRow metrics={metrics} metricsError={metricsError} />
+      <BlockStack gap="200">
+        <InlineStack gap="200" blockAlign="center">
+          <Text as="h4" variant="headingXs">
+            Predicted score
+          </Text>
+          <Badge tone="attention">Predicted</Badge>
+        </InlineStack>
+        <AdScorecardSlot
+          creative={creative}
+          cached={cached}
+          assumedSpendCents={assumedSpendCents}
+          campaignIdParam={campaignIdParam}
+        />
+      </BlockStack>
+    </BlockStack>
+  );
+}
+
+// Real, ACTUAL per-ad performance over the last 7 days (vs the PREDICTED scorecard
+// below). Every metric renders its real value OR "— (no data)" when the field is
+// null or there's no metrics row for this ad at all — NEVER a fabricated 0
+// (rule 12). If the whole fetch failed, one honest subdued line says so.
+function LiveMetricsRow({
+  metrics,
+  metricsError,
+}: {
+  metrics: AdMetrics | undefined;
+  metricsError: { code: string; message: string } | null;
+}) {
+  return (
+    <BlockStack gap="200">
+      <InlineStack gap="200" blockAlign="center">
+        <Text as="h4" variant="headingXs">
+          Live performance (7d)
+        </Text>
+        <Badge tone="info">Actual</Badge>
+      </InlineStack>
+      {metricsError && (
+        <Text as="p" variant="bodySm" tone="subdued">
+          Live metrics unavailable: {metricsError.message}
+        </Text>
+      )}
+      <InlineGrid columns={{ xs: 2, sm: 5 }} gap="300">
+        <Metric label="7d spend" value={moneyOrNoData(metrics?.spendCents ?? null)} />
+        <Metric label="Impressions" value={intOrNoData(metrics?.impressions ?? null)} />
+        <Metric label="Clicks" value={intOrNoData(metrics?.clicks ?? null)} />
+        <Metric label="CTR" value={pctOrNoData(metrics?.ctr ?? null)} />
+        <Metric label="CPM" value={moneyOrNoData(metrics?.cpmCents ?? null)} />
+      </InlineGrid>
     </BlockStack>
   );
 }
@@ -532,6 +644,36 @@ function CreativeCard({ creative }: { creative: CampaignCreative }) {
 
 function moneyOrDash(cents: number | null): string {
   return cents == null ? "—" : fmtMoney(cents);
+}
+
+// Live-metrics gap marker (rule 12): explicit "no data", never a fabricated 0.
+const NO_DATA = "— (no data)";
+
+function moneyOrNoData(cents: number | null): string {
+  return cents == null ? NO_DATA : fmtMoney(cents);
+}
+
+function intOrNoData(n: number | null): string {
+  return n == null ? NO_DATA : new Intl.NumberFormat("en-US").format(n);
+}
+
+function pctOrNoData(ctr: number | null): string {
+  return ctr == null ? NO_DATA : `${ctr.toFixed(2)}%`;
+}
+
+// A single live-metric cell: subdued label above the actual value (or gap marker).
+function Metric({ label, value }: { label: string; value: string }) {
+  const noData = value === NO_DATA;
+  return (
+    <BlockStack gap="050">
+      <Text as="span" variant="bodyXs" tone="subdued">
+        {label}
+      </Text>
+      <Text as="span" variant="bodyMd" tone={noData ? "subdued" : undefined}>
+        {value}
+      </Text>
+    </BlockStack>
+  );
 }
 
 function Stat({
