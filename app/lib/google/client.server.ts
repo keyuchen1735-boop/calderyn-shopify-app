@@ -8,7 +8,7 @@
 import { getSupabase } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 
-const GOOGLE_ADS_API_VERSION = "v17";
+const GOOGLE_ADS_API_VERSION = "v23";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const ADS_BASE = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
 
@@ -71,6 +71,46 @@ export function extractAdsError(body: unknown): string | null {
   return err ? (err.message ?? "Google Ads API error") : null;
 }
 
+/**
+ * Parse a raw searchStream response body into flattened result rows, failing
+ * visibly (rule 12) on every error shape. Read the body as TEXT first: a sunset
+ * or invalid API version returns an HTML 404, and calling res.json() on that
+ * throws an opaque `Unexpected token '<', "<!DOCTYPE "...` SyntaxError that gets
+ * persisted to shop_integrations.sync_error. Surface the real HTTP status + body
+ * instead. Exported for unit testing without network.
+ */
+export function parseSearchStreamResponse(
+  raw: string,
+  ok: boolean,
+  status: number,
+): unknown[] {
+  let json: SearchStreamBatch[] | SearchStreamError;
+  try {
+    json = JSON.parse(raw) as SearchStreamBatch[] | SearchStreamError;
+  } catch {
+    throw new Error(
+      `Google Ads API error: non-JSON response (HTTP ${status}): ${raw.slice(0, 200)}`,
+    );
+  }
+
+  // A non-2xx status, or an error-shaped body (including the array-wrapped
+  // `[{error}]` streaming form), must throw — never be parsed as zero results
+  // and recorded as a clean, empty sync.
+  const errMessage = extractAdsError(json);
+  if (!ok || errMessage) {
+    throw new Error(`Google Ads API error: ${errMessage ?? `HTTP ${status}`}`);
+  }
+  if (!Array.isArray(json)) {
+    throw new Error(`Google Ads API error: unexpected non-array response (HTTP ${status})`);
+  }
+
+  const rows: unknown[] = [];
+  for (const batch of json) {
+    for (const r of batch.results ?? []) rows.push(r);
+  }
+  return rows;
+}
+
 function buildClient(customerId: string, refreshToken: string): GoogleAdsClient {
   const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
   if (!developerToken) {
@@ -95,26 +135,8 @@ function buildClient(customerId: string, refreshToken: string): GoogleAdsClient 
         },
         body: JSON.stringify({ query: gaql }),
       });
-      const json = (await res.json()) as SearchStreamBatch[] | SearchStreamError;
-
-      // Fail visibly (rule 12). A non-2xx status, or an error-shaped body
-      // (including the array-wrapped `[{error}]` streaming form), must throw —
-      // never be parsed as zero results and recorded as a clean, empty sync.
-      const errMessage = extractAdsError(json);
-      if (!res.ok || errMessage) {
-        throw new Error(
-          `Google Ads API error: ${errMessage ?? `HTTP ${res.status}`}`,
-        );
-      }
-      if (!Array.isArray(json)) {
-        throw new Error(`Google Ads API error: unexpected non-array response (HTTP ${res.status})`);
-      }
-
-      const rows: unknown[] = [];
-      for (const batch of json) {
-        for (const r of batch.results ?? []) rows.push(r);
-      }
-      return rows;
+      const raw = await res.text();
+      return parseSearchStreamResponse(raw, res.ok, res.status);
     },
   };
 }
