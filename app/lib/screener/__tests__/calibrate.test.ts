@@ -78,4 +78,24 @@ describe("calibrate", () => {
     const r = calibrate(metricsAll(60), { ...fullHistory, historyAdCount: 6 }, 50000);
     expect(r.confidence).toBe("medium");
   });
+
+  it("a resolved SKU price alone earns medium even with no ad-count history (Plan 1 wiring)", () => {
+    // Plan 1 has no real ad-count or CVR yet, so confidence must key off the real
+    // SKU price grounding — otherwise it would be misleadingly stuck at "low".
+    const r = calibrate(
+      metricsAll(60),
+      { ...fullHistory, historyAdCount: 0, skuCvr: null, skuPriceCents: 4200 },
+      50000,
+    );
+    expect(r.confidence).toBe("medium");
+  });
+
+  it("stays low when neither ad-count nor a SKU price is available", () => {
+    const r = calibrate(
+      metricsAll(60),
+      { ...fullHistory, historyAdCount: 0, skuCvr: null, skuPriceCents: null },
+      50000,
+    );
+    expect(r.confidence).toBe("low");
+  });
 });

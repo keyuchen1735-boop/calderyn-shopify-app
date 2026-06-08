@@ -56,7 +56,9 @@ function confidenceFor(inputs: CalibrationInputs): Confidence {
   if (inputs.historyAdCount >= 15 && inputs.skuPriceCents != null && inputs.skuCvr != null) {
     return "high";
   }
-  if (inputs.historyAdCount >= 5) return "medium";
+  // A resolved real SKU price grounds the estimate enough for medium, even before
+  // Plan 2 wires a real ad-count / CVR. Without either signal we stay honest at low.
+  if (inputs.historyAdCount >= 5 || inputs.skuPriceCents != null) return "medium";
   return "low";
 }
 
