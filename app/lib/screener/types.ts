@@ -118,3 +118,10 @@ export interface CreativeScreenRun {
   createdAt: string;
   completedAt: string | null;
 }
+
+/** One ad the merchant can pick to screen (Meta source). */
+export interface ScreenableAd {
+  id: string;
+  name: string;
+  effectiveStatus: string;
+}
