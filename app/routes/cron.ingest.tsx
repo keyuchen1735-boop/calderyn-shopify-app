@@ -4,12 +4,12 @@ import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
+import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const auth = request.headers.get("authorization");
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
   }
 

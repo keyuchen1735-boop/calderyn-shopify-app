@@ -2,11 +2,11 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
 import { runGdprAndRetentionSweep } from "~/lib/gdpr/sweep.server";
+import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 // Suggested schedule: daily at 04:00 UTC — `0 4 * * *`.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const auth = request.headers.get("authorization");
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
   }
 
