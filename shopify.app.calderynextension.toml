@@ -2,7 +2,7 @@
 
 client_id = "508429753f1e60bd48c4dadbe063a27e"
 name = "CalderynExtension"
-application_url = "https://shopify-app-rho-ruby.vercel.app"
+application_url = "https://app.calderyncompany.com"
 embedded = true
 
 [access_scopes]
@@ -11,9 +11,9 @@ scopes = "read_inventory,read_locations,read_orders,read_products,write_inventor
 
 [auth]
 redirect_urls = [
-  "https://shopify-app-rho-ruby.vercel.app/auth/callback",
-  "https://shopify-app-rho-ruby.vercel.app/auth/shopify/callback",
-  "https://shopify-app-rho-ruby.vercel.app/api/auth/callback"
+  "https://app.calderyncompany.com/auth/callback",
+  "https://app.calderyncompany.com/auth/shopify/callback",
+  "https://app.calderyncompany.com/api/auth/callback"
 ]
 
 [webhooks]
