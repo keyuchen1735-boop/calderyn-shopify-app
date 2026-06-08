@@ -622,7 +622,7 @@ function AdScorecardSlot({
   if (missingAdId) {
     return (
       <Text as="p" variant="bodySm" tone="subdued">
-        Analysis unavailable: ad is missing a Meta ad id.
+        Analysis unavailable: ad is missing an ad id.
       </Text>
     );
   }
