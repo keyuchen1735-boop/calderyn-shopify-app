@@ -104,8 +104,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   try {
     // 1) Ingested perf row, addressed directly by dim uuid. Here idFromUrl is
     // v_campaigns_flat.id, which is NOT guaranteed to be a Meta external id, so
-    // confirmedExternalId stays null.
-    let campaign: Campaign | null = await getOrNull(client, idFromUrl);
+    // confirmedExternalId stays null. v_campaigns_flat.id is a uuid column, so we
+    // only attempt the direct lookup when idFromUrl is uuid-shaped — a platform
+    // external id (e.g. a long numeric Meta id) would otherwise make Postgres
+    // throw 22P02 and abort the resolution chain before steps 2/3 can run.
+    let campaign: Campaign | null = isUuid(idFromUrl)
+      ? await getOrNull(client, idFromUrl)
+      : null;
     let actionId = idFromUrl;
     let confirmedExternalId: string | null = null;
 
@@ -366,6 +371,14 @@ async function loadAdMetrics(
       adMetricsError: { code: e.code ?? "AD_METRICS_ERROR", message: e.message },
     };
   }
+}
+
+/** True when `s` is a canonical uuid — the shape of v_campaigns_flat.id. Lets the
+ * loader skip the dim-uuid lookup for platform external ids (which would 22P02). */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(s: string): boolean {
+  return UUID_RE.test(s);
 }
 
 /** campaigns.get but null (not throw) on CAMPAIGN_NOT_FOUND, rethrow otherwise. */
