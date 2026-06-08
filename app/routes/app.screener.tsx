@@ -199,7 +199,6 @@ export default function Screener() {
               />
               <TextField
                 label="Assumed spend (USD)"
-                name="assumedSpendCentsDollars"
                 type="number"
                 autoComplete="off"
                 value={spend}
