@@ -28,7 +28,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
-import { getLatestRun, listRuns } from "~/lib/screener/runs.server";
+import { getLatestRun, listRuns, saveVariants } from "~/lib/screener/runs.server";
 import { listScreenableAds, fetchCreativeInput } from "~/lib/screener/meta-creative.server";
 import {
   DEFAULT_SPEND_CENTS,
@@ -42,7 +42,13 @@ import {
   type MetricGroup,
   type ScoreCard,
   type ScreenableAd,
+  type Variant,
 } from "~/lib/screener/types";
+import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
+import { copyGenerator, generateImprovements } from "~/lib/screener/generate.server";
+import { loadCalibrationInputs } from "~/lib/screener/history.server";
+import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
+import { calibrate } from "~/lib/screener/calibrate.server";
 
 // clampSpend: if raw is absent/empty/NaN → return DEFAULT.
 // Any parseable number (including 0) is clamped to [MIN, MAX].
@@ -90,6 +96,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
+
+  if (String(form.get("intent") ?? "") === "generate") {
+    const latest = await getLatestRun(session.shop);
+    if (!latest || latest.status !== "done" || !latest.scorecard || !latest.creativeInput) {
+      return json({ generateError: "Screen an ad first, then generate improvements." });
+    }
+    const original = latest.creativeInput;
+    const calib = await loadCalibrationInputs(session.shop, null);
+    const createMessage: CreateMessageFn = (p) => getAnthropic().messages.create(p);
+    const scoreOne = async (input: CreativeInput) => {
+      const scored = await scoreCreative(input, calib.topAdNames, { createMessage, model: assistantModel() });
+      const { composite } = calibrate(scored.metrics, calib, latest.assumedSpendCents);
+      return { composite, summary: scored.summary, metrics: scored.metrics };
+    };
+    const generator = copyGenerator({ createMessage, model: assistantModel() });
+    const result = await generateImprovements(
+      { original, originalScorecard: latest.scorecard, styleRefs: calib.topAdNames },
+      { generator, scoreOne },
+    );
+    const saved = await saveVariants(latest.id, result.variants);
+    return json(saved);
+  }
+
   const assumedSpendCents = clampSpend(form.get("assumedSpendCents"));
   const meta = isMetaSubmit(form);
   if (meta) {
@@ -105,6 +134,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         id: "", status: "error", source: "meta_ad", metaAdId: meta.metaAdId,
         assumedSpendCents, scorecard: null, error: message,
         createdAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+        creativeInput: null, variants: [],
       } satisfies CreativeScreenRun);
     }
     const run = await executeScreen({
@@ -181,8 +211,9 @@ export default function Screener() {
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
   );
   useEffect(() => {
-    if (fetcher.data?.assumedSpendCents)
-      setSpend(String(fetcher.data.assumedSpendCents / 100));
+    const d = fetcher.data as CreativeScreenRun | undefined;
+    if (d?.assumedSpendCents)
+      setSpend(String(d.assumedSpendCents / 100));
   }, [fetcher.data]);
 
   return (
@@ -407,6 +438,34 @@ export default function Screener() {
                 </BlockStack>
               </Card>
             )}
+
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingSm">Improved variations</Text>
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="intent" value="generate" />
+                    <Button submit loading={running} disabled={running}>Generate improvements</Button>
+                  </fetcher.Form>
+                </InlineStack>
+                {(run?.variants ?? []).length === 0 ? (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Generate copy variations conditioned on this ad&apos;s weak spots. Only variants that out-score the original are shown.
+                  </Text>
+                ) : (
+                  (run?.variants ?? []).map((v: Variant, i: number) => (
+                    <Box key={i} padding="300" borderColor="border" borderBlockStartWidth="025">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">{v.input.headline}</Text>
+                        <Badge tone="success">{`${v.composite} (+${v.delta})`}</Badge>
+                      </InlineStack>
+                      <Text as="p" variant="bodySm">{v.input.primaryText}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">CTA: {v.input.cta} · {v.rationale}</Text>
+                    </Box>
+                  ))
+                )}
+              </BlockStack>
+            </Card>
           </>
         )}
 

@@ -17,7 +17,7 @@ export interface ScreenDeps {
     topAdNames: string[],
   ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: string[] }>;
   startRun: (shop: string, source: RunSource, assumedSpendCents: number, metaAdId?: string | null) => Promise<CreativeScreenRun>;
-  completeRun: (id: string, scorecard: ScoreCard) => Promise<CreativeScreenRun>;
+  completeRun: (id: string, scorecard: ScoreCard, creativeInput: CreativeInput) => Promise<CreativeScreenRun>;
   failRun: (id: string, message: string) => Promise<CreativeScreenRun>;
 }
 
@@ -71,7 +71,7 @@ export async function executeScreen(
       outcomes,
       tips: scored.tips,
     };
-    return await deps.completeRun(run.id, scorecard);
+    return await deps.completeRun(run.id, scorecard, args.input);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (run) {
@@ -91,6 +91,8 @@ export async function executeScreen(
       error: message,
       createdAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
+      creativeInput: null,
+      variants: [],
     };
   }
 }
