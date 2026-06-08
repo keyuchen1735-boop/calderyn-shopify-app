@@ -301,6 +301,7 @@ export function calderynClient(shop: string) {
             .from("v_audit_view")
             .select("*")
             .eq("id", ins.id)
+            .eq("shop_id", shopId)
             .single();
           if (vErr) throw vErr;
           return rowToAudit(view);
@@ -328,6 +329,7 @@ export function calderynClient(shop: string) {
               .from("v_audit_view")
               .select("*")
               .eq("id", prior.audit_id)
+              .eq("shop_id", shopId)
               .single();
             if (vErr) throw vErr;
             return rowToAudit(view);
@@ -370,6 +372,7 @@ export function calderynClient(shop: string) {
             .from("v_audit_view")
             .select("*")
             .eq("id", ins.id)
+            .eq("shop_id", shopId)
             .single();
           if (vErr) throw vErr;
           return rowToAudit(view);
