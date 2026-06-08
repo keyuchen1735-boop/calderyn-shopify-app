@@ -117,7 +117,13 @@ export async function syncQuickbooksCogs(
       continue;
     }
     if (action.kind === "update_then_insert") {
-      const close = await sb.from("cogs_fact").update({ effective_to: now }).eq("id", action.closeId);
+      // Scope the close by shop_id too: the service-role client bypasses RLS, so
+      // a tenant filter on every write is the only cross-shop guard.
+      const close = await sb
+        .from("cogs_fact")
+        .update({ effective_to: now })
+        .eq("id", action.closeId)
+        .eq("shop_id", shopId);
       if (close.error) throw close.error;
       counts.updated++;
     } else {
