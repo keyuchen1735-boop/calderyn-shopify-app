@@ -28,7 +28,7 @@ function run(over: Partial<CreativeScreenRun>): CreativeScreenRun {
   return {
     id: "r", status: "done", source: "meta_ad", metaAdId: "ad-1",
     assumedSpendCents: 50000, scorecard: card(80), error: null,
-    createdAt: "t", completedAt: "t", ...over,
+    createdAt: "t", completedAt: "t", creativeInput: null, variants: [], ...over,
   };
 }
 
