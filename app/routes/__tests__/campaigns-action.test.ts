@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { action } from "../app.campaigns";
+import { action } from "../app.campaigns._index";
 
 // Spies for the boundaries; the real route `action` logic runs against them.
 const {
