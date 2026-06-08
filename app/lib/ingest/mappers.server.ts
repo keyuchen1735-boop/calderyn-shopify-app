@@ -202,3 +202,39 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
   });
   return { order, lines, clickRef: { utm, clickIds, referringSite } };
 }
+
+// Strip an `orders/create` webhook body down to ONLY the fields the ingest
+// pipeline reads (the same set parseOrderWebhook consumes). Shopify always
+// includes customer PII on this webhook — name, email, phone, billing/shipping
+// addresses, notes, IP — which the app never uses; dropping it before anything
+// is stored keeps the data footprint to order totals + line items (Shopify
+// protected-customer-data Level 1). landing_site/referring_site are marketing
+// URLs (used for attribution), not restricted customer fields, so they stay.
+export function minimizeOrderWebhook(p: Record<string, unknown>): RawOrderWebhook {
+  const ship = p.total_shipping_price_set as RawMoneySet | null | undefined;
+  const shipAmount = ship?.shop_money?.amount;
+  const rawLines = Array.isArray(p.line_items)
+    ? (p.line_items as Array<Record<string, unknown>>)
+    : [];
+  return {
+    admin_graphql_api_id: p.admin_graphql_api_id as string | number | undefined,
+    name: p.name as string | number | undefined,
+    created_at: p.created_at as string | undefined,
+    updated_at: p.updated_at as string | undefined,
+    total_price: p.total_price as string | number | null | undefined,
+    subtotal_price: p.subtotal_price as string | number | null | undefined,
+    total_shipping_price_set: shipAmount != null ? { shop_money: { amount: shipAmount } } : null,
+    total_tax: p.total_tax as string | number | null | undefined,
+    total_discounts: p.total_discounts as string | number | null | undefined,
+    currency: p.currency as string | null | undefined,
+    financial_status: p.financial_status as string | null | undefined,
+    line_items: rawLines.map((ln) => ({
+      admin_graphql_api_id: ln.admin_graphql_api_id as string | number | undefined,
+      quantity: ln.quantity as number | undefined,
+      price: ln.price as string | number | null | undefined,
+      variant_id: ln.variant_id as string | number | null | undefined,
+    })),
+    landing_site: p.landing_site as string | null | undefined,
+    referring_site: p.referring_site as string | null | undefined,
+  };
+}

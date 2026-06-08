@@ -8,6 +8,7 @@ import {
   mapOrderLines,
   parseInventoryWebhook,
   parseOrderWebhook,
+  minimizeOrderWebhook,
 } from "../mappers.server";
 
 describe("gidToId", () => {
@@ -243,5 +244,51 @@ describe("parseOrderWebhook", () => {
 describe("moneyToCents empty string", () => {
   it("treats empty string as 0", () => {
     expect(moneyToCents("")).toBe(0);
+  });
+});
+
+describe("minimizeOrderWebhook", () => {
+  // A realistic orders/create REST webhook body: the order fields the pipeline
+  // reads, PLUS the customer PII Shopify always includes (and we must not store).
+  const fullPayload = {
+    admin_graphql_api_id: "gid://shopify/Order/900",
+    name: "#1001",
+    created_at: "2026-05-01T12:00:00Z",
+    updated_at: "2026-05-01T12:00:00Z",
+    financial_status: "paid",
+    currency: "USD",
+    total_price: "59.97",
+    subtotal_price: "54.00",
+    total_tax: "0.97",
+    total_discounts: "0.00",
+    total_shipping_price_set: { shop_money: { amount: "5.00", currency_code: "USD" } },
+    landing_site: "/?utm_source=meta",
+    referring_site: "https://l.facebook.com/",
+    line_items: [
+      { admin_graphql_api_id: "gid://shopify/LineItem/1", quantity: 3, price: "18.00", variant_id: 200, title: "Widget" },
+    ],
+    // --- customer PII that must never be stored ---
+    email: "jane@example.com",
+    phone: "+1-555-0100",
+    customer: { id: 1, first_name: "Jane", last_name: "Doe", email: "jane@example.com" },
+    billing_address: { name: "Jane Doe", address1: "1 Main St", city: "Springfield", zip: "00000" },
+    shipping_address: { name: "Jane Doe", address1: "1 Main St", city: "Springfield", zip: "00000" },
+    note: "leave at the door",
+    browser_ip: "203.0.113.7",
+  };
+
+  it("drops every customer-PII field", () => {
+    const min = minimizeOrderWebhook(fullPayload) as Record<string, unknown>;
+    for (const k of ["email", "phone", "customer", "billing_address", "shipping_address", "note", "browser_ip"]) {
+      expect(min[k]).toBeUndefined();
+    }
+    // line items keep only the read fields — no titles or other extras
+    expect(Object.keys((min.line_items as Record<string, unknown>[])[0]).sort()).toEqual(
+      ["admin_graphql_api_id", "price", "quantity", "variant_id"],
+    );
+  });
+
+  it("is lossless: the stripped body parses to exactly the same result", () => {
+    expect(parseOrderWebhook(minimizeOrderWebhook(fullPayload))).toEqual(parseOrderWebhook(fullPayload));
   });
 });
