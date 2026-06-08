@@ -26,6 +26,8 @@ import {
   listCampaignCreatives,
   type CampaignCreative,
 } from "~/lib/meta/creatives.server";
+import { googleClientForShop } from "~/lib/google/client.server";
+import { listGoogleCampaignCreatives } from "~/lib/google/creatives.server";
 import {
   listCampaignAdInsights,
   type AdMetrics,
@@ -252,13 +254,24 @@ async function loadCachedScorecards(
 // (detail.metaExternalId == null) the URL id is not a Meta id, so we surface an
 // explicit gap rather than relying on the Graph API to error (it can return 200
 // {data:[]}, which would silently look like "no creatives").
+type CreativesResult = {
+  creatives: CampaignCreative[];
+  creativesError: { code: string; message: string } | null;
+};
+
 async function loadCreatives(
   shop: string,
   detail: CampaignDetail,
-): Promise<{ creatives: CampaignCreative[]; creativesError: { code: string; message: string } | null }> {
-  if (detail.platform !== "Meta") {
-    return { creatives: [], creativesError: null };
-  }
+): Promise<CreativesResult> {
+  if (detail.platform === "Meta") return loadMetaCreatives(shop, detail);
+  if (detail.platform === "Google") return loadGoogleCreatives(shop, detail);
+  return { creatives: [], creativesError: null };
+}
+
+async function loadMetaCreatives(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<CreativesResult> {
   if (!detail.metaExternalId) {
     return {
       creatives: [],
@@ -278,6 +291,40 @@ async function loadCreatives(
       };
     }
     const creatives = await listCampaignCreatives(meta.client, detail.metaExternalId);
+    return { creatives, creativesError: null };
+  } catch (err) {
+    const e = err as CalderynError;
+    return {
+      creatives: [],
+      creativesError: { code: e.code ?? "CREATIVES_ERROR", message: e.message },
+    };
+  }
+}
+
+// Fetch Google ad creatives for the detail. Same isolated-try/catch contract as
+// the Meta path (rule 12: surface the gap honestly via creativesError rather than
+// failing the whole loader). Unlike Meta, Google has no live-identity confirmation
+// step, so the URL id (detail.externalId) IS the campaign id from the ingested/
+// list row. NOTE: Google Ads API access is currently broken (token lacks
+// permission), so this WILL error today — that's the honest degraded state, not a
+// fake-success (rule 12).
+async function loadGoogleCreatives(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<CreativesResult> {
+  try {
+    const shopId = await resolveShopId(shop);
+    const conn = await googleClientForShop(shopId);
+    if (!conn) {
+      return {
+        creatives: [],
+        creativesError: {
+          code: "GOOGLE_NOT_CONNECTED",
+          message: "Google Ads account not connected",
+        },
+      };
+    }
+    const creatives = await listGoogleCampaignCreatives(conn.client, detail.externalId);
     return { creatives, creativesError: null };
   } catch (err) {
     const e = err as CalderynError;
