@@ -8,9 +8,11 @@ vi.mock("../../../shopify.server", () => ({
   authenticate: { admin: async () => ({ session: { shop: "acme.myshopify.com" } }) },
 }));
 
+/* eslint-disable import/first -- these imports must follow vi.mock so the shopify.server stub is registered before the route modules load */
 import { clampSpend, parseCreativeForm, isMetaSubmit } from "../../../routes/app.screener";
 import { parseScoreForm } from "../../../routes/app.campaigns.$campaignId.score";
 import { DEFAULT_SPEND_CENTS } from "../types";
+/* eslint-enable import/first */
 
 describe("clampSpend", () => {
   it("clamps to [MIN,MAX] and defaults non-numbers", () => {
