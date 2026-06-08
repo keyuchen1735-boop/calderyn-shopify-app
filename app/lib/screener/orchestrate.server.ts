@@ -6,7 +6,7 @@ import { loadCalibrationInputs as realLoad } from "./history.server";
 import { scoreCreative as realScore } from "./score.server";
 import { startRun as realStart, completeRun as realComplete, failRun as realFail } from "./runs.server";
 import type {
-  CalibrationInputs, CreativeInput, CreativeScreenRun, ScoreCard,
+  CalibrationInputs, CreativeInput, CreativeScreenRun, RunSource, ScoreCard,
 } from "./types";
 
 export interface ScreenDeps {
@@ -16,7 +16,12 @@ export interface ScreenDeps {
     input: CreativeInput,
     topAdNames: string[],
   ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: string[] }>;
-  startRun: (shop: string, source: "manual", assumedSpendCents: number) => Promise<CreativeScreenRun>;
+  startRun: (
+    shop: string,
+    source: RunSource,
+    assumedSpendCents: number,
+    metaAdId?: string | null,
+  ) => Promise<CreativeScreenRun>;
   completeRun: (id: string, scorecard: ScoreCard) => Promise<CreativeScreenRun>;
   failRun: (id: string, message: string) => Promise<CreativeScreenRun>;
 }
@@ -41,19 +46,27 @@ function defaultDeps(): ScreenDeps {
         createMessage: (p) => getAnthropic().messages.create(p),
         model: assistantModel(),
       }),
-    startRun: realStart,
+    startRun: (shop, source, cents, metaAdId) => realStart(shop, source, cents, metaAdId),
     completeRun: realComplete,
     failRun: realFail,
   };
 }
 
 export async function executeScreen(
-  args: { shop: string; input: CreativeInput; assumedSpendCents: number },
+  args: {
+    shop: string;
+    input: CreativeInput;
+    assumedSpendCents: number;
+    source?: RunSource;
+    metaAdId?: string | null;
+  },
   deps: ScreenDeps = defaultDeps(),
 ): Promise<CreativeScreenRun> {
+  const source: RunSource = args.source ?? "manual";
+  const metaAdId: string | null = args.metaAdId ?? null;
   let run: CreativeScreenRun | null = null;
   try {
-    run = await deps.startRun(args.shop, "manual", args.assumedSpendCents);
+    run = await deps.startRun(args.shop, source, args.assumedSpendCents, metaAdId);
     const mappedSku = deps.resolveSku(args.input.destinationUrl);
     const calib = await deps.loadCalibrationInputs(args.shop, mappedSku);
     const scored = await deps.scoreCreative(args.input, calib.topAdNames);
@@ -82,8 +95,8 @@ export async function executeScreen(
     return {
       id: run?.id ?? "",
       status: "error",
-      source: "manual",
-      metaAdId: null,
+      source,
+      metaAdId,
       assumedSpendCents: args.assumedSpendCents,
       scorecard: null,
       error: message,

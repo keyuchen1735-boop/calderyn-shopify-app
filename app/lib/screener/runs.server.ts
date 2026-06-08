@@ -77,6 +77,28 @@ export async function getLatestRun(shop: string): Promise<CreativeScreenRun | nu
   return data ? rowToRun(data) : null;
 }
 
+// Most-recent completed run for a specific Meta ad, shop-scoped. Drives the
+// campaign-detail "cache + auto on load" path: reuse this run if present rather
+// than re-scoring the same ad on every page view.
+export async function getLatestRunForAd(
+  shop: string,
+  metaAdId: string,
+): Promise<CreativeScreenRun | null> {
+  const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
+  const { data, error } = await sb
+    .from("v_creative_screen_runs")
+    .select("*")
+    .eq("shop_id", shopId)
+    .eq("meta_ad_id", metaAdId)
+    .eq("status", "done")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToRun(data) : null;
+}
+
 // History list omits the heavy `scorecard` blob (every item has scorecard: null).
 export async function listRuns(shop: string, limit = 10): Promise<CreativeScreenRun[]> {
   const sb = getSupabase();

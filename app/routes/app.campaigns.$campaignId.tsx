@@ -14,6 +14,7 @@ import {
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
+import { Scorecard } from "~/components/Scorecard";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
@@ -27,6 +28,15 @@ import {
   buildCampaignPerformance,
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
+import {
+  loadOrScoreAdScorecards,
+  type AdScorecard,
+} from "~/lib/screener/campaign-ads.server";
+import {
+  DEFAULT_SPEND_CENTS,
+  MAX_SPEND_CENTS,
+  MIN_SPEND_CENTS,
+} from "~/lib/screener/types";
 import { fmtMoney } from "~/lib/format";
 import type { Campaign } from "~/lib/types";
 
@@ -52,6 +62,7 @@ type LoaderPayload = {
   error: { code: string; message: string } | null;
   creatives: CampaignCreative[];
   creativesError: { code: string; message: string } | null;
+  scorecards: AdScorecard[];
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -73,6 +84,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: "INVALID_REQUEST", message: "Missing campaign id" },
       creatives: [],
       creativesError: null,
+      scorecards: [],
     });
   }
 
@@ -111,7 +123,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         performance: buildCampaignPerformance(campaign),
       };
       const { creatives, creativesError } = await loadCreatives(session.shop, detail);
-      return json<LoaderPayload>({ detail, error: null, creatives, creativesError });
+      const scorecards = await loadScorecards(session.shop, creatives, detail.performance);
+      return json<LoaderPayload>({ detail, error: null, creatives, creativesError, scorecards });
     }
 
     // 3) Identity-only fallback from the live Meta account (no ingested metrics).
@@ -132,7 +145,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             performance: buildCampaignPerformance(null),
           };
           const { creatives, creativesError } = await loadCreatives(session.shop, detail);
-          return json<LoaderPayload>({ detail, error: null, creatives, creativesError });
+          const scorecards = await loadScorecards(session.shop, creatives, detail.performance);
+          return json<LoaderPayload>({ detail, error: null, creatives, creativesError, scorecards });
         }
       }
     }
@@ -142,6 +156,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: "CAMPAIGN_NOT_FOUND", message: `Campaign ${idFromUrl} not found` },
       creatives: [],
       creativesError: null,
+      scorecards: [],
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -150,9 +165,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       error: { code: e.code ?? "ERROR", message: e.message },
       creatives: [],
       creativesError: null,
+      scorecards: [],
     });
   }
 };
+
+// Auto cache-or-score the predictive scorecard for each fetched creative. Isolated
+// in its own try/catch so a scoring failure NEVER breaks the rest of the detail
+// page (rule 12: on failure return [] and let the UI mark scorecards unavailable
+// per ad, rather than a blank/500). Cache-backed, so only the first view pays the
+// Claude cost; subsequent loads reuse the persisted run.
+async function loadScorecards(
+  shop: string,
+  creatives: CampaignCreative[],
+  performance: CampaignPerformance,
+): Promise<AdScorecard[]> {
+  if (creatives.length === 0) return [];
+  try {
+    const raw = performance.spend7dCents ?? DEFAULT_SPEND_CENTS;
+    const assumedSpendCents = Math.min(Math.max(raw, MIN_SPEND_CENTS), MAX_SPEND_CENTS);
+    return await loadOrScoreAdScorecards(
+      shop,
+      creatives.map((c) => ({ adId: c.adId, creative: c.creative })),
+      assumedSpendCents,
+    );
+  } catch {
+    return [];
+  }
+}
 
 // Fetch Meta ad creatives for the detail. Isolated in its own try/catch so a
 // creative-fetch failure NEVER breaks the performance card (rule 12: surface the
@@ -212,7 +252,8 @@ async function getOrNull(
 
 export default function CampaignDetailPage() {
   const navigate = useNavigate();
-  const { detail, error, creatives, creativesError } = useLoaderData<typeof loader>();
+  const { detail, error, creatives, creativesError, scorecards } =
+    useLoaderData<typeof loader>();
 
   if (!detail) {
     return (
@@ -230,6 +271,7 @@ export default function CampaignDetailPage() {
   }
 
   const perf = detail.performance;
+  const scorecardByAd = new Map(scorecards.map((s) => [s.adId, s]));
   return (
     <Page
       title={detail.name}
@@ -278,11 +320,15 @@ export default function CampaignDetailPage() {
               Ad creatives
             </Text>
             {creatives.length > 0 ? (
-              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+              <BlockStack gap="500">
                 {creatives.map((c, i) => (
-                  <CreativeCard key={c.adId || `ad-${i}`} creative={c} />
+                  <CreativeWithScorecard
+                    key={c.adId || `ad-${i}`}
+                    creative={c}
+                    scorecard={c.adId ? scorecardByAd.get(c.adId) : undefined}
+                  />
                 ))}
-              </InlineGrid>
+              </BlockStack>
             ) : (
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd" tone="subdued">
@@ -301,6 +347,31 @@ export default function CampaignDetailPage() {
         </Card>
       </BlockStack>
     </Page>
+  );
+}
+
+// One ad: its creative preview, then calderyn's predictive scorecard beneath it.
+// When the scorecard is missing or errored we say so explicitly (rule 12 — an
+// honest "unavailable" line, never a silent blank).
+function CreativeWithScorecard({
+  creative,
+  scorecard,
+}: {
+  creative: CampaignCreative;
+  scorecard: AdScorecard | undefined;
+}) {
+  return (
+    <BlockStack gap="300">
+      <CreativeCard creative={creative} />
+      {scorecard && scorecard.status === "done" && scorecard.scorecard ? (
+        <Scorecard card={scorecard.scorecard} />
+      ) : (
+        <Text as="p" variant="bodySm" tone="subdued">
+          Analysis unavailable
+          {scorecard?.error ? `: ${scorecard.error}` : ""}
+        </Text>
+      )}
+    </BlockStack>
   );
 }
 
