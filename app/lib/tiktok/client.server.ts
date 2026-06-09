@@ -78,13 +78,18 @@ export function buildTikTokClient(token: string): TikTokClient {
     },
 
     async getAdvertiserCurrency(advertiserId) {
-      const body = await call("/advertiser/info/", {
-        advertiser_ids: JSON.stringify([advertiserId]),
-        fields: JSON.stringify(["currency"]),
-      });
-      const { list } = check(body, "advertiser/info");
-      const first = list[0] as { currency?: unknown } | undefined;
-      return typeof first?.currency === "string" ? first.currency : "USD";
+      try {
+        const body = await call("/advertiser/info/", {
+          advertiser_ids: JSON.stringify([advertiserId]),
+          fields: JSON.stringify(["currency"]),
+        });
+        const { list } = check(body, "advertiser/info");
+        const first = list[0] as { currency?: unknown } | undefined;
+        return typeof first?.currency === "string" ? first.currency : "USD";
+      } catch {
+        // Ad Account Management scope may not be granted; USD is safe default.
+        return "USD";
+      }
     },
   };
 }
