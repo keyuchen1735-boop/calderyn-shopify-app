@@ -17,6 +17,7 @@ import polarisTranslations from "@shopify/polaris/locales/en.json";
 import {
   getClient,
   signPendingOauth,
+  setPendingOauth,
   PENDING_COOKIE_NAME,
   PENDING_COOKIE_OPTS,
 } from "~/lib/mcp_oauth.server";
@@ -97,9 +98,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirectError(params, "invalid_request", "only scope=read is supported in v1");
   }
 
-  // ?shop= shortcut: if shop is already in the URL, skip the form and set cookie directly.
+  // ?shop= shortcut: if shop is already in the URL, skip the form and start the handoff.
   const shop = url.searchParams.get("shop")?.toLowerCase();
   if (shop && SHOP_RE.test(shop)) {
+    // Write authoritative server-side state. Cookie is best-effort fallback
+    // for same-domain testing — modern Chrome blocks 3P cookies across the
+    // Vercel-alias domain change to the embedded admin iframe.
+    await setPendingOauth({
+      shop_domain: shop,
+      client_id: params.client_id,
+      redirect_uri: params.redirect_uri,
+      code_challenge: params.code_challenge,
+      scope: params.scope,
+      client_state: params.state,
+    });
     const jwt = await signPendingOauth({
       client_id: params.client_id,
       redirect_uri: params.redirect_uri,
@@ -152,6 +164,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response("invalid_shop", { status: 400 });
   }
 
+  // Write authoritative server-side state (carries across Vercel-alias domains).
+  await setPendingOauth({
+    shop_domain: params.shop,
+    client_id: params.client_id,
+    redirect_uri: params.redirect_uri,
+    code_challenge: params.code_challenge,
+    scope: params.scope,
+    client_state: params.state,
+  });
   const jwt = await signPendingOauth({
     client_id: params.client_id,
     redirect_uri: params.redirect_uri,

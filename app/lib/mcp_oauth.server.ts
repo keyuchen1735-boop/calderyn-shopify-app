@@ -230,10 +230,75 @@ export async function verifyPendingOauth(token: string): Promise<PendingOauthCtx
 }
 
 export const PENDING_COOKIE_NAME = "__cal_pending_oauth";
-// SameSite=None so the cookie travels when /app loads as an iframe inside
-// admin.shopify.com during the Shopify embedded auth bounce. Lax was previously
-// being dropped on the iframe sub-resource load, breaking the entire handoff.
+// SameSite=None so the cookie travels when /app loads as an iframe. Even with
+// this, the cookie can't cross Vercel-domain-aliases (app.calderyncompany.com
+// vs shopify-app-rho-ruby.vercel.app), which is why we ALSO write a
+// mcp_pending_oauth row keyed by shop. The DB row is the authoritative carrier;
+// the cookie is a same-domain fast-path that exists for completeness.
 export const PENDING_COOKIE_OPTS = `Path=/; Max-Age=${PENDING_TTL_SEC}; HttpOnly; Secure; SameSite=None`;
+
+// ---------------------------------------------------------------------------
+// Pending OAuth (server-side, replaces cross-domain cookie reliance)
+// ---------------------------------------------------------------------------
+
+export interface PendingOauthRow {
+  shop_domain: string;
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string;
+  client_state: string;
+  expires_at: string;
+}
+
+const PENDING_DB_TTL_SEC = 10 * 60;
+
+export async function setPendingOauth(req: {
+  shop_domain: string;
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string;
+  client_state: string;
+}): Promise<void> {
+  const expires_at = new Date(Date.now() + PENDING_DB_TTL_SEC * 1000).toISOString();
+  const { error } = await getSupabase()
+    .from("mcp_pending_oauth")
+    .upsert(
+      {
+        shop_domain: req.shop_domain,
+        client_id: req.client_id,
+        redirect_uri: req.redirect_uri,
+        code_challenge: req.code_challenge,
+        scope: req.scope,
+        client_state: req.client_state,
+        expires_at,
+      },
+      { onConflict: "shop_domain" },
+    );
+  if (error) throw error;
+}
+
+export async function getPendingOauth(shop_domain: string): Promise<PendingOauthRow | null> {
+  const { data, error } = await getSupabase()
+    .from("mcp_pending_oauth")
+    .select("shop_domain, client_id, redirect_uri, code_challenge, scope, client_state, expires_at")
+    .eq("shop_domain", shop_domain)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as PendingOauthRow;
+  if (new Date(row.expires_at).getTime() < Date.now()) return null;
+  return row;
+}
+
+export async function deletePendingOauth(shop_domain: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("mcp_pending_oauth")
+    .delete()
+    .eq("shop_domain", shop_domain);
+  if (error) throw error;
+}
 
 // ---------------------------------------------------------------------------
 // 3.4 consumeAuthCode

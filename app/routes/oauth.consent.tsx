@@ -7,6 +7,9 @@ import {
   verifyPendingOauth,
   getClient,
   issueAuthCode,
+  getPendingOauth,
+  deletePendingOauth,
+  type PendingOauthRow,
 } from "~/lib/mcp_oauth.server";
 import { resolveShopId } from "~/lib/supabase.server";
 import { authenticate } from "../shopify.server";
@@ -29,28 +32,57 @@ import {
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 
-const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
-
-function readCookie(req: Request, name: string): string | null {
-  const h = req.headers.get("cookie") ?? "";
-  const m = h.match(new RegExp(`${name}=([^;]+)`));
-  return m ? m[1] : null;
+interface PendingCtx {
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string;
+  state: string;
 }
+
+async function loadPendingCtx(
+  request: Request,
+  shop: string,
+): Promise<PendingCtx | null> {
+  // Authoritative path: server-side row keyed by shop.
+  const row: PendingOauthRow | null = await getPendingOauth(shop);
+  if (row) {
+    return {
+      client_id: row.client_id,
+      redirect_uri: row.redirect_uri,
+      code_challenge: row.code_challenge,
+      scope: row.scope,
+      state: row.client_state,
+    };
+  }
+  // Fallback: signed cookie (works only when /app loads on the same domain
+  // as /oauth/authorize, which is not the embedded-admin case in prod).
+  const h = request.headers.get("cookie") ?? "";
+  const m = h.match(new RegExp(`${PENDING_COOKIE_NAME}=([^;]+)`));
+  if (!m) return null;
+  try {
+    const cookieCtx = await verifyPendingOauth(m[1]);
+    if (cookieCtx.shop !== shop) return null;
+    return {
+      client_id: cookieCtx.client_id,
+      redirect_uri: cookieCtx.redirect_uri,
+      code_challenge: cookieCtx.code_challenge,
+      scope: cookieCtx.scope,
+      state: cookieCtx.state,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
   const { session } = await authenticate.admin(request);
 
-  const raw = readCookie(request, PENDING_COOKIE_NAME);
-  if (!raw) return redirect("/app");
-
-  let ctx;
-  try {
-    ctx = await verifyPendingOauth(raw);
-  } catch {
-    return redirect("/app");
-  }
-  if (ctx.shop !== session.shop) return redirect("/app");
+  const ctx = await loadPendingCtx(request, session.shop);
+  if (!ctx) return redirect("/app");
 
   const client = await getClient(ctx.client_id);
   if (!client) return redirect("/app");
@@ -66,21 +98,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
   const { session } = await authenticate.admin(request);
-  const raw = readCookie(request, PENDING_COOKIE_NAME);
-  if (!raw) return redirect("/app");
-  let ctx;
-  try {
-    ctx = await verifyPendingOauth(raw);
-  } catch {
-    return redirect("/app");
-  }
-  if (ctx.shop !== session.shop) return redirect("/app");
+  const ctx = await loadPendingCtx(request, session.shop);
+  if (!ctx) return redirect("/app");
 
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
-  // SameSite=None to match the issue-time cookie. Browsers reject Set-Cookie
-  // with mismatched SameSite when invalidating the same name.
   const clearCookie = `${PENDING_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
 
   // Return JSON (not 302) so the client-side fetcher can navigate the TOP
@@ -92,6 +115,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     url.searchParams.set("error", "access_denied");
     url.searchParams.set("error_description", "merchant denied authorization");
     if (ctx.state) url.searchParams.set("state", ctx.state);
+    await deletePendingOauth(session.shop);
     const headers = new Headers();
     headers.append("set-cookie", clearCookie);
     return json({ redirect_url: url.toString() }, { headers });
@@ -112,6 +136,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const url = new URL(ctx.redirect_uri);
   url.searchParams.set("code", code);
   if (ctx.state) url.searchParams.set("state", ctx.state);
+  await deletePendingOauth(session.shop);
   const headers = new Headers();
   headers.append("set-cookie", clearCookie);
   return json({ redirect_url: url.toString() }, { headers });
