@@ -11,7 +11,7 @@ vi.mock("../../lib/mcp_tokens.server", () => ({
 }));
 
 import { consumeAuthCode, getClient } from "../../lib/mcp_oauth.server";
-import { mintAccessToken } from "../../lib/mcp_tokens.server";
+import { mintAccessToken, rotateRefreshToken } from "../../lib/mcp_tokens.server";
 import { action } from "../oauth.token";
 
 beforeEach(() => {
@@ -129,5 +129,57 @@ describe("/oauth/token POST (authorization_code)", () => {
     expect(r.status).toBe(400);
     const j = await r.json();
     expect(j.error).toBe("invalid_grant");
+  });
+});
+
+describe("/oauth/token POST (refresh_token)", () => {
+  beforeEach(() => {
+    process.env.MCP_OAUTH_ENABLED = "true";
+    (rotateRefreshToken as unknown as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  it("rotates refresh and returns new pair", async () => {
+    (rotateRefreshToken as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      access_token: "cala_new",
+      refresh_token: "calr_new",
+      expires_in: 7776000,
+      token_type: "Bearer",
+      scope: "read",
+    });
+    const r = await action({
+      request: form({
+        grant_type: "refresh_token",
+        refresh_token: "calr_old",
+        client_id: "cal_client_x",
+      }),
+    } as never);
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.access_token).toBe("cala_new");
+    expect(j.refresh_token).toBe("calr_new");
+  });
+
+  it("400 invalid_grant on rotation failure", async () => {
+    const err = Object.assign(new Error("revoked"), { code: "invalid_grant" });
+    (rotateRefreshToken as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+    const r = await action({
+      request: form({
+        grant_type: "refresh_token",
+        refresh_token: "x",
+        client_id: "c",
+      }),
+    } as never);
+    expect(r.status).toBe(400);
+    const j = await r.json();
+    expect(j.error).toBe("invalid_grant");
+  });
+
+  it("400 invalid_request on missing refresh_token", async () => {
+    const r = await action({
+      request: form({ grant_type: "refresh_token", client_id: "c" }),
+    } as never);
+    expect(r.status).toBe(400);
+    const j = await r.json();
+    expect(j.error).toBe("invalid_request");
   });
 });
