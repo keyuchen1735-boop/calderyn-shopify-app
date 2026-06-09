@@ -1,7 +1,11 @@
 // app/routes/__tests__/oauth-consent.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as McpOauth from "../../lib/mcp_oauth.server";
-import { signConsentAuth, getClient } from "../../lib/mcp_oauth.server";
+import {
+  signConsentAuth,
+  getClient,
+  getPendingOauth,
+} from "../../lib/mcp_oauth.server";
 
 // /oauth/consent verifies a signed _auth JWT bound to a shop, then reads the
 // pending_oauth row keyed by that shop. No authenticate.admin in this route.
@@ -22,8 +26,6 @@ vi.mock("../../lib/supabase.server", () => ({
 
 // eslint-disable-next-line import/first
 import { resolveShopId } from "../../lib/supabase.server";
-// eslint-disable-next-line import/first
-import { getPendingOauth } from "../../lib/mcp_oauth.server";
 // eslint-disable-next-line import/first
 import { loader, action } from "../oauth.consent";
 
