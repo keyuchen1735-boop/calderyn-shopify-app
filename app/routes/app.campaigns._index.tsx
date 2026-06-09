@@ -65,11 +65,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
+    // Ingested campaigns from v_campaigns_flat cover EVERY connected platform
+    // (Meta, Google, TikTok). When Meta is live-connected, its rows are replaced
+    // by the live API list (works pre-ingest, fresher status); other platforms
+    // always come from the ingested view.
+    const ingested = await client.campaigns.list(request.signal);
     const meta = await metaClientForShop(session.shop);
     let campaigns: Campaign[];
     if (meta) {
       const live = await listCampaigns(meta.client, meta.adAccountId);
-      campaigns = live.map((c) => ({
+      const liveMeta = live.map((c) => ({
         id: c.id,
         name: c.name,
         platform: "Meta" as const,
@@ -79,8 +84,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         contribution_margin: 0,
         spend_7d: 0,
       }));
+      campaigns = [...liveMeta, ...ingested.filter((c) => c.platform !== "Meta")];
     } else {
-      campaigns = await client.campaigns.list(request.signal);
+      campaigns = ingested;
     }
     const alerts = await client.alerts.list({}, request.signal);
     return json<LoaderPayload>({ campaigns, alerts, error: null });
@@ -148,15 +154,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
   }
 
-  // Preferred path: if this Meta campaign has been ingested into ad_campaign_dim,
-  // run the action through the orchestrator (idempotency + cross-tenant ownership
-  // guard + single audit row live there). resolveCampaignDimId maps the posted Meta
-  // external id → dim UUID; null means "not ingested yet" → fall through to the
-  // legacy direct-Meta path below.
-  if (platform === "Meta") {
+  // Preferred path: run the action through the orchestrator (idempotency +
+  // cross-tenant ownership guard + single audit row live there). Meta rows post
+  // the platform external id (live API list) — resolveCampaignDimId maps it to
+  // the dim UUID; null means "not ingested yet" → fall through to the legacy
+  // direct-Meta path below. Non-Meta rows (Google, TikTok) come from
+  // v_campaigns_flat, so the posted id already IS the dim UUID.
+  {
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId = await resolveCampaignDimId(sb, shopId, "meta", campaignId);
+    const dimId =
+      platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
     if (dimId) {
       const orchestratedKind: ExecutableKind =
         intent === "pause"
@@ -390,7 +400,7 @@ export default function Campaigns() {
   return (
     <Page
       title="Campaigns"
-      subtitle="All ad campaigns synced from Meta and Google · pause, resume, or adjust budgets directly"
+      subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       <BlockStack gap="400">
@@ -588,6 +598,12 @@ function CampaignActionModal({
   );
 }
 
+const PLATFORM_DOT: Record<Campaign["platform"], string> = {
+  Meta: "var(--cdn-info)",
+  Google: "var(--cdn-warning)",
+  TikTok: "var(--cdn-attention)",
+};
+
 function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
   return (
     <InlineStack gap="100" blockAlign="center" wrap={false}>
@@ -597,7 +613,7 @@ function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
           height: 8,
           borderRadius: 9999,
           display: "inline-block",
-          background: platform === "Meta" ? "var(--cdn-info)" : "var(--cdn-warning)",
+          background: PLATFORM_DOT[platform] ?? "var(--cdn-subdued)",
         }}
       />
       <Text as="span" variant="bodySm">

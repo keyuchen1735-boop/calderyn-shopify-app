@@ -61,7 +61,7 @@ type CampaignDetail = {
    */
   metaExternalId: string | null;
   name: string;
-  platform: "Meta" | "Google";
+  platform: Campaign["platform"];
   status: "active" | "paused";
   performance: CampaignPerformance;
 };
@@ -92,7 +92,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const idFromUrl = String(params.campaignId ?? "");
   const url = new URL(request.url);
-  const platformParam = url.searchParams.get("platform") === "Google" ? "Google" : "Meta";
+  const rawPlatform = url.searchParams.get("platform");
+  const platformParam =
+    rawPlatform === "Google" ? "Google" : rawPlatform === "TikTok" ? "TikTok" : "Meta";
   const client = calderynClient(session.shop);
 
   if (!idFromUrl) {
@@ -119,7 +121,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (!campaign) {
       const sb = getSupabase();
       const shopId = await resolveShopId(session.shop);
-      const platform = platformParam === "Google" ? "google" : "meta";
+      const platform =
+        platformParam === "Google" ? "google" : platformParam === "TikTok" ? "tiktok" : "meta";
       const dimId = await resolveCampaignDimId(sb, shopId, platform, idFromUrl);
       if (dimId) {
         campaign = await getOrNull(client, dimId);

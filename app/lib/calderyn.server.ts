@@ -129,7 +129,7 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
   return {
     id: String(r.id),
     name: String(r.name),
-    platform: platform === "google" ? "Google" : "Meta",
+    platform: platform === "google" ? "Google" : platform === "tiktok" ? "TikTok" : "Meta",
     status: r.status === "paused" ? "paused" : "active",
     daily_budget_cents: Number(r.daily_budget_cents ?? 0),
     roas_7d: Number(r.roas_7d ?? 0),

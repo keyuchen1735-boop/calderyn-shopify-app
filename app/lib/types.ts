@@ -60,7 +60,7 @@ export interface AuditEntry {
 export interface Campaign {
   id: string;
   name: string;
-  platform: "Meta" | "Google";
+  platform: "Meta" | "Google" | "TikTok";
   status: "active" | "paused";
   daily_budget_cents: number;
   roas_7d: number;
