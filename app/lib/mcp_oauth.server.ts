@@ -51,3 +51,188 @@ export function newRefreshToken(): string {
 export function sha256hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3: OAuth data layer (Supabase CRUD)
+// ---------------------------------------------------------------------------
+
+import { getSupabase } from "./supabase.server";
+
+// ---------------------------------------------------------------------------
+// Shared helpers (non-exported)
+// ---------------------------------------------------------------------------
+
+function isHttpsUri(u: string): boolean {
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function err(code: string, message: string): Error {
+  const e = new Error(`${code}: ${message}`) as Error & { code: string };
+  e.code = code;
+  return e;
+}
+
+function invalidGrant(detail: string): Error {
+  return err("invalid_grant", detail);
+}
+
+// ---------------------------------------------------------------------------
+// 3.1 registerClient
+// ---------------------------------------------------------------------------
+
+export interface DcrRequest {
+  client_name: string;
+  redirect_uris: string[];
+  software_id?: string;
+  software_version?: string;
+}
+
+export interface DcrResponse {
+  client_id: string;
+  client_name: string;
+  redirect_uris: string[];
+  token_endpoint_auth_method: "none";
+}
+
+export async function registerClient(req: DcrRequest): Promise<DcrResponse> {
+  const name = (req.client_name ?? "").trim();
+  if (!name) throw err("INVALID_CLIENT_NAME", "client_name is required");
+  if (!Array.isArray(req.redirect_uris) || req.redirect_uris.length === 0) {
+    throw err("INVALID_REDIRECT_URI", "redirect_uris must be a non-empty array");
+  }
+  if (req.redirect_uris.length > 5) {
+    throw err("TOO_MANY_REDIRECT_URIS", "at most 5 redirect_uris allowed");
+  }
+  for (const u of req.redirect_uris) {
+    if (!isHttpsUri(u)) throw err("INVALID_REDIRECT_URI", `redirect_uri must be https: ${u}`);
+  }
+
+  const client_id = newClientId();
+  const { data, error } = await getSupabase()
+    .from("mcp_oauth_clients")
+    .insert({
+      client_id,
+      client_name: name,
+      redirect_uris: req.redirect_uris,
+      token_endpoint_auth_method: "none",
+      software_id: req.software_id ?? null,
+      software_version: req.software_version ?? null,
+    })
+    .select("client_id, client_name, redirect_uris, token_endpoint_auth_method")
+    .single();
+  if (error) throw error;
+  return data as DcrResponse;
+}
+
+// ---------------------------------------------------------------------------
+// 3.2 getClient
+// ---------------------------------------------------------------------------
+
+export interface OauthClientRow {
+  client_id: string;
+  client_name: string;
+  redirect_uris: string[];
+  token_endpoint_auth_method: string;
+}
+
+export async function getClient(clientId: string): Promise<OauthClientRow | null> {
+  const { data, error } = await getSupabase()
+    .from("mcp_oauth_clients")
+    .select("client_id, client_name, redirect_uris, token_endpoint_auth_method")
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as OauthClientRow | null) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// 3.3 issueAuthCode
+// ---------------------------------------------------------------------------
+
+export interface IssueCodeReq {
+  client_id: string;
+  shop_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scopes: string[];
+  state: string;
+}
+
+const CODE_TTL_SEC = 60;
+
+export async function issueAuthCode(req: IssueCodeReq): Promise<string> {
+  const raw = newAuthCode();
+  const code_hash = sha256hex(raw);
+  const expires_at = new Date(Date.now() + CODE_TTL_SEC * 1000).toISOString();
+  const state_hint = req.state.slice(-8);
+  const { error } = await getSupabase().from("mcp_oauth_codes").insert({
+    code_hash,
+    client_id: req.client_id,
+    shop_id: req.shop_id,
+    redirect_uri: req.redirect_uri,
+    code_challenge: req.code_challenge,
+    scopes: req.scopes,
+    state_hint,
+    expires_at,
+  });
+  if (error) throw error;
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
+// 3.4 consumeAuthCode
+// ---------------------------------------------------------------------------
+
+export interface ConsumeCodeReq {
+  raw_code: string;
+  code_verifier: string;
+  redirect_uri: string;
+  client_id: string;
+}
+
+export interface ConsumedContext {
+  shop_id: string;
+  scopes: string[];
+}
+
+export async function consumeAuthCode(req: ConsumeCodeReq): Promise<ConsumedContext> {
+  const code_hash = sha256hex(req.raw_code);
+  const { data, error } = await getSupabase()
+    .from("mcp_oauth_codes")
+    .select("client_id, shop_id, redirect_uri, code_challenge, scopes, expires_at, consumed_at")
+    .eq("code_hash", code_hash)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw invalidGrant("code not found");
+  if ((data as { consumed_at: unknown }).consumed_at) throw invalidGrant("code already used");
+  if (new Date((data as { expires_at: string }).expires_at).getTime() < Date.now()) {
+    throw invalidGrant("code expired");
+  }
+  if ((data as { client_id: string }).client_id !== req.client_id)
+    throw invalidGrant("client_id mismatch");
+  if ((data as { redirect_uri: string }).redirect_uri !== req.redirect_uri)
+    throw invalidGrant("redirect_uri mismatch");
+  if (!verifyPkce(req.code_verifier, (data as { code_challenge: string }).code_challenge)) {
+    throw invalidGrant("PKCE mismatch");
+  }
+
+  // Atomically claim the code. Only succeeds if consumed_at is still null.
+  const { data: updated, error: uerr } = await getSupabase()
+    .from("mcp_oauth_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("code_hash", code_hash)
+    .is("consumed_at", null)
+    .select("code_hash");
+  if (uerr) throw uerr;
+  if (!Array.isArray(updated) || updated.length === 0) throw invalidGrant("code race lost");
+
+  return {
+    shop_id: (data as { shop_id: string }).shop_id,
+    scopes: (data as { scopes: string[] }).scopes,
+  };
+}
