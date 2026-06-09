@@ -22,8 +22,8 @@ manually), and Calderyn returns:
 - **generated improved variations** (copy, image, video) produced through an
   anti-slop loop that re-scores every variant and only surfaces improvements.
 
-The architecture mirrors the existing `app/lib/simulator/` module (the proven
-"predict before it happens" pattern in this repo): a Claude forced-tool scorer,
+The architecture follows the repo's proven "predict before it happens"
+pattern: a Claude forced-tool scorer,
 a **deterministic** calibration layer grounded in real account data, a
 dependency-injected orchestrator, and a persisted run table.
 
@@ -76,22 +76,23 @@ dependency-injected orchestrator, and a persisted run table.
 
 ## 5. Architecture — `app/lib/screener/`
 
-Mirrors `app/lib/simulator/` for convention (repo rule 11) and testability.
+Follows the repo's standard `app/lib/` module layout (repo rule 11) for
+convention and testability.
 
 | File | Responsibility |
 |---|---|
 | `types.ts` | DTOs: `CreativeScreenRun`, `ScoreCard`, `MetricScore`, `MetricGroup`, `PredictedOutcomes`, `Tip`, `Variant`, `GenerationMode`, status enums, min/max constants. No raw DB rows leak. |
-| `score.server.ts` | Claude **forced-tool** call (pattern: `simulate.server.ts`'s `REPORT_TOOL`). Emits per-dimension 0–100 score + reasoning string. Vision input = the creative image; text input = copy + targeting + brand context + the merchant's top-3 historical ads as style references. Injectable `CreateMessageFn`. |
+| `score.server.ts` | Claude **forced-tool** call (`REPORT_TOOL`). Emits per-dimension 0–100 score + reasoning string. Vision input = the creative image; text input = copy + targeting + brand context + the merchant's top-3 historical ads as style references. Injectable `CreateMessageFn`. |
 | `calibrate.server.ts` | **Deterministic.** Maps dimension scores → CTR/engagement multipliers; combines with account history + SKU price → `PredictedOutcomes` (incl. Estimated ROAS); computes composite score + predicted grade + confidence. No model calls. |
 | `history.server.ts` | Reads the calibration inputs from Supabase: account CTR/engagement baselines (`ad_engagement_fact`, `ad_spend_fact`), `campaign_grade_fact` (`roas`, `break_even_roas`), top-N historical ads, and the mapped SKU's price (`sku_dim.price_cents` / `v_skus_flat`) + CVR (`order_fact` / `attribution_fact`). |
 | `generate.server.ts` | `CreativeGenerator` adapter interface + the **re-score gate** orchestration (brief → generate → re-score → keep winners). Copy generator (native Claude) implemented; image/video generators are provider-backed (§11). |
 | `brief.server.ts` | Claude turns scored flaws into a structured, diff-like **edit brief** (KEEP / CHANGE constraints) used by the generators. |
 | `meta-creative.server.ts` | New Meta read path: list draft/paused ads + fetch a creative's image/copy/targeting; push a variant as a paused draft. Built on existing `metaClientForShop` + `client.server.ts`. |
-| `runs.server.ts` | Persist runs to `creative_screen_run` (pattern: simulator `runs.server.ts` — `startRun`/`completeRun`/`failRun`/`getLatestRun`/`listRuns`). |
-| `orchestrate.server.ts` | DI wiring (pattern: simulator `orchestrate.server.ts`): source → score → calibrate → persist, with the same in-app error-DTO behavior on failure. |
+| `runs.server.ts` | Persist runs to `creative_screen_run` (`startRun`/`completeRun`/`failRun`/`getLatestRun`/`listRuns`). |
+| `orchestrate.server.ts` | DI wiring: source → score → calibrate → persist, with in-app error-DTO behavior on failure. |
 
 Route: `app/routes/app.screener.tsx` (loader = history + latest run; action = run
-screen / generate variations / push to Meta). Mirrors `app.simulator.tsx`.
+screen / generate variations / push to Meta).
 
 ## 6. Scoring model — metrics
 
@@ -189,15 +190,15 @@ human approval before any live action.
 ## 10. Data model
 
 New **Supabase** table `creative_screen_run` (timestamped SQL migration in
-`supabase/migrations/`, mirrored in `tests/engine/schema/migrations/` — the same
-mechanism used for `simulation_run`; **not** Prisma, which only backs Shopify
+`supabase/migrations/`, mirrored in `tests/engine/schema/migrations/`; **not**
+Prisma, which only backs Shopify
 session storage):
 
 | Column | Notes |
 |---|---|
 | `id` | pk |
 | `shop_id` | fk → shops |
-| `status` | `running` / `done` / `error` (matches simulator) |
+| `status` | `running` / `done` / `error` |
 | `source` | `meta_ad` / `manual` |
 | `meta_ad_id` | nullable |
 | `mapped_sku_id` | nullable (cold-start) |
@@ -207,8 +208,8 @@ session storage):
 | `error` | nullable |
 | `created_at` / `completed_at` | timestamps |
 
-Plus a `v_creative_screen_runs` view for list queries (mirrors
-`v_simulation_runs`). DTOs are shaped in `types.ts`; raw rows never leak.
+Plus a `v_creative_screen_runs` view for list queries. DTOs are shaped in
+`types.ts`; raw rows never leak.
 
 ## 11. External generation provider (higgsfield) integration
 
@@ -226,8 +227,7 @@ Plus a `v_creative_screen_runs` view for list queries (mirrors
 
 ## 12. Error handling & failure visibility (rule 12)
 
-- Orchestrator catches and returns an in-app error DTO (banner), not a crash
-  (pattern: simulator).
+- Orchestrator catches and returns an in-app error DTO (banner), not a crash.
 - Missing `ANTHROPIC_API_KEY`, Meta auth failure, unmapped SKU, provider
   unavailable, and re-score rejections are each surfaced explicitly.
 - Discarded variants are counted and shown ("3 variants generated, 1 beat the
