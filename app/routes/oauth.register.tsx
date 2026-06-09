@@ -6,6 +6,8 @@ const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+  // TODO(post-ship): add per-IP rate limit (10/hr) via Vercel KV before public launch.
+  //   See docs/superpowers/specs/2026-06-08-claude-connector-oauth-design.md §8.3.
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
   let body: unknown;
