@@ -1,4 +1,5 @@
 // app/routes/oauth.consent.tsx
+import { useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
@@ -14,7 +15,7 @@ import { authenticate } from "../shopify.server";
 // UI
 // ---------------------------------------------------------------------------
 
-import { Form, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   AppProvider as PolarisAppProvider,
   Banner,
@@ -78,19 +79,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
-  const clearCookie = `${PENDING_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+  // SameSite=None to match the issue-time cookie. Browsers reject Set-Cookie
+  // with mismatched SameSite when invalidating the same name.
+  const clearCookie = `${PENDING_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+
+  // Return JSON (not 302) so the client-side fetcher can navigate the TOP
+  // window (the popup) — a server 302 only navigates the iframe, and Claude.ai's
+  // callback page expects to load in the popup with window.opener set.
 
   if (intent === "deny") {
     const url = new URL(ctx.redirect_uri);
     url.searchParams.set("error", "access_denied");
     url.searchParams.set("error_description", "merchant denied authorization");
     if (ctx.state) url.searchParams.set("state", ctx.state);
-    const headers = new Headers({ location: url.toString() });
+    const headers = new Headers();
     headers.append("set-cookie", clearCookie);
-    return new Response(null, { status: 302, headers });
+    return json({ redirect_url: url.toString() }, { headers });
   }
 
-  if (intent !== "allow") return new Response("invalid_intent", { status: 400 });
+  if (intent !== "allow") return json({ error: "invalid_intent" }, { status: 400 });
 
   const shop_id = await resolveShopId(session.shop);
   const code = await issueAuthCode({
@@ -105,9 +112,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const url = new URL(ctx.redirect_uri);
   url.searchParams.set("code", code);
   if (ctx.state) url.searchParams.set("state", ctx.state);
-  const headers = new Headers({ location: url.toString() });
+  const headers = new Headers();
   headers.append("set-cookie", clearCookie);
-  return new Response(null, { status: 302, headers });
+  return json({ redirect_url: url.toString() }, { headers });
 };
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
@@ -118,6 +125,29 @@ export default function Consent() {
     shop: string;
     scopes: string[];
   };
+  const fetcher = useFetcher<{ redirect_url?: string; error?: string }>();
+  const submitting = fetcher.state !== "idle";
+
+  // The action returns JSON with redirect_url. We must navigate the TOP window
+  // (not the iframe) so Claude.ai's callback page loads in the popup with a
+  // valid window.opener.
+  useEffect(() => {
+    const url = fetcher.data?.redirect_url;
+    if (!url) return;
+    try {
+      if (typeof window !== "undefined" && window.top) {
+        window.top.location.href = url;
+        return;
+      }
+    } catch {
+      // top-window navigation may be blocked; fall through to same-window.
+    }
+    window.location.href = url;
+  }, [fetcher.data]);
+
+  const submit = (intent: "allow" | "deny") =>
+    fetcher.submit({ intent }, { method: "post", action: "/oauth/consent" });
+
   return (
     <PolarisAppProvider i18n={polarisTranslations}>
       <Page title={`Connect ${client_name} to Calderyn`}>
@@ -138,30 +168,23 @@ export default function Consent() {
                 You can disconnect this at any time from <b>Settings &rarr; Claude connections</b>.
               </p>
             </Banner>
-            <Form method="post">
-              <input type="hidden" name="intent" value="allow" id="intent-allow" />
-              <ButtonGroup>
-                <Button
-                  submit
-                  variant="primary"
-                  onClick={() => {
-                    const el = document.getElementById("intent-allow") as HTMLInputElement | null;
-                    if (el) el.value = "allow";
-                  }}
-                >
-                  Allow
-                </Button>
-                <Button
-                  submit
-                  onClick={() => {
-                    const el = document.getElementById("intent-allow") as HTMLInputElement | null;
-                    if (el) el.value = "deny";
-                  }}
-                >
-                  Deny
-                </Button>
-              </ButtonGroup>
-            </Form>
+            <ButtonGroup>
+              <Button
+                variant="primary"
+                onClick={() => submit("allow")}
+                loading={submitting}
+                disabled={submitting}
+              >
+                Allow
+              </Button>
+              <Button
+                onClick={() => submit("deny")}
+                loading={submitting}
+                disabled={submitting}
+              >
+                Deny
+              </Button>
+            </ButtonGroup>
           </BlockStack>
         </Card>
       </Page>

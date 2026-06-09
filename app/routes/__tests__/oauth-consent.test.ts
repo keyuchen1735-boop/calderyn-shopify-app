@@ -133,7 +133,7 @@ describe("/oauth/consent action", () => {
     process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
   });
 
-  it("Allow mints code, clears cookie, 302s to redirect_uri with code+state", async () => {
+  it("Allow mints code and returns JSON redirect_url so UI navigates window.top", async () => {
     const jwt = await signPendingOauth({
       client_id: "cal_client_x",
       redirect_uri: "https://claude.ai/cb",
@@ -156,15 +156,18 @@ describe("/oauth/consent action", () => {
         body: form,
       }),
     } as never);
-    expect(r.status).toBe(302);
-    const loc = r.headers.get("location") ?? "";
-    expect(loc).toMatch(/^https:\/\/claude\.ai\/cb\?/);
-    expect(loc).toContain("code=calc_test_code");
-    expect(loc).toContain("state=abc");
-    expect(r.headers.get("set-cookie") ?? "").toContain(`${PENDING_COOKIE_NAME}=;`);
+    expect(r.status).toBe(200);
+    const j = (await r.json()) as { redirect_url?: string };
+    expect(j.redirect_url ?? "").toMatch(/^https:\/\/claude\.ai\/cb\?/);
+    expect(j.redirect_url ?? "").toContain("code=calc_test_code");
+    expect(j.redirect_url ?? "").toContain("state=abc");
+    const setCookie = r.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(`${PENDING_COOKIE_NAME}=;`);
+    // Clear cookie must use SameSite=None to match the issue-time attribute.
+    expect(setCookie).toContain("SameSite=None");
   });
 
-  it("Deny redirects with error=access_denied", async () => {
+  it("Deny returns JSON redirect_url with error=access_denied", async () => {
     const jwt = await signPendingOauth({
       client_id: "cal_client_x",
       redirect_uri: "https://claude.ai/cb",
@@ -186,10 +189,10 @@ describe("/oauth/consent action", () => {
         body: form,
       }),
     } as never);
-    expect(r.status).toBe(302);
-    const loc = r.headers.get("location") ?? "";
-    expect(loc).toContain("error=access_denied");
-    expect(loc).toContain("state=abc");
+    expect(r.status).toBe(200);
+    const j = (await r.json()) as { redirect_url?: string };
+    expect(j.redirect_url ?? "").toContain("error=access_denied");
+    expect(j.redirect_url ?? "").toContain("state=abc");
     expect(r.headers.get("set-cookie") ?? "").toContain(`${PENDING_COOKIE_NAME}=;`);
   });
 });
