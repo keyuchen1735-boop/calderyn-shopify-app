@@ -20,5 +20,8 @@ export const fmtRelTime = (iso: string) => {
 export const fmtAbsTime = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
 
+export const shortId = (id: string) =>
+  id.length > 13 ? `${id.slice(0, 8)}…` : id;
+
 export const newId = (prefix: string) =>
   prefix + "_" + Math.random().toString(36).substring(2, 14).toUpperCase();
