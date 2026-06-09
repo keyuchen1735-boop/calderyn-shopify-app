@@ -23,7 +23,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
-import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
+import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
 import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
@@ -134,7 +134,7 @@ export default function Audit() {
     .reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
 
   const rows = audit.map((a) => [
-    <Box key={`t-${a.id}`}>
+    <Box key={`t-${a.id}`} minWidth="150px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
         {fmtRelTime(a.created_at)}
       </Text>
@@ -142,23 +142,29 @@ export default function Audit() {
         {fmtAbsTime(a.created_at)}
       </Text>
     </Box>,
-    <Box key={`a-${a.id}`}>
+    <Box key={`a-${a.id}`} minWidth="170px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
-        {ACTION_LABELS[a.action_kind]}
+        {ACTION_LABELS[a.action_kind] ?? a.action_kind}
       </Text>
       {a.undo_of && (
         <Text as="p" variant="bodySm" tone="subdued">
-          undo of {a.undo_of}
+          undo of {shortId(a.undo_of)}
         </Text>
       )}
     </Box>,
-    a.target,
+    <Tooltip key={`tg-${a.id}`} content={a.target}>
+      <Text as="span" variant="bodySm">
+        {shortId(a.target)}
+      </Text>
+    </Tooltip>,
     DETECTOR_LABELS[a.detector_id] ? (
       <Tooltip key={`d-${a.id}`} content={DETECTOR_TERMS[a.detector_id]}>
         <Badge>{DETECTOR_LABELS[a.detector_id]}</Badge>
       </Tooltip>
     ) : (
-      <Badge key={`d-${a.id}`}>—</Badge>
+      <Text key={`d-${a.id}`} as="span" tone="subdued">
+        —
+      </Text>
     ),
     <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
       {a.actor}
