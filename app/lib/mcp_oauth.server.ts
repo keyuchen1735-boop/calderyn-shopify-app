@@ -3,6 +3,8 @@
 // PKCE math + token/code generators here; CRUD helpers in later phases.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { SignJWT, jwtVerify } from "jose";
+import { getSupabase } from "./supabase.server";
 
 const BASE32_ALPHA = "abcdefghijklmnopqrstuvwxyz234567";
 
@@ -55,8 +57,6 @@ export function sha256hex(input: string): string {
 // ---------------------------------------------------------------------------
 // Phase 3: OAuth data layer (Supabase CRUD)
 // ---------------------------------------------------------------------------
-
-import { getSupabase } from "./supabase.server";
 
 // ---------------------------------------------------------------------------
 // Shared helpers (non-exported)
@@ -187,8 +187,6 @@ export async function issueAuthCode(req: IssueCodeReq): Promise<string> {
 // ---------------------------------------------------------------------------
 // Phase 8: Pending-OAuth JWT cookie helpers (HS256, 10-min TTL)
 // ---------------------------------------------------------------------------
-
-import { SignJWT, jwtVerify } from "jose";
 
 export interface PendingOauthCtx {
   client_id: string;

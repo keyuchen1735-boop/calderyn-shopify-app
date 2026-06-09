@@ -1,6 +1,19 @@
 // app/routes/oauth.authorize.tsx
+import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import { Form, useLoaderData } from "@remix-run/react";
+import {
+  AppProvider as PolarisAppProvider,
+  Button,
+  Card,
+  FormLayout,
+  Page,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import polarisTranslations from "@shopify/polaris/locales/en.json";
 import {
   getClient,
   signPendingOauth,
@@ -153,3 +166,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   headers.set("location", `/auth/login?shop=${encodeURIComponent(params.shop)}`);
   return new Response(null, { status: 302, headers });
 };
+
+export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+
+type PickShopData = {
+  phase: "pick-shop";
+  client_name: string;
+  client_id: string;
+  response_type: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  scope: string;
+  state: string;
+};
+
+const HIDDEN_FIELDS: Array<keyof PickShopData> = [
+  "response_type",
+  "client_id",
+  "redirect_uri",
+  "code_challenge",
+  "code_challenge_method",
+  "scope",
+  "state",
+];
+
+export default function AuthorizePickShop() {
+  const data = useLoaderData<typeof loader>() as PickShopData;
+  const [shop, setShop] = useState("");
+  return (
+    <PolarisAppProvider i18n={polarisTranslations}>
+      <Page title="Connect Claude.ai">
+        <Card>
+          <Form method="post">
+            <FormLayout>
+              <Text variant="bodyMd" as="p">
+                <b>{data.client_name}</b> is asking to connect to your Calderyn data. Enter your shop
+                domain to sign in and approve.
+              </Text>
+              <TextField
+                type="text"
+                name="shop"
+                label="Shop domain"
+                helpText="example.myshopify.com"
+                value={shop}
+                onChange={setShop}
+                autoComplete="on"
+              />
+              {HIDDEN_FIELDS.map((k) => (
+                <input key={k} type="hidden" name={k} value={data[k] ?? ""} />
+              ))}
+              <Button submit>Continue</Button>
+            </FormLayout>
+          </Form>
+        </Card>
+      </Page>
+    </PolarisAppProvider>
+  );
+}

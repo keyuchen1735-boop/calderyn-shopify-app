@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import("../../lib/mcp_oauth.server")>();
   return {
     ...actual,
@@ -9,7 +10,9 @@ vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   };
 });
 
+// eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { getClient } from "../../lib/mcp_oauth.server";
+// eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { loader, action } from "../oauth.authorize";
 
 const VALID_PARAMS: Record<string, string> = {
