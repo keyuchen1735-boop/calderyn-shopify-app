@@ -7,6 +7,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "./supabase.server";
 
+// ---------------------------------------------------------------------------
+// Phase 4: OAuth-specific token operations
+// ---------------------------------------------------------------------------
+
+import { newAccessToken, newRefreshToken } from "./mcp_oauth.server";
+
 export interface McpTokenRow {
   id: string;
   shop_id: string;
@@ -104,6 +110,154 @@ export async function revokeMcpToken(opts: {
     .update({ revoked_at: new Date().toISOString() })
     .eq("shop_id", shopId)
     .eq("id", opts.tokenId)
+    .is("revoked_at", null);
+  if (error) throw error;
+}
+
+export interface MintAccessTokenReq {
+  client_id: string;
+  client_name: string;
+  shop_id: string;
+  scopes: string[];
+}
+
+export interface MintAccessTokenResult {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: "Bearer";
+  scope: string;
+}
+
+const ACCESS_TTL_SEC = 60 * 60 * 24 * 90; // 90d
+
+export async function mintAccessToken(req: MintAccessTokenReq): Promise<MintAccessTokenResult> {
+  const access_token = newAccessToken();
+  const refresh_token = newRefreshToken();
+  const token_hash = hashToken(access_token);
+  const refresh_hash = hashToken(refresh_token);
+  const expires_at = new Date(Date.now() + ACCESS_TTL_SEC * 1000).toISOString();
+  const prefix = access_token.slice(0, 9); // "cala_" + first 4 body chars
+
+  const { error } = await getSupabase()
+    .from("mcp_tokens")
+    .insert({
+      shop_id: req.shop_id,
+      name: `${req.client_name} (${req.client_id.slice(-8)})`,
+      token_hash,
+      token_prefix: prefix,
+      scopes: req.scopes,
+      auth_type: "oauth",
+      client_id: req.client_id,
+      expires_at,
+      refresh_hash,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  return {
+    access_token,
+    refresh_token,
+    expires_in: ACCESS_TTL_SEC,
+    token_type: "Bearer",
+    scope: req.scopes.join(" "),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4.2 rotateRefreshToken
+// ---------------------------------------------------------------------------
+
+export interface RotateRefreshReq {
+  refresh_token: string;
+  client_id: string;
+}
+
+function invalidGrantTokens(detail: string): Error {
+  const e = new Error(`invalid_grant: ${detail}`) as Error & { code: string };
+  e.code = "invalid_grant";
+  return e;
+}
+
+export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAccessTokenResult> {
+  const old_refresh_hash = hashToken(req.refresh_token);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .select("id, shop_id, client_id, scopes, revoked_at")
+    .eq("refresh_hash", old_refresh_hash)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw invalidGrantTokens("unknown refresh_token");
+  const row = data as { id: string; shop_id: string; client_id: string | null; scopes: string[]; revoked_at: string | null };
+  if (row.client_id !== req.client_id) throw invalidGrantTokens("client_id mismatch");
+  if (row.revoked_at) throw invalidGrantTokens("revoked");
+
+  const new_access = newAccessToken();
+  const new_refresh = newRefreshToken();
+  const new_token_hash = hashToken(new_access);
+  const new_refresh_hash = hashToken(new_refresh);
+  const new_expires_at = new Date(Date.now() + ACCESS_TTL_SEC * 1000).toISOString();
+  const new_prefix = new_access.slice(0, 9);
+
+  const { data: updated, error: uerr } = await getSupabase()
+    .from("mcp_tokens")
+    .update({
+      token_hash: new_token_hash,
+      refresh_hash: new_refresh_hash,
+      token_prefix: new_prefix,
+      expires_at: new_expires_at,
+    })
+    .eq("id", row.id)
+    .eq("refresh_hash", old_refresh_hash)
+    .select("id");
+  if (uerr) throw uerr;
+  if (!Array.isArray(updated) || updated.length === 0) throw invalidGrantTokens("concurrent rotation");
+
+  return {
+    access_token: new_access,
+    refresh_token: new_refresh,
+    expires_in: ACCESS_TTL_SEC,
+    token_type: "Bearer",
+    scope: row.scopes.join(" "),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4.3 listOauthGrants + revokeOauthGrant
+// ---------------------------------------------------------------------------
+
+export interface OauthGrantRow {
+  id: string;
+  name: string;
+  client_id: string | null;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export async function listOauthGrants(shopDomain: string): Promise<OauthGrantRow[]> {
+  const shopId = await resolveShopId(shopDomain);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .select("id, name, client_id, scopes, created_at, last_used_at, expires_at")
+    .eq("shop_id", shopId)
+    .eq("auth_type", "oauth")
+    .is("revoked_at", null)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as OauthGrantRow[];
+}
+
+export async function revokeOauthGrant(opts: { shopDomain: string; tokenId: string }): Promise<void> {
+  const shopId = await resolveShopId(opts.shopDomain);
+  const { error } = await getSupabase()
+    .from("mcp_tokens")
+    .update({ revoked_at: new Date().toISOString(), refresh_hash: null })
+    .eq("shop_id", shopId)
+    .eq("id", opts.tokenId)
+    .eq("auth_type", "oauth")
     .is("revoked_at", null);
   if (error) throw error;
 }

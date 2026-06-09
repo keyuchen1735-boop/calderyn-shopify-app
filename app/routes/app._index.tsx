@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Form, useLoaderData, useNavigate } from "@remix-run/react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import {
   Banner,
   BlockStack,
@@ -16,6 +16,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import { PENDING_COOKIE_NAME, verifyPendingOauth } from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
@@ -38,6 +39,24 @@ type LoaderPayload = {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+
+  // Pending-OAuth handoff: if a Claude.ai connector flow stashed a JWT cookie
+  // before sending the merchant through Shopify auth, and the resolved session
+  // matches the shop bound in that cookie, jump them to /oauth/consent instead
+  // of rendering the dashboard.
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const m = cookieHeader.match(new RegExp(`${PENDING_COOKIE_NAME}=([^;]+)`));
+  if (m) {
+    try {
+      const ctx = await verifyPendingOauth(m[1]);
+      if (ctx.shop === session.shop) {
+        return redirect("/oauth/consent");
+      }
+    } catch {
+      // expired / tampered / wrong shop — fall through to normal dashboard load
+    }
+  }
+
   const client = calderynClient(session.shop);
   try {
     const [alerts, audit, campaigns, guardrails, onboarding] = await Promise.all([
