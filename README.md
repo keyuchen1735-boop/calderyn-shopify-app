@@ -127,10 +127,41 @@ shopify-app/
 
 ## MCP server
 
-External agents (Claude.ai connectors, custom agents) can query this shop's
-read-only calderyn state — alerts, audit log, campaigns, SKUs, guardrails,
-integrations — via the hosted [`calderyn-mcp`](../calderyn-mcp) server at
-`https://calderyn-mcp.vercel.app/mcp`. Merchants mint per-shop bearer tokens at
-`/app/mcp` in this admin and paste them into any MCP client. See
-`docs/adr/0001-mcp-server-split.md` for the split rationale and
-`docs/superpowers/specs/2026-05-25-mcp-server-design.md` for the full design.
+External agents can query this shop's read-only calderyn state — alerts, audit
+log, campaigns, SKUs, guardrails, integrations — via the hosted
+[`calderyn-mcp`](../calderyn-mcp) server at `https://calderyn-mcp.vercel.app/mcp`.
+
+There are two ways to connect, depending on the client:
+
+### Claude.ai (web) — OAuth, recommended
+
+No token to paste. Requires a Claude Pro/Team/Max/Enterprise plan.
+
+1. Claude.ai → **Settings → Connectors → Add custom connector**.
+2. Name `Calderyn`, URL `https://calderyn-mcp.vercel.app/mcp`, **Add**.
+3. Click **Connect** → a tab opens to `app.calderyncompany.com`. If prompted,
+   enter `your-store.myshopify.com` and sign in through Shopify.
+4. On **"Connect Claude.ai to {shop}"**, click **Allow**. Done.
+
+The OAuth authorization server lives in this app (`/oauth/authorize`,
+`/oauth/consent`, `/oauth/token`, `/oauth/register` + `/.well-known/oauth-authorization-server`);
+`calderyn-mcp` is the resource server (validates the issued `cala_*` access
+token and serves `/.well-known/oauth-protected-resource`). PKCE, public client,
+refresh-token rotation.
+
+### Claude Code / Desktop / custom clients — bearer token
+
+For clients that don't speak OAuth. Mint a per-shop `mcp_live_*` token at
+**Claude connections** (`/app/mcp`) → *Connect via bearer token*, then:
+
+```bash
+claude mcp add --scope user --transport http calderyn https://calderyn-mcp.vercel.app/mcp \
+  --header "Authorization: Bearer mcp_live_YOUR_TOKEN_HERE"
+```
+
+Manage or disconnect either kind from the **Claude connections** page.
+
+**More:** [`CONNECT_MCP.md`](CONNECT_MCP.md) (step-by-step),
+`docs/adr/0001-mcp-server-split.md` (split rationale),
+`docs/adr/0002-mcp-oauth-2-1.md` (OAuth decisions),
+`docs/superpowers/specs/2026-06-08-claude-connector-oauth-design.md` (full OAuth design).
