@@ -21,18 +21,23 @@ import {
   createMcpToken,
   listMcpTokens,
   revokeMcpToken,
+  listOauthGrants,
+  revokeOauthGrant,
   type McpTokenRow,
+  type OauthGrantRow,
 } from "~/lib/mcp_tokens.server";
 import { useActionToast } from "~/lib/toast";
+import { McpConnectCards } from "~/components/McpConnectCards";
 
 type LoaderPayload = {
   tokens: McpTokenRow[];
+  oauthGrants: OauthGrantRow[];
   error: { code: string; message: string } | null;
 };
 
 type ActionPayload = {
   ok: boolean;
-  intent: "create" | "revoke" | "unknown";
+  intent: "create" | "revoke" | "oauth-revoke" | "unknown";
   rawToken?: string;
   rawTokenName?: string;
   toast?: { message: string; isError?: boolean };
@@ -42,12 +47,16 @@ type ActionPayload = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   try {
-    const tokens = await listMcpTokens(session.shop);
-    return json<LoaderPayload>({ tokens, error: null });
+    const [tokens, oauthGrants] = await Promise.all([
+      listMcpTokens(session.shop),
+      listOauthGrants(session.shop),
+    ]);
+    return json<LoaderPayload>({ tokens, oauthGrants, error: null });
   } catch (err) {
     const e = err as { code?: string; message?: string };
     return json<LoaderPayload>({
       tokens: [],
+      oauthGrants: [],
       error: { code: e.code ?? "ERROR", message: e.message ?? String(err) },
     });
   }
@@ -107,6 +116,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (intent === "oauth-revoke") {
+      const tokenId = String(formData.get("token_id") || "");
+      if (!tokenId) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            intent,
+            error: { code: "TOKEN_ID_REQUIRED", message: "token_id is required" },
+            toast: { message: "Missing token_id", isError: true },
+          },
+          { status: 400 },
+        );
+      }
+      await revokeOauthGrant({ shopDomain: session.shop, tokenId });
+      return json<ActionPayload>({
+        ok: true,
+        intent,
+        toast: { message: "Claude.ai workspace disconnected" },
+      });
+    }
+
     return json<ActionPayload>(
       {
         ok: false,
@@ -134,7 +164,7 @@ export default function McpTokens() {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
-  const { tokens, error } = useLoaderData<typeof loader>();
+  const { tokens, oauthGrants, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
 
@@ -186,15 +216,7 @@ export default function McpTokens() {
           </Banner>
         )}
 
-        <Banner tone="info" title="How to connect">
-          <p>
-            Generate a token below, then paste it into your MCP client (Claude.ai connector,
-            custom agent, etc.) as a bearer token. The server endpoint is{" "}
-            <code>https://calderyn-mcp.vercel.app/mcp</code>. Each token is scoped to this shop and
-            grants read-only access to your alerts, audit log, campaigns, SKUs, guardrails,
-            and integration status.
-          </p>
-        </Banner>
+        <McpConnectCards />
 
         <Layout>
           <Layout.Section>
@@ -216,6 +238,33 @@ export default function McpTokens() {
               )}
             </Card>
           </Layout.Section>
+          {oauthGrants.length > 0 && (
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">
+                    Connected Claude.ai workspaces
+                  </Text>
+                  <DataTable
+                    columnContentTypes={["text", "text", "text", "text"]}
+                    headings={["Name", "Connected", "Last used", ""]}
+                    rows={oauthGrants.map((g) => [
+                      g.name,
+                      new Date(g.created_at).toLocaleString(),
+                      g.last_used_at ? new Date(g.last_used_at).toLocaleString() : "—",
+                      <Form method="post" key={`oauth-revoke-${g.id}`}>
+                        <input type="hidden" name="intent" value="oauth-revoke" />
+                        <input type="hidden" name="token_id" value={g.id} />
+                        <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                          Disconnect
+                        </Button>
+                      </Form>,
+                    ])}
+                  />
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          )}
         </Layout>
       </BlockStack>
 
