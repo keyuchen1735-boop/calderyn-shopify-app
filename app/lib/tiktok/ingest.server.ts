@@ -18,6 +18,23 @@ function daysAgoISO(n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Store currency from the latest ingested order — merchants run ads in their
+ * store currency, so this beats a hardcoded USD when advertiser/info is
+ * unavailable (Ad Account Management scope not granted on Basic-tier apps).
+ */
+export async function shopCurrencyFallback(sb: SupabaseClient, shopId: string): Promise<string> {
+  const { data, error } = await sb
+    .from("order_fact")
+    .select("currency")
+    .eq("shop_id", shopId)
+    .order("created_at_source", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || typeof data?.currency !== "string") return "USD";
+  return data.currency;
+}
+
 export function makeTikTokSource(
   client: TikTokClient,
   advertiserId: string,
@@ -63,7 +80,9 @@ export const tiktokAdapter: AdPlatformAdapter = {
     const token = decrypt(data.access_token_encrypted as string);
     const tiktokClient = buildTikTokClient(token);
     const advertiserId = String(data.external_account_id);
-    const currency = await tiktokClient.getAdvertiserCurrency(advertiserId);
+    const currency =
+      (await tiktokClient.getAdvertiserCurrency(advertiserId)) ??
+      (await shopCurrencyFallback(sb, shopId));
     return makeTikTokSource(tiktokClient, advertiserId, shopId, currency);
   },
 };
