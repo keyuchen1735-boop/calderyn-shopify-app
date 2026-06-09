@@ -13,13 +13,17 @@ vi.mock("../../shopify.server", () => ({
   },
 }));
 
-// Mock getClient and issueAuthCode on top of the real module so signPendingOauth/verifyPendingOauth still work.
+// Mock getClient, issueAuthCode, and the pending-OAuth DB helpers on top of the
+// real module so signPendingOauth/verifyPendingOauth still work for the cookie
+// fallback path.
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   const actual = await importOriginal<typeof McpOauth>();
   return {
     ...actual,
     getClient: vi.fn(),
     issueAuthCode: vi.fn().mockResolvedValue("calc_test_code"),
+    getPendingOauth: vi.fn().mockResolvedValue(null),
+    deletePendingOauth: vi.fn().mockResolvedValue(undefined),
   };
 });
 

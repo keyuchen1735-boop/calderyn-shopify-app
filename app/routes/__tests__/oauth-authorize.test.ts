@@ -7,6 +7,7 @@ vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   return {
     ...actual,
     getClient: vi.fn(),
+    setPendingOauth: vi.fn().mockResolvedValue(undefined),
   };
 });
 
