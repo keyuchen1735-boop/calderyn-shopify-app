@@ -222,3 +222,42 @@ export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAcc
     scope: row.scopes.join(" "),
   };
 }
+
+// ---------------------------------------------------------------------------
+// 4.3 listOauthGrants + revokeOauthGrant
+// ---------------------------------------------------------------------------
+
+export interface OauthGrantRow {
+  id: string;
+  name: string;
+  client_id: string | null;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export async function listOauthGrants(shopDomain: string): Promise<OauthGrantRow[]> {
+  const shopId = await resolveShopId(shopDomain);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .select("id, name, client_id, scopes, created_at, last_used_at, expires_at")
+    .eq("shop_id", shopId)
+    .eq("auth_type", "oauth")
+    .is("revoked_at", null)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as OauthGrantRow[];
+}
+
+export async function revokeOauthGrant(opts: { shopDomain: string; tokenId: string }): Promise<void> {
+  const shopId = await resolveShopId(opts.shopDomain);
+  const { error } = await getSupabase()
+    .from("mcp_tokens")
+    .update({ revoked_at: new Date().toISOString(), refresh_hash: null })
+    .eq("shop_id", shopId)
+    .eq("id", opts.tokenId)
+    .eq("auth_type", "oauth")
+    .is("revoked_at", null);
+  if (error) throw error;
+}

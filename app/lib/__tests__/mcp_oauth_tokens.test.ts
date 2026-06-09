@@ -15,7 +15,7 @@ vi.mock("../supabase.server", () => ({
 
 process.env.MCP_TOKEN_PEPPER = "x".repeat(64);
 
-import { mintAccessToken, rotateRefreshToken } from "../mcp_tokens.server";
+import { mintAccessToken, rotateRefreshToken, listOauthGrants, revokeOauthGrant } from "../mcp_tokens.server";
 import { resolveShopId } from "../supabase.server";
 
 beforeEach(resetRecorded);
@@ -117,5 +117,66 @@ describe("rotateRefreshToken", () => {
       { data: [], error: null }, // race lost
     ]);
     await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4.3 listOauthGrants + revokeOauthGrant
+// ---------------------------------------------------------------------------
+
+describe("listOauthGrants", () => {
+  it("returns oauth rows for the shop", async () => {
+    setSupabaseResponse({
+      data: [
+        {
+          id: "g1",
+          name: "Claude (workspace 1)",
+          client_id: "cal_client_a",
+          scopes: ["read"],
+          created_at: "2026-06-08T00:00:00Z",
+          last_used_at: null,
+          expires_at: null,
+        },
+        {
+          id: "g2",
+          name: "Claude (workspace 2)",
+          client_id: "cal_client_b",
+          scopes: ["read"],
+          created_at: "2026-06-07T00:00:00Z",
+          last_used_at: "2026-06-08T01:00:00Z",
+          expires_at: null,
+        },
+      ],
+      error: null,
+    });
+    const out = await listOauthGrants("myshop.myshopify.com");
+    expect(out.length).toBe(2);
+    expect(out[0].id).toBe("g1");
+    // Verify filter calls happened on the right columns
+    const eqCalls = getRecorded("eq");
+    expect(eqCalls.some((c) => c[0] === "shop_id" && c[1] === "shopuuid")).toBe(true);
+    expect(eqCalls.some((c) => c[0] === "auth_type" && c[1] === "oauth")).toBe(true);
+  });
+
+  it("returns empty when no grants", async () => {
+    setSupabaseResponse({ data: [], error: null });
+    const out = await listOauthGrants("myshop.myshopify.com");
+    expect(out).toEqual([]);
+  });
+});
+
+describe("revokeOauthGrant", () => {
+  it("updates the row with revoked_at + null refresh_hash, scoped by shop + token + auth_type", async () => {
+    setSupabaseResponse({ data: null, error: null });
+    await revokeOauthGrant({ shopDomain: "myshop.myshopify.com", tokenId: "g1" });
+    const updates = getRecorded("update");
+    expect(updates.length).toBe(1);
+    const patch = updates[0][0] as Record<string, unknown>;
+    expect(patch.revoked_at).toBeTypeOf("string");
+    expect(patch.refresh_hash).toBeNull();
+    const eqCalls = getRecorded("eq");
+    expect(eqCalls.some((c) => c[0] === "shop_id" && c[1] === "shopuuid")).toBe(true);
+    expect(eqCalls.some((c) => c[0] === "id" && c[1] === "g1")).toBe(true);
+    expect(eqCalls.some((c) => c[0] === "auth_type" && c[1] === "oauth")).toBe(true);
   });
 });
