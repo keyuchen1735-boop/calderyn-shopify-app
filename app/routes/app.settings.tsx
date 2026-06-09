@@ -4,10 +4,10 @@ import {
   useActionData,
   useFetcher,
   useLoaderData,
-  useNavigate,
   useNavigation,
   useSearchParams,
 } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -181,7 +181,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Settings() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { guardrails, integrations, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);

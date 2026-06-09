@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -42,7 +43,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function SKUs() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { skus, alerts, error } = useLoaderData<typeof loader>();
 
   // Sortable numeric columns (index → value). Default: days of cover, ascending

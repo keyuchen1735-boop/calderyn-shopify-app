@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Form, useLoaderData, useNavigate } from "@remix-run/react";
+import { Form, useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
@@ -121,7 +122,7 @@ function trueRoas(campaigns: Campaign[]): string {
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { alerts, audit, campaigns, guardrails, onboardingDone, error } =
     useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);

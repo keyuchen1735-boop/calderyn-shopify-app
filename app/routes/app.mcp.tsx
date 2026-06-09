@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Form, useActionData, useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -161,7 +162,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function McpTokens() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   const { tokens, oauthGrants, error } = useLoaderData<typeof loader>();

@@ -3,7 +3,8 @@
 // campaign_below_breakeven alert as the "next step".
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import {
   Badge,
   Banner,
@@ -66,7 +67,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function Analytics() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { roasSeries, grades, topAds, breakevenCount, error } =
     useLoaderData<typeof loader>();
   const series = toRoasSeries(roasSeries);

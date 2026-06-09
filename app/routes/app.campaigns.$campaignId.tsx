@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { useNavigate, useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -398,7 +399,7 @@ async function getOrNull(
 }
 
 export default function CampaignDetailPage() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const {
     detail,
     error,

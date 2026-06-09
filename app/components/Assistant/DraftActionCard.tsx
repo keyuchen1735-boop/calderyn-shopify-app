@@ -1,13 +1,13 @@
-import { useNavigate } from "@remix-run/react";
 import { Box, Button, InlineStack, Text } from "@shopify/polaris";
 import type { DraftedAction } from "~/lib/assistant/types";
+import { useEmbeddedNavigate } from "~/lib/embedded-nav";
 
 function dollars(cents: number): string {
   return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 }
 
 export function DraftActionCard({ action }: { action: DraftedAction }) {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   return (
     <Box
       padding="300"
