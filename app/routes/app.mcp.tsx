@@ -21,18 +21,22 @@ import {
   createMcpToken,
   listMcpTokens,
   revokeMcpToken,
+  listOauthGrants,
+  revokeOauthGrant,
   type McpTokenRow,
+  type OauthGrantRow,
 } from "~/lib/mcp_tokens.server";
 import { useActionToast } from "~/lib/toast";
 
 type LoaderPayload = {
   tokens: McpTokenRow[];
+  oauthGrants: OauthGrantRow[];
   error: { code: string; message: string } | null;
 };
 
 type ActionPayload = {
   ok: boolean;
-  intent: "create" | "revoke" | "unknown";
+  intent: "create" | "revoke" | "oauth-revoke" | "unknown";
   rawToken?: string;
   rawTokenName?: string;
   toast?: { message: string; isError?: boolean };
@@ -42,12 +46,16 @@ type ActionPayload = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   try {
-    const tokens = await listMcpTokens(session.shop);
-    return json<LoaderPayload>({ tokens, error: null });
+    const [tokens, oauthGrants] = await Promise.all([
+      listMcpTokens(session.shop),
+      listOauthGrants(session.shop),
+    ]);
+    return json<LoaderPayload>({ tokens, oauthGrants, error: null });
   } catch (err) {
     const e = err as { code?: string; message?: string };
     return json<LoaderPayload>({
       tokens: [],
+      oauthGrants: [],
       error: { code: e.code ?? "ERROR", message: e.message ?? String(err) },
     });
   }
@@ -107,6 +115,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (intent === "oauth-revoke") {
+      const tokenId = String(formData.get("token_id") || "");
+      if (!tokenId) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            intent,
+            error: { code: "TOKEN_ID_REQUIRED", message: "token_id is required" },
+            toast: { message: "Missing token_id", isError: true },
+          },
+          { status: 400 },
+        );
+      }
+      await revokeOauthGrant({ shopDomain: session.shop, tokenId });
+      return json<ActionPayload>({
+        ok: true,
+        intent,
+        toast: { message: "Claude.ai workspace disconnected" },
+      });
+    }
+
     return json<ActionPayload>(
       {
         ok: false,
@@ -134,7 +163,7 @@ export default function McpTokens() {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
-  const { tokens, error } = useLoaderData<typeof loader>();
+  const { tokens, oauthGrants, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
 
