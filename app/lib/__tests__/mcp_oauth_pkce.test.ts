@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pkceChallenge, verifyPkce } from "../mcp_oauth.server";
+import { pkceChallenge, verifyPkce, newClientId, newAuthCode, newAccessToken, newRefreshToken } from "../mcp_oauth.server";
 
 describe("pkceChallenge (S256)", () => {
   it("produces a 43-char base64url challenge from a 43-128 char verifier", () => {
@@ -23,5 +23,33 @@ describe("verifyPkce", () => {
 
   it("returns false for too-short verifier (< 43 chars)", () => {
     expect(verifyPkce("short", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")).toBe(false);
+  });
+});
+
+describe("id generators", () => {
+  it("newClientId has 'cal_client_' prefix and 16 base32 body", () => {
+    const id = newClientId();
+    expect(id).toMatch(/^cal_client_[a-z2-7]{16}$/);
+  });
+
+  it("newAuthCode has 'calc_' prefix and 32 base32 body", () => {
+    const c = newAuthCode();
+    expect(c).toMatch(/^calc_[a-z2-7]{32}$/);
+  });
+
+  it("newAccessToken has 'cala_' prefix and 32 base32 body", () => {
+    const t = newAccessToken();
+    expect(t).toMatch(/^cala_[a-z2-7]{32}$/);
+  });
+
+  it("newRefreshToken has 'calr_' prefix and 32 base32 body", () => {
+    const t = newRefreshToken();
+    expect(t).toMatch(/^calr_[a-z2-7]{32}$/);
+  });
+
+  it("generators produce unique values", () => {
+    const xs = new Set<string>();
+    for (let i = 0; i < 1000; i++) xs.add(newAccessToken());
+    expect(xs.size).toBe(1000);
   });
 });
