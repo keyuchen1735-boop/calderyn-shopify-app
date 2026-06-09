@@ -33,8 +33,15 @@ export function makeTikTokSource(
       return camps.map((c) => tiktokCampaignToNormalized(c, shopId, currency));
     },
     async fetchBackfillSpend() {
-      const rows = await withRetry(() => client.getReport(advertiserId, daysAgoISO(90), todayISO()), RETRY);
-      return rows.map((r) => tiktokReportToSpend(r, shopId));
+      // TikTok caps report queries at 30 days; chunk the 90-day backfill.
+      const all: Awaited<ReturnType<typeof client.getReport>> = [];
+      for (let offset = 90; offset > 0; offset -= 30) {
+        const start = daysAgoISO(offset);
+        const end = daysAgoISO(Math.max(offset - 30, 0));
+        const rows = await withRetry(() => client.getReport(advertiserId, start, end), RETRY);
+        all.push(...rows);
+      }
+      return all.map((r) => tiktokReportToSpend(r, shopId));
     },
     async fetchDailySpend(day: string) {
       const rows = await withRetry(() => client.getReport(advertiserId, day, day), RETRY);
