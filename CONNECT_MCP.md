@@ -1,64 +1,68 @@
 # Connect to the Calderyn MCP server
 
-The Calderyn MCP server gives an MCP client (Claude Code, the Claude.ai
-connector, a custom agent) read-only access to your shop's alerts, audit log,
-campaigns, SKUs, guardrails, ROAS series, and integration status — plus the
+Calderyn exposes a read-only MCP server so an MCP client (Claude.ai, Claude Code,
+Claude Desktop, custom agents) can query your shop's alerts, audit log,
+campaigns, SKUs, guardrails, ROAS series, and integration status, plus the
 `propose_action` tool.
 
-- **Endpoint:** `https://calderyn-mcp.vercel.app/mcp`
-- **Transport:** HTTP
-- **Auth:** per-user bearer token of the form `mcp_live_...`
+- **MCP endpoint:** `https://calderyn-mcp.vercel.app/mcp`
+- **Two ways to connect**, depending on your client:
+  - **Claude.ai (web)** → OAuth, no tokens. *Recommended.*
+  - **Claude Code / Desktop / custom clients** → `mcp_live_*` bearer token.
 
-Each user authenticates with **their own** token. A token is scoped to one shop
-and is shown exactly once when created — Calderyn stores only a hash.
-
----
-
-## Step 1 — Generate your token
-
-1. Open the Calderyn app in your Shopify admin.
-2. Go to the **MCP tokens** page (route `/app/mcp`).
-3. Click **Generate token**, give it a name (e.g. `claude-code-laptop`), and
-   click **Generate**.
-4. In the reveal modal, click **Copy to clipboard**. **Copy it now — it is not
-   shown again.** If you lose it, revoke and regenerate.
-
-## Step 2 — Add it to Claude Code
-
-Paste this command, replacing the token with the one you just copied:
-
-```bash
-claude mcp add --scope user --transport http calderyn https://calderyn-mcp.vercel.app/mcp \
-  --header "Authorization: Bearer mcp_live_YOUR_TOKEN_HERE"
-```
-
-`--scope user` makes it available in every project on your machine (written to
-`~/.claude.json`).
-
-## Step 3 — Verify
-
-```bash
-claude mcp list        # calderyn should show: ✔ Connected
-```
-
-Or run `/mcp` inside a Claude Code session. You're connected.
+There is nothing to paste into Claude.ai — it uses OAuth. Tokens are only for
+clients that don't speak OAuth.
 
 ---
 
-## Managing the connection
+## A. Claude.ai (web) — OAuth, recommended
 
-```bash
-claude mcp get calderyn       # show config + status
-claude mcp remove calderyn -s user   # disconnect
-```
+Requires a Claude **Pro / Team / Enterprise** plan (free Claude can't add
+connectors).
 
-To rotate a token: generate a new one on `/app/mcp`, re-run the `claude mcp add`
-command (it overwrites), then **Revoke** the old token in the app.
+1. In Claude.ai: **Settings → Connectors → Add custom connector**.
+2. Name it `Calderyn` and paste the URL: `https://calderyn-mcp.vercel.app/mcp`.
+3. Claude.ai discovers the OAuth server and opens a Calderyn consent screen on
+   `app.calderyncompany.com`.
+   - If you're not already signed into your shop in that browser, you'll be
+     asked **"Which shop?"** → enter `your-store.myshopify.com` → sign in through
+     Shopify.
+4. On **"Connect Claude.ai to {your shop}"**, click **Allow**.
+5. Done — Claude.ai is connected. Access is refreshed automatically; you never
+   handle a token.
 
-## Notes
+**Manage / disconnect:** in the Calderyn app, open **Claude connections**
+(`/app/mcp`). The *Connected Claude.ai workspaces* card lists each connection
+with a **Disconnect** button; disconnecting makes the next request from that
+workspace fail immediately.
 
-- Tokens are read-only and shop-scoped — safe to mint one per device.
-- Because every user needs a different token, this is **not** distributed via a
-  committed `.mcp.json`. Each user runs the `claude mcp add` command above.
-- Lost or leaked token? Revoke it on the **MCP tokens** page; the server rejects
-  it immediately.
+## B. Claude Code / Desktop / custom clients — bearer token
+
+For clients that don't speak OAuth.
+
+1. In the Calderyn app, open **Claude connections** (`/app/mcp`) → the
+   *Connect via bearer token (advanced)* card → **Generate token**, name it, and
+   **Copy** it. It's shown once (Calderyn stores only a hash).
+2. Add it to your client. For Claude Code:
+   ```bash
+   claude mcp add --scope user --transport http calderyn https://calderyn-mcp.vercel.app/mcp \
+     --header "Authorization: Bearer mcp_live_YOUR_TOKEN_HERE"
+   ```
+3. Verify: `claude mcp list` → `calderyn` shows `✔ Connected` (or `/mcp` in a
+   session).
+
+Tokens are read-only and scoped to one shop — mint one per device. Lost or
+leaked? Revoke it on the **Claude connections** page; the server rejects it
+immediately.
+
+---
+
+## How auth works (reference)
+
+- **OAuth** (Claude.ai): the authorization server lives in the Shopify app
+  (`app.calderyncompany.com/oauth/*`) where your shop session lives; the MCP
+  server (`calderyn-mcp`) is the resource server that validates the issued
+  access token. PKCE-secured, public client, refresh-token rotation.
+- **Bearer** (`mcp_live_*`): hashed at rest (HMAC-SHA256), resolved to a
+  `shop_id` by the same middleware. Both auth modes land on the same read-only
+  data surface.
