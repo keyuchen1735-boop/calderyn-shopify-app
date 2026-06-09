@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { pkceChallenge, verifyPkce, newClientId, newAuthCode, newAccessToken, newRefreshToken, sha256hex } from "../mcp_oauth.server";
+import { describe, it, expect, beforeEach } from "vitest";
+import { pkceChallenge, verifyPkce, newClientId, newAuthCode, newAccessToken, newRefreshToken, sha256hex, signPendingOauth, verifyPendingOauth } from "../mcp_oauth.server";
 
 describe("pkceChallenge (S256)", () => {
   it("produces a 43-char base64url challenge from a 43-128 char verifier", () => {
@@ -59,5 +59,39 @@ describe("sha256hex", () => {
     expect(sha256hex("abc")).toBe(
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     );
+  });
+});
+
+const _ctx = {
+  client_id: "cal_client_x",
+  redirect_uri: "https://claude.ai/cb",
+  code_challenge: "ch",
+  scope: "read",
+  state: "abc",
+  shop: "myshop.myshopify.com",
+};
+
+describe("pending OAuth cookie", () => {
+  beforeEach(() => {
+    process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
+  });
+
+  it("round-trips a signed payload", async () => {
+    const jwt = await signPendingOauth(_ctx);
+    expect(typeof jwt).toBe("string");
+    const decoded = await verifyPendingOauth(jwt);
+    expect(decoded).toMatchObject(_ctx);
+  });
+
+  it("rejects a tampered payload", async () => {
+    const jwt = await signPendingOauth(_ctx);
+    const tampered = jwt.slice(0, -1) + (jwt.endsWith("a") ? "b" : "a");
+    await expect(verifyPendingOauth(tampered)).rejects.toThrow();
+  });
+
+  it("rejects an expired payload", async () => {
+    const jwt = await signPendingOauth(_ctx, { ttlSec: 1 });
+    await new Promise((r) => setTimeout(r, 1200));
+    await expect(verifyPendingOauth(jwt)).rejects.toThrow();
   });
 });

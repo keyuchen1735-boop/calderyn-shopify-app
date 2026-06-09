@@ -185,6 +185,56 @@ export async function issueAuthCode(req: IssueCodeReq): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 8: Pending-OAuth JWT cookie helpers (HS256, 10-min TTL)
+// ---------------------------------------------------------------------------
+
+import { SignJWT, jwtVerify } from "jose";
+
+export interface PendingOauthCtx {
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string;
+  state: string;
+  shop: string;
+}
+
+function cookieKey(): Uint8Array {
+  const hex = process.env.MCP_OAUTH_COOKIE_SECRET ?? "";
+  if (hex.length < 64) throw new Error("MCP_OAUTH_COOKIE_SECRET must be 64+ hex chars");
+  return new Uint8Array(Buffer.from(hex, "hex"));
+}
+
+const PENDING_TTL_SEC = 10 * 60;
+
+export async function signPendingOauth(
+  ctx: PendingOauthCtx,
+  opts: { ttlSec?: number } = {},
+): Promise<string> {
+  const ttl = opts.ttlSec ?? PENDING_TTL_SEC;
+  return new SignJWT({ ...ctx })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${ttl}s`)
+    .sign(cookieKey());
+}
+
+export async function verifyPendingOauth(token: string): Promise<PendingOauthCtx> {
+  const { payload } = await jwtVerify(token, cookieKey(), { algorithms: ["HS256"] });
+  return {
+    client_id: String(payload.client_id),
+    redirect_uri: String(payload.redirect_uri),
+    code_challenge: String(payload.code_challenge),
+    scope: String(payload.scope),
+    state: String(payload.state),
+    shop: String(payload.shop),
+  };
+}
+
+export const PENDING_COOKIE_NAME = "__cal_pending_oauth";
+export const PENDING_COOKIE_OPTS = `Path=/; Max-Age=${PENDING_TTL_SEC}; HttpOnly; Secure; SameSite=Lax`;
+
+// ---------------------------------------------------------------------------
 // 3.4 consumeAuthCode
 // ---------------------------------------------------------------------------
 
