@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pkceChallenge, verifyPkce, newClientId, newAuthCode, newAccessToken, newRefreshToken } from "../mcp_oauth.server";
+import { pkceChallenge, verifyPkce, newClientId, newAuthCode, newAccessToken, newRefreshToken, sha256hex } from "../mcp_oauth.server";
 
 describe("pkceChallenge (S256)", () => {
   it("produces a 43-char base64url challenge from a 43-128 char verifier", () => {
@@ -51,5 +51,13 @@ describe("id generators", () => {
     const xs = new Set<string>();
     for (let i = 0; i < 1000; i++) xs.add(newAccessToken());
     expect(xs.size).toBe(1000);
+  });
+});
+
+describe("sha256hex", () => {
+  it("matches a known vector", () => {
+    expect(sha256hex("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
   });
 });
