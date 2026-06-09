@@ -301,6 +301,39 @@ export async function deletePendingOauth(shop_domain: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Consent-auth JWT
+//
+// /app/_index.tsx successfully authenticates via authenticate.admin (it's
+// under the AppProvider layout that initializes App Bridge). /oauth/consent
+// is OUTSIDE that layout and can't reliably do the same — App Bridge isn't
+// initialized and 3P-cookie-blocking browsers won't carry session state across
+// the 302 from /app to /oauth/consent inside the embedded admin iframe.
+//
+// Solution: /app/_index proves shop ownership server-side, mints a short-lived
+// signed JWT bound to that shop, and includes it in the redirect URL.
+// /oauth/consent verifies the JWT instead of calling authenticate.admin.
+// ---------------------------------------------------------------------------
+
+const CONSENT_AUTH_TTL_SEC = 60;
+
+export interface ConsentAuthPayload {
+  shop: string;
+}
+
+export async function signConsentAuth(payload: ConsentAuthPayload): Promise<string> {
+  return new SignJWT({ shop: payload.shop })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${CONSENT_AUTH_TTL_SEC}s`)
+    .sign(cookieKey());
+}
+
+export async function verifyConsentAuth(token: string): Promise<ConsentAuthPayload> {
+  const { payload } = await jwtVerify(token, cookieKey(), { algorithms: ["HS256"] });
+  return { shop: String(payload.shop) };
+}
+
+// ---------------------------------------------------------------------------
 // 3.4 consumeAuthCode
 // ---------------------------------------------------------------------------
 
