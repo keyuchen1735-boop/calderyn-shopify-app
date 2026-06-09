@@ -7,8 +7,9 @@
 // UNTOUCHED (no mutation)" path. A fake `sb` records the select filters
 // and any update payloads — the empty-registry path must record none.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ActionError } from "../../ads/actions";
 
 import {
   backoffSeconds,
@@ -83,6 +84,114 @@ describe("drainActionRetries", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("replays a due retrying pause row via the adapter and marks it succeeded", async () => {
+    const row = {
+      id: "66666666-6666-4666-8666-666666666666",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(adapter.pause).toHaveBeenCalledWith("ext1");
+    expect(result.succeeded).toBe(1);
+    expect(result.processed).toBe(1);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(row.id);
+    expect(updates[0].payload).toMatchObject({ outcome: "succeeded", attempts: 2 });
+  });
+
+  it("keeps a row retrying (bumps attempts) when replay fails below the attempt cap", async () => {
+    const row = {
+      id: "77777777-7777-4777-8777-777777777777",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1, // → next attempt 2, still < MAX
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const boom = new ActionError("meta", "rate limited"); // retriable by default
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw boom; }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.retrying).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "retrying", attempts: 2 });
+    expect(updates[0].payload.last_error).toMatch(/rate limited/);
+  });
+
+  it("terminally fails a row when replay fails at the attempt cap", async () => {
+    const row = {
+      id: "88888888-8888-4888-8888-888888888888",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: MAX_ATTEMPTS - 1, // → next attempt == MAX → terminal
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw new Error("still down"); }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.failed).toBe(1);
+    expect(result.retrying).toBe(0);
+    expect(updates[0].payload).toMatchObject({ outcome: "failed", attempts: MAX_ATTEMPTS });
+  });
+
+  it("immediately terminally fails on a non-retriable adapter error", async () => {
+    const row = {
+      id: "99999999-9999-4999-8999-999999999999",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1, // well below cap, but error is permanent
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const perm = new ActionError("meta", "invalid token", { retriable: false });
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw perm; }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.failed).toBe(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "failed", attempts: 2 });
+  });
+
+  it("treats a disconnected platform as a (retriable) failure, never a crash", async () => {
+    const row = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => null });
+
+    expect(result.retrying).toBe(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "retrying", attempts: 2 });
+    expect(updates[0].payload.last_error).toMatch(/not connected/);
+  });
+
   it("short-circuits a fetched row that is already succeeded", async () => {
     const row = {
       id: "55555555-5555-4555-8555-555555555555",
@@ -101,6 +210,19 @@ describe("drainActionRetries", () => {
     expect(updates).toHaveLength(0);
   });
 });
+
+// A fake ActionAdapter whose campaign methods resolve by default; individual
+// tests override one to reject (replay failure).
+function makeFakeAdapter(overrides: Record<string, unknown> = {}) {
+  return {
+    platform: "meta" as const,
+    pause: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    setDailyBudget: vi.fn(async () => {}),
+    getState: vi.fn(),
+    ...overrides,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Fake Supabase client: serves one select (action_audit) and records the

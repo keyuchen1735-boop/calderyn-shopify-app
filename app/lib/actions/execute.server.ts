@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
+import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 
 export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
@@ -20,7 +21,12 @@ export interface ExecuteInput {
 
 export interface ExecutedAudit {
   id: string;
-  outcome: "succeeded" | "failed";
+  /**
+   * `retrying` is a transient platform failure parked for the action-retry
+   * cron to replay (see retry.server.ts); it is NOT a success and NOT yet a
+   * terminal failure.
+   */
+  outcome: "succeeded" | "failed" | "retrying";
 }
 
 export async function executeAction(
@@ -36,7 +42,18 @@ export async function executeAction(
     .eq("idempotency_key", input.idempotencyKey)
     .maybeSingle();
   if (pErr) throw pErr;
-  if (prior?.audit_id) return { id: String(prior.audit_id), outcome: "succeeded" };
+  if (prior?.audit_id) {
+    // Return the prior attempt's REAL outcome — it may still be `retrying`
+    // (parked for the cron) or have terminally `failed`. Reporting a
+    // hardcoded success here would mask a not-yet-succeeded action (rule 12).
+    const { data: prevAudit } = await sb
+      .from("action_audit")
+      .select("outcome")
+      .eq("id", prior.audit_id)
+      .maybeSingle();
+    const priorOutcome = (prevAudit?.outcome as ExecutedAudit["outcome"]) ?? "succeeded";
+    return { id: String(prior.audit_id), outcome: priorOutcome };
+  }
 
   // 2. Ownership + resolve campaign.
   const { data: camp, error: cErr } = await sb
@@ -59,10 +76,12 @@ export async function executeAction(
         : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
 
   // 3. Resolve adapter + 4. call platform.
-  let outcome: "succeeded" | "failed" = "succeeded";
+  let outcome: "succeeded" | "failed" | "retrying" = "succeeded";
   let lastError: string | null = null;
   const adapter = await actionAdapterForShop(shopId, platform);
   if (!adapter) {
+    // No integration row — permanent until the merchant reconnects, so fail
+    // fast rather than burning the retry budget against a disconnected platform.
     outcome = "failed";
     lastError = `${platform} not connected`;
   } else {
@@ -75,8 +94,10 @@ export async function executeAction(
         await adapter.setDailyBudget(externalId, input.dailyBudgetCents ?? 0);
       }
     } catch (err) {
-      outcome = "failed";
       lastError = err instanceof Error ? err.message : String(err);
+      // Transient failures are parked as `retrying` (attempts=1) for the
+      // action-retry cron to replay; only known-permanent errors fail terminally.
+      outcome = isRetriableFailure(err) ? "retrying" : "failed";
     }
   }
 
@@ -89,6 +110,8 @@ export async function executeAction(
       action_kind: input.kind,
       params: { campaign_id: input.campaignId, external_id: externalId, platform, daily_budget_cents: input.dailyBudgetCents ?? null },
       outcome,
+      // A parked `retrying` row has already consumed its first attempt.
+      attempts: outcome === "retrying" ? 1 : 0,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,

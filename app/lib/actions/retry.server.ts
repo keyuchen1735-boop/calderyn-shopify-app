@@ -26,6 +26,10 @@
 // create_po_draft, snooze_alert).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Platform } from "../ads/adapter";
+import type { ActionAdapter } from "../ads/actions";
+import { isRetriableFailure } from "../ads/actions";
+import { actionAdapterForShop } from "../ads/action-registry.server";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -42,31 +46,43 @@ export function backoffSeconds(attempts: number): number {
   return Math.min(30 * Math.pow(2, attempts - 1), 600);
 }
 
-/**
- * Result of replaying one audit row's action. Mirrors the monorepo
- * executor contract so ported executors slot in without signature churn.
- */
-export interface ExecuteResult {
-  ok: boolean;
-  retriable?: boolean;
-  error?: string;
-  post_state?: unknown;
-  external_call_id?: string | null;
-}
-
-export interface ActionExecutor {
-  execute(params: unknown, ctx: unknown): Promise<ExecuteResult>;
+/** The replay-relevant slice of an audit row's persisted `params`. */
+export interface ReplayParams {
+  external_id: string;
+  platform: Platform;
+  daily_budget_cents?: number | null;
 }
 
 /**
- * Executor registry keyed by `action_kind`. INTENTIONALLY EMPTY.
- *
- * TODO(slice-6+): port the monorepo executors
- * (`apps/web/app/lib/executors`) and register them here keyed by the
- * `action_kind` enum. Until then every due row is SKIPPED (left
- * untouched) because there is no executor to replay.
+ * Re-issues one `action_kind` against an already-resolved adapter and
+ * returns the post-state to persist on success. Throws on platform failure
+ * (classified by `isRetriableFailure` in the drain).
  */
-export const EXECUTOR_REGISTRY: Record<string, ActionExecutor> = {};
+export type ActionReplayer = (
+  adapter: ActionAdapter,
+  params: ReplayParams,
+) => Promise<{ post_state: unknown }>;
+
+/**
+ * Executor registry keyed by `action_kind`. Covers the three executable
+ * campaign kinds that `executeAction` (execute.server.ts) can enqueue as
+ * `retrying`. Non-campaign kinds (snooze_alert, exclude_geo, …) have no
+ * platform replay and are intentionally absent — the drain skips them.
+ */
+export const EXECUTOR_REGISTRY: Record<string, ActionReplayer> = {
+  pause_campaign: async (adapter, p) => {
+    await adapter.pause(p.external_id);
+    return { post_state: { status: "paused", daily_budget_cents: p.daily_budget_cents ?? null } };
+  },
+  resume_campaign: async (adapter, p) => {
+    await adapter.resume(p.external_id);
+    return { post_state: { status: "active", daily_budget_cents: p.daily_budget_cents ?? null } };
+  },
+  reduce_campaign_budget: async (adapter, p) => {
+    await adapter.setDailyBudget(p.external_id, p.daily_budget_cents ?? 0);
+    return { post_state: { status: "active", daily_budget_cents: p.daily_budget_cents ?? null } };
+  },
+};
 
 interface AuditRow {
   id: string;
@@ -75,6 +91,7 @@ interface AuditRow {
   attempts: number;
   outcome: string;
   completed_at: string | null;
+  params: ReplayParams | null;
 }
 
 export interface DrainOptions {
@@ -82,6 +99,14 @@ export interface DrainOptions {
   now?: () => Date;
   /** Override the batch bound (tests). */
   maxRows?: number;
+  /**
+   * Resolve the per-shop action adapter. Defaults to the live registry;
+   * injected in tests to avoid real platform/DB calls.
+   */
+  resolveAdapter?: (
+    shopId: string,
+    platform: Platform,
+  ) => Promise<ActionAdapter | null>;
 }
 
 export interface DrainResult {
@@ -109,6 +134,7 @@ export async function drainActionRetries(
 ): Promise<DrainResult> {
   const now = opts.now ?? (() => new Date());
   const maxRows = opts.maxRows ?? MAX_RETRY_ROWS;
+  const resolveAdapter = opts.resolveAdapter ?? actionAdapterForShop;
 
   const result: DrainResult = {
     processed: 0,
@@ -121,7 +147,7 @@ export async function drainActionRetries(
 
   const { data: rows, error: selErr } = await sb
     .from("action_audit")
-    .select("id, shop_id, action_kind, attempts, outcome, completed_at")
+    .select("id, shop_id, action_kind, attempts, outcome, completed_at, params")
     .eq("outcome", "retrying")
     .lt("attempts", MAX_ATTEMPTS)
     .order("completed_at", { ascending: true })
@@ -153,25 +179,62 @@ export async function drainActionRetries(
         }
       }
 
-      const executor = EXECUTOR_REGISTRY[raw.action_kind];
-      if (!executor) {
-        // Empty registry — INERT skeleton: leave the row UNTOUCHED. A due
-        // `retrying` row must never be marked `failed` just because no
-        // executor exists yet — `failed` is terminal, so that would
-        // permanently destroy a legitimate retry before the executor
-        // layer ships. Count it as skipped (rule 12: visible, non-
-        // destructive). No DB write happens on this path.
+      const replayer = EXECUTOR_REGISTRY[raw.action_kind];
+      if (!replayer || !raw.params) {
+        // No platform replay for this kind (e.g. snooze_alert), or the row
+        // carries no params to replay. Leave it UNTOUCHED — a due `retrying`
+        // row must never be marked `failed` for lack of an executor, since
+        // `failed` is terminal (rule 12: visible, non-destructive skip).
         result.skipped += 1;
         continue;
       }
 
-      // Reached only once EXECUTOR_REGISTRY is populated (the executor
-      // port). The actual replay + success/failure bookkeeping is wired
-      // here in the follow-up.
       result.processed += 1;
-      result.errors.push(
-        `executor for ${raw.action_kind} present but replay not yet wired`,
-      );
+      const nextAttempts = raw.attempts + 1;
+
+      // Replay against the resolved adapter. A throw here is isolated to this
+      // row and classified transient-by-default (rule 5).
+      let ok = false;
+      let postState: unknown = null;
+      let replayError: string | null = null;
+      let terminal = false;
+      try {
+        const adapter = await resolveAdapter(raw.shop_id, raw.params.platform);
+        if (!adapter) throw new Error(`${raw.params.platform} not connected`);
+        const out = await replayer(adapter, raw.params);
+        ok = true;
+        postState = out.post_state;
+      } catch (err) {
+        replayError = err instanceof Error ? err.message : String(err);
+        // Permanent failure, or attempt cap reached → terminal `failed`.
+        terminal = !isRetriableFailure(err) || nextAttempts >= MAX_ATTEMPTS;
+      }
+
+      const update: Record<string, unknown> = {
+        attempts: nextAttempts,
+        completed_at: now().toISOString(),
+      };
+      if (ok) {
+        update.outcome = "succeeded";
+        update.post_state = postState;
+        update.last_error = null;
+      } else {
+        update.outcome = terminal ? "failed" : "retrying";
+        update.last_error = replayError;
+      }
+
+      const { error: updErr } = await sb
+        .from("action_audit")
+        .update(update)
+        .eq("id", raw.id);
+      if (updErr) {
+        result.errors.push(`update ${raw.id}: ${updErr.message}`);
+        continue;
+      }
+
+      if (ok) result.succeeded += 1;
+      else if (terminal) result.failed += 1;
+      else result.retrying += 1;
     } catch (err) {
       // Per-row isolation: collect, never abort the batch (rule 12).
       result.errors.push(

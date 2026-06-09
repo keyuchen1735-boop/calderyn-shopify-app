@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeAction } from "../execute.server";
+import { ActionError } from "../../ads/actions";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const { adapter, actionAdapterForShop } = vi.hoisted(() => {
@@ -13,7 +14,7 @@ const SHOP = "00000000-0000-0000-0000-000000000010";
 const CAMP = "11111111-1111-1111-1111-111111111111";
 
 // Fake supabase: campaign lookup, idempotency lookup, audit insert, idempotency insert.
-function fakeSb(opts: { idempotent?: { audit_id: string }; campaign?: Record<string, unknown> | null }) {
+function fakeSb(opts: { idempotent?: { audit_id: string }; campaign?: Record<string, unknown> | null; priorOutcome?: string }) {
   const calls = { inserts: [] as Array<{ table: string; rows: unknown }> };
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
@@ -22,7 +23,7 @@ function fakeSb(opts: { idempotent?: { audit_id: string }; campaign?: Record<str
     chain.maybeSingle = vi.fn(async () => {
       if (table === "action_idempotency") return { data: opts.idempotent ?? null, error: null };
       if (table === "ad_campaign_dim") return { data: opts.campaign ?? null, error: null };
-      if (table === "v_audit_view" || table === "action_audit") return { data: { id: "aud1" }, error: null };
+      if (table === "v_audit_view" || table === "action_audit") return { data: { id: "aud1", outcome: opts.priorOutcome ?? "succeeded" }, error: null };
       return { data: null, error: null };
     });
     chain.single = vi.fn(async () => ({ data: { id: "aud1" }, error: null }));
@@ -85,6 +86,31 @@ describe("executeAction", () => {
     const { sb } = fakeSb({ idempotent: { audit_id: "prev" }, campaign });
     await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "k1" }, sb);
     expect(adapter.pause).not.toHaveBeenCalled();
+  });
+
+  it("returns the prior attempt's real outcome on a used key (not a hardcoded success)", async () => {
+    // The first attempt is still parked as `retrying`; a re-submit must not
+    // report success for an action that has not actually succeeded (rule 12).
+    const { sb } = fakeSb({ idempotent: { audit_id: "prev" }, campaign, priorOutcome: "retrying" });
+    const res = await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "k1" }, sb);
+    expect(res.outcome).toBe("retrying");
+    expect(adapter.pause).not.toHaveBeenCalled();
+  });
+
+  it("records a retrying audit (attempts 1) when the adapter throws a transient error", async () => {
+    adapter.pause.mockRejectedValueOnce(new Error("Meta API 503"));
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kt1" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>)).toMatchObject({ outcome: "retrying", attempts: 1, post_state: null });
+  });
+
+  it("records a terminal failed audit when the adapter throws a non-retriable error", async () => {
+    adapter.pause.mockRejectedValueOnce(new ActionError("meta", "invalid token", { retriable: false }));
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kt2" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>)).toMatchObject({ outcome: "failed" });
   });
 
   it("records a failed audit when the platform is not connected", async () => {

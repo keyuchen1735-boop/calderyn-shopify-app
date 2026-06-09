@@ -189,6 +189,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             { status: 502 },
           );
         }
+        if (outcome === "retrying") {
+          // Transient platform failure parked for the retry cron — the action
+          // has NOT taken effect yet, so do not report success (rule 12).
+          return json<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "ACTION_RETRYING", message: `Couldn't reach the ad platform — ${intent} for ${campaignName} is queued and will retry automatically` },
+              toast: { message: `${campaignName}: queued, will retry automatically` },
+            },
+            { status: 202 },
+          );
+        }
         const messageByIntent: Record<string, string> = {
           pause: `Paused ${campaignName}`,
           resume: `Resumed ${campaignName}`,

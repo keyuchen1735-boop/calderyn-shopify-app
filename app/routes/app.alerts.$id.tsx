@@ -202,8 +202,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           message:
             result.outcome === "succeeded"
               ? `${ACTION_VERBS[kind] ?? "Action"} executed`
-              : "Action recorded as failed — check the audit log",
-          isError: result.outcome !== "succeeded",
+              : result.outcome === "retrying"
+                ? "Couldn't reach the ad platform — queued, will retry automatically"
+                : "Action recorded as failed — check the audit log",
+          // `retrying` is pending, not an error; only terminal failure is.
+          isError: result.outcome === "failed",
         },
       });
     }
