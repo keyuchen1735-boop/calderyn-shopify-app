@@ -12,9 +12,6 @@ import { withRetry } from "../ads/backoff";
 
 const RETRY = { maxAttempts: 4, baseDelayMs: 500 };
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 function daysAgoISO(n: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - n);
