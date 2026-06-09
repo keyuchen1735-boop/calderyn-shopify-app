@@ -230,7 +230,10 @@ export async function verifyPendingOauth(token: string): Promise<PendingOauthCtx
 }
 
 export const PENDING_COOKIE_NAME = "__cal_pending_oauth";
-export const PENDING_COOKIE_OPTS = `Path=/; Max-Age=${PENDING_TTL_SEC}; HttpOnly; Secure; SameSite=Lax`;
+// SameSite=None so the cookie travels when /app loads as an iframe inside
+// admin.shopify.com during the Shopify embedded auth bounce. Lax was previously
+// being dropped on the iframe sub-resource load, breaking the entire handoff.
+export const PENDING_COOKIE_OPTS = `Path=/; Max-Age=${PENDING_TTL_SEC}; HttpOnly; Secure; SameSite=None`;
 
 // ---------------------------------------------------------------------------
 // 3.4 consumeAuthCode
