@@ -1,6 +1,11 @@
 // app/routes/__tests__/oauth-consent.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { signPendingOauth, PENDING_COOKIE_NAME } from "../../lib/mcp_oauth.server";
+import type * as McpOauth from "../../lib/mcp_oauth.server";
+import {
+  signPendingOauth,
+  PENDING_COOKIE_NAME,
+  getClient,
+} from "../../lib/mcp_oauth.server";
 
 vi.mock("../../shopify.server", () => ({
   authenticate: {
@@ -10,7 +15,7 @@ vi.mock("../../shopify.server", () => ({
 
 // Mock getClient and issueAuthCode on top of the real module so signPendingOauth/verifyPendingOauth still work.
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/mcp_oauth.server")>();
+  const actual = await importOriginal<typeof McpOauth>();
   return {
     ...actual,
     getClient: vi.fn(),
@@ -24,8 +29,6 @@ vi.mock("../../lib/supabase.server", () => ({
 
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { authenticate } from "../../shopify.server";
-// eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
-import { getClient } from "../../lib/mcp_oauth.server";
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { resolveShopId } from "../../lib/supabase.server";
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting

@@ -1,6 +1,10 @@
 // app/routes/__tests__/oauth-token.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { consumeAuthCode, getClient } from "../../lib/mcp_oauth.server";
+import { mintAccessToken, rotateRefreshToken } from "../../lib/mcp_tokens.server";
+import { action } from "../oauth.token";
+
 vi.mock("../../lib/mcp_oauth.server", () => ({
   consumeAuthCode: vi.fn(),
   getClient: vi.fn(),
@@ -9,10 +13,6 @@ vi.mock("../../lib/mcp_tokens.server", () => ({
   mintAccessToken: vi.fn(),
   rotateRefreshToken: vi.fn(),
 }));
-
-import { consumeAuthCode, getClient } from "../../lib/mcp_oauth.server";
-import { mintAccessToken, rotateRefreshToken } from "../../lib/mcp_tokens.server";
-import { action } from "../oauth.token";
 
 beforeEach(() => {
   process.env.MCP_OAUTH_ENABLED = "true";

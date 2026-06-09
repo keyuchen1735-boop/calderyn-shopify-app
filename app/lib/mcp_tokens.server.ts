@@ -7,6 +7,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "./supabase.server";
 
+// ---------------------------------------------------------------------------
+// Phase 4: OAuth-specific token operations
+// ---------------------------------------------------------------------------
+
+import { newAccessToken, newRefreshToken } from "./mcp_oauth.server";
+
 export interface McpTokenRow {
   id: string;
   shop_id: string;
@@ -107,12 +113,6 @@ export async function revokeMcpToken(opts: {
     .is("revoked_at", null);
   if (error) throw error;
 }
-
-// ---------------------------------------------------------------------------
-// Phase 4: OAuth-specific token operations
-// ---------------------------------------------------------------------------
-
-import { newAccessToken, newRefreshToken } from "./mcp_oauth.server";
 
 export interface MintAccessTokenReq {
   client_id: string;

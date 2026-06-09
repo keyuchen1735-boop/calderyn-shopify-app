@@ -1,12 +1,12 @@
 import { vi, describe, it, expect } from "vitest";
 import { buildChain, setSupabaseResponse, setSupabaseResponses, getRecorded } from "./_supabase_chain_mock";
 
+import { issueAuthCode, consumeAuthCode } from "../mcp_oauth.server";
+
 vi.mock("../supabase.server", () => ({
   getSupabase: () => buildChain(),
   resolveShopId: vi.fn(),
 }));
-
-import { issueAuthCode, consumeAuthCode } from "../mcp_oauth.server";
 
 describe("issueAuthCode", () => {
   it("returns a calc_-prefixed raw code and writes only the hash + metadata", async () => {

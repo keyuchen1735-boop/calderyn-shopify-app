@@ -8,15 +8,14 @@ import {
   resetRecorded,
 } from "./_supabase_chain_mock";
 
+import { mintAccessToken, rotateRefreshToken, listOauthGrants, revokeOauthGrant } from "../mcp_tokens.server";
+
 vi.mock("../supabase.server", () => ({
   getSupabase: () => buildChain(),
   resolveShopId: vi.fn().mockResolvedValue("shopuuid"),
 }));
 
 process.env.MCP_TOKEN_PEPPER = "x".repeat(64);
-
-import { mintAccessToken, rotateRefreshToken, listOauthGrants, revokeOauthGrant } from "../mcp_tokens.server";
-import { resolveShopId } from "../supabase.server";
 
 beforeEach(resetRecorded);
 

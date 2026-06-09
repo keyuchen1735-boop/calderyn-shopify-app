@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { registerClient } from "../../lib/mcp_oauth.server";
+import { action } from "../oauth.register";
+
 vi.mock("../../lib/mcp_oauth.server", () => ({
   registerClient: vi.fn(),
 }));
-
-import { registerClient } from "../../lib/mcp_oauth.server";
-import { action } from "../oauth.register";
 
 beforeEach(() => {
   (registerClient as unknown as ReturnType<typeof vi.fn>).mockReset();

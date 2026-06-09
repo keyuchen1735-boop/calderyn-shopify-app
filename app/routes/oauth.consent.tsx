@@ -10,6 +10,24 @@ import {
 import { resolveShopId } from "~/lib/supabase.server";
 import { authenticate } from "../shopify.server";
 
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+
+import { Form, useLoaderData } from "@remix-run/react";
+import {
+  AppProvider as PolarisAppProvider,
+  Banner,
+  BlockStack,
+  Button,
+  ButtonGroup,
+  Card,
+  Page,
+  Text,
+} from "@shopify/polaris";
+import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import polarisTranslations from "@shopify/polaris/locales/en.json";
+
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
 function readCookie(req: Request, name: string): string | null {
@@ -91,24 +109,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   headers.append("set-cookie", clearCookie);
   return new Response(null, { status: 302, headers });
 };
-
-// ---------------------------------------------------------------------------
-// UI
-// ---------------------------------------------------------------------------
-
-import { Form, useLoaderData } from "@remix-run/react";
-import {
-  AppProvider as PolarisAppProvider,
-  Banner,
-  BlockStack,
-  Button,
-  ButtonGroup,
-  Card,
-  Page,
-  Text,
-} from "@shopify/polaris";
-import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 

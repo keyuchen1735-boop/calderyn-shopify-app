@@ -1,14 +1,14 @@
 import { vi, describe, it, expect } from "vitest";
 import { buildChain, setSupabaseResponse, getRecorded } from "./_supabase_chain_mock";
 
+import { registerClient, getClient } from "../mcp_oauth.server";
+
 // vi.mock is hoisted by Vitest to the top of the file before imports,
 // so it intercepts the module before mcp_oauth.server.ts loads it.
 vi.mock("../supabase.server", () => ({
   getSupabase: () => buildChain(),
   resolveShopId: vi.fn(),
 }));
-
-import { registerClient, getClient } from "../mcp_oauth.server";
 
 describe("registerClient", () => {
   it("inserts a row with a generated client_id and returns DCR response shape", async () => {
