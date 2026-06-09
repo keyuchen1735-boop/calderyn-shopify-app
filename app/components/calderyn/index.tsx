@@ -296,7 +296,7 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
               <Icon name="spark" size={16} fill />
             </span>
             <Text as="h2" variant="headingSm">
-              Claude&apos;s read
+              Calderyn Analysis
             </Text>
           </InlineStack>
           {rank !== undefined && <Badge tone="info">{`Rank #${rank}`}</Badge>}
