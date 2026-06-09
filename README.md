@@ -127,10 +127,61 @@ shopify-app/
 
 ## MCP server
 
-External agents (Claude.ai connectors, custom agents) can query this shop's
-read-only calderyn state — alerts, audit log, campaigns, SKUs, guardrails,
-integrations — via the hosted [`calderyn-mcp`](../calderyn-mcp) server at
-`https://calderyn-mcp.vercel.app/mcp`. Merchants mint per-shop bearer tokens at
-`/app/mcp` in this admin and paste them into any MCP client. See
-`docs/adr/0001-mcp-server-split.md` for the split rationale and
+External agents (Claude Code, Claude.ai connectors, custom agents) can query a
+shop's calderyn state — and propose guardrailed actions — via the hosted
+[`calderyn-mcp`](../calderyn-mcp) server over Streamable HTTP at:
+
+```
+https://calderyn-mcp.vercel.app/mcp
+```
+
+Auth is a per-shop bearer token (`mcp_live_…`) minted at **`/app/mcp`** in this
+admin. Each token is scoped to one shop; the server resolves the shop from the
+token, so every tool is tenant-isolated.
+
+### Tools (12)
+
+- **Read** — `list_alerts`, `get_alert`, `list_audit`, `list_campaigns`,
+  `list_skus`, `get_guardrails`, `list_integrations`.
+- **Analytics** — `get_shop_stats` (one-call KPI snapshot: open-alert counts by
+  severity, dollars at risk, top-ranked alerts, spend-weighted blended ROAS,
+  7-day actions taken + dollars recovered, integration health),
+  `list_campaign_grades` (per-campaign calderyn score — winning/okay/poor with
+  ROAS vs break-even), `get_roas_series` (daily spend/revenue trend),
+  `list_top_ads` (top creative by engagement).
+- **Propose** — `propose_action`: validates one action against the alert's
+  detector and returns a draft plus a `confirm_url`. **Validation-only — it never
+  executes;** execution still flows through this app's action gateway + guardrails.
+
+### Connect
+
+**Claude Code** — register the server once, then any project (or subagent) can
+call it:
+
+```bash
+claude mcp add --transport http --scope user calderyn \
+  https://calderyn-mcp.vercel.app/mcp \
+  --header "Authorization: Bearer mcp_live_…"
+```
+
+`--scope user` makes it available in every project; swap to `--scope project` to
+share it with collaborators via a checked-in `.mcp.json`. Confirm with
+`claude mcp list` (expect `calderyn … ✔ Connected`), and restart other running
+Claude sessions to pick up the new server.
+
+**Claude.ai / custom MCP clients** — add a custom connector pointing at the URL
+above with header `Authorization: Bearer mcp_live_…`. Smoke-test the endpoint
+directly with:
+
+```bash
+curl -s https://calderyn-mcp.vercel.app/mcp \
+  -H "authorization: Bearer mcp_live_…" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+`GET /healthz` returns `{ "ok": true }` (no auth) for uptime checks.
+
+See `docs/adr/0001-mcp-server-split.md` for the split rationale and
 `docs/superpowers/specs/2026-05-25-mcp-server-design.md` for the full design.
