@@ -15,7 +15,7 @@ vi.mock("../supabase.server", () => ({
 
 process.env.MCP_TOKEN_PEPPER = "x".repeat(64);
 
-import { mintAccessToken } from "../mcp_tokens.server";
+import { mintAccessToken, rotateRefreshToken } from "../mcp_tokens.server";
 import { resolveShopId } from "../supabase.server";
 
 beforeEach(resetRecorded);
@@ -60,5 +60,62 @@ describe("mintAccessToken", () => {
     expect(row.token_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.refresh_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(new Date(row.expires_at as string).getTime()).toBeGreaterThan(Date.now() + 89 * 86400 * 1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4.2 rotateRefreshToken
+// ---------------------------------------------------------------------------
+
+describe("rotateRefreshToken", () => {
+  it("returns a new pair and replaces hashes on the same row", async () => {
+    setSupabaseResponses([
+      {
+        data: {
+          id: "tokenuuid",
+          shop_id: "shopuuid",
+          client_id: "cal_client_x",
+          scopes: ["read"],
+          revoked_at: null,
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+        error: null,
+      },
+      { data: [{ id: "tokenuuid" }], error: null }, // atomic update succeeds (1 row)
+    ]);
+    const out = await rotateRefreshToken({ refresh_token: "calr_xxx", client_id: "cal_client_x" });
+    expect(out.access_token).toMatch(/^cala_/);
+    expect(out.refresh_token).toMatch(/^calr_/);
+    expect(out.access_token).not.toBe("calr_xxx");
+    expect(out.token_type).toBe("Bearer");
+  });
+
+  it("rejects unknown refresh_token", async () => {
+    setSupabaseResponse({ data: null, error: null });
+    await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
+  });
+
+  it("rejects when client_id doesn't match", async () => {
+    setSupabaseResponse({
+      data: { id: "x", shop_id: "s", client_id: "other", scopes: [], revoked_at: null, expires_at: null },
+      error: null,
+    });
+    await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
+  });
+
+  it("rejects revoked token", async () => {
+    setSupabaseResponse({
+      data: { id: "x", shop_id: "s", client_id: "c", scopes: [], revoked_at: new Date().toISOString() },
+      error: null,
+    });
+    await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
+  });
+
+  it("rejects when atomic update returns zero rows (concurrent rotation)", async () => {
+    setSupabaseResponses([
+      { data: { id: "x", shop_id: "s", client_id: "c", scopes: ["read"], revoked_at: null }, error: null },
+      { data: [], error: null }, // race lost
+    ]);
+    await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
   });
 });

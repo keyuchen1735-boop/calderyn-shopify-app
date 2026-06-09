@@ -164,3 +164,61 @@ export async function mintAccessToken(req: MintAccessTokenReq): Promise<MintAcce
     scope: req.scopes.join(" "),
   };
 }
+
+// ---------------------------------------------------------------------------
+// 4.2 rotateRefreshToken
+// ---------------------------------------------------------------------------
+
+export interface RotateRefreshReq {
+  refresh_token: string;
+  client_id: string;
+}
+
+function invalidGrantTokens(detail: string): Error {
+  const e = new Error(`invalid_grant: ${detail}`) as Error & { code: string };
+  e.code = "invalid_grant";
+  return e;
+}
+
+export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAccessTokenResult> {
+  const old_refresh_hash = hashToken(req.refresh_token);
+  const { data, error } = await getSupabase()
+    .from("mcp_tokens")
+    .select("id, shop_id, client_id, scopes, revoked_at")
+    .eq("refresh_hash", old_refresh_hash)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw invalidGrantTokens("unknown refresh_token");
+  const row = data as { id: string; shop_id: string; client_id: string | null; scopes: string[]; revoked_at: string | null };
+  if (row.client_id !== req.client_id) throw invalidGrantTokens("client_id mismatch");
+  if (row.revoked_at) throw invalidGrantTokens("revoked");
+
+  const new_access = newAccessToken();
+  const new_refresh = newRefreshToken();
+  const new_token_hash = hashToken(new_access);
+  const new_refresh_hash = hashToken(new_refresh);
+  const new_expires_at = new Date(Date.now() + ACCESS_TTL_SEC * 1000).toISOString();
+  const new_prefix = new_access.slice(0, 9);
+
+  const { data: updated, error: uerr } = await getSupabase()
+    .from("mcp_tokens")
+    .update({
+      token_hash: new_token_hash,
+      refresh_hash: new_refresh_hash,
+      token_prefix: new_prefix,
+      expires_at: new_expires_at,
+    })
+    .eq("id", row.id)
+    .eq("refresh_hash", old_refresh_hash)
+    .select("id");
+  if (uerr) throw uerr;
+  if (!Array.isArray(updated) || updated.length === 0) throw invalidGrantTokens("concurrent rotation");
+
+  return {
+    access_token: new_access,
+    refresh_token: new_refresh,
+    expires_in: ACCESS_TTL_SEC,
+    token_type: "Bearer",
+    scope: row.scopes.join(" "),
+  };
+}
