@@ -107,3 +107,60 @@ export async function revokeMcpToken(opts: {
     .is("revoked_at", null);
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4: OAuth-specific token operations
+// ---------------------------------------------------------------------------
+
+import { newAccessToken, newRefreshToken } from "./mcp_oauth.server";
+
+export interface MintAccessTokenReq {
+  client_id: string;
+  client_name: string;
+  shop_id: string;
+  scopes: string[];
+}
+
+export interface MintAccessTokenResult {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: "Bearer";
+  scope: string;
+}
+
+const ACCESS_TTL_SEC = 60 * 60 * 24 * 90; // 90d
+
+export async function mintAccessToken(req: MintAccessTokenReq): Promise<MintAccessTokenResult> {
+  const access_token = newAccessToken();
+  const refresh_token = newRefreshToken();
+  const token_hash = hashToken(access_token);
+  const refresh_hash = hashToken(refresh_token);
+  const expires_at = new Date(Date.now() + ACCESS_TTL_SEC * 1000).toISOString();
+  const prefix = access_token.slice(0, 9); // "cala_" + first 4 body chars
+
+  const { error } = await getSupabase()
+    .from("mcp_tokens")
+    .insert({
+      shop_id: req.shop_id,
+      name: `${req.client_name} (${req.client_id.slice(-8)})`,
+      token_hash,
+      token_prefix: prefix,
+      scopes: req.scopes,
+      auth_type: "oauth",
+      client_id: req.client_id,
+      expires_at,
+      refresh_hash,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  return {
+    access_token,
+    refresh_token,
+    expires_in: ACCESS_TTL_SEC,
+    token_type: "Bearer",
+    scope: req.scopes.join(" "),
+  };
+}
