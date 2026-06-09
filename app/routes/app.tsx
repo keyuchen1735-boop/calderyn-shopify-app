@@ -37,6 +37,7 @@ export default function App() {
         <Link to="/app/screener">Ad Pre-Screen</Link>
         <Link to="/app/simulator">Simulator</Link>
         <Link to="/app/settings">Settings</Link>
+        <Link to="/app/mcp">Claude connections</Link>
       </NavMenu>
       <Outlet />
       <AssistantSlideout />
