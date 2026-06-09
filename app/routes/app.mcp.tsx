@@ -238,6 +238,33 @@ export default function McpTokens() {
               )}
             </Card>
           </Layout.Section>
+          {oauthGrants.length > 0 && (
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">
+                    Connected Claude.ai workspaces
+                  </Text>
+                  <DataTable
+                    columnContentTypes={["text", "text", "text", "text"]}
+                    headings={["Name", "Connected", "Last used", ""]}
+                    rows={oauthGrants.map((g) => [
+                      g.name,
+                      new Date(g.created_at).toLocaleString(),
+                      g.last_used_at ? new Date(g.last_used_at).toLocaleString() : "—",
+                      <Form method="post" key={`oauth-revoke-${g.id}`}>
+                        <input type="hidden" name="intent" value="oauth-revoke" />
+                        <input type="hidden" name="token_id" value={g.id} />
+                        <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                          Disconnect
+                        </Button>
+                      </Form>,
+                    ])}
+                  />
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          )}
         </Layout>
       </BlockStack>
 
