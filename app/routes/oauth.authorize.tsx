@@ -1,9 +1,16 @@
 // app/routes/oauth.authorize.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { getClient } from "~/lib/mcp_oauth.server";
+import {
+  getClient,
+  signPendingOauth,
+  PENDING_COOKIE_NAME,
+  PENDING_COOKIE_OPTS,
+} from "~/lib/mcp_oauth.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
+
+const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 interface AuthorizeParams {
   response_type: string;
@@ -77,11 +84,72 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirectError(params, "invalid_request", "only scope=read is supported in v1");
   }
 
-  // Phase 7 stops here: return JSON describing the pick-shop phase.
-  // Phase 8 will add the action + Polaris UI + ?shop= shortcut.
+  // ?shop= shortcut: if shop is already in the URL, skip the form and set cookie directly.
+  const shop = url.searchParams.get("shop")?.toLowerCase();
+  if (shop && SHOP_RE.test(shop)) {
+    const jwt = await signPendingOauth({
+      client_id: params.client_id,
+      redirect_uri: params.redirect_uri,
+      code_challenge: params.code_challenge,
+      scope: params.scope,
+      state: params.state,
+      shop,
+    });
+    const headers = new Headers();
+    headers.append("set-cookie", `${PENDING_COOKIE_NAME}=${jwt}; ${PENDING_COOKIE_OPTS}`);
+    headers.set("location", `/auth/login?shop=${encodeURIComponent(shop)}`);
+    return new Response(null, { status: 302, headers });
+  }
+
   return json({
     phase: "pick-shop",
     client_name: client.client_name,
     client_id: client.client_id,
+    response_type: params.response_type,
+    redirect_uri: params.redirect_uri,
+    code_challenge: params.code_challenge,
+    code_challenge_method: params.code_challenge_method,
+    scope: params.scope,
+    state: params.state,
   });
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+
+  const form = await request.formData();
+  const params: AuthorizeParams = {
+    response_type: String(form.get("response_type") ?? ""),
+    client_id: String(form.get("client_id") ?? ""),
+    redirect_uri: String(form.get("redirect_uri") ?? ""),
+    code_challenge: String(form.get("code_challenge") ?? ""),
+    code_challenge_method: String(form.get("code_challenge_method") ?? "S256"),
+    scope: String(form.get("scope") ?? "read"),
+    state: String(form.get("state") ?? ""),
+    shop: String(form.get("shop") ?? "").trim().toLowerCase(),
+  };
+
+  // Re-validate (this endpoint is also reachable via direct POST)
+  const client = await getClient(params.client_id);
+  if (!client) return new Response("invalid_request", { status: 400 });
+  if (!client.redirect_uris.includes(params.redirect_uri)) {
+    return new Response("invalid_request", { status: 400 });
+  }
+  if (!params.shop || !SHOP_RE.test(params.shop)) {
+    return new Response("invalid_shop", { status: 400 });
+  }
+
+  const jwt = await signPendingOauth({
+    client_id: params.client_id,
+    redirect_uri: params.redirect_uri,
+    code_challenge: params.code_challenge,
+    scope: params.scope,
+    state: params.state,
+    shop: params.shop,
+  });
+
+  const headers = new Headers();
+  headers.append("set-cookie", `${PENDING_COOKIE_NAME}=${jwt}; ${PENDING_COOKIE_OPTS}`);
+  headers.set("location", `/auth/login?shop=${encodeURIComponent(params.shop)}`);
+  return new Response(null, { status: 302, headers });
 };

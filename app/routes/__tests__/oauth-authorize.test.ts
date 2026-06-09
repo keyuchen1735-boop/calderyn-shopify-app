@@ -1,12 +1,16 @@
 // app/routes/__tests__/oauth-authorize.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../lib/mcp_oauth.server", () => ({
-  getClient: vi.fn(),
-}));
+vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/mcp_oauth.server")>();
+  return {
+    ...actual,
+    getClient: vi.fn(),
+  };
+});
 
 import { getClient } from "../../lib/mcp_oauth.server";
-import { loader } from "../oauth.authorize";
+import { loader, action } from "../oauth.authorize";
 
 const VALID_PARAMS: Record<string, string> = {
   response_type: "code",
@@ -98,5 +102,88 @@ describe("/oauth/authorize loader", () => {
     expect(j.phase).toBe("pick-shop");
     expect(j.client_name).toBe("Claude");
     expect(j.client_id).toBe("cal_client_x");
+  });
+
+  it("with ?shop=...: sets cookie and 302s to /auth/login", async () => {
+    process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
+    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      client_id: "cal_client_x",
+      client_name: "Claude",
+      redirect_uris: ["https://claude.ai/cb"],
+      token_endpoint_auth_method: "none",
+    });
+    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "myshop.myshopify.com" }) as never);
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toContain("/auth/login?shop=myshop.myshopify.com");
+    expect(r.headers.get("set-cookie") ?? "").toContain("__cal_pending_oauth=");
+  });
+
+  it("loader returns OAuth params alongside client info in pick-shop response", async () => {
+    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      client_id: "cal_client_x",
+      client_name: "Claude",
+      redirect_uris: ["https://claude.ai/cb"],
+      token_endpoint_auth_method: "none",
+    });
+    const r = await loader(reqWith(VALID_PARAMS) as never);
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.phase).toBe("pick-shop");
+    expect(j.client_name).toBe("Claude");
+    expect(j.client_id).toBe("cal_client_x");
+    expect(j.redirect_uri).toBe("https://claude.ai/cb");
+    expect(j.code_challenge).toBe("challenge");
+    expect(j.code_challenge_method).toBe("S256");
+    expect(j.scope).toBe("read");
+    expect(j.state).toBe("abc");
+    expect(j.response_type).toBe("code");
+  });
+});
+
+describe("/oauth/authorize POST (pick-shop)", () => {
+  beforeEach(() => {
+    process.env.MCP_OAUTH_ENABLED = "true";
+    process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
+    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      client_id: "cal_client_x",
+      client_name: "Claude",
+      redirect_uris: ["https://claude.ai/cb"],
+      token_endpoint_auth_method: "none",
+    });
+  });
+
+  it("400s when shop is empty", async () => {
+    const form = new FormData();
+    form.set("shop", "");
+    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+  });
+
+  it("400s on non-myshopify.com shop", async () => {
+    const form = new FormData();
+    form.set("shop", "not-shopify");
+    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+  });
+
+  it("sets pending cookie and redirects to /auth/login on valid shop", async () => {
+    const form = new FormData();
+    form.set("shop", "myshop.myshopify.com");
+    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/auth/login?shop=myshop.myshopify.com");
+    const cookieHeader = res.headers.get("set-cookie") ?? "";
+    expect(cookieHeader).toContain("__cal_pending_oauth=");
+    expect(cookieHeader).toContain("HttpOnly");
+    expect(cookieHeader).toContain("Secure");
   });
 });
