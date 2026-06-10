@@ -297,6 +297,21 @@ export function calderynClient(shop: string) {
             .single();
           if (iErr) throw iErr;
 
+          // Undo revives the underlying problem: acknowledge-on-execute
+          // closed the alert, so reversing the action puts it back in the
+          // open queue. Best-effort — log, don't fail the recorded undo.
+          if (orig.alert_id) {
+            const { error: reopenErr } = await supabase
+              .from("alerts")
+              .update({ status: "open" })
+              .eq("shop_id", shopId)
+              .eq("id", orig.alert_id)
+              .eq("status", "acknowledged");
+            if (reopenErr) {
+              console.error(`[audit] failed to re-open alert ${orig.alert_id} after undo`, reopenErr);
+            }
+          }
+
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")
             .select("*")
