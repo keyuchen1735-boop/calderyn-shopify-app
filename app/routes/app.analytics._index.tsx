@@ -125,9 +125,14 @@ export default function Analytics() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              ROAS trend
-            </Text>
+            <BlockStack gap="050">
+              <Text as="h2" variant="headingMd">
+                ROAS trend
+              </Text>
+              <Text as="span" variant="bodySm" tone="subdued">
+                Return on ad spend across the last {WINDOW_DAYS} days. Higher is better; 1.0× means every dollar in came back as a dollar of revenue.
+              </Text>
+            </BlockStack>
             <MarginChart
               series={series}
               formatValue={formatRoas}
