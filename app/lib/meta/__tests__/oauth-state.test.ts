@@ -162,4 +162,30 @@ describe("embeddedReturnUrl", () => {
       embeddedReturnUrl("/app/settings", { google: "connected" }, { host: null, shop: null }),
     ).toBe("/app/settings?google=connected");
   });
+
+  // `host` is merely base64url("admin.shopify.com/store/<handle>") — derivable
+  // from the shop domain. The connect form loses ?host= after client-side
+  // navigation, so a missing host must not dump the merchant on the login page.
+  it("synthesizes host from the shop domain when only shop is known", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { quickbooks: "connected" },
+      { host: null, shop: "demo.myshopify.com" },
+    );
+    const parsed = new URL(url, "https://x.example");
+    expect(parsed.searchParams.get("shop")).toBe("demo.myshopify.com");
+    const host = parsed.searchParams.get("host")!;
+    expect(Buffer.from(host, "base64url").toString("utf8")).toBe(
+      "admin.shopify.com/store/demo",
+    );
+  });
+
+  it("prefers the real packed host over a synthesized one", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { quickbooks: "connected" },
+      { host: "realhost", shop: "demo.myshopify.com" },
+    );
+    expect(new URL(url, "https://x.example").searchParams.get("host")).toBe("realhost");
+  });
 });
