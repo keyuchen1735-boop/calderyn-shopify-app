@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Importing the shared chain mock also registers its beforeEach state reset.
 // Each `maybeSingle()` drains the queued responses (the helper runs two
 // sequential lookups: alerts → shops).
-import { setSupabaseResponses } from "./_supabase_chain_mock";
+import { setSupabaseResponses, getRecorded } from "./_supabase_chain_mock";
 import { adminAlertDeepLink, adminDeepLinkRedirect } from "../admin-deeplink.server";
 
 vi.mock("../supabase.server", async () => {
@@ -43,6 +43,17 @@ describe("adminAlertDeepLink", () => {
     expect(
       await adminAlertDeepLink("https://app.calderyncompany.com/app/alerts/not-a-uuid"),
     ).toBeNull();
+  });
+
+  it("excludes uninstalled shops from the lookup", async () => {
+    // shops rows survive uninstall for a 30-day grace window; the deep link
+    // must not send those to an admin app URL that no longer exists.
+    setSupabaseResponses([
+      { data: { shop_id: "shop-uuid-1" }, error: null },
+      { data: { shop_domain: "calderyn-shop-tester.myshopify.com" }, error: null },
+    ]);
+    await adminAlertDeepLink(CONFIRM_URL);
+    expect(getRecorded("is")).toContainEqual(["uninstalled_at", null]);
   });
 
   it("returns null when the alert lookup misses", async () => {
