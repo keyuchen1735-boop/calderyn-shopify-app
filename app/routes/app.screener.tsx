@@ -15,6 +15,7 @@ import {
   BlockStack,
   Box,
   Button,
+  ButtonGroup,
   Card,
   Collapsible,
   Divider,
@@ -45,7 +46,8 @@ import {
   type Variant,
 } from "~/lib/screener/types";
 import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
-import { copyGenerator, generateImprovements } from "~/lib/screener/generate.server";
+import { generateImprovements } from "~/lib/screener/generate.server";
+import { pickGenerator } from "~/lib/screener/pick-generator.server";
 import { loadCalibrationInputs } from "~/lib/screener/history.server";
 import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
 import { calibrate } from "~/lib/screener/calibrate.server";
@@ -81,7 +83,12 @@ export function isMetaSubmit(form: FormData): { metaAdId: string } | null {
   return metaAdId ? { metaAdId } : null;
 }
 
-type LoaderPayload = { latest: CreativeScreenRun | null; history: CreativeScreenRun[]; metaAds: ScreenableAd[] };
+type LoaderPayload = {
+  latest: CreativeScreenRun | null;
+  history: CreativeScreenRun[];
+  metaAds: ScreenableAd[];
+  imageGenAvailable: boolean;
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -90,7 +97,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     listRuns(session.shop, 10),
     listScreenableAds(session.shop).catch(() => [] as ScreenableAd[]),
   ]);
-  return json<LoaderPayload>({ latest, history, metaAds });
+  const imageGenAvailable =
+    Boolean(process.env.HIGGSFIELD_API_KEY) && Boolean(process.env.HIGGSFIELD_API_SECRET);
+  return json<LoaderPayload>({ latest, history, metaAds, imageGenAvailable });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -110,7 +119,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const { composite } = calibrate(scored.metrics, calib, latest.assumedSpendCents);
       return { composite, summary: scored.summary, metrics: scored.metrics };
     };
-    const generator = copyGenerator({ createMessage, model: assistantModel() });
+    const generator = pickGenerator(String(form.get("mode") ?? "copy"), {
+      createMessage,
+      model: assistantModel(),
+    });
     const result = await generateImprovements(
       { original, originalScorecard: latest.scorecard, styleRefs: calib.topAdNames },
       { generator, scoreOne },
@@ -200,7 +212,7 @@ function MetricRow({ m }: { m: ScoreCard["metrics"][number] }) {
 }
 
 export default function Screener() {
-  const { latest, history, metaAds } = useLoaderData<typeof loader>();
+  const { latest, history, metaAds, imageGenAvailable } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const run: CreativeScreenRun | null =
     (fetcher.data as CreativeScreenRun | undefined) ?? latest;
@@ -210,6 +222,7 @@ export default function Screener() {
   const [spend, setSpend] = useState<string>(
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
   );
+  const [genMode, setGenMode] = useState<"copy" | "image">("copy");
   useEffect(() => {
     const d = fetcher.data as CreativeScreenRun | undefined;
     if (d?.assumedSpendCents)
@@ -445,12 +458,34 @@ export default function Screener() {
                   <Text as="h2" variant="headingSm">Improved variations</Text>
                   <fetcher.Form method="post">
                     <input type="hidden" name="intent" value="generate" />
-                    <Button submit loading={running} disabled={running}>Generate improvements</Button>
+                    <input type="hidden" name="mode" value={genMode} />
+                    <InlineStack gap="200" blockAlign="center">
+                      <ButtonGroup variant="segmented">
+                        <Button pressed={genMode === "copy"} onClick={() => setGenMode("copy")}>
+                          Copy
+                        </Button>
+                        <Button
+                          pressed={genMode === "image"}
+                          disabled={!imageGenAvailable}
+                          onClick={() => setGenMode("image")}
+                        >
+                          Image
+                        </Button>
+                      </ButtonGroup>
+                      <Button submit variant="primary" loading={running} disabled={running}>
+                        Generate
+                      </Button>
+                    </InlineStack>
                   </fetcher.Form>
                 </InlineStack>
+                {!imageGenAvailable && (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Image generation isn&apos;t connected — set HIGGSFIELD_API_KEY and HIGGSFIELD_API_SECRET to enable it.
+                  </Text>
+                )}
                 {(run?.variants ?? []).length === 0 ? (
                   <Text as="p" tone="subdued" variant="bodySm">
-                    Generate copy variations conditioned on this ad&apos;s weak spots. Only variants that out-score the original are shown.
+                    Generate variations conditioned on this ad&apos;s weak spots. Only variants that out-score the original are shown.
                   </Text>
                 ) : (
                   (run?.variants ?? []).map((v: Variant, i: number) => (
