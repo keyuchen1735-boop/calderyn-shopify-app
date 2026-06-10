@@ -5,8 +5,10 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
+import type { ActionKind } from "../types";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
+import { recoveredCentsForAction } from "../audit-impact";
 
 export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
 
@@ -75,11 +77,32 @@ export async function insertAuditWithIdempotency(
   audit: AuditInsert,
   sb: SupabaseClient,
 ): Promise<ExecutedAudit> {
+  // Recovered impact: a value-recovering action that succeeds against an alert
+  // claws back that alert's at-stake dollars. Without this the Recovered-impact
+  // total is always $0. Stored in dollars (the column's unit). A lookup failure
+  // must never block the action — the platform call already happened — so it
+  // falls back to 0.
+  let dollarImpactAtExec = 0;
+  if (audit.outcome === "succeeded" && audit.alert_id) {
+    try {
+      const { data: al } = await sb
+        .from("alerts")
+        .select("dollar_impact")
+        .eq("id", audit.alert_id)
+        .maybeSingle();
+      const atStakeCents = Math.round(Number(al?.dollar_impact ?? 0) * 100);
+      dollarImpactAtExec = recoveredCentsForAction(audit.action_kind as ActionKind, atStakeCents) / 100;
+    } catch (err) {
+      console.error(`[actions] recovered-impact lookup failed for alert ${audit.alert_id}`, err);
+    }
+  }
+
   const { data: ins, error: iErr } = await sb
     .from("action_audit")
     .insert({
       shop_id: shopId,
       ...audit,
+      dollar_impact_at_exec: dollarImpactAtExec,
       // A parked `retrying` row has already consumed its first attempt.
       attempts: audit.outcome === "retrying" ? 1 : 0,
       completed_at: new Date().toISOString(),
