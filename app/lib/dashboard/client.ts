@@ -197,6 +197,7 @@ const AUDIT_VERBS: Record<string, string> = {
   pause_campaign: "Paused campaign",
   resume_campaign: "Resumed campaign",
   reduce_campaign_budget: "Reduced budget",
+  reallocate_budget: "Reallocated budget",
   exclude_geo: "Excluded geo",
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",

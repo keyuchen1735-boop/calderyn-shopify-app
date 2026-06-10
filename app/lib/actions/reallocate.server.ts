@@ -26,6 +26,7 @@ interface CampaignRow {
   id: string;
   external_id: string;
   platform: string;
+  name: string;
   status: string;
   daily_budget_cents: number | null;
 }
@@ -37,7 +38,7 @@ async function loadOwnedCampaign(
 ): Promise<CampaignRow | null> {
   const { data, error } = await sb
     .from("ad_campaign_dim")
-    .select("id, shop_id, external_id, platform, status, daily_budget_cents")
+    .select("id, shop_id, external_id, platform, name, status, daily_budget_cents")
     .eq("id", campaignId)
     .eq("shop_id", shopId)
     .maybeSingle();
@@ -163,6 +164,10 @@ export async function executeReallocation(
   // the increase step with its existing single-adapter shape.
   const params: Record<string, unknown> = {
     campaign_id: input.sourceCampaignId, // source side — existing cooldown lookups match it
+    // Human-readable identifiers so audit surfaces (target column derives from
+    // params) can label the row without resolving uuids.
+    campaign_name: source.name,
+    target: `${source.platform} · ${source.name} → ${dest.platform} · ${dest.name}`,
     source_campaign_id: input.sourceCampaignId,
     source_external_id: source.external_id,
     source_platform: source.platform,

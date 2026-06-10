@@ -19,6 +19,7 @@ import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.serve
 import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
+import { undoAction } from "./actions/undo.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -256,6 +257,22 @@ export function calderynClient(shop: string) {
           if (oErr) throw oErr;
           if (!orig) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
+          }
+
+          // Composite reallocations have a real two-sided platform undo —
+          // delegate to the action-gateway undo (adapter-based, restores BOTH
+          // budgets) instead of the legacy path below, which would record a
+          // success without touching either platform (rule 12).
+          if (orig.action_kind === "reallocate_budget") {
+            const res = await undoAction(shopId, auditId, supabase);
+            const { data: view, error: vErr } = await supabase
+              .from("v_audit_view")
+              .select("*")
+              .eq("id", res.id)
+              .eq("shop_id", shopId)
+              .single();
+            if (vErr) throw vErr;
+            return rowToAudit(view);
           }
 
           // For real ad-platform pauses, restore the prior status on Meta first.

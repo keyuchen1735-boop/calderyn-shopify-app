@@ -261,6 +261,7 @@ export function CDIcon({ name, ...rest }: CDIconProps): JSX.Element {
 export const CD_ACTION_ICON: Record<string, string> = {
   pause_campaign: "pause",
   reduce_campaign_budget: "reduce",
+  reallocate_budget: "swap",
   exclude_geo: "globe",
   reallocate_inventory: "swap",
   create_po_draft: "doc",

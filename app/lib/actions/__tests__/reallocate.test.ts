@@ -57,8 +57,8 @@ function fakeSb(opts: {
   return { sb, calls };
 }
 
-const SRC = { id: SRC_ID, shop_id: SHOP, external_id: "g-1", platform: "google", status: "active", daily_budget_cents: 2000 };
-const DST = { id: DST_ID, shop_id: SHOP, external_id: "m-1", platform: "meta", status: "active", daily_budget_cents: 1000 };
+const SRC = { id: SRC_ID, shop_id: SHOP, external_id: "g-1", platform: "google", name: "Brand Search", status: "active", daily_budget_cents: 2000 };
+const DST = { id: DST_ID, shop_id: SHOP, external_id: "m-1", platform: "meta", name: "Prospecting", status: "active", daily_budget_cents: 1000 };
 
 const input = {
   alertId: null,
