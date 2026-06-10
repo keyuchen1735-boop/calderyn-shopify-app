@@ -232,7 +232,18 @@ const icon =
   '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>' +
   '<path d="m21 15-5-5L5 21"/></svg>';
 
-export class ImageSlot extends HTMLElement {
+// SSR-safe base: `HTMLElement` is a browser-only global and does not exist in
+// the Node server bundle. Referencing it as a superclass at module-eval time
+// (which happens on import, before any guard) throws `ReferenceError:
+// HTMLElement is not defined` and crashes the whole SSR bundle. Resolve the
+// base to a harmless stand-in on the server; the real element is only ever
+// instantiated/registered in the browser (see the guarded define() below).
+const ImageSlotBase: typeof HTMLElement =
+  typeof HTMLElement !== "undefined"
+    ? HTMLElement
+    : (class {} as unknown as typeof HTMLElement);
+
+export class ImageSlot extends ImageSlotBase {
   static _warned?: boolean;
 
   private _frame!: HTMLElement;
