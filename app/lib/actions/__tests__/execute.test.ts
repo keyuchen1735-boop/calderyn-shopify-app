@@ -81,6 +81,23 @@ describe("executeAction", () => {
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
   });
 
+  it("refuses reduce_campaign_budget without a target budget instead of zeroing it", async () => {
+    // Alerts whose evidence lacks the current budget produce
+    // dailyBudgetCents=undefined; the old `?? 0` fallthrough set the live
+    // campaign budget to $0.
+    const { sb, calls } = fakeSb({ campaign });
+
+    await expect(
+      executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "kb" },
+        sb,
+      ),
+    ).rejects.toThrow(/dailyBudgetCents/);
+    expect(adapter.setDailyBudget).not.toHaveBeenCalled();
+    expect(calls.inserts).toHaveLength(0); // nothing recorded for a refused input
+  });
+
   it("surfaces an idempotency insert failure without failing the executed action", async () => {
     // The platform call already happened and the audit row exists; failing
     // here would provoke the duplicate execution the key prevents. But the

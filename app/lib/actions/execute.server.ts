@@ -34,6 +34,14 @@ export async function executeAction(
   input: ExecuteInput,
   sb: SupabaseClient,
 ): Promise<ExecutedAudit> {
+  // 0. Validate input: a missing/zero target budget must refuse loudly —
+  // the old `?? 0` fallthrough would set the live campaign budget to $0.
+  if (input.kind === "reduce_campaign_budget" && !input.dailyBudgetCents) {
+    throw new Error(
+      `reduce_campaign_budget for ${input.campaignId} has no positive dailyBudgetCents (alert evidence lacked the current budget)`,
+    );
+  }
+
   // 1. Idempotency.
   const { data: prior, error: pErr } = await sb
     .from("action_idempotency")
