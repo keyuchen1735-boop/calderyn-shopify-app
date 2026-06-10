@@ -51,6 +51,30 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
     const size = opts.size ?? 10;
     text(str, rightX - f.widthOfTextAtSize(sanitize(str), size), y, opts);
   };
+  // Draw text constrained to maxWidth: shrink the font toward `min` first
+  // (keeps long SKUs fully legible), then ellipsis-truncate only if it still
+  // overflows at the floor size. Without this, long values paint across the
+  // next column. "…" is WinAnsi-encodable so it survives the standard font.
+  const fitText = (
+    str: string,
+    x: number,
+    y: number,
+    maxWidth: number,
+    opts: { size?: number; min?: number; font?: PDFFont; color?: ReturnType<typeof rgb> } = {},
+  ) => {
+    const f = opts.font ?? font;
+    const min = opts.min ?? 7;
+    const clean = sanitize(str);
+    let size = opts.size ?? 10;
+    while (size > min && f.widthOfTextAtSize(clean, size) > maxWidth) size -= 0.5;
+    let out = clean;
+    if (f.widthOfTextAtSize(out, size) > maxWidth) {
+      while (out.length > 1 && f.widthOfTextAtSize(out + "…", size) > maxWidth)
+        out = out.slice(0, -1);
+      out += "…";
+    }
+    page.drawText(out, { x, y, size, font: f, color: opts.color ?? INK });
+  };
   const hr = (y: number) =>
     page.drawLine({
       start: { x: MARGIN, y },
@@ -91,8 +115,10 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
   // ---- Line items ----------------------------------------------------------
   y -= 20;
   const colSku = MARGIN;
-  const colDesc = MARGIN + 90;
+  const colDesc = MARGIN + 150;
   const colQtyR = MARGIN + 340;
+  const skuMaxW = colDesc - colSku - 10;
+  const descMaxW = colQtyR - colDesc - 40;
   const colUnitR = MARGIN + 420;
   const colTotalR = PAGE_W - MARGIN;
   text("SKU", colSku, y, { size: 8, font: bold, color: MUTED });
@@ -106,8 +132,8 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
     y -= 16;
     const lineTotal =
       line.unit_cost_cents === null ? null : line.quantity * line.unit_cost_cents;
-    text(line.sku, colSku, y);
-    text(line.title, colDesc, y);
+    fitText(line.sku, colSku, y, skuMaxW);
+    fitText(line.title, colDesc, y, descMaxW);
     rightText(String(line.quantity), colQtyR, y);
     rightText(money(line.unit_cost_cents), colUnitR, y);
     rightText(money(lineTotal), colTotalR, y);
