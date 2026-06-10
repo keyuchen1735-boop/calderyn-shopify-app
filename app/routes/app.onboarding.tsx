@@ -357,46 +357,49 @@ function GuardrailsStep({
           ]}
         />
       </Box>
-      <Form method="post">
-        <input type="hidden" name="intent" value="save_guardrails" />
-        <input type="hidden" name="step" value={String(nextStep)} />
-        <input type="hidden" name="budget" value={budget} />
-        <input type="hidden" name="cap" value={cap} />
-        <input type="hidden" name="cooldown" value={cooldown} />
-        <BlockStack gap="300">
-          <TextField
-            label="Daily action budget cap (USD)"
-            type="number"
-            value={budget}
-            onChange={setBudget}
-            autoComplete="off"
-            helpText={`Used today: ${fmtMoney(
-              guardrails?.daily_action_budget_used_cents ?? 0,
-            )} of ${fmtMoney(Number(budget) * 100)}`}
-          />
-          <TextField
-            label="Per-action dollar cap (USD)"
-            type="number"
-            value={cap}
-            onChange={setCap}
-            autoComplete="off"
-            helpText="Single-action impact above this prompts re-authentication."
-          />
-          <TextField
-            label="Cooldown between actions (minutes)"
-            type="number"
-            value={cooldown}
-            onChange={setCooldown}
-            autoComplete="off"
-          />
-          <InlineStack align="space-between">
-            <BackButton step={Math.max(0, nextStep - 2)} submitting={submitting} />
+      <BlockStack gap="300">
+        <TextField
+          label="Daily action budget cap (USD)"
+          type="number"
+          value={budget}
+          onChange={setBudget}
+          autoComplete="off"
+          helpText={`Used today: ${fmtMoney(
+            guardrails?.daily_action_budget_used_cents ?? 0,
+          )} of ${fmtMoney(Number(budget) * 100)}`}
+        />
+        <TextField
+          label="Per-action dollar cap (USD)"
+          type="number"
+          value={cap}
+          onChange={setCap}
+          autoComplete="off"
+          helpText="Single-action impact above this prompts re-authentication."
+        />
+        <TextField
+          label="Cooldown between actions (minutes)"
+          type="number"
+          value={cooldown}
+          onChange={setCooldown}
+          autoComplete="off"
+        />
+        {/* The Back button renders its own <form>, so it must stay a sibling of
+            this one — a form nested inside a form is dropped by the HTML parser
+            and Back would silently submit save_guardrails instead. */}
+        <InlineStack align="space-between">
+          <BackButton step={Math.max(0, nextStep - 2)} submitting={submitting} />
+          <Form method="post" style={{ display: "inline" }}>
+            <input type="hidden" name="intent" value="save_guardrails" />
+            <input type="hidden" name="step" value={String(nextStep)} />
+            <input type="hidden" name="budget" value={budget} />
+            <input type="hidden" name="cap" value={cap} />
+            <input type="hidden" name="cooldown" value={cooldown} />
             <Button submit variant="primary" loading={submitting} disabled={submitting}>
               Continue
             </Button>
-          </InlineStack>
-        </BlockStack>
-      </Form>
+          </Form>
+        </InlineStack>
+      </BlockStack>
     </BlockStack>
   );
 }
