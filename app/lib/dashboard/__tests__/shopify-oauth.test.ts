@@ -85,7 +85,7 @@ describe("exchangeCodeForToken", () => {
       clientSecret: "shh",
     });
     expect(ok).toBe(true);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://x.myshopify.com/admin/oauth/access_token");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
