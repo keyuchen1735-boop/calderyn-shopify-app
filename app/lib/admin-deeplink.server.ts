@@ -1,7 +1,7 @@
 import { redirect } from "@remix-run/node";
+import { isUuid } from "./ids";
 import { getSupabase } from "./supabase.server";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALERT_PATH_RE = /^\/app\/alerts\/([^/]+)$/;
 
 /**
@@ -22,7 +22,7 @@ export async function adminAlertDeepLink(requestUrl: string): Promise<string | n
   const match = url.pathname.match(ALERT_PATH_RE);
   const alertId = match?.[1];
   const apiKey = process.env.SHOPIFY_API_KEY;
-  if (!alertId || !UUID_RE.test(alertId) || !apiKey) return null;
+  if (!alertId || !isUuid(alertId) || !apiKey) return null;
 
   try {
     const supabase = getSupabase();

@@ -2,6 +2,7 @@
 // row (dollars, ints) into the pure evaluator's shape.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isUuid } from "../ids";
 import { evaluateGuardrails, type AutopilotGuardrails, type GuardrailResult, type GuardedKind } from "./guardrails";
 
 export interface CheckInput {
@@ -14,8 +15,6 @@ export interface CheckInput {
   currentBudgetCents?: number;
   newBudgetCents?: number;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function minutesSinceLastAutopilotActionOn(
   sb: SupabaseClient,
@@ -51,7 +50,7 @@ export async function checkGuardrails(
 ): Promise<GuardrailResult> {
   // Ids are interpolated into a PostgREST .or() filter — refuse anything that
   // is not a plain uuid rather than risk corrupting the filter expression.
-  if (!UUID_RE.test(input.campaignId) || (input.destCampaignId && !UUID_RE.test(input.destCampaignId))) {
+  if (!isUuid(input.campaignId) || (input.destCampaignId && !isUuid(input.destCampaignId))) {
     return { allowed: false, reason: "invalid campaign id" };
   }
 

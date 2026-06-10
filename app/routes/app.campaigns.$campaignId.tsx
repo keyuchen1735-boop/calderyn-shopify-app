@@ -20,6 +20,7 @@ import { authenticate } from "../shopify.server";
 import { Scorecard } from "~/components/Scorecard";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { isUuid } from "~/lib/ids";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns } from "~/lib/meta/campaigns.server";
@@ -375,14 +376,6 @@ async function loadAdMetrics(
       adMetricsError: { code: e.code ?? "AD_METRICS_ERROR", message: e.message },
     };
   }
-}
-
-/** True when `s` is a canonical uuid — the shape of v_campaigns_flat.id. Lets the
- * loader skip the dim-uuid lookup for platform external ids (which would 22P02). */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isUuid(s: string): boolean {
-  return UUID_RE.test(s);
 }
 
 /** campaigns.get but null (not throw) on CAMPAIGN_NOT_FOUND, rethrow otherwise. */

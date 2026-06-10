@@ -11,7 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
-import type { ExecutedAudit } from "./execute.server";
+import {
+  insertAuditWithIdempotency,
+  priorExecutionForKey,
+  type ExecutedAudit,
+} from "./execute.server";
 
 export interface ReallocateInput {
   alertId: string | null;
@@ -54,22 +58,8 @@ export async function executeReallocation(
   // 1. Idempotency — same contract as executeAction: a replayed key returns
   // the REAL prior outcome (may still be `retrying` or `failed`), never a
   // hardcoded success (rule 12).
-  const { data: prior, error: pErr } = await sb
-    .from("action_idempotency")
-    .select("audit_id")
-    .eq("shop_id", shopId)
-    .eq("idempotency_key", input.idempotencyKey)
-    .maybeSingle();
-  if (pErr) throw pErr;
-  if (prior?.audit_id) {
-    const { data: prevAudit } = await sb
-      .from("action_audit")
-      .select("outcome")
-      .eq("id", prior.audit_id)
-      .maybeSingle();
-    const priorOutcome = (prevAudit?.outcome as ExecutedAudit["outcome"]) ?? "succeeded";
-    return { id: String(prior.audit_id), outcome: priorOutcome };
-  }
+  const prior = await priorExecutionForKey(shopId, input.idempotencyKey, sb);
+  if (prior) return prior;
 
   // 2. Validation + ownership. Failures THROW with no audit row — like the
   // executeAction ownership guard, nothing was attempted on any platform.
@@ -185,30 +175,19 @@ export async function executeReallocation(
   };
   if (compensation) params.compensation = compensation;
 
-  const { data: ins, error: iErr } = await sb
-    .from("action_audit")
-    .insert({
-      shop_id: shopId,
+  return insertAuditWithIdempotency(
+    shopId,
+    input.idempotencyKey,
+    {
       alert_id: input.alertId,
       action_kind: "reallocate_budget",
       params,
       outcome,
-      // A parked `retrying` row has already consumed its first attempt.
-      attempts: outcome === "retrying" ? 1 : 0,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
-      completed_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  if (iErr) throw iErr;
-  const auditId = String(ins.id);
-
-  await sb
-    .from("action_idempotency")
-    .insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
-
-  return { id: auditId, outcome };
+    },
+    sb,
+  );
 }
