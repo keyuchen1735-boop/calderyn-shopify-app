@@ -143,7 +143,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           message: `Unknown provider: ${provider}`,
         });
       }
-      const { redirectUrl } = await client.integrations.startOAuth(provider, request.signal);
+      // Carry the embedded App Bridge `host` through the OAuth round-trip: the
+      // provider callback lands at the top level (outside the admin iframe) and
+      // needs host to redirect the merchant back INTO the embedded admin.
+      const host = String(formData.get("host") || "") || null;
+      const { redirectUrl } = await client.integrations.startOAuth(provider, host);
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
@@ -502,6 +506,9 @@ function IntegrationCard({
 }) {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
+  // App Bridge appends `host` to the embedded URL; forward it on connect so the
+  // OAuth callback can re-embed the merchant in the Shopify admin afterwards.
+  const [searchParams] = useSearchParams();
   // Connect runs through its own fetcher so the provider's OAuth page can be
   // opened at the top level — embedded iframes can't load third-party OAuth
   // pages (they refuse to be framed).
@@ -546,6 +553,7 @@ function IntegrationCard({
             <connectFetcher.Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
               <input type="hidden" name="provider" value={oauthProvider} />
+              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
               <Button submit variant="primary" loading={connecting} disabled={connecting}>
                 Connect
               </Button>

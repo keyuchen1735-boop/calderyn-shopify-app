@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- in-memory fake models supabase-js's loosely-typed query builder */
 import { describe, it, expect, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createOAuthState, consumeOAuthState, OAUTH_STATE_TTL_MS } from "../oauth-state.server";
+import {
+  createOAuthState,
+  consumeOAuthState,
+  packOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+  OAUTH_STATE_TTL_MS,
+} from "../oauth-state.server";
 
 type Row = Record<string, any>;
 const store: Record<string, Row[]> = {};
@@ -89,5 +96,70 @@ describe("consumeOAuthState", () => {
     const old = new Date(Date.now() - OAUTH_STATE_TTL_MS - 1000).toISOString();
     store["oauth_state"] = [{ nonce: "stale", shop_id: "shop-A", created_at: old }];
     expect(await consumeOAuthState(sb, "stale")).toBeNull();
+  });
+
+  it("validates the nonce inside a packed state and stays single-use", async () => {
+    const state = await createOAuthState(sb, "shop-A", {
+      host: "b64host",
+      shop: "demo.myshopify.com",
+    });
+    // The stored nonce is bare; the returned `state` is packed (carries context).
+    const bareNonce = store["oauth_state"][0].nonce;
+    expect(state).not.toBe(bareNonce);
+    expect(parseOAuthState(state)).toMatchObject({
+      nonce: bareNonce,
+      host: "b64host",
+      shop: "demo.myshopify.com",
+    });
+    expect(await consumeOAuthState(sb, state)).toBe("shop-A");
+    // Replay of the packed state must also fail (row consumed).
+    expect(await consumeOAuthState(sb, state)).toBeNull();
+  });
+});
+
+describe("packOAuthState / parseOAuthState", () => {
+  it("round-trips host and shop through a packed state", () => {
+    const state = packOAuthState("nonce-1", { host: "aHsdf==", shop: "demo.myshopify.com" });
+    expect(state).not.toBe("nonce-1");
+    expect(parseOAuthState(state)).toEqual({
+      nonce: "nonce-1",
+      host: "aHsdf==",
+      shop: "demo.myshopify.com",
+    });
+  });
+
+  it("returns the bare nonce when no context is supplied", () => {
+    expect(packOAuthState("nonce-1")).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", {})).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", { host: null, shop: null })).toBe("nonce-1");
+  });
+
+  it("parses a plain nonce as the nonce with null context", () => {
+    expect(parseOAuthState("just-a-nonce")).toEqual({
+      nonce: "just-a-nonce",
+      host: null,
+      shop: null,
+    });
+  });
+});
+
+describe("embeddedReturnUrl", () => {
+  it("appends shop and host when both are present", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { google: "connected" },
+      { host: "b64host", shop: "demo.myshopify.com" },
+    );
+    const parsed = new URL(url, "https://x.example");
+    expect(parsed.pathname).toBe("/app/settings");
+    expect(parsed.searchParams.get("google")).toBe("connected");
+    expect(parsed.searchParams.get("shop")).toBe("demo.myshopify.com");
+    expect(parsed.searchParams.get("host")).toBe("b64host");
+  });
+
+  it("falls back to a bare path when context is missing", () => {
+    expect(
+      embeddedReturnUrl("/app/settings", { google: "connected" }, { host: null, shop: null }),
+    ).toBe("/app/settings?google=connected");
   });
 });
