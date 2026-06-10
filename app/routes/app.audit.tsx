@@ -19,6 +19,7 @@ import {
   DataTable,
   EmptyState,
   InlineGrid,
+  InlineStack,
   Page,
   Text,
   Tooltip,
@@ -135,7 +136,19 @@ export default function Audit() {
     .filter((a) => a.outcome === "succeeded")
     .reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
 
-  const rows = audit.map((a) => [
+  const rows = audit.map((a) => {
+    const canUndo = a.undo_eligible && !a.undo_of;
+    // The PDF route 404s for entries recorded before the PO snapshot existed,
+    // so only offer the download when the audit row actually carries one.
+    const hasPoPdf =
+      a.action_kind === "create_po_draft" &&
+      a.outcome === "succeeded" &&
+      Boolean(a.post_state?.po);
+    // Realized impact is attributed later (often $0 at exec time); fall back to
+    // the estimate snapshotted at execution so the column isn't a wall of $0.
+    const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
+    const showEstimate = !a.dollar_impact_at_exec && estimateCents > 0;
+    return [
     <Box key={`t-${a.id}`} minWidth="150px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
         {fmtRelTime(a.created_at)}
@@ -171,29 +184,40 @@ export default function Audit() {
     <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
       {a.actor}
     </Text>,
-    <Text key={`i-${a.id}`} as="span" alignment="end" variant="bodySm" fontWeight="semibold">
-      {a.dollar_impact_at_exec < 0 ? "-" : ""}
-      {fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
-    </Text>,
+    <Box key={`i-${a.id}`}>
+      <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
+        {a.dollar_impact_at_exec < 0 ? "-" : ""}
+        {fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
+      </Text>
+      {showEstimate && (
+        <Text as="p" alignment="end" variant="bodySm" tone="subdued">
+          est. {fmtMoney(estimateCents)}
+        </Text>
+      )}
+    </Box>,
     <Badge key={`s-${a.id}`} tone={a.outcome === "succeeded" ? "success" : "critical"}>
       {a.outcome}
     </Badge>,
-    a.undo_eligible && !a.undo_of ? (
-      <Form key={`u-${a.id}`} method="post">
-        <input type="hidden" name="intent" value="undo" />
-        <input type="hidden" name="auditId" value={a.id} />
-        <Button submit variant="plain" loading={submitting} disabled={submitting}>
-          Undo
-        </Button>
-      </Form>
-    ) : a.action_kind === "create_po_draft" && a.outcome === "succeeded" ? (
-      <DownloadPoButton key={`u-${a.id}`} auditId={a.id} />
+    canUndo || hasPoPdf ? (
+      <InlineStack key={`u-${a.id}`} gap="200" wrap={false}>
+        {canUndo && (
+          <Form method="post">
+            <input type="hidden" name="intent" value="undo" />
+            <input type="hidden" name="auditId" value={a.id} />
+            <Button submit variant="plain" loading={submitting} disabled={submitting}>
+              Undo
+            </Button>
+          </Form>
+        )}
+        {hasPoPdf && <DownloadPoButton auditId={a.id} />}
+      </InlineStack>
     ) : (
       <Text key={`u-${a.id}`} as="span" tone="subdued">
         —
       </Text>
     ),
-  ]);
+  ];
+  });
 
   return (
     <Page

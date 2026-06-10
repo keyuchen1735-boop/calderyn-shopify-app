@@ -37,6 +37,7 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
 
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
+  resume_campaign: "Resume campaign",
   reduce_campaign_budget: "Reduce campaign budget",
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
@@ -46,6 +47,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
 
 export const ACTION_VERBS: Record<ActionKind, string> = {
   pause_campaign: "Paused campaign",
+  resume_campaign: "Resumed campaign",
   reduce_campaign_budget: "Reduced budget",
   exclude_geo: "Excluded geo",
   reallocate_inventory: "Reallocated inventory",

@@ -23,6 +23,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { adminDeepLinkRedirect } from "~/lib/admin-deeplink.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -59,6 +60,7 @@ type LoaderPayload = {
   alert: Alert | null;
   guardrails: GuardrailConfig | null;
   poDefaults: PoDefaults | null;
+  existingPoDraft: boolean;
   error: { code: string; message: string } | null;
 };
 
@@ -69,7 +71,15 @@ type ActionPayload = {
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  let session;
+  try {
+    ({ session } = await authenticate.admin(request));
+  } catch (thrown) {
+    // Unauthenticated hit on a confirm_url (e.g. from propose_action): send
+    // it to the Shopify admin deep link, which survives login, instead of
+    // the bare login page that drops the path.
+    throw (await adminDeepLinkRedirect(request, thrown)) ?? thrown;
+  }
   const client = calderynClient(session.shop);
   const id = params.id!;
   try {
@@ -81,24 +91,40 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Pre-fill the PO modal from the alert's evidence and the current COGS
     // row; both may be unknown (null) — the modal renders those blank/TBD.
     let poDefaults: PoDefaults | null = null;
+    let existingPoDraft = false;
     if ((DETECTOR_TO_ACTIONS[alert.detector_id] ?? []).includes("create_po_draft") && alert.sku) {
+      const supabase = getSupabase();
+      const shopId = await resolveShopId(session.shop);
       poDefaults = {
         quantity: derivePoQuantity(alert.evidence ?? {}),
-        unit_cost_cents: await getCurrentUnitCostCents(
-          getSupabase(),
-          await resolveShopId(session.shop),
-          alert.sku,
-        ),
+        unit_cost_cents: await getCurrentUnitCostCents(supabase, shopId, alert.sku),
       };
+      // Surface (not block) repeat executions: a successful, un-undone draft
+      // for this alert already in the audit log warns in the confirm dialog.
+      const { data: priorDrafts, error: dupErr } = await supabase
+        .from("action_audit")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("alert_id", id)
+        .eq("action_kind", "create_po_draft")
+        .eq("outcome", "succeeded")
+        .is("undo_of", null)
+        .limit(1);
+      if (dupErr) {
+        // Cosmetic lookup — log loudly but don't take the page down over it.
+        console.error(`[alerts] duplicate-PO lookup failed for ${id}`, dupErr);
+      }
+      existingPoDraft = (priorDrafts ?? []).length > 0;
     }
 
-    return json<LoaderPayload>({ alert, guardrails, poDefaults, error: null });
+    return json<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       alert: null,
       guardrails: null,
       poDefaults: null,
+      existingPoDraft: false,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -275,12 +301,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         getSupabase(),
       );
 
+      let successMessage = `${ACTION_VERBS[kind] ?? "Action"} executed`;
+      if (result.outcome === "succeeded" && !(await acknowledgeAlert(session.shop, alertId))) {
+        successMessage += " — alert couldn't be acknowledged";
+      }
+
       return json<ActionPayload>({
         ok: result.outcome === "succeeded",
         toast: {
           message:
             result.outcome === "succeeded"
-              ? `${ACTION_VERBS[kind] ?? "Action"} executed`
+              ? successMessage
               : result.outcome === "retrying"
                 ? "Couldn't reach the ad platform — queued, will retry automatically"
                 : "Action recorded as failed — check the audit log",
@@ -300,9 +331,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       idempotencyKey,
     });
 
+    const acknowledged = await acknowledgeAlert(session.shop, alertId);
     return json<ActionPayload>({
       ok: true,
-      toast: { message: `${ACTION_VERBS[kind] ?? "Action"} executed` },
+      toast: {
+        message: `${ACTION_VERBS[kind] ?? "Action"} executed${
+          acknowledged ? "" : " — alert couldn't be acknowledged"
+        }`,
+      },
     });
   } catch (err) {
     if (err instanceof CalderynError) {
@@ -329,7 +365,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function AlertDetail() {
   const navigate = useEmbeddedNavigate();
-  const { alert, guardrails, poDefaults, error } = useLoaderData<typeof loader>();
+  const { alert, guardrails, poDefaults, existingPoDraft, error } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
@@ -510,6 +547,7 @@ export default function AlertDetail() {
           alert={alert}
           kind={actionKind}
           poDefaults={poDefaults}
+          existingPoDraft={existingPoDraft}
           submitting={submitting}
           onClose={() => setActionKind(null)}
         />
@@ -522,12 +560,14 @@ function ExecuteActionModal({
   alert,
   kind,
   poDefaults,
+  existingPoDraft,
   submitting,
   onClose,
 }: {
   alert: Alert;
   kind: ActionKind;
   poDefaults: PoDefaults | null;
+  existingPoDraft: boolean;
   submitting: boolean;
   onClose: () => void;
 }) {
@@ -578,6 +618,12 @@ function ExecuteActionModal({
             <Text as="p" variant="bodyMd" tone="subdued">
               {actionDescription(kind)}
             </Text>
+            {kind === "create_po_draft" && existingPoDraft && (
+              <Banner tone="warning">
+                A PO draft for this alert already exists in the audit log. Executing again
+                creates another draft.
+              </Banner>
+            )}
             {kind === "create_po_draft" && (
               <InlineStack gap="200" wrap={false}>
                 <TextField
@@ -638,6 +684,28 @@ function ExecuteActionModal({
   );
 }
 
+/**
+ * After a successful action, move the alert out of the open queue. Only flips
+ * open → acknowledged; the detector still owns resolution and may re-open it
+ * on the next pass. Returns false (and logs) on failure so the caller can
+ * surface it in the toast without failing the already-executed action.
+ */
+async function acknowledgeAlert(shopDomain: string, alertId: string): Promise<boolean> {
+  try {
+    const { error } = await getSupabase()
+      .from("alerts")
+      .update({ status: "acknowledged" })
+      .eq("shop_id", await resolveShopId(shopDomain))
+      .eq("id", alertId)
+      .eq("status", "open");
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error(`[alerts] failed to acknowledge ${alertId} after action`, err);
+    return false;
+  }
+}
+
 function useStableIdempotencyKey(alertId: string, kind: ActionKind) {
   const [key] = useState(() => `${alertId}:${kind}:${newIdempotencyKey()}`);
   return key;
@@ -654,6 +722,8 @@ function actionDescription(kind: ActionKind) {
   switch (kind) {
     case "pause_campaign":
       return "Pauses the campaign immediately via the Meta/Google API. Reversible via Undo.";
+    case "resume_campaign":
+      return "Resumes the paused campaign via the ad platform API.";
     case "reduce_campaign_budget":
       return "Reduces daily budget by 30% (historical bend point). Reversible via Undo.";
     case "exclude_geo":
