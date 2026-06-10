@@ -7,7 +7,6 @@ import {
   Card,
   SectionTitle,
   CountMoney,
-  CountNum,
   AreaChart,
   SevBadge,
   Pill,
@@ -18,6 +17,7 @@ import {
   GradePill,
 } from "../ui";
 import { money, DETECTOR_TERMS, ACTION_LABELS } from "../format";
+import { trueRoas } from "~/lib/roas";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
@@ -270,8 +270,12 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     .filter((a) => a.post !== "Reverted")
     .reduce((s, a) => s + a.dollar_impact_at_exec, 0);
 
-  const today = app.today;
-  const blended = today.revenue_cents / Math.max(1, today.spend_cents);
+  // Daily action budget — same guardrail numbers the embedded extension shows.
+  const g = app.guardrails;
+  const budgetCap = g?.daily_action_budget_cents ?? 0;
+  const budgetUsed = g?.daily_action_budget_used_cents ?? 0;
+  const budgetLeft = Math.max(0, budgetCap - budgetUsed);
+  const budgetPct = budgetCap > 0 ? (budgetUsed / budgetCap) * 100 : 0;
 
   const topAlerts: AlertVM[] = [...open]
     .sort((a, b) => a.claude_rank - b.claude_rank)
@@ -309,27 +313,23 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           </span>
           <span className="cd-caption">across {succeeded.length} actions</span>
         </Card>
-        <Card className="cd-stat">
-          <span className="cd-stat-label">Revenue today</span>
-          <span className="cd-stat-value">
-            <CountMoney cents={today.revenue_cents} />
-          </span>
-          <span className="cd-caption tabular-nums">
-            {today.orders > 0 ? `${today.orders} orders · live` : "live"}
-          </span>
+        <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
+          <span className="cd-stat-label">Daily action budget</span>
+          {g ? (
+            <>
+              <Meter pct={budgetPct} tone={budgetPct > 85 ? "warn" : "accent"} />
+              <span className="cd-caption tabular-nums">
+                {money(budgetLeft)} left today
+              </span>
+            </>
+          ) : (
+            <span className="cd-caption">unavailable</span>
+          )}
         </Card>
-        <Card className="cd-stat">
-          <span className="cd-stat-label">Blended ROAS today</span>
-          <span className="cd-stat-value">
-            {today.spend_cents > 0 ? (
-              <CountNum value={blended} decimals={1} suffix="×" />
-            ) : (
-              <span className="tabular-nums">—</span>
-            )}
-          </span>
-          <span className="cd-caption tabular-nums">
-            on <CountMoney cents={today.spend_cents} /> ad spend
-          </span>
+        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
+          <span className="cd-stat-label">Real ad return (7d)</span>
+          <span className="cd-stat-value tabular-nums">{trueRoas(app.campaigns)}</span>
+          <span className="cd-caption">margin-adjusted ROAS, all campaigns</span>
         </Card>
       </div>
 

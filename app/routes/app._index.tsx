@@ -24,6 +24,7 @@ import {
   signConsentAuth,
 } from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
+import { trueRoas } from "~/lib/roas";
 import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
 import {
@@ -115,20 +116,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 };
-
-/** Spend-weighted, margin-adjusted blended ROAS — the "true" return on ad spend. */
-function trueRoas(campaigns: Campaign[]): string {
-  const withData = campaigns.filter(
-    (c) => c.spend_7d > 0 && c.roas_7d > 0 && c.contribution_margin > 0,
-  );
-  const totalSpend = withData.reduce((s, c) => s + c.spend_7d, 0);
-  if (totalSpend === 0) return "—";
-  const weighted = withData.reduce(
-    (s, c) => s + c.spend_7d * c.roas_7d * c.contribution_margin,
-    0,
-  );
-  return `${(weighted / totalSpend).toFixed(1)}×`;
-}
 
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
