@@ -103,6 +103,52 @@ describe("audit.undo Meta safety", () => {
   });
 });
 
+describe("audit.undo platform restore", () => {
+  it("restores the prior status for an orchestrator-shape pause row", async () => {
+    // executeAction snapshots lowercase statuses from ad_campaign_dim and
+    // keeps the platform campaign id in params.external_id (post_state has
+    // none) — the restore must handle that shape, not just the legacy
+    // uppercase/post_state.campaign_id one.
+    metaForShopSpy.mockResolvedValue({ client: { get: vi.fn(), post: vi.fn() }, adAccountId: "act_1" });
+    setStatusSpy.mockResolvedValue(undefined);
+    sbState.origRow = {
+      id: "a3",
+      action_kind: "pause_campaign",
+      pre_state: { status: "active", daily_budget_cents: 5000 },
+      post_state: { status: "paused", daily_budget_cents: 5000 },
+      alert_id: null,
+      params: { campaign_id: "dim-uuid-1", external_id: "120", platform: "meta", daily_budget_cents: null },
+      dollar_impact_at_exec: 0,
+    };
+
+    const client = calderynClient("acme.myshopify.com");
+    await client.audit.undo("a3");
+
+    expect(setStatusSpy).toHaveBeenCalledWith(expect.anything(), "120", "ACTIVE");
+    expect(insertSpy).toHaveBeenCalled();
+  });
+
+  it("re-pauses the campaign when undoing a resume_campaign row", async () => {
+    metaForShopSpy.mockResolvedValue({ client: { get: vi.fn(), post: vi.fn() }, adAccountId: "act_1" });
+    setStatusSpy.mockResolvedValue(undefined);
+    sbState.origRow = {
+      id: "a4",
+      action_kind: "resume_campaign",
+      pre_state: { status: "paused", daily_budget_cents: 5000 },
+      post_state: { status: "active", daily_budget_cents: 5000 },
+      alert_id: null,
+      params: { campaign_id: "dim-uuid-2", external_id: "121", platform: "meta", daily_budget_cents: null },
+      dollar_impact_at_exec: 0,
+    };
+
+    const client = calderynClient("acme.myshopify.com");
+    await client.audit.undo("a4");
+
+    expect(setStatusSpy).toHaveBeenCalledWith(expect.anything(), "121", "PAUSED");
+    expect(insertSpy).toHaveBeenCalled();
+  });
+});
+
 describe("audit.undo alert re-open", () => {
   it("puts the acknowledged alert back in the open queue when its action is undone", async () => {
     // Undo revives the underlying problem: the acknowledge-on-execute flow

@@ -258,10 +258,17 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // For real ad-platform pauses, restore the prior status on Meta first.
-          if (orig.action_kind === "pause_campaign") {
-            const priorStatus = (orig.pre_state as { status?: string } | null)?.status;
-            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+          // For real ad-platform pauses/resumes, restore the prior status on
+          // Meta first. executeAction snapshots lowercase statuses from
+          // ad_campaign_dim while legacy rows recorded Meta's uppercase —
+          // normalize before matching. The platform campaign id lives in
+          // post_state.campaign_id on legacy rows but only in
+          // params.external_id on orchestrator rows.
+          if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
+            const priorStatus = (orig.pre_state as { status?: string } | null)?.status?.toUpperCase();
+            const campaignId =
+              (orig.post_state as { campaign_id?: string } | null)?.campaign_id ??
+              (orig.params as { external_id?: string } | null)?.external_id;
             if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
               const restore: "ACTIVE" | "PAUSED" = priorStatus;
               const meta = await metaClientForShop(shop);
