@@ -42,10 +42,10 @@ describe("parseGeneratorForm", () => {
 });
 
 describe("generator constants", () => {
-  it("every aspect maps to a real Soul size", () => {
-    expect(GENERATOR_ASPECTS["1:1"]).toBe("1536x1536");
-    expect(GENERATOR_ASPECTS["3:4"]).toBe("1152x1536");
-    expect(GENERATOR_ASPECTS["9:16"]).toBe("1152x2048");
+  it("every aspect maps to a platform aspect_ratio value", () => {
+    expect(GENERATOR_ASPECTS["1:1"]).toBe("1:1");
+    expect(GENERATOR_ASPECTS["3:4"]).toBe("3:4");
+    expect(GENERATOR_ASPECTS["9:16"]).toBe("9:16");
   });
   it("every style has a prompt preset", () => {
     for (const preset of Object.values(GENERATOR_STYLES)) {
