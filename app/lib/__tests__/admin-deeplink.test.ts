@@ -1,25 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Importing the shared chain mock also registers its beforeEach state reset.
+// Each `maybeSingle()` drains the queued responses (the helper runs two
+// sequential lookups: alerts → shops).
+import { setSupabaseResponses } from "./_supabase_chain_mock";
 import { adminAlertDeepLink, adminDeepLinkRedirect } from "../admin-deeplink.server";
 
-// Queue-driven Supabase stub: each `maybeSingle()` resolves the next queued
-// response (the helper runs two sequential lookups: alerts → shops).
-const { supabaseState } = vi.hoisted(() => ({
-  supabaseState: {
-    queue: [] as Array<{ data: unknown; error: unknown }>,
-  },
-}));
-
-vi.mock("../supabase.server", () => {
-  const chain = () => {
-    const c: Record<string, unknown> = {};
-    for (const m of ["from", "select", "eq"]) {
-      c[m] = () => c;
-    }
-    c.maybeSingle = () =>
-      Promise.resolve(supabaseState.queue.shift() ?? { data: null, error: null });
-    return c;
-  };
-  return { getSupabase: () => chain() };
+vi.mock("../supabase.server", async () => {
+  const { buildChain } = await import("./_supabase_chain_mock");
+  return { getSupabase: () => buildChain() };
 });
 
 const ALERT_ID = "67091f82-bd08-4333-b892-3b034ef720c9";
@@ -33,16 +21,15 @@ function loginBounce(): Response {
 }
 
 beforeEach(() => {
-  supabaseState.queue = [];
   vi.stubEnv("SHOPIFY_API_KEY", "test-api-key");
 });
 
 describe("adminAlertDeepLink", () => {
   it("builds the admin deep link, preserving the action query param", async () => {
-    supabaseState.queue = [
+    setSupabaseResponses([
       { data: { shop_id: "shop-uuid-1" }, error: null },
       { data: { shop_domain: "calderyn-shop-tester.myshopify.com" }, error: null },
-    ];
+    ]);
     expect(await adminAlertDeepLink(CONFIRM_URL)).toBe(
       `https://admin.shopify.com/store/calderyn-shop-tester/apps/test-api-key/app/alerts/${ALERT_ID}?action=create_po_draft`,
     );
@@ -59,7 +46,7 @@ describe("adminAlertDeepLink", () => {
   });
 
   it("returns null when the alert lookup misses", async () => {
-    supabaseState.queue = [{ data: null, error: null }];
+    setSupabaseResponses([{ data: null, error: null }]);
     expect(await adminAlertDeepLink(CONFIRM_URL)).toBeNull();
   });
 
@@ -71,10 +58,10 @@ describe("adminAlertDeepLink", () => {
 
 describe("adminDeepLinkRedirect", () => {
   it("rewrites the stock login bounce to the admin deep link", async () => {
-    supabaseState.queue = [
+    setSupabaseResponses([
       { data: { shop_id: "shop-uuid-1" }, error: null },
       { data: { shop_domain: "calderyn-shop-tester.myshopify.com" }, error: null },
-    ];
+    ]);
     const res = await adminDeepLinkRedirect(new Request(CONFIRM_URL), loginBounce());
     expect(res?.status).toBe(302);
     expect(res?.headers.get("location")).toBe(
@@ -92,7 +79,7 @@ describe("adminDeepLinkRedirect", () => {
   });
 
   it("falls through (null) when the shop can't be resolved", async () => {
-    supabaseState.queue = [{ data: null, error: null }];
+    setSupabaseResponses([{ data: null, error: null }]);
     expect(await adminDeepLinkRedirect(new Request(CONFIRM_URL), loginBounce())).toBeNull();
   });
 });

@@ -1,18 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
+// Importing the shared chain mock also registers its beforeEach state reset.
+import { setSupabaseResponse, getRecorded } from "../../lib/__tests__/_supabase_chain_mock";
 import { action } from "../app.alerts.$id";
 
 // Spies for the boundaries; the real route `action` logic runs against them.
-const { executeSpy, alertsGetSpy, guardrailsGetSpy, supabaseState } = vi.hoisted(() => ({
+const { executeSpy, alertsGetSpy, guardrailsGetSpy } = vi.hoisted(() => ({
   executeSpy: vi.fn(),
   alertsGetSpy: vi.fn(),
   guardrailsGetSpy: vi.fn(),
-  // Chainable Supabase stub state: records builder calls (for the
-  // acknowledge-after-success assertions) and resolves with `response`.
-  supabaseState: {
-    calls: [] as Array<[string, ...unknown[]]>,
-    response: { data: null as unknown, error: null as unknown },
-  },
 }));
 
 // Stub Polaris so importing the route module doesn't pull the real UI lib.
@@ -71,21 +67,10 @@ vi.mock("~/lib/calderyn.server", () => {
 vi.mock("~/lib/actions/execute.server", () => ({
   executeAction: vi.fn(),
 }));
-vi.mock("~/lib/supabase.server", () => {
-  const chain = () => {
-    const c: Record<string, unknown> = {};
-    for (const m of ["from", "update", "select", "eq", "is", "limit"]) {
-      c[m] = (...args: unknown[]) => {
-        supabaseState.calls.push([m, ...args]);
-        return c;
-      };
-    }
-    // Awaiting the builder resolves with the queued response.
-    c.then = (resolve: (v: unknown) => unknown) => resolve(supabaseState.response);
-    return c;
-  };
+vi.mock("~/lib/supabase.server", async () => {
+  const { buildChain } = await import("../../lib/__tests__/_supabase_chain_mock");
   return {
-    getSupabase: () => chain(),
+    getSupabase: () => buildChain(),
     resolveShopId: vi.fn(async () => "shop-uuid-1"),
   };
 });
@@ -140,8 +125,6 @@ beforeEach(() => {
   alertsGetSpy.mockResolvedValue(ALERT);
   guardrailsGetSpy.mockResolvedValue({ dollar_cap_cents: 10_000_00 });
   executeSpy.mockResolvedValue({ id: "aud-po-1", outcome: "succeeded" });
-  supabaseState.calls = [];
-  supabaseState.response = { data: null, error: null };
 });
 
 describe("alert action — create_po_draft snapshots the PO into the audit params", () => {
@@ -219,19 +202,19 @@ describe("alert action — acknowledges the alert after success", () => {
 
     expect(body.ok).toBe(true);
     expect(body.toast.message).toBe("Created PO draft executed");
-    expect(supabaseState.calls).toEqual(
+    expect(getRecorded("from")).toContainEqual(["alerts"]);
+    expect(getRecorded("update")).toContainEqual([{ status: "acknowledged" }]);
+    expect(getRecorded("eq")).toEqual(
       expect.arrayContaining([
-        ["from", "alerts"],
-        ["update", { status: "acknowledged" }],
-        ["eq", "shop_id", "shop-uuid-1"],
-        ["eq", "id", ALERT.id],
-        ["eq", "status", "open"],
+        ["shop_id", "shop-uuid-1"],
+        ["id", ALERT.id],
+        ["status", "open"],
       ]),
     );
   });
 
   it("surfaces an acknowledge failure in the toast without failing the action", async () => {
-    supabaseState.response = { data: null, error: { message: "update blew up" } };
+    setSupabaseResponse({ data: null, error: { message: "update blew up" } });
     const res = await call(poRequest());
     const body = (await res.json()) as { ok: boolean; toast: { message: string } };
 
@@ -241,8 +224,6 @@ describe("alert action — acknowledges the alert after success", () => {
 
   it("does not acknowledge when the action is rejected", async () => {
     await call(poRequest({ po_quantity: "0" }));
-    expect(supabaseState.calls).not.toEqual(
-      expect.arrayContaining([["update", { status: "acknowledged" }]]),
-    );
+    expect(getRecorded("update")).toEqual([]);
   });
 });
