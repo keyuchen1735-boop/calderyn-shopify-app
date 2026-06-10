@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { BrandGlyph, brandLabel } from "../../calderyn/brand-icons";
+import { BrandGlyph, brandTitle } from "../../calderyn/brand-icons";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM, SkuSource } from "../view-models";
@@ -55,12 +55,11 @@ function LocationBar({ locations }: { locations: Record<string, number> }) {
 function SourceIcons({ sources }: { sources: SkuSource[] }) {
   if (!sources.length) return <span className="cd-caption">—</span>;
   return (
-    <span
-      style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "help" }}
-      title={`Also gets data from: ${sources.map(brandLabel).join(", ")}`}
-    >
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "help" }}>
       {sources.map((s) => (
-        <BrandGlyph key={s} name={s} size={12} />
+        <span key={s} title={brandTitle(s)}>
+          <BrandGlyph name={s} size={12} />
+        </span>
       ))}
     </span>
   );

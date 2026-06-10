@@ -16,7 +16,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { Icon } from "~/components/calderyn";
-import { BrandGlyph, brandLabel } from "~/components/calderyn/brand-icons";
+import { BrandGlyph, brandTitle } from "~/components/calderyn/brand-icons";
 import type { Alert, SKU, SkuSource } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 
@@ -305,11 +305,12 @@ function SourceIcons({ sources }: { sources: SkuSource[] }) {
       </Text>
     );
   }
-  const label = `Also gets data from: ${sources.map(brandLabel).join(", ")}`;
   return (
-    <span className="cdn-srcicons" title={label}>
+    <span className="cdn-srcicons">
       {sources.map((s) => (
-        <BrandGlyph key={s} name={s} />
+        <span key={s} title={brandTitle(s)}>
+          <BrandGlyph name={s} />
+        </span>
       ))}
     </span>
   );
