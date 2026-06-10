@@ -241,7 +241,9 @@ export default function Onboarding() {
           {key === "consent" && (
             <ConsentStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
           )}
-          {key === "complete" && <CompleteStep submitting={submitting} />}
+          {key === "complete" && (
+            <CompleteStep prevStep={safeStep - 1} submitting={submitting} />
+          )}
         </Card>
       </BlockStack>
     </Page>
@@ -414,24 +416,26 @@ function OAuthStep({
   prevStep: number;
   submitting: boolean;
 }) {
-  const labels: Record<IntegrationProvider, { title: string; blurb: string; optional?: boolean }> = {
+  const labels: Record<IntegrationProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
-      blurb: "Calderyn reads spend, impressions, and conversions to compute true ROAS. Required.",
+      blurb:
+        "Calderyn reads spend, impressions, and conversions to compute true ROAS. You can skip and connect later from Settings.",
     },
     meta: {
       title: "Connect Meta Ads",
-      blurb: "Calderyn reads Meta Ads spend, attribution, and ad-set structure.",
+      blurb:
+        "Calderyn reads Meta Ads spend, attribution, and ad-set structure. You can skip and connect later from Settings.",
     },
     tiktok: {
       title: "Connect TikTok Ads",
-      blurb: "Calderyn reads TikTok Ads spend and advertiser performance.",
+      blurb:
+        "Calderyn reads TikTok Ads spend and advertiser performance. You can skip and connect later from Settings.",
     },
     quickbooks: {
       title: "Connect QuickBooks (optional)",
       blurb:
         "Optional. Calderyn reads COGS journal entries to validate landed cost. Skip to use Shopify cost-per-item only.",
-      optional: true,
     },
   };
   const cfg = labels[provider];
@@ -465,7 +469,7 @@ function OAuthStep({
       <InlineStack align="space-between">
         <BackButton step={prevStep} submitting={submitting} />
         <InlineStack gap="200">
-          {cfg.optional && (
+          {!connected && (
             <AdvanceForm step={nextStep}>
               <Button submit loading={submitting} disabled={submitting}>
                 Skip for now
@@ -477,7 +481,7 @@ function OAuthStep({
               submit
               variant="primary"
               loading={submitting}
-              disabled={submitting || (!connected && !cfg.optional)}
+              disabled={submitting || !connected}
             >
               Continue
             </Button>
@@ -555,7 +559,7 @@ function ConsentStep({
   );
 }
 
-function CompleteStep({ submitting }: { submitting: boolean }) {
+function CompleteStep({ prevStep, submitting }: { prevStep: number; submitting: boolean }) {
   return (
     <BlockStack gap="400">
       <Text as="h2" variant="headingMd">
@@ -565,7 +569,8 @@ function CompleteStep({ submitting }: { submitting: boolean }) {
         Calderyn is now watching your store. The first pass over your historical data is running
         — alerts will populate as detections complete.
       </Text>
-      <InlineStack align="end">
+      <InlineStack align="space-between">
+        <BackButton step={prevStep} submitting={submitting} />
         <Form method="post">
           <input type="hidden" name="intent" value="finish" />
           <Button submit variant="primary" loading={submitting} disabled={submitting}>
