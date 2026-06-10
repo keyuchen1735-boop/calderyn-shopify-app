@@ -88,4 +88,15 @@ describe("imageGenerator", () => {
     const candidates = await imageGenerator({ generateImage: vi.fn(async () => []) }).generate(REQ);
     expect(candidates).toEqual([]);
   });
+
+  it("includes the merchant's extra direction and style preset in the prompt", async () => {
+    const generateImage = vi.fn<GenerateImageFn>(async () => ["https://cdn.example/new.png"]);
+    await imageGenerator({ generateImage }).generate({
+      ...REQ,
+      extraDirection: "keep the forest backdrop, golden hour — UGC handheld style",
+    });
+    const arg = generateImage.mock.calls[0][0];
+    expect(arg.prompt).toContain("keep the forest backdrop, golden hour");
+    expect(arg.prompt).toContain("UGC handheld");
+  });
 });

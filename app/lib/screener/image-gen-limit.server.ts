@@ -86,6 +86,32 @@ export async function checkAndReserveImageGen(
   return { ok: true, remaining: Math.max(perShopDaily - shopCount - 1, 0), eventId };
 }
 
+export type ReserveSlotsResult =
+  | { ok: true; eventIds: string[] }
+  | { ok: false; scope: "shop" | "global"; limit: number };
+
+/**
+ * Reserve `count` quota slots for a batch generation. If any slot is blocked
+ * partway, the slots already reserved are released and the block is reported —
+ * a blocked batch must not consume quota.
+ */
+export async function reserveImageGenSlots(
+  shop: string,
+  count: number,
+  now: Date = new Date(),
+): Promise<ReserveSlotsResult> {
+  const eventIds: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const res = await checkAndReserveImageGen(shop, now);
+    if (!res.ok) {
+      for (const id of eventIds) await releaseImageGen(id);
+      return res;
+    }
+    if (res.eventId) eventIds.push(res.eventId);
+  }
+  return { ok: true, eventIds };
+}
+
 /**
  * Release a reservation made by checkAndReserveImageGen when the generation
  * itself failed — a failed attempt must not burn the merchant's daily quota.

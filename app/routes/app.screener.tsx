@@ -15,6 +15,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "~/lib/embedded-nav";
 import {
   Badge,
   Banner,
@@ -50,7 +51,7 @@ import {
   type ScreenableAd,
   type Variant,
 } from "~/lib/screener/types";
-import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
+import { gateScoreDeps } from "~/lib/screener/score-one.server";
 import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
 import { pushVariantToMeta, type PushResult } from "~/lib/screener/meta-push.server";
@@ -60,9 +61,6 @@ import {
   releaseImageGen,
   type ReserveResult,
 } from "~/lib/screener/image-gen-limit.server";
-import { loadCalibrationInputs } from "~/lib/screener/history.server";
-import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
-import { calibrate } from "~/lib/screener/calibrate.server";
 
 // clampSpend: if raw is absent/empty/NaN → return DEFAULT.
 // Any parseable number (including 0) is clamped to [MIN, MAX].
@@ -143,13 +141,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ generateError: "Screen an ad first, then generate improvements." });
     }
     const original = latest.creativeInput;
-    const calib = await loadCalibrationInputs(session.shop, null);
-    const createMessage: CreateMessageFn = (p) => getAnthropic().messages.create(p);
-    const scoreOne = async (input: CreativeInput) => {
-      const scored = await scoreCreative(input, calib.topAdNames, { createMessage, model: assistantModel() });
-      const { composite } = calibrate(scored.metrics, calib, latest.assumedSpendCents);
-      return { composite, summary: scored.summary, metrics: scored.metrics };
-    };
+    const { calib, scoreOne, claudeDeps } = await gateScoreDeps(
+      session.shop,
+      latest.assumedSpendCents,
+    );
     const mode = String(form.get("mode") ?? "copy");
     let reservation: ReserveResult | null = null;
     if (mode === "image") {
@@ -158,7 +153,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ generateError: imageLimitMessage(reservation) });
       }
     }
-    const generator = pickGenerator(mode, { createMessage, model: assistantModel() });
+    const generator = pickGenerator(mode, claudeDeps);
     try {
       const result = await generateImprovements(
         {
@@ -530,6 +525,7 @@ function OutcomePanel({ o }: { o: ScoreCard["outcomes"] }) {
 export default function Screener() {
   const { latest, history, metaAds, metaConnected, metaAdsError, imageGenAvailable } =
     useLoaderData<typeof loader>();
+  const navigate = useEmbeddedNavigate();
   const fetcher = useFetcher<typeof action>();
   // The generate action may return a run DTO or a { generateError } — only treat
   // it as a run when it actually is one, so an error doesn't clobber the display.
@@ -827,6 +823,9 @@ export default function Screener() {
                       <Text as="p">{card.summary}</Text>
                     </Box>
                   </div>
+                  <Button variant="primary" onClick={() => navigate("/app/generator")}>
+                    Remake with Higgsfield
+                  </Button>
                 </InlineStack>
                 {card.confidence === "low" && (
                   <Banner tone="warning" title="Low-confidence estimate">
