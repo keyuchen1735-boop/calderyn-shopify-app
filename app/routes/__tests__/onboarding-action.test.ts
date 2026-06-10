@@ -165,19 +165,26 @@ describe("onboarding action — guardrails", () => {
 });
 
 describe("onboarding action — integration connect", () => {
-  it("starts OAuth for the chosen provider, forwarding the embedded host param", async () => {
+  it("returns the OAuth URL as data (no 302 — the iframe can't load provider pages)", async () => {
     startOAuthSpy.mockResolvedValue({ redirectUrl: "https://accounts.google.com/o/oauth2/auth?x=1" });
 
     const res = await callAction(
-      postRequest(
-        { intent: "connect_integration", provider: "google" },
-        "http://localhost/app/onboarding?host=abc123",
-      ),
+      postRequest({ intent: "connect_integration", provider: "google", host: "abc123" }),
     );
+    const body = (await res.json()) as { ok: boolean; redirectUrl?: string };
 
     expect(startOAuthSpy).toHaveBeenCalledWith("google", "abc123");
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("https://accounts.google.com/o/oauth2/auth?x=1");
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.redirectUrl).toBe("https://accounts.google.com/o/oauth2/auth?x=1");
+  });
+
+  it("passes a null host when the form omits it", async () => {
+    startOAuthSpy.mockResolvedValue({ redirectUrl: "https://example.com/oauth" });
+
+    await callAction(postRequest({ intent: "connect_integration", provider: "google" }));
+
+    expect(startOAuthSpy).toHaveBeenCalledWith("google", null);
   });
 
   it("surfaces a not-configured provider as an error toast instead of redirecting", async () => {

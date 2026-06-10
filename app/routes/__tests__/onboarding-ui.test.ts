@@ -15,15 +15,22 @@ const fixture = vi.hoisted(() => ({
   data: {} as Record<string, unknown>,
 }));
 
-vi.mock("@remix-run/react", () => ({
+vi.mock("@remix-run/react", () => {
   // Spread all props so the mock keeps the real Form's pass-through behavior
   // (style, id, …) instead of silently dropping them.
-  Form: ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) =>
-    createElement("form", rest, children),
-  useLoaderData: () => fixture.data,
-  useActionData: () => undefined,
-  useNavigation: () => ({ state: "idle" }),
-}));
+  const Form = ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) =>
+    createElement("form", rest, children);
+  return {
+    Form,
+    useLoaderData: () => fixture.data,
+    useActionData: () => undefined,
+    useNavigation: () => ({ state: "idle" }),
+    useSearchParams: () => [new URLSearchParams("host=test-host")],
+    // The OAuth connect button posts through its own fetcher so the provider
+    // URL comes back as data instead of 302ing the iframe.
+    useFetcher: () => ({ state: "idle", data: undefined, Form }),
+  };
+});
 
 vi.mock("~/lib/toast", () => ({ useActionToast: () => {} }));
 

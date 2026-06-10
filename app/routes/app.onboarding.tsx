@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Form,
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigation,
+  useSearchParams,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -58,6 +60,8 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
+  // External OAuth URL to open at the top level (escaping the embedded iframe).
+  redirectUrl?: string;
 };
 
 // ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
@@ -126,9 +130,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
-      const host = new URL(request.url).searchParams.get("host");
+      // Carry the embedded App Bridge `host` through the OAuth round-trip: the
+      // provider callback lands at the top level (outside the admin iframe) and
+      // needs host to redirect the merchant back INTO the embedded admin.
+      const host = String(formData.get("host") || "") || null;
       const { redirectUrl } = await client.integrations.startOAuth(provider, host);
-      return redirect(redirectUrl);
+      // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
+      // be framed. Hand the URL back so the client opens it at the top level.
+      return json<ActionPayload>({ ok: true, redirectUrl });
     }
     if (intent === "finish") {
       await client.onboarding.advance(STEPS.length, request.signal);
@@ -419,6 +428,19 @@ function OAuthStep({
   prevStep: number;
   submitting: boolean;
 }) {
+  // App Bridge appends `host` to the embedded URL; forward it on connect so the
+  // OAuth callback can re-embed the merchant in the Shopify admin afterwards.
+  const [searchParams] = useSearchParams();
+  // Connect runs through its own fetcher so the provider's OAuth page can be
+  // opened at the top level — embedded iframes can't load third-party OAuth
+  // pages (they refuse to be framed).
+  const connectFetcher = useFetcher<ActionPayload>();
+  const connecting = connectFetcher.state !== "idle";
+  useActionToast(connectFetcher.data ?? undefined);
+  useEffect(() => {
+    const url = connectFetcher.data?.redirectUrl;
+    if (url) window.open(url, "_top");
+  }, [connectFetcher.data]);
   const labels: Record<IntegrationProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
@@ -459,13 +481,14 @@ function OAuthStep({
           {connected ? (
             <Badge tone="success">Connected</Badge>
           ) : (
-            <Form method="post">
+            <connectFetcher.Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
               <input type="hidden" name="provider" value={provider} />
-              <Button submit variant="primary" loading={submitting} disabled={submitting}>
+              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
+              <Button submit variant="primary" loading={connecting} disabled={connecting}>
                 Connect
               </Button>
-            </Form>
+            </connectFetcher.Form>
           )}
         </InlineStack>
       </Box>
