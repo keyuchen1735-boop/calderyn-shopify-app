@@ -8,11 +8,14 @@ import {
   Banner,
   Box,
   Card,
+  InlineStack,
   Page,
   Text,
+  TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import { Icon } from "~/components/calderyn";
 import type { Alert, SKU } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 
@@ -44,12 +47,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/** A SKU with no recent sales has no meaningful velocity or days-of-cover
+ * (the engine caps cover at 999 in that case). */
+const hasSales = (s: SKU) => (s.velocity ?? 0) > 0;
+
 export default function SKUs() {
   const navigate = useEmbeddedNavigate();
   const { skus, alerts, error } = useLoaderData<typeof loader>();
 
   const [sortKey, setSortKey] = useState<SortKey>("days_of_cover");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [query, setQuery] = useState("");
 
   const alertsBySku = useMemo(() => {
     const map = new Map<string, number>();
@@ -60,28 +68,57 @@ export default function SKUs() {
     return map;
   }, [alerts]);
 
+  const totalUnits = useMemo(
+    () => skus.reduce((sum, s) => sum + (s.on_hand ?? 0), 0),
+    [skus],
+  );
+
+  const attentionCount = useMemo(
+    () =>
+      skus.filter(
+        (s) =>
+          (alertsBySku.get(s.id) ?? 0) > 0 ||
+          (s.on_hand ?? 0) === 0 ||
+          (hasSales(s) && (s.days_of_cover ?? 0) < 7),
+      ).length,
+    [skus, alertsBySku],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return skus;
+    return skus.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q),
+    );
+  }, [skus, query]);
+
   const sorted = useMemo(() => {
     const compare = (a: SKU, b: SKU) => {
       if (sortKey === "title") return a.title.localeCompare(b.title);
       return (a[sortKey] ?? 0) - (b[sortKey] ?? 0);
     };
-    const arr = [...skus].sort(compare);
+    const arr = [...filtered].sort(compare);
     return sortDir === "asc" ? arr : arr.reverse();
-  }, [skus, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
-      setSortDir(key === "title" ? "asc" : "asc");
+      setSortDir("asc");
     }
   };
+
+  const countLabel = query.trim()
+    ? `${sorted.length} of ${skus.length} SKUs`
+    : `${skus.length} SKUs`;
 
   return (
     <Page
       title="Inventory"
-      subtitle={`${skus.length} active SKUs synced from Shopify · inventory across locations`}
+      titleMetadata={<ShopifySourcePill />}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && (
@@ -94,6 +131,42 @@ export default function SKUs() {
         </Box>
       )}
       <Card padding="0">
+        <Box
+          padding="300"
+          paddingInlineStart="400"
+          paddingInlineEnd="400"
+          borderBlockEndWidth="025"
+          borderColor="border"
+        >
+          <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+            <InlineStack gap="100" blockAlign="baseline" wrap={false}>
+              <Text as="span" fontWeight="semibold">
+                {countLabel}
+              </Text>
+              <Text as="span" tone="subdued">
+                · {totalUnits.toLocaleString()} units on hand
+              </Text>
+              {attentionCount > 0 && (
+                <Text as="span" tone="caution" fontWeight="medium">
+                  · {attentionCount} need attention
+                </Text>
+              )}
+            </InlineStack>
+            <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
+              <TextField
+                label="Search SKUs"
+                labelHidden
+                autoComplete="off"
+                placeholder="Search by product or SKU"
+                value={query}
+                onChange={setQuery}
+                clearButton
+                onClearButtonClick={() => setQuery("")}
+                prefix={<Icon name="search" size={14} strokeWidth={2} />}
+              />
+            </div>
+          </InlineStack>
+        </Box>
         <div className="cdn-skutable" role="table" aria-label="SKUs">
           <div className="cdn-skutable__head" role="row">
             <div role="columnheader" className="cdn-skutable__cell">SKU</div>
@@ -129,10 +202,17 @@ export default function SKUs() {
           </div>
           {sorted.map((s) => {
             const alertCount = alertsBySku.get(s.id) ?? 0;
+            const selling = hasSales(s);
             const onHandTone =
               s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined;
             const cover = s.days_of_cover ?? 0;
-            const coverTone = cover < 2 ? "critical" : cover < 7 ? "caution" : undefined;
+            const coverTone = selling
+              ? cover < 2
+                ? "critical"
+                : cover < 7
+                  ? "caution"
+                  : undefined
+              : undefined;
             return (
               <div key={s.id} className="cdn-skutable__row" role="row">
                 <div className="cdn-skutable__cell" role="cell">
@@ -149,38 +229,74 @@ export default function SKUs() {
                   </Text>
                 </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
-                  <Text as="span" fontWeight={coverTone ? "semibold" : undefined} tone={coverTone}>
-                    <span className="cdn-tnum">{cover.toFixed(1)}</span>
-                  </Text>
-                  <Text as="span" tone="subdued"> d</Text>
+                  {selling ? (
+                    <>
+                      <Text as="span" fontWeight={coverTone ? "semibold" : undefined} tone={coverTone}>
+                        <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                      </Text>
+                      <Text as="span" tone="subdued"> d</Text>
+                    </>
+                  ) : (
+                    <span title="No recent sales, so days of cover isn't meaningful">
+                      <Text as="span" tone="subdued">—</Text>
+                    </span>
+                  )}
                 </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
-                  <Text as="span">
-                    <span className="cdn-tnum">{(s.velocity ?? 0).toFixed(1)}</span>
-                  </Text>
-                  <Text as="span" tone="subdued"> /day</Text>
+                  {selling ? (
+                    <>
+                      <Text as="span">
+                        <span className="cdn-tnum">{(s.velocity ?? 0).toFixed(1)}</span>
+                      </Text>
+                      <Text as="span" tone="subdued"> /day</Text>
+                    </>
+                  ) : (
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      No sales
+                    </Text>
+                  )}
                 </div>
                 <div className="cdn-skutable__cell" role="cell">
                   <LocationCell locations={s.locations ?? {}} />
                 </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
-                  {alertCount ? (
-                    <Badge tone="warning">{String(alertCount)}</Badge>
-                  ) : (
-                    <Text as="span" tone="subdued">—</Text>
-                  )}
+                  {alertCount > 0 && <Badge tone="warning">{String(alertCount)}</Badge>}
                 </div>
               </div>
             );
           })}
           {sorted.length === 0 && !error && (
             <div className="cdn-skutable__empty">
-              <Text as="p" tone="subdued">No SKUs yet. They appear here as soon as Shopify syncs your catalog.</Text>
+              <Text as="p" tone="subdued">
+                {query.trim()
+                  ? `No SKUs match "${query.trim()}".`
+                  : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
+              </Text>
             </div>
           )}
         </div>
       </Card>
     </Page>
+  );
+}
+
+/** Official Shopify glyph (Simple Icons, CC0). Marks where SKU data syncs from. */
+function ShopifySourcePill() {
+  return (
+    <span className="cdn-source-pill">
+      <svg
+        className="cdn-source-pill__glyph"
+        width={13}
+        height={13}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z" />
+      </svg>
+      Synced from Shopify
+    </span>
   );
 }
 
