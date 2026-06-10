@@ -5,6 +5,8 @@
 // written via window.omelette.writeFile). localStorage/sidecar persistence and
 // all reframe (pan/zoom/crop) logic are preserved exactly.
 
+import type React from "react";
+
 // Host bridge surface (sidecar writes are allowlisted to *.state.json basenames).
 interface OmeletteBridge {
   writeFile?: (path: string, contents: string) => unknown;
@@ -12,6 +14,18 @@ interface OmeletteBridge {
 declare global {
   interface Window {
     omelette?: OmeletteBridge;
+  }
+  // <image-slot> is a native custom element (Web Component), not a React
+  // component. Declare it so TSX consumers (Predictor/Generator) typecheck.
+  // Allows the author attributes the prototype sets (shape/radius/fit/mask/
+  // position/placeholder/src) alongside the standard HTML attributes.
+  namespace JSX {
+    interface IntrinsicElements {
+      "image-slot": React.DetailedHTMLProps<
+        React.HTMLAttributes<HTMLElement>,
+        HTMLElement
+      > & { id?: string; [key: string]: unknown };
+    }
   }
 }
 
