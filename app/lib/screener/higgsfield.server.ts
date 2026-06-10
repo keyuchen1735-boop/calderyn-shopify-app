@@ -20,11 +20,15 @@ export type FetchLike = (
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 const HF_BASE = "https://platform.higgsfield.ai";
-// VERIFY at first live call (cloud.higgsfield.ai docs): the REST model path and the
-// reference-image body field. `marketing_studio_image` is the MCP catalog id; the
-// REST path is namespaced like `higgsfield-ai/<model>/<variant>`.
-const DEFAULT_MODEL = "higgsfield-ai/marketing-studio/image";
+// Contract verified against the official @higgsfield/client v2 source
+// (github.com/higgsfield-ai/higgsfield-js: src/v2/client.ts + src/v2/types.ts):
+// POST /v1/text2image/soul with the SoulText2ImageInput fields flat in the body,
+// auth `Authorization: Key <key>:<secret>`, poll GET /requests/{id}/status until
+// a terminal status, images returned as `images: [{url}]`.
+const DEFAULT_MODEL = "v1/text2image/soul";
 const TERMINAL = new Set(["completed", "nsfw", "cancelled", "failed"]);
+// Soul accepts only these batch sizes (SDK BatchSize: SINGLE=1, QUAD=4).
+const soulBatchSize = (count: number): 1 | 4 => (count > 1 ? 4 : 1);
 
 const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -38,8 +42,17 @@ async function hfRequest(
   if (!res.ok) {
     let detail = String(res.status);
     try {
-      const e = (await res.json()) as { message?: string; error?: string };
-      detail = e?.message ?? e?.error ?? detail;
+      // The platform reports errors as {detail} — a string ("Invalid
+      // credentials") or a validation array of {msg} objects.
+      const e = (await res.json()) as {
+        detail?: string | Array<{ msg?: string }>;
+        message?: string;
+        error?: string;
+      };
+      const fromDetail = Array.isArray(e?.detail)
+        ? e.detail.map((d) => d?.msg).filter(Boolean).join("; ")
+        : e?.detail;
+      detail = fromDetail || e?.message || e?.error || detail;
     } catch {
       /* non-JSON error body */
     }
@@ -83,8 +96,15 @@ export function higgsfieldImageClient(
     }
     const auth = `Key ${key}:${secret}`;
 
-    const body: Record<string, unknown> = { prompt, count };
-    if (referenceImageUrl) body.image_url = referenceImageUrl; // VERIFY field name
+    const body: Record<string, unknown> = {
+      prompt,
+      width_and_height: "1536x1536",
+      quality: "1080p",
+      batch_size: soulBatchSize(count),
+    };
+    if (referenceImageUrl) {
+      body.image_reference = { type: "image_url", image_url: referenceImageUrl };
+    }
 
     const submitted = await hfRequest(fetchImpl, `${HF_BASE}/${model}`, {
       method: "POST",
