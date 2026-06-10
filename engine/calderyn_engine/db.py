@@ -35,8 +35,14 @@ async def get_pool(
         return _pool
     async with _pool_lock:
         if _pool is None:
+            # statement_cache_size=0: DATABASE_URL points at Supabase's
+            # transaction pooler (port 6543), which does not support asyncpg's
+            # named prepared statements across pooled connections.
             _pool = await asyncpg.create_pool(
-                database_url, min_size=min_size, max_size=max_size
+                database_url,
+                min_size=min_size,
+                max_size=max_size,
+                statement_cache_size=0,
             )
     return _pool
 
@@ -49,7 +55,10 @@ async def make_pool(
 ) -> asyncpg.Pool:
     """Create a fresh pool (does not touch the module-level cache)."""
     return await asyncpg.create_pool(
-        database_url, min_size=min_size, max_size=max_size
+        database_url,
+        min_size=min_size,
+        max_size=max_size,
+        statement_cache_size=0,
     )
 
 
