@@ -22,6 +22,7 @@ import {
   FormLayout,
   InlineGrid,
   InlineStack,
+  Layout,
   Modal,
   Page,
   ProgressBar,
@@ -274,345 +275,382 @@ export default function Screener() {
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
   );
   const [genMode, setGenMode] = useState<"copy" | "image">("copy");
+  const [showInputs, setShowInputs] = useState(false);
   useEffect(() => {
     const d = fetcher.data as CreativeScreenRun | undefined;
     if (d?.assumedSpendCents)
       setSpend(String(d.assumedSpendCents / 100));
   }, [fetcher.data]);
 
+  const inputsOpen = !card || showInputs;
   return (
     <Page
       title="Ad Pre-Screen"
       subtitle="Score an ad's potential before it goes live — a test screening before you hit publish"
     >
-      <BlockStack gap="500">
-        {metaAds.length > 0 && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingSm">Screen a paused ad from Meta</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Pulls the real creative + targeting from your connected Meta account.
-              </Text>
-              <BlockStack gap="200">
-                {metaAds.map((ad) => (
-                  <InlineStack key={ad.id} align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text as="span" variant="bodyMd">{ad.name}</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">{ad.effectiveStatus}</Text>
-                    </BlockStack>
-                    <fetcher.Form method="post">
-                      <input type="hidden" name="source" value="meta_ad" />
-                      <input type="hidden" name="metaAdId" value={ad.id} />
-                      <input type="hidden" name="assumedSpendCents" value={Math.round(Number(spend || 0) * 100)} />
-                      <Button submit loading={running} disabled={running}>Screen this ad</Button>
-                    </fetcher.Form>
-                  </InlineStack>
-                ))}
-              </BlockStack>
-            </BlockStack>
-          </Card>
-        )}
-        <Card>
-          <fetcher.Form method="post">
-            <FormLayout>
-              <TextField label="Headline" name="headline" autoComplete="off" />
-              <TextField
-                label="Primary text"
-                name="primaryText"
-                multiline={3}
-                autoComplete="off"
-              />
-              <FormLayout.Group>
-                <TextField
-                  label="Call to action"
-                  name="cta"
-                  autoComplete="off"
-                  placeholder="SHOP_NOW"
-                />
-                <TextField
-                  label="Destination URL"
-                  name="destinationUrl"
-                  autoComplete="off"
-                  placeholder="https://…?utm_content=SKU"
-                />
-              </FormLayout.Group>
-              <TextField
-                label="Target audience"
-                name="audience"
-                autoComplete="off"
-                placeholder="Women 25-44 interested in skincare"
-              />
-              <TextField
-                label="Image URL (optional)"
-                name="imageUrl"
-                autoComplete="off"
-                placeholder="https://…/creative.jpg"
-              />
-              <TextField
-                label="Assumed spend (USD)"
-                type="number"
-                autoComplete="off"
-                value={spend}
-                onChange={setSpend}
-                helpText="Drives the ROAS estimate. Edit and re-screen to see the impact."
-              />
-              <input
-                type="hidden"
-                name="assumedSpendCents"
-                value={Math.round(Number(spend || 0) * 100)}
-              />
-              <Button submit variant="primary" loading={running} disabled={running}>
-                Screen this ad
-              </Button>
-            </FormLayout>
-          </fetcher.Form>
-        </Card>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {run?.status === "error" && (
+              <Banner tone="critical" title="Screening failed">
+                <p>{run.error}</p>
+              </Banner>
+            )}
 
-        {running && !card && (
-          <Card>
-            <Text as="p" tone="subdued">
-              Scoring this creative… ~20–30 seconds.
-            </Text>
-          </Card>
-        )}
-
-        {run?.status === "error" && (
-          <Banner tone="critical" title="Screening failed">
-            <p>{run.error}</p>
-          </Banner>
-        )}
-
-        {card && (
-          <>
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <InlineStack gap="300" blockAlign="center">
-                    <Text as="span" variant="heading2xl">
-                      {card.composite}
-                    </Text>
-                    <BlockStack gap="100">
-                      <Badge tone={gradeTone[card.grade]}>{card.grade}</Badge>
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        Confidence: {card.confidence}
-                        {card.confidence === "low" ? " — not SKU-calibrated" : ""}
-                      </Text>
-                    </BlockStack>
-                  </InlineStack>
-                </InlineStack>
+            {running && !card && (
+              <Card>
                 <Text as="p" tone="subdued">
-                  {card.summary}
+                  Scoring this creative… ~20–30 seconds.
                 </Text>
-                {card.confidence === "low" && (
-                  <Banner tone="warning" title="Low-confidence estimate">
-                    <p>
-                      This creative isn't mapped to a SKU with enough history, so outcomes use
-                      category/account fallbacks. Treat the numbers as directional.
-                    </p>
-                  </Banner>
-                )}
-              </BlockStack>
-            </Card>
+              </Card>
+            )}
 
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  Predicted outcomes
-                </Text>
-                <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
-                  <Box>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      Estimated ROAS
-                    </Text>
-                    <Text as="p" variant="headingLg">
-                      {card.outcomes.estimatedRoas}x
-                    </Text>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      range {card.outcomes.roasLow}–{card.outcomes.roasHigh}x · break-even{" "}
-                      {card.outcomes.breakEvenRoas}x
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      Predicted CTR
-                    </Text>
-                    <Text as="p" variant="headingLg">
-                      {pct(card.outcomes.predictedCtr)}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      Hold / engagement
-                    </Text>
-                    <Text as="p" variant="headingLg">
-                      {pct(card.outcomes.holdRate)}
-                    </Text>
-                  </Box>
-                </InlineGrid>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  Based on{" "}
-                  {card.outcomes.mappedSku ? `SKU ${card.outcomes.mappedSku}` : "no mapped SKU"}
-                  {card.outcomes.skuPriceCents
-                    ? ` @ ${dollars(card.outcomes.skuPriceCents)}`
-                    : ""}{" "}
-                  · assumed spend {dollars(card.outcomes.assumedSpendCents)} · projected revenue{" "}
-                  {dollars(card.outcomes.predictedRevenueCents)}
-                </Text>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingSm">
-                  Creative breakdown
-                </Text>
-                {METRIC_GROUPS.map((g: MetricGroup) => {
-                  const rows = card.metrics.filter((m) => m.group === g);
-                  if (rows.length === 0) return null;
-                  return (
-                    <BlockStack key={g} gap="200">
-                      <Text as="h3" variant="headingXs">
-                        {METRIC_GROUP_LABELS[g]}
-                      </Text>
-                      {rows.map((m) => (
-                        <MetricRow key={m.id} m={m} />
-                      ))}
-                      <Divider />
-                    </BlockStack>
-                  );
-                })}
-              </BlockStack>
-            </Card>
-
-            {card.tips.length > 0 && (
+            {!run && !running && (
               <Card>
                 <BlockStack gap="200">
-                  <Text as="h2" variant="headingSm">
-                    How to make it better
+                  <Text as="h2" variant="headingMd">
+                    Screen an ad to see its score
                   </Text>
-                  <ol style={{ margin: 0, paddingInlineStart: 18 }}>
-                    {card.tips.map((t, i) => (
-                      <li key={i}>
-                        <Text as="span" variant="bodySm">
-                          {t}
-                        </Text>
-                      </li>
-                    ))}
-                  </ol>
+                  <Text as="p" tone="subdued">
+                    Fill in the ad on the right (or pick a paused Meta ad), then screen it. You&apos;ll
+                    get a predicted score, ROAS, and one-click improvements before you spend a dollar.
+                  </Text>
                 </BlockStack>
               </Card>
             )}
 
+            {card && (
+              <>
+                <Card>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="start" gap="400">
+                      <InlineStack gap="300" blockAlign="center">
+                        <Text as="span" variant="heading2xl">
+                          {card.composite}
+                        </Text>
+                        <BlockStack gap="100">
+                          <Badge tone={gradeTone[card.grade]}>{card.grade}</Badge>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            Confidence: {card.confidence}
+                            {card.confidence === "low" ? " — not SKU-calibrated" : ""}
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+                      <fetcher.Form method="post">
+                        <input type="hidden" name="intent" value="generate" />
+                        <input type="hidden" name="mode" value={genMode} />
+                        <BlockStack gap="150" inlineAlign="end">
+                          <ButtonGroup variant="segmented">
+                            <Button pressed={genMode === "copy"} onClick={() => setGenMode("copy")}>
+                              Copy
+                            </Button>
+                            <Button
+                              pressed={genMode === "image"}
+                              disabled={!imageGenAvailable}
+                              onClick={() => setGenMode("image")}
+                            >
+                              Image
+                            </Button>
+                          </ButtonGroup>
+                          <Button submit variant="primary" loading={running} disabled={running}>
+                            Improve this ad
+                          </Button>
+                        </BlockStack>
+                      </fetcher.Form>
+                    </InlineStack>
+
+                    <Text as="p" tone="subdued">{card.summary}</Text>
+
+                    {card.confidence === "low" && (
+                      <Banner tone="warning" title="Low-confidence estimate">
+                        <p>
+                          This creative isn&apos;t mapped to a SKU with enough history, so outcomes use
+                          category/account fallbacks. Treat the numbers as directional.
+                        </p>
+                      </Banner>
+                    )}
+                    {generateError && <Banner tone="warning">{generateError}</Banner>}
+                    {!imageGenAvailable && (
+                      <Text as="p" tone="subdued" variant="bodySm">
+                        Image generation isn&apos;t connected — set HIGGSFIELD_API_KEY and
+                        HIGGSFIELD_API_SECRET to enable it.
+                      </Text>
+                    )}
+
+                    <Divider />
+
+                    <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                      <Box>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Estimated ROAS
+                        </Text>
+                        <Text as="p" variant="headingLg">
+                          {card.outcomes.estimatedRoas}x
+                        </Text>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          range {card.outcomes.roasLow}–{card.outcomes.roasHigh}x · break-even{" "}
+                          {card.outcomes.breakEvenRoas}x
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Predicted CTR
+                        </Text>
+                        <Text as="p" variant="headingLg">
+                          {pct(card.outcomes.predictedCtr)}
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Hold / engagement
+                        </Text>
+                        <Text as="p" variant="headingLg">
+                          {pct(card.outcomes.holdRate)}
+                        </Text>
+                      </Box>
+                    </InlineGrid>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Based on{" "}
+                      {card.outcomes.mappedSku ? `SKU ${card.outcomes.mappedSku}` : "no mapped SKU"}
+                      {card.outcomes.skuPriceCents
+                        ? ` @ ${dollars(card.outcomes.skuPriceCents)}`
+                        : ""}{" "}
+                      · assumed spend {dollars(card.outcomes.assumedSpendCents)} · projected revenue{" "}
+                      {dollars(card.outcomes.predictedRevenueCents)}
+                    </Text>
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingSm">
+                      Improved variations
+                    </Text>
+                    {pushResult && (
+                      <Banner tone={pushResult.ok ? "success" : "critical"}>
+                        {pushResult.ok
+                          ? `Created a paused ad${pushResult.adId ? ` (${pushResult.adId})` : ""}${pushResult.alreadyPushed ? " — already pushed earlier" : ""}. Review it in Meta Ads Manager before activating.`
+                          : pushResult.error}
+                      </Banner>
+                    )}
+                    {(run?.variants ?? []).length === 0 ? (
+                      <Text as="p" tone="subdued" variant="bodySm">
+                        Use <Text as="span" fontWeight="semibold">Improve this ad</Text> above to
+                        generate variations conditioned on this ad&apos;s weak spots. Only variants
+                        that out-score the original are shown.
+                      </Text>
+                    ) : (
+                      (run?.variants ?? []).map((v: Variant, i: number) => (
+                        <Box key={i} padding="300" borderColor="border" borderBlockStartWidth="025">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">{v.input.headline}</Text>
+                            <Badge tone="success">{`${v.composite} (+${v.delta})`}</Badge>
+                          </InlineStack>
+                          <Text as="p" variant="bodySm">{v.input.primaryText}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">CTA: {v.input.cta} · {v.rationale}</Text>
+                          {run?.source === "meta_ad" && (
+                            <Box paddingBlockStart="200">
+                              <Button onClick={() => setPushTarget(i)} disabled={pushing}>
+                                Push to Meta (paused)
+                              </Button>
+                            </Box>
+                          )}
+                        </Box>
+                      ))
+                    )}
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingSm">
+                      Creative breakdown
+                    </Text>
+                    {METRIC_GROUPS.map((g: MetricGroup) => {
+                      const rows = card.metrics.filter((m) => m.group === g);
+                      if (rows.length === 0) return null;
+                      return (
+                        <BlockStack key={g} gap="200">
+                          <Text as="h3" variant="headingXs">
+                            {METRIC_GROUP_LABELS[g]}
+                          </Text>
+                          {rows.map((m) => (
+                            <MetricRow key={m.id} m={m} />
+                          ))}
+                          <Divider />
+                        </BlockStack>
+                      );
+                    })}
+                  </BlockStack>
+                </Card>
+
+                {card.tips.length > 0 && (
+                  <Card>
+                    <BlockStack gap="200">
+                      <Text as="h2" variant="headingSm">
+                        How to make it better
+                      </Text>
+                      <ol style={{ margin: 0, paddingInlineStart: 18 }}>
+                        {card.tips.map((t, i) => (
+                          <li key={i}>
+                            <Text as="span" variant="bodySm">
+                              {t}
+                            </Text>
+                          </li>
+                        ))}
+                      </ol>
+                    </BlockStack>
+                  </Card>
+                )}
+              </>
+            )}
+          </BlockStack>
+        </Layout.Section>
+
+        <Layout.Section variant="oneThird">
+          <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingSm">Improved variations</Text>
-                  <fetcher.Form method="post">
-                    <input type="hidden" name="intent" value="generate" />
-                    <input type="hidden" name="mode" value={genMode} />
-                    <InlineStack gap="200" blockAlign="center">
-                      <ButtonGroup variant="segmented">
-                        <Button pressed={genMode === "copy"} onClick={() => setGenMode("copy")}>
-                          Copy
-                        </Button>
-                        <Button
-                          pressed={genMode === "image"}
-                          disabled={!imageGenAvailable}
-                          onClick={() => setGenMode("image")}
-                        >
-                          Image
-                        </Button>
-                      </ButtonGroup>
-                      <Button submit variant="primary" loading={running} disabled={running}>
-                        Generate
-                      </Button>
-                    </InlineStack>
-                  </fetcher.Form>
+                  <Text as="h2" variant="headingSm">
+                    {card ? "Screen another ad" : "Screen an ad"}
+                  </Text>
+                  {card && (
+                    <Button variant="plain" onClick={() => setShowInputs((s) => !s)}>
+                      {inputsOpen ? "Hide" : "New screen"}
+                    </Button>
+                  )}
                 </InlineStack>
-                {generateError && (
-                  <Banner tone="warning">{generateError}</Banner>
-                )}
-                {pushResult && (
-                  <Banner tone={pushResult.ok ? "success" : "critical"}>
-                    {pushResult.ok
-                      ? `Created a paused ad${pushResult.adId ? ` (${pushResult.adId})` : ""}${pushResult.alreadyPushed ? " — already pushed earlier" : ""}. Review it in Meta Ads Manager before activating.`
-                      : pushResult.error}
-                  </Banner>
-                )}
-                {!imageGenAvailable && (
+                {card && !inputsOpen && (
                   <Text as="p" tone="subdued" variant="bodySm">
-                    Image generation isn&apos;t connected — set HIGGSFIELD_API_KEY and HIGGSFIELD_API_SECRET to enable it.
+                    Last screened: {run?.creativeInput?.headline || "manual creative"} ·{" "}
+                    {dollars(run?.assumedSpendCents ?? 0)} spend
                   </Text>
                 )}
-                {(run?.variants ?? []).length === 0 ? (
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Generate variations conditioned on this ad&apos;s weak spots. Only variants that out-score the original are shown.
-                  </Text>
-                ) : (
-                  (run?.variants ?? []).map((v: Variant, i: number) => (
-                    <Box key={i} padding="300" borderColor="border" borderBlockStartWidth="025">
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">{v.input.headline}</Text>
-                        <Badge tone="success">{`${v.composite} (+${v.delta})`}</Badge>
-                      </InlineStack>
-                      <Text as="p" variant="bodySm">{v.input.primaryText}</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">CTA: {v.input.cta} · {v.rationale}</Text>
-                      {run?.source === "meta_ad" && (
-                        <Box paddingBlockStart="200">
-                          <Button onClick={() => setPushTarget(i)} disabled={pushing}>
-                            Push to Meta (paused)
-                          </Button>
-                        </Box>
-                      )}
-                    </Box>
-                  ))
-                )}
-                <Modal
-                  open={pushTarget !== null}
-                  onClose={() => setPushTarget(null)}
-                  title="Push this variant to Meta?"
-                  primaryAction={{
-                    content: "Create paused ad",
-                    loading: pushing,
-                    onAction: () => {
-                      if (pushTarget !== null) {
-                        pushFetcher.submit(
-                          { intent: "push", variantIndex: String(pushTarget) },
-                          { method: "post" },
-                        );
-                      }
-                      setPushTarget(null);
-                    },
-                  }}
-                  secondaryActions={[{ content: "Cancel", onAction: () => setPushTarget(null) }]}
+                <Collapsible
+                  open={inputsOpen}
+                  id="screen-form"
+                  transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
                 >
-                  <Modal.Section>
-                    <Text as="p" variant="bodyMd">
-                      This creates a new <Text as="span" fontWeight="semibold">paused</Text> ad in
-                      the source ad&apos;s ad set. It won&apos;t spend until you activate it in Meta
-                      Ads Manager.
-                    </Text>
-                  </Modal.Section>
-                </Modal>
+                  <fetcher.Form method="post">
+                    <FormLayout>
+                      <TextField label="Headline" name="headline" autoComplete="off" />
+                      <TextField
+                        label="Primary text"
+                        name="primaryText"
+                        multiline={3}
+                        autoComplete="off"
+                      />
+                      <TextField
+                        label="Call to action"
+                        name="cta"
+                        autoComplete="off"
+                        placeholder="SHOP_NOW"
+                      />
+                      <TextField
+                        label="Destination URL"
+                        name="destinationUrl"
+                        autoComplete="off"
+                        placeholder="https://…?utm_content=SKU"
+                      />
+                      <TextField
+                        label="Target audience"
+                        name="audience"
+                        autoComplete="off"
+                        placeholder="Women 25-44 interested in skincare"
+                      />
+                      <TextField
+                        label="Image URL (optional)"
+                        name="imageUrl"
+                        autoComplete="off"
+                        placeholder="https://…/creative.jpg"
+                      />
+                      <TextField
+                        label="Assumed spend (USD)"
+                        type="number"
+                        autoComplete="off"
+                        value={spend}
+                        onChange={setSpend}
+                        helpText="Drives the ROAS estimate. Edit and re-screen to see the impact."
+                      />
+                      <input
+                        type="hidden"
+                        name="assumedSpendCents"
+                        value={Math.round(Number(spend || 0) * 100)}
+                      />
+                      <Button submit variant="primary" loading={running} disabled={running}>
+                        Screen this ad
+                      </Button>
+                    </FormLayout>
+                  </fetcher.Form>
+                </Collapsible>
               </BlockStack>
             </Card>
-          </>
-        )}
 
-        {!run && !running && (
-          <Card>
-            <Text as="p" tone="subdued">
-              No screens yet. Enter an ad above and screen it before you spend.
-            </Text>
-          </Card>
-        )}
+            {metaAds.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingSm">
+                    Or screen a paused Meta ad
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Pulls the real creative + targeting from your connected Meta account.
+                  </Text>
+                  <BlockStack gap="200">
+                    {metaAds.map((ad) => (
+                      <InlineStack key={ad.id} align="space-between" blockAlign="center">
+                        <BlockStack gap="100">
+                          <Text as="span" variant="bodyMd">{ad.name}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued">{ad.effectiveStatus}</Text>
+                        </BlockStack>
+                        <fetcher.Form method="post">
+                          <input type="hidden" name="source" value="meta_ad" />
+                          <input type="hidden" name="metaAdId" value={ad.id} />
+                          <input type="hidden" name="assumedSpendCents" value={Math.round(Number(spend || 0) * 100)} />
+                          <Button submit loading={running} disabled={running}>Screen</Button>
+                        </fetcher.Form>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            )}
 
-        {history.length > 0 && (
-          <Text as="p" tone="subdued" variant="bodySm">
-            {history.length} previous screen(s) on record.
+            {history.length > 0 && (
+              <Text as="p" tone="subdued" variant="bodySm">
+                {history.length} previous screen(s) on record.
+              </Text>
+            )}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+
+      <Modal
+        open={pushTarget !== null}
+        onClose={() => setPushTarget(null)}
+        title="Push this variant to Meta?"
+        primaryAction={{
+          content: "Create paused ad",
+          loading: pushing,
+          onAction: () => {
+            if (pushTarget !== null) {
+              pushFetcher.submit(
+                { intent: "push", variantIndex: String(pushTarget) },
+                { method: "post" },
+              );
+            }
+            setPushTarget(null);
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setPushTarget(null) }]}
+      >
+        <Modal.Section>
+          <Text as="p" variant="bodyMd">
+            This creates a new <Text as="span" fontWeight="semibold">paused</Text> ad in the source
+            ad&apos;s ad set. It won&apos;t spend until you activate it in Meta Ads Manager.
           </Text>
-        )}
-      </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
