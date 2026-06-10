@@ -41,6 +41,7 @@ type LoaderPayload = {
   guardrails: GuardrailConfig | null;
   onboardingDone: boolean;
   error: { code: string; message: string } | null;
+  dashboardLoginUrl: string;
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -77,6 +78,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
+  // Sign-in-with-Shopify entry point of the external merchant dashboard; the
+  // merchant's live admin session completes the OAuth round-trip silently.
+  const dashboardLoginUrl = `${
+    process.env.DASHBOARD_PUBLIC_URL ?? "https://calderyncompany.com"
+  }/dashboard/login?shop=${encodeURIComponent(session.shop)}`;
+
   const client = calderynClient(session.shop);
   try {
     const [alerts, audit, campaigns, guardrails, onboarding] = await Promise.all([
@@ -93,6 +100,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails,
       onboardingDone: onboarding.done,
       error: null,
+      dashboardLoginUrl,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -103,6 +111,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails: null,
       onboardingDone: true,
       error: { code: e.code ?? "ERROR", message: e.message },
+      dashboardLoginUrl,
     });
   }
 };
@@ -123,7 +132,7 @@ function trueRoas(campaigns: Campaign[]): string {
 
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
-  const { alerts, audit, campaigns, guardrails, onboardingDone, error } =
+  const { alerts, audit, campaigns, guardrails, onboardingDone, error, dashboardLoginUrl } =
     useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -155,7 +164,12 @@ export default function Dashboard() {
       title="Calderyn"
       subtitle="Watching ad spend and inventory — together."
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
-      secondaryActions={[{ content: "Settings", onAction: () => navigate("/app/settings") }]}
+      secondaryActions={[
+        { content: "Settings", onAction: () => navigate("/app/settings") },
+        // New tab is required: the dashboard sends frame-ancestors 'none',
+        // so it cannot render inside the admin iframe.
+        { content: "Open web dashboard", url: dashboardLoginUrl, external: true },
+      ]}
     >
       <BlockStack gap="500">
         {error && (
