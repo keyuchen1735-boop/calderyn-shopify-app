@@ -4,7 +4,11 @@ import {
   setSupabaseResponses,
   getRecorded,
 } from "../../__tests__/_supabase_chain_mock";
-import { checkAndReserveImageGen, releaseImageGen } from "../image-gen-limit.server";
+import {
+  checkAndReserveImageGen,
+  releaseImageGen,
+  reserveImageGenSlots,
+} from "../image-gen-limit.server";
 
 vi.mock("../../supabase.server", () => ({
   getSupabase: () => buildChain(),
@@ -48,6 +52,30 @@ describe("checkAndReserveImageGen", () => {
     const res = await checkAndReserveImageGen(SHOP, NOW);
     expect(res).toEqual({ ok: false, scope: "global", limit: 300 });
     expect(getRecorded("insert")).toHaveLength(0);
+  });
+});
+
+describe("reserveImageGenSlots", () => {
+  it("reserves N slots and returns all event ids", async () => {
+    setSupabaseResponses([
+      count(0), count(0), { data: { id: "e1" }, error: null },
+      count(1), count(1), { data: { id: "e2" }, error: null },
+    ]);
+    const res = await reserveImageGenSlots(SHOP, 2, NOW);
+    expect(res).toEqual({ ok: true, eventIds: ["e1", "e2"] });
+    expect(getRecorded("insert")).toHaveLength(2);
+  });
+
+  it("releases already-reserved slots when blocked partway, and reports the block", async () => {
+    setSupabaseResponses([
+      count(19), count(10), { data: { id: "e1" }, error: null }, // slot 1 fits (19 -> 20)
+      count(20), count(11), // slot 2 blocked at per-shop cap
+      { data: null, error: null }, // release of e1
+    ]);
+    const res = await reserveImageGenSlots(SHOP, 2, NOW);
+    expect(res).toEqual({ ok: false, scope: "shop", limit: 20 });
+    expect(getRecorded("delete")).toHaveLength(1);
+    expect(getRecorded("eq")).toContainEqual(["id", "e1"]);
   });
 });
 

@@ -79,9 +79,17 @@ function extractImageUrls(payload: unknown): string[] {
  * HTTP layer is injectable so tests never hit the network.
  */
 export function higgsfieldImageClient(
-  opts: { fetchImpl?: FetchLike; model?: string; pollDelayMs?: number; timeoutMs?: number } = {},
+  opts: {
+    fetchImpl?: FetchLike;
+    model?: string;
+    pollDelayMs?: number;
+    timeoutMs?: number;
+    /** A SoulSize string like "1536x1536" — controls the rendered aspect. */
+    widthAndHeight?: string;
+  } = {},
 ): GenerateImageFn {
   const fetchImpl = opts.fetchImpl ?? defaultFetch;
+  const widthAndHeight = opts.widthAndHeight ?? "1536x1536";
   const model = opts.model ?? DEFAULT_MODEL;
   const pollDelayMs = opts.pollDelayMs ?? 500;
   const timeoutMs = opts.timeoutMs ?? 90_000;
@@ -98,7 +106,7 @@ export function higgsfieldImageClient(
 
     const body: Record<string, unknown> = {
       prompt,
-      width_and_height: "1536x1536",
+      width_and_height: widthAndHeight,
       quality: "1080p",
       batch_size: soulBatchSize(count),
     };
@@ -149,6 +157,7 @@ export function buildImagePrompt(req: GenerateRequest): string {
     `\nFix these weak dimensions:\n${weak}`,
     req.tips.length ? `\nApply these fixes: ${req.tips.join("; ")}` : "",
     refs,
+    req.extraDirection ? `\nArt direction from the merchant: ${req.extraDirection}` : "",
   ].join("\n");
 }
 

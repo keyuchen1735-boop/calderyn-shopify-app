@@ -62,6 +62,17 @@ describe("higgsfieldImageClient", () => {
     expect(body).not.toHaveProperty("image_reference");
   });
 
+  it("renders at the requested aspect via the widthAndHeight option", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ request_id: "r1" }))
+      .mockResolvedValueOnce(ok({ status: "completed", images: [{ url: "u1" }] }));
+    const client = higgsfieldImageClient({ fetchImpl, pollDelayMs: 0, widthAndHeight: "1152x2048" });
+    await client({ prompt: "x", referenceImageUrl: null, count: 1 });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.width_and_height).toBe("1152x2048");
+  });
+
   it("honors an explicit model path override", async () => {
     const fetchImpl = vi
       .fn()
