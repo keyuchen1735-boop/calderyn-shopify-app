@@ -165,6 +165,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
+    // reallocate_budget needs source/dest/amount inputs that only the Campaigns
+    // page collects. The alert page deep-links there; reject any direct POST so
+    // we never write a bogus audit row while the campaigns UI is in progress.
+    if (kind === "reallocate_budget") {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "UNSUPPORTED_HERE", message: "Reallocate budget from the Campaigns page" },
+          toast: { message: "Reallocate budget from the Campaigns page", isError: true },
+        },
+        { status: 400 },
+      );
+    }
+
     // Guardrail: enforce the per-action dollar-impact cap server-side using the
     // alert's real impact (not a form value). Snooze is harmless and exempt.
     const guardrails = await client.guardrails.get(request.signal);
