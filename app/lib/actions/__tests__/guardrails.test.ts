@@ -68,3 +68,42 @@ describe("evaluateGuardrails", () => {
     expect(r.allowed).toBe(false);
   });
 });
+
+describe("evaluateGuardrails · reallocate_budget", () => {
+  const cfg: AutopilotGuardrails = {
+    enabled: true, dailyActionCap: 10, minSpendCents: 0, maxBudgetCutPct: 50,
+    dollarCapCents: 100000, cooldownMinutes: 30, businessHoursOnly: false,
+    businessHoursStartUtc: 0, businessHoursEndUtc: 0,
+  };
+  const base: GuardrailFacts = {
+    kind: "reallocate_budget", dollarImpactCents: 500, campaignSpendCents: 50000,
+    currentBudgetCents: 2000, newBudgetCents: 1500, todayAutopilotCount: 0,
+    minutesSinceLastActionOnCampaign: null, minutesSinceLastActionOnDestCampaign: null,
+    nowUtcHour: 12,
+  };
+
+  it("allows a valid reallocation", () => {
+    expect(evaluateGuardrails(cfg, base)).toEqual({ allowed: true });
+  });
+
+  it("blocks when the DESTINATION campaign is in cooldown", () => {
+    const r = evaluateGuardrails(cfg, { ...base, minutesSinceLastActionOnDestCampaign: 10 });
+    expect(r).toEqual({ allowed: false, reason: "destination campaign in cooldown" });
+  });
+
+  it("blocks when the SOURCE campaign is in cooldown (existing rule still applies)", () => {
+    const r = evaluateGuardrails(cfg, { ...base, minutesSinceLastActionOnCampaign: 10 });
+    expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
+  });
+
+  it("applies maxBudgetCutPct to the SOURCE cut of a reallocation", () => {
+    // 1000 -> 400 is a 60% cut > 50% cap.
+    const r = evaluateGuardrails(cfg, { ...base, currentBudgetCents: 1000, newBudgetCents: 400 });
+    expect(r).toEqual({ allowed: false, reason: "budget cut exceeds max" });
+  });
+
+  it("dollar cap covers the amount", () => {
+    const r = evaluateGuardrails(cfg, { ...base, dollarImpactCents: 200000 });
+    expect(r).toEqual({ allowed: false, reason: "dollar impact exceeds cap" });
+  });
+});
