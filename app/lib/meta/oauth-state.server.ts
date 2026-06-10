@@ -59,13 +59,14 @@ export function parseOAuthState(state: string): {
 }
 
 /**
- * Build a redirect path back into the embedded admin, carrying the App Bridge
- * `shop`/`host` recovered from the OAuth state. authenticate.admin requires BOTH
- * params to re-embed a top-level callback into the Shopify admin iframe; without
- * them the embedded route dead-ends on the app login page. `host` is just
- * base64url("admin.shopify.com/store/<handle>"), so when the packed state lost
- * it (the connect form's ?host= is empty after client-side navigation) it is
- * synthesized from the shop domain instead of falling back to a bare path.
+ * Build the redirect back into the embedded admin after a top-level OAuth
+ * callback. Preferred form is Shopify's admin deep link
+ * (admin.shopify.com/store/<handle>/apps/<api-key><path>?<query>): the admin
+ * loads the app iframe at that exact path with the query forwarded and fresh
+ * shop/host/session context. Returning to our own domain instead goes through
+ * authenticate.admin, which re-enters at the app ROOT and drops the path and
+ * the connection notice. Falls back to a same-domain path with shop +
+ * (possibly synthesized) host when the api key or shop is unavailable.
  */
 export function embeddedReturnUrl(
   path: string,
@@ -73,6 +74,11 @@ export function embeddedReturnUrl(
   ctx: { host: string | null; shop: string | null },
 ): string {
   const params = new URLSearchParams(query);
+  const apiKey = process.env.SHOPIFY_API_KEY;
+  if (ctx.shop && apiKey) {
+    const handle = ctx.shop.replace(/\.myshopify\.com$/, "");
+    return `https://admin.shopify.com/store/${handle}/apps/${apiKey}${path}?${params.toString()}`;
+  }
   if (ctx.shop) {
     const handle = ctx.shop.replace(/\.myshopify\.com$/, "");
     const host =

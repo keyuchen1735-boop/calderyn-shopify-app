@@ -144,6 +144,28 @@ describe("packOAuthState / parseOAuthState", () => {
 });
 
 describe("embeddedReturnUrl", () => {
+  beforeEach(() => {
+    delete process.env.SHOPIFY_API_KEY;
+  });
+
+  // The reliable way back into a SPECIFIC embedded page after a top-level OAuth
+  // callback is Shopify's admin deep link — admin.shopify.com loads the app
+  // iframe at the exact path and forwards the query params. Returning to our
+  // own domain instead bounces through authenticate.admin, which re-enters at
+  // the app ROOT and drops the path + connection notice.
+  it("returns the admin deep link when shop and the app api key are known", () => {
+    process.env.SHOPIFY_API_KEY = "testapikey";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { quickbooks: "connected" },
+        { host: null, shop: "demo.myshopify.com" },
+      ),
+    ).toBe(
+      "https://admin.shopify.com/store/demo/apps/testapikey/app/settings?quickbooks=connected",
+    );
+  });
+
   it("appends shop and host when both are present", () => {
     const url = embeddedReturnUrl(
       "/app/settings",
