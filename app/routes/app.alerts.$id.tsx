@@ -408,7 +408,11 @@ export default function AlertDetail() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-      if (e.key === "e") setActionKind(allowed[0]);
+      // "reallocate_budget" deep-links to the campaigns page; it has no inline
+      // confirm modal. Skip it so the shortcut lands on the first actionable kind
+      // rather than silently firing a server 400.
+      const inlineKinds = allowed.filter((k) => k !== "reallocate_budget");
+      if (e.key === "e" && inlineKinds[0]) setActionKind(inlineKinds[0]);
       if (e.key === "s") setActionKind("snooze_alert");
     };
     document.addEventListener("keydown", onKey);
@@ -496,9 +500,15 @@ export default function AlertDetail() {
                   {allowedActions.map((kind, i) =>
                     i === 0 ? (
                       <BlockStack key={kind} gap="100">
-                        <Button variant="primary" onClick={() => setActionKind(kind)} fullWidth>
-                          {ACTION_LABELS[kind]}
-                        </Button>
+                        {kind === "reallocate_budget" ? (
+                          <Button fullWidth onClick={() => navigate("/app/campaigns")}>
+                            {ACTION_LABELS[kind]} →
+                          </Button>
+                        ) : (
+                          <Button variant="primary" onClick={() => setActionKind(kind)} fullWidth>
+                            {ACTION_LABELS[kind]}
+                          </Button>
+                        )}
                         <InlineStack gap="150" blockAlign="center">
                           <Badge tone="success">Recommended</Badge>
                           <Text as="span" variant="bodyXs" tone="subdued">
@@ -506,6 +516,10 @@ export default function AlertDetail() {
                           </Text>
                         </InlineStack>
                       </BlockStack>
+                    ) : kind === "reallocate_budget" ? (
+                      <Button key={kind} fullWidth onClick={() => navigate("/app/campaigns")}>
+                        {ACTION_LABELS[kind]} →
+                      </Button>
                     ) : (
                       <Button key={kind} onClick={() => setActionKind(kind)} fullWidth>
                         {ACTION_LABELS[kind]}

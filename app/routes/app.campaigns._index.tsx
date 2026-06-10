@@ -21,10 +21,12 @@ import {
   Link,
   Modal,
   Page,
+  Select,
   Text,
   TextField,
   Tooltip,
 } from "@shopify/polaris";
+import type { SelectGroup } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
@@ -39,6 +41,7 @@ import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server
 import { executeReallocation } from "~/lib/actions/reallocate.server";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { suggestReallocation } from "~/lib/actions/reallocation-suggest.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
@@ -48,11 +51,20 @@ import type { ActionKind, Alert, Campaign } from "~/lib/types";
 type PendingAction =
   | { kind: "pause"; campaign: Campaign }
   | { kind: "resume"; campaign: Campaign }
-  | { kind: "edit_budget"; campaign: Campaign };
+  | { kind: "edit_budget"; campaign: Campaign }
+  | { kind: "reallocate"; sourceId?: string };
+
+type ReallocationPrefill = {
+  sourceId: string | null; // id as used by the campaigns list (Meta = external id)
+  destId: string | null;
+  sourceGrade: string | null;
+  destGrade: string | null;
+};
 
 type LoaderPayload = {
   campaigns: Campaign[];
   alerts: Alert[];
+  reallocation: ReallocationPrefill | null;
   error: { code: string; message: string } | null;
 };
 
@@ -90,12 +102,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       campaigns = ingested;
     }
     const alerts = await client.alerts.list({}, request.signal);
-    return json<LoaderPayload>({ campaigns, alerts, error: null });
+
+    // Best-effort grade-driven prefill for the reallocate modal. Failure
+    // degrades VISIBLY to "no suggestion" (no Suggested badges, defaults
+    // unset) — the modal itself still works; this is advisory data, not a
+    // swallowed mutation (rule 12).
+    let reallocation: ReallocationPrefill | null = null;
+    try {
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      const s = await suggestReallocation(shopId, sb);
+      if (s.source && s.dest) {
+        const matchId = (cand: { campaignId: string; externalId: string }) =>
+          campaigns.find((c) => c.id === cand.campaignId || c.id === cand.externalId)?.id ?? null;
+        reallocation = {
+          sourceId: matchId(s.source),
+          destId: matchId(s.dest),
+          sourceGrade: s.source.grade,
+          destGrade: s.dest.grade,
+        };
+      }
+    } catch {
+      reallocation = null;
+    }
+    return json<LoaderPayload>({ campaigns, alerts, reallocation, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       campaigns: [],
       alerts: [],
+      reallocation: null,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -407,7 +443,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Campaigns() {
   const navigate = useEmbeddedNavigate();
-  const { campaigns, alerts, error } = useLoaderData<typeof loader>();
+  const { campaigns, alerts, reallocation, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
@@ -486,6 +522,13 @@ export default function Campaigns() {
         >
           Edit budget
         </Button>
+        <Button
+          variant="plain"
+          disabled={c.status !== "active" || c.daily_budget_cents <= 0}
+          onClick={() => setPending({ kind: "reallocate", sourceId: c.id })}
+        >
+          Reallocate
+        </Button>
       </ButtonGroup>,
     ];
   });
@@ -495,6 +538,14 @@ export default function Campaigns() {
       title="Campaigns"
       subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      secondaryActions={[
+        {
+          content: "Reallocate budget",
+          onAction: () => setPending({ kind: "reallocate" }),
+          disabled:
+            campaigns.filter((c) => c.status === "active" && c.daily_budget_cents > 0).length < 2,
+        },
+      ]}
     >
       <BlockStack gap="400">
         {error && (
@@ -628,6 +679,16 @@ export default function Campaigns() {
           </BlockStack>
         </CampaignActionModal>
       )}
+
+      {pending?.kind === "reallocate" && (
+        <ReallocateBudgetModal
+          campaigns={campaigns}
+          prefill={reallocation}
+          initialSourceId={pending.sourceId}
+          submitting={submitting}
+          onClose={() => setPending(null)}
+        />
+      )}
     </Page>
   );
 }
@@ -681,6 +742,135 @@ function CampaignActionModal({
                   disabled={submitting}
                 >
                   {primaryLabel}
+                </Button>
+              </ButtonGroup>
+            </Box>
+          </BlockStack>
+        </Form>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
+function ReallocateBudgetModal({
+  campaigns,
+  prefill,
+  initialSourceId,
+  submitting,
+  onClose,
+}: {
+  campaigns: Campaign[];
+  prefill: ReallocationPrefill | null;
+  initialSourceId?: string;
+  submitting: boolean;
+  onClose: () => void;
+}) {
+  const eligible = campaigns.filter((c) => c.status === "active" && c.daily_budget_cents > 0);
+  const startSource = initialSourceId ?? prefill?.sourceId ?? eligible[0]?.id ?? "";
+  const [sourceId, setSourceId] = useState(startSource);
+  const [destId, setDestId] = useState(() => {
+    if (prefill?.destId && prefill.destId !== startSource) return prefill.destId;
+    return eligible.find((c) => c.id !== startSource)?.id ?? "";
+  });
+  const [amount, setAmount] = useState("5");
+  const [idempotencyKey] = useState(() => `realloc:${newIdempotencyKey()}`);
+
+  const source = eligible.find((c) => c.id === sourceId);
+  const dest = eligible.find((c) => c.id === destId);
+  const amountCents = Math.round(Number(amount) * 100);
+  const sameCampaign = Boolean(source && dest && source.id === dest.id);
+  const amountInvalid = !Number.isFinite(amountCents) || amountCents <= 0;
+  const exceedsSource = Boolean(source && !amountInvalid && amountCents >= source.daily_budget_cents);
+  const valid = Boolean(source && dest && !sameCampaign && !amountInvalid && !exceedsSource);
+
+  // Grade text is known only for the suggested pair (loader keeps the grade
+  // join scoped to the suggestion).
+  const gradeFor = (id: string): string | null =>
+    prefill?.sourceId === id
+      ? prefill?.sourceGrade ?? null
+      : prefill?.destId === id
+        ? prefill?.destGrade ?? null
+        : null;
+  const optionGroups: SelectGroup[] = (["Meta", "Google", "TikTok"] as const)
+    .map((p) => ({
+      title: p,
+      options: eligible
+        .filter((c) => c.platform === p)
+        .map((c) => {
+          const grade = gradeFor(c.id);
+          return {
+            value: c.id,
+            label: `${c.name} · ${fmtMoney(c.daily_budget_cents)}/day${grade ? ` · ${grade}` : ""}`,
+          };
+        }),
+    }))
+    .filter((g) => g.options.length > 0);
+
+  return (
+    <Modal open title="Reallocate daily budget" onClose={onClose}>
+      <Modal.Section>
+        <Form method="post" preventScrollReset>
+          <input type="hidden" name="intent" value="reallocate" />
+          <input type="hidden" name="campaignId" value={source?.id ?? ""} />
+          <input type="hidden" name="campaignName" value={source?.name ?? ""} />
+          <input type="hidden" name="platform" value={source?.platform ?? ""} />
+          <input type="hidden" name="destCampaignId" value={dest?.id ?? ""} />
+          <input type="hidden" name="destName" value={dest?.name ?? ""} />
+          <input type="hidden" name="destPlatform" value={dest?.platform ?? ""} />
+          <input type="hidden" name="amountCents" value={String(amountInvalid ? 0 : amountCents)} />
+          <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+          <BlockStack gap="300">
+            <Select
+              label="Move budget from"
+              options={optionGroups}
+              value={sourceId}
+              onChange={setSourceId}
+              helpText={
+                prefill?.sourceId === sourceId ? "Suggested: lowest-graded campaign" : undefined
+              }
+            />
+            <Select
+              label="To"
+              options={optionGroups}
+              value={destId}
+              onChange={setDestId}
+              error={sameCampaign ? "Choose two different campaigns" : undefined}
+              helpText={
+                prefill?.destId === destId
+                  ? "Suggested: best winning campaign on another platform"
+                  : undefined
+              }
+            />
+            <TextField
+              label="Amount per day (USD)"
+              type="number"
+              prefix="$"
+              value={amount}
+              onChange={setAmount}
+              autoComplete="off"
+              error={
+                amountInvalid
+                  ? "Enter an amount above $0"
+                  : exceedsSource
+                    ? "Amount must leave the source budget above zero"
+                    : undefined
+              }
+            />
+            {source && dest && valid && (
+              <Banner tone="info">
+                {source.platform} · {source.name}: {fmtMoney(source.daily_budget_cents)} →{" "}
+                {fmtMoney(source.daily_budget_cents - amountCents)}/day {" — "} {dest.platform} ·{" "}
+                {dest.name}: {fmtMoney(dest.daily_budget_cents)} →{" "}
+                {fmtMoney(dest.daily_budget_cents + amountCents)}/day
+              </Banner>
+            )}
+            <Box>
+              <ButtonGroup>
+                <Button onClick={onClose} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button submit variant="primary" loading={submitting} disabled={submitting || !valid}>
+                  Move {fmtMoneyDec(amountInvalid ? 0 : amountCents)}/day
                 </Button>
               </ButtonGroup>
             </Box>
