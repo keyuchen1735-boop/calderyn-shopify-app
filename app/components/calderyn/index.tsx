@@ -47,6 +47,7 @@ const ICON_PATHS: Record<string, string> = {
   arrowFlat: "M5 12h14",
   undo: "M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3",
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
 };
 
 export function Icon({

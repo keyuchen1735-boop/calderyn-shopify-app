@@ -122,6 +122,27 @@
   height: 40px;
 }
 
+/* ── Source pill (where a dataset is synced from) ───────────── */
+.cdn-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--cdn-border);
+  border-radius: 9999px;
+  background: var(--p-color-bg-surface);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--p-color-text-secondary, #616a75);
+  white-space: nowrap;
+}
+.cdn-source-pill__glyph {
+  display: block;
+  flex: 0 0 auto;
+  color: #5e8e3e; /* Shopify brand green (dark variant for contrast) */
+}
+
 /* ── SKU location inline list ─────────────────────────────── */
 .cdn-loccell-inline {
   display: inline-flex;
