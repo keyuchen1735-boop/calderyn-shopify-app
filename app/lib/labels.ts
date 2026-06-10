@@ -63,21 +63,76 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
 export const EVIDENCE_LABELS: Record<string, string> = {
   stock: "Total stock",
   sku_title: "Product",
+  title: "Product",
   days_of_cover: "Days until sold out",
   spend_wow_ratio: "Spend vs last week",
   spend_prev_7d_usd: "Spend, prior 7 days",
   spend_this_7d_usd: "Spend, this 7 days",
+  spend_7d_usd: "Spend, last 7 days",
+  ad_spend_7d_usd: "Ad spend, last 7 days",
+  regional_spend_7d_usd: "Regional ad spend, last 7 days",
+  cogs_7d_usd: "Product costs, last 7 days",
+  revenue_7d_usd: "Revenue, last 7 days",
+  revenue_30d_usd: "Revenue, last 30 days",
+  return_30d_usd: "Returns, last 30 days",
+  gross_profit_7d_usd: "Gross profit, last 7 days",
   velocity_units_per_day: "Selling rate",
   velocity: "Selling rate",
-  unit_margin: "Profit per unit",
-  margin_pct: "Profit margin",
   daily_velocity_units: "Selling rate",
+  daily_demand: "Demand per day",
+  unit_margin: "Profit per unit",
+  unit_margin_usd: "Profit per unit",
+  gross_unit_margin_usd: "Gross profit per unit",
+  net_per_unit_usd: "Net per unit",
+  cac_per_unit_usd: "CAC per unit",
+  baseline_unit_margin_usd: "Baseline profit per unit",
+  current_unit_margin_usd: "Current profit per unit",
+  current_unit_cost_usd: "Current unit cost",
+  prior_unit_cost_usd: "Previous unit cost",
+  ad_tax_ratio: "Ad cost share of revenue",
+  threshold: "Alert threshold",
+  return_rate: "Return rate",
+  drift_pct: "Cost increase",
+  drop_pct: "Margin drop",
+  demand_share_pct: "Share of demand",
+  stock_concentration_pct: "Stock concentration",
+  margin_pct: "Profit margin",
+  baseline_units_30d: "Baseline units, 30 days",
+  current_units_7d: "Units, last 7 days",
+  units_sold_30d: "Units sold, 30 days",
+  units_14d: "Units, last 14 days",
+  units_30d: "Units, last 30 days",
+  gap_days: "Reorder gap",
+  lead_time_days: "Supplier lead time",
+  shortfall_units: "Projected shortfall",
+  regional_stock_units: "Regional stock",
+  regional_stock: "Regional stock",
+  stock_elsewhere: "Stock at other locations",
+  stock_units: "Stock",
+  location_region: "Region",
+  region: "Region",
+  campaign_name: "Campaign",
   campaign_id: "Campaign",
   inventory_item_id: "Inventory item",
   from_location_id: "From location",
   to_location_id: "To location",
   recommended_delta: "Recommended transfer",
 };
+
+// Acronyms that must stay uppercase when an unknown evidence key falls back to
+// title-casing ("cac_per_unit_usd" must never render as "Cac per unit usd").
+const LABEL_ACRONYMS = new Set(["cac", "usd", "roas", "sku", "cogs", "po", "aov", "cpc", "cpm", "ctr"]);
+
+/**
+ * Fallback label for evidence keys missing from EVIDENCE_LABELS: underscores
+ * to spaces, sentence case, acronyms uppercased.
+ */
+export function formatEvidenceKey(key: string): string {
+  if (EVIDENCE_LABELS[key]) return EVIDENCE_LABELS[key];
+  const words = key.split("_").map((w) => (LABEL_ACRONYMS.has(w) ? w.toUpperCase() : w));
+  const label = words.join(" ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 const fmtUsdFromString = (v: unknown): string => {
   const n = Number(v);
@@ -120,7 +175,39 @@ export const EVIDENCE_FORMATTERS: Record<string, (v: unknown) => string> = {
     if (!Number.isFinite(n)) return String(v ?? "—");
     return `${(n * 100).toFixed(0)}%`;
   },
+  daily_demand: (v) => fmtUnits(v, " /day"),
+  lead_time_days: (v) => fmtUnits(v, " days"),
+  gap_days: (v) => fmtUnits(v, " days"),
+  shortfall_units: (v) => fmtUnits(v, " units"),
+  regional_stock_units: (v) => fmtUnits(v, " units"),
+  regional_stock: (v) => fmtUnits(v, " units"),
+  stock_elsewhere: (v) => fmtUnits(v, " units"),
+  stock_units: (v) => fmtUnits(v, " units"),
 };
+
+const fmtPctFromFraction = (v: unknown): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  // Values arrive as fractions (0.493) or already-percent (93.4); treat
+  // anything ≤ 1.5 as a fraction.
+  const pct = Math.abs(n) <= 1.5 ? n * 100 : n;
+  return `${pct.toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
+};
+
+/**
+ * Formatter for an evidence value: the explicit per-key entry when present,
+ * otherwise inferred from the key's suffix (_usd → money, _pct/_rate/_ratio →
+ * percent, _units → units, _days → days) so new detector fields render as
+ * "$4,669" / "49%" / "14 days" instead of raw numbers.
+ */
+export function getEvidenceFormatter(key: string): ((v: unknown) => string) | undefined {
+  if (EVIDENCE_FORMATTERS[key]) return EVIDENCE_FORMATTERS[key];
+  if (key.endsWith("_usd")) return fmtUsdFromString;
+  if (key.endsWith("_pct") || key.endsWith("_rate") || key.endsWith("_ratio")) return fmtPctFromFraction;
+  if (key.endsWith("_units")) return (v) => fmtUnits(v, " units");
+  if (key.endsWith("_days")) return (v) => fmtUnits(v, " days");
+  return undefined;
+}
 
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
