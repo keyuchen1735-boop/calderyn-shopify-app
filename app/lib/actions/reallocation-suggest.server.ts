@@ -39,6 +39,10 @@ interface GradeRow {
   day_bucket: string;
 }
 
+/**
+ * Suggest source and destination campaigns for a budget reallocation.
+ * NOTE: a PINNED sourceCampaignId is returned even if graded winning — the caller owns that judgment (autopilot pins the alert's campaign; the guardrail cut-cap still applies).
+ */
 export async function suggestReallocation(
   shopId: string,
   sb: SupabaseClient,
