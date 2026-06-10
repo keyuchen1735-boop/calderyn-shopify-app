@@ -22,6 +22,7 @@ import {
   FormLayout,
   InlineGrid,
   InlineStack,
+  Modal,
   Page,
   ProgressBar,
   Text,
@@ -48,6 +49,8 @@ import {
 import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
 import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
+import { pushVariantToMeta, type PushResult } from "~/lib/screener/meta-push.server";
+import { metaClientForShop } from "~/lib/meta/client.server";
 import { loadCalibrationInputs } from "~/lib/screener/history.server";
 import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
 import { calibrate } from "~/lib/screener/calibrate.server";
@@ -102,6 +105,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json<LoaderPayload>({ latest, history, metaAds, imageGenAvailable });
 };
 
+function pushFail(error: string): PushResult {
+  return { ok: false, adId: null, alreadyPushed: false, error };
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -129,6 +136,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const saved = await saveVariants(latest.id, result.variants);
     return json(saved);
+  }
+
+  if (String(form.get("intent") ?? "") === "push") {
+    const variantIndex = Number(form.get("variantIndex"));
+    const latest = await getLatestRun(session.shop);
+    if (!latest) {
+      return json({ push: pushFail("Nothing to push yet — screen and generate first.") });
+    }
+    const conn = await metaClientForShop(session.shop);
+    if (!conn) return json({ push: pushFail("Connect your Meta account first.") });
+    const push = await pushVariantToMeta(
+      { shop: session.shop, run: latest, variantIndex },
+      { client: conn.client, adAccountId: conn.adAccountId },
+    );
+    return json({ push });
   }
 
   const assumedSpendCents = clampSpend(form.get("assumedSpendCents"));
@@ -218,6 +240,12 @@ export default function Screener() {
     (fetcher.data as CreativeScreenRun | undefined) ?? latest;
   const running = fetcher.state !== "idle";
   const card = run?.scorecard ?? null;
+
+  // A separate fetcher so a push never overwrites the screened/generated run display.
+  const pushFetcher = useFetcher<typeof action>();
+  const pushResult = (pushFetcher.data as { push?: PushResult } | undefined)?.push;
+  const pushing = pushFetcher.state !== "idle";
+  const [pushTarget, setPushTarget] = useState<number | null>(null);
 
   const [spend, setSpend] = useState<string>(
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
@@ -478,6 +506,13 @@ export default function Screener() {
                     </InlineStack>
                   </fetcher.Form>
                 </InlineStack>
+                {pushResult && (
+                  <Banner tone={pushResult.ok ? "success" : "critical"}>
+                    {pushResult.ok
+                      ? `Created a paused ad${pushResult.adId ? ` (${pushResult.adId})` : ""}${pushResult.alreadyPushed ? " — already pushed earlier" : ""}. Review it in Meta Ads Manager before activating.`
+                      : pushResult.error}
+                  </Banner>
+                )}
                 {!imageGenAvailable && (
                   <Text as="p" tone="subdued" variant="bodySm">
                     Image generation isn&apos;t connected — set HIGGSFIELD_API_KEY and HIGGSFIELD_API_SECRET to enable it.
@@ -496,9 +531,43 @@ export default function Screener() {
                       </InlineStack>
                       <Text as="p" variant="bodySm">{v.input.primaryText}</Text>
                       <Text as="p" variant="bodySm" tone="subdued">CTA: {v.input.cta} · {v.rationale}</Text>
+                      {run?.source === "meta_ad" && (
+                        <Box paddingBlockStart="200">
+                          <Button onClick={() => setPushTarget(i)} disabled={pushing}>
+                            Push to Meta (paused)
+                          </Button>
+                        </Box>
+                      )}
                     </Box>
                   ))
                 )}
+                <Modal
+                  open={pushTarget !== null}
+                  onClose={() => setPushTarget(null)}
+                  title="Push this variant to Meta?"
+                  primaryAction={{
+                    content: "Create paused ad",
+                    loading: pushing,
+                    onAction: () => {
+                      if (pushTarget !== null) {
+                        pushFetcher.submit(
+                          { intent: "push", variantIndex: String(pushTarget) },
+                          { method: "post" },
+                        );
+                      }
+                      setPushTarget(null);
+                    },
+                  }}
+                  secondaryActions={[{ content: "Cancel", onAction: () => setPushTarget(null) }]}
+                >
+                  <Modal.Section>
+                    <Text as="p" variant="bodyMd">
+                      This creates a new <Text as="span" fontWeight="semibold">paused</Text> ad in
+                      the source ad&apos;s ad set. It won&apos;t spend until you activate it in Meta
+                      Ads Manager.
+                    </Text>
+                  </Modal.Section>
+                </Modal>
               </BlockStack>
             </Card>
           </>
