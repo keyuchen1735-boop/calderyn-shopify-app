@@ -70,7 +70,14 @@ function auditRow(calls: { inserts: Array<{ table: string; rows: unknown }> }) {
 }
 
 describe("executeReallocation · happy path + validation", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore the default impl so Once queues from prior tests don't leak.
+    actionAdapterForShop.mockImplementation(
+      async (_shop: string, platform: string) =>
+        adapters[platform as keyof typeof adapters] ?? null,
+    );
+  });
 
   it("reduces source then increases dest and writes ONE two-sided audit row", async () => {
     const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
@@ -159,16 +166,24 @@ describe("executeReallocation · happy path + validation", () => {
 });
 
 describe("executeReallocation · failure paths", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore the default impl so Once queues from prior tests don't leak.
+    actionAdapterForShop.mockImplementation(
+      async (_shop: string, platform: string) =>
+        adapters[platform as keyof typeof adapters] ?? null,
+    );
+  });
 
   it("source-step failure is TERMINAL failed (not parked), dest untouched", async () => {
+    // Plain (retriable-class) error on purpose: SOURCE-step failures are always terminal by design — there is no retry path for the first step.
     adapters.google.setDailyBudget.mockRejectedValueOnce(new Error("Google API 503"));
     const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
     const res = await executeReallocation(SHOP, input, sb);
     expect(res.outcome).toBe("failed");
     expect(adapters.meta.setDailyBudget).not.toHaveBeenCalled();
     const audit = auditRow(calls);
-    expect(audit).toMatchObject({ outcome: "failed", post_state: null });
+    expect(audit).toMatchObject({ outcome: "failed", attempts: 0, post_state: null });
     expect((audit.params as Record<string, unknown>).step).toBe("reduce_source");
     expect(String(audit.last_error)).toMatch(/503/);
   });
@@ -202,6 +217,7 @@ describe("executeReallocation · failure paths", () => {
     expect(adapters.google.setDailyBudget).toHaveBeenNthCalledWith(1, "g-1", 1500);
     expect(adapters.google.setDailyBudget).toHaveBeenNthCalledWith(2, "g-1", 2000);
     const audit = auditRow(calls);
+    expect(audit).toMatchObject({ outcome: "failed", post_state: null });
     expect((audit.params as Record<string, unknown>).compensation).toBe("succeeded");
   });
 
