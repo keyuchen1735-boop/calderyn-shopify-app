@@ -29,6 +29,34 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
     else await adapter.pause(externalId);
   } else if (orig.action_kind === "reduce_campaign_budget") {
     if (pre.daily_budget_cents != null) await adapter.setDailyBudget(externalId, pre.daily_budget_cents);
+  } else if (orig.action_kind === "reallocate_budget") {
+    // Two-sided undo. `adapter` (resolved above from params.platform) IS the
+    // dest adapter — replay params are written dest-side. Restore the dest
+    // budget FIRST (reduce before increase: a mid-undo failure leaves the
+    // merchant under-spending, never over-spending), then the source.
+    const rp = (orig.params ?? {}) as {
+      source_external_id?: string;
+      source_platform?: string;
+      dest_external_id?: string;
+    };
+    const rpre = (orig.pre_state ?? {}) as {
+      source?: { daily_budget_cents?: number | null };
+      dest?: { daily_budget_cents?: number | null };
+    };
+    if (rpre.dest?.daily_budget_cents != null) {
+      await adapter.setDailyBudget(String(rp.dest_external_id ?? ""), rpre.dest.daily_budget_cents);
+    }
+    const srcPlatform = String(rp.source_platform ?? "") as Platform;
+    const srcAdapter =
+      srcPlatform === platform ? adapter : await actionAdapterForShop(shopId, srcPlatform);
+    if (!srcAdapter) throw new Error(`${srcPlatform} not connected; cannot undo`);
+    if (rpre.source?.daily_budget_cents != null) {
+      await srcAdapter.setDailyBudget(String(rp.source_external_id ?? ""), rpre.source.daily_budget_cents);
+    }
+  } else {
+    // No platform reversal implemented for this kind — refuse loudly instead
+    // of recording a "succeeded" undo that never touched the platform (rule 12).
+    throw new Error(`undo not supported for action kind ${String(orig.action_kind)}`);
   }
 
   const { data: ins, error: iErr } = await sb
