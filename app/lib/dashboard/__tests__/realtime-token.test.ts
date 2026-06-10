@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { jwtVerify } from "jose";
 
+import { loader } from "../../../routes/dashboard.api.realtime-token";
+
 const requireDashboardSession = vi.fn();
 vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
-
-import { loader } from "../../../routes/dashboard.api.realtime-token";
 
 beforeEach(() => {
   vi.clearAllMocks();

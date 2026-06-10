@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { action as campaignAction } from "../../../routes/dashboard.api.campaigns.$id.action";
+import { action as undoRoute } from "../../../routes/dashboard.api.audit.$id.undo";
+import { action as guardrailsAction } from "../../../routes/dashboard.api.guardrails";
+import { action as logoutAction } from "../../../routes/dashboard.api.logout";
+
 const requireDashboardSession = vi.fn();
 const requireSameOrigin = vi.fn();
 const executeAction = vi.fn();
@@ -38,11 +43,6 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     }),
   };
 });
-
-import { action as campaignAction } from "../../../routes/dashboard.api.campaigns.$id.action";
-import { action as undoRoute } from "../../../routes/dashboard.api.audit.$id.undo";
-import { action as guardrailsAction } from "../../../routes/dashboard.api.guardrails";
-import { action as logoutAction } from "../../../routes/dashboard.api.logout";
 
 beforeEach(() => {
   vi.clearAllMocks();
