@@ -28,7 +28,10 @@ model Session {
   collaborator        Boolean?
   emailVerified       Boolean?
   refreshToken        String?   @db.VarChar
-  refreshTokenExpires BigInt?
+  // session-storage-prisma v9 writes/reads this as a Date (rowToSession calls
+  // .getTime()); a BigInt column makes every session upsert throw
+  // PrismaClientValidationError and 500s authenticate.admin.
+  refreshTokenExpires DateTime? @db.Timestamptz
 
   @@map("shopify_sessions")
 }
