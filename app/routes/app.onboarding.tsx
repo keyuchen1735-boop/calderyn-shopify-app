@@ -126,7 +126,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
-      const { redirectUrl } = await client.integrations.startOAuth(provider, request.signal);
+      const host = new URL(request.url).searchParams.get("host");
+      const { redirectUrl } = await client.integrations.startOAuth(provider, host);
       return redirect(redirectUrl);
     }
     if (intent === "finish") {

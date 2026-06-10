@@ -657,7 +657,10 @@ export function calderynClient(shop: string) {
           rethrow("integrations.list", err);
         }
       },
-      async startOAuth(provider: IntegrationProvider, _signal?: AbortSignal): Promise<{ redirectUrl: string }> {
+      async startOAuth(
+        provider: IntegrationProvider,
+        host?: string | null,
+      ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
           const appSecret = process.env.META_APP_SECRET;
@@ -673,7 +676,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
@@ -691,7 +694,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/google`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/google.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "tiktok") {
@@ -709,7 +712,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/tiktok`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "quickbooks") {
@@ -727,7 +730,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/quickbooks`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         throw new CalderynError({
