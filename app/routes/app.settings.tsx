@@ -32,7 +32,7 @@ import {
   calderynClient,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
-import { useActionToast } from "~/lib/toast";
+import { useActionToast, useConnectionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import {
   OAUTH_PROVIDERS,
@@ -193,6 +193,7 @@ export default function Settings() {
   // (e.g. ?google=connected or ?meta=error&reason=...).
   const [searchParams] = useSearchParams();
   const notice = connectionNotice(searchParams);
+  useConnectionToast(notice);
 
   return (
     <Page
