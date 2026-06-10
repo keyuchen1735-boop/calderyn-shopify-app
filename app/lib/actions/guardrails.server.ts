@@ -15,11 +15,18 @@ export interface CheckInput {
   newBudgetCents?: number;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function minutesSinceLastAutopilotActionOn(
   sb: SupabaseClient,
   shopId: string,
   campaignId: string,
 ): Promise<number | null> {
+  // Matches the campaign as the single-campaign target (params.campaign_id —
+  // also written by reallocations for their SOURCE) OR as a reallocation
+  // DESTINATION (params.dest_campaign_id). Intent: a campaign that just
+  // RECEIVED budget was touched — pausing or cutting it seconds later would
+  // be autopilot whiplash, so it cools down like any other recent target.
   const { data: last } = await sb
     .from("action_audit")
     .select("created_at")
@@ -42,6 +49,12 @@ export async function checkGuardrails(
   input: CheckInput,
   sb: SupabaseClient,
 ): Promise<GuardrailResult> {
+  // Ids are interpolated into a PostgREST .or() filter — refuse anything that
+  // is not a plain uuid rather than risk corrupting the filter expression.
+  if (!UUID_RE.test(input.campaignId) || (input.destCampaignId && !UUID_RE.test(input.destCampaignId))) {
+    return { allowed: false, reason: "invalid campaign id" };
+  }
+
   const { data: row, error } = await sb
     .from("guardrail_config")
     .select(

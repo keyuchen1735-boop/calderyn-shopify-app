@@ -88,4 +88,16 @@ describe("checkGuardrails", () => {
     }, sb);
     expect(r).toEqual({ allowed: true });
   });
+
+  it("cooldown-blocks a pause on a campaign recently touched as a reallocation DESTINATION", async () => {
+    // The single cooldown lookup matches params->>campaign_id OR
+    // params->>dest_campaign_id (see minutesSinceLastAutopilotActionOn) — a
+    // recent reallocation INTO this campaign counts as a recent touch.
+    const sb = fakeSb({ todayCount: 0, lastActionAtIsoQueue: ["2026-06-06T15:50:00Z"] });
+    const r = await checkGuardrails(SHOP, {
+      kind: "pause_campaign", campaignId: CAMP,
+      dollarImpactCents: 500, campaignSpendCents: 50000,
+    }, sb);
+    expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
+  });
 });

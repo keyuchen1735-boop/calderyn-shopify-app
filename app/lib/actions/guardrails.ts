@@ -53,6 +53,7 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
     return { allowed: false, reason: "campaign in cooldown" };
   }
   if (
+    facts.kind === "reallocate_budget" &&
     facts.minutesSinceLastActionOnDestCampaign != null &&
     facts.minutesSinceLastActionOnDestCampaign < cfg.cooldownMinutes
   ) {
