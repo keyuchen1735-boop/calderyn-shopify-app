@@ -1,7 +1,11 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { exchangeCodeForToken } from "~/lib/quickbooks/oauth.server";
-import { consumeOAuthState } from "~/lib/meta/oauth-state.server";
+import {
+  consumeOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+} from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 
@@ -26,8 +30,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const clientSecret = process.env.QBO_CLIENT_SECRET;
   const appUrl = process.env.SHOPIFY_APP_URL;
 
+  // Recover the embedded App Bridge context (shop/host) carried through `state`
+  // so the redirects below re-embed the merchant in the Shopify admin instead of
+  // dead-ending top-level (mirrors auth.google.$.tsx).
+  const returnCtx = parseOAuthState(state ?? "");
+
   if (oauthError) {
-    return redirect(`/app/settings?quickbooks=error&reason=${encodeURIComponent(oauthError)}`);
+    return redirect(
+      embeddedReturnUrl("/app/settings", { quickbooks: "error", reason: oauthError }, returnCtx),
+    );
   }
   if (!code || !state || !realmId || !clientId || !clientSecret || !appUrl) {
     throw new Response("Missing OAuth parameters", { status: 400 });
@@ -82,5 +93,5 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
-  return redirect("/app/settings?quickbooks=connected");
+  return redirect(embeddedReturnUrl("/app/settings", { quickbooks: "connected" }, returnCtx));
 };
