@@ -4,6 +4,7 @@
 // cookie; only its peppered HMAC-SHA256 hash is stored (same pattern as
 // mcp_tokens.server.ts). Session identity is the SHOP, not a person (v1).
 
+import { redirect } from "@remix-run/node";
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
 
@@ -118,6 +119,15 @@ export async function requireDashboardSession(
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   }
+  return session;
+}
+
+/** For HTML routes: redirect to the login page when there is no live session. */
+export async function getSessionOrRedirect(
+  request: Request,
+): Promise<DashboardSession> {
+  const session = await getSessionFromRequest(request);
+  if (!session) throw redirect("/dashboard/login");
   return session;
 }
 

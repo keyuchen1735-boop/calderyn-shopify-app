@@ -16,7 +16,8 @@ export interface CampaignVM {
   breakeven_roas: number;
   contribution_margin: number;
   grade: Grade;
-  trend: number[];
+  /** No per-campaign series exists yet. TODO(api): per-campaign roas series. */
+  trend?: number[];
 }
 
 export interface AlertVM {
@@ -84,6 +85,22 @@ export interface DailyRow {
   daysAgo: number;
   spend_cents: number;
   revenue_cents: number;
+}
+
+export interface OverviewVM {
+  roas_series: DailyRow[];
+  campaign_count: number;
+  active_campaign_count: number;
+  open_alert_count: number;
+  open_alert_dollar_impact_cents: number;
+}
+
+export interface IntegrationVM {
+  key: string;
+  name: string;
+  status: string;
+  detail: string;
+  logoCls: string;
 }
 
 export interface TopAd {
