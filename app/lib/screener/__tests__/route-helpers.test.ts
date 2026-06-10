@@ -12,7 +12,20 @@ vi.mock("../../../shopify.server", () => ({
 import { clampSpend, parseCreativeForm, isMetaSubmit } from "../../../routes/app.screener";
 import { parseScoreForm } from "../../../routes/app.campaigns.$campaignId.score";
 import { DEFAULT_SPEND_CENTS } from "../types";
+import { pickGenerator } from "../pick-generator.server";
 /* eslint-enable import/first */
+
+describe("pickGenerator", () => {
+  const deps = { createMessage: vi.fn(), model: "m" };
+  it("returns the image generator for mode 'image'", () => {
+    expect(pickGenerator("image", deps).mode).toBe("image");
+  });
+  it("defaults to the copy generator for copy / null / unknown modes", () => {
+    expect(pickGenerator("copy", deps).mode).toBe("copy");
+    expect(pickGenerator(null, deps).mode).toBe("copy");
+    expect(pickGenerator("bogus", deps).mode).toBe("copy");
+  });
+});
 
 describe("clampSpend", () => {
   it("clamps to [MIN,MAX] and defaults non-numbers", () => {
