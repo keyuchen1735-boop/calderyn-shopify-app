@@ -7,9 +7,10 @@
 import { useEffect, useState } from "react";
 import { Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
+import { BrandGlyph, brandLabel } from "../../calderyn/brand-icons";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
-import type { SkuVM, AlertVM } from "../view-models";
+import type { SkuVM, AlertVM, SkuSource } from "../view-models";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -47,6 +48,21 @@ function LocationBar({ locations }: { locations: Record<string, number> }) {
           ),
       )}
     </div>
+  );
+}
+
+/* ---------- Per-SKU data sources (cost + ad platforms) ---------- */
+function SourceIcons({ sources }: { sources: SkuSource[] }) {
+  if (!sources.length) return <span className="cd-caption">—</span>;
+  return (
+    <span
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "help" }}
+      title={`Also gets data from: ${sources.map(brandLabel).join(", ")}`}
+    >
+      {sources.map((s) => (
+        <BrandGlyph key={s} name={s} size={12} />
+      ))}
+    </span>
   );
 }
 
@@ -122,6 +138,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 52, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 104 }}>By location</span>
+              <span style={{ width: 72 }}>Sources</span>
               <span style={{ width: 92 }}></span>
             </div>
             <div className="cd-rows">
@@ -181,6 +198,9 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     </span>
                     <span style={{ width: 104 }}>
                       <LocationBar locations={s.locations} />
+                    </span>
+                    <span style={{ width: 72 }}>
+                      <SourceIcons sources={s.sources} />
                     </span>
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <Pill tone={st.tone}>{st.label}</Pill>

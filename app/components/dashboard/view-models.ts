@@ -4,6 +4,8 @@
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Platform = "Meta" | "Google" | "TikTok";
 export type Grade = "winning" | "okay" | "poor";
+/** Platforms enriching a SKU beyond the Shopify sync (mirrors lib/types SkuSource). */
+export type SkuSource = "quickbooks" | "vendor_invoice" | "google" | "meta" | "tiktok";
 
 export interface CampaignVM {
   id: string;
@@ -67,6 +69,7 @@ export interface SkuVM {
   velocity: number;
   status: string;
   locations: Record<string, number>;
+  sources: SkuSource[];
 }
 
 export interface GuardrailVM {

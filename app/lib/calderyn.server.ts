@@ -8,6 +8,7 @@ import type {
   GuardrailConfig,
   Integration,
   SKU,
+  SkuSource,
   TopAdRow,
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
@@ -140,7 +141,19 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
   };
 }
 
-function rowToSku(r: Record<string, unknown>): SKU {
+const SKU_SOURCE_ORDER: SkuSource[] = [
+  "quickbooks",
+  "vendor_invoice",
+  "google",
+  "meta",
+  "tiktok",
+];
+
+function isSkuSource(v: string): v is SkuSource {
+  return (SKU_SOURCE_ORDER as string[]).includes(v);
+}
+
+function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
   return {
     id: String(r.id),
     title: String(r.title),
@@ -148,6 +161,7 @@ function rowToSku(r: Record<string, unknown>): SKU {
     days_of_cover: Number(r.days_of_cover ?? 0),
     velocity: Number(r.velocity ?? 0),
     locations: (r.locations as Record<string, number>) ?? {},
+    sources,
   };
 }
 
@@ -589,13 +603,47 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const { data, error } = await supabase
-            .from("v_skus_flat")
-            .select("*")
-            .eq("shop_id", shopId)
-            .order("on_hand", { ascending: false });
-          if (error) throw error;
-          return (data ?? []).map(rowToSku);
+          const [skuRes, cogsRes, adMapRes] = await Promise.all([
+            supabase
+              .from("v_skus_flat")
+              .select("*")
+              .eq("shop_id", shopId)
+              .order("on_hand", { ascending: false }),
+            // Explicit caps: PostgREST silently truncates at 1000 rows by
+            // default, which would drop sources as cost history grows.
+            supabase
+              .from("cogs_fact")
+              .select("sku_id, source")
+              .eq("shop_id", shopId)
+              .limit(10000),
+            supabase
+              .from("ad_creative_sku_map")
+              .select("sku_id, platform")
+              .eq("shop_id", shopId)
+              .limit(10000),
+          ]);
+          if (skuRes.error) throw skuRes.error;
+          if (cogsRes.error) throw cogsRes.error;
+          if (adMapRes.error) throw adMapRes.error;
+
+          const sourcesBySku = new Map<string, Set<SkuSource>>();
+          const addSource = (skuId: unknown, raw: unknown) => {
+            if (!skuId) return;
+            const src = String(raw ?? "").trim().toLowerCase();
+            if (!isSkuSource(src)) return;
+            const key = String(skuId);
+            const set = sourcesBySku.get(key) ?? new Set<SkuSource>();
+            set.add(src);
+            sourcesBySku.set(key, set);
+          };
+          for (const r of cogsRes.data ?? []) addSource(r.sku_id, r.source);
+          for (const r of adMapRes.data ?? []) addSource(r.sku_id, r.platform);
+
+          return (skuRes.data ?? []).map((r) => {
+            const set = sourcesBySku.get(String(r.id));
+            const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
+            return rowToSku(r, sources);
+          });
         } catch (err) {
           rethrow("skus.list", err);
         }
