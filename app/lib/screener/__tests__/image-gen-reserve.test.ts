@@ -1,0 +1,52 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  buildChain,
+  setSupabaseResponses,
+  getRecorded,
+} from "../../__tests__/_supabase_chain_mock";
+import { checkAndReserveImageGen } from "../image-gen-limit.server";
+
+vi.mock("../../supabase.server", () => ({
+  getSupabase: () => buildChain(),
+  resolveShopId: vi.fn(async (domain: string) => `shop-id-for-${domain}`),
+}));
+
+const SHOP = "demo.myshopify.com";
+const NOW = new Date("2026-06-10T12:00:00.000Z"); // UTC day = 2026-06-10
+const count = (n: number) => ({ data: null, count: n, error: null });
+
+beforeEach(() => {
+  delete process.env.IMAGE_GEN_DAILY_PER_SHOP;
+  delete process.env.IMAGE_GEN_DAILY_GLOBAL;
+});
+
+describe("checkAndReserveImageGen", () => {
+  it("reserves a slot and reports remaining when under both limits", async () => {
+    setSupabaseResponses([count(5), count(100), { data: null, error: null }]);
+    const res = await checkAndReserveImageGen(SHOP, NOW);
+    expect(res).toEqual({ ok: true, remaining: 14 }); // 20 - 5 - 1
+
+    const inserts = getRecorded("insert");
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][0]).toMatchObject({
+      shop_id: "shop-id-for-demo.myshopify.com",
+      day: "2026-06-10",
+    });
+    expect(getRecorded("eq")).toContainEqual(["day", "2026-06-10"]);
+    expect(getRecorded("eq")).toContainEqual(["shop_id", "shop-id-for-demo.myshopify.com"]);
+  });
+
+  it("blocks at the per-shop limit and inserts nothing", async () => {
+    setSupabaseResponses([count(20), count(50)]);
+    const res = await checkAndReserveImageGen(SHOP, NOW);
+    expect(res).toEqual({ ok: false, scope: "shop", limit: 20 });
+    expect(getRecorded("insert")).toHaveLength(0);
+  });
+
+  it("blocks at the global limit and inserts nothing", async () => {
+    setSupabaseResponses([count(5), count(300)]);
+    const res = await checkAndReserveImageGen(SHOP, NOW);
+    expect(res).toEqual({ ok: false, scope: "global", limit: 300 });
+    expect(getRecorded("insert")).toHaveLength(0);
+  });
+});

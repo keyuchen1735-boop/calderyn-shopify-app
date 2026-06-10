@@ -51,6 +51,7 @@ import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
 import { pushVariantToMeta, type PushResult } from "~/lib/screener/meta-push.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
+import { checkAndReserveImageGen } from "~/lib/screener/image-gen-limit.server";
 import { loadCalibrationInputs } from "~/lib/screener/history.server";
 import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
 import { calibrate } from "~/lib/screener/calibrate.server";
@@ -109,6 +110,12 @@ function pushFail(error: string): PushResult {
   return { ok: false, adId: null, alreadyPushed: false, error };
 }
 
+function imageLimitMessage(r: { scope: "shop" | "global"; limit: number }): string {
+  return r.scope === "shop"
+    ? `You've hit today's image limit (${r.limit}/day). It resets tomorrow — or generate copy variations instead.`
+    : "Image generation is at capacity right now. Try again shortly, or generate copy variations.";
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -126,12 +133,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const { composite } = calibrate(scored.metrics, calib, latest.assumedSpendCents);
       return { composite, summary: scored.summary, metrics: scored.metrics };
     };
-    const generator = pickGenerator(String(form.get("mode") ?? "copy"), {
-      createMessage,
-      model: assistantModel(),
-    });
+    const mode = String(form.get("mode") ?? "copy");
+    if (mode === "image") {
+      const reservation = await checkAndReserveImageGen(session.shop);
+      if (!reservation.ok) {
+        return json({ generateError: imageLimitMessage(reservation) });
+      }
+    }
+    const generator = pickGenerator(mode, { createMessage, model: assistantModel() });
     const result = await generateImprovements(
-      { original, originalScorecard: latest.scorecard, styleRefs: calib.topAdNames },
+      {
+        original,
+        originalScorecard: latest.scorecard,
+        styleRefs: calib.topAdNames,
+        count: mode === "image" ? 1 : undefined,
+      },
       { generator, scoreOne },
     );
     const saved = await saveVariants(latest.id, result.variants);
@@ -236,8 +252,15 @@ function MetricRow({ m }: { m: ScoreCard["metrics"][number] }) {
 export default function Screener() {
   const { latest, history, metaAds, imageGenAvailable } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  // The generate action may return a run DTO or a { generateError } — only treat
+  // it as a run when it actually is one, so an error doesn't clobber the display.
+  const data = fetcher.data;
   const run: CreativeScreenRun | null =
-    (fetcher.data as CreativeScreenRun | undefined) ?? latest;
+    data && typeof data === "object" && "status" in data ? (data as CreativeScreenRun) : latest;
+  const generateError =
+    data && typeof data === "object" && "generateError" in data
+      ? (data as { generateError?: string }).generateError
+      : undefined;
   const running = fetcher.state !== "idle";
   const card = run?.scorecard ?? null;
 
@@ -506,6 +529,9 @@ export default function Screener() {
                     </InlineStack>
                   </fetcher.Form>
                 </InlineStack>
+                {generateError && (
+                  <Banner tone="warning">{generateError}</Banner>
+                )}
                 {pushResult && (
                   <Banner tone={pushResult.ok ? "success" : "critical"}>
                     {pushResult.ok
