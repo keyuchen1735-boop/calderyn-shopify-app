@@ -111,6 +111,37 @@ describe("drainActionRetries", () => {
     expect(updates[0].payload).toMatchObject({ outcome: "succeeded", attempts: 2 });
   });
 
+  it("records the alert's recovered dollars when a replayed value-recovering action succeeds", async () => {
+    // A row parked as `retrying` was inserted with dollar_impact_at_exec=0
+    // (it hadn't succeeded yet). When the drain replays it successfully, it
+    // must backfill the recovered dollars or the action never counts toward
+    // the Recovered-impact total.
+    const row = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      shop_id: SHOP,
+      alert_id: "88888888-8888-4888-8888-888888888888",
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row], alertImpactDollars: 1693.03 });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    const audit = updates.find((u) => u.table === "action_audit");
+    expect(audit?.payload).toMatchObject({
+      outcome: "succeeded",
+      dollar_impact_at_exec: 1693.03,
+    });
+  });
+
   it("acknowledges the alert when a replayed action succeeds", async () => {
     // The synchronous execute path only acknowledges on an immediate
     // success; a success via the retry drain must do it here or the alert
@@ -388,7 +419,7 @@ interface SelectFilters {
   lt?: { column: string; value: unknown };
 }
 
-function makeFakeSb(opts: { rows: unknown[] }): {
+function makeFakeSb(opts: { rows: unknown[]; alertImpactDollars?: number }): {
   sb: SupabaseClient;
   selectFilters: SelectFilters;
   updates: {
@@ -410,6 +441,17 @@ function makeFakeSb(opts: { rows: unknown[] }): {
     from(table: string) {
       return {
         select(_cols: string) {
+          // The recovered-impact lookup on a replay success.
+          if (table === "alerts") {
+            const alertBuilder = {
+              eq: () => alertBuilder,
+              maybeSingle: async () => ({
+                data: { dollar_impact: opts.alertImpactDollars ?? null },
+                error: null,
+              }),
+            };
+            return alertBuilder;
+          }
           const builder = {
             eq(column: string, value: unknown) {
               selectFilters.eq = { column, value };

@@ -31,6 +31,7 @@ import type { ActionAdapter } from "../ads/actions";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { acknowledgeAlert } from "../alerts.server";
+import { recoveredDollarsForAlertAction } from "./execute.server";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -267,6 +268,16 @@ export async function drainActionRetries(
         update.outcome = "succeeded";
         update.post_state = postState;
         update.last_error = null;
+        // The row was inserted with dollar_impact_at_exec=0 (it was parked as
+        // `retrying`, not succeeded). Backfill the recovered dollars now or a
+        // retry-recovered action never counts toward the Recovered total.
+        if (raw.alert_id) {
+          update.dollar_impact_at_exec = await recoveredDollarsForAlertAction(
+            sb,
+            raw.alert_id,
+            raw.action_kind,
+          );
+        }
       } else {
         update.outcome = terminal ? "failed" : "retrying";
         update.last_error = replayError;
