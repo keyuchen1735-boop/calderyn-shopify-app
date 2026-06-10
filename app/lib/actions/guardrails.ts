@@ -3,6 +3,10 @@
 
 import type { ExecutableKind } from "./execute.server";
 
+/** Kinds the guardrail evaluator understands: the single-campaign executables
+ * plus the composite reallocation (executed by reallocate.server.ts). */
+export type GuardedKind = ExecutableKind | "reallocate_budget";
+
 export interface AutopilotGuardrails {
   enabled: boolean;
   dailyActionCap: number;
@@ -16,13 +20,15 @@ export interface AutopilotGuardrails {
 }
 
 export interface GuardrailFacts {
-  kind: ExecutableKind;
+  kind: GuardedKind;
   dollarImpactCents: number;
   campaignSpendCents: number;
   currentBudgetCents?: number;
   newBudgetCents?: number;
   todayAutopilotCount: number;
   minutesSinceLastActionOnCampaign: number | null;
+  /** Reallocations cool down BOTH campaigns; null/absent for other kinds. */
+  minutesSinceLastActionOnDestCampaign?: number | null;
   nowUtcHour: number; // 0-23
 }
 
@@ -47,7 +53,14 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
     return { allowed: false, reason: "campaign in cooldown" };
   }
   if (
-    facts.kind === "reduce_campaign_budget" &&
+    facts.kind === "reallocate_budget" &&
+    facts.minutesSinceLastActionOnDestCampaign != null &&
+    facts.minutesSinceLastActionOnDestCampaign < cfg.cooldownMinutes
+  ) {
+    return { allowed: false, reason: "destination campaign in cooldown" };
+  }
+  if (
+    (facts.kind === "reduce_campaign_budget" || facts.kind === "reallocate_budget") &&
     facts.currentBudgetCents != null &&
     facts.currentBudgetCents > 0 &&
     facts.newBudgetCents != null

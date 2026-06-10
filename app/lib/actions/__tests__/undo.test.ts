@@ -44,6 +44,18 @@ describe("undoAction", () => {
     expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud1", outcome: "succeeded" });
   });
 
+  it("re-pauses a campaign on a resume_campaign undo (restores pre status)", async () => {
+    const resumeAudit = { ...pauseAudit, action_kind: "resume_campaign",
+      pre_state: { status: "paused", daily_budget_cents: 5000 },
+      post_state: { status: "active", daily_budget_cents: 5000 } };
+    const { sb, calls } = fakeSb(resumeAudit);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.pause).toHaveBeenCalledWith("c1");
+    expect(adapter.resume).not.toHaveBeenCalled();
+    const undo = calls.inserts.find((i) => i.table === "action_audit");
+    expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud1", outcome: "succeeded" });
+  });
+
   it("restores the prior budget on a budget-action undo", async () => {
     const budgetAudit = { ...pauseAudit, action_kind: "reduce_campaign_budget",
       pre_state: { status: "active", daily_budget_cents: 5000 },
@@ -56,5 +68,95 @@ describe("undoAction", () => {
   it("throws when the audit is not found for the shop", async () => {
     const { sb } = fakeSb(null);
     await expect(undoAction(SHOP, "missing", sb)).rejects.toThrow(/not found/i);
+  });
+});
+
+describe("undoAction · reallocate_budget", () => {
+  const reallocAudit = {
+    id: "audR",
+    shop_id: SHOP,
+    action_kind: "reallocate_budget",
+    params: {
+      source_campaign_id: "src-uuid",
+      source_external_id: "g-1",
+      source_platform: "google",
+      dest_campaign_id: "dst-uuid",
+      dest_external_id: "m-1",
+      dest_platform: "meta",
+      amount_cents: 500,
+      external_id: "m-1",
+      platform: "meta",
+      daily_budget_cents: 1500,
+    },
+    pre_state: { source: { daily_budget_cents: 2000 }, dest: { daily_budget_cents: 1000 } },
+    post_state: { source: { daily_budget_cents: 1500 }, dest: { daily_budget_cents: 1500 } },
+  };
+
+  function fakeUndoSb(orig: Record<string, unknown>) {
+    const inserts: Array<Record<string, unknown>> = [];
+    function builder() {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.maybeSingle = vi.fn(async () => ({ data: orig, error: null }));
+      chain.insert = vi.fn((rows: Record<string, unknown>) => {
+        inserts.push(rows);
+        return chain;
+      });
+      chain.single = vi.fn(async () => ({ data: { id: "undo1" }, error: null }));
+      return chain;
+    }
+    return { sb: { from: vi.fn(() => builder()) } as unknown as SupabaseClient, inserts };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("restores BOTH budgets from pre_state, dest first (never over-spend mid-undo)", async () => {
+    const { sb, inserts } = fakeUndoSb(reallocAudit);
+    await undoAction(SHOP, "audR", sb);
+    // dest back to 1000 BEFORE source back to 2000
+    expect(adapter.setDailyBudget).toHaveBeenNthCalledWith(1, "m-1", 1000);
+    expect(adapter.setDailyBudget).toHaveBeenNthCalledWith(2, "g-1", 2000);
+    expect(inserts[0]).toMatchObject({
+      action_kind: "reallocate_budget",
+      undo_of: "audR",
+      pre_state: reallocAudit.post_state,
+      post_state: reallocAudit.pre_state,
+      outcome: "succeeded",
+    });
+  });
+});
+
+describe("undoAction · unhandled action kind guard", () => {
+  function fakeUndoSb(orig: Record<string, unknown>) {
+    const inserts: Array<Record<string, unknown>> = [];
+    function builder() {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.maybeSingle = vi.fn(async () => ({ data: orig, error: null }));
+      chain.insert = vi.fn((rows: Record<string, unknown>) => {
+        inserts.push(rows);
+        return chain;
+      });
+      chain.single = vi.fn(async () => ({ data: { id: "undo1" }, error: null }));
+      return chain;
+    }
+    return { sb: { from: vi.fn(() => builder()) } as unknown as SupabaseClient, inserts };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("throws for unhandled action kind (rule 12: never silently succeed)", async () => {
+    const unknownAudit = {
+      id: "audX",
+      shop_id: SHOP,
+      action_kind: "snooze_alert",
+      params: { external_id: "x-1", platform: "meta" },
+      pre_state: {},
+      post_state: {},
+    };
+    const { sb } = fakeUndoSb(unknownAudit);
+    await expect(undoAction(SHOP, "audX", sb)).rejects.toThrow(/undo not supported for action kind snooze_alert/i);
   });
 });

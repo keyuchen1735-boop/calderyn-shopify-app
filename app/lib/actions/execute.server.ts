@@ -29,6 +29,79 @@ export interface ExecutedAudit {
   outcome: "succeeded" | "failed" | "retrying";
 }
 
+/**
+ * Idempotency guard shared by every executor: a replayed key returns the prior
+ * attempt's REAL outcome — it may still be `retrying` (parked for the cron) or
+ * have terminally `failed`. Reporting a hardcoded success here would mask a
+ * not-yet-succeeded action (rule 12). Null means the key is fresh.
+ */
+export async function priorExecutionForKey(
+  shopId: string,
+  idempotencyKey: string,
+  sb: SupabaseClient,
+): Promise<ExecutedAudit | null> {
+  const { data: prior, error: pErr } = await sb
+    .from("action_idempotency")
+    .select("audit_id")
+    .eq("shop_id", shopId)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+  if (pErr) throw pErr;
+  if (!prior?.audit_id) return null;
+  const { data: prevAudit } = await sb
+    .from("action_audit")
+    .select("outcome")
+    .eq("id", prior.audit_id)
+    .maybeSingle();
+  const priorOutcome = (prevAudit?.outcome as ExecutedAudit["outcome"]) ?? "succeeded";
+  return { id: String(prior.audit_id), outcome: priorOutcome };
+}
+
+export interface AuditInsert {
+  alert_id: string | null;
+  action_kind: string;
+  params: Record<string, unknown>;
+  outcome: ExecutedAudit["outcome"];
+  pre_state: Record<string, unknown>;
+  post_state: Record<string, unknown> | null;
+  last_error: string | null;
+  actor_user_id: string;
+}
+
+/** The tail of every executor: ONE append-only audit row + its idempotency marker. */
+export async function insertAuditWithIdempotency(
+  shopId: string,
+  idempotencyKey: string,
+  audit: AuditInsert,
+  sb: SupabaseClient,
+): Promise<ExecutedAudit> {
+  const { data: ins, error: iErr } = await sb
+    .from("action_audit")
+    .insert({
+      shop_id: shopId,
+      ...audit,
+      // A parked `retrying` row has already consumed its first attempt.
+      attempts: audit.outcome === "retrying" ? 1 : 0,
+      completed_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (iErr) throw iErr;
+  const auditId = String(ins.id);
+
+  const { error: idemErr } = await sb
+    .from("action_idempotency")
+    .insert({ shop_id: shopId, idempotency_key: idempotencyKey, audit_id: auditId });
+  if (idemErr) {
+    // The platform call already happened and the audit row exists — failing
+    // now would provoke the duplicate execution the key prevents. Surface
+    // the lost dedup protection loudly instead (rule 12).
+    console.error(`[actions] idempotency insert failed for audit ${auditId} (key ${idempotencyKey})`, idemErr);
+  }
+
+  return { id: auditId, outcome: audit.outcome };
+}
+
 export async function executeAction(
   shopId: string,
   input: ExecuteInput,
@@ -43,25 +116,8 @@ export async function executeAction(
   }
 
   // 1. Idempotency.
-  const { data: prior, error: pErr } = await sb
-    .from("action_idempotency")
-    .select("audit_id")
-    .eq("shop_id", shopId)
-    .eq("idempotency_key", input.idempotencyKey)
-    .maybeSingle();
-  if (pErr) throw pErr;
-  if (prior?.audit_id) {
-    // Return the prior attempt's REAL outcome — it may still be `retrying`
-    // (parked for the cron) or have terminally `failed`. Reporting a
-    // hardcoded success here would mask a not-yet-succeeded action (rule 12).
-    const { data: prevAudit } = await sb
-      .from("action_audit")
-      .select("outcome")
-      .eq("id", prior.audit_id)
-      .maybeSingle();
-    const priorOutcome = (prevAudit?.outcome as ExecutedAudit["outcome"]) ?? "succeeded";
-    return { id: String(prior.audit_id), outcome: priorOutcome };
-  }
+  const prior = await priorExecutionForKey(shopId, input.idempotencyKey, sb);
+  if (prior) return prior;
 
   // 2. Ownership + resolve campaign.
   const { data: camp, error: cErr } = await sb
@@ -110,36 +166,19 @@ export async function executeAction(
   }
 
   // 5. One append-only audit row + idempotency.
-  const { data: ins, error: iErr } = await sb
-    .from("action_audit")
-    .insert({
-      shop_id: shopId,
+  return insertAuditWithIdempotency(
+    shopId,
+    input.idempotencyKey,
+    {
       alert_id: input.alertId,
       action_kind: input.kind,
       params: { campaign_id: input.campaignId, external_id: externalId, platform, daily_budget_cents: input.dailyBudgetCents ?? null },
       outcome,
-      // A parked `retrying` row has already consumed its first attempt.
-      attempts: outcome === "retrying" ? 1 : 0,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
-      completed_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  if (iErr) throw iErr;
-  const auditId = String(ins.id);
-
-  const { error: idemErr } = await sb
-    .from("action_idempotency")
-    .insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
-  if (idemErr) {
-    // The platform call already happened and the audit row exists — failing
-    // now would provoke the duplicate execution the key prevents. Surface
-    // the lost dedup protection loudly instead (rule 12).
-    console.error(`[actions] idempotency insert failed for audit ${auditId} (key ${input.idempotencyKey})`, idemErr);
-  }
-
-  return { id: auditId, outcome };
+    },
+    sb,
+  );
 }
