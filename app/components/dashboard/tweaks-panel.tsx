@@ -1,8 +1,7 @@
 // Calderyn DashV2 — Reusable Tweaks shell + form-control helpers.
-// Ported from tweaks-panel.jsx. Owns the host protocol (listens for
-// __activate_edit_mode / __deactivate_edit_mode, posts __edit_mode_available /
-// __edit_mode_set_keys / __edit_mode_dismissed). localStorage/host persistence
-// preserved exactly.
+// Ported from tweaks-panel.jsx. The TweaksPanel still listens for the design-tool
+// host protocol so the floating panel can be opened, but useTweaks now persists
+// to real localStorage (the host's on-disk EDITMODE rewrite does not exist here).
 import * as React from "react";
 import type { ReactNode } from "react";
 
@@ -117,32 +116,65 @@ const __TWEAKS_STYLE = `
 `;
 
 // ── useTweaks ───────────────────────────────────────────────────────────────
-// Single source of truth for tweak values. setTweak persists via the host
-// (__edit_mode_set_keys → host rewrites the EDITMODE block on disk).
+// Single source of truth for tweak values. Persists to localStorage under
+// TWEAKS_STORAGE_KEY: initialized from any stored JSON (merged over defaults,
+// SSR-safe) and rewritten in full on every change.
 export type TweakValues = Record<string, unknown>;
 export type SetTweak = (
   keyOrEdits: string | Record<string, unknown>,
   val?: unknown,
 ) => void;
 
+const TWEAKS_STORAGE_KEY = "calderyn-dash-tweaks";
+
+function loadTweaks<T extends TweakValues>(defaults: T): T {
+  // SSR: no window → defaults, so the server render matches the pre-hydration
+  // client render. The stored values are applied on the first client effect.
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = window.localStorage.getItem(TWEAKS_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<T>;
+    if (parsed && typeof parsed === "object") return { ...defaults, ...parsed };
+  } catch {
+    /* malformed JSON / storage disabled → fall back to defaults */
+  }
+  return defaults;
+}
+
 export function useTweaks<T extends TweakValues>(defaults: T): [T, SetTweak] {
   const [values, setValues] = React.useState<T>(defaults);
+
+  // Hydrate from localStorage after mount (initial state stays `defaults` so
+  // SSR and the first client paint agree, avoiding a hydration mismatch).
+  React.useEffect(() => {
+    const stored = loadTweaks(defaults);
+    setValues(stored);
+    // defaults is a module-level literal; intentionally run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Accepts either setTweak('key', value) or setTweak({ key: value, ... }) so a
   // useState-style call doesn't write a "[object Object]" key into the persisted
-  // JSON block.
+  // JSON.
   const setTweak = React.useCallback<SetTweak>((keyOrEdits, val) => {
     const edits: Record<string, unknown> =
       typeof keyOrEdits === "object" && keyOrEdits !== null
         ? keyOrEdits
         : { [keyOrEdits]: val };
-    setValues((prev) => ({ ...prev, ...edits }));
-    if (typeof window !== "undefined") {
-      window.parent.postMessage({ type: "__edit_mode_set_keys", edits }, "*");
-      // Same-window signal so in-page listeners (deck-stage rail thumbnails)
-      // can react — the parent message only reaches the host, not peers.
-      window.dispatchEvent(new CustomEvent("tweakchange", { detail: edits }));
-    }
+    setValues((prev) => {
+      const next = { ...prev, ...edits };
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(TWEAKS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          /* storage full / disabled → keep in-memory state only */
+        }
+      }
+      return next;
+    });
   }, []);
+
   return [values, setTweak];
 }
 
