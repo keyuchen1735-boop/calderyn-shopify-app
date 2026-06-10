@@ -59,6 +59,36 @@ export async function priorExecutionForKey(
   return { id: String(prior.audit_id), outcome: priorOutcome };
 }
 
+/**
+ * Dollars a succeeded action recovers against its alert — the value persisted
+ * in action_audit.dollar_impact_at_exec (column unit: dollars, matching
+ * alerts.dollar_impact). EVERY write path that marks an audit row `succeeded`
+ * (executeAction here, the legacy actions.execute path in calderyn.server.ts,
+ * and the retry drain's replay success) must record this, or that action
+ * silently never counts toward the Recovered-impact total. A lookup failure
+ * must never block the action — the platform call already happened — so it
+ * falls back to 0.
+ */
+export async function recoveredDollarsForAlertAction(
+  sb: SupabaseClient,
+  alertId: string | null,
+  actionKind: string,
+): Promise<number> {
+  if (!alertId) return 0;
+  try {
+    const { data: al } = await sb
+      .from("alerts")
+      .select("dollar_impact")
+      .eq("id", alertId)
+      .maybeSingle();
+    const atStakeCents = Math.round(Number(al?.dollar_impact ?? 0) * 100);
+    return recoveredCentsForAction(actionKind as ActionKind, atStakeCents) / 100;
+  } catch (err) {
+    console.error(`[actions] recovered-impact lookup failed for alert ${alertId}`, err);
+    return 0;
+  }
+}
+
 export interface AuditInsert {
   alert_id: string | null;
   action_kind: string;
@@ -79,23 +109,11 @@ export async function insertAuditWithIdempotency(
 ): Promise<ExecutedAudit> {
   // Recovered impact: a value-recovering action that succeeds against an alert
   // claws back that alert's at-stake dollars. Without this the Recovered-impact
-  // total is always $0. Stored in dollars (the column's unit). A lookup failure
-  // must never block the action — the platform call already happened — so it
-  // falls back to 0.
-  let dollarImpactAtExec = 0;
-  if (audit.outcome === "succeeded" && audit.alert_id) {
-    try {
-      const { data: al } = await sb
-        .from("alerts")
-        .select("dollar_impact")
-        .eq("id", audit.alert_id)
-        .maybeSingle();
-      const atStakeCents = Math.round(Number(al?.dollar_impact ?? 0) * 100);
-      dollarImpactAtExec = recoveredCentsForAction(audit.action_kind as ActionKind, atStakeCents) / 100;
-    } catch (err) {
-      console.error(`[actions] recovered-impact lookup failed for alert ${audit.alert_id}`, err);
-    }
-  }
+  // total is always $0.
+  const dollarImpactAtExec =
+    audit.outcome === "succeeded"
+      ? await recoveredDollarsForAlertAction(sb, audit.alert_id, audit.action_kind)
+      : 0;
 
   const { data: ins, error: iErr } = await sb
     .from("action_audit")

@@ -22,6 +22,7 @@ import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
 import { undoAction } from "./actions/undo.server";
+import { recoveredDollarsForAlertAction } from "./actions/execute.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -395,6 +396,16 @@ export function calderynClient(shop: string) {
             (opts.params.target as string | undefined) ??
             "";
 
+          // Recovered impact: value-recovering kinds that execute on this
+          // legacy path (create_po_draft, exclude_geo, reallocate_inventory)
+          // must record their clawed-back dollars too, or they never count
+          // toward the Recovered-impact total.
+          const dollarImpactAtExec = await recoveredDollarsForAlertAction(
+            supabase,
+            opts.alertId,
+            opts.kind,
+          );
+
           // For Phase 1 (no Python engines) executions just record an audit row.
           // The detector + action gateway will own the real pre/post state once wired.
           const { data: ins, error: iErr } = await supabase
@@ -405,6 +416,7 @@ export function calderynClient(shop: string) {
               action_kind: opts.kind,
               params: { ...opts.params, target },
               outcome: "succeeded",
+              dollar_impact_at_exec: dollarImpactAtExec,
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
               actor_user_id: "merchant",
