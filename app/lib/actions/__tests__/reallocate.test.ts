@@ -13,7 +13,10 @@ const { adapters, actionAdapterForShop } = vi.hoisted(() => {
   });
   const adapters = { google: mk("google"), meta: mk("meta") };
   const actionAdapterForShop = vi.fn(
-    async (_shop: string, platform: string) =>
+    async (
+      _shop: string,
+      platform: string,
+    ): Promise<ReturnType<typeof mk> | null> =>
       adapters[platform as keyof typeof adapters] ?? null,
   );
   return { adapters, actionAdapterForShop };
