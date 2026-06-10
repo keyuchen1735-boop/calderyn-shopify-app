@@ -12,6 +12,7 @@ import type {
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
+import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
@@ -479,7 +480,10 @@ export function calderynClient(shop: string) {
               "campaign_id, grade, roas, break_even_roas, spend_cents, revenue_cents, day_bucket, ad_campaign_dim(name)",
             )
             .eq("shop_id", shopId)
-            .order("day_bucket", { ascending: false });
+            .order("day_bucket", { ascending: false })
+            // Bounded: one row per campaign per day, desc — the cap trims the
+            // oldest rows first (see GRADE_ROWS_CAP for the staleness tradeoff).
+            .limit(GRADE_ROWS_CAP);
           if (error) throw error;
           const seen = new Set<string>();
           const out: CampaignGradeRow[] = [];

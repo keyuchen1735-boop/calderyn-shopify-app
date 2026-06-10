@@ -14,6 +14,7 @@ function fakeSb(opts: {
     chain.eq = vi.fn(() => chain);
     chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
+    chain.limit = vi.fn(() => chain);
     chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
       resolve({ data: table === "ad_campaign_dim" ? opts.campaigns : opts.grades, error: null });
     return chain;

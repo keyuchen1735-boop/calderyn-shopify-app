@@ -6,16 +6,18 @@ import type { Platform } from "../../ads/adapter";
 
 // vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
 // the runAutopilotForShop import above.
-const { checkGuardrails, executeAction, executeReallocation, suggestReallocation } = vi.hoisted(() => ({
-  checkGuardrails: vi.fn(),
-  executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
-  executeReallocation: vi.fn(async () => ({ id: "aud2", outcome: "succeeded" })),
-  suggestReallocation: vi.fn(async (): Promise<ReallocationSuggestion> => ({ source: null, dest: null })),
-}));
+const { checkGuardrails, executeAction, executeReallocation, loadReallocationCandidates, pickReallocation } =
+  vi.hoisted(() => ({
+    checkGuardrails: vi.fn(),
+    executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
+    executeReallocation: vi.fn(async () => ({ id: "aud2", outcome: "succeeded" })),
+    loadReallocationCandidates: vi.fn(async (): Promise<ReallocationCandidate[]> => []),
+    pickReallocation: vi.fn((): ReallocationSuggestion => ({ source: null, dest: null })),
+  }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
-vi.mock("../reallocation-suggest.server", () => ({ suggestReallocation }));
+vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
@@ -45,7 +47,8 @@ describe("runAutopilotForShop", () => {
     vi.clearAllMocks();
     executeAction.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
     executeReallocation.mockResolvedValue({ id: "aud2", outcome: "succeeded" });
-    suggestReallocation.mockResolvedValue({ source: null, dest: null });
+    loadReallocationCandidates.mockResolvedValue([]);
+    pickReallocation.mockReturnValue({ source: null, dest: null });
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -94,7 +97,7 @@ describe("runAutopilotForShop", () => {
 
   it("REALLOCATES the cut amount when a winning cross-platform dest exists", async () => {
     checkGuardrails.mockResolvedValue({ allowed: true });
-    suggestReallocation.mockResolvedValue({ source: null, dest: destCandidate });
+    pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
     const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
     const r = await runAutopilotForShop(SHOP, sb);
     // 50% default cut of 10000 → amount 5000 redirected, not shrunk.
@@ -116,7 +119,7 @@ describe("runAutopilotForShop", () => {
 
   it("passes destCampaignId into the guardrail check for reallocations", async () => {
     checkGuardrails.mockResolvedValue({ allowed: true });
-    suggestReallocation.mockResolvedValue({ source: null, dest: destCandidate });
+    pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
     const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
     await runAutopilotForShop(SHOP, sb);
     expect(checkGuardrails).toHaveBeenCalledWith(
@@ -133,7 +136,7 @@ describe("runAutopilotForShop", () => {
 
   it("falls back to reduce_campaign_budget when no destination exists", async () => {
     checkGuardrails.mockResolvedValue({ allowed: true });
-    suggestReallocation.mockResolvedValue({ source: null, dest: null });
+    pickReallocation.mockReturnValue({ source: null, dest: null });
     const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
     await runAutopilotForShop(SHOP, sb);
     expect(executeReallocation).not.toHaveBeenCalled();
@@ -146,7 +149,7 @@ describe("runAutopilotForShop", () => {
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
     checkGuardrails.mockResolvedValue({ allowed: false, reason: "destination campaign in cooldown" });
-    suggestReallocation.mockResolvedValue({ source: null, dest: destCandidate });
+    pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
     const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeReallocation).not.toHaveBeenCalled();

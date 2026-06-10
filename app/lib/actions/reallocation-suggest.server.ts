@@ -24,6 +24,12 @@ export interface ReallocationSuggestion {
 
 const GRADE_RANK: Record<string, number> = { poor: 0, okay: 1, winning: 2 };
 
+// Grade history grows one row per campaign per day; with day_bucket-desc
+// ordering the cap trims the oldest rows first. A campaign whose latest grade
+// has aged past the cap window loses its grade and drops out of candidacy —
+// acceptable: a grade that stale shouldn't drive money moves.
+export const GRADE_ROWS_CAP = 1000;
+
 interface CampaignRow {
   id: string;
   external_id: string;
@@ -40,14 +46,14 @@ interface GradeRow {
 }
 
 /**
- * Suggest source and destination campaigns for a budget reallocation.
- * NOTE: a PINNED sourceCampaignId is returned even if graded winning — the caller owns that judgment (autopilot pins the alert's campaign; the guardrail cut-cap still applies).
+ * Load the candidate pool: every active daily-budgeted campaign joined with
+ * its latest grade. One read pair serves any number of pickReallocation calls
+ * (autopilot hoists this out of its per-candidate loop).
  */
-export async function suggestReallocation(
+export async function loadReallocationCandidates(
   shopId: string,
   sb: SupabaseClient,
-  opts: { sourceCampaignId?: string } = {},
-): Promise<ReallocationSuggestion> {
+): Promise<ReallocationCandidate[]> {
   const { data: campRows, error: cErr } = await sb
     .from("ad_campaign_dim")
     .select("id, external_id, platform, name, daily_budget_cents")
@@ -56,13 +62,14 @@ export async function suggestReallocation(
     .not("daily_budget_cents", "is", null);
   if (cErr) throw cErr;
   const campaigns = (campRows ?? []) as CampaignRow[];
-  if (campaigns.length === 0) return { source: null, dest: null };
+  if (campaigns.length === 0) return [];
 
   const { data: gradeRows, error: gErr } = await sb
     .from("campaign_grade_fact")
     .select("campaign_id, grade, roas, day_bucket")
     .eq("shop_id", shopId)
-    .order("day_bucket", { ascending: false });
+    .order("day_bucket", { ascending: false })
+    .limit(GRADE_ROWS_CAP);
   if (gErr) throw gErr;
   // Rows are day_bucket-desc, so the first row seen per campaign is its latest.
   const latest = new Map<string, GradeRow>();
@@ -84,7 +91,17 @@ export async function suggestReallocation(
       roas: Number(g.roas),
     });
   }
+  return graded;
+}
 
+/**
+ * Pick source and destination from a pre-loaded candidate pool.
+ * NOTE: a PINNED sourceCampaignId is returned even if graded winning — the caller owns that judgment (autopilot pins the alert's campaign; the guardrail cut-cap still applies).
+ */
+export function pickReallocation(
+  graded: ReallocationCandidate[],
+  opts: { sourceCampaignId?: string } = {},
+): ReallocationSuggestion {
   let source: ReallocationCandidate | null = null;
   if (opts.sourceCampaignId) {
     source = graded.find((c) => c.campaignId === opts.sourceCampaignId) ?? null;
@@ -108,4 +125,13 @@ export async function suggestReallocation(
       )
       .sort((a, b) => b.roas - a.roas)[0] ?? null;
   return { source, dest };
+}
+
+/** Suggest source and destination campaigns for a budget reallocation. */
+export async function suggestReallocation(
+  shopId: string,
+  sb: SupabaseClient,
+  opts: { sourceCampaignId?: string } = {},
+): Promise<ReallocationSuggestion> {
+  return pickReallocation(await loadReallocationCandidates(shopId, sb), opts);
 }

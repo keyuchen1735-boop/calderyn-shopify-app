@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
-import { suggestReallocation } from "./reallocation-suggest.server";
+import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -46,6 +46,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (aErr) throw aErr;
   const candidates = (rows ?? []) as Candidate[];
 
+  // Hoisted: ONE candidate-pool read serves every reallocation decision this
+  // run, instead of re-reading campaign + grade facts per candidate.
+  const gradedPool = candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id))
+    ? await loadReallocationCandidates(shopId, sb)
+    : [];
+
   let acted = 0;
   let blocked = 0;
   for (const c of candidates) {
@@ -68,7 +74,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
       const amountCents = currentBudgetCents - newBudgetCents;
       if (amountCents > 0) {
-        const { dest } = await suggestReallocation(shopId, sb, { sourceCampaignId: c.campaign_id });
+        const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
         if (dest) {
           const verdict = await checkGuardrails(
             shopId,
