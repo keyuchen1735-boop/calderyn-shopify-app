@@ -62,9 +62,12 @@ export function buildChain(): unknown {
     "eq",
     "is",
     "lt",
+    "lte",
     "gt",
+    "gte",
     "not",
     "order",
+    "limit",
     "upsert",
   ]) {
     c[m] = wrap(m);

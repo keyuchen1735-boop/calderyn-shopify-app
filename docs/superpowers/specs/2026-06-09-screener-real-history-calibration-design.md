@@ -32,7 +32,7 @@ shop-scoped (`.eq("shop_id", shopId)`) and wrapped so a read failure or empty ac
 | `accountBaselineCpmCents` | `ad_spend_fact`, 30d | Σspend_cents / Σimpressions × 1000 | 0 impressions |
 | `accountEngagementRate` | `ad_engagement_fact`, 30d | Σ(reactions+comments+shares+saves) / Σimpressions | 0 impressions |
 | `skuCvr` | `ad_spend_fact`, 30d | Σconversions / Σclicks (account baseline) | 0 clicks |
-| `skuPriceCents` 🐛 | `sku_dim`→`order_line_fact` | avg `price_cents` for that `sku_id`, 30d then all-time fallback | no order lines |
+| `skuPriceCents` 🐛 | `sku_dim`→`order_line_fact` | avg `price_cents` for that `sku_id` (capped all-time sample) | no order lines |
 | `historyAdCount` | `ad_engagement_fact`, all-time | count(distinct `ad_external_id`), capped | (0) |
 | `breakEvenRoas`, `topAdNames` | unchanged | already real | — |
 
@@ -44,7 +44,8 @@ shop-scoped (`.eq("shop_id", shopId)`) and wrapped so a read failure or empty ac
    and feeds the mapped SKU's revenue math as a sensible default. (`ad_spend_fact.conversions`
    already exists, so no join needed.)
 2. **Price = avg of real `order_line_fact.price_cents`** for the SKU (what it actually sold
-   for), 30d window with all-time fallback — `sku_dim` carries no retail price.
+   for) — `sku_dim` carries no retail price. `order_line_fact` has no date column, so it's a
+   capped all-time sample rather than windowed; unit price is stable enough that this is fine.
 3. **`historyAdCount` = all-time distinct ads**, so an established account can reach `high`
    confidence even if recent 30d activity is thin (the whole point of this increment).
 
@@ -53,13 +54,16 @@ shop-scoped (`.eq("shop_id", shopId)`) and wrapped so a read failure or empty ac
 Row-math extracted into **pure, fixture-testable** helpers (mirrors `shapeCalibrationInputs`):
 
 - `aggregateSpend(rows) → { ctr, cpmCents, cvr }` — guards zero denominators → `null`.
-- `aggregateEngagement(rows, sinceISO) → { engagementRate, topAdNames, historyAdCount }` —
-  one all-time `ad_engagement_fact` fetch (ordered `day` desc, capped); engagement rate over
-  rows within `sinceISO`, distinct-ad count over all rows, top-3 names by engagement.
+- `aggregateEngagement(rows, sinceISO) → { engagementRate, historyAdCount }` — engagement rate
+  over rows on/after `sinceISO`, distinct-ad count over all rows (one all-time
+  `ad_engagement_fact` fetch, ordered `day` desc, capped 2000). `topAdNames` keeps its existing
+  separate query, unchanged.
 - `avgPriceCents(lines) → number | null`.
 
 `loadCalibrationInputs` becomes thin glue: run the fetches, hand rows to the pure helpers,
-assemble `RawHistory`, call `shapeCalibrationInputs`. `breakEvenRoas` query unchanged.
+assemble `RawHistory`, call `shapeCalibrationInputs`. `breakEvenRoas` and `topAdNames` queries
+unchanged. Gains an injectable `now` (default `new Date()`) so the 30-day window is
+deterministic in tests.
 
 ## Testing
 
