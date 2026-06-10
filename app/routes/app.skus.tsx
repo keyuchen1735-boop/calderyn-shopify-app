@@ -79,7 +79,7 @@ export default function SKUs() {
 
   return (
     <Page
-      title="SKUs"
+      title="Inventory"
       subtitle={`${skus.length} active SKUs synced from Shopify · inventory across locations`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >

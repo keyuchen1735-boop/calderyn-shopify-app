@@ -25,6 +25,7 @@ import {
   TextField,
   Tooltip,
 } from "@shopify/polaris";
+import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
@@ -610,24 +611,10 @@ function CampaignActionModal({
   );
 }
 
-const PLATFORM_DOT: Record<Campaign["platform"], string> = {
-  Meta: "var(--cdn-info)",
-  Google: "var(--cdn-warning)",
-  TikTok: "var(--cdn-attention)",
-};
-
 function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
   return (
-    <InlineStack gap="100" blockAlign="center" wrap={false}>
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: 9999,
-          display: "inline-block",
-          background: PLATFORM_DOT[platform] ?? "var(--cdn-subdued)",
-        }}
-      />
+    <InlineStack gap="150" blockAlign="center" wrap={false}>
+      <PlatformIcon platform={platform} size={16} />
       <Text as="span" variant="bodySm">
         {platform}
       </Text>
