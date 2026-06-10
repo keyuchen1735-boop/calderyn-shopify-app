@@ -166,9 +166,17 @@ export default function Dashboard() {
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
       secondaryActions={[
         { content: "Settings", onAction: () => navigate("/app/settings") },
-        // New tab is required: the dashboard sends frame-ancestors 'none',
-        // so it cannot render inside the admin iframe.
-        { content: "Open web dashboard", url: dashboardLoginUrl, external: true },
+        // New tab is required: the dashboard sends frame-ancestors 'none', so
+        // it cannot render inside the admin iframe. window.open instead of
+        // url/external because Polaris's url rendering loses the new-tab
+        // intent at two layers in embedded apps (the AppProvider link shim
+        // drops `external`; the narrow-viewport rollup menu drops `target`) —
+        // see dashboard-link-target.test.ts. App Bridge v4 has no external
+        // redirect API; its docs prescribe standard web APIs for this.
+        {
+          content: "Open web dashboard",
+          onAction: () => window.open(dashboardLoginUrl, "_blank", "noopener,noreferrer"),
+        },
       ]}
     >
       <BlockStack gap="500">
