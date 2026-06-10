@@ -128,3 +128,20 @@ export async function consumeOAuthState(
   }
   return String(row.shop_id);
 }
+
+/**
+ * Where a provider's OAuth callback should land the merchant: back inside the
+ * onboarding wizard while setup is incomplete, the Settings page afterwards.
+ * Connecting from onboarding used to strand merchants on Settings mid-wizard.
+ */
+export async function postOAuthPath(sb: SupabaseClient, shopId: string): Promise<string> {
+  const { data, error } = await sb
+    .from("shops")
+    .select("onboarding_step, onboarding_completed_at")
+    .eq("id", shopId)
+    .maybeSingle();
+  if (error) throw error;
+  const row = data as { onboarding_step: string | null; onboarding_completed_at: string | null } | null;
+  const done = Boolean(row?.onboarding_completed_at) || row?.onboarding_step === "complete";
+  return done ? "/app/settings" : "/app/onboarding";
+}

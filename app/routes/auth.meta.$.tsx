@@ -8,6 +8,7 @@ import {
   consumeOAuthState,
   parseOAuthState,
   embeddedReturnUrl,
+  postOAuthPath,
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
@@ -87,5 +88,5 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
-  return redirect(embeddedReturnUrl("/app/settings", { meta: "connected" }, returnCtx));
+  return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { meta: "connected" }, returnCtx));
 };
