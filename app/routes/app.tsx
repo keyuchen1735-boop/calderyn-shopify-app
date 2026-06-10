@@ -8,6 +8,7 @@ import assistantStyles from "../components/Assistant/assistant.css?url";
 import calderynStyles from "../components/calderyn/calderyn.css?url";
 import { AssistantSlideout } from "../components/Assistant/AssistantSlideout";
 import { appendEmbeddedSearch, rememberEmbeddedParams } from "../lib/embedded-nav";
+import { adminDeepLinkRedirect } from "../lib/admin-deeplink.server";
 import { authenticate } from "../shopify.server";
 
 export const links = () => [
@@ -17,7 +18,14 @@ export const links = () => [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  let session;
+  try {
+    ({ session } = await authenticate.admin(request));
+  } catch (thrown) {
+    // Unauthenticated hit on an alert confirm_url: send it to the Shopify
+    // admin deep link (which survives login) instead of the bare login page.
+    throw (await adminDeepLinkRedirect(request, thrown)) ?? thrown;
+  }
   const url = new URL(request.url);
   // shop/host are re-appended to every in-app URL (useEmbeddedNavigate) so
   // document-level reloads can re-authenticate instead of hitting /auth/login.

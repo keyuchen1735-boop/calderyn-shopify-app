@@ -286,7 +286,7 @@ export function calderynClient(shop: string) {
             post_state: orig.pre_state,
             dollar_impact_at_exec: orig.dollar_impact_at_exec ? -Number(orig.dollar_impact_at_exec) : 0,
             undo_of: orig.id,
-            actor_user_id: "demo@calderyn.app",
+            actor_user_id: "merchant",
             completed_at: new Date().toISOString(),
           };
 
@@ -353,7 +353,7 @@ export function calderynClient(shop: string) {
               outcome: "succeeded",
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
-              actor_user_id: "demo@calderyn.app",
+              actor_user_id: "merchant",
               completed_at: new Date().toISOString(),
             })
             .select()

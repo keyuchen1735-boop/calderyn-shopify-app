@@ -142,12 +142,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (cred.error) throw new Response(cred.error.message, { status: 500 });
 
   // 'pending' so cron.google runs the 90-day backfill on its next tick
-  // (cron.google selects sync_status in ('pending','live')).
+  // (cron.google selects sync_status in ('pending','live')). sync_error is
+  // cleared explicitly: a reconnect must not keep showing a stale failure in
+  // Settings while the fresh sync is still pending.
   const integ = await sb.from("shop_integrations").upsert(
     {
       shop_id: shopId,
       kind: "google_ads",
       sync_status: "pending",
+      sync_error: null,
       external_account_id: customerId,
       connected_at: now,
       updated_at: now,

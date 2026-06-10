@@ -4,6 +4,7 @@ export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 export type ActionKind =
   | "pause_campaign"
+  | "resume_campaign"
   | "reduce_campaign_budget"
   | "exclude_geo"
   | "reallocate_inventory"
