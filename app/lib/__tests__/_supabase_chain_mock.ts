@@ -65,6 +65,7 @@ export function buildChain(): unknown {
     "gt",
     "not",
     "order",
+    "limit",
     "upsert",
   ]) {
     c[m] = wrap(m);

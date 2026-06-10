@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Form,
   useActionData,
@@ -5,6 +6,7 @@ import {
   useNavigation,
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -184,6 +186,8 @@ export default function Audit() {
           Undo
         </Button>
       </Form>
+    ) : a.action_kind === "create_po_draft" && a.outcome === "succeeded" ? (
+      <DownloadPoButton key={`u-${a.id}`} auditId={a.id} />
     ) : (
       <Text key={`u-${a.id}`} as="span" tone="subdued">
         —
@@ -237,5 +241,45 @@ export default function Audit() {
         </Card>
       </BlockStack>
     </Page>
+  );
+}
+
+function DownloadPoButton({ auditId }: { auditId: string }) {
+  const shopify = useAppBridge();
+  const [downloading, setDownloading] = useState(false);
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      // Embedded iframe: a plain <a href> document navigation won't carry the
+      // session token. App Bridge patches global fetch with it, so fetch the
+      // bytes and hand them to the browser as a blob download.
+      const res = await fetch(`/app/audit/${auditId}/po.pdf`);
+      if (!res.ok) throw new Error(`PDF download failed (${res.status})`);
+      const filename =
+        res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ??
+        "purchase-order.pdf";
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      // Defer revoke: Safari can abort the download if the URL is revoked
+      // before the browser's download task has grabbed the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (err) {
+      shopify.toast.show((err as Error).message || "PDF download failed", {
+        isError: true,
+        duration: 5000,
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Button variant="plain" loading={downloading} onClick={download}>
+      Download PDF
+    </Button>
   );
 }

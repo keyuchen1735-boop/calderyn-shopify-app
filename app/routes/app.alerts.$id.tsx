@@ -20,6 +20,7 @@ import {
   Modal,
   Page,
   Text,
+  TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -30,6 +31,11 @@ import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
 import { inventoryAdjustQuantities } from "~/lib/shopify/inventory.server";
+import {
+  buildPoDraft,
+  derivePoQuantity,
+  getCurrentUnitCostCents,
+} from "~/lib/po/draft.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import {
   ACTION_LABELS,
@@ -47,9 +53,12 @@ import {
 } from "~/components/calderyn";
 import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
 
+type PoDefaults = { quantity: number | null; unit_cost_cents: number | null };
+
 type LoaderPayload = {
   alert: Alert | null;
   guardrails: GuardrailConfig | null;
+  poDefaults: PoDefaults | null;
   error: { code: string; message: string } | null;
 };
 
@@ -68,12 +77,28 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       client.alerts.get(id, request.signal),
       client.guardrails.get(request.signal),
     ]);
-    return json<LoaderPayload>({ alert, guardrails, error: null });
+
+    // Pre-fill the PO modal from the alert's evidence and the current COGS
+    // row; both may be unknown (null) — the modal renders those blank/TBD.
+    let poDefaults: PoDefaults | null = null;
+    if ((DETECTOR_TO_ACTIONS[alert.detector_id] ?? []).includes("create_po_draft") && alert.sku) {
+      poDefaults = {
+        quantity: derivePoQuantity(alert.evidence ?? {}),
+        unit_cost_cents: await getCurrentUnitCostCents(
+          getSupabase(),
+          await resolveShopId(session.shop),
+          alert.sku,
+        ),
+      };
+    }
+
+    return json<LoaderPayload>({ alert, guardrails, poDefaults, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       alert: null,
       guardrails: null,
+      poDefaults: null,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -160,6 +185,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       execParams.to_location_id = toLocationId;
       execParams.delta = delta;
       execParams.shopify_operation_id = operationId;
+    }
+
+    if (kind === "create_po_draft") {
+      // SECURITY EXCEPTION (intentional): unlike `param_*` fields, the
+      // po_quantity/po_unit_cost form fields ARE honoured here. They shape a
+      // local document only — the PO draft snapshotted into the audit row, with
+      // no external side effect — and are strictly validated below. The SKU and
+      // line title still come from the trusted alert record, never the form.
+      const qtyRaw = String(formData.get("po_quantity") ?? "").trim();
+      const quantity = Number(qtyRaw);
+      // Digits-only regex already guarantees an integer; bound it to a sane max.
+      if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {
+        throw new CalderynError({
+          code: "INVALID_PO_QUANTITY",
+          status: 422,
+          message: "Order quantity must be a positive whole number.",
+        });
+      }
+
+      const costRaw = String(formData.get("po_unit_cost") ?? "").trim();
+      let unitCostCents: number | null = null;
+      if (costRaw !== "") {
+        const dollars = Number(costRaw);
+        if (!Number.isFinite(dollars) || dollars < 0) {
+          throw new CalderynError({
+            code: "INVALID_PO_UNIT_COST",
+            status: 422,
+            message: "Unit cost must be a non-negative dollar amount, or blank for TBD.",
+          });
+        }
+        unitCostCents = Math.round(dollars * 100);
+      }
+
+      if (!alert.sku) {
+        throw new CalderynError({
+          code: "INVALID_PO_TARGET",
+          status: 422,
+          message: "This alert has no SKU to draft a purchase order against.",
+        });
+      }
+
+      const ev = alert.evidence ?? {};
+      const title = stringOrEmpty(ev.title) || stringOrEmpty(ev.sku_title) || alert.sku;
+
+      execParams.po = buildPoDraft({
+        alertId,
+        detectorId: alert.detector_id,
+        shopDomain: session.shop,
+        sku: alert.sku,
+        title,
+        quantity,
+        unitCostCents,
+        now: new Date(),
+      });
     }
 
     // For pause_campaign and reduce_campaign_budget, route through the real
@@ -250,7 +329,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function AlertDetail() {
   const navigate = useEmbeddedNavigate();
-  const { alert, guardrails, error } = useLoaderData<typeof loader>();
+  const { alert, guardrails, poDefaults, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
@@ -430,6 +509,7 @@ export default function AlertDetail() {
         <ExecuteActionModal
           alert={alert}
           kind={actionKind}
+          poDefaults={poDefaults}
           submitting={submitting}
           onClose={() => setActionKind(null)}
         />
@@ -441,16 +521,30 @@ export default function AlertDetail() {
 function ExecuteActionModal({
   alert,
   kind,
+  poDefaults,
   submitting,
   onClose,
 }: {
   alert: Alert;
   kind: ActionKind;
+  poDefaults: PoDefaults | null;
   submitting: boolean;
   onClose: () => void;
 }) {
   const idempotencyKey = useStableIdempotencyKey(alert.id, kind);
   const evidence = alert.evidence ?? {};
+
+  // PO qty/price are the one set of form fields the server honours (strictly
+  // validated; they shape a local document only). Pre-filled from derived
+  // defaults; a blank unit cost prints as "TBD" on the PDF.
+  const [poQuantity, setPoQuantity] = useState(
+    poDefaults?.quantity != null ? String(poDefaults.quantity) : "",
+  );
+  const [poUnitCost, setPoUnitCost] = useState(
+    poDefaults?.unit_cost_cents != null
+      ? (poDefaults.unit_cost_cents / 100).toFixed(2)
+      : "",
+  );
 
   const inventoryHints =
     kind === "reallocate_inventory"
@@ -475,7 +569,8 @@ function ExecuteActionModal({
         <Form method="post" preventScrollReset>
           {/* The server re-loads the alert and derives the action target, dollar
               impact, and inventory inputs from its trusted evidence — so only the
-              identifiers needed to locate the alert + dedupe are submitted. */}
+              identifiers needed to locate the alert + dedupe are submitted. The
+              PO qty/cost fields are the validated exception (local document only). */}
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="alertId" value={alert.id} />
           <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
@@ -483,6 +578,32 @@ function ExecuteActionModal({
             <Text as="p" variant="bodyMd" tone="subdued">
               {actionDescription(kind)}
             </Text>
+            {kind === "create_po_draft" && (
+              <InlineStack gap="200" wrap={false}>
+                <TextField
+                  label="Quantity"
+                  name="po_quantity"
+                  type="number"
+                  min={1}
+                  max={1_000_000}
+                  value={poQuantity}
+                  onChange={setPoQuantity}
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Unit cost"
+                  name="po_unit_cost"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  prefix="$"
+                  value={poUnitCost}
+                  onChange={setPoUnitCost}
+                  autoComplete="off"
+                  helpText="Leave blank if unknown — printed as TBD."
+                />
+              </InlineStack>
+            )}
             {missingInventoryFields ? (
               <Banner tone="critical">
                 Alert evidence is missing the inventory item, source location, destination, or
@@ -540,7 +661,7 @@ function actionDescription(kind: ActionKind) {
     case "reallocate_inventory":
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":
-      return "Creates a draft purchase order in your supplier portal. Send manually after review. Not reversible.";
+      return "Drafts a purchase order and records it in the action audit log, where the PDF can be downloaded. Review and send to your supplier manually.";
     case "snooze_alert":
       return "Suppresses this alert until the condition resolves. Calderyn re-evaluates on the next detection pass.";
   }
