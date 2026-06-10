@@ -60,6 +60,7 @@ function auditEntry(id: string): AuditVM {
     actor: "merchant",
     when: "2026-06-10T18:00:00.000Z",
     undo_eligible: true,
+    undo_of: null,
     pre: "—",
     post: "—",
   };

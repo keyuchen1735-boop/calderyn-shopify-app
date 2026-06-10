@@ -239,6 +239,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           actor: "You",
           when: new Date().toISOString(),
           undo_eligible: kind !== "snooze_alert",
+          undo_of: null,
           pre: "—",
           post: "—",
         };
@@ -346,6 +347,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         actor: "You",
         when: new Date().toISOString(),
         undo_eligible: false,
+        undo_of: null,
         pre: "—",
         post: "Paused draft",
       };

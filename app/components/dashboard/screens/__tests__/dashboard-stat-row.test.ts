@@ -10,7 +10,7 @@ import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
 import Dashboard from "../Dashboard";
 import type { DashboardCtx } from "../../context";
-import type { CampaignVM, GuardrailVM } from "../../view-models";
+import type { AuditVM, CampaignVM, GuardrailVM } from "../../view-models";
 
 const CAMPAIGNS: CampaignVM[] = [
   {
@@ -53,6 +53,29 @@ const GUARDRAILS: GuardrailVM = {
   autopilot_max_budget_cut_pct: 30,
 };
 
+function auditEntry(
+  id: string,
+  outcome: string,
+  cents: number,
+  undo_of: string | null = null,
+): AuditVM {
+  return {
+    id,
+    action_kind: "pause_campaign",
+    verb: "Paused campaign",
+    target: "Prospecting",
+    detail: "",
+    dollar_impact_at_exec: cents,
+    outcome,
+    actor: "merchant",
+    when: "2026-06-10T18:00:00.000Z",
+    undo_eligible: true,
+    undo_of,
+    pre: "—",
+    post: "—",
+  };
+}
+
 function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
   return {
     t: {},
@@ -79,7 +102,9 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
 }
 
 function renderStatGrid(app: DashboardCtx): { html: string; grid: string } {
-  const html = renderToString(h(Dashboard, { app }));
+  // Strip SSR text-boundary markers (`across <!-- -->1<!-- --> action`) so
+  // assertions can match the visible text.
+  const html = renderToString(h(Dashboard, { app })).replace(/<!-- -->/g, "");
   const start = html.indexOf("cd-stat-grid");
   const end = html.indexOf("cd-grid-main");
   expect(start).toBeGreaterThan(-1);
@@ -116,6 +141,22 @@ describe("Dashboard stat row mirrors the extension's KPI contract", () => {
     const { grid } = renderStatGrid(makeApp({ guardrails: null }));
     expect(grid).toContain("Daily action budget");
     expect(grid).toContain("unavailable");
+  });
+
+  it("computes Recovered (7d) like the extension: undo rows excluded", () => {
+    const { grid } = renderStatGrid(
+      makeApp({
+        audit: [
+          auditEntry("au-1", "succeeded", 12_000),
+          auditEntry("au-2", "succeeded", 12_000, "au-1"), // undo of au-1
+          auditEntry("au-3", "failed", 50_000),
+        ],
+      }),
+    );
+    // Only au-1 counts: the undo row must not be summed, the original stays.
+    expect(grid).toContain("$120");
+    expect(grid).toContain("across 1 action");
+    expect(grid).not.toContain("$240");
   });
 
   it("makes every stat tile a keyboard-operable click target", () => {

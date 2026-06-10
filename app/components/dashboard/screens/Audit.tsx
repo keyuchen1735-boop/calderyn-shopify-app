@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money } from "../format";
+import { recovered } from "~/lib/recovered";
 import type { DashboardCtx } from "../context";
 import type { AuditVM } from "../view-models";
 
@@ -91,14 +92,9 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
 
 export default function Audit({ app }: { app: DashboardCtx }) {
   const audit = app.audit;
-  const recovered = audit
-    .filter(
-      (a) =>
-        a.outcome === "succeeded" &&
-        !(a as AuditVM & { undone?: boolean }).undone &&
-        a.post !== "Reverted",
-    )
-    .reduce((s, a) => s + a.dollar_impact_at_exec, 0);
+  // Same shared computation as the Overview tile and the embedded extension
+  // (app/lib/recovered.ts): succeeded actions, undo rows excluded.
+  const recoveredCents = recovered(audit).cents;
 
   const loading = app.loading && audit.length === 0;
 
@@ -109,7 +105,7 @@ export default function Audit({ app }: { app: DashboardCtx }) {
         sub={
           loading
             ? "Loading every action Calderyn and you have taken…"
-            : `Every action Calderyn or you took — ${money(recovered)} recovered, all reversible where possible.`
+            : `Every action Calderyn or you took — ${money(recoveredCents)} recovered, all reversible where possible.`
         }
       />
       <Card pad={false}>

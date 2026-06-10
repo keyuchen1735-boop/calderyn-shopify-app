@@ -50,6 +50,8 @@ export interface AuditVM {
   actor: string;
   when: string;
   undo_eligible: boolean;
+  /** Audit id this row undoes, when the row is itself an undo. */
+  undo_of: string | null;
   pre: string;
   post: string;
   failure?: string;

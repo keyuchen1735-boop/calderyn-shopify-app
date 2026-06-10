@@ -18,6 +18,7 @@ import {
 } from "../ui";
 import { money, DETECTOR_TERMS, ACTION_LABELS } from "../format";
 import { trueRoas } from "~/lib/roas";
+import { recovered } from "~/lib/recovered";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
@@ -264,11 +265,9 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const open = app.alerts.filter((a) => a.status === "open");
   const critical = open.filter((a) => a.severity === "critical");
 
-  // Recovered (7d): succeeded actions that haven't been reverted (undo sets post="Reverted").
-  const succeeded = app.audit.filter((a) => a.outcome === "succeeded");
-  const recovered = succeeded
-    .filter((a) => a.post !== "Reverted")
-    .reduce((s, a) => s + a.dollar_impact_at_exec, 0);
+  // Recovered (7d) — same shared computation as the extension home
+  // (app/lib/recovered.ts): succeeded actions, undo rows excluded.
+  const recovered7d = recovered(app.audit);
 
   // Daily action budget — same guardrail numbers the embedded extension shows.
   const g = app.guardrails;
@@ -309,9 +308,11 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         <Card hover onClick={() => app.navigate("audit")} className="cd-stat">
           <span className="cd-stat-label">Recovered (7d)</span>
           <span className="cd-stat-value" style={{ color: "var(--green)" }}>
-            <CountMoney cents={recovered} />
+            <CountMoney cents={recovered7d.cents} />
           </span>
-          <span className="cd-caption">across {succeeded.length} actions</span>
+          <span className="cd-caption">
+            across {recovered7d.count} action{recovered7d.count === 1 ? "" : "s"}
+          </span>
         </Card>
         <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
           <span className="cd-stat-label">Daily action budget</span>
