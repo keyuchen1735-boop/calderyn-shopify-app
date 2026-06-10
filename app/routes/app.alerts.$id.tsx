@@ -459,9 +459,9 @@ export default function AlertDetail() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingSm">
-                  Why this fired — evidence
+                  What we noticed
                 </Text>
-                <EvidencePanel evidence={evidence} />
+                <EvidencePanel evidence={evidence} hideKeys={["sku_title"]} />
               </BlockStack>
             </Card>
           </BlockStack>
@@ -471,17 +471,17 @@ export default function AlertDetail() {
           <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  Recommended actions
-                </Text>
-                <InlineStack gap="200" align="end">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingSm">
+                    Recommended actions
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    30-day projected impact
+                  </Text>
                   <Text as="p" variant="headingLg">
                     {fmtMoney(alert.dollar_impact)}
                   </Text>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  30-day projected impact
-                </Text>
+                </BlockStack>
                 <BlockStack gap="300">
                   {allowedActions.map((kind, i) =>
                     i === 0 ? (
@@ -492,7 +492,7 @@ export default function AlertDetail() {
                         <InlineStack gap="150" blockAlign="center">
                           <Badge tone="success">Recommended</Badge>
                           <Text as="span" variant="bodyXs" tone="subdued">
-                            protects {fmtMoney(alert.dollar_impact)} / 30d
+                            best at preventing the loss above
                           </Text>
                         </InlineStack>
                       </BlockStack>
@@ -509,15 +509,21 @@ export default function AlertDetail() {
             {guardrails && (
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">
-                    Safety net
-                  </Text>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingSm">
+                      Before Calderyn acts
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      These checks decide whether this action can run automatically. If any fail, you have to confirm it yourself.
+                    </Text>
+                  </BlockStack>
                   <GuardrailMeter
+                    label="Today's action budget"
                     usedCents={guardrails.daily_action_budget_used_cents}
                     totalCents={guardrails.daily_action_budget_cents}
                     checks={[
                       {
-                        label: `Within daily budget · ${fmtMoney(
+                        label: `Budget for today · ${fmtMoney(
                           guardrails.daily_action_budget_cents -
                             guardrails.daily_action_budget_used_cents,
                         )} left`,
@@ -527,17 +533,19 @@ export default function AlertDetail() {
                           0,
                       },
                       {
-                        label: `Under per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)}`,
+                        label: `Per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)} max risk per action`,
                         ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
                       },
                       {
-                        label: `Business hours · ${guardrails.business_hours.start}–${guardrails.business_hours.end}`,
+                        label: `Business hours · ${formatHour(
+                          guardrails.business_hours.start,
+                        )} – ${formatHour(guardrails.business_hours.end)} ${guardrails.business_hours.tz}`,
                         ok: guardrails.in_business_hours,
                       },
                     ]}
                   />
                   <Text as="p" variant="bodyXs" tone="subdued">
-                    Cooldown {guardrails.cooldown_minutes}m between actions on the same campaign.
+                    Min {guardrails.cooldown_minutes} min between actions on the same campaign.
                   </Text>
                 </BlockStack>
               </Card>
@@ -691,6 +699,21 @@ function ExecuteActionModal({
 function useStableIdempotencyKey(alertId: string, kind: ActionKind) {
   const [key] = useState(() => `${alertId}:${kind}:${newIdempotencyKey()}`);
   return key;
+}
+
+// "14:00" → "2 PM"; "00:00" → "midnight"; "12:00" → "noon".
+// Falls through to the raw string if it doesn't look like HH:MM.
+function formatHour(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
+  if (!m) return hhmm;
+  const h = Number(m[1]);
+  const mins = Number(m[2]);
+  if (!Number.isFinite(h) || h < 0 || h > 23) return hhmm;
+  if (h === 0 && mins === 0) return "midnight";
+  if (h === 12 && mins === 0) return "noon";
+  const period = h < 12 ? "AM" : "PM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return mins === 0 ? `${hour12} ${period}` : `${hour12}:${m[2]} ${period}`;
 }
 
 function stringOrEmpty(v: unknown): string {
