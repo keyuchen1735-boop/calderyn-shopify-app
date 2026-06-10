@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 // Importing the shared chain mock also registers its beforeEach state reset.
-import { setSupabaseResponse, getRecorded } from "../../lib/__tests__/_supabase_chain_mock";
-import { action } from "../app.alerts.$id";
+import {
+  setSupabaseResponse,
+  setSupabaseResponses,
+  getRecorded,
+} from "../../lib/__tests__/_supabase_chain_mock";
+import { action, loader } from "../app.alerts.$id";
 
 // Spies for the boundaries; the real route `action` logic runs against them.
 const { executeSpy, alertsGetSpy, guardrailsGetSpy } = vi.hoisted(() => ({
@@ -225,5 +229,56 @@ describe("alert action — acknowledges the alert after success", () => {
   it("does not acknowledge when the action is rejected", async () => {
     await call(poRequest({ po_quantity: "0" }));
     expect(getRecorded("update")).toEqual([]);
+  });
+
+  it("does not acknowledge on snooze — a deferral must keep the alert open", async () => {
+    const fd = new FormData();
+    fd.set("kind", "snooze_alert");
+    fd.set("alertId", ALERT.id);
+    fd.set("idempotencyKey", "k-snooze-1");
+    const res = await call(
+      new Request(`http://localhost/app/alerts/${ALERT.id}`, { method: "POST", body: fd }),
+    );
+    const body = (await res.json()) as { ok: boolean; toast: { message: string } };
+
+    expect(body.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(body.toast.message).toBe("Snoozed alert executed");
+    expect(getRecorded("update")).toEqual([]);
+  });
+});
+
+describe("alert loader — duplicate PO draft warning", () => {
+  function loaderCall() {
+    return loader({
+      request: new Request(`http://localhost/app/alerts/${ALERT.id}`),
+      params: { id: ALERT.id },
+    } as unknown as LoaderFunctionArgs);
+  }
+
+  it("warns when a successful draft exists", async () => {
+    setSupabaseResponses([
+      { data: null, error: null }, // sku_dim lookup (getCurrentUnitCostCents) misses
+      { data: [{ id: "d1", undo_of: null }], error: null },
+    ]);
+    const body = (await (await loaderCall()).json()) as { existingPoDraft: boolean };
+    expect(body.existingPoDraft).toBe(true);
+  });
+
+  it("suppresses the warning when the only draft was undone", async () => {
+    setSupabaseResponses([
+      { data: null, error: null }, // sku_dim lookup misses
+      {
+        // The undo row shares the original's action_kind with undo_of
+        // pointing back at it — the original is no longer an active draft.
+        data: [
+          { id: "d1", undo_of: null },
+          { id: "u1", undo_of: "d1" },
+        ],
+        error: null,
+      },
+    ]);
+    const body = (await (await loaderCall()).json()) as { existingPoDraft: boolean };
+    expect(body.existingPoDraft).toBe(false);
   });
 });
