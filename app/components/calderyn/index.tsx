@@ -29,8 +29,8 @@ import { fmtMoney, fmtRelTime } from "~/lib/format";
 import {
   DETECTOR_LABELS,
   DETECTOR_TERMS,
-  EVIDENCE_FORMATTERS,
-  EVIDENCE_LABELS,
+  formatEvidenceKey,
+  getEvidenceFormatter,
 } from "~/lib/labels";
 import { CountUp } from "./count-up";
 
@@ -318,9 +318,7 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
 /* ───────────────────────────── EvidencePanel ───────────────────────────── */
 
 function prettyKey(k: string) {
-  if (EVIDENCE_LABELS[k]) return EVIDENCE_LABELS[k];
-  const s = k.replace(/_/g, " ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  return formatEvidenceKey(k);
 }
 
 function isNumberArray(v: unknown): v is number[] {
@@ -353,7 +351,7 @@ function Sparkline({ values, tone = "info" }: { values: number[]; tone?: "info" 
 }
 
 function evidenceValueToString(key: string, v: unknown): string {
-  const formatter = EVIDENCE_FORMATTERS[key];
+  const formatter = getEvidenceFormatter(key);
   if (formatter) return formatter(v);
   if (v === null || v === undefined) return "—";
   if (typeof v === "number") return v.toLocaleString("en-US");

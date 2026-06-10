@@ -4,7 +4,7 @@
 // the I/O wrappers build on the existing metaClientForShop. Never throws on
 // sparse creatives — missing fields degrade to empty strings / null image so
 // scoring can still run copy-only.
-import { metaClientForShop } from "../meta/client.server";
+import { metaClientForShop, type MetaConnection } from "../meta/client.server";
 import type { MetaResponse } from "../meta/campaigns.server";
 import type { CreativeInput, ScreenableAd } from "./types";
 
@@ -112,19 +112,44 @@ function check(r: MetaResponse): MetaResponse {
   return r;
 }
 
-/** Paused ads in the connected account, for the picker. Returns [] if Meta isn't connected. */
-export async function listScreenableAds(shop: string): Promise<ScreenableAd[]> {
-  const conn = await metaClientForShop(shop);
-  if (!conn) return [];
+/**
+ * Ads in the connected account, for the picker — active AND paused, so the list
+ * doesn't silently empty out when a merchant activates their only paused ad
+ * (scoring is read-only; the push-variant flow still creates PAUSED ads).
+ */
+async function readScreenableAds(conn: MetaConnection): Promise<ScreenableAd[]> {
   const body = check(
     await conn.client.get(`/${conn.adAccountId}/ads`, {
       fields: "id,name,effective_status",
-      effective_status: JSON.stringify(["PAUSED", "ADSET_PAUSED", "CAMPAIGN_PAUSED"]),
+      effective_status: JSON.stringify(["ACTIVE", "PAUSED", "ADSET_PAUSED", "CAMPAIGN_PAUSED"]),
       limit: "50",
     }),
   );
   const rows = (body.data as Array<Record<string, unknown>>) ?? [];
   return rows.map(mapAdListItem);
+}
+
+export type ScreenableAdSource = {
+  connected: boolean;
+  ads: ScreenableAd[];
+  /** True when Meta is connected but the ads read failed — "no ads" would be a lie. */
+  adsError: boolean;
+};
+
+/**
+ * Picker payload for the screener loader. Distinguishes the three states the UI
+ * must word differently: not connected (connect prompt), connected with a failed
+ * read (transient-error notice, rule 12), connected with a clean read (list or
+ * genuine empty state). Never throws — the page must survive a Meta hiccup.
+ */
+export async function screenableAdSource(shop: string): Promise<ScreenableAdSource> {
+  const conn = await metaClientForShop(shop).catch(() => null);
+  if (!conn) return { connected: false, ads: [], adsError: false };
+  try {
+    return { connected: true, ads: await readScreenableAds(conn), adsError: false };
+  } catch {
+    return { connected: true, ads: [], adsError: true };
+  }
 }
 
 /** Fetch one ad's creative + adset targeting and shape it into a CreativeInput. */

@@ -4,7 +4,7 @@ import {
   setSupabaseResponses,
   getRecorded,
 } from "../../__tests__/_supabase_chain_mock";
-import { checkAndReserveImageGen } from "../image-gen-limit.server";
+import { checkAndReserveImageGen, releaseImageGen } from "../image-gen-limit.server";
 
 vi.mock("../../supabase.server", () => ({
   getSupabase: () => buildChain(),
@@ -21,10 +21,10 @@ beforeEach(() => {
 });
 
 describe("checkAndReserveImageGen", () => {
-  it("reserves a slot and reports remaining when under both limits", async () => {
-    setSupabaseResponses([count(5), count(100), { data: null, error: null }]);
+  it("reserves a slot, reports remaining, and returns the event id for release", async () => {
+    setSupabaseResponses([count(5), count(100), { data: { id: "evt-1" }, error: null }]);
     const res = await checkAndReserveImageGen(SHOP, NOW);
-    expect(res).toEqual({ ok: true, remaining: 14 }); // 20 - 5 - 1
+    expect(res).toEqual({ ok: true, remaining: 14, eventId: "evt-1" }); // 20 - 5 - 1
 
     const inserts = getRecorded("insert");
     expect(inserts).toHaveLength(1);
@@ -48,5 +48,20 @@ describe("checkAndReserveImageGen", () => {
     const res = await checkAndReserveImageGen(SHOP, NOW);
     expect(res).toEqual({ ok: false, scope: "global", limit: 300 });
     expect(getRecorded("insert")).toHaveLength(0);
+  });
+});
+
+describe("releaseImageGen", () => {
+  it("deletes the reserved event row so a failed generation doesn't burn quota", async () => {
+    setSupabaseResponses([{ data: null, error: null }]);
+    await releaseImageGen("evt-1");
+    expect(getRecorded("delete")).toHaveLength(1);
+    expect(getRecorded("eq")).toContainEqual(["id", "evt-1"]);
+  });
+
+  it("is a no-op without an event id", async () => {
+    setSupabaseResponses([]);
+    await releaseImageGen(null);
+    expect(getRecorded("delete")).toHaveLength(0);
   });
 });
