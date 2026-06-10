@@ -157,3 +157,88 @@ describe("executeReallocation · happy path + validation", () => {
     expect(auditRow(calls).actor_user_id).toBe("autopilot");
   });
 });
+
+describe("executeReallocation · failure paths", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("source-step failure is TERMINAL failed (not parked), dest untouched", async () => {
+    adapters.google.setDailyBudget.mockRejectedValueOnce(new Error("Google API 503"));
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("failed");
+    expect(adapters.meta.setDailyBudget).not.toHaveBeenCalled();
+    const audit = auditRow(calls);
+    expect(audit).toMatchObject({ outcome: "failed", post_state: null });
+    expect((audit.params as Record<string, unknown>).step).toBe("reduce_source");
+    expect(String(audit.last_error)).toMatch(/503/);
+  });
+
+  it("dest-step transient failure parks retrying with dest replay params; source NOT restored", async () => {
+    adapters.meta.setDailyBudget.mockRejectedValueOnce(new Error("Meta API 503"));
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("retrying");
+    // Source was reduced exactly once — no compensation for a parked retry.
+    expect(adapters.google.setDailyBudget).toHaveBeenCalledTimes(1);
+    const audit = auditRow(calls);
+    expect(audit).toMatchObject({ outcome: "retrying", attempts: 1, post_state: null });
+    expect(audit.params).toMatchObject({
+      step: "increase_dest",
+      external_id: "m-1",
+      platform: "meta",
+      daily_budget_cents: 1500,
+    });
+    expect((audit.params as Record<string, unknown>).compensation).toBeUndefined();
+  });
+
+  it("dest-step PERMANENT failure compensates: source restored, visibly recorded", async () => {
+    adapters.meta.setDailyBudget.mockRejectedValueOnce(
+      new ActionError("meta", "invalid budget param", { retriable: false }),
+    );
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("failed");
+    // Source reduced (2000→1500), then restored (→2000).
+    expect(adapters.google.setDailyBudget).toHaveBeenNthCalledWith(1, "g-1", 1500);
+    expect(adapters.google.setDailyBudget).toHaveBeenNthCalledWith(2, "g-1", 2000);
+    const audit = auditRow(calls);
+    expect((audit.params as Record<string, unknown>).compensation).toBe("succeeded");
+  });
+
+  it("failed compensation is loudly visible (rule 12)", async () => {
+    adapters.meta.setDailyBudget.mockRejectedValueOnce(
+      new ActionError("meta", "invalid budget param", { retriable: false }),
+    );
+    adapters.google.setDailyBudget
+      .mockResolvedValueOnce(undefined) // step 1 reduce succeeds
+      .mockRejectedValueOnce(new Error("Google API down")); // compensation fails
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("failed");
+    const audit = auditRow(calls);
+    expect((audit.params as Record<string, unknown>).compensation).toBe("failed");
+    expect(String(audit.last_error)).toMatch(/compensation failed/i);
+    expect(String(audit.last_error)).toMatch(/invalid budget param/i);
+  });
+
+  it("fails fast with ZERO platform calls when the source platform is not connected", async () => {
+    actionAdapterForShop.mockResolvedValueOnce(null); // source resolve
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("failed");
+    expect(adapters.google.setDailyBudget).not.toHaveBeenCalled();
+    expect(adapters.meta.setDailyBudget).not.toHaveBeenCalled();
+    expect(String(auditRow(calls).last_error)).toMatch(/google not connected/i);
+  });
+
+  it("fails fast with ZERO platform calls when the dest platform is not connected", async () => {
+    actionAdapterForShop
+      .mockResolvedValueOnce(adapters.google) // source resolve
+      .mockResolvedValueOnce(null); // dest resolve
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    const res = await executeReallocation(SHOP, input, sb);
+    expect(res.outcome).toBe("failed");
+    expect(adapters.google.setDailyBudget).not.toHaveBeenCalled();
+    expect(String(auditRow(calls).last_error)).toMatch(/meta not connected/i);
+  });
+});
