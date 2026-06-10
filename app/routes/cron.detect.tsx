@@ -17,9 +17,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     errors: [] as string[],
   };
 
-  // Derive this deployment's origin so the engine function URL works across
-  // preview, staging, and production without any hardcoded host.
-  const origin = new URL(request.url).origin;
+  // Vercel invokes cron jobs on the SSO-protected *.vercel.app deployment
+  // URL, so a self-fetch derived from request.url is rejected (401) at the
+  // edge before it reaches the engine function. Prefer the public app URL
+  // when configured; fall back to the request origin for dev/preview.
+  const origin = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
 
   // Query ready shops (bounded batch)
   const { data: ready } = await sb
