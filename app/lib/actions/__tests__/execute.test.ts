@@ -19,6 +19,7 @@ function fakeSb(opts: {
   campaign?: Record<string, unknown> | null;
   priorOutcome?: string;
   idemInsertError?: { message: string };
+  alertImpactDollars?: number;
 }) {
   const calls = { inserts: [] as Array<{ table: string; rows: unknown }> };
   function builder(table: string) {
@@ -28,6 +29,7 @@ function fakeSb(opts: {
     chain.maybeSingle = vi.fn(async () => {
       if (table === "action_idempotency") return { data: opts.idempotent ?? null, error: null };
       if (table === "ad_campaign_dim") return { data: opts.campaign ?? null, error: null };
+      if (table === "alerts") return { data: { dollar_impact: opts.alertImpactDollars ?? null }, error: null };
       if (table === "v_audit_view" || table === "action_audit") return { data: { id: "aud1", outcome: opts.priorOutcome ?? "succeeded" }, error: null };
       return { data: null, error: null };
     });
@@ -66,6 +68,21 @@ describe("executeAction", () => {
       pre_state: { status: "active", daily_budget_cents: 5000 },
     });
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
+  });
+
+  it("records the alert's at-stake dollars as recovered impact for a value-recovering action", async () => {
+    const { sb, calls } = fakeSb({ campaign, alertImpactDollars: 1693.03 });
+    await executeAction(SHOP, { alertId: "alert-1", kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kimp" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(1693.03);
+  });
+
+  it("records zero recovered impact for a neutral action even with an alert", async () => {
+    const paused = { ...campaign, status: "paused" };
+    const { sb, calls } = fakeSb({ campaign: paused, alertImpactDollars: 1693.03 });
+    await executeAction(SHOP, { alertId: "alert-1", kind: "resume_campaign", campaignId: CAMP, idempotencyKey: "kn" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(0);
   });
 
   it("resume_campaign calls adapter.resume and writes a succeeded audit + idempotency", async () => {
