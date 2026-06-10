@@ -4,6 +4,8 @@
 // check for state-changing requests, and a fixed-window in-memory rate
 // limiter (per serverless instance — coarse abuse damping, not a guarantee).
 
+import { CalderynError } from "../calderyn.server";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
@@ -69,4 +71,18 @@ export function clientIpKey(request: Request, scope: string): string {
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   return `${scope}:${ip}`;
+}
+
+/** Wrap a loader/action body: CalderynError → its status/code; rethrow Responses. */
+export async function dashboardJson(fn: () => Promise<unknown>): Promise<Response> {
+  try {
+    return jsonOk(await fn());
+  } catch (err) {
+    if (err instanceof Response) throw err;
+    if (err instanceof CalderynError) {
+      return jsonError(err.status, err.code, err.message);
+    }
+    console.error("[dashboard.api] unhandled error", err);
+    return jsonError(500, "internal_error");
+  }
 }
