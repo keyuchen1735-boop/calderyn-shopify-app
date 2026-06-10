@@ -146,8 +146,11 @@ export default function Audit() {
       Boolean(a.post_state?.po);
     // Realized impact is attributed later (often $0 at exec time); fall back to
     // the estimate snapshotted at execution so the column isn't a wall of $0.
+    // Not for snooze: a deferral recovers nothing, and showing the alert's
+    // full at-stake impact there would inflate the column.
     const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
-    const showEstimate = !a.dollar_impact_at_exec && estimateCents > 0;
+    const showEstimate =
+      !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
     return [
     <Box key={`t-${a.id}`} minWidth="150px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
@@ -195,7 +198,14 @@ export default function Audit() {
         </Text>
       )}
     </Box>,
-    <Badge key={`s-${a.id}`} tone={a.outcome === "succeeded" ? "success" : "critical"}>
+    // `retrying` is parked for the retry cron — pending, not a failure
+    // (the alert page's own toast says "queued, will retry automatically").
+    <Badge
+      key={`s-${a.id}`}
+      tone={
+        a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"
+      }
+    >
       {a.outcome}
     </Badge>,
     canUndo || hasPoPdf ? (
