@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 
+import { loader as loginLoader } from "../../../routes/dashboard.login";
+import { loader as callbackLoader } from "../../../routes/dashboard.auth.callback";
+
 const { createSession, resolveShopId, exchangeCodeForToken } = vi.hoisted(() => ({
   createSession: vi.fn(async () => ({ raw: "dash_live_token" })),
   resolveShopId: vi.fn(async () => "shop-1"),
@@ -19,9 +22,6 @@ vi.mock("../shopify-oauth.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../shopify-oauth.server")>()),
   exchangeCodeForToken,
 }));
-
-import { loader as loginLoader } from "../../../routes/dashboard.login";
-import { loader as callbackLoader } from "../../../routes/dashboard.auth.callback";
 
 beforeEach(() => {
   vi.clearAllMocks();

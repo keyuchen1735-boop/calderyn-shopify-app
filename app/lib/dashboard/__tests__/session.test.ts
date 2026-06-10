@@ -5,11 +5,6 @@ import {
   getRecorded,
 } from "../../__tests__/_supabase_chain_mock";
 
-vi.mock("../../supabase.server", () => ({
-  getSupabase: () => buildChain(),
-  resolveShopId: vi.fn(async (domain: string) => `shop-id-for-${domain}`),
-}));
-
 import {
   newSessionToken,
   hashSessionToken,
@@ -22,6 +17,11 @@ import {
   revokeAllSessionsForShop,
   SESSION_COOKIE_NAME,
 } from "../session.server";
+
+vi.mock("../../supabase.server", () => ({
+  getSupabase: () => buildChain(),
+  resolveShopId: vi.fn(async (domain: string) => `shop-id-for-${domain}`),
+}));
 
 beforeEach(() => {
   process.env.DASHBOARD_SESSION_PEPPER = "test-pepper-that-is-at-least-32-chars!!";
