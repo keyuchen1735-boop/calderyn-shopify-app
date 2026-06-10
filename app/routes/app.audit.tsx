@@ -27,6 +27,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
+import { recovered as recoveredOf } from "~/lib/recovered";
 import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
@@ -132,9 +133,9 @@ export default function Audit() {
   const successRate = Math.round(
     (audit.filter((a) => a.outcome === "succeeded").length / audit.length) * 100,
   );
-  const recovered = audit
-    .filter((a) => a.outcome === "succeeded")
-    .reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
+  // Shared with the home tile and the web dashboard (app/lib/recovered.ts):
+  // succeeded actions, undo rows excluded.
+  const recovered = recoveredOf(audit).cents;
 
   const rows = audit.map((a) => {
     const canUndo = a.undo_eligible && !a.undo_of;

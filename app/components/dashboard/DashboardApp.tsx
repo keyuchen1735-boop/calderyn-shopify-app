@@ -18,13 +18,12 @@ import {
   TweakSlider,
   useTweaks,
 } from "./tweaks-panel";
-import { useLiveFeed, todayFromOverview } from "./live";
+import { useLiveFeed } from "./live";
 import type {
   ActionKind,
   DashboardCtx,
   NavState,
   Screen as ScreenId,
-  TodayTotals,
 } from "./context";
 import type {
   AlertVM,
@@ -125,11 +124,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // ----- live engine state -----
   const [liveOn, setLiveOn] = useState(true);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
-  const [today, setToday] = useState<TodayTotals>({
-    revenue_cents: 0,
-    spend_cents: 0,
-    orders: 0,
-  });
 
   // ----- toasts -----
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -160,7 +154,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setAudit(au);
     setGuardrails(gr);
     setIntegrations(integ);
-    setToday((d) => ({ ...d, ...todayFromOverview(ov) }));
   }, []);
 
   useEffect(() => {
@@ -190,10 +183,14 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
     liveOn,
-    campaigns,
     onOverview: useCallback((ov: OverviewVM) => {
       setOverview(ov);
-      setToday((d) => ({ ...d, ...todayFromOverview(ov) }));
+    }, []),
+    onCampaigns: useCallback((cs: CampaignVM[]) => {
+      setCampaigns(cs);
+    }, []),
+    onGuardrails: useCallback((g: GuardrailVM) => {
+      setGuardrails(g);
     }, []),
     onNewAudit: useCallback(
       (entry: AuditVM) => {
@@ -242,6 +239,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           actor: "You",
           when: new Date().toISOString(),
           undo_eligible: kind !== "snooze_alert",
+          undo_of: null,
           pre: "—",
           post: "—",
         };
@@ -349,6 +347,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         actor: "You",
         when: new Date().toISOString(),
         undo_eligible: false,
+        undo_of: null,
         pre: "—",
         post: "Paused draft",
       };
@@ -377,7 +376,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     integrations,
     overview,
     feed,
-    today,
     liveOn,
     setLiveOn,
     executeAction,
