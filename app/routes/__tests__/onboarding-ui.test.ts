@@ -115,17 +115,20 @@ describe("onboarding wizard — button wiring", () => {
     });
   });
 
-  it("step 2 (google, required, not connected): offers Connect and gates Continue", () => {
+  it("step 2 (google, not connected): offers Connect and Skip; Continue stays gated", () => {
     const forms = formsOf(render({ step: 2, integrations: {} }));
 
     const connect = forms.find((f) => f.fields.intent === "connect_integration");
     expect(connect?.fields.provider).toBe("google");
     expect(connect?.buttonDisabled).toBe(false);
 
-    // Back (advance to 1) stays open; Continue (advance to 3) is locked.
+    // Back (advance to 1) stays open. Forward there are TWO advance-to-3 forms:
+    // "Skip for now" (enabled) and Continue (locked until connected) — every
+    // connector is skippable so a broken provider can't dead-end onboarding (#56).
     const advances = forms.filter((f) => f.fields.intent === "advance");
     expect(advances.find((f) => f.fields.step === "1")?.buttonDisabled).toBe(false);
-    expect(advances.find((f) => f.fields.step === "3")?.buttonDisabled).toBe(true);
+    const forward = advances.filter((f) => f.fields.step === "3");
+    expect(forward.map((f) => f.buttonDisabled).sort()).toEqual([false, true]);
   });
 
   it("step 3 (meta): recognizes a pairing stored under the meta_ads kind and unlocks Continue", () => {
@@ -147,24 +150,26 @@ describe("onboarding wizard — button wiring", () => {
     expect(forms.some((f) => f.fields.intent === "connect_integration")).toBe(false);
   });
 
-  it("step 4 (quickbooks, optional): offers Skip and never gates Continue", () => {
+  it("step 4 (quickbooks, not connected): offers Skip; Continue gated like every connector", () => {
     const forms = formsOf(render({ step: 4, integrations: {} }));
 
     const connect = forms.find((f) => f.fields.intent === "connect_integration");
     expect(connect?.fields.provider).toBe("quickbooks");
 
-    // Optional step: both Skip and Continue advance to 5, neither disabled.
+    // Skip (enabled) and Continue (gated) both advance to 5.
     const toNext = forms.filter((f) => f.fields.intent === "advance" && f.fields.step === "5");
     expect(toNext).toHaveLength(2);
-    expect(toNext.every((f) => !f.buttonDisabled)).toBe(true);
+    expect(toNext.map((f) => f.buttonDisabled).sort()).toEqual([false, true]);
   });
 
-  it("step 7 (complete): Open dashboard submits finish", () => {
+  it("step 7 (complete): Open dashboard submits finish, Back returns to consent", () => {
     const forms = formsOf(render({ step: 7 }));
 
-    expect(forms).toHaveLength(1);
-    expect(forms[0].fields).toEqual({ intent: "finish" });
-    expect(forms[0].buttonDisabled).toBe(false);
+    const finish = forms.find((f) => f.fields.intent === "finish");
+    expect(finish?.buttonDisabled).toBe(false);
+    expect(forms).toContainEqual(
+      expect.objectContaining({ fields: { intent: "advance", step: "6" } }),
+    );
   });
 
   it("never nests forms on any step — a nested form re-parents its buttons", () => {
