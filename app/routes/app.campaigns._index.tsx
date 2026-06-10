@@ -449,6 +449,13 @@ export default function Campaigns() {
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
 
+  // Reallocation needs both a source AND a destination with a daily budget —
+  // gate every entry point on the same predicate so the modal can never open
+  // in a dead (no-possible-destination) state.
+  const reallocEligibleCount = campaigns.filter(
+    (c) => c.status === "active" && c.daily_budget_cents > 0,
+  ).length;
+
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
 
@@ -524,7 +531,7 @@ export default function Campaigns() {
         </Button>
         <Button
           variant="plain"
-          disabled={c.status !== "active" || c.daily_budget_cents <= 0}
+          disabled={c.status !== "active" || c.daily_budget_cents <= 0 || reallocEligibleCount < 2}
           onClick={() => setPending({ kind: "reallocate", sourceId: c.id })}
         >
           Reallocate
@@ -542,8 +549,7 @@ export default function Campaigns() {
         {
           content: "Reallocate budget",
           onAction: () => setPending({ kind: "reallocate" }),
-          disabled:
-            campaigns.filter((c) => c.status === "active" && c.daily_budget_cents > 0).length < 2,
+          disabled: reallocEligibleCount < 2,
         },
       ]}
     >
