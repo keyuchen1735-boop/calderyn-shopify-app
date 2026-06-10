@@ -35,7 +35,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
 import { getLatestRun, listRuns, saveVariants } from "~/lib/screener/runs.server";
-import { listScreenableAds, fetchCreativeInput } from "~/lib/screener/meta-creative.server";
+import { screenableAdSource, fetchCreativeInput } from "~/lib/screener/meta-creative.server";
 import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
@@ -55,7 +55,11 @@ import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
 import { pushVariantToMeta, type PushResult } from "~/lib/screener/meta-push.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
-import { checkAndReserveImageGen } from "~/lib/screener/image-gen-limit.server";
+import {
+  checkAndReserveImageGen,
+  releaseImageGen,
+  type ReserveResult,
+} from "~/lib/screener/image-gen-limit.server";
 import { loadCalibrationInputs } from "~/lib/screener/history.server";
 import { scoreCreative, type CreateMessageFn } from "~/lib/screener/score.server";
 import { calibrate } from "~/lib/screener/calibrate.server";
@@ -95,19 +99,28 @@ type LoaderPayload = {
   latest: CreativeScreenRun | null;
   history: CreativeScreenRun[];
   metaAds: ScreenableAd[];
+  metaConnected: boolean;
+  metaAdsError: boolean;
   imageGenAvailable: boolean;
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const [latest, history, metaAds] = await Promise.all([
+  const [latest, history, metaSource] = await Promise.all([
     getLatestRun(session.shop),
     listRuns(session.shop, 10),
-    listScreenableAds(session.shop).catch(() => [] as ScreenableAd[]),
+    screenableAdSource(session.shop),
   ]);
   const imageGenAvailable =
     Boolean(process.env.HIGGSFIELD_API_KEY) && Boolean(process.env.HIGGSFIELD_API_SECRET);
-  return json<LoaderPayload>({ latest, history, metaAds, imageGenAvailable });
+  return json<LoaderPayload>({
+    latest,
+    history,
+    metaAds: metaSource.ads,
+    metaConnected: metaSource.connected,
+    metaAdsError: metaSource.adsError,
+    imageGenAvailable,
+  });
 };
 
 function pushFail(error: string): PushResult {
@@ -138,24 +151,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { composite, summary: scored.summary, metrics: scored.metrics };
     };
     const mode = String(form.get("mode") ?? "copy");
+    let reservation: ReserveResult | null = null;
     if (mode === "image") {
-      const reservation = await checkAndReserveImageGen(session.shop);
+      reservation = await checkAndReserveImageGen(session.shop);
       if (!reservation.ok) {
         return json({ generateError: imageLimitMessage(reservation) });
       }
     }
     const generator = pickGenerator(mode, { createMessage, model: assistantModel() });
-    const result = await generateImprovements(
-      {
-        original,
-        originalScorecard: latest.scorecard,
-        styleRefs: calib.topAdNames,
-        count: mode === "image" ? 1 : undefined,
-      },
-      { generator, scoreOne },
-    );
-    const saved = await saveVariants(latest.id, result.variants);
-    return json(saved);
+    try {
+      const result = await generateImprovements(
+        {
+          original,
+          originalScorecard: latest.scorecard,
+          styleRefs: calib.topAdNames,
+          count: mode === "image" ? 1 : undefined,
+        },
+        { generator, scoreOne },
+      );
+      const saved = await saveVariants(latest.id, result.variants);
+      return json(saved);
+    } catch (err) {
+      // A generator/API failure (e.g. Higgsfield rejecting a request) must land
+      // in the in-app banner, not the route error boundary (rule 12) — and a
+      // failed image generation must not burn the merchant's daily quota.
+      if (reservation?.ok) await releaseImageGen(reservation.eventId);
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ generateError: `Couldn't generate variants: ${message}` });
+    }
   }
 
   if (String(form.get("intent") ?? "") === "push") {
@@ -505,7 +528,8 @@ function OutcomePanel({ o }: { o: ScoreCard["outcomes"] }) {
 }
 
 export default function Screener() {
-  const { latest, history, metaAds, imageGenAvailable } = useLoaderData<typeof loader>();
+  const { latest, history, metaAds, metaConnected, metaAdsError, imageGenAvailable } =
+    useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   // The generate action may return a run DTO or a { generateError } — only treat
   // it as a run when it actually is one, so an error doesn't clobber the display.
@@ -687,19 +711,29 @@ export default function Screener() {
                             )
                           }
                         >
-                          {ad.name}
+                          {`${ad.name} · ${ad.effectiveStatus}`}
                         </Button>
                       ))}
                     </BlockStack>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Paused ads pulled from Meta — scoring uses their real creative and
-                      targeting, at the spend entered on the left.
+                      Pulled from your Meta account. Scoring is read-only and uses the
+                      ad&apos;s real creative and targeting, at the spend entered on the
+                      left.
                     </Text>
                   </>
+                ) : metaAdsError ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Couldn&apos;t load ads from Meta just now — reload the page to try
+                    again.
+                  </Text>
+                ) : metaConnected ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    No ads found in your Meta ad account right now — create one in Meta Ads
+                    Manager and it&apos;ll show up here.
+                  </Text>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Connect your Meta account to score a paused ad&apos;s real creative and
-                    targeting.
+                    Connect your Meta account in Settings to score your real ads here.
                   </Text>
                 )}
               </BlockStack>

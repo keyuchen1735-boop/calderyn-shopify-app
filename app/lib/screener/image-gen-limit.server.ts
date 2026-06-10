@@ -46,7 +46,7 @@ export function decideImageGenLimit(args: {
 }
 
 export type ReserveResult =
-  | { ok: true; remaining: number }
+  | { ok: true; remaining: number; eventId: string | null }
   | { ok: false; scope: "shop" | "global"; limit: number };
 
 const EVENT_TABLE = "image_gen_event";
@@ -81,6 +81,21 @@ export async function checkAndReserveImageGen(
   const decision = decideImageGenLimit({ shopCount, globalCount, perShopDaily, globalDaily });
   if (!decision.ok) return decision;
 
-  await sb.from(EVENT_TABLE).insert({ shop_id: shopId, day });
-  return { ok: true, remaining: Math.max(perShopDaily - shopCount - 1, 0) };
+  const inserted = await sb.from(EVENT_TABLE).insert({ shop_id: shopId, day }).select("id").single();
+  const eventId = ((inserted as { data?: { id?: string } | null }).data?.id as string) ?? null;
+  return { ok: true, remaining: Math.max(perShopDaily - shopCount - 1, 0), eventId };
+}
+
+/**
+ * Release a reservation made by checkAndReserveImageGen when the generation
+ * itself failed — a failed attempt must not burn the merchant's daily quota.
+ * Best-effort: a release failure must never mask the original error.
+ */
+export async function releaseImageGen(eventId: string | null): Promise<void> {
+  if (!eventId) return;
+  try {
+    await getSupabase().from(EVENT_TABLE).delete().eq("id", eventId);
+  } catch {
+    /* best-effort */
+  }
 }
