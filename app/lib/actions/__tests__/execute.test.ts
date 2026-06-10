@@ -14,7 +14,12 @@ const SHOP = "00000000-0000-0000-0000-000000000010";
 const CAMP = "11111111-1111-1111-1111-111111111111";
 
 // Fake supabase: campaign lookup, idempotency lookup, audit insert, idempotency insert.
-function fakeSb(opts: { idempotent?: { audit_id: string }; campaign?: Record<string, unknown> | null; priorOutcome?: string }) {
+function fakeSb(opts: {
+  idempotent?: { audit_id: string };
+  campaign?: Record<string, unknown> | null;
+  priorOutcome?: string;
+  idemInsertError?: { message: string };
+}) {
   const calls = { inserts: [] as Array<{ table: string; rows: unknown }> };
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
@@ -28,6 +33,12 @@ function fakeSb(opts: { idempotent?: { audit_id: string }; campaign?: Record<str
     });
     chain.single = vi.fn(async () => ({ data: { id: "aud1" }, error: null }));
     chain.insert = vi.fn((rows: unknown) => { calls.inserts.push({ table, rows }); return chain; });
+    // Bare-awaited inserts (no .single()) resolve here, e.g. action_idempotency.
+    chain.then = (resolve: (v: unknown) => unknown) =>
+      Promise.resolve({
+        data: null,
+        error: table === "action_idempotency" ? (opts.idemInsertError ?? null) : null,
+      }).then(resolve);
     return chain;
   }
   const sb = { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
@@ -68,6 +79,27 @@ describe("executeAction", () => {
       post_state: { status: "active", daily_budget_cents: 5000 },
     });
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
+  });
+
+  it("surfaces an idempotency insert failure without failing the executed action", async () => {
+    // The platform call already happened and the audit row exists; failing
+    // here would provoke the duplicate execution the key prevents. But the
+    // lost protection must be loud, not silent (rule 12).
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { sb } = fakeSb({ campaign, idemInsertError: { message: "constraint violation" } });
+
+    const result = await executeAction(
+      SHOP,
+      { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "k9" },
+      sb,
+    );
+
+    expect(result.outcome).toBe("succeeded");
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("idempotency"),
+      expect.anything(),
+    );
+    errSpy.mockRestore();
   });
 
   it("resume_campaign short-circuits on a used idempotency key (no adapter call)", async () => {

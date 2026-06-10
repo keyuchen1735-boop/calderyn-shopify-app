@@ -123,7 +123,15 @@ export async function executeAction(
   if (iErr) throw iErr;
   const auditId = String(ins.id);
 
-  await sb.from("action_idempotency").insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
+  const { error: idemErr } = await sb
+    .from("action_idempotency")
+    .insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
+  if (idemErr) {
+    // The platform call already happened and the audit row exists — failing
+    // now would provoke the duplicate execution the key prevents. Surface
+    // the lost dedup protection loudly instead (rule 12).
+    console.error(`[actions] idempotency insert failed for audit ${auditId} (key ${input.idempotencyKey})`, idemErr);
+  }
 
   return { id: auditId, outcome };
 }

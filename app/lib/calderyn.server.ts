@@ -382,13 +382,19 @@ export function calderynClient(shop: string) {
             .single();
           if (iErr) throw iErr;
 
-          await supabase
+          const { error: idemErr } = await supabase
             .from("action_idempotency")
             .insert({
               shop_id: shopId,
               idempotency_key: opts.idempotencyKey,
               audit_id: ins.id,
             });
+          if (idemErr) {
+            // The audit row exists — failing now would provoke the duplicate
+            // execution the key prevents. Surface the lost dedup protection
+            // loudly instead (rule 12).
+            console.error(`[actions] idempotency insert failed for audit ${ins.id} (key ${opts.idempotencyKey})`, idemErr);
+          }
 
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")
