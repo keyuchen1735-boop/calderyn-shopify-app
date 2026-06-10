@@ -265,6 +265,7 @@ export function adaptSku(s: SKU): SkuVM {
     velocity: s.velocity,
     locations: s.locations,
     status,
+    sources: s.sources ?? [],
   };
 }
 

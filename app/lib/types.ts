@@ -71,6 +71,15 @@ export interface Campaign {
   spend_7d: number;
 }
 
+/** Platforms that enrich a SKU beyond the Shopify catalog sync:
+ * cost data (quickbooks, vendor_invoice) and ad-creative mappings (google, meta, tiktok). */
+export type SkuSource =
+  | "quickbooks"
+  | "vendor_invoice"
+  | "google"
+  | "meta"
+  | "tiktok";
+
 export interface SKU {
   id: string;
   title: string;
@@ -78,6 +87,7 @@ export interface SKU {
   days_of_cover: number;
   velocity: number;
   locations: Record<string, number>;
+  sources: SkuSource[];
 }
 
 export interface Integration {

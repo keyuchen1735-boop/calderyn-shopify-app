@@ -137,10 +137,11 @@
   color: var(--p-color-text-secondary, #616a75);
   white-space: nowrap;
 }
-.cdn-source-pill__glyph {
-  display: block;
-  flex: 0 0 auto;
-  color: #5e8e3e; /* Shopify brand green (dark variant for contrast) */
+.cdn-srcicons {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: help;
 }
 
 /* ── SKU location inline list ─────────────────────────────── */
@@ -170,7 +171,8 @@
     minmax(96px, 116px)     /* Days of cover */
     minmax(96px, 120px)     /* Velocity */
     minmax(140px, 1fr)      /* Locations */
-    minmax(72px, 80px);     /* Alerts */
+    minmax(86px, 110px)     /* Sources */
+    minmax(64px, 76px);     /* Alerts */
   width: 100%;
   font-size: 13px;
   line-height: 1.4;
@@ -269,7 +271,8 @@
       minmax(80px, 100px)
       minmax(84px, 100px)
       minmax(120px, 0.9fr)
-      minmax(56px, 64px);
+      minmax(76px, 92px)
+      minmax(52px, 60px);
     font-size: 12.5px;
   }
   .cdn-skutable__cell { padding: 10px 10px; }
