@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
@@ -8,14 +8,15 @@ import {
   Banner,
   Box,
   Card,
-  DataTable,
-  InlineStack,
   Page,
   Text,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import type { Alert, SKU } from "~/lib/types";
+
+type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
+type SortDir = "asc" | "desc";
 
 type LoaderPayload = {
   skus: SKU[];
@@ -46,55 +47,35 @@ export default function SKUs() {
   const navigate = useEmbeddedNavigate();
   const { skus, alerts, error } = useLoaderData<typeof loader>();
 
-  // Sortable numeric columns (index → value). Default: days of cover, ascending
-  // (most-at-risk first).
-  const SORT_KEYS: Record<number, (s: SKU) => number> = {
-    2: (s) => s.on_hand,
-    3: (s) => s.days_of_cover,
-    4: (s) => s.velocity,
+  const [sortKey, setSortKey] = useState<SortKey>("days_of_cover");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const alertsBySku = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of alerts) {
+      if (!a.sku) continue;
+      map.set(a.sku, (map.get(a.sku) ?? 0) + 1);
+    }
+    return map;
+  }, [alerts]);
+
+  const sorted = useMemo(() => {
+    const compare = (a: SKU, b: SKU) => {
+      if (sortKey === "title") return a.title.localeCompare(b.title);
+      return (a[sortKey] ?? 0) - (b[sortKey] ?? 0);
+    };
+    const arr = [...skus].sort(compare);
+    return sortDir === "asc" ? arr : arr.reverse();
+  }, [skus, sortKey, sortDir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "title" ? "asc" : "asc");
+    }
   };
-  const [sortIndex, setSortIndex] = useState(3);
-  const [sortDir, setSortDir] = useState<"ascending" | "descending">("ascending");
-
-  const sorted = [...skus].sort((a, b) => {
-    const key = SORT_KEYS[sortIndex] ?? ((s: SKU) => s.days_of_cover);
-    return sortDir === "ascending" ? key(a) - key(b) : key(b) - key(a);
-  });
-
-  const rows = sorted.map((s) => {
-    const linked = alerts.filter((a) => a.sku === s.id);
-    return [
-      <Text key={`id-${s.id}`} as="span" fontWeight="semibold">
-        {s.id}
-      </Text>,
-      s.title,
-      <Text
-        key={`oh-${s.id}`}
-        as="span"
-        fontWeight="semibold"
-        tone={s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined}
-      >
-        {(s.on_hand ?? 0).toLocaleString()}
-      </Text>,
-      <Text
-        key={`dc-${s.id}`}
-        as="span"
-        tone={s.days_of_cover < 2 ? "critical" : undefined}
-        fontWeight={s.days_of_cover < 2 ? "semibold" : undefined}
-      >
-        {(s.days_of_cover ?? 0).toFixed(1)}
-      </Text>,
-      `${s.velocity ?? 0}/day`,
-      <LocationBar key={`loc-${s.id}`} locations={s.locations ?? {}} />,
-      linked.length ? (
-        <Badge key={`al-${s.id}`} tone="warning">
-          {String(linked.length)}
-        </Badge>
-      ) : (
-        "—"
-      ),
-    ];
-  });
 
   return (
     <Page
@@ -112,57 +93,175 @@ export default function SKUs() {
         </Box>
       )}
       <Card padding="0">
-        <DataTable
-          columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "text", "text"]}
-          headings={["SKU", "Title", "On hand", "Days of cover", "Velocity", "Locations", "Alerts"]}
-          rows={rows}
-          sortable={[false, false, true, true, true, false, false]}
-          defaultSortDirection="ascending"
-          initialSortColumnIndex={3}
-          onSort={(index, direction) => {
-            setSortIndex(index);
-            setSortDir(direction === "ascending" ? "ascending" : "descending");
-          }}
-        />
+        <div className="cdn-skutable" role="table" aria-label="SKUs">
+          <div className="cdn-skutable__head" role="row">
+            <div role="columnheader" className="cdn-skutable__cell">SKU</div>
+            <SortHeader
+              label="Title"
+              active={sortKey === "title"}
+              dir={sortDir}
+              onClick={() => toggleSort("title")}
+            />
+            <SortHeader
+              label="On hand"
+              align="end"
+              active={sortKey === "on_hand"}
+              dir={sortDir}
+              onClick={() => toggleSort("on_hand")}
+            />
+            <SortHeader
+              label="Days of cover"
+              align="end"
+              active={sortKey === "days_of_cover"}
+              dir={sortDir}
+              onClick={() => toggleSort("days_of_cover")}
+            />
+            <SortHeader
+              label="Velocity"
+              align="end"
+              active={sortKey === "velocity"}
+              dir={sortDir}
+              onClick={() => toggleSort("velocity")}
+            />
+            <div role="columnheader" className="cdn-skutable__cell">Locations</div>
+            <div role="columnheader" className="cdn-skutable__cell cdn-skutable__cell--center">Alerts</div>
+          </div>
+          {sorted.map((s) => {
+            const alertCount = alertsBySku.get(s.id) ?? 0;
+            const onHandTone =
+              s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined;
+            const cover = s.days_of_cover ?? 0;
+            const coverTone = cover < 2 ? "critical" : cover < 7 ? "caution" : undefined;
+            return (
+              <div key={s.id} className="cdn-skutable__row" role="row">
+                <div className="cdn-skutable__cell" role="cell">
+                  <SkuId id={s.id} />
+                </div>
+                <div className="cdn-skutable__cell cdn-skutable__cell--truncate" role="cell" title={s.title}>
+                  <Text as="span" fontWeight="medium">
+                    {s.title}
+                  </Text>
+                </div>
+                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
+                  <Text as="span" fontWeight="semibold" tone={onHandTone}>
+                    <span className="cdn-tnum">{(s.on_hand ?? 0).toLocaleString()}</span>
+                  </Text>
+                </div>
+                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
+                  <Text as="span" fontWeight={coverTone ? "semibold" : undefined} tone={coverTone}>
+                    <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                  </Text>
+                  <Text as="span" tone="subdued"> d</Text>
+                </div>
+                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
+                  <Text as="span">
+                    <span className="cdn-tnum">{(s.velocity ?? 0).toFixed(1)}</span>
+                  </Text>
+                  <Text as="span" tone="subdued"> /day</Text>
+                </div>
+                <div className="cdn-skutable__cell" role="cell">
+                  <LocationCell locations={s.locations ?? {}} />
+                </div>
+                <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
+                  {alertCount ? (
+                    <Badge tone="warning">{String(alertCount)}</Badge>
+                  ) : (
+                    <Text as="span" tone="subdued">—</Text>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {sorted.length === 0 && !error && (
+            <div className="cdn-skutable__empty">
+              <Text as="p" tone="subdued">No SKUs yet. They appear here as soon as Shopify syncs your catalog.</Text>
+            </div>
+          )}
+        </div>
       </Card>
     </Page>
   );
 }
 
-/**
- * A compact inventory-by-location bar. Renders whatever locations exist on the
- * SKU — never hardcodes a fixed CA/NJ/TX column set. Zero-stock segments show
- * in a faded critical tone so empty warehouses are obvious at a glance.
- */
-function LocationBar({ locations }: { locations: Record<string, number> }) {
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+  align = "start",
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+  align?: "start" | "end";
+}) {
+  const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
+  return (
+    <button
+      type="button"
+      role="columnheader"
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+      className={`cdn-skutable__cell cdn-skutable__sort ${
+        align === "end" ? "cdn-skutable__cell--num" : ""
+      } ${active ? "cdn-skutable__sort--active" : ""}`}
+      onClick={onClick}
+    >
+      <span>{label}</span>
+      <span aria-hidden="true" className="cdn-skutable__sort-arrow">{arrow}</span>
+    </button>
+  );
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function SkuId({ id }: { id: string }) {
+  const isUuid = UUID_RE.test(id);
+  const display = isUuid ? id.slice(-6).toUpperCase() : id;
+  return (
+    <code className="cdn-skuid" title={id}>
+      {display}
+    </code>
+  );
+}
+
+function LocationCell({ locations }: { locations: Record<string, number> }) {
   const entries = Object.entries(locations);
-  const total = entries.reduce((sum, [, v]) => sum + v, 0) || 1;
-  const palette = ["var(--cdn-info)", "var(--cdn-success)", "var(--cdn-warning)"];
   if (entries.length === 0) {
     return (
-      <Text as="span" variant="bodyXs" tone="subdued">
+      <Text as="span" tone="subdued" variant="bodySm">
         No locations
       </Text>
     );
   }
+  const total = entries.reduce((sum, [, v]) => sum + v, 0);
+  const denom = total || 1;
+  const palette = ["var(--cdn-info)", "var(--cdn-success)", "var(--cdn-warning)"];
+  const summary = entries.length === 1
+    ? `${shortLoc(entries[0][0])} ${entries[0][1]}`
+    : `${entries.length} locs · ${total.toLocaleString()}`;
+  const fullLabel = entries.map(([l, v]) => `${l}: ${v}`).join("\n");
   return (
-    <InlineStack gap="200" blockAlign="center" wrap={false}>
-      <span className="cdn-locbar">
+    <div className="cdn-loccell" title={fullLabel}>
+      <span className="cdn-locbar" aria-hidden="true">
         {entries.map(([loc, v], i) => (
           <span
             key={loc}
             className="cdn-locbar-seg"
-            title={`${loc}: ${v}`}
             style={{
-              width: `${(v / total) * 100}%`,
+              width: `${(v / denom) * 100}%`,
               background: v === 0 ? "rgba(215,44,13,0.3)" : palette[i % palette.length],
             }}
           />
         ))}
       </span>
-      <Text as="span" variant="bodyXs" tone="subdued">
-        <span className="cdn-tnum">{entries.map(([l, v]) => `${l} ${v}`).join(" · ")}</span>
-      </Text>
-    </InlineStack>
+      <span className="cdn-loccell__label cdn-tnum">{summary}</span>
+    </div>
   );
+}
+
+function shortLoc(name: string): string {
+  const afterDash = name.split(/[—–-]/).pop() ?? name;
+  const city = afterDash.split(",")[0]?.trim() || name;
+  return city.length > 12 ? city.slice(0, 11) + "…" : city;
 }
