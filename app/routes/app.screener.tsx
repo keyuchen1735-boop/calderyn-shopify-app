@@ -25,6 +25,7 @@ import {
   Modal,
   Page,
   ProgressBar,
+  Tabs,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -274,6 +275,32 @@ export default function Screener() {
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
   );
   const [genMode, setGenMode] = useState<"copy" | "image">("copy");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const hasMetaAds = metaAds.length > 0;
+  const [sourceTab, setSourceTab] = useState(0);
+  const tabs = hasMetaAds
+    ? [
+        {
+          id: "draft",
+          content: "Score a draft",
+          accessibilityLabel: "Score an ad you're drafting",
+          panelID: "screener-draft-panel",
+        },
+        {
+          id: "meta",
+          content: "Score a paused Meta ad",
+          accessibilityLabel: "Score a paused ad from your Meta account",
+          panelID: "screener-meta-panel",
+        },
+      ]
+    : [
+        {
+          id: "draft",
+          content: "Score a draft",
+          accessibilityLabel: "Score an ad you're drafting",
+          panelID: "screener-draft-panel",
+        },
+      ];
   useEffect(() => {
     const d = fetcher.data as CreativeScreenRun | undefined;
     if (d?.assumedSpendCents)
@@ -283,101 +310,140 @@ export default function Screener() {
   return (
     <Page
       title="Ad Pre-Screen"
-      subtitle="Score an ad's potential before it goes live — a test screening before you hit publish"
+      subtitle="Score an ad before you spend money on it — paste in a draft, get a 0–100 grade and the exact fixes."
     >
       <BlockStack gap="500">
-        {metaAds.length > 0 && (
+        {!card && (
           <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingSm">Screen a paused ad from Meta</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Pulls the real creative + targeting from your connected Meta account.
-              </Text>
-              <BlockStack gap="200">
-                {metaAds.map((ad) => (
-                  <InlineStack key={ad.id} align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text as="span" variant="bodyMd">{ad.name}</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">{ad.effectiveStatus}</Text>
-                    </BlockStack>
-                    <fetcher.Form method="post">
-                      <input type="hidden" name="source" value="meta_ad" />
-                      <input type="hidden" name="metaAdId" value={ad.id} />
-                      <input type="hidden" name="assumedSpendCents" value={Math.round(Number(spend || 0) * 100)} />
-                      <Button submit loading={running} disabled={running}>Screen this ad</Button>
-                    </fetcher.Form>
-                  </InlineStack>
-                ))}
-              </BlockStack>
+            <BlockStack gap="200">
+              <Text as="h2" variant="headingSm">How this works</Text>
+              <Box paddingInlineStart="200">
+                <ol style={{ margin: 0, paddingInlineStart: 18 }}>
+                  <li>
+                    <Text as="span" variant="bodySm">
+                      Drop in your ad's headline, body copy, and (optionally) an image link.
+                    </Text>
+                  </li>
+                  <li>
+                    <Text as="span" variant="bodySm">
+                      Calderyn scores it 0–100 against your top-performing ads.
+                    </Text>
+                  </li>
+                  <li>
+                    <Text as="span" variant="bodySm">
+                      You get a verdict, the top fixes, and (optionally) better versions to try.
+                    </Text>
+                  </li>
+                </ol>
+              </Box>
             </BlockStack>
           </Card>
         )}
-        <Card>
-          <fetcher.Form method="post">
-            <FormLayout>
-              <TextField label="Headline" name="headline" autoComplete="off" />
-              <TextField
-                label="Primary text"
-                name="primaryText"
-                multiline={3}
-                autoComplete="off"
-              />
-              <FormLayout.Group>
-                <TextField
-                  label="Call to action"
-                  name="cta"
-                  autoComplete="off"
-                  placeholder="SHOP_NOW"
-                />
-                <TextField
-                  label="Destination URL"
-                  name="destinationUrl"
-                  autoComplete="off"
-                  placeholder="https://…?utm_content=SKU"
-                />
-              </FormLayout.Group>
-              <TextField
-                label="Target audience"
-                name="audience"
-                autoComplete="off"
-                placeholder="Women 25-44 interested in skincare"
-              />
-              <TextField
-                label="Image URL (optional)"
-                name="imageUrl"
-                autoComplete="off"
-                placeholder="https://…/creative.jpg"
-              />
-              <TextField
-                label="Assumed spend (USD)"
-                type="number"
-                autoComplete="off"
-                value={spend}
-                onChange={setSpend}
-                helpText="Drives the ROAS estimate. Edit and re-screen to see the impact."
-              />
-              <input
-                type="hidden"
-                name="assumedSpendCents"
-                value={Math.round(Number(spend || 0) * 100)}
-              />
-              <Button submit variant="primary" loading={running} disabled={running}>
-                Screen this ad
-              </Button>
-            </FormLayout>
-          </fetcher.Form>
+
+        <Card padding="0">
+          <Tabs tabs={tabs} selected={sourceTab} onSelect={setSourceTab} />
+          <Box padding="400">
+            {sourceTab === 0 || !hasMetaAds ? (
+              <fetcher.Form method="post">
+                <FormLayout>
+                  <TextField
+                    label="Headline"
+                    name="headline"
+                    autoComplete="off"
+                    helpText="The bold one-liner that grabs attention at the top of the ad."
+                  />
+                  <TextField
+                    label="Body text"
+                    name="primaryText"
+                    multiline={3}
+                    autoComplete="off"
+                    helpText="The longer copy that sits below the headline."
+                  />
+                  <FormLayout.Group>
+                    <TextField
+                      label="Button text"
+                      name="cta"
+                      autoComplete="off"
+                      placeholder="Shop now"
+                      helpText="What the click button says."
+                    />
+                    <TextField
+                      label="Where the click goes"
+                      name="destinationUrl"
+                      autoComplete="off"
+                      placeholder="https://yourstore.com/products/..."
+                      helpText="The product or landing page URL."
+                    />
+                  </FormLayout.Group>
+                  <TextField
+                    label="Who's it targeting?"
+                    name="audience"
+                    autoComplete="off"
+                    placeholder="Women 25–44 interested in skincare"
+                    helpText="One-line description of the audience."
+                  />
+                  <TextField
+                    label="Image link (optional)"
+                    name="imageUrl"
+                    autoComplete="off"
+                    placeholder="https://…/creative.jpg"
+                    helpText="Paste the link to your ad creative — we'll score the visual too."
+                  />
+                  <TextField
+                    label="How much would you spend on this ad? (USD)"
+                    type="number"
+                    autoComplete="off"
+                    value={spend}
+                    onChange={setSpend}
+                    helpText="Drives the ROAS estimate. Edit and re-screen to see the impact."
+                  />
+                  <input
+                    type="hidden"
+                    name="assumedSpendCents"
+                    value={Math.round(Number(spend || 0) * 100)}
+                  />
+                  <Button submit variant="primary" loading={running} disabled={running}>
+                    Score this ad
+                  </Button>
+                </FormLayout>
+              </fetcher.Form>
+            ) : (
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued" variant="bodySm">
+                  These are the paused ads in your connected Meta account. Pick one to
+                  score its real creative and targeting.
+                </Text>
+                <BlockStack gap="200">
+                  {metaAds.map((ad) => (
+                    <InlineStack key={ad.id} align="space-between" blockAlign="center">
+                      <BlockStack gap="100">
+                        <Text as="span" variant="bodyMd">{ad.name}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">{ad.effectiveStatus}</Text>
+                      </BlockStack>
+                      <fetcher.Form method="post">
+                        <input type="hidden" name="source" value="meta_ad" />
+                        <input type="hidden" name="metaAdId" value={ad.id} />
+                        <input type="hidden" name="assumedSpendCents" value={Math.round(Number(spend || 0) * 100)} />
+                        <Button submit loading={running} disabled={running}>Score this ad</Button>
+                      </fetcher.Form>
+                    </InlineStack>
+                  ))}
+                </BlockStack>
+              </BlockStack>
+            )}
+          </Box>
         </Card>
 
         {running && !card && (
           <Card>
             <Text as="p" tone="subdued">
-              Scoring this creative… ~20–30 seconds.
+              Scoring your ad… this usually takes 20–30 seconds.
             </Text>
           </Card>
         )}
 
         {run?.status === "error" && (
-          <Banner tone="critical" title="Screening failed">
+          <Banner tone="critical" title="Couldn't score this ad">
             <p>{run.error}</p>
           </Banner>
         )}
@@ -386,28 +452,33 @@ export default function Screener() {
           <>
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <InlineStack gap="300" blockAlign="center">
-                    <Text as="span" variant="heading2xl">
-                      {card.composite}
-                    </Text>
-                    <BlockStack gap="100">
+                <InlineStack gap="400" blockAlign="center" wrap={false}>
+                  <BlockStack gap="050">
+                    <InlineStack gap="200" blockAlign="baseline">
+                      <Text as="span" variant="heading2xl">
+                        {card.composite}
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        out of 100
+                      </Text>
+                    </InlineStack>
+                    <InlineStack gap="200" blockAlign="center">
                       <Badge tone={gradeTone[card.grade]}>{card.grade}</Badge>
                       <Text as="span" variant="bodySm" tone="subdued">
                         Confidence: {card.confidence}
-                        {card.confidence === "low" ? " — not SKU-calibrated" : ""}
+                        {card.confidence === "low" ? " — limited history" : ""}
                       </Text>
-                    </BlockStack>
-                  </InlineStack>
+                    </InlineStack>
+                  </BlockStack>
                 </InlineStack>
-                <Text as="p" tone="subdued">
+                <Text as="p">
                   {card.summary}
                 </Text>
                 {card.confidence === "low" && (
                   <Banner tone="warning" title="Low-confidence estimate">
                     <p>
-                      This creative isn't mapped to a SKU with enough history, so outcomes use
-                      category/account fallbacks. Treat the numbers as directional.
+                      We don't have enough sales history for this product yet, so the numbers below use
+                      category averages. Treat them as a directional read, not a forecast.
                     </p>
                   </Banner>
                 )}
@@ -416,9 +487,14 @@ export default function Screener() {
 
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  Predicted outcomes
-                </Text>
+                <BlockStack gap="050">
+                  <Text as="h2" variant="headingSm">
+                    What this ad would likely do
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Based on the score, your spend assumption, and how your past ads performed.
+                  </Text>
+                </BlockStack>
                 <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
                   <Box>
                     <Text as="span" variant="bodySm" tone="subdued">
@@ -434,18 +510,24 @@ export default function Screener() {
                   </Box>
                   <Box>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      Predicted CTR
+                      Click-through rate
                     </Text>
                     <Text as="p" variant="headingLg">
                       {pct(card.outcomes.predictedCtr)}
                     </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      share of viewers who'll click
+                    </Text>
                   </Box>
                   <Box>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      Hold / engagement
+                      Viewer hold
                     </Text>
                     <Text as="p" variant="headingLg">
                       {pct(card.outcomes.holdRate)}
+                    </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      share who watch past 3 seconds
                     </Text>
                   </Box>
                 </InlineGrid>
@@ -461,34 +543,14 @@ export default function Screener() {
               </BlockStack>
             </Card>
 
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingSm">
-                  Creative breakdown
-                </Text>
-                {METRIC_GROUPS.map((g: MetricGroup) => {
-                  const rows = card.metrics.filter((m) => m.group === g);
-                  if (rows.length === 0) return null;
-                  return (
-                    <BlockStack key={g} gap="200">
-                      <Text as="h3" variant="headingXs">
-                        {METRIC_GROUP_LABELS[g]}
-                      </Text>
-                      {rows.map((m) => (
-                        <MetricRow key={m.id} m={m} />
-                      ))}
-                      <Divider />
-                    </BlockStack>
-                  );
-                })}
-              </BlockStack>
-            </Card>
-
             {card.tips.length > 0 && (
               <Card>
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingSm">
-                    How to make it better
+                    Top fixes
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    The highest-impact changes you can make before going live.
                   </Text>
                   <ol style={{ margin: 0, paddingInlineStart: 18 }}>
                     {card.tips.map((t, i) => (
@@ -504,23 +566,80 @@ export default function Screener() {
             )}
 
             <Card>
+              <BlockStack gap="200">
+                <button
+                  type="button"
+                  onClick={() => setDetailsOpen((o) => !o)}
+                  aria-expanded={detailsOpen}
+                  aria-controls="screener-breakdown"
+                  style={{
+                    all: "unset",
+                    cursor: "pointer",
+                    display: "block",
+                    width: "100%",
+                  }}
+                >
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="050">
+                      <Text as="h2" variant="headingSm">
+                        See the details
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        Per-metric scores across hook, message, design, and offer.
+                      </Text>
+                    </BlockStack>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {detailsOpen ? "Hide ▴" : "Show ▾"}
+                    </Text>
+                  </InlineStack>
+                </button>
+                <Collapsible open={detailsOpen} id="screener-breakdown">
+                  <Box paddingBlockStart="300">
+                    <BlockStack gap="400">
+                      {METRIC_GROUPS.map((g: MetricGroup) => {
+                        const rows = card.metrics.filter((m) => m.group === g);
+                        if (rows.length === 0) return null;
+                        return (
+                          <BlockStack key={g} gap="200">
+                            <Text as="h3" variant="headingXs">
+                              {METRIC_GROUP_LABELS[g]}
+                            </Text>
+                            {rows.map((m) => (
+                              <MetricRow key={m.id} m={m} />
+                            ))}
+                            <Divider />
+                          </BlockStack>
+                        );
+                      })}
+                    </BlockStack>
+                  </Box>
+                </Collapsible>
+              </BlockStack>
+            </Card>
+
+            <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingSm">Improved variations</Text>
+                  <BlockStack gap="050">
+                    <Text as="h2" variant="headingSm">Try better versions</Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Calderyn rewrites your ad targeting its weak spots, scores each rewrite, and only shows ones that beat the original.
+                    </Text>
+                  </BlockStack>
                   <fetcher.Form method="post">
                     <input type="hidden" name="intent" value="generate" />
                     <input type="hidden" name="mode" value={genMode} />
                     <InlineStack gap="200" blockAlign="center">
                       <ButtonGroup variant="segmented">
                         <Button pressed={genMode === "copy"} onClick={() => setGenMode("copy")}>
-                          Copy
+                          Rewrite copy
                         </Button>
                         <Button
                           pressed={genMode === "image"}
                           disabled={!imageGenAvailable}
                           onClick={() => setGenMode("image")}
                         >
-                          Image
+                          New image
                         </Button>
                       </ButtonGroup>
                       <Button submit variant="primary" loading={running} disabled={running}>
@@ -541,26 +660,26 @@ export default function Screener() {
                 )}
                 {!imageGenAvailable && (
                   <Text as="p" tone="subdued" variant="bodySm">
-                    Image generation isn&apos;t connected — set HIGGSFIELD_API_KEY and HIGGSFIELD_API_SECRET to enable it.
+                    Image generation isn&apos;t connected yet. Copy rewrites still work.
                   </Text>
                 )}
                 {(run?.variants ?? []).length === 0 ? (
                   <Text as="p" tone="subdued" variant="bodySm">
-                    Generate variations conditioned on this ad&apos;s weak spots. Only variants that out-score the original are shown.
+                    No rewrites yet — click Generate above to try a few.
                   </Text>
                 ) : (
                   (run?.variants ?? []).map((v: Variant, i: number) => (
                     <Box key={i} padding="300" borderColor="border" borderBlockStartWidth="025">
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="span" variant="bodyMd" fontWeight="semibold">{v.input.headline}</Text>
-                        <Badge tone="success">{`${v.composite} (+${v.delta})`}</Badge>
+                        <Badge tone="success">{`${v.composite} (+${v.delta} vs original)`}</Badge>
                       </InlineStack>
                       <Text as="p" variant="bodySm">{v.input.primaryText}</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">CTA: {v.input.cta} · {v.rationale}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">Button: {v.input.cta} · {v.rationale}</Text>
                       {run?.source === "meta_ad" && (
                         <Box paddingBlockStart="200">
                           <Button onClick={() => setPushTarget(i)} disabled={pushing}>
-                            Push to Meta (paused)
+                            Save to Meta as paused ad
                           </Button>
                         </Box>
                       )}
@@ -599,17 +718,9 @@ export default function Screener() {
           </>
         )}
 
-        {!run && !running && (
-          <Card>
-            <Text as="p" tone="subdued">
-              No screens yet. Enter an ad above and screen it before you spend.
-            </Text>
-          </Card>
-        )}
-
         {history.length > 0 && (
           <Text as="p" tone="subdued" variant="bodySm">
-            {history.length} previous screen(s) on record.
+            {history.length} previously scored ad{history.length === 1 ? "" : "s"} on record.
           </Text>
         )}
       </BlockStack>

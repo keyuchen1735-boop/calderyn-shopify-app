@@ -122,18 +122,17 @@
   height: 40px;
 }
 
-/* ── SKU location mix bar ───────────────────────────────────── */
-.cdn-locbar {
-  display: flex;
-  height: 6px;
-  width: 72px;
-  border-radius: 9999px;
-  overflow: hidden;
-  background: var(--cdn-divider);
-  flex: 0 0 auto;
+/* ── SKU location inline list ─────────────────────────────── */
+.cdn-loccell-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+  cursor: help;
 }
-.cdn-locbar-seg {
-  height: 100%;
+.cdn-loccell-item {
+  white-space: nowrap;
 }
 
 /* ── SKU table (grid-based, replaces Polaris DataTable here) ──
@@ -240,22 +239,6 @@
   border-radius: 4px;
   cursor: help;
 }
-.cdn-loccell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  width: 100%;
-}
-.cdn-loccell__label {
-  font-size: 12px;
-  color: var(--cdn-subdued);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
 @media (max-width: 900px) {
   .cdn-skutable {
     grid-template-columns:

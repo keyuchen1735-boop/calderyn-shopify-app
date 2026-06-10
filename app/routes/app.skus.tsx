@@ -234,29 +234,40 @@ function LocationCell({ locations }: { locations: Record<string, number> }) {
       </Text>
     );
   }
-  const total = entries.reduce((sum, [, v]) => sum + v, 0);
-  const denom = total || 1;
-  const palette = ["var(--cdn-info)", "var(--cdn-success)", "var(--cdn-warning)"];
-  const summary = entries.length === 1
-    ? `${shortLoc(entries[0][0])} ${entries[0][1]}`
-    : `${entries.length} locs · ${total.toLocaleString()}`;
-  const fullLabel = entries.map(([l, v]) => `${l}: ${v}`).join("\n");
+  // Show the top 3 locations by stock (most useful info first), with "+N more"
+  // when there are extras. Tooltip lists every location with its exact count.
+  const sorted = [...entries].sort(([, a], [, b]) => b - a);
+  const visible = sorted.slice(0, 3);
+  const hidden = sorted.length - visible.length;
+  const fullLabel = sorted.map(([l, v]) => `${l}: ${v.toLocaleString()}`).join("\n");
   return (
-    <div className="cdn-loccell" title={fullLabel}>
-      <span className="cdn-locbar" aria-hidden="true">
-        {entries.map(([loc, v], i) => (
-          <span
-            key={loc}
-            className="cdn-locbar-seg"
-            style={{
-              width: `${(v / denom) * 100}%`,
-              background: v === 0 ? "rgba(215,44,13,0.3)" : palette[i % palette.length],
-            }}
-          />
-        ))}
-      </span>
-      <span className="cdn-loccell__label cdn-tnum">{summary}</span>
-    </div>
+    <span className="cdn-loccell-inline" title={fullLabel}>
+      {visible.map(([loc, qty], i) => (
+        <span key={loc} className="cdn-loccell-item">
+          <Text as="span" variant="bodySm" tone="subdued">
+            {shortLoc(loc)}{" "}
+          </Text>
+          <Text
+            as="span"
+            variant="bodySm"
+            tone={qty === 0 ? "critical" : undefined}
+            fontWeight={qty === 0 ? "semibold" : undefined}
+          >
+            <span className="cdn-tnum">{qty.toLocaleString()}</span>
+          </Text>
+          {i < visible.length - 1 || hidden > 0 ? (
+            <Text as="span" variant="bodySm" tone="subdued">
+              {" · "}
+            </Text>
+          ) : null}
+        </span>
+      ))}
+      {hidden > 0 && (
+        <Text as="span" variant="bodySm" tone="subdued">
+          +{hidden} more
+        </Text>
+      )}
+    </span>
   );
 }
 
