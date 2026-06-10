@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { CalderynError } from "../../calderyn.server";
+import { loader as campaignsLoader } from "../../../routes/dashboard.api.campaigns._index";
+import { loader as campaignLoader } from "../../../routes/dashboard.api.campaigns.$id";
+
 const requireDashboardSession = vi.fn();
 const campaignsList = vi.fn();
 const campaignsGet = vi.fn();
@@ -20,10 +24,6 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     }),
   };
 });
-
-import { CalderynError } from "../../calderyn.server";
-import { loader as campaignsLoader } from "../../../routes/dashboard.api.campaigns._index";
-import { loader as campaignLoader } from "../../../routes/dashboard.api.campaigns.$id";
 
 beforeEach(() => {
   vi.clearAllMocks();

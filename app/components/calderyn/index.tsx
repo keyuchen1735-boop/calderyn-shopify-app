@@ -26,7 +26,12 @@ import {
 } from "@shopify/polaris";
 import type { Alert, DetectorId, Severity } from "~/lib/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
-import { DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
+import {
+  DETECTOR_LABELS,
+  DETECTOR_TERMS,
+  EVIDENCE_FORMATTERS,
+  EVIDENCE_LABELS,
+} from "~/lib/labels";
 import { CountUp } from "./count-up";
 
 export { CountUp } from "./count-up";
@@ -296,7 +301,7 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
               <Icon name="spark" size={16} fill />
             </span>
             <Text as="h2" variant="headingSm">
-              Calderyn Analysis
+              The take
             </Text>
           </InlineStack>
           {rank !== undefined && <Badge tone="info">{`Rank #${rank}`}</Badge>}
@@ -312,6 +317,7 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
 /* ───────────────────────────── EvidencePanel ───────────────────────────── */
 
 function prettyKey(k: string) {
+  if (EVIDENCE_LABELS[k]) return EVIDENCE_LABELS[k];
   const s = k.replace(/_/g, " ");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -345,7 +351,9 @@ function Sparkline({ values, tone = "info" }: { values: number[]; tone?: "info" 
   );
 }
 
-function evidenceValueToString(v: unknown): string {
+function evidenceValueToString(key: string, v: unknown): string {
+  const formatter = EVIDENCE_FORMATTERS[key];
+  if (formatter) return formatter(v);
   if (v === null || v === undefined) return "—";
   if (typeof v === "number") return v.toLocaleString("en-US");
   if (typeof v === "boolean") return v ? "Yes" : "No";
@@ -353,8 +361,16 @@ function evidenceValueToString(v: unknown): string {
   return JSON.stringify(v);
 }
 
-export function EvidencePanel({ evidence }: { evidence: Record<string, unknown> }) {
-  const entries = Object.entries(evidence ?? {});
+export function EvidencePanel({
+  evidence,
+  hideKeys = [],
+}: {
+  evidence: Record<string, unknown>;
+  /** Evidence keys to suppress (e.g. ones already shown in the page header). */
+  hideKeys?: string[];
+}) {
+  const skipSet = new Set(hideKeys);
+  const entries = Object.entries(evidence ?? {}).filter(([k]) => !skipSet.has(k));
   if (entries.length === 0) {
     return (
       <Text as="p" variant="bodySm" tone="subdued">
@@ -385,7 +401,7 @@ export function EvidencePanel({ evidence }: { evidence: Record<string, unknown> 
                   {prettyKey(k)}
                 </Text>
                 <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  <span className="cdn-tnum">{evidenceValueToString(v)}</span>
+                  <span className="cdn-tnum">{evidenceValueToString(k, v)}</span>
                 </Text>
               </BlockStack>
             </Box>

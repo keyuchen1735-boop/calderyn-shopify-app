@@ -37,6 +37,9 @@ export async function adminAlertDeepLink(requestUrl: string): Promise<string | n
       .from("shops")
       .select("shop_domain")
       .eq("id", alert.shop_id)
+      // Uninstalled shops keep their row for a grace window; their admin app
+      // URL is dead, so fall back to the stock login (which offers reinstall).
+      .is("uninstalled_at", null)
       .maybeSingle();
     if (sErr || !shop?.shop_domain) return null;
 

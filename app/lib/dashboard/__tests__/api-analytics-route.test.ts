@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { loader as analyticsLoader } from "../../../routes/dashboard.api.analytics";
+
 const requireDashboardSession = vi.fn();
 const dailyRoasSeries = vi.fn();
 const campaignGrades = vi.fn();
@@ -22,8 +24,6 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     }),
   };
 });
-
-import { loader as analyticsLoader } from "../../../routes/dashboard.api.analytics";
 
 beforeEach(() => {
   vi.clearAllMocks();

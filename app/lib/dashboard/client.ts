@@ -232,6 +232,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     // The screen formats the timestamp; pass the raw ISO string through.
     when: e.created_at,
     undo_eligible: e.undo_eligible,
+    undo_of: e.undo_of ?? null,
     pre: summarizeState(e.pre_state),
     post: summarizeState(e.post_state),
     failure: e.failure_reason,

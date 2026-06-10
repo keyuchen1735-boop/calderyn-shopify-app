@@ -10,6 +10,7 @@ import {
 } from "react";
 import { money, moneyK, SEV_STYLE } from "./format";
 import { CDIcon } from "./icons";
+import { PlatformIcon } from "../PlatformIcon";
 import type { DailyRow, Severity, Grade, Platform, Toast } from "./view-models";
 
 /* ---------- CountUp: animated number ticker ---------- */
@@ -170,10 +171,9 @@ export function GradePill({ grade }: { grade: Grade | string }) {
 }
 
 export function PlatformMark({ platform }: { platform: Platform | string }) {
-  const map: Record<string, string> = { Meta: "M", Google: "G", TikTok: "T" };
   return (
     <span className="cd-platform" title={platform} data-platform={platform}>
-      {map[platform] || "?"}
+      <PlatformIcon platform={platform} size={16} title={platform} />
     </span>
   );
 }

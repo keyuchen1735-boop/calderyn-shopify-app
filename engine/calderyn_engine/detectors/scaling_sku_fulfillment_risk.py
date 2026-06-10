@@ -79,9 +79,17 @@ recent_pnl AS (
     GROUP BY sku_id
 ),
 sku_stock AS (
+    -- inventory_level_fact is a time-series (every Shopify poll inserts a new
+    -- row per sku+location). Take the LATEST snapshot per (sku, location),
+    -- then sum across locations — summing every historical row would inflate
+    -- stock by the number of inventory polls Shopify has sent.
     SELECT sku_id, sum(available)::numeric AS qty
-    FROM public.inventory_level_fact
-    WHERE shop_id = $1
+    FROM (
+        SELECT DISTINCT ON (sku_id, location_id) sku_id, available
+        FROM public.inventory_level_fact
+        WHERE shop_id = $1
+        ORDER BY sku_id, location_id, observed_at DESC
+    ) latest
     GROUP BY sku_id
 )
 SELECT lf.sku_id,

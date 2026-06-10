@@ -27,13 +27,6 @@ export interface NavState {
   param: string | null;
 }
 
-/** Live count-up "today" numbers fed by the live engine / overview poll. */
-export interface TodayTotals {
-  revenue_cents: number;
-  spend_cents: number;
-  orders: number;
-}
-
 /** Action kinds an alert can be resolved with (mirrors the prototype). */
 export type ActionKind =
   | "pause_campaign"
@@ -61,7 +54,6 @@ export interface DashboardCtx {
 
   // --- live engine ---
   feed: FeedEvent[];
-  today: TodayTotals;
   liveOn: boolean;
   setLiveOn: (next: boolean) => void;
 

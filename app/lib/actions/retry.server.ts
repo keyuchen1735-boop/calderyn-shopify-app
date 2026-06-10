@@ -30,6 +30,7 @@ import type { Platform } from "../ads/adapter";
 import type { ActionAdapter } from "../ads/actions";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
+import { acknowledgeAlert } from "../alerts.server";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -134,6 +135,7 @@ export const COMPENSATOR_REGISTRY: Record<string, ActionCompensator> = {
 interface AuditRow {
   id: string;
   shop_id: string;
+  alert_id: string | null;
   action_kind: string;
   attempts: number;
   outcome: string;
@@ -194,7 +196,7 @@ export async function drainActionRetries(
 
   const { data: rows, error: selErr } = await sb
     .from("action_audit")
-    .select("id, shop_id, action_kind, attempts, outcome, completed_at, params")
+    .select("id, shop_id, alert_id, action_kind, attempts, outcome, completed_at, params")
     .eq("outcome", "retrying")
     .lt("attempts", MAX_ATTEMPTS)
     .order("completed_at", { ascending: true })
@@ -285,6 +287,13 @@ export async function drainActionRetries(
       if (updErr) {
         result.errors.push(`update ${raw.id}: ${updErr.message}`);
         continue;
+      }
+
+      // The synchronous execute path only acknowledges on an immediate
+      // success; a success replayed here must do it too, or the alert
+      // stays open after the action actually executed (rule 12).
+      if (ok && raw.alert_id && !(await acknowledgeAlert(sb, raw.shop_id, raw.alert_id))) {
+        result.errors.push(`acknowledge alert ${raw.alert_id} (audit ${raw.id}) failed`);
       }
 
       if (ok) result.succeeded += 1;

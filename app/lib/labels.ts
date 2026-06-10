@@ -57,6 +57,71 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   snooze_alert: "Snoozed alert",
 };
 
+// Plain-language labels for evidence keys shown on alert detail pages. Keys
+// that aren't in this map fall back to the underscore-stripped/title-cased
+// form so a new detector emitting an unknown key still renders sensibly.
+export const EVIDENCE_LABELS: Record<string, string> = {
+  stock: "Total stock",
+  sku_title: "Product",
+  days_of_cover: "Days until sold out",
+  spend_wow_ratio: "Spend vs last week",
+  spend_prev_7d_usd: "Spend, prior 7 days",
+  spend_this_7d_usd: "Spend, this 7 days",
+  velocity_units_per_day: "Selling rate",
+  velocity: "Selling rate",
+  unit_margin: "Profit per unit",
+  margin_pct: "Profit margin",
+  daily_velocity_units: "Selling rate",
+  campaign_id: "Campaign",
+  inventory_item_id: "Inventory item",
+  from_location_id: "From location",
+  to_location_id: "To location",
+  recommended_delta: "Recommended transfer",
+};
+
+const fmtUsdFromString = (v: unknown): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+};
+
+const fmtUnits = (v: unknown, suffix: string): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: 1 })}${suffix}`;
+};
+
+// Formatters keyed by evidence field name. Unknown keys fall back to the
+// EvidencePanel's default toString. Each formatter accepts the raw value
+// (number, string, etc.) and returns a display string.
+export const EVIDENCE_FORMATTERS: Record<string, (v: unknown) => string> = {
+  stock: (v) => fmtUnits(v, " units"),
+  days_of_cover: (v) => fmtUnits(v, " days"),
+  spend_wow_ratio: (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return String(v ?? "—");
+    // 1.81 → "+81% vs last week"; 0.7 → "-30% vs last week"
+    const pct = Math.round((n - 1) * 100);
+    const sign = pct >= 0 ? "+" : "";
+    return `${sign}${pct}% vs last week`;
+  },
+  spend_this_7d_usd: fmtUsdFromString,
+  spend_prev_7d_usd: fmtUsdFromString,
+  velocity_units_per_day: (v) => fmtUnits(v, " /day"),
+  velocity: (v) => fmtUnits(v, " /day"),
+  daily_velocity_units: (v) => fmtUnits(v, " /day"),
+  unit_margin: fmtUsdFromString,
+  margin_pct: (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v ?? "—");
+    return `${(n * 100).toFixed(0)}%`;
+  },
+};
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],

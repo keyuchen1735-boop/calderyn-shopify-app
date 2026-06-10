@@ -23,7 +23,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { adminDeepLinkRedirect } from "~/lib/admin-deeplink.server";
+import { acknowledgeAlert } from "~/lib/alerts.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -82,15 +82,10 @@ const DEEP_LINK_ACTIONS: Partial<Record<ActionKind, { path: string; message: str
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  let session;
-  try {
-    ({ session } = await authenticate.admin(request));
-  } catch (thrown) {
-    // Unauthenticated hit on a confirm_url (e.g. from propose_action): send
-    // it to the Shopify admin deep link, which survives login, instead of
-    // the bare login page that drops the path.
-    throw (await adminDeepLinkRedirect(request, thrown)) ?? thrown;
-  }
+  // Unauthenticated confirm_url hits are rewritten to the Shopify admin deep
+  // link by the parent app.tsx loader, which runs for every document request
+  // matching this route — no per-route wrapper needed here.
+  const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   const id = params.id!;
   try {
@@ -110,22 +105,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         quantity: derivePoQuantity(alert.evidence ?? {}),
         unit_cost_cents: await getCurrentUnitCostCents(supabase, shopId, alert.sku),
       };
-      // Surface (not block) repeat executions: a successful, un-undone draft
-      // for this alert already in the audit log warns in the confirm dialog.
+      // Surface (not block) repeat executions: a successful draft that hasn't
+      // been undone warns in the confirm dialog. Undo rows share the
+      // original's action_kind with undo_of pointing back at it, so fetch
+      // both and net them out here (PostgREST can't anti-join in one query).
       const { data: priorDrafts, error: dupErr } = await supabase
         .from("action_audit")
-        .select("id")
+        .select("id, undo_of")
         .eq("shop_id", shopId)
         .eq("alert_id", id)
         .eq("action_kind", "create_po_draft")
-        .eq("outcome", "succeeded")
-        .is("undo_of", null)
-        .limit(1);
+        .eq("outcome", "succeeded");
       if (dupErr) {
         // Cosmetic lookup — log loudly but don't take the page down over it.
         console.error(`[alerts] duplicate-PO lookup failed for ${id}`, dupErr);
       }
-      existingPoDraft = (priorDrafts ?? []).length > 0;
+      const rows = (priorDrafts ?? []) as Array<{ id: string; undo_of: string | null }>;
+      const undone = new Set(rows.map((r) => r.undo_of).filter(Boolean));
+      existingPoDraft = rows.some((r) => !r.undo_of && !undone.has(r.id));
     }
 
     return json<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
@@ -325,7 +322,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
 
       let successMessage = `${ACTION_VERBS[kind] ?? "Action"} executed`;
-      if (result.outcome === "succeeded" && !(await acknowledgeAlert(session.shop, alertId))) {
+      if (
+        result.outcome === "succeeded" &&
+        !(await acknowledgeAlert(getSupabase(), shopId, alertId))
+      ) {
         successMessage += " — alert couldn't be acknowledged";
       }
 
@@ -354,7 +354,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       idempotencyKey,
     });
 
-    const acknowledged = await acknowledgeAlert(session.shop, alertId);
+    // Snooze is a deferral, not a resolution — leave the alert in the open
+    // queue; every other kind moves it out after a successful execution.
+    const acknowledged =
+      kind === "snooze_alert" ||
+      (await acknowledgeAlert(getSupabase(), await resolveShopId(session.shop), alertId));
     return json<ActionPayload>({
       ok: true,
       toast: {
@@ -487,9 +491,9 @@ export default function AlertDetail() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingSm">
-                  Why this fired — evidence
+                  What we noticed
                 </Text>
-                <EvidencePanel evidence={evidence} />
+                <EvidencePanel evidence={evidence} hideKeys={["sku_title"]} />
               </BlockStack>
             </Card>
           </BlockStack>
@@ -499,17 +503,17 @@ export default function AlertDetail() {
           <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  Recommended actions
-                </Text>
-                <InlineStack gap="200" align="end">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingSm">
+                    Recommended actions
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    30-day projected impact
+                  </Text>
                   <Text as="p" variant="headingLg">
                     {fmtMoney(alert.dollar_impact)}
                   </Text>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  30-day projected impact
-                </Text>
+                </BlockStack>
                 <BlockStack gap="300">
                   {allowedActions.map((kind, i) => {
                     const deepLink = DEEP_LINK_ACTIONS[kind];
@@ -532,7 +536,7 @@ export default function AlertDetail() {
                         <InlineStack gap="150" blockAlign="center">
                           <Badge tone="success">Recommended</Badge>
                           <Text as="span" variant="bodyXs" tone="subdued">
-                            protects {fmtMoney(alert.dollar_impact)} / 30d
+                            best at preventing the loss above
                           </Text>
                         </InlineStack>
                       </BlockStack>
@@ -547,15 +551,21 @@ export default function AlertDetail() {
             {guardrails && (
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">
-                    Safety net
-                  </Text>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingSm">
+                      Before Calderyn acts
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      These checks decide whether this action can run automatically. If any fail, you have to confirm it yourself.
+                    </Text>
+                  </BlockStack>
                   <GuardrailMeter
+                    label="Today's action budget"
                     usedCents={guardrails.daily_action_budget_used_cents}
                     totalCents={guardrails.daily_action_budget_cents}
                     checks={[
                       {
-                        label: `Within daily budget · ${fmtMoney(
+                        label: `Budget for today · ${fmtMoney(
                           guardrails.daily_action_budget_cents -
                             guardrails.daily_action_budget_used_cents,
                         )} left`,
@@ -565,17 +575,19 @@ export default function AlertDetail() {
                           0,
                       },
                       {
-                        label: `Under per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)}`,
+                        label: `Per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)} max risk per action`,
                         ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
                       },
                       {
-                        label: `Business hours · ${guardrails.business_hours.start}–${guardrails.business_hours.end}`,
+                        label: `Business hours · ${formatHour(
+                          guardrails.business_hours.start,
+                        )} – ${formatHour(guardrails.business_hours.end)} ${guardrails.business_hours.tz}`,
                         ok: guardrails.in_business_hours,
                       },
                     ]}
                   />
                   <Text as="p" variant="bodyXs" tone="subdued">
-                    Cooldown {guardrails.cooldown_minutes}m between actions on the same campaign.
+                    Min {guardrails.cooldown_minutes} min between actions on the same campaign.
                   </Text>
                 </BlockStack>
               </Card>
@@ -726,31 +738,24 @@ function ExecuteActionModal({
   );
 }
 
-/**
- * After a successful action, move the alert out of the open queue. Only flips
- * open → acknowledged; the detector still owns resolution and may re-open it
- * on the next pass. Returns false (and logs) on failure so the caller can
- * surface it in the toast without failing the already-executed action.
- */
-async function acknowledgeAlert(shopDomain: string, alertId: string): Promise<boolean> {
-  try {
-    const { error } = await getSupabase()
-      .from("alerts")
-      .update({ status: "acknowledged" })
-      .eq("shop_id", await resolveShopId(shopDomain))
-      .eq("id", alertId)
-      .eq("status", "open");
-    if (error) throw error;
-    return true;
-  } catch (err) {
-    console.error(`[alerts] failed to acknowledge ${alertId} after action`, err);
-    return false;
-  }
-}
-
 function useStableIdempotencyKey(alertId: string, kind: ActionKind) {
   const [key] = useState(() => `${alertId}:${kind}:${newIdempotencyKey()}`);
   return key;
+}
+
+// "14:00" → "2 PM"; "00:00" → "midnight"; "12:00" → "noon".
+// Falls through to the raw string if it doesn't look like HH:MM.
+function formatHour(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
+  if (!m) return hhmm;
+  const h = Number(m[1]);
+  const mins = Number(m[2]);
+  if (!Number.isFinite(h) || h < 0 || h > 23) return hhmm;
+  if (h === 0 && mins === 0) return "midnight";
+  if (h === 12 && mins === 0) return "noon";
+  const period = h < 12 ? "AM" : "PM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return mins === 0 ? `${hour12} ${period}` : `${hour12}:${m[2]} ${period}`;
 }
 
 function stringOrEmpty(v: unknown): string {
