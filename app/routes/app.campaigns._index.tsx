@@ -36,12 +36,13 @@ import { newIdempotencyKey } from "~/lib/ids";
 // to the legacy direct-Meta path (ownership verified via listCampaigns) so the
 // page still works pre-ingest.
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { executeReallocation } from "~/lib/actions/reallocate.server";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
-import { fmtMoney } from "~/lib/format";
+import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import type { ActionKind, Alert, Campaign } from "~/lib/types";
 
 type PendingAction =
@@ -110,6 +111,86 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const platform = String(formData.get("platform") || "");
   const idempotencyKey =
     String(formData.get("idempotencyKey") || "") || newIdempotencyKey();
+
+  if (intent === "reallocate") {
+    const destCampaignId = String(formData.get("destCampaignId") || "");
+    const destPlatform = String(formData.get("destPlatform") || "");
+    const destName = String(formData.get("destName") || "");
+    const amountCents = Math.round(Number(formData.get("amountCents") || 0));
+    // Validate at the boundary — never trust FormData shapes.
+    if (!campaignId || !destCampaignId || !Number.isFinite(amountCents) || amountCents <= 0) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "INVALID_REQUEST", message: "source, destination and a positive amount are required" },
+          toast: { message: "Invalid reallocation", isError: true },
+        },
+        { status: 400 },
+      );
+    }
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    // Meta rows post the live external id; resolve to the dim uuid. The
+    // composite action has NO legacy direct-Meta fallback: both campaigns
+    // must be ingested before budget can be moved between them.
+    const sourceDim =
+      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
+    const destDim =
+      destPlatform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId) : destCampaignId;
+    if (!sourceDim || !destDim) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "NOT_INGESTED", message: "Both campaigns must finish syncing before budget can be reallocated" },
+          toast: { message: "Campaigns still syncing — try again shortly", isError: true },
+        },
+        { status: 409 },
+      );
+    }
+    try {
+      const { outcome } = await executeReallocation(
+        shopId,
+        { alertId: null, sourceCampaignId: sourceDim, destCampaignId: destDim, amountCents, idempotencyKey },
+        sb,
+      );
+      if (outcome === "failed") {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_FAILED", message: `Could not reallocate budget from ${campaignName}` },
+            toast: { message: `Could not reallocate budget from ${campaignName}`, isError: true },
+          },
+          { status: 502 },
+        );
+      }
+      if (outcome === "retrying") {
+        // Source budget IS reduced; the dest increase is parked for the retry
+        // cron. Not a success yet (rule 12).
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_RETRYING", message: `Source budget reduced; the increase on ${destName} is queued and will retry automatically` },
+            toast: { message: `${destName}: increase queued, will retry automatically` },
+          },
+          { status: 202 },
+        );
+      }
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: `Moved ${fmtMoneyDec(amountCents)}/day from ${campaignName} to ${destName}` },
+      });
+    } catch (err) {
+      const e = err as CalderynError;
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: e.code ?? "ACTION_FAILED", message: e.message },
+          toast: { message: e.message, isError: true },
+        },
+        { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+      );
+    }
+  }
 
   if (!campaignId) {
     return json<ActionPayload>(
