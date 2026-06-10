@@ -23,7 +23,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { adminDeepLinkRedirect } from "~/lib/admin-deeplink.server";
+import { acknowledgeAlert } from "~/lib/alerts.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -71,15 +71,10 @@ type ActionPayload = {
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  let session;
-  try {
-    ({ session } = await authenticate.admin(request));
-  } catch (thrown) {
-    // Unauthenticated hit on a confirm_url (e.g. from propose_action): send
-    // it to the Shopify admin deep link, which survives login, instead of
-    // the bare login page that drops the path.
-    throw (await adminDeepLinkRedirect(request, thrown)) ?? thrown;
-  }
+  // Unauthenticated confirm_url hits are rewritten to the Shopify admin deep
+  // link by the parent app.tsx loader, which runs for every document request
+  // matching this route — no per-route wrapper needed here.
+  const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   const id = params.id!;
   try {
@@ -99,22 +94,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         quantity: derivePoQuantity(alert.evidence ?? {}),
         unit_cost_cents: await getCurrentUnitCostCents(supabase, shopId, alert.sku),
       };
-      // Surface (not block) repeat executions: a successful, un-undone draft
-      // for this alert already in the audit log warns in the confirm dialog.
+      // Surface (not block) repeat executions: a successful draft that hasn't
+      // been undone warns in the confirm dialog. Undo rows share the
+      // original's action_kind with undo_of pointing back at it, so fetch
+      // both and net them out here (PostgREST can't anti-join in one query).
       const { data: priorDrafts, error: dupErr } = await supabase
         .from("action_audit")
-        .select("id")
+        .select("id, undo_of")
         .eq("shop_id", shopId)
         .eq("alert_id", id)
         .eq("action_kind", "create_po_draft")
-        .eq("outcome", "succeeded")
-        .is("undo_of", null)
-        .limit(1);
+        .eq("outcome", "succeeded");
       if (dupErr) {
         // Cosmetic lookup — log loudly but don't take the page down over it.
         console.error(`[alerts] duplicate-PO lookup failed for ${id}`, dupErr);
       }
-      existingPoDraft = (priorDrafts ?? []).length > 0;
+      const rows = (priorDrafts ?? []) as Array<{ id: string; undo_of: string | null }>;
+      const undone = new Set(rows.map((r) => r.undo_of).filter(Boolean));
+      existingPoDraft = rows.some((r) => !r.undo_of && !undone.has(r.id));
     }
 
     return json<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
@@ -302,7 +299,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
 
       let successMessage = `${ACTION_VERBS[kind] ?? "Action"} executed`;
-      if (result.outcome === "succeeded" && !(await acknowledgeAlert(session.shop, alertId))) {
+      if (
+        result.outcome === "succeeded" &&
+        !(await acknowledgeAlert(getSupabase(), shopId, alertId))
+      ) {
         successMessage += " — alert couldn't be acknowledged";
       }
 
@@ -331,7 +331,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       idempotencyKey,
     });
 
-    const acknowledged = await acknowledgeAlert(session.shop, alertId);
+    // Snooze is a deferral, not a resolution — leave the alert in the open
+    // queue; every other kind moves it out after a successful execution.
+    const acknowledged =
+      kind === "snooze_alert" ||
+      (await acknowledgeAlert(getSupabase(), await resolveShopId(session.shop), alertId));
     return json<ActionPayload>({
       ok: true,
       toast: {
@@ -682,28 +686,6 @@ function ExecuteActionModal({
       </Modal.Section>
     </Modal>
   );
-}
-
-/**
- * After a successful action, move the alert out of the open queue. Only flips
- * open → acknowledged; the detector still owns resolution and may re-open it
- * on the next pass. Returns false (and logs) on failure so the caller can
- * surface it in the toast without failing the already-executed action.
- */
-async function acknowledgeAlert(shopDomain: string, alertId: string): Promise<boolean> {
-  try {
-    const { error } = await getSupabase()
-      .from("alerts")
-      .update({ status: "acknowledged" })
-      .eq("shop_id", await resolveShopId(shopDomain))
-      .eq("id", alertId)
-      .eq("status", "open");
-    if (error) throw error;
-    return true;
-  } catch (err) {
-    console.error(`[alerts] failed to acknowledge ${alertId} after action`, err);
-    return false;
-  }
 }
 
 function useStableIdempotencyKey(alertId: string, kind: ActionKind) {

@@ -34,6 +34,14 @@ export async function executeAction(
   input: ExecuteInput,
   sb: SupabaseClient,
 ): Promise<ExecutedAudit> {
+  // 0. Validate input: a missing/zero target budget must refuse loudly —
+  // the old `?? 0` fallthrough would set the live campaign budget to $0.
+  if (input.kind === "reduce_campaign_budget" && !input.dailyBudgetCents) {
+    throw new Error(
+      `reduce_campaign_budget for ${input.campaignId} has no positive dailyBudgetCents (alert evidence lacked the current budget)`,
+    );
+  }
+
   // 1. Idempotency.
   const { data: prior, error: pErr } = await sb
     .from("action_idempotency")
@@ -123,7 +131,15 @@ export async function executeAction(
   if (iErr) throw iErr;
   const auditId = String(ins.id);
 
-  await sb.from("action_idempotency").insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
+  const { error: idemErr } = await sb
+    .from("action_idempotency")
+    .insert({ shop_id: shopId, idempotency_key: input.idempotencyKey, audit_id: auditId });
+  if (idemErr) {
+    // The platform call already happened and the audit row exists — failing
+    // now would provoke the duplicate execution the key prevents. Surface
+    // the lost dedup protection loudly instead (rule 12).
+    console.error(`[actions] idempotency insert failed for audit ${auditId} (key ${input.idempotencyKey})`, idemErr);
+  }
 
   return { id: auditId, outcome };
 }

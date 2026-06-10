@@ -258,10 +258,17 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // For real ad-platform pauses, restore the prior status on Meta first.
-          if (orig.action_kind === "pause_campaign") {
-            const priorStatus = (orig.pre_state as { status?: string } | null)?.status;
-            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+          // For real ad-platform pauses/resumes, restore the prior status on
+          // Meta first. executeAction snapshots lowercase statuses from
+          // ad_campaign_dim while legacy rows recorded Meta's uppercase —
+          // normalize before matching. The platform campaign id lives in
+          // post_state.campaign_id on legacy rows but only in
+          // params.external_id on orchestrator rows.
+          if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
+            const priorStatus = (orig.pre_state as { status?: string } | null)?.status?.toUpperCase();
+            const campaignId =
+              (orig.post_state as { campaign_id?: string } | null)?.campaign_id ??
+              (orig.params as { external_id?: string } | null)?.external_id;
             if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
               const restore: "ACTIVE" | "PAUSED" = priorStatus;
               const meta = await metaClientForShop(shop);
@@ -296,6 +303,21 @@ export function calderynClient(shop: string) {
             .select()
             .single();
           if (iErr) throw iErr;
+
+          // Undo revives the underlying problem: acknowledge-on-execute
+          // closed the alert, so reversing the action puts it back in the
+          // open queue. Best-effort — log, don't fail the recorded undo.
+          if (orig.alert_id) {
+            const { error: reopenErr } = await supabase
+              .from("alerts")
+              .update({ status: "open" })
+              .eq("shop_id", shopId)
+              .eq("id", orig.alert_id)
+              .eq("status", "acknowledged");
+            if (reopenErr) {
+              console.error(`[audit] failed to re-open alert ${orig.alert_id} after undo`, reopenErr);
+            }
+          }
 
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")
@@ -360,13 +382,19 @@ export function calderynClient(shop: string) {
             .single();
           if (iErr) throw iErr;
 
-          await supabase
+          const { error: idemErr } = await supabase
             .from("action_idempotency")
             .insert({
               shop_id: shopId,
               idempotency_key: opts.idempotencyKey,
               audit_id: ins.id,
             });
+          if (idemErr) {
+            // The audit row exists — failing now would provoke the duplicate
+            // execution the key prevents. Surface the lost dedup protection
+            // loudly instead (rule 12).
+            console.error(`[actions] idempotency insert failed for audit ${ins.id} (key ${opts.idempotencyKey})`, idemErr);
+          }
 
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")

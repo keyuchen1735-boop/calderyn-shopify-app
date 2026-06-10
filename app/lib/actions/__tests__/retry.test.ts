@@ -110,6 +110,41 @@ describe("drainActionRetries", () => {
     expect(updates[0].payload).toMatchObject({ outcome: "succeeded", attempts: 2 });
   });
 
+  it("acknowledges the alert when a replayed action succeeds", async () => {
+    // The synchronous execute path only acknowledges on an immediate
+    // success; a success via the retry drain must do it here or the alert
+    // stays open forever after the action actually executed.
+    const row = {
+      id: "77777777-7777-4777-8777-777777777777",
+      shop_id: SHOP,
+      alert_id: "88888888-8888-4888-8888-888888888888",
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    expect(result.errors).toEqual([]);
+    const ack = updates.find((u) => u.table === "alerts");
+    expect(ack?.payload).toEqual({ status: "acknowledged" });
+    expect(ack?.filters).toEqual(
+      expect.arrayContaining([
+        ["shop_id", SHOP],
+        ["id", row.alert_id],
+        ["status", "open"],
+      ]),
+    );
+  });
+
   it("keeps a row retrying (bumps attempts) when replay fails below the attempt cap", async () => {
     const row = {
       id: "77777777-7777-4777-8777-777777777777",
@@ -237,13 +272,23 @@ interface SelectFilters {
 function makeFakeSb(opts: { rows: unknown[] }): {
   sb: SupabaseClient;
   selectFilters: SelectFilters;
-  updates: { id: string; payload: Record<string, unknown> }[];
+  updates: {
+    table: string;
+    id: string;
+    payload: Record<string, unknown>;
+    filters: Array<[string, unknown]>;
+  }[];
 } {
   const selectFilters: SelectFilters = {};
-  const updates: { id: string; payload: Record<string, unknown> }[] = [];
+  const updates: {
+    table: string;
+    id: string;
+    payload: Record<string, unknown>;
+    filters: Array<[string, unknown]>;
+  }[] = [];
 
   const sb = {
-    from(_table: string) {
+    from(table: string) {
       return {
         select(_cols: string) {
           const builder = {
@@ -264,13 +309,26 @@ function makeFakeSb(opts: { rows: unknown[] }): {
           };
           return builder;
         },
+        // Chainable + thenable so multi-filter updates (acknowledgeAlert's
+        // shop_id/id/status chain) work; the update is recorded on await.
         update(payload: Record<string, unknown>) {
-          return {
-            eq(_column: string, value: unknown) {
-              updates.push({ id: String(value), payload });
-              return Promise.resolve({ error: null });
+          const filters: Array<[string, unknown]> = [];
+          const builder = {
+            eq(column: string, value: unknown) {
+              filters.push([column, value]);
+              return builder;
+            },
+            then(resolve: (v: unknown) => unknown) {
+              updates.push({
+                table,
+                id: String(filters.find(([c]) => c === "id")?.[1] ?? ""),
+                payload,
+                filters,
+              });
+              return Promise.resolve({ error: null }).then(resolve);
             },
           };
+          return builder;
         },
       };
     },

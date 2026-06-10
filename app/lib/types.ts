@@ -42,7 +42,8 @@ export interface Alert {
 export interface AuditEntry {
   id: string;
   action_kind: ActionKind;
-  outcome: "succeeded" | "failed";
+  // `retrying` = parked for the action-retry cron (pending, not terminal).
+  outcome: "succeeded" | "failed" | "retrying";
   target: string;
   dollar_impact_at_exec: number;
   pre_state: any;
