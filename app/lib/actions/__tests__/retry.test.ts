@@ -10,6 +10,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ActionError } from "../../ads/actions";
+import type { Platform } from "../../ads/adapter";
 
 import {
   backoffSeconds,
@@ -208,6 +209,124 @@ describe("drainActionRetries", () => {
     expect(result.succeeded).toBe(1);
     expect(result.processed).toBe(0);
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe("drainActionRetries · reallocate_budget", () => {
+  const SHOP2 = "00000000-0000-0000-0000-000000000099";
+
+  const reallocParams = {
+    external_id: "m-1",
+    platform: "meta",
+    daily_budget_cents: 1500,
+    source_external_id: "g-1",
+    source_platform: "google",
+    source_prev_budget_cents: 2000,
+    source_new_budget_cents: 1500,
+    step: "increase_dest",
+  };
+
+  function mkAdapter(platform: Platform) {
+    return {
+      platform,
+      pause: vi.fn(async () => {}),
+      resume: vi.fn(async () => {}),
+      setDailyBudget: vi.fn(async () => {}),
+      getState: vi.fn(),
+    };
+  }
+
+  function fakeDrainSb(row: Record<string, unknown>) {
+    const updates: Array<Record<string, unknown>> = [];
+    function builder() {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.lt = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.update = vi.fn((u: Record<string, unknown>) => {
+        updates.push(u);
+        return chain;
+      });
+      chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
+        resolve({ data: [row], error: null });
+      return chain;
+    }
+    return {
+      sb: { from: vi.fn(() => builder()) } as unknown as SupabaseClient,
+      updates,
+    };
+  }
+
+  it("replays ONLY the dest increase and writes a two-sided post_state", async () => {
+    const meta = mkAdapter("meta");
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r1", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(meta.setDailyBudget).toHaveBeenCalledWith("m-1", 1500);
+    expect(google.setDailyBudget).not.toHaveBeenCalled();
+    expect(r.succeeded).toBe(1);
+    expect(updates[0]).toMatchObject({
+      outcome: "succeeded",
+      post_state: { source: { daily_budget_cents: 1500 }, dest: { daily_budget_cents: 1500 } },
+    });
+  });
+
+  it("compensates (restores source) when the parked row fails TERMINALLY", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new ActionError("meta", "invalid budget", { retriable: false }));
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r2", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(r.failed).toBe(1);
+    expect(google.setDailyBudget).toHaveBeenCalledWith("g-1", 2000);
+    expect(updates[0].outcome).toBe("failed");
+    expect((updates[0].params as Record<string, unknown>).compensation).toBe("succeeded");
+    expect(String(updates[0].last_error)).toMatch(/source budget restored/i);
+  });
+
+  it("records a FAILED compensation loudly (rule 12)", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new ActionError("meta", "invalid budget", { retriable: false }));
+    const google = mkAdapter("google");
+    google.setDailyBudget.mockRejectedValue(new Error("Google down"));
+    const { sb, updates } = fakeDrainSb({
+      id: "r3", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect((updates[0].params as Record<string, unknown>).compensation).toBe("failed");
+    expect(String(updates[0].last_error)).toMatch(/compensation failed/i);
+  });
+
+  it("does NOT compensate a still-transient failure (row re-parks)", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new Error("Meta 503"));
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r4", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(r.retrying).toBe(1);
+    expect(google.setDailyBudget).not.toHaveBeenCalled();
+    expect(updates[0].outcome).toBe("retrying");
+    expect(updates[0].params).toBeUndefined();
   });
 });
 

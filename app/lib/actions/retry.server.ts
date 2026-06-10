@@ -51,6 +51,13 @@ export interface ReplayParams {
   external_id: string;
   platform: Platform;
   daily_budget_cents?: number | null;
+  // reallocate_budget extras: dest-side replay is covered by the three fields
+  // above (written dest-side at park time); these carry the source side for
+  // post_state and terminal compensation.
+  source_external_id?: string;
+  source_platform?: Platform;
+  source_prev_budget_cents?: number | null;
+  source_new_budget_cents?: number | null;
 }
 
 /**
@@ -81,6 +88,46 @@ export const EXECUTOR_REGISTRY: Record<string, ActionReplayer> = {
   reduce_campaign_budget: async (adapter, p) => {
     await adapter.setDailyBudget(p.external_id, p.daily_budget_cents ?? 0);
     return { post_state: { status: "active", daily_budget_cents: p.daily_budget_cents ?? null } };
+  },
+  // Parked reallocations resume at the DEST-increase step only; the source
+  // reduce already happened before the row was parked (reallocate.server.ts).
+  reallocate_budget: async (adapter, p) => {
+    await adapter.setDailyBudget(p.external_id, p.daily_budget_cents ?? 0);
+    return {
+      post_state: {
+        source: { daily_budget_cents: p.source_new_budget_cents ?? null },
+        dest: { daily_budget_cents: p.daily_budget_cents ?? null },
+      },
+    };
+  },
+};
+
+/**
+ * Consulted ONLY on the terminal-failure path. A parked reallocation has
+ * already reduced its source budget; if the dest increase fails for good,
+ * restore the source rather than leaving the merchant silently under-spending.
+ * The result is recorded on the row's params either way (rule 12).
+ */
+export type ActionCompensator = (
+  resolveAdapter: (shopId: string, platform: Platform) => Promise<ActionAdapter | null>,
+  shopId: string,
+  params: ReplayParams,
+) => Promise<{ compensation: "succeeded" | "failed"; note: string }>;
+
+export const COMPENSATOR_REGISTRY: Record<string, ActionCompensator> = {
+  reallocate_budget: async (resolveAdapter, shopId, p) => {
+    try {
+      if (!p.source_platform || !p.source_external_id) {
+        throw new Error("missing source replay params");
+      }
+      const adapter = await resolveAdapter(shopId, p.source_platform);
+      if (!adapter) throw new Error(`${p.source_platform} not connected`);
+      await adapter.setDailyBudget(p.source_external_id, p.source_prev_budget_cents ?? 0);
+      return { compensation: "succeeded", note: "source budget restored" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { compensation: "failed", note: `compensation failed: ${msg}` };
+    }
   },
 };
 
@@ -221,6 +268,14 @@ export async function drainActionRetries(
       } else {
         update.outcome = terminal ? "failed" : "retrying";
         update.last_error = replayError;
+        if (terminal) {
+          const compensate = COMPENSATOR_REGISTRY[raw.action_kind];
+          if (compensate && raw.params) {
+            const comp = await compensate(resolveAdapter, raw.shop_id, raw.params);
+            update.params = { ...raw.params, compensation: comp.compensation };
+            update.last_error = `${replayError}; ${comp.note}`;
+          }
+        }
       }
 
       const { error: updErr } = await sb
