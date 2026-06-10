@@ -133,7 +133,19 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     key={s.id}
                     className="cd-row"
                     style={{ cursor: alert ? "pointer" : "default" }}
+                    role={alert ? "button" : undefined}
+                    tabIndex={alert ? 0 : undefined}
                     onClick={alert ? () => app.navigate("alerts", alert.id) : undefined}
+                    onKeyDown={
+                      alert
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              app.navigate("alerts", alert.id);
+                            }
+                          }
+                        : undefined
+                    }
                   >
                     <div className="min-w-0" style={{ flex: "1 1 0", minWidth: 140 }}>
                       <div className="cd-row-title truncate">{s.title}</div>

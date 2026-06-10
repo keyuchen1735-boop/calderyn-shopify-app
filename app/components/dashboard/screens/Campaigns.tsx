@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Card,
+  SectionTitle,
   GradePill,
   PlatformMark,
   Sparkline,
@@ -233,6 +234,35 @@ function CampaignDetail({
           )}
         </Card>
       </div>
+
+      {(() => {
+        // Open alerts attributed to this campaign (live source: app.alerts).
+        const open = app.alerts.filter(
+          (a) => a.campaign_id === c.id && a.status === "open",
+        );
+        if (open.length === 0) return null;
+        return (
+          <Card pad={false}>
+            <div className="cd-pad-x cd-pad-t">
+              <SectionTitle>Open alerts on this campaign</SectionTitle>
+            </div>
+            <div className="cd-rows">
+              {open.map((a) => (
+                <button
+                  key={a.id}
+                  className="cd-row"
+                  onClick={() => app.navigate("alerts", a.id)}
+                >
+                  <span className={`cd-sev-bar sev-${a.severity}`} />
+                  <span className="cd-row-title flex-1">{a.title}</span>
+                  <span className="cd-row-num tabular-nums">{money(a.dollar_impact)}/wk</span>
+                  <CDIcon name="chevronRight" size={14} />
+                </button>
+              ))}
+            </div>
+          </Card>
+        );
+      })()}
 
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and logged

@@ -74,16 +74,29 @@ export function Card({
   pad?: boolean;
   hover?: boolean;
 }) {
-  return (
-    <div
-      onClick={onClick}
-      className={
-        "cd-card " + (pad ? "cd-pad " : "") + (hover || onClick ? "cd-card-hover " : "") + className
-      }
-    >
-      {children}
-    </div>
-  );
+  const cls =
+    "cd-card " + (pad ? "cd-pad " : "") + (hover || onClick ? "cd-card-hover " : "") + className;
+  // When the card is a click target, make it keyboard-operable (WCAG AA):
+  // a focusable button-role element that activates on Enter/Space.
+  if (onClick) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        className={cls}
+      >
+        {children}
+      </div>
+    );
+  }
+  return <div className={cls}>{children}</div>;
 }
 
 export function SectionTitle({
