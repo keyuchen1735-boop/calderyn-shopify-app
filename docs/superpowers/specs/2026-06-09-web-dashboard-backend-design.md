@@ -48,7 +48,7 @@ Cookie: `__Host-calderyn_dash` with `SameSite=Lax; Secure; HttpOnly; Path=/`, al
 
 **Revocation on uninstall:** the existing `webhooks/app/uninstalled` handler additionally marks all `dashboard_sessions` for that shop revoked.
 
-**Note on cookies through the rewrite:** Vercel rewrites from `calderyncompany.com/dashboard/*` keep the browser on `calderyncompany.com`, so Set-Cookie from the proxied function is first-party for the apex domain. The OAuth redirect URI, however, must be the real host (`app.calderyncompany.com`) because Shopify redirects the browser there directly; the callback finishes by redirecting to `https://calderyncompany.com/dashboard` and sets the session via a one-time code handoff: callback stores the session, then redirects to `calderyncompany.com/dashboard/auth/finish?code=<one-time>` (proxied), which exchanges the one-time code for the cookie on the apex origin. One-time codes live in `dashboard_sessions` as a nullable `handoff_code_hash` + `handoff_expires_at` (60 s, single use).
+**Note on cookies through the rewrite (simplified during planning):** Vercel rewrites from `calderyncompany.com/dashboard/*` keep the browser on `calderyncompany.com`, so Set-Cookie from the proxied function is first-party for the apex domain. We register the **apex** URL `https://calderyncompany.com/dashboard/auth/callback` as the Shopify redirect URI — the rewrite proxies it to the app, so the whole OAuth round-trip (login → Shopify → callback) happens on the apex origin. State cookie and session cookie both live on the apex; no cross-host handoff is needed. The public origin is configured via a `DASHBOARD_PUBLIC_URL` env var (set to the app's own URL in dev).
 
 ### 3. JSON API (`app/routes/dashboard.api.*`)
 
@@ -62,7 +62,7 @@ All require the session; all responses `application/json`; all scoped to the ses
 | `/dashboard/api/campaigns/:id` | GET | campaign detail |
 | `/dashboard/api/campaigns/:id/action` | POST `{type: pause\|resume\|set_budget, …}` | `actions/execute.server.ts` |
 | `/dashboard/api/alerts` | GET | alert list (filterable) |
-| `/dashboard/api/alerts/:id` | GET / POST resolve | alert detail + resolution path |
+| `/dashboard/api/alerts/:id` | GET | alert detail (read-only in v1 — the embedded app has no alert-resolve write path to reuse; alert state changes flow through detectors/actions) |
 | `/dashboard/api/skus` | GET | SKU/inventory list |
 | `/dashboard/api/guardrails` | GET / PUT | `actions/guardrails.server.ts` |
 | `/dashboard/api/audit` | GET | action audit (paginated) + POST undo via `actions/undo.server.ts` |
