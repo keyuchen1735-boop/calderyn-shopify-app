@@ -59,11 +59,11 @@ export const GENERATOR_STYLES = {
 } as const;
 export type GeneratorStyle = keyof typeof GENERATOR_STYLES;
 
-/** Aspect labels → real Soul sizes (the API's accepted width_and_height values). */
+/** Aspect labels → the platform API's accepted aspect_ratio values. */
 export const GENERATOR_ASPECTS = {
-  "1:1": "1536x1536",
-  "3:4": "1152x1536",
-  "9:16": "1152x2048",
+  "1:1": "1:1",
+  "3:4": "3:4",
+  "9:16": "9:16",
 } as const;
 export type GeneratorAspect = keyof typeof GENERATOR_ASPECTS;
 
@@ -80,7 +80,7 @@ export function parseGeneratorForm(form: FormData): {
   const style: GeneratorStyle = styleRaw in GENERATOR_STYLES ? (styleRaw as GeneratorStyle) : "studio";
   const aspect: GeneratorAspect =
     aspectRaw in GENERATOR_ASPECTS ? (aspectRaw as GeneratorAspect) : "1:1";
-  // Soul renders batches of exactly 1 or 4 — anything else falls back to 1.
+  // The generator offers batches of exactly 1 or 4 — anything else falls back to 1.
   const count = String(form.get("count") ?? "") === "4" ? 4 : 1;
   const extraDirection = String(form.get("extraDirection") ?? "")
     .trim()
@@ -141,7 +141,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const direction = [GENERATOR_STYLES[style].prompt, extraDirection].filter(Boolean).join(". ");
   const generator = imageGenerator({
-    generateImage: higgsfieldImageClient({ widthAndHeight: GENERATOR_ASPECTS[aspect] }),
+    generateImage: higgsfieldImageClient({ aspectRatio: GENERATOR_ASPECTS[aspect] }),
   });
 
   try {

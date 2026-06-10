@@ -20,15 +20,15 @@ export type FetchLike = (
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 const HF_BASE = "https://platform.higgsfield.ai";
-// Contract verified against the official @higgsfield/client v2 source
-// (github.com/higgsfield-ai/higgsfield-js: src/v2/client.ts + src/v2/types.ts):
-// POST /v1/text2image/soul with the SoulText2ImageInput fields flat in the body,
-// auth `Authorization: Key <key>:<secret>`, poll GET /requests/{id}/status until
-// a terminal status, images returned as `images: [{url}]`.
-const DEFAULT_MODEL = "v1/text2image/soul";
+// Contract verified against the official platform docs
+// (docs.higgsfield.ai/docs/how-to/introduction + docs/guides/images):
+// POST /{model_id} with {prompt, aspect_ratio, resolution} flat in the body and
+// media inputs as flat url strings (image_url), auth `Authorization: Key
+// <key>:<secret>`, poll GET /requests/{id}/status until a terminal status,
+// images returned as `images: [{url}]`. The platform has no batch field — one
+// request produces one image, so batches are parallel submissions.
+const DEFAULT_MODEL = "higgsfield-ai/soul/standard";
 const TERMINAL = new Set(["completed", "nsfw", "cancelled", "failed"]);
-// Soul accepts only these batch sizes (SDK BatchSize: SINGLE=1, QUAD=4).
-const soulBatchSize = (count: number): 1 | 4 => (count > 1 ? 4 : 1);
 
 const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -43,14 +43,18 @@ async function hfRequest(
     let detail = String(res.status);
     try {
       // The platform reports errors as {detail} — a string ("Invalid
-      // credentials") or a validation array of {msg} objects.
+      // credentials") or a validation array of {loc, msg} objects. Keep the
+      // loc path: it names the field a 422 is complaining about.
       const e = (await res.json()) as {
-        detail?: string | Array<{ msg?: string }>;
+        detail?: string | Array<{ msg?: string; loc?: Array<string | number> }>;
         message?: string;
         error?: string;
       };
       const fromDetail = Array.isArray(e?.detail)
-        ? e.detail.map((d) => d?.msg).filter(Boolean).join("; ")
+        ? e.detail
+            .map((d) => [d?.loc?.map(String).join("."), d?.msg].filter(Boolean).join(": "))
+            .filter(Boolean)
+            .join("; ")
         : e?.detail;
       detail = fromDetail || e?.message || e?.error || detail;
     } catch {
@@ -84,12 +88,15 @@ export function higgsfieldImageClient(
     model?: string;
     pollDelayMs?: number;
     timeoutMs?: number;
-    /** A SoulSize string like "1536x1536" — controls the rendered aspect. */
-    widthAndHeight?: string;
+    /** An aspect_ratio string like "1:1", "3:4", "9:16" — controls the rendered aspect. */
+    aspectRatio?: string;
+    /** Output resolution; "720p" is the documented platform value. */
+    resolution?: string;
   } = {},
 ): GenerateImageFn {
   const fetchImpl = opts.fetchImpl ?? defaultFetch;
-  const widthAndHeight = opts.widthAndHeight ?? "1536x1536";
+  const aspectRatio = opts.aspectRatio ?? "1:1";
+  const resolution = opts.resolution ?? "720p";
   const model = opts.model ?? DEFAULT_MODEL;
   const pollDelayMs = opts.pollDelayMs ?? 500;
   const timeoutMs = opts.timeoutMs ?? 90_000;
@@ -106,38 +113,55 @@ export function higgsfieldImageClient(
 
     const body: Record<string, unknown> = {
       prompt,
-      width_and_height: widthAndHeight,
-      quality: "1080p",
-      batch_size: soulBatchSize(count),
+      aspect_ratio: aspectRatio,
+      resolution,
     };
-    if (referenceImageUrl) {
-      body.image_reference = { type: "image_url", image_url: referenceImageUrl };
-    }
+    if (referenceImageUrl) body.image_url = referenceImageUrl;
 
-    const submitted = await hfRequest(fetchImpl, `${HF_BASE}/${model}`, {
-      method: "POST",
-      headers: { Authorization: auth, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const requestId =
-      (submitted as { request_id?: string }).request_id ?? (submitted as { id?: string }).id;
-    if (!requestId) throw new Error("Higgsfield submit did not return a request id");
-
+    // One deadline for the whole call, not per request — count>1 must not
+    // stretch the caller's timeout budget.
     const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const status = await hfRequest(fetchImpl, `${HF_BASE}/requests/${requestId}/status`, {
-        method: "GET",
-        headers: { Authorization: auth },
+
+    const generateOne = async (): Promise<string[]> => {
+      const submitted = await hfRequest(fetchImpl, `${HF_BASE}/${model}`, {
+        method: "POST",
+        headers: { Authorization: auth, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
-      const state = String((status as { status?: unknown }).status ?? "").toLowerCase();
-      if (state === "completed") return extractImageUrls(status).slice(0, count);
-      if (TERMINAL.has(state)) {
-        const msg = (status as { error?: string }).error ?? state;
-        throw new Error(`Higgsfield generation ${state}: ${msg}`);
+      const requestId =
+        (submitted as { request_id?: string }).request_id ?? (submitted as { id?: string }).id;
+      if (!requestId) throw new Error("Higgsfield submit did not return a request id");
+
+      for (;;) {
+        const status = await hfRequest(fetchImpl, `${HF_BASE}/requests/${requestId}/status`, {
+          method: "GET",
+          headers: { Authorization: auth },
+        });
+        const state = String((status as { status?: unknown }).status ?? "").toLowerCase();
+        if (state === "completed") return extractImageUrls(status);
+        if (TERMINAL.has(state)) {
+          const msg = (status as { error?: string }).error ?? state;
+          throw new Error(`Higgsfield generation ${state}: ${msg}`);
+        }
+        if (Date.now() >= deadline) throw new Error("Higgsfield generation timed out");
+        await sleep(pollDelayMs);
       }
-      if (Date.now() >= deadline) throw new Error("Higgsfield generation timed out");
-      await sleep(pollDelayMs);
+    };
+
+    // allSettled, not all: with parallel submissions one nsfw/failed request
+    // must not discard the sibling images that were already produced (and
+    // billed). Surface the failure only when nothing succeeded.
+    const settled = await Promise.allSettled(
+      Array.from({ length: Math.max(1, count) }, () => generateOne()),
+    );
+    const urls = settled
+      .filter((s): s is PromiseFulfilledResult<string[]> => s.status === "fulfilled")
+      .flatMap((s) => s.value);
+    if (urls.length === 0) {
+      const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+      if (failed) throw failed.reason;
     }
+    return urls.slice(0, count);
   };
 }
 
