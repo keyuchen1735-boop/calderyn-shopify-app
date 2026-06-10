@@ -44,6 +44,18 @@ describe("undoAction", () => {
     expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud1", outcome: "succeeded" });
   });
 
+  it("re-pauses a campaign on a resume_campaign undo (restores pre status)", async () => {
+    const resumeAudit = { ...pauseAudit, action_kind: "resume_campaign",
+      pre_state: { status: "paused", daily_budget_cents: 5000 },
+      post_state: { status: "active", daily_budget_cents: 5000 } };
+    const { sb, calls } = fakeSb(resumeAudit);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.pause).toHaveBeenCalledWith("c1");
+    expect(adapter.resume).not.toHaveBeenCalled();
+    const undo = calls.inserts.find((i) => i.table === "action_audit");
+    expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud1", outcome: "succeeded" });
+  });
+
   it("restores the prior budget on a budget-action undo", async () => {
     const budgetAudit = { ...pauseAudit, action_kind: "reduce_campaign_budget",
       pre_state: { status: "active", daily_budget_cents: 5000 },

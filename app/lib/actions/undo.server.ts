@@ -24,7 +24,9 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
   const adapter = await actionAdapterForShop(shopId, platform);
   if (!adapter) throw new Error(`${platform} not connected; cannot undo`);
 
-  if (orig.action_kind === "pause_campaign") {
+  if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
+    // Both are status flips, so both undo the same way: put the campaign back
+    // in whatever state pre_state recorded.
     if (pre.status === "active") await adapter.resume(externalId);
     else await adapter.pause(externalId);
   } else if (orig.action_kind === "reduce_campaign_budget") {
