@@ -24,6 +24,8 @@ import {
   signConsentAuth,
 } from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
+import { trueRoas } from "~/lib/roas";
+import { recovered } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
 import {
@@ -116,20 +118,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
-/** Spend-weighted, margin-adjusted blended ROAS — the "true" return on ad spend. */
-function trueRoas(campaigns: Campaign[]): string {
-  const withData = campaigns.filter(
-    (c) => c.spend_7d > 0 && c.roas_7d > 0 && c.contribution_margin > 0,
-  );
-  const totalSpend = withData.reduce((s, c) => s + c.spend_7d, 0);
-  if (totalSpend === 0) return "—";
-  const weighted = withData.reduce(
-    (s, c) => s + c.spend_7d * c.roas_7d * c.contribution_margin,
-    0,
-  );
-  return `${(weighted / totalSpend).toFixed(1)}×`;
-}
-
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
   const { alerts, audit, campaigns, guardrails, onboardingDone, error, dashboardLoginUrl } =
@@ -142,8 +130,7 @@ export default function Dashboard() {
 
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");
-  const succeeded = audit.filter((a) => a.outcome === "succeeded" && !a.undo_of);
-  const recovered7d = succeeded.reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
+  const { cents: recovered7d, count: recoveredCount } = recovered(audit);
   const atRisk = critical.reduce((s, a) => s + a.dollar_impact, 0);
   const top = [...openAlerts].sort((a, b) => a.claude_rank - b.claude_rank).slice(0, 5);
   const recentAudit = audit.slice(0, 4);
@@ -166,9 +153,17 @@ export default function Dashboard() {
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
       secondaryActions={[
         { content: "Settings", onAction: () => navigate("/app/settings") },
-        // New tab is required: the dashboard sends frame-ancestors 'none',
-        // so it cannot render inside the admin iframe.
-        { content: "Open web dashboard", url: dashboardLoginUrl, external: true },
+        // New tab is required: the dashboard sends frame-ancestors 'none', so
+        // it cannot render inside the admin iframe. window.open instead of
+        // url/external because Polaris's url rendering loses the new-tab
+        // intent at two layers in embedded apps (the AppProvider link shim
+        // drops `external`; the narrow-viewport rollup menu drops `target`) —
+        // see dashboard-link-target.test.ts. App Bridge v4 has no external
+        // redirect API; its docs prescribe standard web APIs for this.
+        {
+          content: "Open web dashboard",
+          onAction: () => window.open(dashboardLoginUrl, "_blank", "noopener,noreferrer"),
+        },
       ]}
     >
       <BlockStack gap="500">
@@ -203,7 +198,7 @@ export default function Dashboard() {
               label="Recovered (7d)"
               value={fmtMoney(recovered7d)}
               tone="success"
-              caption={`across ${succeeded.length} action${succeeded.length === 1 ? "" : "s"}`}
+              caption={`across ${recoveredCount} action${recoveredCount === 1 ? "" : "s"}`}
               onClick={() => navigate("/app/audit")}
             />
             <StatTile

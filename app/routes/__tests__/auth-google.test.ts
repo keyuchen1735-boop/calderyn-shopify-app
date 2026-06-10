@@ -16,6 +16,8 @@ vi.mock("~/lib/meta/oauth-state.server", () => ({
   parseOAuthState: () => ({ nonce: "n", host: null, shop: null }),
   embeddedReturnUrl: (path: string, params: Record<string, string>) =>
     `${path}?${new URLSearchParams(params).toString()}`,
+  // This suite's fixture shop has finished onboarding -> Settings.
+  postOAuthPath: async () => "/app/settings",
 }));
 vi.mock("~/lib/google/oauth.server", () => ({
   exchangeCodeForToken: (...a: unknown[]) => exchangeCodeForToken(...a),
@@ -23,6 +25,15 @@ vi.mock("~/lib/google/oauth.server", () => ({
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve({
+              data: { onboarding_step: "complete", onboarding_completed_at: "2026-06-10T00:00:00Z" },
+              error: null,
+            }),
+        }),
+      }),
       upsert: (row: Record<string, unknown>) => {
         upsertCalls.push({ table, row });
         return Promise.resolve({ error: null });

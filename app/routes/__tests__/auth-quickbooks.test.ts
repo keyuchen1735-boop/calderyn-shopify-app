@@ -18,6 +18,13 @@ vi.mock("~/lib/meta/oauth-state.server", async (importOriginal) => {
 vi.mock("~/lib/quickbooks/oauth.server", () => ({
   exchangeCodeForToken: (...a: unknown[]) => exchangeCodeForToken(...a),
 }));
+// Onboarding state drives where the success redirect lands: back into the
+// wizard while setup is incomplete, Settings once it's done.
+const shopsRow: { onboarding_step: string | null; onboarding_completed_at: string | null } = {
+  onboarding_step: "quickbooks",
+  onboarding_completed_at: null,
+};
+
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => ({
@@ -25,6 +32,9 @@ vi.mock("~/lib/supabase.server", () => ({
         upsertCalls.push({ table, row });
         return Promise.resolve({ error: null });
       },
+      select: () => ({
+        eq: () => ({ maybeSingle: () => Promise.resolve({ data: shopsRow, error: null }) }),
+      }),
     }),
   }),
 }));
@@ -32,6 +42,8 @@ vi.mock("~/lib/crypto.server", () => ({ encrypt: (s: string) => `enc(${s})` }));
 
 beforeEach(() => {
   upsertCalls.length = 0;
+  shopsRow.onboarding_step = "quickbooks";
+  shopsRow.onboarding_completed_at = null;
   consumeOAuthState.mockReset();
   exchangeCodeForToken.mockReset();
   process.env.QBO_CLIENT_ID = "cid";
@@ -49,14 +61,14 @@ describe("auth.quickbooks loader", () => {
     await expect(loader(req("code=abc&state=bad&realmId=9"))).rejects.toMatchObject({ status: 400 });
   });
 
-  it("stores the encrypted refresh token + realmId and redirects to settings", async () => {
+  it("stores the encrypted refresh token + realmId and returns to onboarding mid-setup", async () => {
     consumeOAuthState.mockResolvedValue("shop-1");
     exchangeCodeForToken.mockResolvedValue({
       accessToken: "acc", refreshToken: "ref", expiresInSec: 3600, refreshExpiresInSec: 8640000,
     });
     const res = await loader(req("code=abc&state=ok&realmId=realm-9"));
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/app/settings?quickbooks=connected");
+    expect(res.headers.get("location")).toBe("/app/onboarding?quickbooks=connected");
 
     const cred = upsertCalls.find((c) => c.table === "integration_credentials")!;
     expect(cred.row).toMatchObject({
@@ -81,8 +93,18 @@ describe("auth.quickbooks loader", () => {
     const res = await loader(req(`code=abc&state=${packedState}&realmId=realm-9`));
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(
-      "/app/settings?quickbooks=connected&shop=test.myshopify.com&host=aG9zdA",
+      "/app/onboarding?quickbooks=connected&shop=test.myshopify.com&host=aG9zdA",
     );
+  });
+
+  it("redirects to settings once onboarding is complete", async () => {
+    shopsRow.onboarding_completed_at = "2026-06-10T00:00:00Z";
+    consumeOAuthState.mockResolvedValue("shop-1");
+    exchangeCodeForToken.mockResolvedValue({
+      accessToken: "acc", refreshToken: "ref", expiresInSec: 3600, refreshExpiresInSec: 8640000,
+    });
+    const res = await loader(req("code=abc&state=ok&realmId=realm-9"));
+    expect(res.headers.get("location")).toBe("/app/settings?quickbooks=connected");
   });
 
   it("carries shop/host through the user-declined error redirect", async () => {

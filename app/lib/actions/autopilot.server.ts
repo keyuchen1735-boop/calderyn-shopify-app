@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind } from "./execute.server";
+import { executeReallocation } from "./reallocate.server";
+import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -44,6 +46,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (aErr) throw aErr;
   const candidates = (rows ?? []) as Candidate[];
 
+  // Hoisted: ONE candidate-pool read serves every reallocation decision this
+  // run, instead of re-reading campaign + grade facts per candidate.
+  const gradedPool = candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id))
+    ? await loadReallocationCandidates(shopId, sb)
+    : [];
+
   let acted = 0;
   let blocked = 0;
   for (const c of candidates) {
@@ -57,6 +65,51 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       kind === "reduce_campaign_budget" && currentBudgetCents != null
         ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
         : undefined;
+
+    // Budget detectors: prefer REDIRECTING the cut to a winning campaign on
+    // another platform over shrinking total spend. Falls back to the plain
+    // reduction below when no destination exists. A guardrail-blocked
+    // reallocation does NOT fall through to reduce — same alert, same day,
+    // one decision (counted as blocked).
+    if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
+      const amountCents = currentBudgetCents - newBudgetCents;
+      if (amountCents > 0) {
+        const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
+        if (dest) {
+          const verdict = await checkGuardrails(
+            shopId,
+            {
+              kind: "reallocate_budget",
+              campaignId: c.campaign_id,
+              destCampaignId: dest.campaignId,
+              dollarImpactCents: amountCents,
+              campaignSpendCents: c.campaign_spend_cents,
+              currentBudgetCents,
+              newBudgetCents,
+            },
+            sb,
+          );
+          if (!verdict.allowed) {
+            blocked += 1;
+            continue;
+          }
+          await executeReallocation(
+            shopId,
+            {
+              alertId: c.alert_id,
+              sourceCampaignId: c.campaign_id,
+              destCampaignId: dest.campaignId,
+              amountCents,
+              idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
+              actor: "autopilot",
+            },
+            sb,
+          );
+          acted += 1;
+          continue;
+        }
+      }
+    }
 
     const verdict = await checkGuardrails(
       shopId,

@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Form,
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigation,
+  useSearchParams,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -58,6 +60,8 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
+  // External OAuth URL to open at the top level (escaping the embedded iframe).
+  redirectUrl?: string;
 };
 
 // ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
@@ -126,9 +130,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
-      const host = new URL(request.url).searchParams.get("host");
+      // Carry the embedded App Bridge `host` through the OAuth round-trip: the
+      // provider callback lands at the top level (outside the admin iframe) and
+      // needs host to redirect the merchant back INTO the embedded admin.
+      const host = String(formData.get("host") || "") || null;
       const { redirectUrl } = await client.integrations.startOAuth(provider, host);
-      return redirect(redirectUrl);
+      // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
+      // be framed. Hand the URL back so the client opens it at the top level.
+      return json<ActionPayload>({ ok: true, redirectUrl });
     }
     if (intent === "finish") {
       await client.onboarding.advance(STEPS.length, request.signal);
@@ -241,7 +250,9 @@ export default function Onboarding() {
           {key === "consent" && (
             <ConsentStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
           )}
-          {key === "complete" && <CompleteStep submitting={submitting} />}
+          {key === "complete" && (
+            <CompleteStep prevStep={safeStep - 1} submitting={submitting} />
+          )}
         </Card>
       </BlockStack>
     </Page>
@@ -357,46 +368,49 @@ function GuardrailsStep({
           ]}
         />
       </Box>
-      <Form method="post">
-        <input type="hidden" name="intent" value="save_guardrails" />
-        <input type="hidden" name="step" value={String(nextStep)} />
-        <input type="hidden" name="budget" value={budget} />
-        <input type="hidden" name="cap" value={cap} />
-        <input type="hidden" name="cooldown" value={cooldown} />
-        <BlockStack gap="300">
-          <TextField
-            label="Daily action budget cap (USD)"
-            type="number"
-            value={budget}
-            onChange={setBudget}
-            autoComplete="off"
-            helpText={`Used today: ${fmtMoney(
-              guardrails?.daily_action_budget_used_cents ?? 0,
-            )} of ${fmtMoney(Number(budget) * 100)}`}
-          />
-          <TextField
-            label="Per-action dollar cap (USD)"
-            type="number"
-            value={cap}
-            onChange={setCap}
-            autoComplete="off"
-            helpText="Single-action impact above this prompts re-authentication."
-          />
-          <TextField
-            label="Cooldown between actions (minutes)"
-            type="number"
-            value={cooldown}
-            onChange={setCooldown}
-            autoComplete="off"
-          />
-          <InlineStack align="space-between">
-            <BackButton step={Math.max(0, nextStep - 2)} submitting={submitting} />
+      <BlockStack gap="300">
+        <TextField
+          label="Daily action budget cap (USD)"
+          type="number"
+          value={budget}
+          onChange={setBudget}
+          autoComplete="off"
+          helpText={`Used today: ${fmtMoney(
+            guardrails?.daily_action_budget_used_cents ?? 0,
+          )} of ${fmtMoney(Number(budget) * 100)}`}
+        />
+        <TextField
+          label="Per-action dollar cap (USD)"
+          type="number"
+          value={cap}
+          onChange={setCap}
+          autoComplete="off"
+          helpText="Single-action impact above this prompts re-authentication."
+        />
+        <TextField
+          label="Cooldown between actions (minutes)"
+          type="number"
+          value={cooldown}
+          onChange={setCooldown}
+          autoComplete="off"
+        />
+        {/* The Back button renders its own <form>, so it must stay a sibling of
+            this one — a form nested inside a form is dropped by the HTML parser
+            and Back would silently submit save_guardrails instead. */}
+        <InlineStack align="space-between">
+          <BackButton step={Math.max(0, nextStep - 2)} submitting={submitting} />
+          <Form method="post" style={{ display: "inline" }}>
+            <input type="hidden" name="intent" value="save_guardrails" />
+            <input type="hidden" name="step" value={String(nextStep)} />
+            <input type="hidden" name="budget" value={budget} />
+            <input type="hidden" name="cap" value={cap} />
+            <input type="hidden" name="cooldown" value={cooldown} />
             <Button submit variant="primary" loading={submitting} disabled={submitting}>
               Continue
             </Button>
-          </InlineStack>
-        </BlockStack>
-      </Form>
+          </Form>
+        </InlineStack>
+      </BlockStack>
     </BlockStack>
   );
 }
@@ -414,24 +428,39 @@ function OAuthStep({
   prevStep: number;
   submitting: boolean;
 }) {
-  const labels: Record<IntegrationProvider, { title: string; blurb: string; optional?: boolean }> = {
+  // App Bridge appends `host` to the embedded URL; forward it on connect so the
+  // OAuth callback can re-embed the merchant in the Shopify admin afterwards.
+  const [searchParams] = useSearchParams();
+  // Connect runs through its own fetcher so the provider's OAuth page can be
+  // opened at the top level — embedded iframes can't load third-party OAuth
+  // pages (they refuse to be framed).
+  const connectFetcher = useFetcher<ActionPayload>();
+  const connecting = connectFetcher.state !== "idle";
+  useActionToast(connectFetcher.data ?? undefined);
+  useEffect(() => {
+    const url = connectFetcher.data?.redirectUrl;
+    if (url) window.open(url, "_top");
+  }, [connectFetcher.data]);
+  const labels: Record<IntegrationProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
-      blurb: "Calderyn reads spend, impressions, and conversions to compute true ROAS. Required.",
+      blurb:
+        "Calderyn reads spend, impressions, and conversions to compute true ROAS. You can skip and connect later from Settings.",
     },
     meta: {
       title: "Connect Meta Ads",
-      blurb: "Calderyn reads Meta Ads spend, attribution, and ad-set structure.",
+      blurb:
+        "Calderyn reads Meta Ads spend, attribution, and ad-set structure. You can skip and connect later from Settings.",
     },
     tiktok: {
       title: "Connect TikTok Ads",
-      blurb: "Calderyn reads TikTok Ads spend and advertiser performance.",
+      blurb:
+        "Calderyn reads TikTok Ads spend and advertiser performance. You can skip and connect later from Settings.",
     },
     quickbooks: {
       title: "Connect QuickBooks (optional)",
       blurb:
         "Optional. Calderyn reads COGS journal entries to validate landed cost. Skip to use Shopify cost-per-item only.",
-      optional: true,
     },
   };
   const cfg = labels[provider];
@@ -452,20 +481,21 @@ function OAuthStep({
           {connected ? (
             <Badge tone="success">Connected</Badge>
           ) : (
-            <Form method="post">
+            <connectFetcher.Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
               <input type="hidden" name="provider" value={provider} />
-              <Button submit variant="primary" loading={submitting} disabled={submitting}>
+              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
+              <Button submit variant="primary" loading={connecting} disabled={connecting}>
                 Connect
               </Button>
-            </Form>
+            </connectFetcher.Form>
           )}
         </InlineStack>
       </Box>
       <InlineStack align="space-between">
         <BackButton step={prevStep} submitting={submitting} />
         <InlineStack gap="200">
-          {cfg.optional && (
+          {!connected && (
             <AdvanceForm step={nextStep}>
               <Button submit loading={submitting} disabled={submitting}>
                 Skip for now
@@ -477,7 +507,7 @@ function OAuthStep({
               submit
               variant="primary"
               loading={submitting}
-              disabled={submitting || (!connected && !cfg.optional)}
+              disabled={submitting || !connected}
             >
               Continue
             </Button>
@@ -555,7 +585,7 @@ function ConsentStep({
   );
 }
 
-function CompleteStep({ submitting }: { submitting: boolean }) {
+function CompleteStep({ prevStep, submitting }: { prevStep: number; submitting: boolean }) {
   return (
     <BlockStack gap="400">
       <Text as="h2" variant="headingMd">
@@ -565,7 +595,8 @@ function CompleteStep({ submitting }: { submitting: boolean }) {
         Calderyn is now watching your store. The first pass over your historical data is running
         — alerts will populate as detections complete.
       </Text>
-      <InlineStack align="end">
+      <InlineStack align="space-between">
+        <BackButton step={prevStep} submitting={submitting} />
         <Form method="post">
           <input type="hidden" name="intent" value="finish" />
           <Button submit variant="primary" loading={submitting} disabled={submitting}>

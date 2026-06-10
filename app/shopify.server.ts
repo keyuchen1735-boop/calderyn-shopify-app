@@ -33,7 +33,10 @@ const shopify = shopifyApp({
   distribution: AppDistribution.AppStore,
   future: {
     unstable_newEmbeddedAuthStrategy: true,
-    removeRest: true,
+    // Shopify rejects non-expiring offline tokens for new public apps
+    // (enforced 2026-04-01): background Admin API calls 403 without this.
+    // The library mints expiring offline tokens and auto-refreshes them.
+    expiringOfflineAccessTokens: true,
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }

@@ -21,6 +21,15 @@ vi.mock("~/lib/tiktok/oauth.server", () => ({
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve({
+              data: { onboarding_step: "complete", onboarding_completed_at: "2026-06-10T00:00:00Z" },
+              error: null,
+            }),
+        }),
+      }),
       upsert: (row: Record<string, unknown>) => {
         upsertCalls.push({ table, row });
         return Promise.resolve({ error: null });

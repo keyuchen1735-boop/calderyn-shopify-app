@@ -11,17 +11,22 @@ const config = {
   business_hours_only: false, business_hours_start_utc: 14, business_hours_end_utc: 0,
 };
 
-function fakeSb(opts: { config?: Record<string, unknown> | null; todayCount?: number; lastActionAtIso?: string | null }) {
+function fakeSb(opts: { config?: Record<string, unknown> | null; todayCount?: number; lastActionAtIso?: string | null; lastActionAtIsoQueue?: Array<string | null> }) {
+  const cooldownQueue = [...(opts.lastActionAtIsoQueue ?? [opts.lastActionAtIso ?? null])];
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
     chain.gte = vi.fn(() => chain);
+    chain.or = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.limit = vi.fn(() => chain);
     chain.maybeSingle = vi.fn(async () => {
       if (table === "guardrail_config") return { data: opts.config !== undefined ? opts.config : config, error: null };
-      if (table === "action_audit") return { data: opts.lastActionAtIso ? { created_at: opts.lastActionAtIso } : null, error: null };
+      if (table === "action_audit") {
+        const iso = cooldownQueue.length ? cooldownQueue.shift() : null;
+        return { data: iso ? { created_at: iso } : null, error: null };
+      }
       return { data: null, error: null };
     });
     // count query: head:true select returns { count }
@@ -59,5 +64,40 @@ describe("checkGuardrails", () => {
       kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000,
     }, sb);
     expect(r).toMatchObject({ allowed: false });
+  });
+
+  it("blocks a reallocation whose DEST campaign is in cooldown", async () => {
+    // Source lookup (first action_audit call) → null; dest lookup → recent.
+    const sb = fakeSb({ todayCount: 0, lastActionAtIsoQueue: [null, "2026-06-06T15:50:00Z"] });
+    const r = await checkGuardrails(SHOP, {
+      kind: "reallocate_budget", campaignId: CAMP,
+      destCampaignId: "22222222-2222-2222-2222-222222222222",
+      dollarImpactCents: 500, campaignSpendCents: 50000,
+      currentBudgetCents: 2000, newBudgetCents: 1500,
+    }, sb);
+    expect(r).toEqual({ allowed: false, reason: "destination campaign in cooldown" });
+  });
+
+  it("allows a reallocation when neither campaign is in cooldown", async () => {
+    const sb = fakeSb({ todayCount: 0, lastActionAtIsoQueue: [null, null] });
+    const r = await checkGuardrails(SHOP, {
+      kind: "reallocate_budget", campaignId: CAMP,
+      destCampaignId: "22222222-2222-2222-2222-222222222222",
+      dollarImpactCents: 500, campaignSpendCents: 50000,
+      currentBudgetCents: 2000, newBudgetCents: 1500,
+    }, sb);
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("cooldown-blocks a pause on a campaign recently touched as a reallocation DESTINATION", async () => {
+    // The single cooldown lookup matches params->>campaign_id OR
+    // params->>dest_campaign_id (see minutesSinceLastAutopilotActionOn) — a
+    // recent reallocation INTO this campaign counts as a recent touch.
+    const sb = fakeSb({ todayCount: 0, lastActionAtIsoQueue: ["2026-06-06T15:50:00Z"] });
+    const r = await checkGuardrails(SHOP, {
+      kind: "pause_campaign", campaignId: CAMP,
+      dollarImpactCents: 500, campaignSpendCents: 50000,
+    }, sb);
+    expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
   });
 });

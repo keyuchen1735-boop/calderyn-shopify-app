@@ -12,6 +12,7 @@ import type {
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
+import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
@@ -19,6 +20,7 @@ import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.serve
 import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
+import { undoAction } from "./actions/undo.server";
 
 export class CalderynError extends Error {
   code: string;
@@ -258,6 +260,22 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
+          // Composite reallocations have a real two-sided platform undo —
+          // delegate to the action-gateway undo (adapter-based, restores BOTH
+          // budgets) instead of the legacy path below, which would record a
+          // success without touching either platform (rule 12).
+          if (orig.action_kind === "reallocate_budget") {
+            const res = await undoAction(shopId, auditId, supabase);
+            const { data: view, error: vErr } = await supabase
+              .from("v_audit_view")
+              .select("*")
+              .eq("id", res.id)
+              .eq("shop_id", shopId)
+              .single();
+            if (vErr) throw vErr;
+            return rowToAudit(view);
+          }
+
           // For real ad-platform pauses/resumes, restore the prior status on
           // Meta first. executeAction snapshots lowercase statuses from
           // ad_campaign_dim while legacy rows recorded Meta's uppercase —
@@ -490,7 +508,10 @@ export function calderynClient(shop: string) {
               "campaign_id, grade, roas, break_even_roas, spend_cents, revenue_cents, day_bucket, ad_campaign_dim(name)",
             )
             .eq("shop_id", shopId)
-            .order("day_bucket", { ascending: false });
+            .order("day_bucket", { ascending: false })
+            // Bounded: one row per campaign per day, desc — the cap trims the
+            // oldest rows first (see GRADE_ROWS_CAP for the staleness tradeoff).
+            .limit(GRADE_ROWS_CAP);
           if (error) throw error;
           const seen = new Set<string>();
           const out: CampaignGradeRow[] = [];

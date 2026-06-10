@@ -17,6 +17,7 @@ import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { Icon } from "~/components/calderyn";
 import type { Alert, SKU } from "~/lib/types";
+import { isUuid } from "~/lib/ids";
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
 type SortDir = "asc" | "desc";
@@ -329,11 +330,8 @@ function SortHeader({
   );
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function SkuId({ id }: { id: string }) {
-  const isUuid = UUID_RE.test(id);
-  const display = isUuid ? id.slice(-6).toUpperCase() : id;
+  const display = isUuid(id) ? id.slice(-6).toUpperCase() : id;
   return (
     <code className="cdn-skuid" title={id}>
       {display}

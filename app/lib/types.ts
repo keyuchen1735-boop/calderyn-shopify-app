@@ -6,6 +6,7 @@ export type ActionKind =
   | "pause_campaign"
   | "resume_campaign"
   | "reduce_campaign_budget"
+  | "reallocate_budget"
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"

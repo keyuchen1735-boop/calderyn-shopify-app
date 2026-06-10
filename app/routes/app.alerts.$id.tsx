@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Form,
   useActionData,
@@ -68,6 +68,17 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
+};
+
+// Per-kind execution surface. Most kinds confirm + execute inline on this page;
+// kinds listed here need inputs only another page collects, so every surface
+// (buttons, ?action= param, keyboard shortcut) deep-links there instead, and
+// the action handler rejects direct POSTs rather than write a bogus audit row.
+const DEEP_LINK_ACTIONS: Partial<Record<ActionKind, { path: string; message: string }>> = {
+  reallocate_budget: {
+    path: "/app/campaigns",
+    message: "Reallocate budget from the Campaigns page",
+  },
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -160,6 +171,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         status: 403,
         message: `"${kind}" is not a permitted action for this alert.`,
       });
+    }
+
+    const deepLink = DEEP_LINK_ACTIONS[kind];
+    if (deepLink) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "UNSUPPORTED_HERE", message: deepLink.message },
+          toast: { message: deepLink.message, isError: true },
+        },
+        { status: 400 },
+      );
     }
 
     // Guardrail: enforce the per-action dollar-impact cap server-side using the
@@ -381,7 +404,12 @@ export default function AlertDetail() {
   useEffect(() => {
     if (!alert) return;
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-    const fromUrl = resolveActionParam(searchParams.get("action"), allowed);
+    // Deep-linked kinds have no inline confirm modal — opening one would only
+    // 400 on submit, so the param is ignored and the deep-link button remains.
+    const fromUrl = resolveActionParam(
+      searchParams.get("action"),
+      allowed.filter((k) => !DEEP_LINK_ACTIONS[k]),
+    );
     if (fromUrl) setActionKind(fromUrl);
   }, [alert, searchParams]);
 
@@ -398,7 +426,11 @@ export default function AlertDetail() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-      if (e.key === "e") setActionKind(allowed[0]);
+      // Deep-linked kinds have no inline confirm modal. Skip them so the
+      // shortcut lands on the first actionable kind rather than silently
+      // firing a server 400.
+      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k]);
+      if (e.key === "e" && inlineKinds[0]) setActionKind(inlineKinds[0]);
       if (e.key === "s") setActionKind("snooze_alert");
     };
     document.addEventListener("keydown", onKey);
@@ -483,12 +515,24 @@ export default function AlertDetail() {
                   </Text>
                 </BlockStack>
                 <BlockStack gap="300">
-                  {allowedActions.map((kind, i) =>
-                    i === 0 ? (
+                  {allowedActions.map((kind, i) => {
+                    const deepLink = DEEP_LINK_ACTIONS[kind];
+                    const button = deepLink ? (
+                      <Button fullWidth onClick={() => navigate(deepLink.path)}>
+                        {ACTION_LABELS[kind]} →
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={i === 0 ? "primary" : undefined}
+                        onClick={() => setActionKind(kind)}
+                        fullWidth
+                      >
+                        {ACTION_LABELS[kind]}
+                      </Button>
+                    );
+                    return i === 0 ? (
                       <BlockStack key={kind} gap="100">
-                        <Button variant="primary" onClick={() => setActionKind(kind)} fullWidth>
-                          {ACTION_LABELS[kind]}
-                        </Button>
+                        {button}
                         <InlineStack gap="150" blockAlign="center">
                           <Badge tone="success">Recommended</Badge>
                           <Text as="span" variant="bodyXs" tone="subdued">
@@ -497,11 +541,9 @@ export default function AlertDetail() {
                         </InlineStack>
                       </BlockStack>
                     ) : (
-                      <Button key={kind} onClick={() => setActionKind(kind)} fullWidth>
-                        {ACTION_LABELS[kind]}
-                      </Button>
-                    ),
-                  )}
+                      <Fragment key={kind}>{button}</Fragment>
+                    );
+                  })}
                 </BlockStack>
               </BlockStack>
             </Card>

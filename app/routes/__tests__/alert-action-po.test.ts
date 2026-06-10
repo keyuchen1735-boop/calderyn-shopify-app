@@ -199,6 +199,33 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
   });
 });
 
+describe("alert action — reallocate_budget guard", () => {
+  const AD_TAX_ALERT = {
+    ...ALERT,
+    detector_id: "ad_tax_overload",
+    sku: null,
+    campaign: "camp-abc",
+    evidence: {},
+  };
+
+  it("returns 400 UNSUPPORTED_HERE for reallocate_budget on the alert page", async () => {
+    alertsGetSpy.mockResolvedValue(AD_TAX_ALERT);
+    const fd = new FormData();
+    fd.set("kind", "reallocate_budget");
+    fd.set("alertId", AD_TAX_ALERT.id);
+    const req = new Request(`http://localhost/app/alerts/${AD_TAX_ALERT.id}`, {
+      method: "POST",
+      body: fd,
+    });
+    const res = await call(req);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: { code: string } };
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("UNSUPPORTED_HERE");
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("alert action — acknowledges the alert after success", () => {
   it("flips the alert open → acknowledged after a successful execution", async () => {
     const res = await call(poRequest());
