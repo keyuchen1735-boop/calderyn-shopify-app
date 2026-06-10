@@ -419,7 +419,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
         <FormLayout>
           <FormLayout.Group>
             <TextField
-              label="Daily action budget cap (USD)"
+              label="Total dollar value of changes Calderyn can make per day (USD)"
               type="number"
               value={budget}
               autoComplete="off"
@@ -427,7 +427,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
             />
             <TextField
-              label="Per-action dollar cap (USD)"
+              label="Require my approval for any change bigger than (USD)"
               type="number"
               value={cap}
               autoComplete="off"
@@ -437,7 +437,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           </FormLayout.Group>
           <FormLayout.Group>
             <TextField
-              label="Cooldown (minutes)"
+              label="Minimum wait between changes to the same campaign (minutes)"
               type="number"
               value={cooldown}
               autoComplete="off"
@@ -453,14 +453,14 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
             />
           </FormLayout.Group>
           <Checkbox
-            label="Auto-pilot — automatically pause clearly money-losing campaigns"
+            label="Let Calderyn pause money-losing campaigns on its own"
             checked={autopilotEnabled}
             onChange={setAutopilotEnabled}
             helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
           />
           <FormLayout.Group>
             <TextField
-              label="Max automatic actions per day"
+              label="Most automatic changes per day"
               type="number"
               value={autopilotDailyActionCap}
               autoComplete="off"
@@ -468,7 +468,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               helpText="Calderyn will not take more than this many automatic actions in a single day."
             />
             <TextField
-              label="Don't act until a campaign has spent (USD)"
+              label="Ignore campaigns that have spent less than (USD)"
               type="number"
               value={autopilotMinSpend}
               autoComplete="off"
@@ -478,7 +478,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           </FormLayout.Group>
           <FormLayout.Group>
             <TextField
-              label="Max budget cut per action (%)"
+              label="Most Calderyn can cut a campaign's budget at once (%)"
               type="number"
               value={autopilotMaxBudgetCutPct}
               autoComplete="off"
