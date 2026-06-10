@@ -191,6 +191,8 @@ export interface FeedEvent {
   tone: string;
   cents: number;
   kind?: string;
+  /** Epoch ms the event was surfaced; stamped at push time, read via app.relTime. */
+  ts?: number;
 }
 
 export interface Toast {

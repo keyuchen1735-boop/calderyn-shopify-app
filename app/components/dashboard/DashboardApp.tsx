@@ -140,7 +140,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   }, []);
 
   const pushFeed = useCallback((ev: Omit<FeedEvent, "id">) => {
-    setFeed((f) => [{ id: nextFeedId(), ...ev }, ...f].slice(0, 30));
+    setFeed((f) => [{ id: nextFeedId(), ts: ev.ts ?? Date.now(), ...ev }, ...f].slice(0, 30));
   }, []);
 
   // ----- initial load + refresh -----
