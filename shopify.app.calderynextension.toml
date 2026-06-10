@@ -13,7 +13,9 @@ scopes = "read_inventory,read_locations,read_orders,read_products,write_inventor
 redirect_urls = [
   "https://app.calderyncompany.com/auth/callback",
   "https://app.calderyncompany.com/auth/shopify/callback",
-  "https://app.calderyncompany.com/api/auth/callback"
+  "https://app.calderyncompany.com/api/auth/callback",
+  "https://calderyncompany.com/dashboard/auth/callback",
+  "https://app.calderyncompany.com/dashboard/auth/callback"
 ]
 
 [webhooks]

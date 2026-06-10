@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { markShopUninstalled } from "~/lib/supabase.server";
+import { revokeAllSessionsForShop } from "~/lib/dashboard/session.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -16,6 +17,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await markShopUninstalled(shop);
   } catch (err) {
     console.error(`Failed to mark shop ${shop} uninstalled in Supabase`, err);
+  }
+
+  try {
+    await revokeAllSessionsForShop(shop);
+  } catch (err) {
+    console.error(`Failed to revoke dashboard sessions for ${shop}`, err);
   }
 
   try {
