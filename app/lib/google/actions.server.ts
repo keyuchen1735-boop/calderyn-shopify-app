@@ -7,6 +7,7 @@ import { getSupabase } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 import type { ActionAdapter, CampaignActionState } from "../ads/actions";
 import { ActionError } from "../ads/actions";
+import { extractAdsError } from "./client.server";
 
 type MutateFn = (resource: string, operation: Record<string, unknown>, campaignExternalId?: string) => Promise<unknown>;
 type ReadFn = (campaignExternalId: string) => Promise<{ status?: string; amountMicros?: number }>;
@@ -86,8 +87,11 @@ export async function googleActionAdapterForShop(shopId: string): Promise<Action
       headers: { authorization: `Bearer ${token}`, "developer-token": devToken, "content-type": "application/json" },
       body: JSON.stringify({ operations: [operation] }),
     });
-    const json = (await res.json()) as { error?: { message?: string } };
-    if (!res.ok || json.error) throw new ActionError("google", json.error?.message ?? `HTTP ${res.status}`);
+    // extractAdsError appends error.details[].errors[] (rule 12): a bare
+    // "The caller does not have permission" is not actionable.
+    const json: unknown = await res.json();
+    const errMessage = extractAdsError(json);
+    if (!res.ok || errMessage) throw new ActionError("google", errMessage ?? `HTTP ${res.status}`);
     return json;
   };
 

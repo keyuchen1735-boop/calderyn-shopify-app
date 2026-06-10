@@ -31,7 +31,41 @@ describe("extractAdsError", () => {
   it("falls back to a generic message when error has no message field", () => {
     expect(extractAdsError([{ error: {} }])).toBe("Google Ads API error");
   });
+
+  it("surfaces detail errorCode + message, not just the generic top-level message", () => {
+    // Exact body captured live on 2026-06-10: the top-level message for every
+    // PERMISSION_DENIED is the useless "The caller does not have permission";
+    // the actionable reason lives only in error.details[].errors[].
+    const msg = extractAdsError(DEVELOPER_TOKEN_403);
+    expect(msg).toContain("DEVELOPER_TOKEN_NOT_APPROVED");
+    expect(msg).toContain("apply for Basic or Standard access");
+  });
 });
+
+// Verbatim searchStream 403 response (array-wrapped streaming form) from a
+// test-access-level developer token querying a production customer account.
+const DEVELOPER_TOKEN_403 = [
+  {
+    error: {
+      code: 403,
+      message: "The caller does not have permission",
+      status: "PERMISSION_DENIED",
+      details: [
+        {
+          "@type": "type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",
+          errors: [
+            {
+              errorCode: { authorizationError: "DEVELOPER_TOKEN_NOT_APPROVED" },
+              message:
+                "The developer token is only approved for use with test accounts. To access non-test accounts, apply for Basic or Standard access.",
+            },
+          ],
+          requestId: "ctPQxfy09Y6rARFlyeiW6w",
+        },
+      ],
+    },
+  },
+];
 
 describe("parseSearchStreamResponse", () => {
   it("flattens results across batches on a successful (ok) response", () => {
@@ -61,5 +95,12 @@ describe("parseSearchStreamResponse", () => {
 
   it("throws with the HTTP status on a non-ok JSON response with no error body", () => {
     expect(() => parseSearchStreamResponse(JSON.stringify([]), false, 500)).toThrow(/HTTP 500/);
+  });
+
+  it("throws with the actionable detail on a developer-token 403 (sync_error must be diagnosable)", () => {
+    const raw = JSON.stringify(DEVELOPER_TOKEN_403);
+    expect(() => parseSearchStreamResponse(raw, false, 403)).toThrow(
+      /DEVELOPER_TOKEN_NOT_APPROVED.*apply for Basic or Standard access/,
+    );
   });
 });
