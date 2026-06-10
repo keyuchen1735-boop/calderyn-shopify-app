@@ -4,7 +4,11 @@ import {
   exchangeCodeForToken,
   type TikTokTokenResponse,
 } from "~/lib/tiktok/oauth.server";
-import { consumeOAuthState } from "~/lib/meta/oauth-state.server";
+import {
+  consumeOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+} from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 
@@ -28,8 +32,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const appId = process.env.TIKTOK_APP_ID;
   const appSecret = process.env.TIKTOK_APP_SECRET;
 
+  // Recover the embedded App Bridge context (shop/host) carried through `state`
+  // so the redirects below land back on the embedded settings page instead of
+  // dead-ending top-level (mirrors auth.google.$.tsx / auth.quickbooks.$.tsx).
+  const returnCtx = parseOAuthState(state ?? "");
+
   if (oauthError) {
-    return redirect(`/app/settings?tiktok=error&reason=${encodeURIComponent(oauthError)}`);
+    return redirect(
+      embeddedReturnUrl("/app/settings", { tiktok: "error", reason: oauthError }, returnCtx),
+    );
   }
   if (!authCode || !state || !appId || !appSecret) {
     throw new Response("Missing OAuth parameters", { status: 400 });
@@ -84,5 +95,5 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
-  return redirect("/app/settings?tiktok=connected");
+  return redirect(embeddedReturnUrl("/app/settings", { tiktok: "connected" }, returnCtx));
 };
