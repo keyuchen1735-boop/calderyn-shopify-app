@@ -1,0 +1,188 @@
+// Calderyn DashV2 — view-model types mirroring the prototype's data.js shapes.
+// These are the shapes screens consume; field names/types match data.js exactly.
+
+export type Severity = "critical" | "high" | "medium" | "low";
+export type Platform = "Meta" | "Google" | "TikTok";
+export type Grade = "winning" | "okay" | "poor";
+
+export interface CampaignVM {
+  id: string;
+  name: string;
+  platform: Platform;
+  status: string;
+  daily_budget_cents: number;
+  spend_7d: number;
+  roas_7d: number;
+  breakeven_roas: number;
+  contribution_margin: number;
+  grade: Grade;
+  trend: number[];
+}
+
+export interface AlertVM {
+  id: string;
+  detector_id: string;
+  severity: Severity;
+  status: string;
+  claude_rank: number;
+  dollar_impact: number;
+  created_at: string;
+  title: string;
+  campaign: string | null;
+  campaign_id: string | null;
+  sku: string | null;
+  narrative: string;
+  evidence: Record<string, string>;
+  actions: string[];
+  recommended: string | null;
+  rec_detail: string;
+}
+
+export interface AuditVM {
+  id: string;
+  action_kind: string;
+  verb: string;
+  target: string;
+  detail: string;
+  dollar_impact_at_exec: number;
+  outcome: string;
+  actor: string;
+  when: string;
+  undo_eligible: boolean;
+  pre: string;
+  post: string;
+  failure?: string;
+}
+
+export interface SkuVM {
+  id: string;
+  title: string;
+  sku: string;
+  category: string;
+  on_hand: number;
+  days_of_cover: number;
+  velocity: number;
+  status: string;
+  locations: Record<string, number>;
+}
+
+export interface GuardrailVM {
+  daily_action_budget_cents: number;
+  daily_action_budget_used_cents: number;
+  dollar_cap_cents: number;
+  cooldown_minutes: number;
+  business_hours: { start: string; end: string; tz: string };
+  in_business_hours: boolean;
+  autopilot_enabled: boolean;
+  autopilot_daily_action_cap: number;
+  autopilot_actions_today: number;
+  autopilot_min_spend_cents: number;
+  autopilot_max_budget_cut_pct: number;
+}
+
+export interface DailyRow {
+  daysAgo: number;
+  spend_cents: number;
+  revenue_cents: number;
+}
+
+export interface TopAd {
+  ad_name: string;
+  campaign_name: string;
+  reactions: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  engagement: number;
+}
+
+export interface ScorecardMetric {
+  id: string;
+  group: string;
+  label: string;
+  score: number;
+  reasoning: string;
+}
+
+export interface ScorecardVariant {
+  mode: string;
+  composite: number;
+  delta: number;
+  summary: string;
+  headline: string;
+  cta: string;
+}
+
+export interface Scorecard {
+  ad_name: string;
+  composite: number;
+  grade: Grade;
+  confidence: string;
+  summary: string;
+  outcomes: {
+    estimatedRoas: number;
+    roasLow: number;
+    roasHigh: number;
+    breakEvenRoas: number;
+    predictedCtr: number;
+    holdRate: number;
+    assumedSpendCents: number;
+    predictedRevenueCents: number;
+    mappedSku: string;
+    skuPriceCents: number;
+  };
+  metrics: ScorecardMetric[];
+  tips: string[];
+  variants: ScorecardVariant[];
+}
+
+export interface GeneratorFix {
+  dim: string;
+  before: number;
+  fix: string;
+}
+
+export interface GeneratorOutput {
+  id: string;
+  recommended: boolean;
+  name: string;
+  format: string;
+  duration: string | null;
+  headline: string;
+  primaryText: string;
+  cta: string;
+  composite: number;
+  delta: number;
+  estRoas: number;
+  fixed: Array<[string, number, number]>;
+}
+
+export interface Generator {
+  source_ad: string;
+  source_composite: number;
+  fixes: GeneratorFix[];
+  styles: string[];
+  steps: string[];
+  outputs: GeneratorOutput[];
+}
+
+export interface FeedEvent {
+  id?: string | number;
+  icon: string;
+  text: string;
+  sub: string;
+  tone: string;
+  cents: number;
+  kind?: string;
+}
+
+export interface Toast {
+  id: string | number;
+  text: string;
+  icon?: string;
+  tone?: string;
+}
+
+export interface Tweaks {
+  [key: string]: unknown;
+}
