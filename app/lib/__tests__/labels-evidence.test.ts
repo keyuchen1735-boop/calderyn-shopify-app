@@ -35,7 +35,7 @@ describe("evidence labels", () => {
   });
 
   it("prefers the curated label over the fallback", () => {
-    expect(formatEvidenceKey("cac_per_unit_usd")).toBe("CAC per unit");
+    expect(formatEvidenceKey("cac_per_unit_usd")).toBe("Ad cost per sale");
     expect(formatEvidenceKey("days_of_cover")).toBe("Days until sold out");
   });
 });
