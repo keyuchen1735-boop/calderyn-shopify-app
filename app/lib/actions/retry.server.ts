@@ -30,7 +30,9 @@ import type { Platform } from "../ads/adapter";
 import type { ActionAdapter } from "../ads/actions";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
+import type { ActionKind } from "../types";
 import { acknowledgeAlert } from "../alerts.server";
+import { recoveredCentsFromStates } from "../audit-impact";
 import { recoveredDollarsForAlertAction } from "./execute.server";
 
 export const MAX_ATTEMPTS = 5;
@@ -141,6 +143,7 @@ interface AuditRow {
   attempts: number;
   outcome: string;
   completed_at: string | null;
+  pre_state: unknown;
   params: ReplayParams | null;
 }
 
@@ -197,7 +200,7 @@ export async function drainActionRetries(
 
   const { data: rows, error: selErr } = await sb
     .from("action_audit")
-    .select("id, shop_id, alert_id, action_kind, attempts, outcome, completed_at, params")
+    .select("id, shop_id, alert_id, action_kind, attempts, outcome, completed_at, pre_state, params")
     .eq("outcome", "retrying")
     .lt("attempts", MAX_ATTEMPTS)
     .order("completed_at", { ascending: true })
@@ -270,14 +273,16 @@ export async function drainActionRetries(
         update.last_error = null;
         // The row was inserted with dollar_impact_at_exec=0 (it was parked as
         // `retrying`, not succeeded). Backfill the recovered dollars now or a
-        // retry-recovered action never counts toward the Recovered total.
-        if (raw.alert_id) {
-          update.dollar_impact_at_exec = await recoveredDollarsForAlertAction(
-            sb,
-            raw.alert_id,
-            raw.action_kind,
-          );
-        }
+        // retry-recovered action never counts toward the Recovered total:
+        // alert-driven rows claw back the alert's at-stake dollars, no-alert
+        // rows recover what their own budget states prove they stopped.
+        update.dollar_impact_at_exec = raw.alert_id
+          ? await recoveredDollarsForAlertAction(sb, raw.alert_id, raw.action_kind)
+          : recoveredCentsFromStates(
+              raw.action_kind as ActionKind,
+              raw.pre_state,
+              postState,
+            ) / 100;
       } else {
         update.outcome = terminal ? "failed" : "retrying";
         update.last_error = replayError;

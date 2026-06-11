@@ -8,7 +8,7 @@ import type { Platform } from "../ads/adapter";
 import type { ActionKind } from "../types";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
-import { recoveredCentsForAction } from "../audit-impact";
+import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
 
 export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
 
@@ -108,11 +108,18 @@ export async function insertAuditWithIdempotency(
   sb: SupabaseClient,
 ): Promise<ExecutedAudit> {
   // Recovered impact: a value-recovering action that succeeds against an alert
-  // claws back that alert's at-stake dollars. Without this the Recovered-impact
-  // total is always $0.
+  // claws back that alert's at-stake dollars; a no-alert action (campaigns
+  // page, dashboard API) recovers what its own pre/post states prove it
+  // stopped. Without this the Recovered-impact total is always $0.
   const dollarImpactAtExec =
     audit.outcome === "succeeded"
-      ? await recoveredDollarsForAlertAction(sb, audit.alert_id, audit.action_kind)
+      ? audit.alert_id
+        ? await recoveredDollarsForAlertAction(sb, audit.alert_id, audit.action_kind)
+        : recoveredCentsFromStates(
+            audit.action_kind as ActionKind,
+            audit.pre_state,
+            audit.post_state,
+          ) / 100
       : 0;
 
   const { data: ins, error: iErr } = await sb

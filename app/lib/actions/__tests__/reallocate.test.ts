@@ -121,6 +121,14 @@ describe("executeReallocation · happy path + validation", () => {
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
   });
 
+  it("records the moved daily dollars as recovered impact for a no-alert reallocation", async () => {
+    // Campaigns-page reallocations have no alert; the recovered dollars are
+    // the daily budget moved off the (wasting) source campaign.
+    const { sb, calls } = fakeSb({ campaigns: [SRC, DST] });
+    await executeReallocation(SHOP, input, sb);
+    expect(auditRow(calls).dollar_impact_at_exec).toBe(5); // 500c/day moved
+  });
+
   it("short-circuits on a used idempotency key and reports the REAL prior outcome", async () => {
     const { sb } = fakeSb({ idempotent: { audit_id: "prev" }, campaigns: [SRC, DST], priorOutcome: "retrying" });
     const res = await executeReallocation(SHOP, input, sb);
