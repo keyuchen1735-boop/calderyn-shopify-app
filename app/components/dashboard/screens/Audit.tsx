@@ -59,6 +59,10 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">
+            {/* An undo row shares the original's verb; prefix it so the row reads
+                as a reversal rather than a fresh "Created PO draft" (mirrors the
+                extension audit log). */}
+            {entry.undo_of ? "Reversed — " : ""}
             {entry.verb} — {entry.target}
           </span>
           {failed && (

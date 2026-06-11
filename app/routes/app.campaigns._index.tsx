@@ -83,6 +83,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // (Meta, Google, TikTok). When Meta is live-connected, its rows are replaced
     // by the live API list (works pre-ingest, fresher status); other platforms
     // always come from the ingested view.
+    //
+    // TODO(merchant-review item 3): this live-Meta REPLACEMENT makes Campaigns
+    // and Analytics disagree. Analytics reads the ingested/graded Meta campaigns
+    // (campaign_grade_fact → ad_campaign_dim), but here those ingested rows are
+    // dropped and swapped for whatever the live ad account returns — a different
+    // set whenever the connected account doesn't match the ingested data (e.g.
+    // seeded/demo campaigns vs a real live account). The two surfaces then show
+    // different Meta campaigns. Reconciling them (back both from the same source,
+    // or overlay live status onto ingested rows instead of replacing) is a
+    // deferred maintainer decision — flagged, not yet fixed.
     const ingested = await client.campaigns.list(request.signal);
     const meta = await metaClientForShop(session.shop);
     let campaigns: Campaign[];

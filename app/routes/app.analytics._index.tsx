@@ -30,7 +30,6 @@ type LoaderPayload = {
   roasSeries: DailyRoasRow[];
   grades: CampaignGradeRow[];
   topAds: TopAdRow[];
-  breakevenCount: number;
   error: { code: string; message: string } | null;
 };
 
@@ -38,20 +37,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [roasSeries, grades, topAds, breakevenAlerts] = await Promise.all([
+    const [roasSeries, grades, topAds] = await Promise.all([
       client.analytics.dailyRoasSeries(WINDOW_DAYS, request.signal),
       client.analytics.campaignGrades(request.signal),
       client.analytics.topAdsByEngagement(WINDOW_DAYS, 20, request.signal),
-      client.alerts.list(
-        { detector: "campaign_below_breakeven", status: "open" },
-        request.signal,
-      ),
     ]);
     return json<LoaderPayload>({
       roasSeries,
       grades,
       topAds,
-      breakevenCount: breakevenAlerts.length,
       error: null,
     });
   } catch (err) {
@@ -60,7 +54,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       roasSeries: [],
       grades: [],
       topAds: [],
-      breakevenCount: 0,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -68,9 +61,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Analytics() {
   const navigate = useEmbeddedNavigate();
-  const { roasSeries, grades, topAds, breakevenCount, error } =
-    useLoaderData<typeof loader>();
+  const { roasSeries, grades, topAds, error } = useLoaderData<typeof loader>();
   const series = toRoasSeries(roasSeries);
+
+  // Derive the "losing money" count from the same grades the table below renders,
+  // so the banner can't disagree with the on-page list (a poor-grade campaign may
+  // have no open alert — acknowledged, under the min-spend guardrail, etc.). Same
+  // rule as the web dashboard's Analytics screen.
+  const losing = grades.filter(
+    (g) => g.break_even_roas > 0 && g.roas < g.break_even_roas,
+  );
+  const breakevenCount = losing.length;
 
   const gradeRows = grades.map((g) => [
     <Text key={`n-${g.campaign_id}`} as="span" fontWeight="semibold">

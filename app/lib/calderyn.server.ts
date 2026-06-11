@@ -22,6 +22,7 @@ import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
 import { undoAction } from "./actions/undo.server";
+import { dailyActionBudgetUsedCents } from "./recovered";
 
 export class CalderynError extends Error {
   code: string;
@@ -165,10 +166,16 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
   };
 }
 
-function rowToGuardrails(r: Record<string, unknown>): GuardrailConfig {
+// Start of the current UTC day — the window the daily action budget resets on,
+// matching the autopilot guardrail enforcement (actions/guardrails.server.ts).
+function startOfUtcDayIso(now = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+
+function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailConfig {
   return {
     daily_action_budget_cents: Number(r.daily_action_budget ?? 0) * 100,
-    daily_action_budget_used_cents: 0,
+    daily_action_budget_used_cents: usedCents,
     dollar_cap_cents: Math.round(Number(r.dollar_impact_cap_without_2fa ?? 0) * 100),
     cooldown_minutes: Number(r.cooldown_minutes_per_campaign ?? 30),
     business_hours: {
@@ -203,6 +210,35 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
   const shopIdP = resolveShopId(shop);
+
+  // Dollars (in cents) the shop's actions have recovered since the start of the
+  // UTC day — the "used" half of the daily action budget meter. Same inclusion
+  // rule as the Recovered-impact total, windowed to today.
+  async function dailyUsedCents(shopId: string): Promise<number> {
+    const since = startOfUtcDayIso();
+    // A failed lookup must degrade the "used" meter to 0, not blank the whole
+    // guardrails tile — the cap and every other setting still load. Same
+    // fallback the impact write uses (actions/execute.server.ts).
+    try {
+      const { data, error } = await supabase
+        .from("action_audit")
+        .select("outcome, dollar_impact_at_exec, undo_of, created_at")
+        .eq("shop_id", shopId)
+        .gte("created_at", since);
+      if (error) throw error;
+      const rows = (data ?? []).map((r) => ({
+        outcome: String(r.outcome),
+        // DB stores dollars; the budget meter (and the helper) work in cents.
+        dollar_impact_at_exec: Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),
+        undo_of: (r.undo_of as string | null) ?? null,
+        created_at: String(r.created_at),
+      }));
+      return dailyActionBudgetUsedCents(rows, since);
+    } catch (err) {
+      console.error(`[guardrails] daily action budget used lookup failed for shop ${shopId}`, err);
+      return 0;
+    }
+  }
 
   return {
     alerts: {
@@ -667,7 +703,7 @@ export function calderynClient(shop: string) {
               message: `No guardrail config for shop ${shop}`,
             });
           }
-          return rowToGuardrails(data);
+          return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.get", err);
         }
@@ -705,7 +741,7 @@ export function calderynClient(shop: string) {
             .eq("shop_id", shopId)
             .single();
           if (error) throw error;
-          return rowToGuardrails(data);
+          return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.update", err);
         }

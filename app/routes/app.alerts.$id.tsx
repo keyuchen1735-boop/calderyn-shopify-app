@@ -464,9 +464,22 @@ export default function AlertDetail() {
   const submitting = navigation.state !== "idle";
   const evidence = alert.evidence ?? {};
 
+  // UI guard: the "Best-seller may sell out" (scaling_sku_fulfillment_risk) copy
+  // contradicts its own evidence when on-hand stock / days-of-cover are already 0
+  // — the product isn't going to sell out, it's already out. Reframe the headline
+  // and add a clarifying note so the copy never argues with the numbers below.
+  // (The engine-side detector boundary is the real fix — flagged separately.)
+  const soldOut =
+    alert.detector_id === "scaling_sku_fulfillment_risk" &&
+    (Number(evidence.stock) === 0 || Number(evidence.days_of_cover) === 0);
+  const productName =
+    stringOrEmpty(evidence.title) || stringOrEmpty(evidence.sku_title) || alert.sku || "";
+  const headline =
+    soldOut && productName ? `${productName} is sold out — restock now` : alert.title;
+
   return (
     <Page
-      title={alert.title}
+      title={headline}
       backAction={{ content: "Alerts", onAction: () => navigate("/app/alerts") }}
       titleMetadata={
         <InlineStack gap="200">
@@ -483,6 +496,15 @@ export default function AlertDetail() {
               <Banner tone="critical" title="Action failed">
                 <p>
                   {actionData.error.code}: {actionData.error.message}
+                </p>
+              </Banner>
+            )}
+            {soldOut && (
+              <Banner tone="critical" title="This product is already sold out">
+                <p>
+                  On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s
+                  a stockout. Restock now, and pause or exclude the spend below until inventory is
+                  back so you stop paying for demand you can&apos;t fill.
                 </p>
               </Banner>
             )}

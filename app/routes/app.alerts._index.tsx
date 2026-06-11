@@ -62,12 +62,24 @@ export default function AlertList() {
   const openAlerts = alerts.filter((a) => a.status === "open");
   const projectedImpact = openAlerts.reduce((s, a) => s + a.dollar_impact, 0);
 
+  // The summary must agree with the list below it: when a non-default filter is
+  // applied (anything other than all-severities / open), report the filtered
+  // count and its impact instead of the all-open totals.
+  const isFiltered = sev !== "all" || st !== "open";
+  const filteredImpact = filtered.reduce((s, a) => s + a.dollar_impact, 0);
+
   return (
     <Page
       title="Alerts"
-      subtitle={`${openAlerts.length} open · ranked by Claude · ${fmtMoney(
-        projectedImpact,
-      )} projected 30-day impact`}
+      subtitle={
+        isFiltered
+          ? `Showing ${filtered.length} of ${alerts.length} · ${fmtMoney(
+              filteredImpact,
+            )} projected 30-day impact`
+          : `${openAlerts.length} open · ranked by Claude · ${fmtMoney(
+              projectedImpact,
+            )} projected 30-day impact`
+      }
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && (

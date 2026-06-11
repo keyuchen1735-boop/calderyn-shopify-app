@@ -152,22 +152,23 @@ export default function Audit() {
     const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
     const showEstimate =
       !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
+    const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
     return [
-    <Box key={`t-${a.id}`} minWidth="150px">
-      <Text as="p" variant="bodySm" fontWeight="semibold">
+    // Relative time is the at-a-glance value; the absolute timestamp moves into a
+    // tooltip so this column stops forcing the table past the card (see merchant
+    // review — the trailing actions column was clipping at rest).
+    <Tooltip key={`t-${a.id}`} content={fmtAbsTime(a.created_at)}>
+      <Text as="span" variant="bodySm" fontWeight="semibold">
         {fmtRelTime(a.created_at)}
       </Text>
-      <Text as="p" variant="bodySm" tone="subdued">
-        {fmtAbsTime(a.created_at)}
-      </Text>
-    </Box>,
-    <Box key={`a-${a.id}`} minWidth="170px">
+    </Tooltip>,
+    <Box key={`a-${a.id}`} minWidth="130px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
-        {ACTION_LABELS[a.action_kind] ?? a.action_kind}
+        {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
       </Text>
       {a.undo_of && (
         <Text as="p" variant="bodySm" tone="subdued">
-          undo of {shortId(a.undo_of)}
+          reverses {shortId(a.undo_of)}
         </Text>
       )}
     </Box>,
@@ -232,6 +233,7 @@ export default function Audit() {
 
   return (
     <Page
+      fullWidth
       title="Action audit log"
       subtitle={`Every action executed by the gateway · ${audit.length} entries · 90-day retention`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
