@@ -11,11 +11,16 @@ const CONCURRENCY = 4; // bounded fan-out across shops × adapters
 async function setSync(shopId: string, kind: string, patch: Record<string, unknown>): Promise<void> {
   const sb = getSupabase();
   const now = new Date().toISOString();
-  await sb
+  // supabase-js returns { error } without throwing; a silently-dropped status
+  // write on the success path would report a sync that never persisted (stale
+  // "pending" → endless re-backfill, or a missed last_sync_at). Throw so the
+  // pool records it as a real failure instead of a false success.
+  const { error } = await sb
     .from("shop_integrations")
     .update({ ...patch, updated_at: now })
     .eq("shop_id", shopId)
     .eq("kind", kind);
+  if (error) throw error;
 }
 
 async function runOne(item: AdWorkItem, summary: Summary): Promise<void> {
@@ -40,7 +45,13 @@ async function runOne(item: AdWorkItem, summary: Summary): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await setSync(shopId, adapter.integrationKind, { sync_status: "error", sync_error: message.slice(0, 500) });
+    // Best-effort error-status write: never let a failed status update mask the
+    // original ingestion error (which must reach the pool below).
+    try {
+      await setSync(shopId, adapter.integrationKind, { sync_status: "error", sync_error: message.slice(0, 500) });
+    } catch (statusErr) {
+      console.error(`[cron.ingest-ads] failed to record sync error for ${tag}`, statusErr);
+    }
     throw err; // re-thrown into the isolated pool slot; recorded below
   }
 }
