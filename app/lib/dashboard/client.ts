@@ -30,6 +30,7 @@ import type {
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
+import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 
 // --- error type ------------------------------------------------------------
 
@@ -120,13 +121,20 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   const campaign_id =
     a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null;
 
-  const actions = campaign_id
-    ? ["pause_campaign", "reduce_campaign_budget", "snooze_alert"]
-    : ["snooze_alert"];
+  // Only live-executable kinds render as buttons: campaign kinds go through
+  // /dashboard/api/campaigns/:id/action, reallocate_inventory through
+  // /dashboard/api/alerts/:id/action. Detector kinds without a dashboard
+  // endpoint (exclude_geo, create_po_draft) stay hidden until wired.
+  const detectorActions = DETECTOR_TO_ACTIONS[a.detector_id] ?? [];
+  const actions: string[] = [
+    ...(campaign_id ? ["pause_campaign", "reduce_campaign_budget"] : []),
+    ...(detectorActions.includes("reallocate_inventory") ? ["reallocate_inventory"] : []),
+    "snooze_alert",
+  ];
 
   // recommended is the first concrete action; if all we can do is snooze there
   // is no recommendation to surface.
-  const recommended = campaign_id ? actions[0] : null;
+  const recommended = actions.length > 1 ? actions[0] : null;
 
   // Evidence values may arrive as non-strings; coerce so AlertVM's
   // Record<string,string> contract holds.
@@ -460,6 +468,18 @@ export async function executeCampaignAction(
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
   return { auditId: data.audit_id, outcome: data.outcome };
+}
+
+export async function executeAlertAction(
+  alertId: string,
+  input: { type: string },
+): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
+  const data = await apiSend<{ audit_id: string; outcome: string; acknowledged: boolean }>(
+    "POST",
+    `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,
+    { type: input.type, idempotency_key: crypto.randomUUID() },
+  );
+  return { auditId: data.audit_id, outcome: data.outcome, acknowledged: data.acknowledged };
 }
 
 export async function undoAudit(auditId: string): Promise<{ auditId: string }> {
