@@ -127,9 +127,25 @@ shopify-app/
 
 ## MCP server
 
-External agents can query this shop's read-only calderyn state — alerts, audit
-log, campaigns, SKUs, guardrails, integrations — via the hosted
-[`calderyn-mcp`](../calderyn-mcp) server at `https://calderyn-mcp.vercel.app/mcp`.
+External agents (Claude Code, Claude.ai connectors, custom agents) can query a
+shop's calderyn state — and propose (validation-only) guardrailed actions — via
+the hosted [`calderyn-mcp`](../calderyn-mcp) server at
+`https://calderyn-mcp.vercel.app/mcp`. Every tool is tenant-isolated: the server
+resolves the shop from the authenticated session or token.
+
+### Tools (12)
+
+- **Read** — `list_alerts`, `get_alert`, `list_audit`, `list_campaigns`,
+  `list_skus`, `get_guardrails`, `list_integrations`.
+- **Analytics** — `get_shop_stats` (one-call KPI snapshot: open-alert counts by
+  severity, dollars at risk, top-ranked alerts, spend-weighted blended ROAS,
+  7-day actions taken + dollars recovered, integration health),
+  `list_campaign_grades` (per-campaign calderyn score — winning/okay/poor with
+  ROAS vs break-even), `get_roas_series` (daily spend/revenue trend),
+  `list_top_ads` (top creative by engagement).
+- **Propose** — `propose_action`: validates one action against the alert's
+  detector and returns a draft plus a `confirm_url`. **Validation-only — it never
+  executes;** execution still flows through this app's action gateway + guardrails.
 
 There are two ways to connect, depending on the client:
 
@@ -159,7 +175,18 @@ claude mcp add --scope user --transport http calderyn https://calderyn-mcp.verce
   --header "Authorization: Bearer mcp_live_YOUR_TOKEN_HERE"
 ```
 
-Manage or disconnect either kind from the **Claude connections** page.
+Manage or disconnect either kind from the **Claude connections** page. Smoke-test
+the endpoint directly with:
+
+```bash
+curl -s https://calderyn-mcp.vercel.app/mcp \
+  -H "authorization: Bearer mcp_live_…" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+`GET /healthz` returns `{ "ok": true }` (no auth) for uptime checks.
 
 **More:** [`CONNECT_MCP.md`](CONNECT_MCP.md) (step-by-step),
 `docs/adr/0001-mcp-server-split.md` (split rationale),
