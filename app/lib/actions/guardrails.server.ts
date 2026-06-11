@@ -76,12 +76,15 @@ export async function checkGuardrails(
     businessHoursEndUtc: Number(row.business_hours_end_utc ?? 0),
   };
 
-  // Count today's autopilot actions (UTC day).
+  // Count today's autopilot actions (UTC day). Only landed actions consume
+  // the cap — a day of transient platform failures (`retrying`/`failed`)
+  // must not exhaust it with zero actions actually taken.
   const { count } = await sb
     .from("action_audit")
     .select("id", { count: "exact", head: true })
     .eq("shop_id", shopId)
     .eq("actor_user_id", "autopilot")
+    .eq("outcome", "succeeded")
     .gte("created_at", startOfUtcDayIso());
 
   const minutesSince = await minutesSinceLastAutopilotActionOn(sb, shopId, input.campaignId);

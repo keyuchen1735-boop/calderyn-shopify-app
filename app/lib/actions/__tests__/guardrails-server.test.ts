@@ -66,6 +66,39 @@ describe("checkGuardrails", () => {
     expect(r).toMatchObject({ allowed: false });
   });
 
+  it("counts only SUCCEEDED autopilot actions toward the daily cap", async () => {
+    // A day of retrying/failed attempts must not exhaust the cap with zero
+    // landed actions — the count query has to filter outcome=succeeded.
+    const eqCallsByChain: Array<Array<[string, string]>> = [];
+    function builder(table: string) {
+      const chain: Record<string, unknown> = {};
+      const eqCalls: Array<[string, string]> = [];
+      if (table === "action_audit") eqCallsByChain.push(eqCalls);
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn((col: string, val: string) => {
+        eqCalls.push([col, val]);
+        return chain;
+      });
+      chain.gte = vi.fn(() => chain);
+      chain.or = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.maybeSingle = vi.fn(async () =>
+        table === "guardrail_config" ? { data: config, error: null } : { data: null, error: null },
+      );
+      chain.then = (resolve: (r: { count: number; data: unknown; error: null }) => unknown) =>
+        resolve({ count: 0, data: [], error: null });
+      return chain;
+    }
+    const sb = { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
+    await checkGuardrails(SHOP, {
+      kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000,
+    }, sb);
+    expect(eqCallsByChain.some((calls) =>
+      calls.some(([col, val]) => col === "outcome" && val === "succeeded"),
+    )).toBe(true);
+  });
+
   it("blocks a reallocation whose DEST campaign is in cooldown", async () => {
     // Source lookup (first action_audit call) → null; dest lookup → recent.
     const sb = fakeSb({ todayCount: 0, lastActionAtIsoQueue: [null, "2026-06-06T15:50:00Z"] });
