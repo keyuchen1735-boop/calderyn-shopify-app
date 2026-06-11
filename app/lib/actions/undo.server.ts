@@ -15,7 +15,7 @@ export async function undoAction(
 ): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of")
+    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of, outcome")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
@@ -26,10 +26,19 @@ export async function undoAction(
   // or undoing twice must be refused server-side, not just hidden by the UI's
   // undo_eligible flag (rule 12: the API is the real boundary). Read-then-act
   // guard, not a true unique constraint — a race between two concurrent undos
-  // remains theoretically possible; the DB index is deliberately out of scope
-  // for this branch.
+  // remains theoretically possible, as is the window where the reversal applies
+  // but the undo-row insert below fails (see the insert error path); the DB
+  // index is deliberately out of scope for this branch.
   if (orig.undo_of) {
     throw new Error(`audit ${auditId} is itself an undo; cannot undo an undo`);
+  }
+  // Only a succeeded action moved anything on the platform. A failed
+  // reallocate_inventory audit still carries a full replayable plan (rule-12
+  // failed rows), so without this guard its "undo" would fire a real reverse
+  // transfer for stock that never moved. v_audit_view.undo_eligible only gates
+  // the UI; the API is the real boundary.
+  if (orig.outcome !== "succeeded") {
+    throw new Error(`audit ${auditId} recorded outcome '${String(orig.outcome)}'; only succeeded actions can be undone`);
   }
   const { data: existingUndo, error: uErr } = await sb
     .from("action_audit")
@@ -73,6 +82,11 @@ export async function undoAction(
       console.error(`[undo] mirror restore failed for campaign ${externalId} (corrects on next sync)`, mirrorErr);
     }
   };
+
+  // Set after the inventory branch fires its reverse transfer: an inventory
+  // reversal is a relative delta, so retrying it double-applies — unlike the
+  // campaign kinds, whose reversals are absolute-state and safe to retry.
+  let appliedInventoryOperationId: string | null = null;
 
   if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
     // Both are status flips, so both undo the same way: put the campaign back
@@ -127,12 +141,13 @@ export async function undoAction(
     if (!ip.inventory_item_id || !ip.from_location_id || !ip.to_location_id || !delta) {
       throw new Error(`audit ${auditId} lacks a replayable transfer plan; cannot undo`);
     }
-    await inventoryAdjustQuantities(deps.admin, {
+    const reversal = await inventoryAdjustQuantities(deps.admin, {
       inventoryItemId: ip.inventory_item_id,
       fromLocationId: ip.to_location_id,
       toLocationId: ip.from_location_id,
       delta,
     });
+    appliedInventoryOperationId = reversal.operationId;
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).
@@ -161,7 +176,23 @@ export async function undoAction(
     })
     .select("id")
     .single();
-  if (iErr) throw iErr;
+  if (iErr) {
+    // The reversal applies BEFORE this insert, so a failure here leaves a real
+    // platform change with no audit row. For inventory (delta-based) a retry
+    // would double-apply the transfer — fail with an explicit do-not-retry
+    // message. Campaign kinds fall through to the raw error: their reversals
+    // restore absolute state, so retrying is safe.
+    if (appliedInventoryOperationId) {
+      console.error(
+        `[undo] inventory reversal for audit ${auditId} (operation ${appliedInventoryOperationId}) applied to Shopify but undo row insert failed`,
+        iErr,
+      );
+      throw new Error(
+        `inventory reversal for audit ${auditId} was applied to Shopify but recording failed — do not retry; reconcile via the audit log`,
+      );
+    }
+    throw iErr;
+  }
 
   // Undo revives the underlying problem: acknowledge-on-execute (see
   // insertAuditWithIdempotency) closed the alert, so reversing the action

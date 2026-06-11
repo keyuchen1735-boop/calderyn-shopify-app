@@ -25,10 +25,17 @@ const ORIG = {
   pre_state: { from_location_available: 80 },
   post_state: { from_location_available: 40 },
   dollar_impact_at_exec: 0,
+  outcome: "succeeded",
 };
 
-function mockSb(orig: Record<string, unknown> | null) {
-  const single = vi.fn(async () => ({ data: { id: "audit-undo-1" }, error: null }));
+function mockSb(
+  orig: Record<string, unknown> | null,
+  insertResult: { data: { id: string } | null; error: Error | null } = {
+    data: { id: "audit-undo-1" },
+    error: null,
+  },
+) {
+  const single = vi.fn(async () => insertResult);
   const builder: Record<string, unknown> = {};
   for (const m of ["eq", "update", "insert", "order", "limit"]) {
     builder[m] = vi.fn(() => builder);
@@ -81,6 +88,23 @@ describe("undoAction for reallocate_inventory", () => {
       undoAction("shop-1", "audit-1", mockSb(noPlan), { admin: ADMIN }),
     ).rejects.toThrow(/transfer plan/i);
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-succeeded original (failed transfers keep a replayable plan) without any platform call", async () => {
+    const failed = { ...ORIG, outcome: "failed" };
+    await expect(
+      undoAction("shop-1", "audit-1", mockSb(failed), { admin: ADMIN }),
+    ).rejects.toThrow(/only succeeded/i);
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("throws a do-not-retry error when the reversal applied but the undo row insert fails", async () => {
+    const sb = mockSb(ORIG, { data: null, error: new Error("db down") });
+    await expect(undoAction("shop-1", "audit-1", sb, { admin: ADMIN })).rejects.toThrow(
+      /was applied .* do not retry/i,
+    );
+    // The reversal really fired — the error must say so instead of inviting a retry.
+    expect(inventoryAdjustQuantities).toHaveBeenCalledTimes(1);
   });
 
   it("does not require an ads adapter for inventory undo", async () => {

@@ -49,6 +49,7 @@ const pauseAudit = {
   pre_state: { status: "active", daily_budget_cents: 5000 },
   post_state: { status: "paused", daily_budget_cents: 5000 },
   dollar_impact_at_exec: 5000,
+  outcome: "succeeded",
 };
 
 describe("undoAction", () => {
@@ -165,6 +166,7 @@ describe("undoAction · reallocate_budget", () => {
     },
     pre_state: { source: { daily_budget_cents: 2000 }, dest: { daily_budget_cents: 1000 } },
     post_state: { source: { daily_budget_cents: 1500 }, dest: { daily_budget_cents: 1500 } },
+    outcome: "succeeded",
   };
 
   function fakeUndoSb(orig: Record<string, unknown>) {
@@ -244,6 +246,7 @@ describe("undoAction · unhandled action kind guard", () => {
       params: { external_id: "x-1", platform: "meta" },
       pre_state: {},
       post_state: {},
+      outcome: "succeeded",
     };
     const { sb } = fakeUndoSb(unknownAudit);
     await expect(undoAction(SHOP, "audX", sb)).rejects.toThrow(/undo not supported for action kind snooze_alert/i);

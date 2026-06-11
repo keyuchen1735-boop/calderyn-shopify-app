@@ -18,7 +18,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
     let admin: AdminGraphqlClient | undefined;
     try {
       ({ admin } = await unauthenticated.admin(session.shopDomain));
-    } catch {
+    } catch (err) {
+      console.error("[undo] unauthenticated.admin failed — proceeding without Shopify admin client", err);
       admin = undefined;
     }
     const result = await undoAction(session.shopId, String(params.id), getSupabase(), { admin });
