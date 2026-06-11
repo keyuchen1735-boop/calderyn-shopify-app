@@ -557,19 +557,33 @@ export default function Campaigns() {
       <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load campaigns">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Action failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
 
+        {campaigns.length === 0 && !error ? (
+          <Card>
+            <Box padding="600">
+              <BlockStack gap="300" inlineAlign="center">
+                <Text as="p" variant="headingMd">
+                  No campaigns yet
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Connect an ad platform and your campaigns appear here within a few minutes
+                  of the first sync.
+                </Text>
+                <Button variant="primary" onClick={() => navigate("/app/settings")}>
+                  Connect an ad platform
+                </Button>
+              </BlockStack>
+            </Box>
+          </Card>
+        ) : (
         <Card padding="0">
           <DataTable
             columnContentTypes={[
@@ -608,6 +622,7 @@ export default function Campaigns() {
             }}
           />
         </Card>
+        )}
       </BlockStack>
 
       {pending?.kind === "pause" && (
