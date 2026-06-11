@@ -235,11 +235,15 @@ export function calderynClient(shop: string) {
     try {
       const { data, error } = await supabase
         .from("action_audit")
-        .select("outcome, dollar_impact_at_exec, undo_of, created_at")
+        // id is load-bearing: recovered() claws back an undone action by
+        // matching undo_of against the original row's id — without it the
+        // meter keeps counting actions the merchant has undone.
+        .select("id, outcome, dollar_impact_at_exec, undo_of, created_at")
         .eq("shop_id", shopId)
         .gte("created_at", since);
       if (error) throw error;
       const rows = (data ?? []).map((r) => ({
+        id: String(r.id),
         outcome: String(r.outcome),
         // DB stores dollars; the budget meter (and the helper) work in cents.
         dollar_impact_at_exec: Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),
