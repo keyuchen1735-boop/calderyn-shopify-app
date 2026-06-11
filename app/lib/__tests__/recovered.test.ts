@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { recovered } from "../recovered";
+import { dailyActionBudgetUsedCents, recovered } from "../recovered";
 
 const entry = (
   outcome: string,
@@ -36,5 +36,56 @@ describe("recovered — succeeded actions excluding undo rows", () => {
 
   test("returns zeros for an empty log", () => {
     expect(recovered([])).toEqual({ cents: 0, count: 0 });
+  });
+});
+
+describe("dailyActionBudgetUsedCents — what you acted on today", () => {
+  const START = "2026-06-10T00:00:00.000Z";
+  const todayRow = (
+    outcome: string,
+    cents: number,
+    created_at: string,
+    undo_of?: string | null,
+  ) => ({ outcome, dollar_impact_at_exec: cents, created_at, undo_of });
+
+  test("counts a $4669 pause acted on today against the budget", () => {
+    const used = dailyActionBudgetUsedCents(
+      [todayRow("succeeded", 466_900, "2026-06-10T14:30:00.000Z")],
+      START,
+    );
+    expect(used).toBe(466_900);
+  });
+
+  test("excludes actions from previous days", () => {
+    const used = dailyActionBudgetUsedCents(
+      [
+        todayRow("succeeded", 466_900, "2026-06-10T14:30:00.000Z"),
+        todayRow("succeeded", 10_000, "2026-06-09T23:59:00.000Z"),
+      ],
+      START,
+    );
+    expect(used).toBe(466_900);
+  });
+
+  test("counts a row in the first microsecond of the day (Postgres +00:00 format)", () => {
+    // PostgREST returns created_at with microseconds and a +00:00 offset, while
+    // the cutoff is the millisecond 'Z' form — a byte-wise compare would drop this.
+    const used = dailyActionBudgetUsedCents(
+      [todayRow("succeeded", 466_900, "2026-06-10T00:00:00.000001+00:00")],
+      START,
+    );
+    expect(used).toBe(466_900);
+  });
+
+  test("ignores failed actions and undo rows", () => {
+    const used = dailyActionBudgetUsedCents(
+      [
+        todayRow("succeeded", 466_900, "2026-06-10T14:30:00.000Z"),
+        todayRow("failed", 99_000, "2026-06-10T15:00:00.000Z"),
+        todayRow("succeeded", 466_900, "2026-06-10T16:00:00.000Z", "au-1"),
+      ],
+      START,
+    );
+    expect(used).toBe(466_900);
   });
 });
