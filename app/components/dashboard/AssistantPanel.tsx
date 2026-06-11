@@ -7,6 +7,7 @@ import * as client from "~/lib/dashboard/client";
 import { AssistantSendError } from "~/lib/dashboard/client";
 import type { ChatMessage, DraftedAction } from "~/lib/assistant/types";
 import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
+import { useThinkingPhrase } from "~/lib/assistant/thinking";
 import { CHAT_INLINE_ACTIONS } from "~/lib/labels";
 import { Markdown } from "~/components/Markdown";
 
@@ -121,6 +122,7 @@ export default function AssistantPanel({ app }: { app: DashboardCtx }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const thinking = useThinkingPhrase(sending);
   const [errorText, setErrorText] = useState<string | null>(null);
 
   const msgsRef = useRef<HTMLDivElement>(null);
@@ -285,10 +287,11 @@ export default function AssistantPanel({ app }: { app: DashboardCtx }) {
           </div>
         ))}
         {sending && (
-          <div className="cd-chat-thinking">
+          <div className="cd-chat-thinking" role="status">
             <span className="cd-chat-dot" />
             <span className="cd-chat-dot" />
             <span className="cd-chat-dot" />
+            <span className="cd-chat-thinking-text">{thinking}</span>
           </div>
         )}
         {errorText && <div className="cd-chat-error">{errorText}</div>}

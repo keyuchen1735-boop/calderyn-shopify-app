@@ -11,6 +11,7 @@ import {
 } from "@shopify/polaris";
 import type { ChatMessage, ConversationSummary } from "~/lib/assistant/types";
 import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
+import { useThinkingPhrase } from "~/lib/assistant/thinking";
 import { Markdown } from "~/components/Markdown";
 import { DraftActionCard } from "./DraftActionCard";
 
@@ -40,6 +41,7 @@ export function AssistantSlideout() {
   const history = useFetcher<LoaderData>();
   const send = useFetcher<ActionData>();
   const sending = send.state !== "idle";
+  const thinking = useThinkingPhrase(sending);
   const messagesRef = useRef<HTMLDivElement>(null);
 
   // Load history the first time the panel opens.
@@ -181,9 +183,9 @@ export function AssistantSlideout() {
           ))}
           {sending && (
             <InlineStack gap="200" blockAlign="center">
-              <Spinner size="small" accessibilityLabel="Claude is thinking" />
+              <Spinner size="small" accessibilityLabel="Calderyn is thinking" />
               <Text as="span" tone="subdued" variant="bodySm">
-                Claude is thinking&hellip;
+                {thinking}
               </Text>
             </InlineStack>
           )}

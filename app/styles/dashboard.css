@@ -497,6 +497,7 @@
   .cd-chat-dot:nth-child(2) { animation-delay: 0.15s; }
   .cd-chat-dot:nth-child(3) { animation-delay: 0.3s; }
   @keyframes cd-chat-dot { 0%, 100% { opacity: 0.35; transform: none; } 50% { opacity: 1; transform: translateY(-2px); } }
+  .cd-chat-thinking-text { margin-left: 6px; font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); letter-spacing: -0.004em; }
 
   .cd-chat-error { font-size: 12.5px; color: var(--red); }
 
