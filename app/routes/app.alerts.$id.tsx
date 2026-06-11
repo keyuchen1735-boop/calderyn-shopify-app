@@ -493,7 +493,9 @@ export default function AlertDetail() {
                 <Text as="h2" variant="headingSm">
                   What we noticed
                 </Text>
-                <EvidencePanel evidence={evidence} hideKeys={["sku_title"]} />
+                {/* title/sku_title duplicate the page header; threshold is an
+                    internal tuning constant, not merchant-facing signal. */}
+                <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
               </BlockStack>
             </Card>
           </BlockStack>

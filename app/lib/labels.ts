@@ -83,10 +83,10 @@ export const EVIDENCE_LABELS: Record<string, string> = {
   unit_margin: "Profit per unit",
   unit_margin_usd: "Profit per unit",
   gross_unit_margin_usd: "Gross profit per unit",
-  net_per_unit_usd: "Net per unit",
-  cac_per_unit_usd: "CAC per unit",
-  baseline_unit_margin_usd: "Baseline profit per unit",
-  current_unit_margin_usd: "Current profit per unit",
+  net_per_unit_usd: "Profit after ad costs",
+  cac_per_unit_usd: "Ad cost per sale",
+  baseline_unit_margin_usd: "Profit per unit (before)",
+  current_unit_margin_usd: "Profit per unit (now)",
   current_unit_cost_usd: "Current unit cost",
   prior_unit_cost_usd: "Previous unit cost",
   ad_tax_ratio: "Ad cost share of revenue",
@@ -94,15 +94,15 @@ export const EVIDENCE_LABELS: Record<string, string> = {
   return_rate: "Return rate",
   drift_pct: "Cost increase",
   drop_pct: "Margin drop",
-  demand_share_pct: "Share of demand",
-  stock_concentration_pct: "Stock concentration",
+  demand_share_pct: "Sales from this region",
+  stock_concentration_pct: "Stock kept in this region",
   margin_pct: "Profit margin",
-  baseline_units_30d: "Baseline units, 30 days",
+  baseline_units_30d: "Units sold (30 days)",
   current_units_7d: "Units, last 7 days",
   units_sold_30d: "Units sold, 30 days",
   units_14d: "Units, last 14 days",
   units_30d: "Units, last 30 days",
-  gap_days: "Reorder gap",
+  gap_days: "Projected stockout window",
   lead_time_days: "Supplier lead time",
   shortfall_units: "Projected shortfall",
   regional_stock_units: "Regional stock",
@@ -118,6 +118,21 @@ export const EVIDENCE_LABELS: Record<string, string> = {
   to_location_id: "To location",
   recommended_delta: "Recommended transfer",
 };
+
+// Evidence keys that form a before→after pair. When BOTH are present on an
+// alert, EvidencePanel collapses them into one "before → now" row instead of
+// two separate cells, so the change reads at a glance. `tone: "critical"` tints
+// the "now" value red — these pairs only surface on adverse alerts (cost rising,
+// margin shrinking), so the worse number should read as the warning.
+export const EVIDENCE_PAIRS: {
+  from: string;
+  to: string;
+  label: string;
+  tone?: "critical";
+}[] = [
+  { from: "prior_unit_cost_usd", to: "current_unit_cost_usd", label: "Unit cost", tone: "critical" },
+  { from: "baseline_unit_margin_usd", to: "current_unit_margin_usd", label: "Profit per unit", tone: "critical" },
+];
 
 // Acronyms that must stay uppercase when an unknown evidence key falls back to
 // title-casing ("cac_per_unit_usd" must never render as "Cac per unit usd").

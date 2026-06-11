@@ -29,6 +29,7 @@ import { fmtMoney, fmtRelTime } from "~/lib/format";
 import {
   DETECTOR_LABELS,
   DETECTOR_TERMS,
+  EVIDENCE_PAIRS,
   formatEvidenceKey,
   getEvidenceFormatter,
 } from "~/lib/labels";
@@ -273,7 +274,7 @@ export function AlertCard({
         <InlineStack gap="400" blockAlign="center" wrap={false}>
           <BlockStack gap="050" inlineAlign="end">
             <Text as="span" variant="bodyXs" tone="subdued">
-              30-DAY
+              30-DAY LOSS
             </Text>
             <Text as="span" variant="headingMd" tone="critical">
               <span className="cdn-tnum">{fmtMoney(alert.dollar_impact)}</span>
@@ -369,8 +370,19 @@ export function EvidencePanel({
   hideKeys?: string[];
 }) {
   const skipSet = new Set(hideKeys);
-  const entries = Object.entries(evidence ?? {}).filter(([k]) => !skipSet.has(k));
-  if (entries.length === 0) {
+  const present = new Set(
+    Object.keys(evidence ?? {}).filter(
+      (k) => !skipSet.has(k) && evidence[k] != null && !isNumberArray(evidence[k]),
+    ),
+  );
+  // before→now pairs where both halves are present; their keys drop out of the
+  // scalar grid so the change shows once, as "$41 → $53", not two stray cells.
+  const pairs = EVIDENCE_PAIRS.filter((p) => present.has(p.from) && present.has(p.to));
+  const pairedKeys = new Set(pairs.flatMap((p) => [p.from, p.to]));
+  const entries = Object.entries(evidence ?? {}).filter(
+    ([k]) => !skipSet.has(k) && !pairedKeys.has(k),
+  );
+  if (entries.length === 0 && pairs.length === 0) {
     return (
       <Text as="p" variant="bodySm" tone="subdued">
         No structured evidence on this alert yet.
@@ -391,6 +403,30 @@ export function EvidencePanel({
           </BlockStack>
         </Box>
       ))}
+      {pairs.length > 0 && (
+        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          {pairs.map((p) => (
+            <Box key={p.label} background="bg-surface-secondary" borderRadius="200" padding="300">
+              <BlockStack gap="050">
+                <Text as="p" variant="bodyXs" tone="subdued">
+                  {p.label}
+                </Text>
+                <InlineStack gap="150" blockAlign="center">
+                  <Text as="span" variant="bodyMd" tone="subdued">
+                    <span className="cdn-tnum">{evidenceValueToString(p.from, evidence[p.from])}</span>
+                  </Text>
+                  <Text as="span" variant="bodyMd" tone="subdued">
+                    →
+                  </Text>
+                  <Text as="span" variant="bodyMd" fontWeight="semibold" tone={p.tone}>
+                    <span className="cdn-tnum">{evidenceValueToString(p.to, evidence[p.to])}</span>
+                  </Text>
+                </InlineStack>
+              </BlockStack>
+            </Box>
+          ))}
+        </InlineGrid>
+      )}
       {scalars.length > 0 && (
         <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
           {scalars.map(([k, v]) => (
