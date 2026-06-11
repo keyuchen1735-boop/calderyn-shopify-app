@@ -143,17 +143,19 @@ describe("Dashboard stat row mirrors the extension's KPI contract", () => {
     expect(grid).toContain("unavailable");
   });
 
-  it("computes Recovered (7d) like the extension: undo rows excluded", () => {
+  it("computes Recovered (7d) like the extension: undo rows excluded, undone originals pulled back", () => {
     const { grid } = renderStatGrid(
       makeApp({
         audit: [
-          auditEntry("au-1", "succeeded", 12_000),
-          auditEntry("au-2", "succeeded", 12_000, "au-1"), // undo of au-1
+          auditEntry("au-1", "succeeded", 12_000), // undone below → pulled back
+          auditEntry("au-2", "succeeded", -12_000, "au-1"), // undo of au-1
           auditEntry("au-3", "failed", 50_000),
+          auditEntry("au-4", "succeeded", 12_000), // still standing → counts
         ],
       }),
     );
-    // Only au-1 counts: the undo row must not be summed, the original stays.
+    // au-1 is undone (excluded) and au-2 is its undo row (excluded); only the
+    // still-standing au-4 counts.
     expect(grid).toContain("$120");
     expect(grid).toContain("across 1 action");
     expect(grid).not.toContain("$240");

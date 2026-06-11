@@ -58,19 +58,20 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
 }
 
 describe("Audit screen recovered total", () => {
-  it("matches the shared helper: undone originals kept, undo rows excluded", () => {
+  it("matches the shared helper: undone originals pulled back, undo rows excluded", () => {
     const html = renderToString(
       h(Audit, {
         app: makeApp([
-          // An undone original: locally marked post "Reverted" by undoAction.
-          // Extension semantics keep it in the total — only the undo row
-          // itself is excluded.
+          // An undone original: undoAction reverses it, so its recovered impact
+          // is pulled back out of the total. Both the original (au-1) and its
+          // undo row (au-2) drop out; only still-standing actions count.
           auditEntry("au-1", "succeeded", 12_000, { post: "Reverted" }),
-          auditEntry("au-2", "succeeded", 0, { undo_of: "au-1" }),
+          auditEntry("au-2", "succeeded", -12_000, { undo_of: "au-1" }),
           auditEntry("au-3", "failed", 50_000),
+          auditEntry("au-4", "succeeded", 8_000),
         ]),
       }),
     ).replace(/<!-- -->/g, "");
-    expect(html).toContain("$120 recovered");
+    expect(html).toContain("$80 recovered");
   });
 });
