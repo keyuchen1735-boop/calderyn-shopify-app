@@ -27,10 +27,14 @@ vi.mock("@shopify/polaris", () => {
   return {
     Badge: Stub,
     Banner: Stub,
+    BlockStack: Stub,
     Box: Stub,
+    Button: Stub,
     Card: Stub,
     InlineStack: Stub,
+    Modal: Object.assign(Stub, { Section: Stub }),
     Page: Stub,
+    Select: Stub,
     Text: Stub,
     TextField: Stub,
   };
@@ -93,6 +97,9 @@ describe("app.skus action", () => {
     ["empty quantity", { quantity: "" }],
     ["missing idempotency key", { idempotency_key: "" }],
     ["missing sku", { sku_id: "" }],
+    ["missing from location", { from_location_id: "" }],
+    ["missing to location", { to_location_id: "" }],
+    ["zero quantity", { quantity: "0" }],
   ])("rejects %s at the boundary without touching the executor", async (_n, patch) => {
     const res = await action({
       request: postForm({ ...FIELDS, ...patch }),

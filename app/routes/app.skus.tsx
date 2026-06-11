@@ -1,15 +1,19 @@
-import { useMemo, useState } from "react";
-import { useLoaderData } from "@remix-run/react";
+import { useEffect, useMemo, useState } from "react";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Badge,
   Banner,
+  BlockStack,
   Box,
+  Button,
   Card,
   InlineStack,
+  Modal,
   Page,
+  Select,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -20,7 +24,7 @@ import {
   RelocationError,
 } from "~/lib/actions/inventory-relocate.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
-import type { ActionToast } from "~/lib/toast";
+import { useActionToast, type ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
 import type { Alert, ShopLocation, SKU } from "~/lib/types";
@@ -137,11 +141,17 @@ const hasSales = (s: SKU) => (s.velocity ?? 0) > 0;
 
 export default function SKUs() {
   const navigate = useEmbeddedNavigate();
-  const { skus, alerts, error } = useLoaderData<typeof loader>();
+  const { skus, alerts, locations, error } = useLoaderData<typeof loader>();
 
   const [sortKey, setSortKey] = useState<SortKey>("days_of_cover");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [query, setQuery] = useState("");
+  const [relocating, setRelocating] = useState<SKU | null>(null);
+  const fetcher = useFetcher<RelocatePayload>();
+  useActionToast(fetcher.data);
+  useEffect(() => {
+    if (fetcher.data?.ok) setRelocating(null);
+  }, [fetcher.data]);
 
   const alertsBySku = useMemo(() => {
     const map = new Map<string, number>();
@@ -264,6 +274,8 @@ export default function SKUs() {
               onClick={() => toggleSort("velocity")}
             />
             <div role="columnheader" className="cdn-skutable__cell">Locations</div>
+            <div role="columnheader" className="cdn-skutable__cell">Main demand</div>
+            <div role="columnheader" className="cdn-skutable__cell">Actions</div>
             <div role="columnheader" className="cdn-skutable__cell cdn-skutable__cell--center">Alerts</div>
           </div>
           {sorted.map((s) => {
@@ -325,6 +337,16 @@ export default function SKUs() {
                 <div className="cdn-skutable__cell" role="cell">
                   <LocationCell locations={s.locations ?? {}} />
                 </div>
+                <div className="cdn-skutable__cell" role="cell">
+                  <DemandCell demand={s.demand} />
+                </div>
+                <div className="cdn-skutable__cell" role="cell">
+                  {s.suggested_transfer && (
+                    <Button size="slim" onClick={() => setRelocating(s)}>
+                      Relocate
+                    </Button>
+                  )}
+                </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
                   {alertCount > 0 && <Badge tone="warning">{String(alertCount)}</Badge>}
                 </div>
@@ -342,6 +364,14 @@ export default function SKUs() {
           )}
         </div>
       </Card>
+      {relocating && (
+        <RelocateModal
+          sku={relocating}
+          locations={locations}
+          fetcher={fetcher}
+          onClose={() => setRelocating(null)}
+        />
+      )}
     </Page>
   );
 }
@@ -437,6 +467,139 @@ function LocationCell({ locations }: { locations: Record<string, number> }) {
         </Text>
       )}
     </span>
+  );
+}
+
+function DemandCell({ demand }: { demand: SKU["demand"] }) {
+  if (!demand) {
+    return (
+      <Text as="span" tone="subdued" variant="bodySm">
+        —
+      </Text>
+    );
+  }
+  const starved = demand.stock_in_region === 0;
+  return (
+    <span
+      title={`${demand.units_30d.toLocaleString()} units sold in ${demand.region} over 30 days (${Math.round(demand.share * 100)}% of demand) · ${demand.stock_in_region.toLocaleString()} in stock there`}
+    >
+      <Text
+        as="span"
+        variant="bodySm"
+        fontWeight={starved ? "semibold" : "medium"}
+        tone={starved ? "critical" : undefined}
+      >
+        {shortLoc(demand.region)}
+      </Text>{" "}
+      <Text as="span" variant="bodySm" tone="subdued">
+        <span className="cdn-tnum">{demand.units_30d.toLocaleString()}</span>/30d
+      </Text>
+    </span>
+  );
+}
+
+function RelocateModal({
+  sku,
+  locations,
+  fetcher,
+  onClose,
+}: {
+  sku: SKU;
+  locations: ShopLocation[];
+  fetcher: ReturnType<typeof useFetcher<RelocatePayload>>;
+  onClose: () => void;
+}) {
+  // Safe: the modal is only rendered from rows with a suggested transfer.
+  const plan = sku.suggested_transfer!;
+  const [fromId, setFromId] = useState(plan.from_location_id);
+  const [toId, setToId] = useState(plan.to_location_id);
+  const [qty, setQty] = useState(String(plan.recommended_delta));
+  // One key per modal-open: double-clicking Confirm replays, not re-executes.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+
+  const sourceOptions = sku.locations_detail
+    .filter((l) => l.available > 0)
+    .map((l) => ({
+      label: `${l.name} (${l.available.toLocaleString()} available)`,
+      value: l.id,
+    }));
+  const destOptions = locations
+    .filter((l) => l.active)
+    .map((l) => ({
+      label: l.region ? `${l.name} — ${l.region}` : l.name,
+      value: l.id,
+    }));
+
+  const available = sku.locations_detail.find((l) => l.id === fromId)?.available ?? 0;
+  const qtyNum = /^\d+$/.test(qty) ? Number(qty) : NaN;
+  const qtyError =
+    !Number.isInteger(qtyNum) || qtyNum < 1
+      ? "Enter a positive whole number"
+      : qtyNum > available
+        ? `Only ${available.toLocaleString()} available at the source`
+        : undefined;
+  const invalid = Boolean(qtyError) || fromId === toId;
+  const submitting = fetcher.state !== "idle";
+
+  const submit = () => {
+    fetcher.submit(
+      {
+        sku_id: sku.id,
+        from_location_id: fromId,
+        to_location_id: toId,
+        quantity: qty,
+        idempotency_key: idempotencyKey,
+      },
+      { method: "post" },
+    );
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Relocate ${sku.title}`}
+      primaryAction={{
+        content: "Move inventory",
+        onAction: submit,
+        loading: submitting,
+        disabled: invalid,
+      }}
+      secondaryActions={[{ content: "Cancel", onAction: onClose }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="400">
+          {sku.demand && (
+            <Text as="p" tone="subdued">
+              Main demand is {sku.demand.region} ({sku.demand.units_30d.toLocaleString()}{" "}
+              units/30d), which currently holds{" "}
+              {sku.demand.stock_in_region.toLocaleString()} units.
+            </Text>
+          )}
+          <Select label="From" options={sourceOptions} value={fromId} onChange={setFromId} />
+          <Select
+            label="To"
+            options={destOptions}
+            value={toId}
+            onChange={setToId}
+            error={fromId === toId ? "Source and destination must differ" : undefined}
+          />
+          <TextField
+            label="Quantity"
+            type="text"
+            autoComplete="off"
+            value={qty}
+            onChange={setQty}
+            error={qtyError}
+            helpText="Suggested to cover one week of regional demand."
+          />
+          <Text as="p" tone="subdued" variant="bodySm">
+            Transfers via Shopify, recorded in the audit log. Reversible via Undo for 24
+            hours.
+          </Text>
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
   );
 }
 
