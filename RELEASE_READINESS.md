@@ -2,7 +2,54 @@
 
 Maintained by the hourly release-readiness sweep. This is the shared brain across
 runs: reconcile against it so findings are never duplicated. Status vocabulary:
-`[NEW]` `[OPEN]` `[FIXED]` `[NEEDS-HUMAN]` `[WONTFIX]`.
+`[NEW]` `[OPEN]` `[FIXED]` `[CHANGED]` `[NEEDS-HUMAN]` `[WONTFIX]`.
+
+---
+
+## ⭐ OWNER-SEEDED BACKLOG (2026-06-11, from a deep Opus+Sonnet agent analysis)
+
+The product owner ran a one-off deep analysis (42-persona adoption panel + UX review +
+feature/bug trace) and explicitly wants these ACTED ON, not just logged. Work these
+top-down in priority order; verify each against live data / current code before changing
+(some may already be fixed by a prior sweep — reconcile and mark `[FIXED]`/`[WONTFIX]`).
+Each fix gets the full pre-commit gate. UI copy/state/layout fixes are pre-approved.
+
+**OWNER DECISIONS (honor exactly):**
+- **"ranked by Claude" → "ranked by priority"** everywhere it appears
+  (`app/routes/app.alerts._index.tsx:68`, `app/routes/app._index.tsx:269`). Optionally add a
+  one-line tooltip explaining the ranking signal. This is a final decision, not a suggestion.
+- The detection engine (`/api/engine/run`) is **NOT a bug in this repo** — it lives in the
+  separate engine repo. Confirm alerts are flowing via Calderyn MCP, then mark any such
+  "missing engine" finding `[WONTFIX]` / parity-note. Do not try to build it here.
+
+**B-prefixed = real bugs (verify, then fix if still present); U = UX/copy/state (pre-approved):**
+
+| ID | Pri | Item | File(s) |
+|----|-----|------|---------|
+| B1 | P0 | `in_business_hours` hardcoded `true` — merchant guardrail check always shows green; wire it to `withinBusinessHours()` | `app/lib/calderyn.server.ts:186` |
+| B2 | P1 | `acknowledgeAlert` not called from autopilot + dashboard action paths → alert stays "open" after a pause. Centralize ack on succeeded action w/ alert_id | `app/lib/actions/execute.server.ts`, `autopilot.server.ts`, `dashboard.api.campaigns.$id.action.tsx` |
+| B3 | P1 | Legacy `actions.execute()` path never writes `dollar_impact_at_exec` → Recovered KPI shows $0 for PO/inventory/geo actions | `app/lib/calderyn.server.ts:~437` |
+| B4 | P1 | Onboarding step enum order/names differ server vs UI → step state desync | `calderyn.server.ts:59` vs `app/routes/app.onboarding.tsx:38` |
+| B5 | P1 | New shop has no guardrail row → `guardrails.get()` throws 404 → error banner on first run. Return a default config instead of throwing (read-only path; safe) | `calderyn.server.ts:~700` |
+| B6 | P1 | Autopilot daily cap query counts `retrying`/`failed` rows → cap exhausts with zero landed actions. Add `.eq("outcome","succeeded")` | `app/lib/actions/guardrails.server.ts:79` |
+| B7 | P1 | Autopilot `reduce_campaign_budget` with null current budget → `executeAction` throws, counted as error not `blocked`. Skip+count blocked instead | `autopilot.server.ts:60`, `execute.server.ts:135` |
+| B8 | P1 | QuickBooks `cogs_fact` open-row lookup missing `.eq("shop_id", shopId)` (also in security backlog) | `app/lib/quickbooks/ingest.server.ts:102` |
+| U1 | High | **#1 adoption blocker:** add one line to the guardrails onboarding step BEFORE the dollar fields: "By default Calderyn only acts when you approve it. These limits apply if you later turn on Autopilot." | `app/routes/app.onboarding.tsx` GuardrailsStep |
+| U2 | High | "30-day projected impact" / "30-DAY LOSS" has NO methodology — add a Tooltip explaining how it's estimated (top trust-killer). Unify the label across card + detail | `app/routes/app.alerts.$id.tsx:~507`, `app/components/calderyn/index.tsx:278` |
+| U3 | High | Settings notification checkboxes are render-only (no onChange/save) — either wire them to a real form or replace with an info Banner. Don't show dead affordances | `app/routes/app.settings.tsx:278-290` |
+| U4 | High | Error banners render raw `error.code:` to merchants — drop the code prefix (and map GUARDRAIL_* to plain guidance) | `_index.tsx:173`, `app.alerts._index.tsx:77`, `app.alerts.$id.tsx:444`, `campaigns._index.tsx:561`, `audit.tsx:249`, `skus.tsx:126` |
+| U5 | High | First-load empty state says "All clear" even before the first scan completes → looks broken for new installs. Add a "syncing / first scan running" state | `app/routes/app._index.tsx:275-291` |
+| U6 | Med | "Execute · $X" button → use action label, e.g. "Pause campaign · saves $340" | `app/routes/app.alerts.$id.tsx:733` |
+| U7 | Med | Onboarding: mark Google/Meta/QuickBooks steps "(optional)" in the stepper badges (only Shop+Guardrails required) | `app/routes/app.onboarding.tsx` STEPS |
+| U8 | Med | "Before Calderyn acts" guardrail card framing implies auto-action by default (autopilot is off) — conditionalize title/copy on `autopilot_enabled` | `app/routes/app.alerts.$id.tsx:558` |
+| U9 | Med | Evidence panel leaks raw Shopify GIDs (`inventory_item_id`, `from/to_location_id`) — add to `hideKeys` | `app/components/calderyn/index.tsx`, `app.alerts.$id.tsx:498` |
+| U10 | Low | Misc: "All" filter ordering, audit `actor` raw strings, all-caps headings, `"— (no data)"` → `"—"`, `fmtRelTime` cap at 30d, audit EmptyState `image=""`, screener jargon ("hold rate"), bland dashboard subtitle | various routes |
+
+Adoption model (full detail in `ADOPTION_SIMULATION.md`): ~15–20% of installs ever act;
+~5% active at day 30. Biggest blocker = U1. Strongest trust assets = audit log + undo
+(surface them earlier).
+
+---
 
 ## Summary
 
