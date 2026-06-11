@@ -26,7 +26,7 @@ import {
 } from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
-import { recovered } from "~/lib/recovered";
+import { recoveredWithin } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
 import {
@@ -45,7 +45,12 @@ type LoaderPayload = {
   onboardingDone: boolean;
   error: { code: string; message: string } | null;
   dashboardLoginUrl: string;
+  // Recovered impact over the trailing 7 days — windowed server-side so the
+  // "Recovered (7d)" tile matches its label (audit.list returns up to 90d).
+  recovered7d: { cents: number; count: number };
 };
+
+const RECOVERED_WINDOW_DAYS = 7;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -96,6 +101,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.guardrails.get(request.signal),
       client.onboarding.getState(request.signal),
     ]);
+    const sinceIso = new Date(
+      Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
     return json<LoaderPayload>({
       alerts,
       audit,
@@ -104,6 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       onboardingDone: onboarding.done,
       error: null,
       dashboardLoginUrl,
+      recovered7d: recoveredWithin(audit, sinceIso),
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -115,14 +124,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       onboardingDone: true,
       error: { code: e.code ?? "ERROR", message: e.message },
       dashboardLoginUrl,
+      recovered7d: { cents: 0, count: 0 },
     });
   }
 };
 
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
-  const { alerts, audit, campaigns, guardrails, onboardingDone, error, dashboardLoginUrl } =
-    useLoaderData<typeof loader>();
+  const {
+    alerts,
+    audit,
+    campaigns,
+    guardrails,
+    onboardingDone,
+    error,
+    dashboardLoginUrl,
+    recovered7d,
+  } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
@@ -131,7 +149,7 @@ export default function Dashboard() {
 
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");
-  const { cents: recovered7d, count: recoveredCount } = recovered(audit);
+  const { cents: recovered7dCents, count: recoveredCount } = recovered7d;
   const atRisk = critical.reduce((s, a) => s + a.dollar_impact, 0);
   const top = [...openAlerts].sort((a, b) => a.claude_rank - b.claude_rank).slice(0, 5);
   const recentAudit = audit.slice(0, 4);
@@ -195,7 +213,7 @@ export default function Dashboard() {
             />
             <StatTile
               label="Recovered (7d)"
-              value={fmtMoney(recovered7d)}
+              value={fmtMoney(recovered7dCents)}
               tone="success"
               caption={`across ${recoveredCount} action${recoveredCount === 1 ? "" : "s"}`}
               onClick={() => navigate("/app/audit")}

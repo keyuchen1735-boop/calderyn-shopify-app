@@ -18,7 +18,7 @@ import {
 } from "../ui";
 import { money, DETECTOR_TERMS, ACTION_LABELS } from "../format";
 import { trueRoas } from "~/lib/roas";
-import { recovered } from "~/lib/recovered";
+import { recoveredWithin } from "~/lib/recovered";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
@@ -266,8 +266,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const critical = open.filter((a) => a.severity === "critical");
 
   // Recovered (7d) — same shared computation as the extension home
-  // (app/lib/recovered.ts): succeeded actions, undo rows excluded.
-  const recovered7d = recovered(app.audit);
+  // (app/lib/recovered.ts): succeeded actions, undo rows excluded, windowed to
+  // the trailing 7 days so the number matches the "(7d)" label.
+  const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const recovered7d = recoveredWithin(app.audit, sinceIso);
 
   // Daily action budget — same guardrail numbers the embedded extension shows.
   const g = app.guardrails;

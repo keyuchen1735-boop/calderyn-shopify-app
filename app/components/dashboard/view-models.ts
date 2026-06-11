@@ -51,6 +51,8 @@ export interface AuditVM {
   outcome: string;
   actor: string;
   when: string;
+  /** Raw ISO timestamp, for windowing (e.g. Recovered 7d). `when` is for display. */
+  created_at: string;
   undo_eligible: boolean;
   /** Audit id this row undoes, when the row is itself an undo. */
   undo_of: string | null;

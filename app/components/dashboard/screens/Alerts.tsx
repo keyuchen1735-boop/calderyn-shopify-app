@@ -131,6 +131,17 @@ function AlertDetail({
     (alert.recommended && ACTION_LABELS[alert.recommended]) ||
     "action taken";
 
+  // Mirror of the extension's sold-out guard (app/routes/app.alerts.$id.tsx):
+  // when a "may sell out" alert's stock / days-of-cover are already 0, reframe the
+  // headline so copy never contradicts the evidence. Engine fix flagged separately.
+  const soldOut =
+    alert.detector_id === "scaling_sku_fulfillment_risk" &&
+    (Number(alert.evidence.stock) === 0 || Number(alert.evidence.days_of_cover) === 0);
+  const productName =
+    alert.evidence.title || alert.evidence.sku_title || alert.sku || "";
+  const headline =
+    soldOut && productName ? `${productName} is sold out — restock now` : alert.title;
+
   const campaign = alert.campaign_id
     ? app.campaigns.find((c) => c.id === alert.campaign_id) ?? null
     : null;
@@ -171,7 +182,7 @@ function AlertDetail({
               </Pill>
             )}
           </div>
-          <h1 className="cd-h1">{alert.title}</h1>
+          <h1 className="cd-h1">{headline}</h1>
         </div>
         <div className="text-right">
           <div
@@ -188,6 +199,12 @@ function AlertDetail({
         <div className="flex flex-col gap-4 min-w-0">
           <Card>
             <h2 className="cd-h2 mb-2">What&apos;s happening</h2>
+            {soldOut && (
+              <p className="cd-body" style={{ color: "var(--red)", marginBottom: 8, maxWidth: "62ch" }}>
+                On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s a
+                stockout. Restock now and pause or exclude the spend until inventory is back.
+              </p>
+            )}
             <p className="cd-body" style={{ maxWidth: "62ch" }}>
               {alert.narrative}
             </p>
