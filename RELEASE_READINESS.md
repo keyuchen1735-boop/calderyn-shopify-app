@@ -22,6 +22,17 @@ Each fix gets the full pre-commit gate. UI copy/state/layout fixes are pre-appro
   separate engine repo. Confirm alerts are flowing via Calderyn MCP, then mark any such
   "missing engine" finding `[WONTFIX]` / parity-note. Do not try to build it here.
 
+**STATUS (2026-06-11 ~10:15 sweep): worked top-down this run.** B1 [FIXED] · B2 [FIXED]
+· B3 [WONTFIX — already fixed in current code: `actions.execute` calls
+`recoveredDollarsForAlertAction` and writes `dollar_impact_at_exec`, calderyn.server.ts]
+· B4 [FIXED] · B5 [FIXED] · B6 [FIXED] · B7 [FIXED] · B8 [FIXED] · U1 [CHANGED] ·
+U2 [CHANGED] · U3 [CHANGED] · U4 [CHANGED — all 13 banner sites] · U5 [CHANGED] ·
+U6 [CHANGED] · U7 [CHANGED] · U8 [CHANGED] · U9 [CHANGED] · U10 [CHANGED — "All"
+filter ordering, audit actor labels, `"— (no data)"`→`"—"`, fmtRelTime 30d cap +
+invalid-date guard, audit EmptyState image="", screener "hold rate", home subtitle;
+all-caps "30-DAY LOSS" unified into the U2 label]. Owner decision "ranked by
+Claude"→"ranked by priority" applied at both sites + tooltips.
+
 **B-prefixed = real bugs (verify, then fix if still present); U = UX/copy/state (pre-approved):**
 
 | ID | Pri | Item | File(s) |
@@ -89,21 +100,27 @@ expired before verification; re-verify via migrations files in `supabase/migrati
 
 ## Summary
 
-- **Last run:** 2026-06-11 08:35 UTC
+- **Last run:** 2026-06-11 ~10:15 UTC (owner-backlog implementation sweep)
 - **Correctness gate:** GREEN — `npm ci` 0, `typecheck` 0, `lint` 0 (12 pre-existing
-  warnings in untouched test files), `build` 0, `npm test` 832 passed / 5 skipped (135 files).
+  warnings in untouched test files; `--max-warnings=0` clean on all touched files),
+  `build` 0, `npm test` 838 passed / 5 skipped (+6 new tests for B2/B6/B7).
 - **Canonical check (pause → Recovered KPI):** PASS against live data (unchanged).
   Audit row `5af82d74…` (`pause_campaign`, succeeded, `dollar_impact_at_exec`=12861.94)
-  equals `get_shop_stats.recovered_7d`=12861.94. Contract still closes on both surfaces.
-- **Open bugs:** 1 code (F15 Predictor div-by-zero, latent/demo-only — guard before live);
-  F12 (topAdNames embed shape, needs schema verification) + F6 (date-format, visual call)
-  OPEN; F5 (meta-push idempotency gap) still OPEN.
-- **Fixed this run:** 0 — rotation areas swept clean (no clear low-risk fix surfaced). 1
-  new finding logged (F17, GDPR customer-redact drop — webhook edit, NEEDS-HUMAN).
-- **Needs human:** 5 (F1 cross-surface guardrail day-boundary, F2 demo-config check,
-  F13 backfill inventory timeseries fabricated at run-time, F14 Predictor/Generator ship
-  demo data labeled live with false "synced from Meta" copy — **gate before launch**,
-  F17 GDPR customer-redact/data-request forward failures silently dropped — **compliance**).
+  equals `get_shop_stats.recovered_7d`=12861.94. Alerts flowing (55 open, engine alive).
+- **This run:** the ENTIRE owner-seeded backlog is resolved — 7 bug fixes (B1, B2, B4,
+  B5, B6, B7, B8; B3 verified already-fixed) + all 10 U-items + both owner decisions,
+  plus panel/trace/prod-log fixes (assistant slideout rollback + Enter-to-send,
+  DraftActionCard money mismatch, campaigns empty state, favicon 404 noise) and
+  3 cleanup refactors (shared DEFAULT_GUARDRAILS, ACTOR_LABELS/actorLabel +
+  INTERNAL_EVIDENCE_ID_KEYS into lib/labels.ts).
+- **New findings:** F18–F24 (MCP-OAuth plumbing sweep — F18 refresh tokens never
+  expire is the headline, all NEEDS-HUMAN per the auth guardrail), F25 (prod `.data`
+  500s around session auth), F26 (dashboard API unhandled rejections in prod logs),
+  F27 (engine-side `in_business_hours` hardcoded true — parity TODO now that the
+  app computes it), plus adoption items A18–A23 in `ADOPTION_SIMULATION.md`.
+- **Needs human (carried):** F1 day-boundary, F2 prod default guardrails, F13
+  backfill timeseries, F14 demo-as-live Predictor/Generator (**gate before launch**),
+  F17 GDPR customer-redact forward drop (**compliance**), F6 dashboard timestamps.
 
 ## Coverage log
 
@@ -116,7 +133,9 @@ expired before verification; re-verify via migrations files in `supabase/migrati
 | 2026-06-11 07:48 | Correctness gate (full, GREEN — 832 pass). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`; guardrails still demo $1M/day, used 0 → F1/F2 unchanged). Rotation — **meta/* internals** `meta/{insights,ad-insights,actions,campaigns,creatives,ingest,oauth-state}.server.ts` (clean; documented limitations: creatives single-page >25-ad truncation, ingest currency-default-on-error); **assistant/*** `assistant/{anthropic,loop,tools,prompt,request,snapshot,conversations}.server.ts` (clean — model `claude-sonnet-4-6` correct; verified `snapshot.dollars()` consumes cents-shaped `dollar_impact` per `calderyn.server.ts:102`, no unit bug); **adapter internals deep-read** via sub-agent `google/* tiktok/* quickbooks/* ads/*` (found F16 in google `recordSyncError` + cron.ingest-ads `setSync`; rest clean). UI code review: `routes/app.skus.tsx` (clean — auth/error/empty states, location cell), `app.generator.tsx` (clean live feature — auth both sides, quota refund, error/empty/loading states). |
 | 2026-06-11 08:35 | Correctness gate (full, GREEN — 832 pass / 5 skip). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`; guardrails still demo $1M/day, used 0 → F1/F2 unchanged). Rotation — **ingest internals (remaining)** `ingest/{dlq,enqueue,shopify-admin}.server.ts` (clean — dlq logs-never-throws correctly, enqueue throws on error, shopify-admin checks GraphQL `body.errors` + documents slice-1 page-size caps); **assistant glue** `assistant/{action-param,types}.ts` + `app.assistant.tsx` resource route (clean — auth, `parseAssistantRequest` validation, error-path saves user turn but not broken assistant turn); **GDPR plumbing** `webhooks.gdpr.tsx` + `cron.gdpr.tsx` + `gdpr/sweep.server.ts` (found F17 — customer-redact/data-request forward-drop; shop_redact reconciled by sweep, customer-level NOT); **meta client deep-read** `meta/client.server.ts` (read-only, clean — checks `error` on creds read, decrypts token; no `res.ok` guard but Graph API returns `{error}` JSON consumed by callers). UI code review: `routes/app.campaigns.$campaignId.tsx` (clean — strong loader error isolation per-fetch, honest `— (no data)`/`CREATIVE_ID_UNAVAILABLE` gap states, Predicted/Actual badges, good BlockStack/InlineGrid structure). |
 
-**Not yet swept (rotate here next):** `app/routes/oauth.*` (authorize/consent/register/token) + `cron.mcp-oauth-cleanup.tsx` + `[.]well-known.oauth-authorization-server.tsx` (read-only review only — no auth edits), `app.campaigns._index.tsx` + `app.campaigns.$campaignId.score.tsx` UI, `app.assistant` slideout client component (the route is a resource route — find the React slideout UI), `webhooks.{orders.create,products.update,inventory_levels.update}.tsx` deeper read, `app/lib/ads/*` + `attribution/*` re-verify, `history.server.ts` topAdNames schema verification (F12 — needs Supabase schema access). Swept this run: ingest dlq/enqueue/shopify-admin, assistant action-param/types + assistant route, GDPR webhooks/cron/sweep, meta client, campaign-detail UI.
+| 2026-06-11 ~10:15 | Correctness gate (full, GREEN — 838 pass / 5 skip, +6 new). Canonical pause→Recovered re-verified live (PASS; 55 open alerts, engine alive; guardrails still demo $1M/day → F1/F2 unchanged). **Owner backlog implemented end-to-end** (B1–B8 verified+fixed, U1–U10 + owner decisions shipped — see backlog STATUS). Rotation via sub-agent — **MCP-OAuth plumbing read-only** `oauth.{authorize,consent,register,token}` + `mcp_tokens/mcp_oauth` libs + `cron.mcp-oauth-cleanup` (7 findings F18–F24, all logged NEEDS-HUMAN per auth guardrail); **assistant slideout client** (`AssistantSlideout`, `DraftActionCard` — 3 found, 3 fixed); **webhooks deeper read** orders.create/products.update/inventory_levels.update (clean beyond known F17 pattern); `app.campaigns._index` + campaign-score UI (empty-state gap found+fixed). 28-persona panel (2 batches; see ADOPTION_SIMULATION.md). Vercel prod logs swept: favicon 404 noise (fixed in-repo), `.data` 500s (F25), dashboard-API unhandled rejections (F26), cron.detect engine failures (engine repo). |
+
+**Not yet swept (rotate here next):** `app/lib/ads/*` + `attribution/*` re-verify, `history.server.ts` topAdNames schema verification (F12 — needs Supabase schema access), `app/lib/dashboard/*` + `dashboard.api.*` routes (F26 unhandled rejections — find the rejecting promise), `app.analytics._index.tsx` deep UI review, `app/lib/shopify/inventory.server.ts` + PO PDF route, `cron.detect`/`cron.autopilot` routes, dashboard screens parity items (F6/F14). Swept this run: MCP-OAuth plumbing, assistant slideout client, webhooks deeper read, campaigns index/score UI, full owner backlog surface.
 
 ## Findings
 
@@ -329,8 +348,94 @@ expired before verification; re-verify via migrations files in `supabase/migrati
   reconciling sweep (mirror the shop_redact path). Parity TODO for the engine repo, which
   owns `/internal/gdpr/*`.
 
+### [NEEDS-HUMAN] F18 — MCP refresh tokens never expire (rotation ignores `expires_at`)
+- **Where:** `app/lib/mcp_tokens.server.ts:183-215` (`rotateRefreshToken`).
+- **Observed:** the select fetches `revoked_at` but not `expires_at`, and nothing checks
+  expiry — a stolen refresh token can be rotated forever; the spec's 90-day lifetime is
+  not enforced. Auth logic → not auto-fixed per guardrail. **Fix before enabling
+  `MCP_OAUTH_ENABLED` in production:** select `expires_at`, throw `invalid_grant` when past.
+
+### [NEEDS-HUMAN] F19–F24 — remaining MCP-OAuth sweep findings (auth guardrail; sub-agent verified)
+- **F19** `oauth.consent.tsx:95` — `resolveShopId` throws on un-provisioned shop → unhandled
+  500 instead of an OAuth error redirect.
+- **F20** `mcp_oauth.server.ts:266-279` — pending-OAuth upsert keyed on `shop_domain` only;
+  two concurrent client flows overwrite each other (fix needs a schema migration).
+- **F21** `oauth.authorize.tsx:107-126` — pending row written BEFORE Shopify confirms shop
+  identity (orphaned row w/ attacker-controlled redirect_uri for the 10-min TTL).
+- **F22** `oauth.authorize.tsx:163-165` — action branch doesn't validate `code_challenge`
+  non-empty (loader does); inconsistent validation.
+- **F23** `oauth.register.tsx` — open dynamic-client-registration endpoint, rate limit still
+  TODO; pre-public-launch requirement.
+- **F24** `oauth.token.tsx:70-73` — all errors collapse to `invalid_request` 400; transient
+  server errors should be `server_error` so clients back off and retry.
+- Also minor: consent silent-redirect on expired pending row (no explanation page);
+  cleanup cron 24h cutoff vs 10-min TTL table. PKCE itself verified sound (constant-time
+  compare, S256, single-use codes, redirect_uri validated).
+
+### [OPEN] F25 — prod `.data` route 500s around session auth
+- **Where:** Vercel prod logs 2026-06-10 ~22:19–23:04 UTC: `GET /app.data`,
+  `/app/alerts.data`, `/app/analytics.data`, `POST /app/screener.data` → 500 with
+  `[shopify-app/INFO] Authenti…` (truncated). Likely session-token refresh/expiry path
+  throwing instead of re-authing. Needs log drill-down (full message) next run; auth
+  plumbing, so investigate before touching.
+
+### [OPEN] F26 — dashboard API "Unhandled Rejection" in prod despite 200 responses
+- **Where:** Vercel prod logs: `GET /dashboard/api/alerts`, `/dashboard/api/audit` →
+  status 200 but `Unhandled Rejection: Error:…`. A fire-and-forget promise in the
+  dashboard API path rejects after the response is sent. Find the un-awaited promise
+  (rotate here next run).
+
+### [OPEN] F28 — autopilot cooldown query counts failed/retrying rows (asymmetric with the B6 cap fix)
+- **Where:** `app/lib/actions/guardrails.server.ts:29` (`minutesSinceLastAutopilotActionOn` —
+  no outcome filter).
+- **Observed:** a `retrying`/`failed` autopilot attempt starts the full per-campaign
+  cooldown even though no platform change landed, while the daily cap (B6) now ignores
+  those rows. Deliberately NOT changed this run: a `retrying` row has a replay parked in
+  the retry cron, so cooling the campaign while an action is in flight is arguably
+  correct; pure `failed` is the debatable case. Needs a one-line design call: should
+  cooldown mirror the cap (`succeeded` only), or treat in-flight retries as touches?
+
+### [OPEN] F29 — settings privacy buttons ("Withdraw consent" / "Download my data (GDPR)") are handler-less
+- **Where:** `app/routes/app.settings.tsx` privacy section.
+- **Observed:** same dead-affordance class as U3 (fixed); these two remained because
+  consent-withdrawal/data-export semantics are a product/compliance call, not copy. Either
+  wire them (engine owns the GDPR endpoints) or replace with mailto/instructions pre-launch.
+
+### [NEEDS-HUMAN] F27 — engine/MCP still reports `in_business_hours: true` hardcoded (parity)
+- **Where:** live `get_guardrails` returned `in_business_hours: true` at 09:35 UTC for a
+  14:00–00:00 UTC window (should be false). This repo's copy of the bug (B1) is fixed
+  this run; the engine repo's MCP tool has the same hardcode. Parity TODO for the
+  engine/dashboard repo.
+
 ## Fixed this cycle
 
+- **(2026-06-11 ~10:15 run)** Owner backlog cleared + panel/trace/prod fixes. Commits on
+  `calderyn/release-polish` (each gated: typecheck 0 / lint 0 on touched files / build 0 /
+  838 tests pass):
+  - `b34cbc6` lib/calderyn.server: B1 `in_business_hours` real window math, B4 onboarding
+    enum mirror, B5 default guardrails instead of 404.
+  - `1f3d90d` actions/guardrails.server: B6 daily cap counts only succeeded (+test).
+  - `6667b63` actions/autopilot.server: B7 null/zero-budget cut → blocked, loop keeps
+    draining (+2 tests). The throw previously aborted the whole autopilot run.
+  - `f7db4ba` actions/execute.server: B2 centralized acknowledge-on-success (+3 tests).
+  - `40e435a` quickbooks/ingest: B8 shop_id scope on cogs_fact open-row read.
+  - `3e50bb0` actions/undo.server: re-open alert on EVERY undo surface + carry alert_id
+    (review-found follow-up to B2 — dashboard undo + reallocate undo left alerts stuck
+    acknowledged). `141894f` autopilot blocked-branch logs + onboarding enum name-pin test.
+  - `b0b6622` onboarding U1/U7/U4 + OAuth reassurance + shared `lib/guardrail-defaults.ts`.
+  - `8eb6c8e` alerts surfaces U2/U4/U6/U8/U9 + owner renames + `INTERNAL_EVIDENCE_ID_KEYS`/
+    `ACTOR_LABELS` into labels.ts. `c436674` home U5 first-scan state (+ !error guard,
+    review-found) + audit actor labels + real empty state. `76aaa88` settings U3 dead
+    checkboxes → honest banner. `83536b6` campaigns empty state + `— (no data)`→`—`.
+    `7dbaec7` skus/analytics/mcp/screener U4 + de-jargon. `85a502f` assistant slideout
+    rollback + Enter-to-send + DraftActionCard money. `2e980dc` fmtRelTime 30d cap +
+    invalid guard. `2edc5fa` favicon routes (prod 404 noise).
+  - `/code-review` (3-angle fan-out + verify): 2 real findings fixed (undo re-open,
+    first-scan-on-error), 3 hardening follow-ups, 4 downgraded with justification —
+    double-ack in alerts route is idempotent + self-healing (second call retries a failed
+    first ack); `in_business_hours` is a loader snapshot, gateway re-checks live at
+    execute; guardrails default-on-null is safe (service-role bypasses RLS, null = no
+    row); empty-state JSX triplication accepted for now.
 - **(2026-06-11 08:35 run)** No code fix — rotation areas (ingest dlq/enqueue/shopify-admin,
   assistant glue + route, GDPR webhooks/cron/sweep, meta client, campaign-detail UI) swept clean;
   no clear low-risk fix surfaced. One new finding logged: F17 (GDPR customer-redact drop, NEEDS-HUMAN).
@@ -345,7 +450,10 @@ dashboard `format.money()` `$NaN`; F7 — ingest `transform.server.ts` 3 swallow
 
 ## Needs human
 
-- **F1** — canonical day boundary for daily action budget (UTC vs merchant tz); engine/app disagree. Parity TODO for dashboard/engine repo. **← most important.**
+- **F18** — MCP refresh tokens never expire (`rotateRefreshToken` ignores `expires_at`);
+  fix before `MCP_OAUTH_ENABLED` ships. F19–F24 queue behind it. **← most important this run.**
+- **F1** — canonical day boundary for daily action budget (UTC vs merchant tz); engine/app disagree. Parity TODO for dashboard/engine repo.
+- **F27** — engine MCP `in_business_hours` hardcoded true (app side fixed as B1); parity TODO.
 - **F14** — Predictor/Generator dashboard screens render demo data as live with false "synced from Meta" copy; gate behind a Preview/Demo affordance before launch (credibility risk). Parity TODO for dashboard repo.
 - **F13** — backfill fabricates the inventory time series (all points at run-time, not actual stock-change time); design call (bulk-ops API or accept limitation).
 - **F17** — GDPR `customers/data_request` + `customers/redact` forward failures return 200 with no retry and no reconciler (only `shop/redact` is reconciled by the sweep) — compliance gap; decide retry-on-failure vs persist-and-reconcile. Parity TODO for the engine repo.
