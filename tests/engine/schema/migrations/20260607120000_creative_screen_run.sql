@@ -1,6 +1,6 @@
 -- creative_screen_run: one ad-creative pre-screen. `scorecard` holds the scored
 -- + calibrated result (composite, grade, metrics with reasoning, predicted
--- outcomes, tips). Shop-scoped in code (service-role), like simulation_run.
+-- outcomes, tips). Shop-scoped in code (service-role).
 
 create table creative_screen_run (
   id                   uuid primary key default gen_random_uuid(),

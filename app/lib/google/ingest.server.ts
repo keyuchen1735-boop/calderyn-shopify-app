@@ -104,11 +104,17 @@ export function googleSource(
 async function recordSyncError(shopId: string, err: unknown, sb: SupabaseClient): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   const now = new Date().toISOString();
-  await sb
+  // Best-effort status write inside the caller's catch: surface a write failure
+  // (supabase-js returns { error } without throwing) but never throw it — the
+  // caller re-throws the ORIGINAL ingestion error, which must not be masked.
+  const { error: writeErr } = await sb
     .from("shop_integrations")
     .update({ sync_status: "error", sync_error: message.slice(0, 500), updated_at: now })
     .eq("shop_id", shopId)
     .eq("kind", "google_ads");
+  if (writeErr) {
+    console.error(`[google.ingest] failed to record sync error for ${shopId}`, writeErr);
+  }
 }
 
 /**

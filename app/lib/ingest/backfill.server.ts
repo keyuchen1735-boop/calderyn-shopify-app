@@ -115,7 +115,7 @@ export async function backfillShop(shopDomain: string): Promise<BackfillResult> 
       }
     }
 
-    await sb
+    const { error: readyErr } = await sb
       .from("shop_integrations")
       .update({
         sync_status: "ready",
@@ -125,6 +125,7 @@ export async function backfillShop(shopDomain: string): Promise<BackfillResult> 
       })
       .eq("shop_id", shopId)
       .eq("kind", "shopify");
+    if (readyErr) throw readyErr;
 
     return result;
   } catch (err) {

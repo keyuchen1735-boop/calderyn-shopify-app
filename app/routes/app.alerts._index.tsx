@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -41,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function AlertList() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { alerts, error } = useLoaderData<typeof loader>();
   const [severity, setSeverity] = useState<("all" | Severity)[]>(["all"]);
   const [status, setStatus] = useState<("all" | AlertStatus)[]>(["open"]);
@@ -64,17 +65,15 @@ export default function AlertList() {
   return (
     <Page
       title="Alerts"
-      subtitle={`${openAlerts.length} open · ranked by Claude · ${fmtMoney(
+      subtitle={`${openAlerts.length} open · ranked by priority · ${fmtMoney(
         projectedImpact,
-      )} projected 30-day impact`}
+      )} total projected 30-day impact`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Couldn't load alerts">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         </Box>
       )}
@@ -97,10 +96,10 @@ export default function AlertList() {
               <ChoiceList
                 title="Status"
                 choices={[
+                  { label: "All", value: "all" },
                   { label: "Open", value: "open" },
                   { label: "Acknowledged", value: "acknowledged" },
                   { label: "Resolved", value: "resolved" },
-                  { label: "All", value: "all" },
                 ]}
                 selected={status}
                 onChange={(v) => setStatus(v as ("all" | AlertStatus)[])}

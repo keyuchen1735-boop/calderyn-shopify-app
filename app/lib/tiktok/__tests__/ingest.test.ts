@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { makeTikTokSource } from "../ingest.server";
+import { makeTikTokSource, shopCurrencyFallback } from "../ingest.server";
 import { buildTikTokClient } from "../client.server";
 import type { TikTokClient } from "../client.server";
 import type { TikTokReportRow, TikTokCampaignPayload } from "../types";
@@ -34,12 +34,15 @@ describe("makeTikTokSource", () => {
     expect(c.getReport).toHaveBeenCalledWith(ADV, "2026-06-05", "2026-06-05");
   });
 
-  it("fetchBackfillSpend requests a ~90-day window ending today", async () => {
+  it("fetchBackfillSpend chunks the 90-day window into three 30-day reports", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-06-06T00:00:00Z"));
     const c = client([], []);
     const src = makeTikTokSource(c, ADV, SHOP, "USD");
     await src.fetchBackfillSpend();
-    expect(c.getReport).toHaveBeenCalledWith(ADV, "2026-03-08", "2026-06-06");
+    expect(c.getReport).toHaveBeenCalledTimes(3);
+    expect(c.getReport).toHaveBeenNthCalledWith(1, ADV, "2026-03-08", "2026-04-07");
+    expect(c.getReport).toHaveBeenNthCalledWith(2, ADV, "2026-04-07", "2026-05-07");
+    expect(c.getReport).toHaveBeenNthCalledWith(3, ADV, "2026-05-07", "2026-06-06");
     vi.useRealTimers();
   });
 });
@@ -103,7 +106,7 @@ describe("buildTikTokClient.getAdvertiserCurrency", () => {
     expect(currency).toBe("EUR");
   });
 
-  it("falls back to USD when currency is missing from response", async () => {
+  it("returns null when currency is missing from response", async () => {
     const mockFetch = vi.fn(async () => ({
       status: 200,
       json: async () => ({ code: 0, message: "OK", data: { list: [{}] } }),
@@ -112,10 +115,10 @@ describe("buildTikTokClient.getAdvertiserCurrency", () => {
 
     const c = buildTikTokClient("test-token");
     const currency = await c.getAdvertiserCurrency(ADV);
-    expect(currency).toBe("USD");
+    expect(currency).toBeNull();
   });
 
-  it("falls back to USD when list is empty", async () => {
+  it("returns null when list is empty", async () => {
     const mockFetch = vi.fn(async () => ({
       status: 200,
       json: async () => ({ code: 0, message: "OK", data: { list: [] } }),
@@ -124,6 +127,47 @@ describe("buildTikTokClient.getAdvertiserCurrency", () => {
 
     const c = buildTikTokClient("test-token");
     const currency = await c.getAdvertiserCurrency(ADV);
-    expect(currency).toBe("USD");
+    expect(currency).toBeNull();
+  });
+
+  it("returns null when the scope is denied (non-zero code)", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 40001, message: "No permission", data: {} }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    const currency = await c.getAdvertiserCurrency(ADV);
+    expect(currency).toBeNull();
+  });
+});
+
+describe("shopCurrencyFallback", () => {
+  function fakeSb(result: { data: { currency?: unknown } | null; error: unknown }) {
+    const maybeSingle = vi.fn(async () => result);
+    const chain = {
+      select: vi.fn(() => chain),
+      eq: vi.fn(() => chain),
+      order: vi.fn(() => chain),
+      limit: vi.fn(() => chain),
+      maybeSingle,
+    };
+    return { from: vi.fn(() => chain) } as unknown as Parameters<typeof shopCurrencyFallback>[0];
+  }
+
+  it("returns the latest order's currency", async () => {
+    const sb = fakeSb({ data: { currency: "EUR" }, error: null });
+    expect(await shopCurrencyFallback(sb, SHOP)).toBe("EUR");
+  });
+
+  it("returns USD when the shop has no orders", async () => {
+    const sb = fakeSb({ data: null, error: null });
+    expect(await shopCurrencyFallback(sb, SHOP)).toBe("USD");
+  });
+
+  it("returns USD on query error", async () => {
+    const sb = fakeSb({ data: null, error: { message: "boom" } });
+    expect(await shopCurrencyFallback(sb, SHOP)).toBe("USD");
   });
 });

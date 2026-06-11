@@ -4,7 +4,9 @@ export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 export type ActionKind =
   | "pause_campaign"
+  | "resume_campaign"
   | "reduce_campaign_budget"
+  | "reallocate_budget"
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
@@ -41,7 +43,8 @@ export interface Alert {
 export interface AuditEntry {
   id: string;
   action_kind: ActionKind;
-  outcome: "succeeded" | "failed";
+  // `retrying` = parked for the action-retry cron (pending, not terminal).
+  outcome: "succeeded" | "failed" | "retrying";
   target: string;
   dollar_impact_at_exec: number;
   pre_state: any;
@@ -60,13 +63,22 @@ export interface AuditEntry {
 export interface Campaign {
   id: string;
   name: string;
-  platform: "Meta" | "Google";
+  platform: "Meta" | "Google" | "TikTok";
   status: "active" | "paused";
   daily_budget_cents: number;
   roas_7d: number;
   contribution_margin: number;
   spend_7d: number;
 }
+
+/** Platforms that enrich a SKU beyond the Shopify catalog sync:
+ * cost data (quickbooks, vendor_invoice) and ad-creative mappings (google, meta, tiktok). */
+export type SkuSource =
+  | "quickbooks"
+  | "vendor_invoice"
+  | "google"
+  | "meta"
+  | "tiktok";
 
 export interface SKU {
   id: string;
@@ -75,6 +87,7 @@ export interface SKU {
   days_of_cover: number;
   velocity: number;
   locations: Record<string, number>;
+  sources: SkuSource[];
 }
 
 export interface Integration {

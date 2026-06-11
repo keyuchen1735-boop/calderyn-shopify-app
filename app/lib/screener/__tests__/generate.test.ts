@@ -81,6 +81,35 @@ describe("generateImprovements (re-score gate)", () => {
     expect(out.discarded).toBe(1); // B failed re-scoring → discarded, not crashing the batch
   });
 
+  it("returns every re-scored candidate in allScored so the UI can show losing remakes with critiques", async () => {
+    const out = await generateImprovements({ original, originalScorecard: scorecard(64), count: 3 }, gateDeps());
+    // winners stay filtered/ranked, but allScored keeps B (50 < 64) with its critique
+    expect(out.variants.map((v) => v.input.headline)).toEqual(["C", "A"]);
+    expect(out.allScored.map((v) => v.input.headline)).toEqual(["C", "A", "B"]);
+    const b = out.allScored.find((v) => v.input.headline === "B");
+    expect(b?.composite).toBe(50);
+    expect(b?.delta).toBe(-14);
+    expect(b?.summary).toBe("s:B");
+  });
+
+  it("passes extraDirection through to the generator", async () => {
+    let seen: string | undefined;
+    await generateImprovements(
+      { original, originalScorecard: scorecard(64), extraDirection: "golden hour, UGC handheld" },
+      gateDeps({
+        generator: {
+          mode: "image",
+          available: () => true,
+          generate: async (req) => {
+            seen = req.extraDirection;
+            return [];
+          },
+        },
+      }),
+    );
+    expect(seen).toBe("golden hour, UGC handheld");
+  });
+
   it("passes styleRefs through to the generator", async () => {
     let seen: string[] = [];
     await generateImprovements(

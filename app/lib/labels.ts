@@ -37,7 +37,9 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
 
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
+  resume_campaign: "Resume campaign",
   reduce_campaign_budget: "Reduce campaign budget",
+  reallocate_budget: "Reallocate budget",
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
   create_po_draft: "Create PO draft",
@@ -46,17 +48,226 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
 
 export const ACTION_VERBS: Record<ActionKind, string> = {
   pause_campaign: "Paused campaign",
+  resume_campaign: "Resumed campaign",
   reduce_campaign_budget: "Reduced budget",
+  reallocate_budget: "Reallocated budget",
   exclude_geo: "Excluded geo",
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",
   snooze_alert: "Snoozed alert",
 };
 
+// Who acted, in the merchant's terms. Raw actor_user_id values ("merchant",
+// "autopilot") read as system internals; unknown values (e.g. a teammate's
+// email) pass through via actorLabel below.
+export const ACTOR_LABELS: Record<string, string> = {
+  merchant: "You",
+  autopilot: "Autopilot",
+  system: "System",
+};
+
+export function actorLabel(actor: string): string {
+  return ACTOR_LABELS[actor] ?? actor;
+}
+
+// Evidence keys that are raw platform identifiers (Shopify GIDs, internal
+// uuids) — plumbing for the action executor, never merchant-facing evidence.
+// EvidencePanel suppresses these unconditionally; human-readable *_name
+// variants still render. Keep next to EVIDENCE_LABELS so a new detector's
+// keys get classified (label vs suppress) in one place.
+export const INTERNAL_EVIDENCE_ID_KEYS = [
+  "inventory_item_id",
+  "from_location_id",
+  "to_location_id",
+  "location_id",
+  "campaign_id",
+  "sku_id",
+] as const;
+
+// Plain-language labels for evidence keys shown on alert detail pages. Keys
+// that aren't in this map fall back to the underscore-stripped/title-cased
+// form so a new detector emitting an unknown key still renders sensibly.
+export const EVIDENCE_LABELS: Record<string, string> = {
+  stock: "Total stock",
+  sku_title: "Product",
+  title: "Product",
+  days_of_cover: "Days until sold out",
+  spend_wow_ratio: "Spend vs last week",
+  spend_prev_7d_usd: "Spend, prior 7 days",
+  spend_this_7d_usd: "Spend, this 7 days",
+  spend_7d_usd: "Spend, last 7 days",
+  ad_spend_7d_usd: "Ad spend, last 7 days",
+  regional_spend_7d_usd: "Regional ad spend, last 7 days",
+  cogs_7d_usd: "Product costs, last 7 days",
+  revenue_7d_usd: "Revenue, last 7 days",
+  revenue_30d_usd: "Revenue, last 30 days",
+  return_30d_usd: "Returns, last 30 days",
+  gross_profit_7d_usd: "Gross profit, last 7 days",
+  velocity_units_per_day: "Selling rate",
+  velocity: "Selling rate",
+  daily_velocity_units: "Selling rate",
+  daily_demand: "Demand per day",
+  unit_margin: "Profit per unit",
+  unit_margin_usd: "Profit per unit",
+  gross_unit_margin_usd: "Gross profit per unit",
+  net_per_unit_usd: "Profit after ad costs",
+  cac_per_unit_usd: "Ad cost per sale",
+  baseline_unit_margin_usd: "Profit per unit (before)",
+  current_unit_margin_usd: "Profit per unit (now)",
+  current_unit_cost_usd: "Current unit cost",
+  prior_unit_cost_usd: "Previous unit cost",
+  ad_tax_ratio: "Ad cost share of revenue",
+  threshold: "Alert threshold",
+  return_rate: "Return rate",
+  drift_pct: "Cost increase",
+  drop_pct: "Margin drop",
+  demand_share_pct: "Sales from this region",
+  stock_concentration_pct: "Stock kept in this region",
+  margin_pct: "Profit margin",
+  baseline_units_30d: "Units sold (30 days)",
+  current_units_7d: "Units, last 7 days",
+  units_sold_30d: "Units sold, 30 days",
+  units_14d: "Units, last 14 days",
+  units_30d: "Units, last 30 days",
+  gap_days: "Projected stockout window",
+  lead_time_days: "Supplier lead time",
+  shortfall_units: "Projected shortfall",
+  regional_stock_units: "Regional stock",
+  regional_stock: "Regional stock",
+  stock_elsewhere: "Stock at other locations",
+  stock_units: "Stock",
+  location_region: "Region",
+  region: "Region",
+  campaign_name: "Campaign",
+  campaign_id: "Campaign",
+  inventory_item_id: "Inventory item",
+  from_location_id: "From location",
+  to_location_id: "To location",
+  recommended_delta: "Recommended transfer",
+};
+
+// Evidence keys that form a before→after pair. When BOTH are present on an
+// alert, EvidencePanel collapses them into one "before → now" row instead of
+// two separate cells, so the change reads at a glance. `tone: "critical"` tints
+// the "now" value red — these pairs only surface on adverse alerts (cost rising,
+// margin shrinking), so the worse number should read as the warning.
+export const EVIDENCE_PAIRS: {
+  from: string;
+  to: string;
+  label: string;
+  tone?: "critical";
+}[] = [
+  { from: "prior_unit_cost_usd", to: "current_unit_cost_usd", label: "Unit cost", tone: "critical" },
+  { from: "baseline_unit_margin_usd", to: "current_unit_margin_usd", label: "Profit per unit", tone: "critical" },
+];
+
+// Acronyms that must stay uppercase when an unknown evidence key falls back to
+// title-casing ("cac_per_unit_usd" must never render as "Cac per unit usd").
+const LABEL_ACRONYMS = new Set(["cac", "usd", "roas", "sku", "cogs", "po", "aov", "cpc", "cpm", "ctr"]);
+
+/**
+ * Fallback label for evidence keys missing from EVIDENCE_LABELS: underscores
+ * to spaces, sentence case, acronyms uppercased.
+ */
+export function formatEvidenceKey(key: string): string {
+  if (EVIDENCE_LABELS[key]) return EVIDENCE_LABELS[key];
+  const words = key.split("_").map((w) => (LABEL_ACRONYMS.has(w) ? w.toUpperCase() : w));
+  const label = words.join(" ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+const fmtUsdFromString = (v: unknown): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+};
+
+const fmtUnits = (v: unknown, suffix: string): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: 1 })}${suffix}`;
+};
+
+// Formatters keyed by evidence field name. Unknown keys fall back to the
+// EvidencePanel's default toString. Each formatter accepts the raw value
+// (number, string, etc.) and returns a display string.
+export const EVIDENCE_FORMATTERS: Record<string, (v: unknown) => string> = {
+  stock: (v) => fmtUnits(v, " units"),
+  days_of_cover: (v) => fmtUnits(v, " days"),
+  spend_wow_ratio: (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return String(v ?? "—");
+    // 1.81 → "+81% vs last week"; 0.7 → "-30% vs last week"
+    const pct = Math.round((n - 1) * 100);
+    const sign = pct >= 0 ? "+" : "";
+    return `${sign}${pct}% vs last week`;
+  },
+  spend_this_7d_usd: fmtUsdFromString,
+  spend_prev_7d_usd: fmtUsdFromString,
+  velocity_units_per_day: (v) => fmtUnits(v, " /day"),
+  velocity: (v) => fmtUnits(v, " /day"),
+  daily_velocity_units: (v) => fmtUnits(v, " /day"),
+  unit_margin: fmtUsdFromString,
+  margin_pct: (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v ?? "—");
+    return `${(n * 100).toFixed(0)}%`;
+  },
+  daily_demand: (v) => fmtUnits(v, " /day"),
+  lead_time_days: (v) => fmtUnits(v, " days"),
+  gap_days: (v) => fmtUnits(v, " days"),
+  shortfall_units: (v) => fmtUnits(v, " units"),
+  regional_stock_units: (v) => fmtUnits(v, " units"),
+  regional_stock: (v) => fmtUnits(v, " units"),
+  stock_elsewhere: (v) => fmtUnits(v, " units"),
+  stock_units: (v) => fmtUnits(v, " units"),
+};
+
+const fmtPctFromFraction = (v: unknown): string => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "—");
+  // Values arrive as fractions (0.493) or already-percent (93.4); treat
+  // anything ≤ 1.5 as a fraction.
+  const pct = Math.abs(n) <= 1.5 ? n * 100 : n;
+  return `${pct.toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
+};
+
+/**
+ * Formatter for an evidence value: the explicit per-key entry when present,
+ * otherwise inferred from the key's suffix (_usd → money, _pct/_rate/_ratio →
+ * percent, _units → units, _days → days) so new detector fields render as
+ * "$4,669" / "49%" / "14 days" instead of raw numbers.
+ */
+export function getEvidenceFormatter(key: string): ((v: unknown) => string) | undefined {
+  if (EVIDENCE_FORMATTERS[key]) return EVIDENCE_FORMATTERS[key];
+  if (key.endsWith("_usd")) return fmtUsdFromString;
+  if (key.endsWith("_pct") || key.endsWith("_rate") || key.endsWith("_ratio")) return fmtPctFromFraction;
+  if (key.endsWith("_units")) return (v) => fmtUnits(v, " units");
+  if (key.endsWith("_days")) return (v) => fmtUnits(v, " days");
+  return undefined;
+}
+
+// Action kinds a chat surface may execute after an in-chat confirm tap: the
+// alert route can run them with no inputs beyond the alert itself. The rest
+// (create_po_draft collects quantity/cost, reallocate_budget lives on the
+// Campaigns page) deep-link to their review surface instead. Keep in sync
+// with DEEP_LINK_ACTIONS and the PO modal in app/routes/app.alerts.$id.tsx.
+export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
+  "pause_campaign",
+  "reduce_campaign_budget",
+  "snooze_alert",
+  "exclude_geo",
+  "reallocate_inventory",
+]);
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],
-  ad_tax_overload: ["reduce_campaign_budget", "pause_campaign", "snooze_alert"],
+  ad_tax_overload: ["reallocate_budget", "reduce_campaign_budget", "pause_campaign", "snooze_alert"],
   margin_erosion: ["snooze_alert"],
   negative_unit_economics: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],
   cogs_drift: ["snooze_alert"],

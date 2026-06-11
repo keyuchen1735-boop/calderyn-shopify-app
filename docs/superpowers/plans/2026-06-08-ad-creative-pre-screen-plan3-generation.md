@@ -543,7 +543,7 @@ Add `Variant` to the `~/lib/screener/types` import list.
             </Card>
 ```
 
-- [ ] **Step 3: Verify** `cd /Users/ericchen/Developer/shopify-app-plan3 && npx tsc --noEmit` (exit 0) and `npm run lint` (exit 0, no `import/no-duplicates`). Fix any Polaris prop names against `app/routes/app.simulator.tsx`. No `any`/`@ts-ignore`.
+- [ ] **Step 3: Verify** `cd /Users/ericchen/Developer/shopify-app-plan3 && npx tsc --noEmit` (exit 0) and `npm run lint` (exit 0, no `import/no-duplicates`). Fix any Polaris prop names against existing routes. No `any`/`@ts-ignore`.
 
 - [ ] **Step 4: Commit**
 ```bash

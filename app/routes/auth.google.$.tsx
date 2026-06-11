@@ -4,7 +4,12 @@ import {
   exchangeCodeForToken,
   type GoogleTokenResponse,
 } from "~/lib/google/oauth.server";
-import { consumeOAuthState } from "~/lib/meta/oauth-state.server";
+import {
+  consumeOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+  postOAuthPath,
+} from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 
@@ -37,9 +42,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
   const appUrl = process.env.SHOPIFY_APP_URL;
 
+  // Recover the embedded App Bridge context (shop/host) carried through `state`
+  // so every redirect below re-embeds the merchant in the Shopify admin instead
+  // of dead-ending on a top-level 410 HTML page.
+  const returnCtx = parseOAuthState(state ?? "");
+
   // Surface a user-declined consent cleanly rather than as a 400.
   if (oauthError) {
-    return redirect(`/app/settings?google=error&reason=${encodeURIComponent(oauthError)}`);
+    return redirect(
+      embeddedReturnUrl("/app/settings", { google: "error", reason: oauthError }, returnCtx),
+    );
   }
   if (!code || !state || !clientId || !clientSecret || !appUrl) {
     throw new Response("Missing OAuth parameters", { status: 400 });
@@ -131,12 +143,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (cred.error) throw new Response(cred.error.message, { status: 500 });
 
   // 'pending' so cron.google runs the 90-day backfill on its next tick
-  // (cron.google selects sync_status in ('pending','live')).
+  // (cron.google selects sync_status in ('pending','live')). sync_error is
+  // cleared explicitly: a reconnect must not keep showing a stale failure in
+  // Settings while the fresh sync is still pending.
   const integ = await sb.from("shop_integrations").upsert(
     {
       shop_id: shopId,
       kind: "google_ads",
       sync_status: "pending",
+      sync_error: null,
       external_account_id: customerId,
       connected_at: now,
       updated_at: now,
@@ -145,7 +160,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
-  return redirect("/app/settings?google=connected");
+  return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { google: "connected" }, returnCtx));
 };
 
 // One-shot refresh-token -> access-token exchange used only to resolve the

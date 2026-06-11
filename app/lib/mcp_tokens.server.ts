@@ -184,14 +184,19 @@ export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAcc
   const old_refresh_hash = hashToken(req.refresh_token);
   const { data, error } = await getSupabase()
     .from("mcp_tokens")
-    .select("id, shop_id, client_id, scopes, revoked_at")
+    .select("id, shop_id, client_id, scopes, revoked_at, expires_at")
     .eq("refresh_hash", old_refresh_hash)
     .maybeSingle();
   if (error) throw error;
   if (!data) throw invalidGrantTokens("unknown refresh_token");
-  const row = data as { id: string; shop_id: string; client_id: string | null; scopes: string[]; revoked_at: string | null };
+  const row = data as { id: string; shop_id: string; client_id: string | null; scopes: string[]; revoked_at: string | null; expires_at: string | null };
   if (row.client_id !== req.client_id) throw invalidGrantTokens("client_id mismatch");
   if (row.revoked_at) throw invalidGrantTokens("revoked");
+  // The refresh token lives exactly as long as the grant it belongs to.
+  // Without this check an expired (but unrevoked) grant could rotate forever.
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+    throw invalidGrantTokens("expired");
+  }
 
   const new_access = newAccessToken();
   const new_refresh = newRefreshToken();

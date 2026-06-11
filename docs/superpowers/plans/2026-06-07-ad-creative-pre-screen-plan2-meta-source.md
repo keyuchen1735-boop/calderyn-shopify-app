@@ -560,7 +560,7 @@ Then add this card as the FIRST child inside the top `<BlockStack gap="500">`, b
 ```
 Keep the existing manual-form card and the whole results section unchanged. (The manual form already keeps the `<Text as="h2">` heading? If not, optionally add a "Or enter an ad manually" heading to the manual card — minor, your call. Do NOT restructure the results UI.)
 
-- [ ] **Step 4: Run** `npx vitest run app/lib/screener/__tests__/route-helpers.test.ts` — expect PASS. Then `npx tsc --noEmit` exit 0 (watch the Polaris `gap="050"` value — if the installed Polaris rejects "050", use "100"; confirm against existing usage in `app/routes/app.simulator.tsx`).
+- [ ] **Step 4: Run** `npx vitest run app/lib/screener/__tests__/route-helpers.test.ts` — expect PASS. Then `npx tsc --noEmit` exit 0 (watch the Polaris `gap="050"` value — if the installed Polaris rejects "050", use "100"; confirm against existing usage in other routes).
 
 - [ ] **Step 5: Commit**
 

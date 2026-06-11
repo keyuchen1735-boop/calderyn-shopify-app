@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- in-memory fake models supabase-js's loosely-typed query builder */
 import { describe, it, expect, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createOAuthState, consumeOAuthState, OAUTH_STATE_TTL_MS } from "../oauth-state.server";
+import {
+  createOAuthState,
+  consumeOAuthState,
+  packOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+  OAUTH_STATE_TTL_MS,
+} from "../oauth-state.server";
 
 type Row = Record<string, any>;
 const store: Record<string, Row[]> = {};
@@ -89,5 +96,118 @@ describe("consumeOAuthState", () => {
     const old = new Date(Date.now() - OAUTH_STATE_TTL_MS - 1000).toISOString();
     store["oauth_state"] = [{ nonce: "stale", shop_id: "shop-A", created_at: old }];
     expect(await consumeOAuthState(sb, "stale")).toBeNull();
+  });
+
+  it("validates the nonce inside a packed state and stays single-use", async () => {
+    const state = await createOAuthState(sb, "shop-A", {
+      host: "b64host",
+      shop: "demo.myshopify.com",
+    });
+    // The stored nonce is bare; the returned `state` is packed (carries context).
+    const bareNonce = store["oauth_state"][0].nonce;
+    expect(state).not.toBe(bareNonce);
+    expect(parseOAuthState(state)).toMatchObject({
+      nonce: bareNonce,
+      host: "b64host",
+      shop: "demo.myshopify.com",
+    });
+    expect(await consumeOAuthState(sb, state)).toBe("shop-A");
+    // Replay of the packed state must also fail (row consumed).
+    expect(await consumeOAuthState(sb, state)).toBeNull();
+  });
+});
+
+describe("packOAuthState / parseOAuthState", () => {
+  it("round-trips host and shop through a packed state", () => {
+    const state = packOAuthState("nonce-1", { host: "aHsdf==", shop: "demo.myshopify.com" });
+    expect(state).not.toBe("nonce-1");
+    expect(parseOAuthState(state)).toEqual({
+      nonce: "nonce-1",
+      host: "aHsdf==",
+      shop: "demo.myshopify.com",
+    });
+  });
+
+  it("returns the bare nonce when no context is supplied", () => {
+    expect(packOAuthState("nonce-1")).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", {})).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", { host: null, shop: null })).toBe("nonce-1");
+  });
+
+  it("parses a plain nonce as the nonce with null context", () => {
+    expect(parseOAuthState("just-a-nonce")).toEqual({
+      nonce: "just-a-nonce",
+      host: null,
+      shop: null,
+    });
+  });
+});
+
+describe("embeddedReturnUrl", () => {
+  beforeEach(() => {
+    delete process.env.SHOPIFY_API_KEY;
+  });
+
+  // The reliable way back into a SPECIFIC embedded page after a top-level OAuth
+  // callback is Shopify's admin deep link — admin.shopify.com loads the app
+  // iframe at the exact path and forwards the query params. Returning to our
+  // own domain instead bounces through authenticate.admin, which re-enters at
+  // the app ROOT and drops the path + connection notice.
+  it("returns the admin deep link when shop and the app api key are known", () => {
+    process.env.SHOPIFY_API_KEY = "testapikey";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { quickbooks: "connected" },
+        { host: null, shop: "demo.myshopify.com" },
+      ),
+    ).toBe(
+      "https://admin.shopify.com/store/demo/apps/testapikey/app/settings?quickbooks=connected",
+    );
+  });
+
+  it("appends shop and host when both are present", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { google: "connected" },
+      { host: "b64host", shop: "demo.myshopify.com" },
+    );
+    const parsed = new URL(url, "https://x.example");
+    expect(parsed.pathname).toBe("/app/settings");
+    expect(parsed.searchParams.get("google")).toBe("connected");
+    expect(parsed.searchParams.get("shop")).toBe("demo.myshopify.com");
+    expect(parsed.searchParams.get("host")).toBe("b64host");
+  });
+
+  it("falls back to a bare path when context is missing", () => {
+    expect(
+      embeddedReturnUrl("/app/settings", { google: "connected" }, { host: null, shop: null }),
+    ).toBe("/app/settings?google=connected");
+  });
+
+  // `host` is merely base64url("admin.shopify.com/store/<handle>") — derivable
+  // from the shop domain. The connect form loses ?host= after client-side
+  // navigation, so a missing host must not dump the merchant on the login page.
+  it("synthesizes host from the shop domain when only shop is known", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { quickbooks: "connected" },
+      { host: null, shop: "demo.myshopify.com" },
+    );
+    const parsed = new URL(url, "https://x.example");
+    expect(parsed.searchParams.get("shop")).toBe("demo.myshopify.com");
+    const host = parsed.searchParams.get("host")!;
+    expect(Buffer.from(host, "base64url").toString("utf8")).toBe(
+      "admin.shopify.com/store/demo",
+    );
+  });
+
+  it("prefers the real packed host over a synthesized one", () => {
+    const url = embeddedReturnUrl(
+      "/app/settings",
+      { quickbooks: "connected" },
+      { host: "realhost", shop: "demo.myshopify.com" },
+    );
+    expect(new URL(url, "https://x.example").searchParams.get("host")).toBe("realhost");
   });
 });

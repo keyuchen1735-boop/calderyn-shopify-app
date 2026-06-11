@@ -7,8 +7,10 @@
 // UNTOUCHED (no mutation)" path. A fake `sb` records the select filters
 // and any update payloads — the empty-registry path must record none.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ActionError } from "../../ads/actions";
+import type { Platform } from "../../ads/adapter";
 
 import {
   backoffSeconds,
@@ -83,6 +85,210 @@ describe("drainActionRetries", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("replays a due retrying pause row via the adapter and marks it succeeded", async () => {
+    const row = {
+      id: "66666666-6666-4666-8666-666666666666",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(adapter.pause).toHaveBeenCalledWith("ext1");
+    expect(result.succeeded).toBe(1);
+    expect(result.processed).toBe(1);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(row.id);
+    expect(updates[0].payload).toMatchObject({ outcome: "succeeded", attempts: 2 });
+  });
+
+  it("records the alert's recovered dollars when a replayed value-recovering action succeeds", async () => {
+    // A row parked as `retrying` was inserted with dollar_impact_at_exec=0
+    // (it hadn't succeeded yet). When the drain replays it successfully, it
+    // must backfill the recovered dollars or the action never counts toward
+    // the Recovered-impact total.
+    const row = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      shop_id: SHOP,
+      alert_id: "88888888-8888-4888-8888-888888888888",
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row], alertImpactDollars: 1693.03 });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    const audit = updates.find((u) => u.table === "action_audit");
+    expect(audit?.payload).toMatchObject({
+      outcome: "succeeded",
+      dollar_impact_at_exec: 1693.03,
+    });
+  });
+
+  it("records state-derived recovered dollars when a NO-ALERT replayed action succeeds", async () => {
+    // Campaigns-page actions park with alert_id=null; on replay success the
+    // recovered dollars come from the row's own pre/post budget states.
+    const row = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      shop_id: SHOP,
+      alert_id: null,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      pre_state: { status: "active", daily_budget_cents: 5000 },
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    const audit = updates.find((u) => u.table === "action_audit");
+    expect(audit?.payload).toMatchObject({
+      outcome: "succeeded",
+      dollar_impact_at_exec: 50, // 5000c/day stopped
+    });
+  });
+
+  it("acknowledges the alert when a replayed action succeeds", async () => {
+    // The synchronous execute path only acknowledges on an immediate
+    // success; a success via the retry drain must do it here or the alert
+    // stays open forever after the action actually executed.
+    const row = {
+      id: "77777777-7777-4777-8777-777777777777",
+      shop_id: SHOP,
+      alert_id: "88888888-8888-4888-8888-888888888888",
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    expect(result.errors).toEqual([]);
+    const ack = updates.find((u) => u.table === "alerts");
+    expect(ack?.payload).toEqual({ status: "acknowledged" });
+    expect(ack?.filters).toEqual(
+      expect.arrayContaining([
+        ["shop_id", SHOP],
+        ["id", row.alert_id],
+        ["status", "open"],
+      ]),
+    );
+  });
+
+  it("keeps a row retrying (bumps attempts) when replay fails below the attempt cap", async () => {
+    const row = {
+      id: "77777777-7777-4777-8777-777777777777",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1, // → next attempt 2, still < MAX
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const boom = new ActionError("meta", "rate limited"); // retriable by default
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw boom; }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.retrying).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "retrying", attempts: 2 });
+    expect(updates[0].payload.last_error).toMatch(/rate limited/);
+  });
+
+  it("terminally fails a row when replay fails at the attempt cap", async () => {
+    const row = {
+      id: "88888888-8888-4888-8888-888888888888",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: MAX_ATTEMPTS - 1, // → next attempt == MAX → terminal
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw new Error("still down"); }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.failed).toBe(1);
+    expect(result.retrying).toBe(0);
+    expect(updates[0].payload).toMatchObject({ outcome: "failed", attempts: MAX_ATTEMPTS });
+  });
+
+  it("immediately terminally fails on a non-retriable adapter error", async () => {
+    const row = {
+      id: "99999999-9999-4999-8999-999999999999",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1, // well below cap, but error is permanent
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const perm = new ActionError("meta", "invalid token", { retriable: false });
+    const adapter = makeFakeAdapter({ pause: vi.fn(async () => { throw perm; }) });
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => adapter });
+
+    expect(result.failed).toBe(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "failed", attempts: 2 });
+  });
+
+  it("treats a disconnected platform as a (retriable) failure, never a crash", async () => {
+    const row = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      shop_id: SHOP,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, { now: () => FIXED_NOW, resolveAdapter: async () => null });
+
+    expect(result.retrying).toBe(1);
+    expect(updates[0].payload).toMatchObject({ outcome: "retrying", attempts: 2 });
+    expect(updates[0].payload.last_error).toMatch(/not connected/);
+  });
+
   it("short-circuits a fetched row that is already succeeded", async () => {
     const row = {
       id: "55555555-5555-4555-8555-555555555555",
@@ -102,6 +308,137 @@ describe("drainActionRetries", () => {
   });
 });
 
+describe("drainActionRetries · reallocate_budget", () => {
+  const SHOP2 = "00000000-0000-0000-0000-000000000099";
+
+  const reallocParams = {
+    external_id: "m-1",
+    platform: "meta",
+    daily_budget_cents: 1500,
+    source_external_id: "g-1",
+    source_platform: "google",
+    source_prev_budget_cents: 2000,
+    source_new_budget_cents: 1500,
+    step: "increase_dest",
+  };
+
+  function mkAdapter(platform: Platform) {
+    return {
+      platform,
+      pause: vi.fn(async () => {}),
+      resume: vi.fn(async () => {}),
+      setDailyBudget: vi.fn(async () => {}),
+      getState: vi.fn(),
+    };
+  }
+
+  function fakeDrainSb(row: Record<string, unknown>) {
+    const updates: Array<Record<string, unknown>> = [];
+    function builder() {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.lt = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.update = vi.fn((u: Record<string, unknown>) => {
+        updates.push(u);
+        return chain;
+      });
+      chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
+        resolve({ data: [row], error: null });
+      return chain;
+    }
+    return {
+      sb: { from: vi.fn(() => builder()) } as unknown as SupabaseClient,
+      updates,
+    };
+  }
+
+  it("replays ONLY the dest increase and writes a two-sided post_state", async () => {
+    const meta = mkAdapter("meta");
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r1", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(meta.setDailyBudget).toHaveBeenCalledWith("m-1", 1500);
+    expect(google.setDailyBudget).not.toHaveBeenCalled();
+    expect(r.succeeded).toBe(1);
+    expect(updates[0]).toMatchObject({
+      outcome: "succeeded",
+      post_state: { source: { daily_budget_cents: 1500 }, dest: { daily_budget_cents: 1500 } },
+    });
+  });
+
+  it("compensates (restores source) when the parked row fails TERMINALLY", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new ActionError("meta", "invalid budget", { retriable: false }));
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r2", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(r.failed).toBe(1);
+    expect(google.setDailyBudget).toHaveBeenCalledWith("g-1", 2000);
+    expect(updates[0].outcome).toBe("failed");
+    expect((updates[0].params as Record<string, unknown>).compensation).toBe("succeeded");
+    expect(String(updates[0].last_error)).toMatch(/source budget restored/i);
+  });
+
+  it("records a FAILED compensation loudly (rule 12)", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new ActionError("meta", "invalid budget", { retriable: false }));
+    const google = mkAdapter("google");
+    google.setDailyBudget.mockRejectedValue(new Error("Google down"));
+    const { sb, updates } = fakeDrainSb({
+      id: "r3", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect((updates[0].params as Record<string, unknown>).compensation).toBe("failed");
+    expect(String(updates[0].last_error)).toMatch(/compensation failed/i);
+  });
+
+  it("does NOT compensate a still-transient failure (row re-parks)", async () => {
+    const meta = mkAdapter("meta");
+    meta.setDailyBudget.mockRejectedValue(new Error("Meta 503"));
+    const google = mkAdapter("google");
+    const { sb, updates } = fakeDrainSb({
+      id: "r4", shop_id: SHOP2, action_kind: "reallocate_budget", attempts: 1,
+      outcome: "retrying", completed_at: "2020-01-01T00:00:00Z", params: reallocParams,
+    });
+    const r = await drainActionRetries(sb, {
+      resolveAdapter: async (_s, p) => (p === "meta" ? meta : google),
+    });
+    expect(r.retrying).toBe(1);
+    expect(google.setDailyBudget).not.toHaveBeenCalled();
+    expect(updates[0].outcome).toBe("retrying");
+    expect(updates[0].params).toBeUndefined();
+  });
+});
+
+// A fake ActionAdapter whose campaign methods resolve by default; individual
+// tests override one to reject (replay failure).
+function makeFakeAdapter(overrides: Record<string, unknown> = {}) {
+  return {
+    platform: "meta" as const,
+    pause: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    setDailyBudget: vi.fn(async () => {}),
+    getState: vi.fn(),
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Fake Supabase client: serves one select (action_audit) and records the
 // select filters + any update() payloads keyed by id.
@@ -112,18 +449,39 @@ interface SelectFilters {
   lt?: { column: string; value: unknown };
 }
 
-function makeFakeSb(opts: { rows: unknown[] }): {
+function makeFakeSb(opts: { rows: unknown[]; alertImpactDollars?: number }): {
   sb: SupabaseClient;
   selectFilters: SelectFilters;
-  updates: { id: string; payload: Record<string, unknown> }[];
+  updates: {
+    table: string;
+    id: string;
+    payload: Record<string, unknown>;
+    filters: Array<[string, unknown]>;
+  }[];
 } {
   const selectFilters: SelectFilters = {};
-  const updates: { id: string; payload: Record<string, unknown> }[] = [];
+  const updates: {
+    table: string;
+    id: string;
+    payload: Record<string, unknown>;
+    filters: Array<[string, unknown]>;
+  }[] = [];
 
   const sb = {
-    from(_table: string) {
+    from(table: string) {
       return {
         select(_cols: string) {
+          // The recovered-impact lookup on a replay success.
+          if (table === "alerts") {
+            const alertBuilder = {
+              eq: () => alertBuilder,
+              maybeSingle: async () => ({
+                data: { dollar_impact: opts.alertImpactDollars ?? null },
+                error: null,
+              }),
+            };
+            return alertBuilder;
+          }
           const builder = {
             eq(column: string, value: unknown) {
               selectFilters.eq = { column, value };
@@ -142,13 +500,26 @@ function makeFakeSb(opts: { rows: unknown[] }): {
           };
           return builder;
         },
+        // Chainable + thenable so multi-filter updates (acknowledgeAlert's
+        // shop_id/id/status chain) work; the update is recorded on await.
         update(payload: Record<string, unknown>) {
-          return {
-            eq(_column: string, value: unknown) {
-              updates.push({ id: String(value), payload });
-              return Promise.resolve({ error: null });
+          const filters: Array<[string, unknown]> = [];
+          const builder = {
+            eq(column: string, value: unknown) {
+              filters.push([column, value]);
+              return builder;
+            },
+            then(resolve: (v: unknown) => unknown) {
+              updates.push({
+                table,
+                id: String(filters.find(([c]) => c === "id")?.[1] ?? ""),
+                payload,
+                filters,
+              });
+              return Promise.resolve({ error: null }).then(resolve);
             },
           };
+          return builder;
         },
       };
     },

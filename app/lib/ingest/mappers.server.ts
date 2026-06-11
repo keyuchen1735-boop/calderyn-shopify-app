@@ -164,7 +164,7 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
   lines: OrderLineRow[];
   clickRef: AttributionSignals;
 } {
-  const updatedAt = String(p.updated_at ?? p.created_at);
+  const updatedAt = String(p.updated_at ?? p.created_at ?? new Date().toISOString());
   const landingSite = p.landing_site ?? null;
   const referringSite = p.referring_site ?? null;
   const { utm, clickIds } = parseLandingSite(landingSite);

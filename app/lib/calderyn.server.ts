@@ -8,10 +8,12 @@ import type {
   GuardrailConfig,
   Integration,
   SKU,
+  SkuSource,
   TopAdRow,
 } from "./types";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
+import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
@@ -19,6 +21,11 @@ import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.serve
 import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
+import { undoAction } from "./actions/undo.server";
+import { withinBusinessHours } from "./actions/guardrails";
+import { DEFAULT_GUARDRAILS } from "./guardrail-defaults";
+import { recoveredDollarsForAlertAction } from "./actions/execute.server";
+import { dailyActionBudgetUsedCents } from "./recovered";
 
 export class CalderynError extends Error {
   code: string;
@@ -52,14 +59,18 @@ export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks";
 
 export type OnboardingState = { step: number; done: boolean };
 
+// MUST mirror the wizard's STEPS order in routes/app.onboarding.tsx — the DB
+// stores the step NAME, so a divergent order here persists a step the merchant
+// is not actually on (and any other surface reading shops.onboarding_step
+// would resume them at the wrong place).
 const ONBOARDING_STEPS = [
   "shopify",
-  "meta",
-  "google",
-  "quickbooks",
   "guardrails",
-  "consent",
+  "google",
+  "meta",
+  "quickbooks",
   "creative_mapping",
+  "consent",
   "complete",
 ] as const;
 
@@ -129,7 +140,7 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
   return {
     id: String(r.id),
     name: String(r.name),
-    platform: platform === "google" ? "Google" : "Meta",
+    platform: platform === "google" ? "Google" : platform === "tiktok" ? "TikTok" : "Meta",
     status: r.status === "paused" ? "paused" : "active",
     daily_budget_cents: Number(r.daily_budget_cents ?? 0),
     roas_7d: Number(r.roas_7d ?? 0),
@@ -138,7 +149,19 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
   };
 }
 
-function rowToSku(r: Record<string, unknown>): SKU {
+const SKU_SOURCE_ORDER: SkuSource[] = [
+  "quickbooks",
+  "vendor_invoice",
+  "google",
+  "meta",
+  "tiktok",
+];
+
+function isSkuSource(v: string): v is SkuSource {
+  return (SKU_SOURCE_ORDER as string[]).includes(v);
+}
+
+function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
   return {
     id: String(r.id),
     title: String(r.title),
@@ -146,13 +169,20 @@ function rowToSku(r: Record<string, unknown>): SKU {
     days_of_cover: Number(r.days_of_cover ?? 0),
     velocity: Number(r.velocity ?? 0),
     locations: (r.locations as Record<string, number>) ?? {},
+    sources,
   };
 }
 
-function rowToGuardrails(r: Record<string, unknown>): GuardrailConfig {
+// Start of the current UTC day — the window the daily action budget resets on,
+// matching the autopilot guardrail enforcement (actions/guardrails.server.ts).
+function startOfUtcDayIso(now = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+
+function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailConfig {
   return {
     daily_action_budget_cents: Number(r.daily_action_budget ?? 0) * 100,
-    daily_action_budget_used_cents: 0,
+    daily_action_budget_used_cents: usedCents,
     dollar_cap_cents: Math.round(Number(r.dollar_impact_cap_without_2fa ?? 0) * 100),
     cooldown_minutes: Number(r.cooldown_minutes_per_campaign ?? 30),
     business_hours: {
@@ -160,7 +190,13 @@ function rowToGuardrails(r: Record<string, unknown>): GuardrailConfig {
       end: `${String(r.business_hours_end_utc ?? 0).padStart(2, "0")}:00`,
       tz: String(r.timezone ?? "America/New_York"),
     },
-    in_business_hours: true,
+    // Same window math the autopilot gateway enforces (actions/guardrails.ts),
+    // so the merchant-facing check can't show green while the gateway blocks.
+    in_business_hours: withinBusinessHours(
+      Number(r.business_hours_start_utc ?? 14),
+      Number(r.business_hours_end_utc ?? 0),
+      new Date().getUTCHours(),
+    ),
     autopilot_enabled: Boolean(r.autopilot_enabled),
     autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
@@ -187,6 +223,39 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
   const shopIdP = resolveShopId(shop);
+
+  // Dollars (in cents) the shop's actions have recovered since the start of the
+  // UTC day — the "used" half of the daily action budget meter. Same inclusion
+  // rule as the Recovered-impact total, windowed to today.
+  async function dailyUsedCents(shopId: string): Promise<number> {
+    const since = startOfUtcDayIso();
+    // A failed lookup must degrade the "used" meter to 0, not blank the whole
+    // guardrails tile — the cap and every other setting still load. Same
+    // fallback the impact write uses (actions/execute.server.ts).
+    try {
+      const { data, error } = await supabase
+        .from("action_audit")
+        // id is load-bearing: recovered() claws back an undone action by
+        // matching undo_of against the original row's id — without it the
+        // meter keeps counting actions the merchant has undone.
+        .select("id, outcome, dollar_impact_at_exec, undo_of, created_at")
+        .eq("shop_id", shopId)
+        .gte("created_at", since);
+      if (error) throw error;
+      const rows = (data ?? []).map((r) => ({
+        id: String(r.id),
+        outcome: String(r.outcome),
+        // DB stores dollars; the budget meter (and the helper) work in cents.
+        dollar_impact_at_exec: Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),
+        undo_of: (r.undo_of as string | null) ?? null,
+        created_at: String(r.created_at),
+      }));
+      return dailyActionBudgetUsedCents(rows, since);
+    } catch (err) {
+      console.error(`[guardrails] daily action budget used lookup failed for shop ${shopId}`, err);
+      return 0;
+    }
+  }
 
   return {
     alerts: {
@@ -258,10 +327,33 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // For real ad-platform pauses, restore the prior status on Meta first.
-          if (orig.action_kind === "pause_campaign") {
-            const priorStatus = (orig.pre_state as { status?: string } | null)?.status;
-            const campaignId = (orig.post_state as { campaign_id?: string } | null)?.campaign_id;
+          // Composite reallocations have a real two-sided platform undo —
+          // delegate to the action-gateway undo (adapter-based, restores BOTH
+          // budgets) instead of the legacy path below, which would record a
+          // success without touching either platform (rule 12).
+          if (orig.action_kind === "reallocate_budget") {
+            const res = await undoAction(shopId, auditId, supabase);
+            const { data: view, error: vErr } = await supabase
+              .from("v_audit_view")
+              .select("*")
+              .eq("id", res.id)
+              .eq("shop_id", shopId)
+              .single();
+            if (vErr) throw vErr;
+            return rowToAudit(view);
+          }
+
+          // For real ad-platform pauses/resumes, restore the prior status on
+          // Meta first. executeAction snapshots lowercase statuses from
+          // ad_campaign_dim while legacy rows recorded Meta's uppercase —
+          // normalize before matching. The platform campaign id lives in
+          // post_state.campaign_id on legacy rows but only in
+          // params.external_id on orchestrator rows.
+          if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
+            const priorStatus = (orig.pre_state as { status?: string } | null)?.status?.toUpperCase();
+            const campaignId =
+              (orig.post_state as { campaign_id?: string } | null)?.campaign_id ??
+              (orig.params as { external_id?: string } | null)?.external_id;
             if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
               const restore: "ACTIVE" | "PAUSED" = priorStatus;
               const meta = await metaClientForShop(shop);
@@ -286,7 +378,7 @@ export function calderynClient(shop: string) {
             post_state: orig.pre_state,
             dollar_impact_at_exec: orig.dollar_impact_at_exec ? -Number(orig.dollar_impact_at_exec) : 0,
             undo_of: orig.id,
-            actor_user_id: "demo@calderyn.app",
+            actor_user_id: "merchant",
             completed_at: new Date().toISOString(),
           };
 
@@ -296,6 +388,21 @@ export function calderynClient(shop: string) {
             .select()
             .single();
           if (iErr) throw iErr;
+
+          // Undo revives the underlying problem: acknowledge-on-execute
+          // closed the alert, so reversing the action puts it back in the
+          // open queue. Best-effort — log, don't fail the recorded undo.
+          if (orig.alert_id) {
+            const { error: reopenErr } = await supabase
+              .from("alerts")
+              .update({ status: "open" })
+              .eq("shop_id", shopId)
+              .eq("id", orig.alert_id)
+              .eq("status", "acknowledged");
+            if (reopenErr) {
+              console.error(`[audit] failed to re-open alert ${orig.alert_id} after undo`, reopenErr);
+            }
+          }
 
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")
@@ -341,6 +448,16 @@ export function calderynClient(shop: string) {
             (opts.params.target as string | undefined) ??
             "";
 
+          // Recovered impact: value-recovering kinds that execute on this
+          // legacy path (create_po_draft, exclude_geo, reallocate_inventory)
+          // must record their clawed-back dollars too, or they never count
+          // toward the Recovered-impact total.
+          const dollarImpactAtExec = await recoveredDollarsForAlertAction(
+            supabase,
+            opts.alertId,
+            opts.kind,
+          );
+
           // For Phase 1 (no Python engines) executions just record an audit row.
           // The detector + action gateway will own the real pre/post state once wired.
           const { data: ins, error: iErr } = await supabase
@@ -351,22 +468,29 @@ export function calderynClient(shop: string) {
               action_kind: opts.kind,
               params: { ...opts.params, target },
               outcome: "succeeded",
+              dollar_impact_at_exec: dollarImpactAtExec,
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
-              actor_user_id: "demo@calderyn.app",
+              actor_user_id: "merchant",
               completed_at: new Date().toISOString(),
             })
             .select()
             .single();
           if (iErr) throw iErr;
 
-          await supabase
+          const { error: idemErr } = await supabase
             .from("action_idempotency")
             .insert({
               shop_id: shopId,
               idempotency_key: opts.idempotencyKey,
               audit_id: ins.id,
             });
+          if (idemErr) {
+            // The audit row exists — failing now would provoke the duplicate
+            // execution the key prevents. Surface the lost dedup protection
+            // loudly instead (rule 12).
+            console.error(`[actions] idempotency insert failed for audit ${ins.id} (key ${opts.idempotencyKey})`, idemErr);
+          }
 
           const { data: view, error: vErr } = await supabase
             .from("v_audit_view")
@@ -462,7 +586,10 @@ export function calderynClient(shop: string) {
               "campaign_id, grade, roas, break_even_roas, spend_cents, revenue_cents, day_bucket, ad_campaign_dim(name)",
             )
             .eq("shop_id", shopId)
-            .order("day_bucket", { ascending: false });
+            .order("day_bucket", { ascending: false })
+            // Bounded: one row per campaign per day, desc — the cap trims the
+            // oldest rows first (see GRADE_ROWS_CAP for the staleness tradeoff).
+            .limit(GRADE_ROWS_CAP);
           if (error) throw error;
           const seen = new Set<string>();
           const out: CampaignGradeRow[] = [];
@@ -540,13 +667,47 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const { data, error } = await supabase
-            .from("v_skus_flat")
-            .select("*")
-            .eq("shop_id", shopId)
-            .order("on_hand", { ascending: false });
-          if (error) throw error;
-          return (data ?? []).map(rowToSku);
+          const [skuRes, cogsRes, adMapRes] = await Promise.all([
+            supabase
+              .from("v_skus_flat")
+              .select("*")
+              .eq("shop_id", shopId)
+              .order("on_hand", { ascending: false }),
+            // Explicit caps: PostgREST silently truncates at 1000 rows by
+            // default, which would drop sources as cost history grows.
+            supabase
+              .from("cogs_fact")
+              .select("sku_id, source")
+              .eq("shop_id", shopId)
+              .limit(10000),
+            supabase
+              .from("ad_creative_sku_map")
+              .select("sku_id, platform")
+              .eq("shop_id", shopId)
+              .limit(10000),
+          ]);
+          if (skuRes.error) throw skuRes.error;
+          if (cogsRes.error) throw cogsRes.error;
+          if (adMapRes.error) throw adMapRes.error;
+
+          const sourcesBySku = new Map<string, Set<SkuSource>>();
+          const addSource = (skuId: unknown, raw: unknown) => {
+            if (!skuId) return;
+            const src = String(raw ?? "").trim().toLowerCase();
+            if (!isSkuSource(src)) return;
+            const key = String(skuId);
+            const set = sourcesBySku.get(key) ?? new Set<SkuSource>();
+            set.add(src);
+            sourcesBySku.set(key, set);
+          };
+          for (const r of cogsRes.data ?? []) addSource(r.sku_id, r.source);
+          for (const r of adMapRes.data ?? []) addSource(r.sku_id, r.platform);
+
+          return (skuRes.data ?? []).map((r) => {
+            const set = sourcesBySku.get(String(r.id));
+            const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
+            return rowToSku(r, sources);
+          });
         } catch (err) {
           rethrow("skus.list", err);
         }
@@ -563,14 +724,21 @@ export function calderynClient(shop: string) {
             .eq("shop_id", shopId)
             .maybeSingle();
           if (error) throw error;
+          // A shop that hasn't saved guardrails yet (fresh install, pre-
+          // onboarding) gets the same defaults the onboarding form pre-fills
+          // instead of a 404 that blanks the home + onboarding loaders.
+          // Read-only: the row is created when the merchant first saves.
           if (!data) {
-            throw new CalderynError({
-              code: "GUARDRAILS_NOT_FOUND",
-              status: 404,
-              message: `No guardrail config for shop ${shop}`,
-            });
+            return rowToGuardrails(
+              {
+                daily_action_budget: DEFAULT_GUARDRAILS.daily_action_budget_cents / 100,
+                dollar_impact_cap_without_2fa: DEFAULT_GUARDRAILS.dollar_cap_cents / 100,
+                cooldown_minutes_per_campaign: DEFAULT_GUARDRAILS.cooldown_minutes,
+              },
+              await dailyUsedCents(shopId),
+            );
           }
-          return rowToGuardrails(data);
+          return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.get", err);
         }
@@ -608,7 +776,7 @@ export function calderynClient(shop: string) {
             .eq("shop_id", shopId)
             .single();
           if (error) throw error;
-          return rowToGuardrails(data);
+          return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.update", err);
         }
@@ -657,7 +825,10 @@ export function calderynClient(shop: string) {
           rethrow("integrations.list", err);
         }
       },
-      async startOAuth(provider: IntegrationProvider, _signal?: AbortSignal): Promise<{ redirectUrl: string }> {
+      async startOAuth(
+        provider: IntegrationProvider,
+        host?: string | null,
+      ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
           const appSecret = process.env.META_APP_SECRET;
@@ -673,7 +844,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
@@ -691,7 +862,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/google`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/google.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "tiktok") {
@@ -709,7 +880,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/tiktok`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "quickbooks") {
@@ -727,7 +898,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/quickbooks`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId);
+          const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         throw new CalderynError({
@@ -803,13 +974,16 @@ export function calderynClient(shop: string) {
         try {
           const shopId = await shopIdP;
           const topic = headers["X-Shopify-Topic"] ?? path.split("/").pop() ?? "unknown";
-          await supabase.from("raw_shopify_webhook").insert({
+          const { error } = await supabase.from("raw_shopify_webhook").insert({
             shop_id: shopId,
             topic,
             webhook_id: headers["X-Shopify-Webhook-Id"] ?? `${topic}-${Date.now()}-${newIdempotencyKey()}`,
             hmac_verified: true,
             payload: payload as object,
           });
+          // 23505 = unique(webhook_id): Shopify redelivered something that
+          // already landed — the delivery IS persisted, so that's success.
+          if (error && error.code !== "23505") throw error;
         } catch (err) {
           rethrow("internal.forwardWebhook", err);
         }

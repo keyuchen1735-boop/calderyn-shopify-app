@@ -32,10 +32,13 @@ describe("buildCampaignPerformance", () => {
     expect(perf.realRoas).toBeNull();
   });
 
-  it("marks performance unavailable (null, never 0) when metrics are not synced (margin 0)", () => {
+  it("shows reported ROAS but null margin metrics when only the margin is missing (loss-leader)", () => {
+    // Split guards: valid ROAS with zero/unknown margin is REAL performance —
+    // only the margin-derived numbers stay null (rendered as "—"), never the
+    // whole card as "no data".
     const perf = buildCampaignPerformance(camp({ contribution_margin: 0 }));
-    expect(perf.available).toBe(false);
-    expect(perf.reportedRoas).toBeNull();
+    expect(perf.available).toBe(true);
+    expect(perf.reportedRoas).toBe(3);
     expect(perf.realRoas).toBeNull();
     expect(perf.contributionMargin).toBeNull();
   });

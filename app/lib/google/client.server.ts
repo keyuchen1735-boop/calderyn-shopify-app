@@ -57,18 +57,37 @@ async function exchangeRefreshToken(refreshToken: string): Promise<string> {
 // Loose shape of the searchStream response: an array of batches, each holding a
 // `results` array. This is the documented raw-API-payload exception to no-`any`
 // (precise optionals, never `any`).
+type AdsErrorDetail = {
+  errors?: Array<{ errorCode?: Record<string, string>; message?: string }>;
+};
 type SearchStreamBatch = { results?: unknown[]; error?: { message?: string } };
-type SearchStreamError = { error?: { message?: string } };
+type SearchStreamError = { error?: { message?: string; details?: AdsErrorDetail[] } };
 
 /**
  * Extract a human message from a Google Ads error body. The streaming endpoint
  * returns errors EITHER as a bare `{ error: {...} }` OR — because it is a stream
  * — as a single-element array `[{ error: {...} }]`. Handle both.
+ *
+ * The top-level `error.message` is generic (every PERMISSION_DENIED says "The
+ * caller does not have permission"); the actionable reason — e.g.
+ * DEVELOPER_TOKEN_NOT_APPROVED — lives in `error.details[].errors[]`. Append it
+ * so shop_integrations.sync_error is diagnosable (rule 12).
  */
 export function extractAdsError(body: unknown): string | null {
   const obj = Array.isArray(body) ? body[0] : body;
   const err = (obj as SearchStreamError | undefined)?.error;
-  return err ? (err.message ?? "Google Ads API error") : null;
+  if (!err) return null;
+  const top = err.message ?? "Google Ads API error";
+  const detail = (err.details ?? [])
+    .flatMap((d) => d.errors ?? [])
+    .map((e) =>
+      [e.errorCode ? Object.values(e.errorCode).join("/") : null, e.message]
+        .filter(Boolean)
+        .join(": "),
+    )
+    .filter(Boolean)
+    .join("; ");
+  return detail ? `${top} — ${detail}` : top;
 }
 
 /**

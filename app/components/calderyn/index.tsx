@@ -26,7 +26,14 @@ import {
 } from "@shopify/polaris";
 import type { Alert, DetectorId, Severity } from "~/lib/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
-import { DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
+import {
+  DETECTOR_LABELS,
+  DETECTOR_TERMS,
+  EVIDENCE_PAIRS,
+  INTERNAL_EVIDENCE_ID_KEYS,
+  formatEvidenceKey,
+  getEvidenceFormatter,
+} from "~/lib/labels";
 import { CountUp } from "./count-up";
 
 export { CountUp } from "./count-up";
@@ -42,6 +49,7 @@ const ICON_PATHS: Record<string, string> = {
   arrowFlat: "M5 12h14",
   undo: "M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3",
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
 };
 
 export function Icon({
@@ -240,6 +248,14 @@ export function GuardrailMeter({
 
 /* ───────────────────────────── AlertCard ───────────────────────────── */
 
+/**
+ * One explanation for the projected-impact dollar figure, shared by the alert
+ * card and the alert detail so the label + methodology never drift apart.
+ */
+export const IMPACT_LABEL = "Projected 30-day impact";
+export const IMPACT_METHODOLOGY =
+  "Estimated from this alert's evidence — current spend, margin-adjusted return, and sales velocity — projected over the next 30 days if nothing changes. An estimate, not a guarantee; the audit log records the realized impact after you act.";
+
 export function AlertCard({
   alert,
   onReview,
@@ -266,9 +282,11 @@ export function AlertCard({
         </BlockStack>
         <InlineStack gap="400" blockAlign="center" wrap={false}>
           <BlockStack gap="050" inlineAlign="end">
-            <Text as="span" variant="bodyXs" tone="subdued">
-              30-DAY
-            </Text>
+            <Tooltip content={IMPACT_METHODOLOGY}>
+              <Text as="span" variant="bodyXs" tone="subdued">
+                {IMPACT_LABEL}
+              </Text>
+            </Tooltip>
             <Text as="span" variant="headingMd" tone="critical">
               <span className="cdn-tnum">{fmtMoney(alert.dollar_impact)}</span>
             </Text>
@@ -296,10 +314,16 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
               <Icon name="spark" size={16} fill />
             </span>
             <Text as="h2" variant="headingSm">
-              Claude&apos;s read
+              The take
             </Text>
           </InlineStack>
-          {rank !== undefined && <Badge tone="info">{`Rank #${rank}`}</Badge>}
+          {rank !== undefined && (
+            <Tooltip
+              content={`Priority #${rank} of your open alerts, ranked by estimated dollar impact, severity, and recency.`}
+            >
+              <Badge tone="info">{`Priority #${rank}`}</Badge>
+            </Tooltip>
+          )}
         </InlineStack>
         <Text as="p" variant="bodyLg">
           {children}
@@ -312,8 +336,7 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
 /* ───────────────────────────── EvidencePanel ───────────────────────────── */
 
 function prettyKey(k: string) {
-  const s = k.replace(/_/g, " ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  return formatEvidenceKey(k);
 }
 
 function isNumberArray(v: unknown): v is number[] {
@@ -345,7 +368,9 @@ function Sparkline({ values, tone = "info" }: { values: number[]; tone?: "info" 
   );
 }
 
-function evidenceValueToString(v: unknown): string {
+function evidenceValueToString(key: string, v: unknown): string {
+  const formatter = getEvidenceFormatter(key);
+  if (formatter) return formatter(v);
   if (v === null || v === undefined) return "—";
   if (typeof v === "number") return v.toLocaleString("en-US");
   if (typeof v === "boolean") return v ? "Yes" : "No";
@@ -353,9 +378,31 @@ function evidenceValueToString(v: unknown): string {
   return JSON.stringify(v);
 }
 
-export function EvidencePanel({ evidence }: { evidence: Record<string, unknown> }) {
-  const entries = Object.entries(evidence ?? {});
-  if (entries.length === 0) {
+export function EvidencePanel({
+  evidence,
+  hideKeys = [],
+}: {
+  evidence: Record<string, unknown>;
+  /** Evidence keys to suppress (e.g. ones already shown in the page header). */
+  hideKeys?: string[];
+}) {
+  // Raw platform identifiers are always suppressed — rendering them reads as
+  // a debug screen (or, for merchants who haven't connected that platform, as
+  // covert access). See INTERNAL_EVIDENCE_ID_KEYS in lib/labels.ts.
+  const skipSet = new Set<string>([...INTERNAL_EVIDENCE_ID_KEYS, ...hideKeys]);
+  const present = new Set(
+    Object.keys(evidence ?? {}).filter(
+      (k) => !skipSet.has(k) && evidence[k] != null && !isNumberArray(evidence[k]),
+    ),
+  );
+  // before→now pairs where both halves are present; their keys drop out of the
+  // scalar grid so the change shows once, as "$41 → $53", not two stray cells.
+  const pairs = EVIDENCE_PAIRS.filter((p) => present.has(p.from) && present.has(p.to));
+  const pairedKeys = new Set(pairs.flatMap((p) => [p.from, p.to]));
+  const entries = Object.entries(evidence ?? {}).filter(
+    ([k]) => !skipSet.has(k) && !pairedKeys.has(k),
+  );
+  if (entries.length === 0 && pairs.length === 0) {
     return (
       <Text as="p" variant="bodySm" tone="subdued">
         No structured evidence on this alert yet.
@@ -376,6 +423,30 @@ export function EvidencePanel({ evidence }: { evidence: Record<string, unknown> 
           </BlockStack>
         </Box>
       ))}
+      {pairs.length > 0 && (
+        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          {pairs.map((p) => (
+            <Box key={p.label} background="bg-surface-secondary" borderRadius="200" padding="300">
+              <BlockStack gap="050">
+                <Text as="p" variant="bodyXs" tone="subdued">
+                  {p.label}
+                </Text>
+                <InlineStack gap="150" blockAlign="center">
+                  <Text as="span" variant="bodyMd" tone="subdued">
+                    <span className="cdn-tnum">{evidenceValueToString(p.from, evidence[p.from])}</span>
+                  </Text>
+                  <Text as="span" variant="bodyMd" tone="subdued">
+                    →
+                  </Text>
+                  <Text as="span" variant="bodyMd" fontWeight="semibold" tone={p.tone}>
+                    <span className="cdn-tnum">{evidenceValueToString(p.to, evidence[p.to])}</span>
+                  </Text>
+                </InlineStack>
+              </BlockStack>
+            </Box>
+          ))}
+        </InlineGrid>
+      )}
       {scalars.length > 0 && (
         <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
           {scalars.map(([k, v]) => (
@@ -385,7 +456,7 @@ export function EvidencePanel({ evidence }: { evidence: Record<string, unknown> 
                   {prettyKey(k)}
                 </Text>
                 <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  <span className="cdn-tnum">{evidenceValueToString(v)}</span>
+                  <span className="cdn-tnum">{evidenceValueToString(k, v)}</span>
                 </Text>
               </BlockStack>
             </Box>

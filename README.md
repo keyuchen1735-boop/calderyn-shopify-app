@@ -128,16 +128,10 @@ shopify-app/
 ## MCP server
 
 External agents (Claude Code, Claude.ai connectors, custom agents) can query a
-shop's calderyn state — and propose guardrailed actions — via the hosted
-[`calderyn-mcp`](../calderyn-mcp) server over Streamable HTTP at:
-
-```
-https://calderyn-mcp.vercel.app/mcp
-```
-
-Auth is a per-shop bearer token (`mcp_live_…`) minted at **`/app/mcp`** in this
-admin. Each token is scoped to one shop; the server resolves the shop from the
-token, so every tool is tenant-isolated.
+shop's calderyn state — and propose (validation-only) guardrailed actions — via
+the hosted [`calderyn-mcp`](../calderyn-mcp) server at
+`https://calderyn-mcp.vercel.app/mcp`. Every tool is tenant-isolated: the server
+resolves the shop from the authenticated session or token.
 
 ### Tools (12)
 
@@ -153,25 +147,36 @@ token, so every tool is tenant-isolated.
   detector and returns a draft plus a `confirm_url`. **Validation-only — it never
   executes;** execution still flows through this app's action gateway + guardrails.
 
-### Connect
+There are two ways to connect, depending on the client:
 
-**Claude Code** — register the server once, then any project (or subagent) can
-call it:
+### Claude.ai (web) — OAuth, recommended
+
+No token to paste. Requires a Claude Pro/Team/Max/Enterprise plan.
+
+1. Claude.ai → **Settings → Connectors → Add custom connector**.
+2. Name `Calderyn`, URL `https://calderyn-mcp.vercel.app/mcp`, **Add**.
+3. Click **Connect** → a tab opens to `app.calderyncompany.com`. If prompted,
+   enter `your-store.myshopify.com` and sign in through Shopify.
+4. On **"Connect Claude.ai to {shop}"**, click **Allow**. Done.
+
+The OAuth authorization server lives in this app (`/oauth/authorize`,
+`/oauth/consent`, `/oauth/token`, `/oauth/register` + `/.well-known/oauth-authorization-server`);
+`calderyn-mcp` is the resource server (validates the issued `cala_*` access
+token and serves `/.well-known/oauth-protected-resource`). PKCE, public client,
+refresh-token rotation.
+
+### Claude Code / Desktop / custom clients — bearer token
+
+For clients that don't speak OAuth. Mint a per-shop `mcp_live_*` token at
+**Claude connections** (`/app/mcp`) → *Connect via bearer token*, then:
 
 ```bash
-claude mcp add --transport http --scope user calderyn \
-  https://calderyn-mcp.vercel.app/mcp \
-  --header "Authorization: Bearer mcp_live_…"
+claude mcp add --scope user --transport http calderyn https://calderyn-mcp.vercel.app/mcp \
+  --header "Authorization: Bearer mcp_live_YOUR_TOKEN_HERE"
 ```
 
-`--scope user` makes it available in every project; swap to `--scope project` to
-share it with collaborators via a checked-in `.mcp.json`. Confirm with
-`claude mcp list` (expect `calderyn … ✔ Connected`), and restart other running
-Claude sessions to pick up the new server.
-
-**Claude.ai / custom MCP clients** — add a custom connector pointing at the URL
-above with header `Authorization: Bearer mcp_live_…`. Smoke-test the endpoint
-directly with:
+Manage or disconnect either kind from the **Claude connections** page. Smoke-test
+the endpoint directly with:
 
 ```bash
 curl -s https://calderyn-mcp.vercel.app/mcp \
@@ -183,5 +188,7 @@ curl -s https://calderyn-mcp.vercel.app/mcp \
 
 `GET /healthz` returns `{ "ok": true }` (no auth) for uptime checks.
 
-See `docs/adr/0001-mcp-server-split.md` for the split rationale and
-`docs/superpowers/specs/2026-05-25-mcp-server-design.md` for the full design.
+**More:** [`CONNECT_MCP.md`](CONNECT_MCP.md) (step-by-step),
+`docs/adr/0001-mcp-server-split.md` (split rationale),
+`docs/adr/0002-mcp-oauth-2-1.md` (OAuth decisions),
+`docs/superpowers/specs/2026-06-08-claude-connector-oauth-design.md` (full OAuth design).

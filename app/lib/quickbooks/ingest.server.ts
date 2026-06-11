@@ -99,9 +99,12 @@ export async function syncQuickbooksCogs(
     counts.matched++;
     const skuId = info.id;
 
+    // shop_id scope on the read too (matches the close below): the
+    // service-role client bypasses RLS, so the tenant filter is the guard.
     const { data: openRow, error: openErr } = await sb
       .from("cogs_fact")
       .select("id, unit_cost_cents")
+      .eq("shop_id", shopId)
       .eq("sku_id", skuId)
       .eq("source", "quickbooks")
       .is("effective_to", null)

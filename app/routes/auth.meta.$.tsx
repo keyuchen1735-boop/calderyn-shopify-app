@@ -4,7 +4,12 @@ import {
   exchangeCodeForToken,
   type GraphTokenResponse,
 } from "~/lib/meta/oauth.server";
-import { consumeOAuthState } from "~/lib/meta/oauth-state.server";
+import {
+  consumeOAuthState,
+  parseOAuthState,
+  embeddedReturnUrl,
+  postOAuthPath,
+} from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 
@@ -27,6 +32,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const sb = getSupabase();
   const shopId = await consumeOAuthState(sb, state);
   if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
+
+  // Embedded App Bridge context (shop/host) carried through `state`, used to
+  // re-embed the merchant in the Shopify admin on the final redirect (a bare
+  // top-level redirect dead-ends on a 410 HTML page).
+  const returnCtx = parseOAuthState(state);
 
   const fetcher = async (u: string): Promise<GraphTokenResponse> =>
     (await fetch(u)).json() as Promise<GraphTokenResponse>;
@@ -78,5 +88,5 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
-  return redirect("/app/settings?meta=connected");
+  return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { meta: "connected" }, returnCtx));
 };

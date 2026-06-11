@@ -11,6 +11,8 @@ const {
   executeActionSpy,
   resolveDimSpy,
   resolveShopIdSpy,
+  executeReallocationSpy,
+  suggestSpy,
 } = vi.hoisted(() => ({
   executeSpy: vi.fn(),
   setStatusSpy: vi.fn(),
@@ -19,6 +21,8 @@ const {
   executeActionSpy: vi.fn(),
   resolveDimSpy: vi.fn(),
   resolveShopIdSpy: vi.fn(),
+  executeReallocationSpy: vi.fn(),
+  suggestSpy: vi.fn(),
 }));
 
 // Stub Polaris so importing the route module doesn't pull the real UI lib.
@@ -79,6 +83,13 @@ vi.mock("~/lib/meta/campaigns.server", () => ({
   listCampaigns: async () => [
     { id: "120", name: "Prospecting", status: "ACTIVE", dailyBudgetCents: 5800 },
   ],
+}));
+
+vi.mock("~/lib/actions/reallocate.server", () => ({
+  executeReallocation: (...a: unknown[]) => executeReallocationSpy(...a),
+}));
+vi.mock("~/lib/actions/reallocation-suggest.server", () => ({
+  suggestReallocation: (...a: unknown[]) => suggestSpy(...a),
 }));
 
 function pauseRequest(): Request {
@@ -204,5 +215,82 @@ describe("campaigns action — orchestrator wiring", () => {
     expect(executeActionSpy).not.toHaveBeenCalled();
     expect(setStatusSpy).toHaveBeenCalledWith(expect.anything(), "120", "PAUSED");
     expect(executeSpy).toHaveBeenCalled();
+  });
+});
+
+function reallocRequest(over: Record<string, string> = {}): Request {
+  const fd = new FormData();
+  fd.set("intent", "reallocate");
+  fd.set("campaignId", "google-uuid-1"); // non-Meta → already the dim uuid
+  fd.set("campaignName", "Brand Search");
+  fd.set("platform", "Google");
+  fd.set("destCampaignId", "tiktok-uuid-2");
+  fd.set("destName", "Spark Ads");
+  fd.set("destPlatform", "TikTok");
+  fd.set("amountCents", "500");
+  fd.set("idempotencyKey", "kr1");
+  for (const [k, v] of Object.entries(over)) fd.set(k, v);
+  return new Request("http://test/app/campaigns", { method: "POST", body: fd });
+}
+
+describe("action · intent=reallocate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveShopIdSpy.mockResolvedValue("shop-uuid");
+  });
+
+  it("runs the reallocation through the orchestrator and reports success", async () => {
+    executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
+    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    const body = (await res.json()) as { ok: boolean; toast?: { message: string }; error?: { code: string; message: string } };
+    expect(executeReallocationSpy).toHaveBeenCalledWith(
+      "shop-uuid",
+      expect.objectContaining({
+        sourceCampaignId: "google-uuid-1",
+        destCampaignId: "tiktok-uuid-2",
+        amountCents: 500,
+        idempotencyKey: "kr1",
+        alertId: null,
+      }),
+      expect.anything(),
+    );
+    expect(body.ok).toBe(true);
+    expect(body.toast!.message).toMatch(/\$5\.00.*Brand Search.*Spark Ads/);
+  });
+
+  it("rejects a non-positive amount with 400 and never calls the orchestrator", async () => {
+    const res = await action({ request: reallocRequest({ amountCents: "0" }), params: {}, context: {} } as ActionFunctionArgs);
+    expect(res.status).toBe(400);
+    expect(executeReallocationSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing destination with 400", async () => {
+    const res = await action({ request: reallocRequest({ destCampaignId: "" }), params: {}, context: {} } as ActionFunctionArgs);
+    expect(res.status).toBe(400);
+    expect(executeReallocationSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 202 (not success) when the dest increase is parked for retry", async () => {
+    executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "retrying" });
+    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    const body = (await res.json()) as { ok: boolean; toast?: { message: string }; error?: { code: string; message: string } };
+    expect(res.status).toBe(202);
+    expect(body.ok).toBe(false);
+    expect(body.error!.code).toBe("ACTION_RETRYING");
+  });
+
+  it("returns 502 when the reallocation failed", async () => {
+    executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "failed" });
+    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    expect(res.status).toBe(502);
+  });
+
+  it("requires Meta-listed campaigns to be ingested (409 when dim resolve fails)", async () => {
+    resolveDimSpy.mockResolvedValue(null);
+    const res = await action(
+      { request: reallocRequest({ platform: "Meta", campaignId: "120" }), params: {}, context: {} } as ActionFunctionArgs,
+    );
+    expect(res.status).toBe(409);
+    expect(executeReallocationSpy).not.toHaveBeenCalled();
   });
 });

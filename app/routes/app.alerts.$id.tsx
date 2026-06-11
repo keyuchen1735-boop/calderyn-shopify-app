@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Form,
   useActionData,
   useLoaderData,
-  useNavigate,
   useNavigation,
   useSearchParams,
 } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -20,8 +20,11 @@ import {
   Modal,
   Page,
   Text,
+  TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { acknowledgeAlert } from "~/lib/alerts.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -30,6 +33,11 @@ import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
 import { inventoryAdjustQuantities } from "~/lib/shopify/inventory.server";
+import {
+  buildPoDraft,
+  derivePoQuantity,
+  getCurrentUnitCostCents,
+} from "~/lib/po/draft.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import {
   ACTION_LABELS,
@@ -42,14 +50,20 @@ import {
   DetectorTag,
   EvidencePanel,
   GuardrailMeter,
+  IMPACT_LABEL,
+  IMPACT_METHODOLOGY,
   NarrativeCard,
   SeverityBadge,
 } from "~/components/calderyn";
 import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
 
+type PoDefaults = { quantity: number | null; unit_cost_cents: number | null };
+
 type LoaderPayload = {
   alert: Alert | null;
   guardrails: GuardrailConfig | null;
+  poDefaults: PoDefaults | null;
+  existingPoDraft: boolean;
   error: { code: string; message: string } | null;
 };
 
@@ -59,7 +73,21 @@ type ActionPayload = {
   error?: { code: string; message: string };
 };
 
+// Per-kind execution surface. Most kinds confirm + execute inline on this page;
+// kinds listed here need inputs only another page collects, so every surface
+// (buttons, ?action= param, keyboard shortcut) deep-links there instead, and
+// the action handler rejects direct POSTs rather than write a bogus audit row.
+const DEEP_LINK_ACTIONS: Partial<Record<ActionKind, { path: string; message: string }>> = {
+  reallocate_budget: {
+    path: "/app/campaigns",
+    message: "Reallocate budget from the Campaigns page",
+  },
+};
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+  // Unauthenticated confirm_url hits are rewritten to the Shopify admin deep
+  // link by the parent app.tsx loader, which runs for every document request
+  // matching this route — no per-route wrapper needed here.
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   const id = params.id!;
@@ -68,12 +96,46 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       client.alerts.get(id, request.signal),
       client.guardrails.get(request.signal),
     ]);
-    return json<LoaderPayload>({ alert, guardrails, error: null });
+
+    // Pre-fill the PO modal from the alert's evidence and the current COGS
+    // row; both may be unknown (null) — the modal renders those blank/TBD.
+    let poDefaults: PoDefaults | null = null;
+    let existingPoDraft = false;
+    if ((DETECTOR_TO_ACTIONS[alert.detector_id] ?? []).includes("create_po_draft") && alert.sku) {
+      const supabase = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      poDefaults = {
+        quantity: derivePoQuantity(alert.evidence ?? {}),
+        unit_cost_cents: await getCurrentUnitCostCents(supabase, shopId, alert.sku),
+      };
+      // Surface (not block) repeat executions: a successful draft that hasn't
+      // been undone warns in the confirm dialog. Undo rows share the
+      // original's action_kind with undo_of pointing back at it, so fetch
+      // both and net them out here (PostgREST can't anti-join in one query).
+      const { data: priorDrafts, error: dupErr } = await supabase
+        .from("action_audit")
+        .select("id, undo_of")
+        .eq("shop_id", shopId)
+        .eq("alert_id", id)
+        .eq("action_kind", "create_po_draft")
+        .eq("outcome", "succeeded");
+      if (dupErr) {
+        // Cosmetic lookup — log loudly but don't take the page down over it.
+        console.error(`[alerts] duplicate-PO lookup failed for ${id}`, dupErr);
+      }
+      const rows = (priorDrafts ?? []) as Array<{ id: string; undo_of: string | null }>;
+      const undone = new Set(rows.map((r) => r.undo_of).filter(Boolean));
+      existingPoDraft = rows.some((r) => !r.undo_of && !undone.has(r.id));
+    }
+
+    return json<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       alert: null,
       guardrails: null,
+      poDefaults: null,
+      existingPoDraft: false,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -112,6 +174,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         status: 403,
         message: `"${kind}" is not a permitted action for this alert.`,
       });
+    }
+
+    const deepLink = DEEP_LINK_ACTIONS[kind];
+    if (deepLink) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "UNSUPPORTED_HERE", message: deepLink.message },
+          toast: { message: deepLink.message, isError: true },
+        },
+        { status: 400 },
+      );
     }
 
     // Guardrail: enforce the per-action dollar-impact cap server-side using the
@@ -162,6 +236,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       execParams.shopify_operation_id = operationId;
     }
 
+    if (kind === "create_po_draft") {
+      // SECURITY EXCEPTION (intentional): unlike `param_*` fields, the
+      // po_quantity/po_unit_cost form fields ARE honoured here. They shape a
+      // local document only — the PO draft snapshotted into the audit row, with
+      // no external side effect — and are strictly validated below. The SKU and
+      // line title still come from the trusted alert record, never the form.
+      const qtyRaw = String(formData.get("po_quantity") ?? "").trim();
+      const quantity = Number(qtyRaw);
+      // Digits-only regex already guarantees an integer; bound it to a sane max.
+      if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {
+        throw new CalderynError({
+          code: "INVALID_PO_QUANTITY",
+          status: 422,
+          message: "Order quantity must be a positive whole number.",
+        });
+      }
+
+      const costRaw = String(formData.get("po_unit_cost") ?? "").trim();
+      let unitCostCents: number | null = null;
+      if (costRaw !== "") {
+        const dollars = Number(costRaw);
+        if (!Number.isFinite(dollars) || dollars < 0) {
+          throw new CalderynError({
+            code: "INVALID_PO_UNIT_COST",
+            status: 422,
+            message: "Unit cost must be a non-negative dollar amount, or blank for TBD.",
+          });
+        }
+        unitCostCents = Math.round(dollars * 100);
+      }
+
+      if (!alert.sku) {
+        throw new CalderynError({
+          code: "INVALID_PO_TARGET",
+          status: 422,
+          message: "This alert has no SKU to draft a purchase order against.",
+        });
+      }
+
+      const ev = alert.evidence ?? {};
+      const title = stringOrEmpty(ev.title) || stringOrEmpty(ev.sku_title) || alert.sku;
+
+      execParams.po = buildPoDraft({
+        alertId,
+        detectorId: alert.detector_id,
+        shopDomain: session.shop,
+        sku: alert.sku,
+        title,
+        quantity,
+        unitCostCents,
+        now: new Date(),
+      });
+    }
+
     // For pause_campaign and reduce_campaign_budget, route through the real
     // executeAction orchestrator when the alert's evidence carries the
     // ad_campaign_dim UUID (campaign_id). Alerts fired by the engine always
@@ -196,14 +324,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         getSupabase(),
       );
 
+      let successMessage = `${ACTION_VERBS[kind] ?? "Action"} executed`;
+      if (
+        result.outcome === "succeeded" &&
+        !(await acknowledgeAlert(getSupabase(), shopId, alertId))
+      ) {
+        successMessage += " — alert couldn't be acknowledged";
+      }
+
       return json<ActionPayload>({
         ok: result.outcome === "succeeded",
         toast: {
           message:
             result.outcome === "succeeded"
-              ? `${ACTION_VERBS[kind] ?? "Action"} executed`
-              : "Action recorded as failed — check the audit log",
-          isError: result.outcome !== "succeeded",
+              ? successMessage
+              : result.outcome === "retrying"
+                ? "Couldn't reach the ad platform — queued, will retry automatically"
+                : "Action recorded as failed — check the audit log",
+          // `retrying` is pending, not an error; only terminal failure is.
+          isError: result.outcome === "failed",
         },
       });
     }
@@ -218,9 +357,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       idempotencyKey,
     });
 
+    // Snooze is a deferral, not a resolution — leave the alert in the open
+    // queue; every other kind moves it out after a successful execution.
+    const acknowledged =
+      kind === "snooze_alert" ||
+      (await acknowledgeAlert(getSupabase(), await resolveShopId(session.shop), alertId));
     return json<ActionPayload>({
       ok: true,
-      toast: { message: `${ACTION_VERBS[kind] ?? "Action"} executed` },
+      toast: {
+        message: `${ACTION_VERBS[kind] ?? "Action"} executed${
+          acknowledged ? "" : " — alert couldn't be acknowledged"
+        }`,
+      },
     });
   } catch (err) {
     if (err instanceof CalderynError) {
@@ -246,8 +394,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function AlertDetail() {
-  const navigate = useNavigate();
-  const { alert, guardrails, error } = useLoaderData<typeof loader>();
+  const navigate = useEmbeddedNavigate();
+  const { alert, guardrails, poDefaults, existingPoDraft, error } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
@@ -258,7 +407,12 @@ export default function AlertDetail() {
   useEffect(() => {
     if (!alert) return;
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-    const fromUrl = resolveActionParam(searchParams.get("action"), allowed);
+    // Deep-linked kinds have no inline confirm modal — opening one would only
+    // 400 on submit, so the param is ignored and the deep-link button remains.
+    const fromUrl = resolveActionParam(
+      searchParams.get("action"),
+      allowed.filter((k) => !DEEP_LINK_ACTIONS[k]),
+    );
     if (fromUrl) setActionKind(fromUrl);
   }, [alert, searchParams]);
 
@@ -275,7 +429,11 @@ export default function AlertDetail() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-      if (e.key === "e") setActionKind(allowed[0]);
+      // Deep-linked kinds have no inline confirm modal. Skip them so the
+      // shortcut lands on the first actionable kind rather than silently
+      // firing a server 400.
+      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k]);
+      if (e.key === "e" && inlineKinds[0]) setActionKind(inlineKinds[0]);
       if (e.key === "s") setActionKind("snooze_alert");
     };
     document.addEventListener("keydown", onKey);
@@ -286,9 +444,7 @@ export default function AlertDetail() {
     return (
       <Page>
         <Banner tone="critical" title="Couldn't load alert">
-          <p>
-            {error.code}: {error.message}
-          </p>
+          <p>{error.message}</p>
           <Button onClick={() => navigate("/app/alerts")}>Back to alerts</Button>
         </Banner>
       </Page>
@@ -326,9 +482,7 @@ export default function AlertDetail() {
           <BlockStack gap="400">
             {actionData?.error && (
               <Banner tone="critical" title="Action failed">
-                <p>
-                  {actionData.error.code}: {actionData.error.message}
-                </p>
+                <p>{actionData.error.message}</p>
               </Banner>
             )}
             <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
@@ -336,9 +490,11 @@ export default function AlertDetail() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingSm">
-                  Why this fired — evidence
+                  What we noticed
                 </Text>
-                <EvidencePanel evidence={evidence} />
+                {/* title/sku_title duplicate the page header; threshold is an
+                    internal tuning constant, not merchant-facing signal. */}
+                <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
               </BlockStack>
             </Card>
           </BlockStack>
@@ -348,37 +504,49 @@ export default function AlertDetail() {
           <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  Recommended actions
-                </Text>
-                <InlineStack gap="200" align="end">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingSm">
+                    Recommended actions
+                  </Text>
+                  <Tooltip content={IMPACT_METHODOLOGY}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {IMPACT_LABEL}
+                    </Text>
+                  </Tooltip>
                   <Text as="p" variant="headingLg">
                     {fmtMoney(alert.dollar_impact)}
                   </Text>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  30-day projected impact
-                </Text>
+                </BlockStack>
                 <BlockStack gap="300">
-                  {allowedActions.map((kind, i) =>
-                    i === 0 ? (
+                  {allowedActions.map((kind, i) => {
+                    const deepLink = DEEP_LINK_ACTIONS[kind];
+                    const button = deepLink ? (
+                      <Button fullWidth onClick={() => navigate(deepLink.path)}>
+                        {ACTION_LABELS[kind]} →
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={i === 0 ? "primary" : undefined}
+                        onClick={() => setActionKind(kind)}
+                        fullWidth
+                      >
+                        {ACTION_LABELS[kind]}
+                      </Button>
+                    );
+                    return i === 0 ? (
                       <BlockStack key={kind} gap="100">
-                        <Button variant="primary" onClick={() => setActionKind(kind)} fullWidth>
-                          {ACTION_LABELS[kind]}
-                        </Button>
+                        {button}
                         <InlineStack gap="150" blockAlign="center">
                           <Badge tone="success">Recommended</Badge>
                           <Text as="span" variant="bodyXs" tone="subdued">
-                            protects {fmtMoney(alert.dollar_impact)} / 30d
+                            best at preventing the loss above
                           </Text>
                         </InlineStack>
                       </BlockStack>
                     ) : (
-                      <Button key={kind} onClick={() => setActionKind(kind)} fullWidth>
-                        {ACTION_LABELS[kind]}
-                      </Button>
-                    ),
-                  )}
+                      <Fragment key={kind}>{button}</Fragment>
+                    );
+                  })}
                 </BlockStack>
               </BlockStack>
             </Card>
@@ -386,15 +554,23 @@ export default function AlertDetail() {
             {guardrails && (
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">
-                    Safety net
-                  </Text>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingSm">
+                      {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {guardrails.autopilot_enabled
+                        ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
+                        : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
+                    </Text>
+                  </BlockStack>
                   <GuardrailMeter
+                    label="Today's action budget"
                     usedCents={guardrails.daily_action_budget_used_cents}
                     totalCents={guardrails.daily_action_budget_cents}
                     checks={[
                       {
-                        label: `Within daily budget · ${fmtMoney(
+                        label: `Budget for today · ${fmtMoney(
                           guardrails.daily_action_budget_cents -
                             guardrails.daily_action_budget_used_cents,
                         )} left`,
@@ -404,17 +580,19 @@ export default function AlertDetail() {
                           0,
                       },
                       {
-                        label: `Under per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)}`,
+                        label: `Per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)} max risk per action`,
                         ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
                       },
                       {
-                        label: `Business hours · ${guardrails.business_hours.start}–${guardrails.business_hours.end}`,
+                        label: `Business hours · ${formatHour(
+                          guardrails.business_hours.start,
+                        )} – ${formatHour(guardrails.business_hours.end)} ${guardrails.business_hours.tz}`,
                         ok: guardrails.in_business_hours,
                       },
                     ]}
                   />
                   <Text as="p" variant="bodyXs" tone="subdued">
-                    Cooldown {guardrails.cooldown_minutes}m between actions on the same campaign.
+                    Min {guardrails.cooldown_minutes} min between actions on the same campaign.
                   </Text>
                 </BlockStack>
               </Card>
@@ -427,6 +605,8 @@ export default function AlertDetail() {
         <ExecuteActionModal
           alert={alert}
           kind={actionKind}
+          poDefaults={poDefaults}
+          existingPoDraft={existingPoDraft}
           submitting={submitting}
           onClose={() => setActionKind(null)}
         />
@@ -438,16 +618,32 @@ export default function AlertDetail() {
 function ExecuteActionModal({
   alert,
   kind,
+  poDefaults,
+  existingPoDraft,
   submitting,
   onClose,
 }: {
   alert: Alert;
   kind: ActionKind;
+  poDefaults: PoDefaults | null;
+  existingPoDraft: boolean;
   submitting: boolean;
   onClose: () => void;
 }) {
   const idempotencyKey = useStableIdempotencyKey(alert.id, kind);
   const evidence = alert.evidence ?? {};
+
+  // PO qty/price are the one set of form fields the server honours (strictly
+  // validated; they shape a local document only). Pre-filled from derived
+  // defaults; a blank unit cost prints as "TBD" on the PDF.
+  const [poQuantity, setPoQuantity] = useState(
+    poDefaults?.quantity != null ? String(poDefaults.quantity) : "",
+  );
+  const [poUnitCost, setPoUnitCost] = useState(
+    poDefaults?.unit_cost_cents != null
+      ? (poDefaults.unit_cost_cents / 100).toFixed(2)
+      : "",
+  );
 
   const inventoryHints =
     kind === "reallocate_inventory"
@@ -472,7 +668,8 @@ function ExecuteActionModal({
         <Form method="post" preventScrollReset>
           {/* The server re-loads the alert and derives the action target, dollar
               impact, and inventory inputs from its trusted evidence — so only the
-              identifiers needed to locate the alert + dedupe are submitted. */}
+              identifiers needed to locate the alert + dedupe are submitted. The
+              PO qty/cost fields are the validated exception (local document only). */}
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="alertId" value={alert.id} />
           <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
@@ -480,6 +677,38 @@ function ExecuteActionModal({
             <Text as="p" variant="bodyMd" tone="subdued">
               {actionDescription(kind)}
             </Text>
+            {kind === "create_po_draft" && existingPoDraft && (
+              <Banner tone="warning">
+                A PO draft for this alert already exists in the audit log. Executing again
+                creates another draft.
+              </Banner>
+            )}
+            {kind === "create_po_draft" && (
+              <InlineStack gap="200" wrap={false}>
+                <TextField
+                  label="Quantity"
+                  name="po_quantity"
+                  type="number"
+                  min={1}
+                  max={1_000_000}
+                  value={poQuantity}
+                  onChange={setPoQuantity}
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Unit cost"
+                  name="po_unit_cost"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  prefix="$"
+                  value={poUnitCost}
+                  onChange={setPoUnitCost}
+                  autoComplete="off"
+                  helpText="Leave blank if unknown — printed as TBD."
+                />
+              </InlineStack>
+            )}
             {missingInventoryFields ? (
               <Banner tone="critical">
                 Alert evidence is missing the inventory item, source location, destination, or
@@ -504,7 +733,12 @@ function ExecuteActionModal({
                 loading={submitting}
                 disabled={submitting || !!missingInventoryFields}
               >
-                {`Execute · ${fmtMoney(alert.dollar_impact)}`}
+                {/* The button names the action, not a bare "Execute" — and only
+                    value-recovering kinds claim a saving (a snooze defers the
+                    loss, it doesn't recover it). */}
+                {kind === "snooze_alert" || alert.dollar_impact <= 0
+                  ? ACTION_LABELS[kind]
+                  : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
               </Button>
             </InlineStack>
           </BlockStack>
@@ -519,6 +753,21 @@ function useStableIdempotencyKey(alertId: string, kind: ActionKind) {
   return key;
 }
 
+// "14:00" → "2 PM"; "00:00" → "midnight"; "12:00" → "noon".
+// Falls through to the raw string if it doesn't look like HH:MM.
+function formatHour(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
+  if (!m) return hhmm;
+  const h = Number(m[1]);
+  const mins = Number(m[2]);
+  if (!Number.isFinite(h) || h < 0 || h > 23) return hhmm;
+  if (h === 0 && mins === 0) return "midnight";
+  if (h === 12 && mins === 0) return "noon";
+  const period = h < 12 ? "AM" : "PM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return mins === 0 ? `${hour12} ${period}` : `${hour12}:${m[2]} ${period}`;
+}
+
 function stringOrEmpty(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -530,6 +779,8 @@ function actionDescription(kind: ActionKind) {
   switch (kind) {
     case "pause_campaign":
       return "Pauses the campaign immediately via the Meta/Google API. Reversible via Undo.";
+    case "resume_campaign":
+      return "Resumes the paused campaign via the ad platform API.";
     case "reduce_campaign_budget":
       return "Reduces daily budget by 30% (historical bend point). Reversible via Undo.";
     case "exclude_geo":
@@ -537,7 +788,7 @@ function actionDescription(kind: ActionKind) {
     case "reallocate_inventory":
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":
-      return "Creates a draft purchase order in your supplier portal. Send manually after review. Not reversible.";
+      return "Drafts a purchase order and records it in the action audit log, where the PDF can be downloaded. Review and send to your supplier manually.";
     case "snooze_alert":
       return "Suppresses this alert until the condition resolves. Calderyn re-evaluates on the next detection pass.";
   }

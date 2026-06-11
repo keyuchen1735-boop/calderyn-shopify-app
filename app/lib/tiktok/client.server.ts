@@ -10,7 +10,8 @@ const API_BASE = "https://business-api.tiktok.com/open_api/v1.3";
 export interface TikTokClient {
   getReport(advertiserId: string, since: string, until: string): Promise<TikTokReportRow[]>;
   getCampaigns(advertiserId: string): Promise<TikTokCampaignPayload[]>;
-  getAdvertiserCurrency(advertiserId: string): Promise<string>;
+  /** null when the Ad Account Management scope is unavailable — caller picks a fallback. */
+  getAdvertiserCurrency(advertiserId: string): Promise<string | null>;
 }
 
 type TikTokPageInfo = { page?: number; page_size?: number; total_number?: number; total_page?: number };
@@ -78,13 +79,18 @@ export function buildTikTokClient(token: string): TikTokClient {
     },
 
     async getAdvertiserCurrency(advertiserId) {
-      const body = await call("/advertiser/info/", {
-        advertiser_ids: JSON.stringify([advertiserId]),
-        fields: JSON.stringify(["currency"]),
-      });
-      const { list } = check(body, "advertiser/info");
-      const first = list[0] as { currency?: unknown } | undefined;
-      return typeof first?.currency === "string" ? first.currency : "USD";
+      try {
+        const body = await call("/advertiser/info/", {
+          advertiser_ids: JSON.stringify([advertiserId]),
+          fields: JSON.stringify(["currency"]),
+        });
+        const { list } = check(body, "advertiser/info");
+        const first = list[0] as { currency?: unknown } | undefined;
+        return typeof first?.currency === "string" ? first.currency : null;
+      } catch {
+        // Ad Account Management scope may not be granted; caller falls back.
+        return null;
+      }
     },
   };
 }

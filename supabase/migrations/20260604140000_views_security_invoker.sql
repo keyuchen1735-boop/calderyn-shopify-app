@@ -12,4 +12,3 @@ alter view public.v_alerts_view     set (security_invoker = on);
 alter view public.v_audit_view      set (security_invoker = on);
 alter view public.v_campaigns_flat  set (security_invoker = on);
 alter view public.v_skus_flat       set (security_invoker = on);
-alter view public.v_simulation_runs set (security_invoker = on);

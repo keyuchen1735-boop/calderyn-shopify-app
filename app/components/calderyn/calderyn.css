@@ -122,18 +122,158 @@
   height: 40px;
 }
 
-/* ── SKU location mix bar ───────────────────────────────────── */
-.cdn-locbar {
-  display: flex;
-  height: 8px;
-  width: 96px;
+/* ── Source pill (where a dataset is synced from) ───────────── */
+.cdn-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--cdn-border);
   border-radius: 9999px;
-  overflow: hidden;
-  background: var(--cdn-divider);
-  flex: 0 0 auto;
+  background: var(--p-color-bg-surface);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--p-color-text-secondary, #616a75);
+  white-space: nowrap;
 }
-.cdn-locbar-seg {
-  height: 100%;
+
+/* ── SKU location inline list ─────────────────────────────── */
+.cdn-loccell-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+  cursor: help;
+}
+.cdn-loccell-item {
+  white-space: nowrap;
+}
+
+/* ── SKU table (grid-based, replaces Polaris DataTable here) ──
+ * DataTable was sizing columns to the widest single cell, which made the
+ * UUID-shaped id column eat the row and clip the locations cell. A real
+ * grid keeps column widths constant row-to-row and lets us right-align
+ * the numeric columns properly. */
+.cdn-skutable {
+  display: grid;
+  grid-template-columns:
+    minmax(86px, 96px)      /* SKU (short id) */
+    minmax(180px, 1.4fr)    /* Title */
+    minmax(72px, 92px)      /* On hand */
+    minmax(96px, 116px)     /* Days of cover */
+    minmax(96px, 120px)     /* Velocity */
+    minmax(140px, 1fr)      /* Locations */
+    minmax(64px, 76px);     /* Alerts */
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.cdn-skutable__head,
+.cdn-skutable__row {
+  display: contents;
+}
+.cdn-skutable__cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--cdn-divider);
+  background: var(--p-color-bg-surface);
+}
+.cdn-skutable__head .cdn-skutable__cell {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cdn-subdued);
+  letter-spacing: 0.01em;
+  background: var(--p-color-bg-surface-secondary, #fafbfb);
+  border-bottom: 1px solid var(--cdn-border);
+  padding-top: 10px;
+  padding-bottom: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.cdn-skutable__row:hover .cdn-skutable__cell {
+  background: var(--p-color-bg-surface-hover, #f6f6f7);
+}
+.cdn-skutable__row:last-child .cdn-skutable__cell {
+  border-bottom: none;
+}
+.cdn-skutable__cell--num {
+  justify-content: flex-end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cdn-skutable__cell--center {
+  justify-content: center;
+}
+/* Keep the base flex centering (so the title stays vertically centered even
+   when a neighbouring cell — e.g. Locations — wraps and grows the row), and
+   truncate the inner text instead of the cell itself. */
+.cdn-skutable__cell--truncate {
+  overflow: hidden;
+}
+.cdn-skutable__cell--truncate > * {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cdn-skutable__sort {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.cdn-skutable__sort:hover {
+  color: var(--p-color-text);
+}
+.cdn-skutable__sort--active {
+  color: var(--p-color-text);
+}
+.cdn-skutable__sort-arrow {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.cdn-skutable__sort:focus-visible {
+  outline: 2px solid var(--cdn-info);
+  outline-offset: -2px;
+}
+.cdn-skutable__empty {
+  grid-column: 1 / -1;
+  padding: 40px 16px;
+  text-align: center;
+}
+.cdn-skuid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--p-color-text);
+  background: var(--p-color-bg-surface-secondary, #f1f2f3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: help;
+}
+@media (max-width: 900px) {
+  .cdn-skutable {
+    grid-template-columns:
+      minmax(80px, 92px)
+      minmax(140px, 1.2fr)
+      minmax(64px, 84px)
+      minmax(80px, 100px)
+      minmax(84px, 100px)
+      minmax(120px, 0.9fr)
+      minmax(52px, 60px);
+    font-size: 12.5px;
+  }
+  .cdn-skutable__cell { padding: 10px 10px; }
 }
 
 /* Whole-tile click target reset (StatTile) */

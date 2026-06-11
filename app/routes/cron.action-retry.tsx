@@ -6,10 +6,12 @@ import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 // Suggested schedule: every 15 minutes — `*/15 * * * *`.
 //
-// CAVEAT: the executor registry is empty (see retry.server.ts), so this
-// currently REPLAYS NOTHING. The drain is INERT — every due row is left
-// untouched and counted as `skipped`; no row is mutated until executors
-// are ported. (It must not fail rows out: `failed` is terminal.)
+// Drains due `retrying` rows from action_audit: re-resolves the per-shop
+// adapter and replays the campaign action (pause/resume/budget) via
+// EXECUTOR_REGISTRY (see retry.server.ts). Success marks the row
+// `succeeded`; a transient failure bumps `attempts` and stays `retrying`
+// until the attempt cap, at which point it terminally `failed`s. Kinds with
+// no platform executor (e.g. snooze_alert) are skipped untouched.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });

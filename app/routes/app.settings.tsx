@@ -4,10 +4,10 @@ import {
   useActionData,
   useFetcher,
   useLoaderData,
-  useNavigate,
   useNavigation,
   useSearchParams,
 } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -32,7 +32,7 @@ import {
   calderynClient,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
-import { useActionToast } from "~/lib/toast";
+import { useActionToast, useConnectionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import {
   OAUTH_PROVIDERS,
@@ -143,7 +143,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           message: `Unknown provider: ${provider}`,
         });
       }
-      const { redirectUrl } = await client.integrations.startOAuth(provider, request.signal);
+      // Carry the embedded App Bridge `host` through the OAuth round-trip: the
+      // provider callback lands at the top level (outside the admin iframe) and
+      // needs host to redirect the merchant back INTO the embedded admin.
+      const host = String(formData.get("host") || "") || null;
+      const { redirectUrl } = await client.integrations.startOAuth(provider, host);
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
@@ -181,7 +185,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Settings() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { guardrails, integrations, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
@@ -189,6 +193,7 @@ export default function Settings() {
   // (e.g. ?google=connected or ?meta=error&reason=...).
   const [searchParams] = useSearchParams();
   const notice = connectionNotice(searchParams);
+  useConnectionToast(notice);
 
   return (
     <Page
@@ -199,16 +204,12 @@ export default function Settings() {
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load settings">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Settings update failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
         {notice &&
@@ -272,13 +273,10 @@ export default function Settings() {
           >
             <Card>
               <BlockStack gap="200">
-                <Checkbox label="Email me a 6:00am ET digest of overnight alerts" checked />
-                <Checkbox label="Email me immediately for Critical alerts" checked />
-                <Checkbox label="Email me when an automatic action fails" checked />
-                <Checkbox
-                  label="Slack notifications"
-                  helpText="Requires Slack connection."
-                />
+                <Banner tone="info" title="Email and Slack notifications are coming soon">
+                  Until then, new alerts appear on the Home screen and in the Alerts queue,
+                  and every action Calderyn takes is recorded in the Audit log.
+                </Banner>
               </BlockStack>
             </Card>
           </Layout.AnnotatedSection>
@@ -414,7 +412,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
         <FormLayout>
           <FormLayout.Group>
             <TextField
-              label="Daily action budget cap (USD)"
+              label="Total dollar value of changes Calderyn can make per day (USD)"
               type="number"
               value={budget}
               autoComplete="off"
@@ -422,7 +420,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
             />
             <TextField
-              label="Per-action dollar cap (USD)"
+              label="Require my approval for any change bigger than (USD)"
               type="number"
               value={cap}
               autoComplete="off"
@@ -432,7 +430,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           </FormLayout.Group>
           <FormLayout.Group>
             <TextField
-              label="Cooldown (minutes)"
+              label="Minimum wait between changes to the same campaign (minutes)"
               type="number"
               value={cooldown}
               autoComplete="off"
@@ -448,14 +446,14 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
             />
           </FormLayout.Group>
           <Checkbox
-            label="Auto-pilot — automatically pause clearly money-losing campaigns"
+            label="Let Calderyn pause money-losing campaigns on its own"
             checked={autopilotEnabled}
             onChange={setAutopilotEnabled}
             helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
           />
           <FormLayout.Group>
             <TextField
-              label="Max automatic actions per day"
+              label="Most automatic changes per day"
               type="number"
               value={autopilotDailyActionCap}
               autoComplete="off"
@@ -463,7 +461,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               helpText="Calderyn will not take more than this many automatic actions in a single day."
             />
             <TextField
-              label="Don't act until a campaign has spent (USD)"
+              label="Ignore campaigns that have spent less than (USD)"
               type="number"
               value={autopilotMinSpend}
               autoComplete="off"
@@ -473,7 +471,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           </FormLayout.Group>
           <FormLayout.Group>
             <TextField
-              label="Max budget cut per action (%)"
+              label="Most Calderyn can cut a campaign's budget at once (%)"
               type="number"
               value={autopilotMaxBudgetCutPct}
               autoComplete="off"
@@ -502,6 +500,9 @@ function IntegrationCard({
 }) {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
+  // App Bridge appends `host` to the embedded URL; forward it on connect so the
+  // OAuth callback can re-embed the merchant in the Shopify admin afterwards.
+  const [searchParams] = useSearchParams();
   // Connect runs through its own fetcher so the provider's OAuth page can be
   // opened at the top level — embedded iframes can't load third-party OAuth
   // pages (they refuse to be framed).
@@ -546,6 +547,7 @@ function IntegrationCard({
             <connectFetcher.Form method="post">
               <input type="hidden" name="intent" value="connect_integration" />
               <input type="hidden" name="provider" value={oauthProvider} />
+              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
               <Button submit variant="primary" loading={connecting} disabled={connecting}>
                 Connect
               </Button>

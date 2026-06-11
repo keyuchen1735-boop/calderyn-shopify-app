@@ -3,7 +3,8 @@
 // campaign_below_breakeven alert as the "next step".
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import {
   Badge,
   Banner,
@@ -66,7 +67,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function Analytics() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { roasSeries, grades, topAds, breakevenCount, error } =
     useLoaderData<typeof loader>();
   const series = toRoasSeries(roasSeries);
@@ -107,9 +108,7 @@ export default function Analytics() {
       <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load analytics">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
 
@@ -124,9 +123,14 @@ export default function Analytics() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              ROAS trend
-            </Text>
+            <BlockStack gap="050">
+              <Text as="h2" variant="headingMd">
+                ROAS trend
+              </Text>
+              <Text as="span" variant="bodySm" tone="subdued">
+                Return on ad spend across the last {WINDOW_DAYS} days. Higher is better; 1.0× means every dollar in came back as a dollar of revenue.
+              </Text>
+            </BlockStack>
             <MarginChart
               series={series}
               formatValue={formatRoas}

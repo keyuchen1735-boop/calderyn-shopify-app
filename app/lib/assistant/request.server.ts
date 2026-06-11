@@ -9,8 +9,12 @@ export type ParseResult =
 
 const MAX_MESSAGE_LEN = 4000;
 
-export function parseAssistantRequest(form: FormData): ParseResult {
-  const message = String(form.get("message") ?? "").trim();
+/** Shared validation core: the slideout posts FormData, the dashboard JSON. */
+export function validateAssistantInput(
+  rawMessage: unknown,
+  rawConversationId: unknown,
+): ParseResult {
+  const message = String(rawMessage ?? "").trim();
   if (!message) return { ok: false, code: "MESSAGE_REQUIRED", message: "Message is required" };
   if (message.length > MAX_MESSAGE_LEN) {
     return {
@@ -19,6 +23,10 @@ export function parseAssistantRequest(form: FormData): ParseResult {
       message: `Message must be ${MAX_MESSAGE_LEN} characters or fewer`,
     };
   }
-  const cid = String(form.get("conversationId") ?? "").trim();
+  const cid = String(rawConversationId ?? "").trim();
   return { ok: true, value: { conversationId: cid || null, message } };
+}
+
+export function parseAssistantRequest(form: FormData): ParseResult {
+  return validateAssistantInput(form.get("message"), form.get("conversationId"));
 }

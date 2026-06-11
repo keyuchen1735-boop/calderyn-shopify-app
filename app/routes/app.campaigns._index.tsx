@@ -3,9 +3,9 @@ import {
   Form,
   useActionData,
   useLoaderData,
-  useNavigate,
   useNavigation,
 } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -21,10 +21,13 @@ import {
   Link,
   Modal,
   Page,
+  Select,
   Text,
   TextField,
   Tooltip,
 } from "@shopify/polaris";
+import type { SelectGroup } from "@shopify/polaris";
+import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
@@ -36,22 +39,33 @@ import { newIdempotencyKey } from "~/lib/ids";
 // to the legacy direct-Meta path (ownership verified via listCampaigns) so the
 // page still works pre-ingest.
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { executeReallocation } from "~/lib/actions/reallocate.server";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { suggestReallocation } from "~/lib/actions/reallocation-suggest.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
-import { fmtMoney } from "~/lib/format";
+import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import type { ActionKind, Alert, Campaign } from "~/lib/types";
 
 type PendingAction =
   | { kind: "pause"; campaign: Campaign }
   | { kind: "resume"; campaign: Campaign }
-  | { kind: "edit_budget"; campaign: Campaign };
+  | { kind: "edit_budget"; campaign: Campaign }
+  | { kind: "reallocate"; sourceId?: string };
+
+type ReallocationPrefill = {
+  sourceId: string | null; // id as used by the campaigns list (Meta = external id)
+  destId: string | null;
+  sourceGrade: string | null;
+  destGrade: string | null;
+};
 
 type LoaderPayload = {
   campaigns: Campaign[];
   alerts: Alert[];
+  reallocation: ReallocationPrefill | null;
   error: { code: string; message: string } | null;
 };
 
@@ -65,11 +79,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
+    // Ingested campaigns from v_campaigns_flat cover EVERY connected platform
+    // (Meta, Google, TikTok). When Meta is live-connected, its rows are replaced
+    // by the live API list (works pre-ingest, fresher status); other platforms
+    // always come from the ingested view.
+    const ingested = await client.campaigns.list(request.signal);
     const meta = await metaClientForShop(session.shop);
     let campaigns: Campaign[];
     if (meta) {
       const live = await listCampaigns(meta.client, meta.adAccountId);
-      campaigns = live.map((c) => ({
+      const liveMeta = live.map((c) => ({
         id: c.id,
         name: c.name,
         platform: "Meta" as const,
@@ -79,16 +98,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         contribution_margin: 0,
         spend_7d: 0,
       }));
+      campaigns = [...liveMeta, ...ingested.filter((c) => c.platform !== "Meta")];
     } else {
-      campaigns = await client.campaigns.list(request.signal);
+      campaigns = ingested;
     }
     const alerts = await client.alerts.list({}, request.signal);
-    return json<LoaderPayload>({ campaigns, alerts, error: null });
+
+    // Best-effort grade-driven prefill for the reallocate modal. Failure
+    // degrades VISIBLY to "no suggestion" (no Suggested badges, defaults
+    // unset) — the modal itself still works; this is advisory data, not a
+    // swallowed mutation (rule 12).
+    let reallocation: ReallocationPrefill | null = null;
+    try {
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      const s = await suggestReallocation(shopId, sb);
+      if (s.source && s.dest) {
+        const matchId = (cand: { campaignId: string; externalId: string }) =>
+          campaigns.find((c) => c.id === cand.campaignId || c.id === cand.externalId)?.id ?? null;
+        reallocation = {
+          sourceId: matchId(s.source),
+          destId: matchId(s.dest),
+          sourceGrade: s.source.grade,
+          destGrade: s.dest.grade,
+        };
+      }
+    } catch {
+      reallocation = null;
+    }
+    return json<LoaderPayload>({ campaigns, alerts, reallocation, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       campaigns: [],
       alerts: [],
+      reallocation: null,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -104,6 +148,86 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const platform = String(formData.get("platform") || "");
   const idempotencyKey =
     String(formData.get("idempotencyKey") || "") || newIdempotencyKey();
+
+  if (intent === "reallocate") {
+    const destCampaignId = String(formData.get("destCampaignId") || "");
+    const destPlatform = String(formData.get("destPlatform") || "");
+    const destName = String(formData.get("destName") || "");
+    const amountCents = Math.round(Number(formData.get("amountCents") || 0));
+    // Validate at the boundary — never trust FormData shapes.
+    if (!campaignId || !destCampaignId || !Number.isFinite(amountCents) || amountCents <= 0) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "INVALID_REQUEST", message: "source, destination and a positive amount are required" },
+          toast: { message: "Invalid reallocation", isError: true },
+        },
+        { status: 400 },
+      );
+    }
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    // Meta rows post the live external id; resolve to the dim uuid. The
+    // composite action has NO legacy direct-Meta fallback: both campaigns
+    // must be ingested before budget can be moved between them.
+    const sourceDim =
+      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
+    const destDim =
+      destPlatform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId) : destCampaignId;
+    if (!sourceDim || !destDim) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "NOT_INGESTED", message: "Both campaigns must finish syncing before budget can be reallocated" },
+          toast: { message: "Campaigns still syncing — try again shortly", isError: true },
+        },
+        { status: 409 },
+      );
+    }
+    try {
+      const { outcome } = await executeReallocation(
+        shopId,
+        { alertId: null, sourceCampaignId: sourceDim, destCampaignId: destDim, amountCents, idempotencyKey },
+        sb,
+      );
+      if (outcome === "failed") {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_FAILED", message: `Could not reallocate budget from ${campaignName}` },
+            toast: { message: `Could not reallocate budget from ${campaignName}`, isError: true },
+          },
+          { status: 502 },
+        );
+      }
+      if (outcome === "retrying") {
+        // Source budget IS reduced; the dest increase is parked for the retry
+        // cron. Not a success yet (rule 12).
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_RETRYING", message: `Source budget reduced; the increase on ${destName} is queued and will retry automatically` },
+            toast: { message: `${destName}: increase queued, will retry automatically` },
+          },
+          { status: 202 },
+        );
+      }
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: `Moved ${fmtMoneyDec(amountCents)}/day from ${campaignName} to ${destName}` },
+      });
+    } catch (err) {
+      const e = err as CalderynError;
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: e.code ?? "ACTION_FAILED", message: e.message },
+          toast: { message: e.message, isError: true },
+        },
+        { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+      );
+    }
+  }
 
   if (!campaignId) {
     return json<ActionPayload>(
@@ -133,7 +257,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     case "edit_budget": {
       kind = "reduce_campaign_budget";
-      const newCents = Math.max(0, Math.round(Number(formData.get("dailyBudgetCents") || 0)));
+      const newCents = Math.round(Number(formData.get("dailyBudgetCents") || 0));
+      // A $0 daily budget effectively pauses the campaign with no warning —
+      // refuse it here; pausing has its own explicit, undoable action.
+      if (!Number.isFinite(newCents) || newCents <= 0) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_BUDGET",
+              message: "Daily budget must be greater than $0. To stop spend entirely, pause the campaign instead.",
+            },
+            toast: { message: "Daily budget must be greater than $0", isError: true },
+          },
+          { status: 400 },
+        );
+      }
       params.daily_budget_cents = newCents;
       break;
     }
@@ -148,15 +287,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
   }
 
-  // Preferred path: if this Meta campaign has been ingested into ad_campaign_dim,
-  // run the action through the orchestrator (idempotency + cross-tenant ownership
-  // guard + single audit row live there). resolveCampaignDimId maps the posted Meta
-  // external id → dim UUID; null means "not ingested yet" → fall through to the
-  // legacy direct-Meta path below.
-  if (platform === "Meta") {
+  // Preferred path: run the action through the orchestrator (idempotency +
+  // cross-tenant ownership guard + single audit row live there). Meta rows post
+  // the platform external id (live API list) — resolveCampaignDimId maps it to
+  // the dim UUID; null means "not ingested yet" → fall through to the legacy
+  // direct-Meta path below. Non-Meta rows (Google, TikTok) come from
+  // v_campaigns_flat, so the posted id already IS the dim UUID.
+  {
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId = await resolveCampaignDimId(sb, shopId, "meta", campaignId);
+    const dimId =
+      platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
     if (dimId) {
       const orchestratedKind: ExecutableKind =
         intent === "pause"
@@ -187,6 +330,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               toast: { message: `Could not ${intent} ${campaignName}`, isError: true },
             },
             { status: 502 },
+          );
+        }
+        if (outcome === "retrying") {
+          // Transient platform failure parked for the retry cron — the action
+          // has NOT taken effect yet, so do not report success (rule 12).
+          return json<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "ACTION_RETRYING", message: `Couldn't reach the ad platform — ${intent} for ${campaignName} is queued and will retry automatically` },
+              toast: { message: `${campaignName}: queued, will retry automatically` },
+            },
+            { status: 202 },
           );
         }
         const messageByIntent: Record<string, string> = {
@@ -303,12 +458,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Campaigns() {
-  const navigate = useNavigate();
-  const { campaigns, alerts, error } = useLoaderData<typeof loader>();
+  const navigate = useEmbeddedNavigate();
+  const { campaigns, alerts, reallocation, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
+
+  // Reallocation needs both a source AND a destination with a daily budget —
+  // gate every entry point on the same predicate so the modal can never open
+  // in a dead (no-possible-destination) state.
+  const reallocEligibleCount = campaigns.filter(
+    (c) => c.status === "active" && c.daily_budget_cents > 0,
+  ).length;
 
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
@@ -368,7 +530,7 @@ export default function Campaigns() {
         "—"
       ),
       linked.length ? <Badge tone="warning">{String(linked.length)}</Badge> : "—",
-      <ButtonGroup key={`act-${c.id}`}>
+      <InlineStack key={`act-${c.id}`} gap="200" blockAlign="center" wrap={false}>
         {c.status === "active" ? (
           <Button onClick={() => setPending({ kind: "pause", campaign: c })}>Pause</Button>
         ) : (
@@ -383,32 +545,60 @@ export default function Campaigns() {
         >
           Edit budget
         </Button>
-      </ButtonGroup>,
+        <Button
+          variant="plain"
+          disabled={c.status !== "active" || c.daily_budget_cents <= 0 || reallocEligibleCount < 2}
+          onClick={() => setPending({ kind: "reallocate", sourceId: c.id })}
+        >
+          Reallocate
+        </Button>
+      </InlineStack>,
     ];
   });
 
   return (
     <Page
       title="Campaigns"
-      subtitle="All ad campaigns synced from Meta and Google · pause, resume, or adjust budgets directly"
+      subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      secondaryActions={[
+        {
+          content: "Reallocate budget",
+          onAction: () => setPending({ kind: "reallocate" }),
+          disabled: reallocEligibleCount < 2,
+        },
+      ]}
     >
       <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load campaigns">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Action failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
 
+        {campaigns.length === 0 && !error ? (
+          <Card>
+            <Box padding="600">
+              <BlockStack gap="300" inlineAlign="center">
+                <Text as="p" variant="headingMd">
+                  No campaigns yet
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Connect an ad platform and your campaigns appear here within a few minutes
+                  of the first sync.
+                </Text>
+                <Button variant="primary" onClick={() => navigate("/app/settings")}>
+                  Connect an ad platform
+                </Button>
+              </BlockStack>
+            </Box>
+          </Card>
+        ) : (
         <Card padding="0">
           <DataTable
             columnContentTypes={[
@@ -428,8 +618,8 @@ export default function Campaigns() {
               "Status",
               "Daily budget",
               "7d spend",
-              <Tooltip key="roas" content="Reported ROAS — revenue ÷ ad spend, before product costs">
-                <span>Ad return</span>
+              <Tooltip key="roas" content="ROAS — revenue ÷ ad spend, before product costs">
+                <span>ROAS</span>
               </Tooltip>,
               <Tooltip key="madj" content="Margin-adjusted ROAS — return after product costs are taken out">
                 <span>Real return</span>
@@ -447,6 +637,7 @@ export default function Campaigns() {
             }}
           />
         </Card>
+        )}
       </BlockStack>
 
       {pending?.kind === "pause" && (
@@ -491,39 +682,60 @@ export default function Campaigns() {
         </CampaignActionModal>
       )}
 
-      {pending?.kind === "edit_budget" && (
-        <CampaignActionModal
-          title={`Edit budget · ${pending.campaign.name}`}
-          intent="edit_budget"
-          campaign={pending.campaign}
+      {pending?.kind === "edit_budget" &&
+        (() => {
+          const currentCents = pending.campaign.daily_budget_cents;
+          const parsed = Number(budgetInput);
+          const validNumber =
+            budgetInput.trim() !== "" && Number.isFinite(parsed) && parsed >= 0;
+          const newCents = validNumber ? Math.round(parsed * 100) : 0;
+          const changed = validNumber && newCents !== currentCents;
+          return (
+            <CampaignActionModal
+              title={`Edit budget · ${pending.campaign.name}`}
+              intent="edit_budget"
+              campaign={pending.campaign}
+              submitting={submitting}
+              onClose={() => setPending(null)}
+              primaryLabel={changed ? `Save · ${fmtMoney(newCents)}/day` : "Save"}
+              primaryDisabled={!changed}
+              extraHidden={
+                <input type="hidden" name="dailyBudgetCents" value={String(newCents)} />
+              }
+            >
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued">
+                  Current daily budget:{" "}
+                  <Text as="span" fontWeight="semibold">
+                    {fmtMoney(currentCents)}
+                  </Text>
+                </Text>
+                <TextField
+                  label="New daily budget (USD)"
+                  type="number"
+                  value={budgetInput}
+                  onChange={setBudgetInput}
+                  autoComplete="off"
+                  autoFocus
+                  helpText={
+                    validNumber && !changed
+                      ? "Same as the current budget — enter a different amount to save."
+                      : undefined
+                  }
+                />
+              </BlockStack>
+            </CampaignActionModal>
+          );
+        })()}
+
+      {pending?.kind === "reallocate" && (
+        <ReallocateBudgetModal
+          campaigns={campaigns}
+          prefill={reallocation}
+          initialSourceId={pending.sourceId}
           submitting={submitting}
           onClose={() => setPending(null)}
-          primaryLabel={`Save · ${fmtMoney(Number(budgetInput) * 100)}/day`}
-          extraHidden={
-            <input
-              type="hidden"
-              name="dailyBudgetCents"
-              value={String(Math.max(0, Number(budgetInput) * 100))}
-            />
-          }
-        >
-          <BlockStack gap="300">
-            <Text as="p" tone="subdued">
-              Current daily budget:{" "}
-              <Text as="span" fontWeight="semibold">
-                {fmtMoney(pending.campaign.daily_budget_cents)}
-              </Text>
-            </Text>
-            <TextField
-              label="New daily budget (USD)"
-              type="number"
-              value={budgetInput}
-              onChange={setBudgetInput}
-              autoComplete="off"
-              autoFocus
-            />
-          </BlockStack>
-        </CampaignActionModal>
+        />
       )}
     </Page>
   );
@@ -537,6 +749,7 @@ function CampaignActionModal({
   onClose,
   primaryLabel,
   primaryDestructive,
+  primaryDisabled,
   children,
   extraHidden,
 }: {
@@ -547,6 +760,7 @@ function CampaignActionModal({
   onClose: () => void;
   primaryLabel: string;
   primaryDestructive?: boolean;
+  primaryDisabled?: boolean;
   children: React.ReactNode;
   extraHidden?: React.ReactNode;
 }) {
@@ -575,7 +789,7 @@ function CampaignActionModal({
                   variant="primary"
                   tone={primaryDestructive ? "critical" : undefined}
                   loading={submitting}
-                  disabled={submitting}
+                  disabled={submitting || primaryDisabled}
                 >
                   {primaryLabel}
                 </Button>
@@ -588,18 +802,139 @@ function CampaignActionModal({
   );
 }
 
+function ReallocateBudgetModal({
+  campaigns,
+  prefill,
+  initialSourceId,
+  submitting,
+  onClose,
+}: {
+  campaigns: Campaign[];
+  prefill: ReallocationPrefill | null;
+  initialSourceId?: string;
+  submitting: boolean;
+  onClose: () => void;
+}) {
+  const eligible = campaigns.filter((c) => c.status === "active" && c.daily_budget_cents > 0);
+  const startSource = initialSourceId ?? prefill?.sourceId ?? eligible[0]?.id ?? "";
+  const [sourceId, setSourceId] = useState(startSource);
+  const [destId, setDestId] = useState(() => {
+    if (prefill?.destId && prefill.destId !== startSource) return prefill.destId;
+    return eligible.find((c) => c.id !== startSource)?.id ?? "";
+  });
+  const [amount, setAmount] = useState("5");
+  const [idempotencyKey] = useState(() => `realloc:${newIdempotencyKey()}`);
+
+  const source = eligible.find((c) => c.id === sourceId);
+  const dest = eligible.find((c) => c.id === destId);
+  const amountCents = Math.round(Number(amount) * 100);
+  const sameCampaign = Boolean(source && dest && source.id === dest.id);
+  const amountInvalid = !Number.isFinite(amountCents) || amountCents <= 0;
+  const exceedsSource = Boolean(source && !amountInvalid && amountCents >= source.daily_budget_cents);
+  const valid = Boolean(source && dest && !sameCampaign && !amountInvalid && !exceedsSource);
+
+  // Grade text is known only for the suggested pair (loader keeps the grade
+  // join scoped to the suggestion).
+  const gradeFor = (id: string): string | null =>
+    prefill?.sourceId === id
+      ? prefill?.sourceGrade ?? null
+      : prefill?.destId === id
+        ? prefill?.destGrade ?? null
+        : null;
+  const optionGroups: SelectGroup[] = (["Meta", "Google", "TikTok"] as const)
+    .map((p) => ({
+      title: p,
+      options: eligible
+        .filter((c) => c.platform === p)
+        .map((c) => {
+          const grade = gradeFor(c.id);
+          return {
+            value: c.id,
+            label: `${c.name} · ${fmtMoney(c.daily_budget_cents)}/day${grade ? ` · ${grade}` : ""}`,
+          };
+        }),
+    }))
+    .filter((g) => g.options.length > 0);
+
+  return (
+    <Modal open title="Reallocate daily budget" onClose={onClose}>
+      <Modal.Section>
+        <Form method="post" preventScrollReset>
+          <input type="hidden" name="intent" value="reallocate" />
+          <input type="hidden" name="campaignId" value={source?.id ?? ""} />
+          <input type="hidden" name="campaignName" value={source?.name ?? ""} />
+          <input type="hidden" name="platform" value={source?.platform ?? ""} />
+          <input type="hidden" name="destCampaignId" value={dest?.id ?? ""} />
+          <input type="hidden" name="destName" value={dest?.name ?? ""} />
+          <input type="hidden" name="destPlatform" value={dest?.platform ?? ""} />
+          <input type="hidden" name="amountCents" value={String(amountInvalid ? 0 : amountCents)} />
+          <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+          <BlockStack gap="300">
+            <Select
+              label="Move budget from"
+              options={optionGroups}
+              value={sourceId}
+              onChange={setSourceId}
+              helpText={
+                prefill?.sourceId === sourceId ? "Suggested: lowest-graded campaign" : undefined
+              }
+            />
+            <Select
+              label="To"
+              options={optionGroups}
+              value={destId}
+              onChange={setDestId}
+              error={sameCampaign ? "Choose two different campaigns" : undefined}
+              helpText={
+                prefill?.destId === destId
+                  ? "Suggested: best winning campaign on another platform"
+                  : undefined
+              }
+            />
+            <TextField
+              label="Amount per day (USD)"
+              type="number"
+              prefix="$"
+              value={amount}
+              onChange={setAmount}
+              autoComplete="off"
+              error={
+                amountInvalid
+                  ? "Enter an amount above $0"
+                  : exceedsSource
+                    ? "Amount must leave the source budget above zero"
+                    : undefined
+              }
+            />
+            {source && dest && valid && (
+              <Banner tone="info">
+                {source.platform} · {source.name}: {fmtMoney(source.daily_budget_cents)} →{" "}
+                {fmtMoney(source.daily_budget_cents - amountCents)}/day {" — "} {dest.platform} ·{" "}
+                {dest.name}: {fmtMoney(dest.daily_budget_cents)} →{" "}
+                {fmtMoney(dest.daily_budget_cents + amountCents)}/day
+              </Banner>
+            )}
+            <Box>
+              <ButtonGroup>
+                <Button onClick={onClose} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button submit variant="primary" loading={submitting} disabled={submitting || !valid}>
+                  Move {fmtMoneyDec(amountInvalid ? 0 : amountCents)}/day
+                </Button>
+              </ButtonGroup>
+            </Box>
+          </BlockStack>
+        </Form>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
 function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
   return (
-    <InlineStack gap="100" blockAlign="center" wrap={false}>
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: 9999,
-          display: "inline-block",
-          background: platform === "Meta" ? "var(--cdn-info)" : "var(--cdn-warning)",
-        }}
-      />
+    <InlineStack gap="150" blockAlign="center" wrap={false}>
+      <PlatformIcon platform={platform} size={16} />
       <Text as="span" variant="bodySm">
         {platform}
       </Text>

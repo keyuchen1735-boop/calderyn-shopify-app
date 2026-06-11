@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Form, useLoaderData, useNavigate } from "@remix-run/react";
+import { Form, useLoaderData } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
@@ -13,6 +14,7 @@ import {
   Layout,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -23,6 +25,8 @@ import {
   signConsentAuth,
 } from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
+import { trueRoas } from "~/lib/roas";
+import { recovered } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
 import {
@@ -40,6 +44,7 @@ type LoaderPayload = {
   guardrails: GuardrailConfig | null;
   onboardingDone: boolean;
   error: { code: string; message: string } | null;
+  dashboardLoginUrl: string;
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -76,6 +81,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
+  // Sign-in-with-Shopify entry point of the external merchant dashboard; the
+  // merchant's live admin session completes the OAuth round-trip silently.
+  const dashboardLoginUrl = `${
+    process.env.DASHBOARD_PUBLIC_URL ?? "https://calderyncompany.com"
+  }/dashboard/login?shop=${encodeURIComponent(session.shop)}`;
+
   const client = calderynClient(session.shop);
   try {
     const [alerts, audit, campaigns, guardrails, onboarding] = await Promise.all([
@@ -92,6 +103,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails,
       onboardingDone: onboarding.done,
       error: null,
+      dashboardLoginUrl,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -102,27 +114,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       guardrails: null,
       onboardingDone: true,
       error: { code: e.code ?? "ERROR", message: e.message },
+      dashboardLoginUrl,
     });
   }
 };
 
-/** Spend-weighted, margin-adjusted blended ROAS — the "true" return on ad spend. */
-function trueRoas(campaigns: Campaign[]): string {
-  const withData = campaigns.filter(
-    (c) => c.spend_7d > 0 && c.roas_7d > 0 && c.contribution_margin > 0,
-  );
-  const totalSpend = withData.reduce((s, c) => s + c.spend_7d, 0);
-  if (totalSpend === 0) return "—";
-  const weighted = withData.reduce(
-    (s, c) => s + c.spend_7d * c.roas_7d * c.contribution_margin,
-    0,
-  );
-  return `${(weighted / totalSpend).toFixed(1)}×`;
-}
-
 export default function Dashboard() {
-  const navigate = useNavigate();
-  const { alerts, audit, campaigns, guardrails, onboardingDone, error } =
+  const navigate = useEmbeddedNavigate();
+  const { alerts, audit, campaigns, guardrails, onboardingDone, error, dashboardLoginUrl } =
     useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -132,8 +131,7 @@ export default function Dashboard() {
 
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");
-  const succeeded = audit.filter((a) => a.outcome === "succeeded" && !a.undo_of);
-  const recovered7d = succeeded.reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
+  const { cents: recovered7d, count: recoveredCount } = recovered(audit);
   const atRisk = critical.reduce((s, a) => s + a.dollar_impact, 0);
   const top = [...openAlerts].sort((a, b) => a.claude_rank - b.claude_rank).slice(0, 5);
   const recentAudit = audit.slice(0, 4);
@@ -152,16 +150,27 @@ export default function Dashboard() {
   return (
     <Page
       title="Calderyn"
-      subtitle="Watching ad spend and inventory — together."
+      subtitle="Catching money leaks across your ad spend and inventory — before they compound."
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
-      secondaryActions={[{ content: "Settings", onAction: () => navigate("/app/settings") }]}
+      secondaryActions={[
+        { content: "Settings", onAction: () => navigate("/app/settings") },
+        // New tab is required: the dashboard sends frame-ancestors 'none', so
+        // it cannot render inside the admin iframe. window.open instead of
+        // url/external because Polaris's url rendering loses the new-tab
+        // intent at two layers in embedded apps (the AppProvider link shim
+        // drops `external`; the narrow-viewport rollup menu drops `target`) —
+        // see dashboard-link-target.test.ts. App Bridge v4 has no external
+        // redirect API; its docs prescribe standard web APIs for this.
+        {
+          content: "Open web dashboard",
+          onAction: () => window.open(dashboardLoginUrl, "_blank", "noopener,noreferrer"),
+        },
+      ]}
     >
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load dashboard data">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
 
@@ -188,7 +197,7 @@ export default function Dashboard() {
               label="Recovered (7d)"
               value={fmtMoney(recovered7d)}
               tone="success"
-              caption={`across ${succeeded.length} action${succeeded.length === 1 ? "" : "s"}`}
+              caption={`across ${recoveredCount} action${recoveredCount === 1 ? "" : "s"}`}
               onClick={() => navigate("/app/audit")}
             />
             <StatTile
@@ -255,9 +264,11 @@ export default function Dashboard() {
           <Layout.Section>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingSm">
-                  Top alerts — ranked by Claude
-                </Text>
+                <Tooltip content="Ranked by estimated dollar impact, severity, and how recently the problem appeared.">
+                  <Text as="h2" variant="headingSm">
+                    Top alerts — ranked by priority
+                  </Text>
+                </Tooltip>
                 <Button variant="plain" onClick={() => navigate("/app/alerts")}>
                   View all
                 </Button>
@@ -265,15 +276,34 @@ export default function Dashboard() {
               {top.length === 0 ? (
                 <Card>
                   <Box padding="400">
-                    <BlockStack gap="100" inlineAlign="center">
-                      <Text as="p" variant="headingMd">
-                        All clear
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        You&apos;ve cleared everything Calderyn is watching. We&apos;ll surface the
-                        next problem the moment it appears.
-                      </Text>
-                    </BlockStack>
+                    {/* A shop with no alerts AND no action history is almost
+                        certainly a fresh install whose first scan hasn't
+                        finished — "All clear" there reads as "the app does
+                        nothing". Show a syncing state instead. Not on a loader
+                        error, though: the empty arrays are the failure, not a
+                        fresh install. */}
+                    {audit.length === 0 && !error ? (
+                      <BlockStack gap="100" inlineAlign="center">
+                        <Text as="p" variant="headingMd">
+                          First scan in progress
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Calderyn is analyzing your orders, inventory, and ad spend. Alerts
+                          appear here as detections complete — usually within a few hours of
+                          setup.
+                        </Text>
+                      </BlockStack>
+                    ) : (
+                      <BlockStack gap="100" inlineAlign="center">
+                        <Text as="p" variant="headingMd">
+                          All clear
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          You&apos;ve cleared everything Calderyn is watching. We&apos;ll surface
+                          the next problem the moment it appears.
+                        </Text>
+                      </BlockStack>
+                    )}
                   </Box>
                 </Card>
               ) : (

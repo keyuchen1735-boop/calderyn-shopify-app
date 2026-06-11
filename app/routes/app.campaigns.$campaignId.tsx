@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { useNavigate, useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -19,6 +20,7 @@ import { authenticate } from "../shopify.server";
 import { Scorecard } from "~/components/Scorecard";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { isUuid } from "~/lib/ids";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns } from "~/lib/meta/campaigns.server";
@@ -61,7 +63,7 @@ type CampaignDetail = {
    */
   metaExternalId: string | null;
   name: string;
-  platform: "Meta" | "Google";
+  platform: Campaign["platform"];
   status: "active" | "paused";
   performance: CampaignPerformance;
 };
@@ -92,7 +94,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const idFromUrl = String(params.campaignId ?? "");
   const url = new URL(request.url);
-  const platformParam = url.searchParams.get("platform") === "Google" ? "Google" : "Meta";
+  const rawPlatform = url.searchParams.get("platform");
+  const platformParam =
+    rawPlatform === "Google" ? "Google" : rawPlatform === "TikTok" ? "TikTok" : "Meta";
   const client = calderynClient(session.shop);
 
   if (!idFromUrl) {
@@ -119,7 +123,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (!campaign) {
       const sb = getSupabase();
       const shopId = await resolveShopId(session.shop);
-      const platform = platformParam === "Google" ? "google" : "meta";
+      const platform =
+        platformParam === "Google" ? "google" : platformParam === "TikTok" ? "tiktok" : "meta";
       const dimId = await resolveCampaignDimId(sb, shopId, platform, idFromUrl);
       if (dimId) {
         campaign = await getOrNull(client, dimId);
@@ -373,14 +378,6 @@ async function loadAdMetrics(
   }
 }
 
-/** True when `s` is a canonical uuid — the shape of v_campaigns_flat.id. Lets the
- * loader skip the dim-uuid lookup for platform external ids (which would 22P02). */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isUuid(s: string): boolean {
-  return UUID_RE.test(s);
-}
-
 /** campaigns.get but null (not throw) on CAMPAIGN_NOT_FOUND, rethrow otherwise. */
 async function getOrNull(
   client: ReturnType<typeof calderynClient>,
@@ -395,7 +392,7 @@ async function getOrNull(
 }
 
 export default function CampaignDetailPage() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const {
     detail,
     error,
@@ -415,9 +412,7 @@ export default function CampaignDetailPage() {
         backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
       >
         <Banner tone="critical" title="Couldn't load campaign">
-          <p>
-            {error?.code}: {error?.message}
-          </p>
+          <p>{error?.message ?? "Unknown error."}</p>
         </Banner>
       </Page>
     );
@@ -494,9 +489,7 @@ export default function CampaignDetailPage() {
                 </Text>
                 {creativesError && (
                   <Banner tone="info" title="Couldn't load ad creatives">
-                    <p>
-                      {creativesError.code}: {creativesError.message}
-                    </p>
+                    <p>{creativesError.message}</p>
                   </Banner>
                 )}
               </BlockStack>
@@ -647,7 +640,7 @@ function AdScorecardSlot({
     }
     const message = data.ok
       ? (data.scorecard.error ?? "Scoring produced no scorecard.")
-      : `${data.error.code}: ${data.error.message}`;
+      : data.error.message;
     return (
       <Text as="p" variant="bodySm" tone="subdued">
         Analysis unavailable: {message}
@@ -704,8 +697,9 @@ function moneyOrDash(cents: number | null): string {
   return cents == null ? "—" : fmtMoney(cents);
 }
 
-// Live-metrics gap marker (rule 12): explicit "no data", never a fabricated 0.
-const NO_DATA = "— (no data)";
+// Live-metrics gap marker (rule 12): an em dash means "no data synced", never a
+// fabricated 0. (The parenthetical "(no data)" read as clutter at table scale.)
+const NO_DATA = "—";
 
 function moneyOrNoData(cents: number | null): string {
   return cents == null ? NO_DATA : fmtMoney(cents);

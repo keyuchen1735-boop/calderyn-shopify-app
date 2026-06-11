@@ -4,7 +4,7 @@
 
 **Goal:** Ship a `/app/screener` page where a merchant enters an ad creative (image + copy + targeting + destination URL) and gets a full scorecard — composite Virality Potential score, predicted grade, 16 metrics with expandable reasoning, predicted outcomes headlined by a history-grounded Estimated ROAS, and ranked tips — with runs persisted.
 
-**Architecture:** A new `app/lib/screener/` module mirroring the proven `app/lib/simulator/` pattern: a Claude **forced-tool** scorer (`score.server.ts`), a **pure deterministic** calibrator (`calibrate.server.ts`) that turns dimension scores + account history + SKU price into predicted outcomes, a thin Supabase history reader (`history.server.ts`), a persisted run table (`runs.server.ts`), and a dependency-injected orchestrator (`orchestrate.server.ts`). The route renders the scorecard with Polaris.
+**Architecture:** A new `app/lib/screener/` module following the repo's standard `app/lib/` pattern: a Claude **forced-tool** scorer (`score.server.ts`), a **pure deterministic** calibrator (`calibrate.server.ts`) that turns dimension scores + account history + SKU price into predicted outcomes, a thin Supabase history reader (`history.server.ts`), a persisted run table (`runs.server.ts`), and a dependency-injected orchestrator (`orchestrate.server.ts`). The route renders the scorecard with Polaris.
 
 **Tech Stack:** Remix (Vite) + TypeScript (strict), Polaris, Anthropic SDK (vision + forced tool use), Supabase (service-role), Vitest.
 
@@ -35,7 +35,7 @@ Spec: `docs/superpowers/specs/2026-06-07-ad-creative-pre-screen-design.md`.
 | `app/lib/screener/calibrate.server.ts` | **Pure** deterministic calibration: metrics + history + spend → outcomes/composite/grade/confidence |
 | `app/lib/screener/score.server.ts` | Claude forced-tool scorer; injectable `CreateMessageFn` |
 | `app/lib/screener/history.server.ts` | Reads `CalibrationInputs` from Supabase (account baselines, break-even, SKU price/CVR) |
-| `app/lib/screener/runs.server.ts` | Persist runs to `creative_screen_run` (mirror simulator `runs.server.ts`) |
+| `app/lib/screener/runs.server.ts` | Persist runs to `creative_screen_run` |
 | `app/lib/screener/orchestrate.server.ts` | DI wiring: input → score → history → calibrate → persist; in-app error DTO |
 | `app/routes/app.screener.tsx` | Manual-input form + scorecard UI (expandable metrics, ROAS, tips) |
 | `app/lib/screener/__tests__/*.test.ts` | Behavior tests per unit |
@@ -55,7 +55,7 @@ Create `supabase/migrations/20260607120000_creative_screen_run.sql`:
 ```sql
 -- creative_screen_run: one ad-creative pre-screen. `scorecard` holds the scored
 -- + calibrated result (composite, grade, metrics with reasoning, predicted
--- outcomes, tips). Shop-scoped in code (service-role), like simulation_run.
+-- outcomes, tips). Shop-scoped in code (service-role).
 
 create table creative_screen_run (
   id                   uuid primary key default gen_random_uuid(),
@@ -487,7 +487,7 @@ git commit -m "screener: pure deterministic calibration (ROAS/CTR/grade/confiden
 
 ## Task 4: Claude scorer — `score.server.ts`
 
-Mirrors `simulator/simulate.server.ts`: forced-tool call, injectable `CreateMessageFn`, parse + normalize.
+Forced-tool call, injectable `CreateMessageFn`, parse + normalize.
 
 **Files:**
 - Create: `app/lib/screener/score.server.ts`
@@ -889,8 +889,6 @@ git commit -m "screener: calibration-inputs history reader with cold-start fallb
 
 ## Task 6: Run persistence — `runs.server.ts`
 
-Mirrors `simulator/runs.server.ts`.
-
 **Files:**
 - Create: `app/lib/screener/runs.server.ts`
 - Test: `app/lib/screener/__tests__/runs.test.ts`
@@ -1052,7 +1050,7 @@ git commit -m "screener: creative_screen_run persistence helpers"
 
 ## Task 7: Orchestrator — `orchestrate.server.ts`
 
-DI wiring, in-app error DTO on failure (mirrors `simulator/orchestrate.server.ts`).
+DI wiring, in-app error DTO on failure.
 
 **Files:**
 - Create: `app/lib/screener/orchestrate.server.ts`
@@ -1568,8 +1566,8 @@ git commit -m "routes/app.screener: manual ad pre-screen form + scorecard UI"
 
 - [ ] **Step 1: Find the nav menu**
 
-Run: `grep -rn "NavMenu\|simulator\|/app/" app/routes/app.tsx`
-Expected: locate the `<NavMenu>` (App Bridge) link list that includes the simulator route.
+Run: `grep -rn "NavMenu\|/app/" app/routes/app.tsx`
+Expected: locate the `<NavMenu>` (App Bridge) link list.
 
 - [ ] **Step 2: Add the nav link**
 

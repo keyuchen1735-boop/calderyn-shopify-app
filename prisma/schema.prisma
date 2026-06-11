@@ -3,8 +3,9 @@
 // for @shopify/shopify-app-session-storage-prisma.
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -28,7 +29,10 @@ model Session {
   collaborator        Boolean?
   emailVerified       Boolean?
   refreshToken        String?   @db.VarChar
-  refreshTokenExpires BigInt?
+  // session-storage-prisma v9 writes/reads this as a Date (rowToSession calls
+  // .getTime()); a BigInt column makes every session upsert throw
+  // PrismaClientValidationError and 500s authenticate.admin.
+  refreshTokenExpires DateTime? @db.Timestamptz
 
   @@map("shopify_sessions")
 }

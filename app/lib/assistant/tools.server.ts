@@ -77,9 +77,19 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "flag_alert",
+    description:
+      "Flag (acknowledge) an alert, moving it out of the open queue immediately. This EXECUTES right away — call it only when the merchant explicitly asks to flag, acknowledge, or mark an alert as handled. It never touches campaigns, budgets, or inventory; for those use propose_action.",
+    input_schema: {
+      type: "object",
+      properties: { alert_id: { type: "string" } },
+      required: ["alert_id"],
+    },
+  },
+  {
     name: "propose_action",
     description:
-      "Propose an action for the merchant to confirm. Only valid for an EXISTING alert and an action_kind allowed for that alert's detector. On success the merchant sees a 'Review & confirm' button; you never execute the action yourself.",
+      "Propose an action for the merchant to confirm. Only valid for an EXISTING alert and an action_kind allowed for that alert's detector. On success the merchant sees a confirm button in the chat (or a 'Review & confirm' link for actions that need extra inputs); you never execute the action yourself.",
     input_schema: {
       type: "object",
       properties: {
@@ -89,6 +99,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
           enum: [
             "pause_campaign",
             "reduce_campaign_budget",
+            "reallocate_budget",
             "exclude_geo",
             "reallocate_inventory",
             "create_po_draft",
@@ -109,7 +120,16 @@ function toolError(code: string, message: string): ToolDispatchResult {
   return { content: JSON.stringify({ code, message }), isError: true };
 }
 
-export function makeToolDispatcher(client: CalderynClient) {
+export interface ToolDispatcherDeps {
+  /**
+   * Flips an open alert to acknowledged (the "flag" the merchant sees).
+   * Resolves false when nothing changed (already acknowledged/resolved).
+   * Surfaces that don't support flagging simply omit it.
+   */
+  flagAlert?: (alertId: string) => Promise<boolean>;
+}
+
+export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
   return async function dispatch(
     name: string,
     input: Record<string, unknown>,
@@ -148,6 +168,25 @@ export function makeToolDispatcher(client: CalderynClient) {
           return ok({ guardrails: await client.guardrails.get() });
         case "list_integrations":
           return ok({ integrations: await client.integrations.list() });
+        case "flag_alert": {
+          if (!deps.flagAlert) {
+            return toolError("FLAG_UNAVAILABLE", "Flagging alerts is not available here.");
+          }
+          // Shop-scoped get(): a foreign or unknown id throws ALERT_NOT_FOUND
+          // before any write happens.
+          const alert = await client.alerts.get(String(input.alert_id ?? ""));
+          const flagged = await deps.flagAlert(alert.id);
+          if (!flagged) {
+            return toolError(
+              "FLAG_FAILED",
+              `Alert ${alert.id} was not flagged — it may already be acknowledged or resolved.`,
+            );
+          }
+          return ok({
+            ok: true,
+            flagged: { id: alert.id, title: alert.title, status: "acknowledged" },
+          });
+        }
         case "propose_action":
           return await proposeAction(client, input);
         default:

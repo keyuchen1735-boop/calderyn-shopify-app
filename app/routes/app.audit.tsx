@@ -1,10 +1,12 @@
+import { useState } from "react";
 import {
   Form,
   useActionData,
   useLoaderData,
-  useNavigate,
   useNavigation,
 } from "@remix-run/react";
+import { useEmbeddedNavigate } from "../lib/embedded-nav";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -15,16 +17,17 @@ import {
   Button,
   Card,
   DataTable,
-  EmptyState,
   InlineGrid,
+  InlineStack,
   Page,
   Text,
   Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
-import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
-import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
+import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
+import { recovered as recoveredOf } from "~/lib/recovered";
+import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS, actorLabel } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
@@ -93,7 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Audit() {
-  const navigate = useNavigate();
+  const navigate = useEmbeddedNavigate();
   const { audit, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -106,21 +109,28 @@ export default function Audit() {
         {error && (
           <Box paddingBlockEnd="400">
             <Banner tone="critical" title="Couldn't load audit log">
-              <p>
-                {error.code}: {error.message}
-              </p>
+              <p>{error.message}</p>
             </Banner>
           </Box>
         )}
         <Card>
-          <EmptyState
-            heading="No actions yet"
-            action={{ content: "Open alerts", onAction: () => navigate("/app/alerts") }}
-            secondaryAction={{ content: "Manage campaigns", onAction: () => navigate("/app/campaigns") }}
-            image=""
-          >
-            <p>Execute an alert recommendation or pause a campaign to log your first action.</p>
-          </EmptyState>
+          <Box padding="600">
+            <BlockStack gap="300" inlineAlign="center">
+              <Text as="p" variant="headingMd">
+                No actions yet
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Every action Calderyn takes — and your one-click Undo for each — is recorded
+                here. Approve an alert recommendation or pause a campaign to log your first.
+              </Text>
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={() => navigate("/app/alerts")}>
+                  Open alerts
+                </Button>
+                <Button onClick={() => navigate("/app/campaigns")}>Manage campaigns</Button>
+              </InlineStack>
+            </BlockStack>
+          </Box>
         </Card>
       </Page>
     );
@@ -129,12 +139,27 @@ export default function Audit() {
   const successRate = Math.round(
     (audit.filter((a) => a.outcome === "succeeded").length / audit.length) * 100,
   );
-  const recovered = audit
-    .filter((a) => a.outcome === "succeeded")
-    .reduce((s, a) => s + (a.dollar_impact_at_exec || 0), 0);
+  // Shared with the home tile and the web dashboard (app/lib/recovered.ts):
+  // succeeded actions, undo rows excluded.
+  const recovered = recoveredOf(audit).cents;
 
-  const rows = audit.map((a) => [
-    <Box key={`t-${a.id}`}>
+  const rows = audit.map((a) => {
+    const canUndo = a.undo_eligible && !a.undo_of;
+    // The PDF route 404s for entries recorded before the PO snapshot existed,
+    // so only offer the download when the audit row actually carries one.
+    const hasPoPdf =
+      a.action_kind === "create_po_draft" &&
+      a.outcome === "succeeded" &&
+      Boolean(a.post_state?.po);
+    // Realized impact is attributed later (often $0 at exec time); fall back to
+    // the estimate snapshotted at execution so the column isn't a wall of $0.
+    // Not for snooze: a deferral recovers nothing, and showing the alert's
+    // full at-stake impact there would inflate the column.
+    const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
+    const showEstimate =
+      !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
+    return [
+    <Box key={`t-${a.id}`} minWidth="150px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
         {fmtRelTime(a.created_at)}
       </Text>
@@ -142,48 +167,74 @@ export default function Audit() {
         {fmtAbsTime(a.created_at)}
       </Text>
     </Box>,
-    <Box key={`a-${a.id}`}>
+    <Box key={`a-${a.id}`} minWidth="170px">
       <Text as="p" variant="bodySm" fontWeight="semibold">
-        {ACTION_LABELS[a.action_kind]}
+        {ACTION_LABELS[a.action_kind] ?? a.action_kind}
       </Text>
       {a.undo_of && (
         <Text as="p" variant="bodySm" tone="subdued">
-          undo of {a.undo_of}
+          undo of {shortId(a.undo_of)}
         </Text>
       )}
     </Box>,
-    a.target,
+    <Tooltip key={`tg-${a.id}`} content={a.target}>
+      <Text as="span" variant="bodySm">
+        {shortId(a.target)}
+      </Text>
+    </Tooltip>,
     DETECTOR_LABELS[a.detector_id] ? (
       <Tooltip key={`d-${a.id}`} content={DETECTOR_TERMS[a.detector_id]}>
         <Badge>{DETECTOR_LABELS[a.detector_id]}</Badge>
       </Tooltip>
     ) : (
-      <Badge key={`d-${a.id}`}>—</Badge>
+      <Text key={`d-${a.id}`} as="span" tone="subdued">
+        —
+      </Text>
     ),
     <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
-      {a.actor}
+      {actorLabel(a.actor)}
     </Text>,
-    <Text key={`i-${a.id}`} as="span" alignment="end" variant="bodySm" fontWeight="semibold">
-      {a.dollar_impact_at_exec < 0 ? "-" : ""}
-      {fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
-    </Text>,
-    <Badge key={`s-${a.id}`} tone={a.outcome === "succeeded" ? "success" : "critical"}>
+    <Box key={`i-${a.id}`}>
+      <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
+        {a.dollar_impact_at_exec < 0 ? "-" : ""}
+        {fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
+      </Text>
+      {showEstimate && (
+        <Text as="p" alignment="end" variant="bodySm" tone="subdued">
+          est. {fmtMoney(estimateCents)}
+        </Text>
+      )}
+    </Box>,
+    // `retrying` is parked for the retry cron — pending, not a failure
+    // (the alert page's own toast says "queued, will retry automatically").
+    <Badge
+      key={`s-${a.id}`}
+      tone={
+        a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"
+      }
+    >
       {a.outcome}
     </Badge>,
-    a.undo_eligible && !a.undo_of ? (
-      <Form key={`u-${a.id}`} method="post">
-        <input type="hidden" name="intent" value="undo" />
-        <input type="hidden" name="auditId" value={a.id} />
-        <Button submit variant="plain" loading={submitting} disabled={submitting}>
-          Undo
-        </Button>
-      </Form>
+    canUndo || hasPoPdf ? (
+      <InlineStack key={`u-${a.id}`} gap="200" wrap={false}>
+        {canUndo && (
+          <Form method="post">
+            <input type="hidden" name="intent" value="undo" />
+            <input type="hidden" name="auditId" value={a.id} />
+            <Button submit variant="plain" loading={submitting} disabled={submitting}>
+              Undo
+            </Button>
+          </Form>
+        )}
+        {hasPoPdf && <DownloadPoButton auditId={a.id} />}
+      </InlineStack>
     ) : (
       <Text key={`u-${a.id}`} as="span" tone="subdued">
         —
       </Text>
     ),
-  ]);
+  ];
+  });
 
   return (
     <Page
@@ -194,16 +245,12 @@ export default function Audit() {
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load audit log">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Undo failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
         <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
@@ -231,5 +278,45 @@ export default function Audit() {
         </Card>
       </BlockStack>
     </Page>
+  );
+}
+
+function DownloadPoButton({ auditId }: { auditId: string }) {
+  const shopify = useAppBridge();
+  const [downloading, setDownloading] = useState(false);
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      // Embedded iframe: a plain <a href> document navigation won't carry the
+      // session token. App Bridge patches global fetch with it, so fetch the
+      // bytes and hand them to the browser as a blob download.
+      const res = await fetch(`/app/audit/${auditId}/po.pdf`);
+      if (!res.ok) throw new Error(`PDF download failed (${res.status})`);
+      const filename =
+        res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ??
+        "purchase-order.pdf";
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      // Defer revoke: Safari can abort the download if the URL is revoked
+      // before the browser's download task has grabbed the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (err) {
+      shopify.toast.show((err as Error).message || "PDF download failed", {
+        isError: true,
+        duration: 5000,
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Button variant="plain" loading={downloading} onClick={download}>
+      Download PDF
+    </Button>
   );
 }
