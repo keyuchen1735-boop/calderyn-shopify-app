@@ -18,7 +18,10 @@
 // the per-branch listing because commit-search only indexes the default branch.
 
 const GITHUB_API = "https://api.github.com";
-const DEFAULT_MAX_BRANCHES = 40;
+// One GET per branch; 100 keeps a daily run well within the function timeout
+// while covering the repo's branch count with headroom. Anything beyond is
+// recorded in `notes` (never silently dropped).
+const DEFAULT_MAX_BRANCHES = 100;
 
 export interface CommitInfo {
   sha: string;
