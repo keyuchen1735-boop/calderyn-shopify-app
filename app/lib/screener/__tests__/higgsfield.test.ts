@@ -72,6 +72,24 @@ describe("imageGenerator", () => {
     }
   });
 
+  it("turns a VIDEO original into image candidates — stale frames cleared so the gate scores the new image", async () => {
+    const generateImage = vi.fn(async () => ["https://cdn.example/new.png"]);
+    const videoOriginal: CreativeInput = {
+      ...ORIGINAL,
+      mediaKind: "video",
+      videoFrameUrls: ["data:image/webp;base64,AA"],
+      videoDurationSec: 12,
+    };
+    const [candidate] = await imageGenerator({ generateImage }).generate({
+      ...REQ,
+      input: videoOriginal,
+    });
+    expect(candidate.input.mediaKind).toBe("image");
+    expect(candidate.input.videoFrameUrls).toEqual([]);
+    expect(candidate.input.videoDurationSec).toBeNull();
+    expect(candidate.input.imageUrl).toBe("https://cdn.example/new.png");
+  });
+
   it("passes a prompt built from the weak dimensions + tips, the reference image, and count", async () => {
     const generateImage = vi.fn<GenerateImageFn>(async () => ["https://cdn.example/new.png"]);
     await imageGenerator({ generateImage }).generate(REQ);

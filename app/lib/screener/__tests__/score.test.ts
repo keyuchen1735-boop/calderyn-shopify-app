@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildScoreCardMetrics, scoreCreative, SCORE_TOOL_NAME } from "../score.server";
+import {
+  buildScoreCardMetrics,
+  buildUserContent,
+  scoreCreative,
+  toImageBlock,
+  SCORE_TOOL_NAME,
+} from "../score.server";
 import { DIMENSIONS, type CreativeInput } from "../types";
 
 const input: CreativeInput = {
@@ -38,6 +44,67 @@ describe("buildScoreCardMetrics", () => {
     const metrics = buildScoreCardMetrics({});
     expect(metrics).toHaveLength(13);
     expect(metrics[0].score).toBe(50);
+  });
+});
+
+describe("toImageBlock", () => {
+  it("turns a data URL into a base64 source block", () => {
+    expect(toImageBlock("data:image/webp;base64,QUJD")).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/webp", data: "QUJD" },
+    });
+  });
+  it("turns an https URL into a url source block", () => {
+    expect(toImageBlock("https://cdn.test/x.jpg")).toEqual({
+      type: "image",
+      source: { type: "url", url: "https://cdn.test/x.jpg" },
+    });
+  });
+  it("rejects non-image data URLs and other schemes", () => {
+    expect(toImageBlock("data:text/html;base64,QUJD")).toBeNull();
+    expect(toImageBlock("file:///tmp/x.png")).toBeNull();
+    expect(toImageBlock("")).toBeNull();
+  });
+});
+
+describe("buildUserContent media handling", () => {
+  it("returns plain text when there is no media", () => {
+    expect(typeof buildUserContent(input, [])).toBe("string");
+  });
+
+  it("sends one image block for an uploaded (data URL) image", () => {
+    const content = buildUserContent(
+      { ...input, mediaKind: "image", imageUrl: "data:image/webp;base64,QUJD" },
+      [],
+    );
+    expect(Array.isArray(content)).toBe(true);
+    const blocks = content as Array<{ type: string }>;
+    expect(blocks.filter((b) => b.type === "image")).toHaveLength(1);
+  });
+
+  it("sends a video preamble plus one block per frame, with the duration", () => {
+    const content = buildUserContent(
+      {
+        ...input,
+        mediaKind: "video",
+        imageUrl: "data:image/webp;base64,QUJD",
+        videoFrameUrls: ["data:image/webp;base64,QUJD", "data:image/webp;base64,REVG"],
+        videoDurationSec: 12.4,
+      },
+      [],
+    );
+    const blocks = content as Array<{ type: string; text?: string }>;
+    expect(blocks.filter((b) => b.type === "image")).toHaveLength(2);
+    expect(blocks[0]?.type).toBe("text");
+    expect(blocks[0]?.text).toMatch(/VIDEO creative \(~12s\)/);
+    // The copy/audience text block still arrives last.
+    expect(blocks[blocks.length - 1]?.text).toMatch(/Headline:/);
+  });
+
+  it("keeps the Meta https imageUrl path as a url source block", () => {
+    const content = buildUserContent({ ...input, imageUrl: "https://cdn.test/x.jpg" }, []);
+    const blocks = content as Array<{ type: string; source?: { type: string } }>;
+    expect(blocks[0]?.source?.type).toBe("url");
   });
 });
 

@@ -204,7 +204,15 @@ export function imageGenerator(deps: { generateImage: GenerateImageFn }): Creati
       const targeted =
         req.weakMetrics.map((m) => m.label).join(", ") || "overall creative quality";
       return urls.map((url) => ({
-        input: { ...req.input, imageUrl: url },
+        // The candidate IS an image now — clear any video fields from the
+        // original so the re-score gate judges the new image, not stale frames.
+        input: {
+          ...req.input,
+          imageUrl: url,
+          mediaKind: "image" as const,
+          videoFrameUrls: [],
+          videoDurationSec: null,
+        },
         rationale: `New image targeting: ${targeted}.`,
       }));
     },

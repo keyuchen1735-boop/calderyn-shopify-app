@@ -32,6 +32,12 @@ import {
   calderynClient,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
+import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import {
+  manualSyncCooldown,
+  syncShopAds,
+  formatSyncToast,
+} from "~/lib/ads/manual-sync.server";
 import { useActionToast, useConnectionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import {
@@ -162,6 +168,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (intent === "sync_now") {
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      // Cooldown is keyed on the most recent integration activity. updated_at is
+      // bumped on every sync that touches a platform — success OR error — so a
+      // failing connection still cools down. (A shop with no usable credentials
+      // makes zero platform calls and just gets "nothing to sync", so it needs
+      // no rate limit.)
+      const { data: rows } = await sb
+        .from("shop_integrations")
+        .select("updated_at")
+        .eq("shop_id", shopId)
+        .in("kind", ["meta_ads", "google_ads", "tiktok_ads"]);
+      const lastActivity = (rows ?? [])
+        .map((r) => String(r.updated_at ?? ""))
+        .filter((s) => s && !Number.isNaN(Date.parse(s)))
+        .reduce<string | null>(
+          (max, s) => (max === null || Date.parse(s) > Date.parse(max) ? s : max),
+          null,
+        );
+      const verdict = manualSyncCooldown(lastActivity, Date.now());
+      if (!verdict.allowed) {
+        return json<ActionPayload>({
+          ok: false,
+          toast: {
+            message: `Just synced — try again in ${verdict.retryAfterSec}s.`,
+            isError: false,
+          },
+        });
+      }
+      const result = await syncShopAds(sb, shopId);
+      const toast = formatSyncToast(result);
+      return json<ActionPayload>({ ok: !toast.isError, toast });
+    }
+
     return json<ActionPayload>(
       {
         ok: false,
@@ -253,6 +294,12 @@ export default function Settings() {
             description="Connect ad-spend and accounting data sources."
           >
             <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Pull the latest campaigns and spend from your connected accounts.
+                </Text>
+                <SyncNowButton />
+              </InlineStack>
               {Object.entries(integrations).map(([k, v]) => (
                 <IntegrationCard key={k} provider={k} integration={v} />
               ))}
@@ -488,6 +535,22 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
         </fetcher.Form>
       </BlockStack>
     </Card>
+  );
+}
+
+function SyncNowButton() {
+  // Own fetcher so the refresh runs in place without navigating; toast surfaces
+  // the per-platform result (and the cooldown notice when rate-limited).
+  const fetcher = useFetcher<ActionPayload>();
+  const syncing = fetcher.state !== "idle";
+  useActionToast(fetcher.data ?? undefined);
+  return (
+    <fetcher.Form method="post">
+      <input type="hidden" name="intent" value="sync_now" />
+      <Button submit loading={syncing} disabled={syncing}>
+        {syncing ? "Syncing…" : "Sync now"}
+      </Button>
+    </fetcher.Form>
   );
 }
 

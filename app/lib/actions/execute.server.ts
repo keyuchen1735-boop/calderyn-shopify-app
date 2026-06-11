@@ -224,7 +224,28 @@ export async function executeAction(
     }
   }
 
-  // 5. One append-only audit row + idempotency.
+  // 5. Optimistic mirror update. The campaigns UI reads status/budget from
+  // ad_campaign_dim (via v_campaigns_flat), which ingestion alone refreshes —
+  // so without this the view stays stale between an action and the next sync.
+  // We already KNOW the new state (postState) and the platform confirmed it, so
+  // reflect it now. No extra platform call; the next ingest still reconciles.
+  // Best-effort: the action already succeeded, so a mirror-write failure must
+  // not fail it (rule 12 — surfaced, not swallowed).
+  if (outcome === "succeeded") {
+    const { error: mirrorErr } = await sb
+      .from("ad_campaign_dim")
+      .update(postState)
+      .eq("id", input.campaignId)
+      .eq("shop_id", shopId);
+    if (mirrorErr) {
+      console.error(
+        `[actions] mirror update failed for campaign ${input.campaignId} (status will correct on next sync)`,
+        mirrorErr,
+      );
+    }
+  }
+
+  // 6. One append-only audit row + idempotency.
   return insertAuditWithIdempotency(
     shopId,
     input.idempotencyKey,

@@ -80,12 +80,51 @@ export async function googleActionAdapterForShop(shopId: string): Promise<Action
     return json.access_token;
   }
 
-  const mutate: MutateFn = async (resource, operation) => {
+  const search = async (query: string): Promise<unknown> => {
+    const token = await accessToken();
+    const res = await fetch(`${base}/customers/${customerId}/googleAds:search`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "developer-token": devToken, "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const json: unknown = await res.json();
+    const errMessage = extractAdsError(json);
+    if (!res.ok || errMessage) throw new ActionError("google", errMessage ?? `HTTP ${res.status}`);
+    return json;
+  };
+
+  // A campaign's budget is its own resource (customers/N/campaignBudgets/M) and
+  // a mutate update without that resourceName is rejected by the API — so budget
+  // edits must first resolve campaign → campaignBudget. Campaign mutates carry
+  // their resourceName already and skip this.
+  const budgetResourceFor = async (campaignExternalId: string): Promise<string> => {
+    if (!/^\d+$/.test(campaignExternalId)) {
+      throw new ActionError("google", `invalid campaign id: ${campaignExternalId}`);
+    }
+    const json = await search(
+      `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = ${campaignExternalId}`,
+    );
+    const resource = (json as { results?: Array<{ campaign?: { campaignBudget?: string } }> })
+      .results?.[0]?.campaign?.campaignBudget;
+    if (!resource) {
+      throw new ActionError("google", `no campaign budget found for campaign ${campaignExternalId}`);
+    }
+    return resource;
+  };
+
+  const mutate: MutateFn = async (resource, operation, campaignExternalId) => {
+    let op = operation;
+    if (resource === "campaignBudgets" && campaignExternalId) {
+      const update = (op.update ?? {}) as Record<string, unknown>;
+      if (!update.resourceName) {
+        op = { ...op, update: { ...update, resourceName: await budgetResourceFor(campaignExternalId) } };
+      }
+    }
     const token = await accessToken();
     const res = await fetch(`${base}/customers/${customerId}/${resource}:mutate`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "developer-token": devToken, "content-type": "application/json" },
-      body: JSON.stringify({ operations: [operation] }),
+      body: JSON.stringify({ operations: [op] }),
     });
     // extractAdsError appends error.details[].errors[] (rule 12): a bare
     // "The caller does not have permission" is not actionable.

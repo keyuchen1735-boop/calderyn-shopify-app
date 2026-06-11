@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "@remix-run/react";
 import {
-  Badge,
   BlockStack,
   Box,
   Button,
@@ -10,7 +9,10 @@ import {
   Text,
   TextField,
 } from "@shopify/polaris";
-import type { ChatMessage, ConversationSummary, DraftedAction } from "~/lib/assistant/types";
+import type { ChatMessage, ConversationSummary } from "~/lib/assistant/types";
+import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
+import { useThinkingPhrase } from "~/lib/assistant/thinking";
+import { Markdown } from "~/components/Markdown";
 import { DraftActionCard } from "./DraftActionCard";
 
 type LoaderData = {
@@ -21,9 +23,10 @@ type LoaderData = {
 type ActionData = {
   conversationId?: string;
   assistantMessage?: ChatMessage;
-  draftedAction?: DraftedAction | null;
+  draftedAction?: DraftedActionData;
   error?: { code: string; message: string };
 };
+type DraftedActionData = ChatMessage["draftedAction"];
 
 let localId = 0;
 const nextLocalId = () => `local-${++localId}`;
@@ -38,6 +41,7 @@ export function AssistantSlideout() {
   const history = useFetcher<LoaderData>();
   const send = useFetcher<ActionData>();
   const sending = send.state !== "idle";
+  const thinking = useThinkingPhrase(sending);
   const messagesRef = useRef<HTMLDivElement>(null);
 
   // Load history the first time the panel opens.
@@ -86,8 +90,8 @@ export function AssistantSlideout() {
     messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight });
   }, [messages, sending]);
 
-  function submit() {
-    const text = input.trim();
+  function sendText(raw: string) {
+    const text = raw.trim();
     if (!text || sending) return;
     const id = nextLocalId();
     pendingRef.current = { id, text };
@@ -139,28 +143,49 @@ export function AssistantSlideout() {
       <div className="calderyn-assistant-messages" ref={messagesRef}>
         <BlockStack gap="0">
           {messages.length === 0 && (
-            <Text as="p" tone="subdued" variant="bodySm">
-              Ask about your alerts, campaigns, SKUs, or audit log — e.g. &ldquo;why did profit drop last week?&rdquo;
-            </Text>
+            <BlockStack gap="300">
+              <Text as="p" tone="subdued" variant="bodySm">
+                Ask about your alerts, campaigns, SKUs, or audit log — or start with one of these:
+              </Text>
+              <div className="calderyn-assistant-suggestions">
+                {SUGGESTED_PROMPTS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="calderyn-assistant-chip"
+                    disabled={sending}
+                    onClick={() => sendText(p)}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </BlockStack>
           )}
           {messages.map((m) => (
-            <div key={m.id} className="calderyn-assistant-bubble" data-role={m.role}>
-              <BlockStack gap="100">
-                <Badge tone={m.role === "assistant" ? "info" : undefined}>
-                  {m.role === "assistant" ? "Claude" : "You"}
-                </Badge>
-                <Text as="p" variant="bodyMd">
-                  {m.content}
-                </Text>
+            <div
+              key={m.id}
+              className="calderyn-assistant-bubble"
+              data-role={m.role}
+              aria-label={m.role === "assistant" ? "Calderyn" : "You"}
+            >
+              <div className="calderyn-assistant-bubble-body">
+                {m.role === "assistant" ? (
+                  <Markdown source={m.content} />
+                ) : (
+                  <Text as="p" variant="bodyMd">
+                    {m.content}
+                  </Text>
+                )}
                 {m.draftedAction && <DraftActionCard action={m.draftedAction} />}
-              </BlockStack>
+              </div>
             </div>
           ))}
           {sending && (
             <InlineStack gap="200" blockAlign="center">
-              <Spinner size="small" accessibilityLabel="Claude is thinking" />
+              <Spinner size="small" accessibilityLabel="Calderyn is thinking" />
               <Text as="span" tone="subdued" variant="bodySm">
-                Claude is thinking&hellip;
+                {thinking}
               </Text>
             </InlineStack>
           )}
@@ -184,7 +209,7 @@ export function AssistantSlideout() {
               // the wrapper still cancels the textarea's default insert.)
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                submit();
+                sendText(input);
               }
             }}
           >
@@ -198,7 +223,7 @@ export function AssistantSlideout() {
               multiline
             />
           </div>
-          <Button variant="primary" loading={sending} disabled={!input.trim()} onClick={submit}>
+          <Button variant="primary" loading={sending} disabled={!input.trim()} onClick={() => sendText(input)}>
             Send
           </Button>
         </InlineStack>

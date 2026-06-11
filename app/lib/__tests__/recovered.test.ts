@@ -107,4 +107,29 @@ describe("dailyActionBudgetUsedCents — what you acted on today", () => {
     );
     expect(used).toBe(466_900);
   });
+
+  test("claws back an undone action when rows carry ids (live query shape)", () => {
+    // Regression: dailyUsedCents selected rows WITHOUT id, so recovered()'s
+    // undone-set could never match and the meter kept counting undone actions.
+    const used = dailyActionBudgetUsedCents(
+      [
+        {
+          id: "au-1",
+          outcome: "succeeded",
+          dollar_impact_at_exec: 466_900,
+          created_at: "2026-06-10T14:30:00.000Z",
+          undo_of: null,
+        },
+        {
+          id: "au-2",
+          outcome: "succeeded",
+          dollar_impact_at_exec: -466_900,
+          created_at: "2026-06-10T15:00:00.000Z",
+          undo_of: "au-1",
+        },
+      ],
+      START,
+    );
+    expect(used).toBe(0);
+  });
 });
