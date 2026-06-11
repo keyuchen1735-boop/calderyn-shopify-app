@@ -36,6 +36,7 @@ describe("ASSISTANT_TOOLS", () => {
     const names = ASSISTANT_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        "flag_alert",
         "get_alert",
         "get_guardrails",
         "list_alerts",
@@ -87,5 +88,45 @@ describe("makeToolDispatcher", () => {
     const res = await dispatch("propose_action", { alert_id: "missing", action_kind: "pause_campaign" });
     expect(res.isError).toBe(true);
     expect(JSON.parse(res.content).code).toBe("ALERT_NOT_FOUND");
+  });
+
+  it("flag_alert acknowledges via the injected callback and reports the flagged alert", async () => {
+    const { client } = fakeClient();
+    const flagAlert = vi.fn(async () => true);
+    const dispatch = makeToolDispatcher(client, { flagAlert });
+    const res = await dispatch("flag_alert", { alert_id: "a1" });
+    expect(flagAlert).toHaveBeenCalledWith("a1");
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content).flagged).toEqual({
+      id: "a1",
+      title: "Below breakeven",
+      status: "acknowledged",
+    });
+  });
+
+  it("flag_alert errors when the surface provides no flag callback", async () => {
+    const { client } = fakeClient();
+    const dispatch = makeToolDispatcher(client);
+    const res = await dispatch("flag_alert", { alert_id: "a1" });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content).code).toBe("FLAG_UNAVAILABLE");
+  });
+
+  it("flag_alert reports a no-op acknowledge as FLAG_FAILED", async () => {
+    const { client } = fakeClient();
+    const dispatch = makeToolDispatcher(client, { flagAlert: async () => false });
+    const res = await dispatch("flag_alert", { alert_id: "a1" });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content).code).toBe("FLAG_FAILED");
+  });
+
+  it("flag_alert never flags an unknown alert (shop-scoped get throws first)", async () => {
+    const { client } = fakeClient();
+    const flagAlert = vi.fn(async () => true);
+    const dispatch = makeToolDispatcher(client, { flagAlert });
+    const res = await dispatch("flag_alert", { alert_id: "missing" });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content).code).toBe("ALERT_NOT_FOUND");
+    expect(flagAlert).not.toHaveBeenCalled();
   });
 });

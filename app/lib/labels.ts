@@ -251,6 +251,19 @@ export function getEvidenceFormatter(key: string): ((v: unknown) => string) | un
   return undefined;
 }
 
+// Action kinds a chat surface may execute after an in-chat confirm tap: the
+// alert route can run them with no inputs beyond the alert itself. The rest
+// (create_po_draft collects quantity/cost, reallocate_budget lives on the
+// Campaigns page) deep-link to their review surface instead. Keep in sync
+// with DEEP_LINK_ACTIONS and the PO modal in app/routes/app.alerts.$id.tsx.
+export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
+  "pause_campaign",
+  "reduce_campaign_budget",
+  "snooze_alert",
+  "exclude_geo",
+  "reallocate_inventory",
+]);
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],

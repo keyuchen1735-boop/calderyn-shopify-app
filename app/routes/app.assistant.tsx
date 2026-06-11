@@ -2,23 +2,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { calderynClient } from "~/lib/calderyn.server";
-import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
-import { buildSnapshot } from "~/lib/assistant/snapshot.server";
-import { buildSystemPrompt } from "~/lib/assistant/prompt.server";
-import { ASSISTANT_TOOLS, makeToolDispatcher } from "~/lib/assistant/tools.server";
-import { runAssistantTurn } from "~/lib/assistant/loop.server";
-import {
-  appendMessage,
-  createConversation,
-  getMessages,
-  listConversations,
-} from "~/lib/assistant/conversations.server";
+import { acknowledgeAlert } from "~/lib/alerts.server";
+import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
 import { parseAssistantRequest } from "~/lib/assistant/request.server";
+import { AssistantTurnError, runConversationTurn } from "~/lib/assistant/turn.server";
 import type { ChatMessage, ConversationSummary } from "~/lib/assistant/types";
-import type Anthropic from "@anthropic-ai/sdk";
-
-const HISTORY_WINDOW = 20;
 
 type LoaderPayload = {
   conversations: ConversationSummary[];
@@ -43,52 +32,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!parsed.ok) {
     return json({ error: { code: parsed.code, message: parsed.message } }, { status: 400 });
   }
-  const { conversationId: incoming, message } = parsed.value;
 
-  const conversationId =
-    incoming ?? (await createConversation(session.shop, message.slice(0, 80)));
-
-  // History BEFORE this message (model context), then persist the user turn.
-  const prior = await getMessages(session.shop, conversationId);
-  await appendMessage(session.shop, conversationId, { role: "user", content: message });
-
-  const history: Anthropic.MessageParam[] = prior
-    .slice(-HISTORY_WINDOW)
-    .map((m) => ({ role: m.role, content: m.content }));
-
-  const client = calderynClient(session.shop);
-  const snapshot = await buildSnapshot(client);
-
-  let result;
   try {
-    const anthropic = getAnthropic();
-    result = await runAssistantTurn({
-      createMessage: (params) => anthropic.messages.create(params),
-      model: assistantModel(),
-      system: buildSystemPrompt(snapshot),
-      tools: ASSISTANT_TOOLS,
-      dispatchTool: makeToolDispatcher(client),
-      history,
-      userMessage: message,
+    const { conversationId, assistantMessage } = await runConversationTurn({
+      shopDomain: session.shop,
+      message: parsed.value.message,
+      conversationId: parsed.value.conversationId,
+      deps: {
+        flagAlert: async (alertId) =>
+          acknowledgeAlert(getSupabase(), await resolveShopId(session.shop), alertId),
+      },
+    });
+    return json({
+      conversationId,
+      assistantMessage,
+      draftedAction: assistantMessage.draftedAction,
     });
   } catch (err) {
-    const e = err as { message?: string };
-    // User turn already saved; do not persist a broken assistant turn (clean retry).
-    console.error("[assistant] turn failed", { shop: session.shop, conversationId, message: e.message });
-    return json(
-      {
-        conversationId,
-        error: { code: "ASSISTANT_ERROR", message: e.message ?? "Could not reach Claude" },
-      },
-      { status: 502 },
-    );
+    if (err instanceof AssistantTurnError) {
+      return json(
+        {
+          conversationId: err.conversationId,
+          error: { code: "ASSISTANT_ERROR", message: err.message },
+        },
+        { status: 502 },
+      );
+    }
+    throw err;
   }
-
-  const assistantMessage = await appendMessage(session.shop, conversationId, {
-    role: "assistant",
-    content: result.text,
-    draftedAction: result.draftedAction,
-  });
-
-  return json({ conversationId, assistantMessage, draftedAction: result.draftedAction });
 };
