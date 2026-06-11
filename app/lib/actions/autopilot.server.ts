@@ -67,6 +67,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     // campaign), and an uncaught throw here would abort the whole run — so
     // count it blocked and keep draining the remaining candidates.
     if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
+      // Distinguish "no budget synced" from "budget is $0 on the platform" in
+      // the logs — both block, but they have different operator fixes.
+      console.info(
+        `[autopilot] blocked budget cut on ${c.campaign_id}: current daily budget is ${
+          currentBudgetCents == null ? "missing from sync" : "$0 on the platform"
+        }`,
+      );
       blocked += 1;
       continue;
     }
@@ -77,8 +84,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         : undefined;
 
     // Same refusal in executeAction: a cut that lands on $0 would zero the
-    // live campaign budget (that's a pause, not a reduction) — blocked.
+    // live campaign budget (that's a pause, not a reduction) — blocked. Only
+    // reachable with maxCutPct near 100, so flag the config loudly.
     if (kind === "reduce_campaign_budget" && !newBudgetCents) {
+      console.warn(
+        `[autopilot] blocked budget cut on ${c.campaign_id}: max_budget_cut_pct=${maxCutPct} computes a $0 target budget`,
+      );
       blocked += 1;
       continue;
     }

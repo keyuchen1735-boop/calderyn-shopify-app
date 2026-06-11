@@ -94,4 +94,27 @@ describe("onboarding state persistence", () => {
     expect(state.step).toBe(0);
     expect(state.done).toBe(false);
   });
+
+  it("persists step NAMES in the wizard's order (semantic contract with app.onboarding.tsx)", async () => {
+    // The index round-trip above passes for ANY 8-entry list — it never failed
+    // while the server enum was in a different order than the wizard, which
+    // persisted wrong step names for cross-surface readers of
+    // shops.onboarding_step. Pin the names at each index to the wizard's flow:
+    // Shop → Guardrails → Google → Meta → QuickBooks → Creative → Consent → Complete.
+    const expected = [
+      "shopify",
+      "guardrails",
+      "google",
+      "meta",
+      "quickbooks",
+      "creative_mapping",
+      "consent",
+      "complete",
+    ];
+    const client = calderynClient("a.myshopify.com");
+    for (let i = 0; i < expected.length; i++) {
+      await client.onboarding.advance(i);
+      expect(store["shops"][0].onboarding_step).toBe(expected[i]);
+    }
+  });
 });
