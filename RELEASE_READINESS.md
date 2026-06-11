@@ -68,6 +68,22 @@ dashboard/* re-verify). Verify each against current code, then act. C-prefixed =
 V-prefixed = UX. Same rules: safe fixes pre-approved; auth/webhook/schema items are
 NEEDS-HUMAN (verify + log only, do not auto-edit).
 
+**STATUS (2026-06-11 ~10:15 sweep, same run as Batch 1):** C1 [FIXED `6aa6573`] ·
+C2 [FIXED `1d84795`] · C3 [NEEDS-HUMAN = F18] · C4 [NEEDS-HUMAN = F23] · C5
+[NEEDS-HUMAN — pipeline dedup design; note `internal.forwardWebhook` already stores
+`X-Shopify-Webhook-Id` on the raw row, so the dedup key exists, the consumer-side
+check doesn't] · C6 [FIXED `d00bba1`] · C7 [FIXED `a2eb6bb`] · C8 [WONTFIX — unit
+verified: `DraftedAction.dollarImpact` is cents ("mirrors Alert.dollar_impact",
+converted at calderyn.server.ts:102); display switched to shared `fmtMoney` this run]
+· C9 [OPEN — judged too risky to rush: pre-reserving the idempotency key before the
+Meta POST changes failure semantics (a crashed run would permanently block re-push);
+needs a reconcile-on-replay design, keep with F5] · C10 [FIXED `5224323`] · C11 [OPEN
+— next run: verify what `alert.campaign` actually carries before re-keying] · C12
+[OPEN — needs schema access; no `supabase/migrations/` in this repo] · C13 [FIXED
+`d00bba1`] · C14 [FIXED `7712a32`] · V1 [FIXED `83536b6` — found independently this
+run] · V2/V3 [FIXED `85a502f` — found independently this run] · V4 [NEEDS-HUMAN
+(auth flow), noted with F19-F24].
+
 | ID | Pri | Item | File(s) | Class |
 |----|-----|------|---------|-------|
 | C1 | P1 | `topAdNames` selects `ad_campaign_dim(name)` — feeds **campaign** names to the screener as "top ad names"; also unordered (`limit(50)`, no `.order`). Use `ad_engagement_fact.ad_name` + order by engagement desc | `app/lib/screener/history.server.ts:183-194` | safe fix (resolves F12) |
