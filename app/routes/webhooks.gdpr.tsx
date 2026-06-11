@@ -9,7 +9,7 @@ const TOPIC_TO_PATH: Record<string, string> = {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
+  const { topic, shop, payload, webhookId } = await authenticate.webhook(request);
   // Topic only — no shop domain in GDPR-path logs (data-minimization; the
   // forward below carries the full context to the engine).
   console.log(`[webhooks.gdpr] received ${topic}`);
@@ -24,7 +24,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await calderynClient(shop).internal.forwardWebhook(
       path,
       payload,
-      { "X-Shopify-Topic": topic },
+      // Delivery id keys the unique(webhook_id) dedup — retries are safe.
+      { "X-Shopify-Topic": topic, "X-Shopify-Webhook-Id": webhookId },
     );
   } catch (err) {
     if (err instanceof CalderynError) {
@@ -34,6 +35,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } else {
       console.error(`Failed to forward GDPR webhook ${topic} for ${shop}`, err);
     }
+    // A dropped customers/redact or data_request is a compliance miss, not a
+    // log line. Non-2xx → Shopify redelivers until the forward lands.
+    return new Response(null, { status: 500 });
   }
 
   return new Response();

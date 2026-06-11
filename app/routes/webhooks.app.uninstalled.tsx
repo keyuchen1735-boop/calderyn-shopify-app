@@ -6,7 +6,7 @@ import { markShopUninstalled } from "~/lib/supabase.server";
 import { revokeAllSessionsForShop } from "~/lib/dashboard/session.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, topic } = await authenticate.webhook(request);
+  const { shop, topic, webhookId } = await authenticate.webhook(request);
   console.log(`Received ${topic} webhook for ${shop}`);
 
   // No `if (session)` guard: on uninstall the offline session is often already
@@ -18,6 +18,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await markShopUninstalled(shop);
   } catch (err) {
     console.error(`Failed to mark shop ${shop} uninstalled in Supabase`, err);
+    // uninstalled_at drives the 30-day GDPR redaction sweep — if this write is
+    // lost the shop is never purged. Non-2xx → Shopify retries the delivery;
+    // everything in this handler is idempotent on replay.
+    return new Response(null, { status: 500 });
   }
 
   try {
@@ -30,7 +34,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await calderynClient(shop).internal.forwardWebhook(
       "/internal/shops/uninstall",
       { shop },
-      { "X-Shopify-Topic": topic },
+      { "X-Shopify-Topic": topic, "X-Shopify-Webhook-Id": webhookId },
     );
   } catch (err) {
     if (err instanceof CalderynError) {

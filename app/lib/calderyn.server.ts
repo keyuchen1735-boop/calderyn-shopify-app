@@ -970,13 +970,16 @@ export function calderynClient(shop: string) {
         try {
           const shopId = await shopIdP;
           const topic = headers["X-Shopify-Topic"] ?? path.split("/").pop() ?? "unknown";
-          await supabase.from("raw_shopify_webhook").insert({
+          const { error } = await supabase.from("raw_shopify_webhook").insert({
             shop_id: shopId,
             topic,
             webhook_id: headers["X-Shopify-Webhook-Id"] ?? `${topic}-${Date.now()}-${newIdempotencyKey()}`,
             hmac_verified: true,
             payload: payload as object,
           });
+          // 23505 = unique(webhook_id): Shopify redelivered something that
+          // already landed — the delivery IS persisted, so that's success.
+          if (error && error.code !== "23505") throw error;
         } catch (err) {
           rethrow("internal.forwardWebhook", err);
         }
