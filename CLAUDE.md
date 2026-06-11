@@ -29,9 +29,16 @@
 ## Dashboard parity (MANDATORY for every feature change)
 Calderyn ships on two surfaces: this Shopify extension and the **Calderyn dashboard** (a separate, already-built monorepo on its own stack — raw `postgres`/`withShopContext`, `apps/web`, its own non-Polaris UI). They share the same product brain, so any feature change here MUST be reflected in the dashboard too.
 
+- **Where the dashboard lives:** the dashboard is reached at https://calderyncompany.com/dashboard via https://github.com/Mezoh/calderyn-waitlist (the apex marketing site, whose `vercel.json` proxies `/dashboard/*` → `app.calderyncompany.com`). `app.calderyncompany.com` is the Vercel project `shopify-app` — i.e. **this repo's `app/routes/dashboard.*` routes are the dashboard code**; mirror changes are implemented there. Touch `Mezoh/calderyn-waitlist` only when the proxy/CSP or marketing surface itself changes. (Do NOT use `keyuchen1735-boop/Calderyn-Shopify` or `calderyn-portal` for parity work — older parallel codebases, not deployed.)
+
 - **Scope:** new routes, new merchant-facing behavior, schema changes that surface in UI, detector/label changes, new actions. Pure infra/internal edits (auth glue, webhook plumbing not visible to users) are exempt.
 - **Mirror, don't redesign or port.** The dashboard's UI already exists — slot the feature into its existing patterns/components. Do NOT copy Polaris JSX; translate the feature's behavior + data contract into the dashboard's own primitives. The repos diverge at the DB layer, so the dashboard side is a re-implementation against its own stack — **match the contract, not the code.**
 - Treat the dashboard mirror as part of the same task, not a follow-up. If only one side can ship in a given change, say so explicitly and leave a TODO for the dashboard side — never silently ship single-sided.
+
+## Feature isolation (MANDATORY for new feature work)
+- **Always implement new features in an isolated git worktree.** Before starting any new feature, create a dedicated worktree (e.g. `git worktree add ../calderyn-<feature> -b feat/<feature>`) and do all the work there — never on top of the current workspace or directly on `main`. This prevents clashes with in-flight work, keeps unrelated changes out of the diff, and lets parallel features proceed without stepping on each other.
+- One worktree per feature/branch. Name the branch `feat/<feature>` and the worktree directory to match.
+- When the feature is done, merged, and verified, remove the worktree (`git worktree remove ...`) and prune the branch — do not leave stale worktrees behind.
 
 ## Pre-commit gate (MANDATORY for any major commit)
 A "major commit" = anything beyond a typo/comment/doc nit: route changes, schema changes, dependency bumps, auth/webhook edits, Polaris/UI components, anything in `app/lib/` or `app/shopify.server.ts`.
