@@ -45,8 +45,14 @@ describe("loadCalibrationInputs", () => {
       { data: engRows, error: null },
       // 3. campaign_grade_fact → breakEven 1.9
       { data: [{ break_even_roas: 1.8 }, { break_even_roas: 2.0 }], error: null },
-      // 4. ad_engagement_fact (topAdNames)
-      { data: [{ ad_campaign_dim: { name: "Summer" } }, { ad_campaign_dim: { name: "Winter" } }], error: null },
+      // 4. ad_engagement_fact (topAdNames) — AD names ranked by total
+      // engagement ("Winter" outscores "Summer" so it must come first; the
+      // old embed-based query returned campaign names, unordered).
+      { data: [
+        { ad_name: "Summer", reactions: 3, comments: 1, shares: 0, saves: 0 },
+        { ad_name: "Winter", reactions: 5, comments: 2, shares: 1, saves: 0 },
+        { ad_name: "Summer", reactions: 1, comments: 0, shares: 0, saves: 0 },
+      ], error: null },
       // 5. sku_dim → id
       { data: { id: "sku-uuid-1" }, error: null },
       // 6. order_line_fact → avg price 4500
@@ -62,7 +68,7 @@ describe("loadCalibrationInputs", () => {
     expect(inputs.skuPriceCents).toBe(4500);
     expect(inputs.historyAdCount).toBe(16);
     expect(inputs.breakEvenRoas).toBeCloseTo(1.9, 6);
-    expect(inputs.topAdNames).toEqual(["Summer", "Winter"]);
+    expect(inputs.topAdNames).toEqual(["Winter", "Summer"]);
 
     // The whole point of the increment: real data unlocks "high" confidence.
     expect(calibrate([], inputs, 10_000).confidence).toBe("high");

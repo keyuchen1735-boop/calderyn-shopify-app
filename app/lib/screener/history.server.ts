@@ -182,20 +182,33 @@ export async function loadCalibrationInputs(
     ? breakEvens.reduce((s, n) => s + n, 0) / breakEvens.length
     : null;
 
-  // Top ad names by engagement (best-effort; empty on no data).
+  // Top AD names by engagement. Previously this embedded ad_campaign_dim(name)
+  // — campaign names, not ad names (and an unordered first-50, not "top") —
+  // so the scorer's "merchant's top historical ads" signal was wrong/empty.
+  // Aggregate ad_name by total engagement (same shape as
+  // analytics.topAdsByEngagement) and keep the best 3.
   const eng = await sb
     .from("ad_engagement_fact")
-    .select("ad_campaign_dim(name)")
+    .select("ad_name, reactions, comments, shares, saves")
     .eq("shop_id", shopId)
-    .limit(50);
+    .limit(1000);
   if (eng.error) throw eng.error;
-  const topAdNames = Array.from(
-    new Set(
-      (eng.data ?? [])
-        .map((r) => (r as { ad_campaign_dim?: { name?: string } }).ad_campaign_dim?.name)
-        .filter((n): n is string => typeof n === "string"),
-    ),
-  ).slice(0, 3);
+  const engagementByAd = new Map<string, number>();
+  for (const r of eng.data ?? []) {
+    const row = r as { ad_name?: unknown; reactions?: unknown; comments?: unknown; shares?: unknown; saves?: unknown };
+    const name = typeof row.ad_name === "string" ? row.ad_name.trim() : "";
+    if (!name) continue;
+    const score =
+      Number(row.reactions ?? 0) +
+      Number(row.comments ?? 0) +
+      Number(row.shares ?? 0) +
+      Number(row.saves ?? 0);
+    engagementByAd.set(name, (engagementByAd.get(name) ?? 0) + score);
+  }
+  const topAdNames = [...engagementByAd.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([n]) => n);
 
   // Realized SKU price: sku_dim carries no retail price, so resolve the SKU id and
   // average what it actually sold for in order_line_fact.
