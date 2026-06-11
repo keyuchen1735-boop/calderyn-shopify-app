@@ -22,6 +22,7 @@ import { createOAuthState } from "./meta/oauth-state.server";
 import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
 import { undoAction } from "./actions/undo.server";
+import { withinBusinessHours } from "./actions/guardrails";
 import { recoveredDollarsForAlertAction } from "./actions/execute.server";
 import { dailyActionBudgetUsedCents } from "./recovered";
 
@@ -57,14 +58,18 @@ export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks";
 
 export type OnboardingState = { step: number; done: boolean };
 
+// MUST mirror the wizard's STEPS order in routes/app.onboarding.tsx — the DB
+// stores the step NAME, so a divergent order here persists a step the merchant
+// is not actually on (and any other surface reading shops.onboarding_step
+// would resume them at the wrong place).
 const ONBOARDING_STEPS = [
   "shopify",
-  "meta",
-  "google",
-  "quickbooks",
   "guardrails",
-  "consent",
+  "google",
+  "meta",
+  "quickbooks",
   "creative_mapping",
+  "consent",
   "complete",
 ] as const;
 
@@ -184,7 +189,13 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
       end: `${String(r.business_hours_end_utc ?? 0).padStart(2, "0")}:00`,
       tz: String(r.timezone ?? "America/New_York"),
     },
-    in_business_hours: true,
+    // Same window math the autopilot gateway enforces (actions/guardrails.ts),
+    // so the merchant-facing check can't show green while the gateway blocks.
+    in_business_hours: withinBusinessHours(
+      Number(r.business_hours_start_utc ?? 14),
+      Number(r.business_hours_end_utc ?? 0),
+      new Date().getUTCHours(),
+    ),
     autopilot_enabled: Boolean(r.autopilot_enabled),
     autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
@@ -708,12 +719,16 @@ export function calderynClient(shop: string) {
             .eq("shop_id", shopId)
             .maybeSingle();
           if (error) throw error;
+          // A shop that hasn't saved guardrails yet (fresh install, pre-
+          // onboarding) gets the same defaults the onboarding form pre-fills
+          // ($2,500/day, $1,000/action, 30 min) instead of a 404 that blanks
+          // the home + onboarding loaders. Read-only: the row is created when
+          // the merchant first saves.
           if (!data) {
-            throw new CalderynError({
-              code: "GUARDRAILS_NOT_FOUND",
-              status: 404,
-              message: `No guardrail config for shop ${shop}`,
-            });
+            return rowToGuardrails(
+              { daily_action_budget: 2500, dollar_impact_cap_without_2fa: 1000 },
+              await dailyUsedCents(shopId),
+            );
           }
           return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {

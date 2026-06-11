@@ -37,7 +37,7 @@ export interface GuardrailResult {
   reason?: string;
 }
 
-function withinBusinessHours(startUtc: number, endUtc: number, hour: number): boolean {
+export function withinBusinessHours(startUtc: number, endUtc: number, hour: number): boolean {
   // Window may wrap midnight (e.g. 14 -> 0 means 14:00..24:00).
   if (startUtc === endUtc) return true;
   if (startUtc < endUtc) return hour >= startUtc && hour < endUtc;
