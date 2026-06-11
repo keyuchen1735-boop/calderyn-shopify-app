@@ -9,7 +9,7 @@ import { actionAdapterForShop } from "../ads/action-registry.server";
 export async function undoAction(shopId: string, auditId: string, sb: SupabaseClient): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec")
+    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
@@ -65,6 +65,7 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
     .from("action_audit")
     .insert({
       shop_id: shopId,
+      alert_id: orig.alert_id ?? null,
       action_kind: orig.action_kind,
       params: orig.params,
       outcome: "succeeded",
@@ -83,5 +84,25 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
     .select("id")
     .single();
   if (iErr) throw iErr;
+
+  // Undo revives the underlying problem: acknowledge-on-execute (see
+  // insertAuditWithIdempotency) closed the alert, so reversing the action
+  // puts it back in the open queue. Lives HERE so every undo surface gets it
+  // — the dashboard undo route and the reallocate delegation call this
+  // directly, not the legacy wrapper in calderyn.server.ts (which has its own
+  // copy for its own insert path). Best-effort: log, don't fail the recorded
+  // undo — the platform reversal already happened.
+  if (orig.alert_id) {
+    const { error: reopenErr } = await sb
+      .from("alerts")
+      .update({ status: "open" })
+      .eq("shop_id", shopId)
+      .eq("id", orig.alert_id)
+      .eq("status", "acknowledged");
+    if (reopenErr) {
+      console.error(`[undo] failed to re-open alert ${orig.alert_id} after undo of ${orig.id}`, reopenErr);
+    }
+  }
+
   return { id: String(ins.id) };
 }

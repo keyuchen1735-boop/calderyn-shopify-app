@@ -150,9 +150,10 @@ export async function insertAuditWithIdempotency(
 
   // A succeeded action against an alert closes it (open → acknowledged) on
   // EVERY executor path — autopilot, dashboard API, reallocation — not just
-  // the alert-detail route. Undo re-opens it (calderyn.server.ts), and the
-  // detector still owns resolution. Best-effort: acknowledgeAlert logs and
-  // returns false rather than failing the already-executed action.
+  // the alert-detail route. Every undo surface re-opens it (undo.server.ts
+  // for the gateway paths, calderyn.server.ts for the legacy wrapper), and
+  // the detector still owns resolution. Best-effort: acknowledgeAlert logs
+  // and returns false rather than failing the already-executed action.
   if (audit.outcome === "succeeded" && audit.alert_id) {
     await acknowledgeAlert(sb, shopId, audit.alert_id);
   }
