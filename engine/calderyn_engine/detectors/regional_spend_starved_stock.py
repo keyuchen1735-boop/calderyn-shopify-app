@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import asyncpg
 
@@ -105,13 +106,43 @@ SELECT rs.sku_id,
        coalesce(v.units, 0)::numeric         AS velocity,
        coalesce(p.margin_cents, 0)::numeric  AS margin_cents_7d,
        d.sku                                  AS sku_code,
-       d.title                                AS sku_title
+       d.title                                AS sku_title,
+       d.inventory_item_id                    AS inventory_item_id,
+       dest.external_id                       AS to_location_external_id,
+       src.external_id                        AS from_location_external_id,
+       src.available                          AS from_location_available
 FROM regional_spend rs
 LEFT JOIN regional_stock rst ON rst.sku_id = rs.sku_id AND rst.region = rs.region
 LEFT JOIN total_stock    ts  ON ts.sku_id  = rs.sku_id
 LEFT JOIN latest_velocity v  ON v.sku_id   = rs.sku_id
 LEFT JOIN recent_pnl     p   ON p.sku_id   = rs.sku_id
 LEFT JOIN public.sku_dim d   ON d.id       = rs.sku_id
+-- Destination of the transfer: an active location IN the starved region (the
+-- region soaking up the ad spend). Deterministic pick keeps the alert stable
+-- across re-runs so the same recommendation upserts in place.
+LEFT JOIN LATERAL (
+    SELECT l.external_id
+    FROM public.location_dim l
+    WHERE l.shop_id = $1
+      AND l.region = rs.region
+      AND l.active
+    ORDER BY l.external_id
+    LIMIT 1
+) dest ON true
+-- Source of the transfer: the location OUTSIDE the region holding the most of
+-- this sku. A single inventoryAdjustQuantities call moves between exactly two
+-- locations, so the recommended delta below is bounded by this one source.
+LEFT JOIN LATERAL (
+    SELECT l.external_id, li.available
+    FROM latest_inventory li
+    JOIN public.location_dim l ON l.id = li.location_id
+    WHERE l.shop_id = $1
+      AND li.sku_id = rs.sku_id
+      AND l.region IS DISTINCT FROM rs.region
+      AND li.available > 0
+    ORDER BY li.available DESC, l.external_id
+    LIMIT 1
+) src ON true
 WHERE rs.spend_cents >= ($2 * 100)
   AND coalesce(rst.qty, 0) <= 0
   AND (coalesce(ts.qty, 0) - coalesce(rst.qty, 0)) > 0
@@ -159,6 +190,35 @@ async def detect(
         if impact <= 0:
             impact = spend
 
+        evidence: dict[str, Any] = {
+            "region": r["region"],
+            "regional_spend_7d_usd": str(spend),
+            "regional_stock": int(regional_qty),
+            "stock_elsewhere": int(elsewhere_qty),
+            "velocity_units_per_day": str(velocity),
+            "sku_title": r["sku_title"],
+        }
+
+        # Concrete transfer plan for the reallocate_inventory action. The alert
+        # route replays these four fields verbatim into Shopify's
+        # inventoryAdjustQuantities, so emit them ONLY when a real move exists:
+        # a Shopify inventory item, an active destination location in the
+        # starved region, and a source location elsewhere that holds stock.
+        # When any piece is missing the fields stay absent and the route's
+        # INVALID_INVENTORY_EVIDENCE guard fails the action visibly (rule 12)
+        # rather than firing a malformed mutation.
+        inv_item = r["inventory_item_id"]
+        to_loc = r["to_location_external_id"]
+        from_loc = r["from_location_external_id"]
+        from_avail = r["from_location_available"]
+        if inv_item and to_loc and from_loc and from_avail:
+            recommended_delta = int(min(shortfall, Decimal(from_avail)))
+            if recommended_delta > 0:
+                evidence["inventory_item_id"] = inv_item
+                evidence["from_location_id"] = from_loc
+                evidence["to_location_id"] = to_loc
+                evidence["recommended_delta"] = recommended_delta
+
         out.append(
             DetectionResult(
                 detector_id=DETECTOR_ID,
@@ -169,14 +229,7 @@ async def detect(
                 },
                 severity="high",
                 dollar_impact=impact,
-                evidence={
-                    "region": r["region"],
-                    "regional_spend_7d_usd": str(spend),
-                    "regional_stock": int(regional_qty),
-                    "stock_elsewhere": int(elsewhere_qty),
-                    "velocity_units_per_day": str(velocity),
-                    "sku_title": r["sku_title"],
-                },
+                evidence=evidence,
             )
         )
     return out

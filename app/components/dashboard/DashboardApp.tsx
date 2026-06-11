@@ -306,7 +306,32 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
-      // exclude_geo / reallocate_inventory / create_po_draft: no live endpoint yet.
+      // reallocate_inventory: live endpoint — the transfer plan is derived
+      // server-side from the alert's evidence, so failures (e.g. evidence
+      // without a concrete move) surface as an error toast, never a fake
+      // resolution.
+      if (kind === "reallocate_inventory") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          markResolved();
+          // Re-fetch audit so the server's authoritative row replaces our optimistic one.
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — done. Logged to action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return;
+      }
+
+      // exclude_geo / create_po_draft: no live endpoint yet.
       // TODO(api): wire these to real mutations once the endpoints exist.
       markResolved();
       logAudit(alert.dollar_impact);

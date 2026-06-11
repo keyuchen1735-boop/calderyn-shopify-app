@@ -539,10 +539,11 @@ def seed_regional_starved_scenario(pg_pool):
             await conn.execute(
                 """
                 INSERT INTO public.sku_dim
-                  (id, shop_id, external_id, product_id, sku, title,
-                   unit_cost_cents, currency)
-                VALUES ($1, $2, 'ext-rg-1', 'prod-rg-1', 'RG-1',
-                        'Regional SKU', 1500, 'USD')
+                  (id, shop_id, external_id, product_id, inventory_item_id,
+                   sku, title, unit_cost_cents, currency)
+                VALUES ($1, $2, 'ext-rg-1', 'prod-rg-1',
+                        'gid://shopify/InventoryItem/44440001',
+                        'RG-1', 'Regional SKU', 1500, 'USD')
                 """,
                 sku_id,
                 shop_id,

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { action as campaignAction } from "../../../routes/dashboard.api.campaigns.$id.action";
+import { action as alertAction } from "../../../routes/dashboard.api.alerts.$id.action";
 import { action as undoRoute } from "../../../routes/dashboard.api.audit.$id.undo";
 import { action as guardrailsAction } from "../../../routes/dashboard.api.guardrails";
 import { action as logoutAction } from "../../../routes/dashboard.api.logout";
@@ -9,8 +10,14 @@ const requireDashboardSession = vi.fn();
 const requireSameOrigin = vi.fn();
 const executeAction = vi.fn();
 const undoAction = vi.fn();
+const guardrailsGet = vi.fn();
 const guardrailsUpdate = vi.fn();
 const revokeSession = vi.fn();
+const alertsGet = vi.fn();
+const actionsExecute = vi.fn();
+const inventoryAdjustQuantities = vi.fn();
+const acknowledgeAlert = vi.fn();
+const unauthenticatedAdmin = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
@@ -37,12 +44,51 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     ...orig,
     calderynClient: () => ({
       guardrails: {
-        get: vi.fn(async () => ({ cooldown_minutes: 30 })),
+        get: (...a: unknown[]) => guardrailsGet(...a),
         update: (...a: unknown[]) => guardrailsUpdate(...a),
+      },
+      alerts: {
+        get: (...a: unknown[]) => alertsGet(...a),
+      },
+      actions: {
+        execute: (...a: unknown[]) => actionsExecute(...a),
       },
     }),
   };
 });
+vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../shopify/inventory.server")>()),
+  inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
+}));
+vi.mock("../../alerts.server", () => ({
+  acknowledgeAlert: (...a: unknown[]) => acknowledgeAlert(...a),
+}));
+vi.mock("../../../shopify.server", () => ({
+  unauthenticated: { admin: (...a: unknown[]) => unauthenticatedAdmin(...a) },
+}));
+
+// Mirrors the transfer plan the regional_spend_starved_stock detector emits
+// into alert evidence (engine commit e3238b5).
+const TRANSFER_EVIDENCE = {
+  region: "US-TX",
+  inventory_item_id: "gid://shopify/InventoryItem/123",
+  from_location_id: "gid://shopify/Location/77",
+  to_location_id: "gid://shopify/Location/88",
+  recommended_delta: 21,
+};
+
+function makeAlert(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "a1",
+    detector_id: "regional_spend_starved_stock",
+    dollar_impact: 50_000,
+    sku: "SKU-1",
+    campaign: null,
+    status: "open",
+    evidence: TRANSFER_EVIDENCE,
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,6 +97,12 @@ beforeEach(() => {
     shopDomain: "x.myshopify.com",
     sessionId: "sess-1",
   });
+  guardrailsGet.mockResolvedValue({ dollar_cap_cents: 100_000_000, cooldown_minutes: 30 });
+  alertsGet.mockResolvedValue(makeAlert());
+  actionsExecute.mockResolvedValue({ id: "audit-inv-1" });
+  inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://shopify/InventoryAdjustmentGroup/9" });
+  acknowledgeAlert.mockResolvedValue(true);
+  unauthenticatedAdmin.mockResolvedValue({ admin: { graphql: vi.fn() } });
 });
 
 function post(url: string, body: unknown, method = "POST"): Request {
@@ -117,6 +169,122 @@ describe("POST /dashboard/api/campaigns/:id/action", () => {
       audit_id: "audit-2",
       outcome: "failed",
     });
+  });
+});
+
+describe("POST /dashboard/api/alerts/:id/action", () => {
+  const url = "https://calderyncompany.com/dashboard/api/alerts/a1/action";
+  const body = { type: "reallocate_inventory", idempotency_key: "key-inv-1" };
+
+  it("executes the transfer Shopify mutation from the alert's evidence, audits, and acknowledges", async () => {
+    const res = (await alertAction({
+      request: post(url, body),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      audit_id: "audit-inv-1",
+      outcome: "succeeded",
+      acknowledged: true,
+    });
+    // Mutation inputs must come from the trusted alert record, not the request body.
+    expect(unauthenticatedAdmin).toHaveBeenCalledWith("x.myshopify.com");
+    expect(inventoryAdjustQuantities).toHaveBeenCalledWith(expect.anything(), {
+      inventoryItemId: "gid://shopify/InventoryItem/123",
+      fromLocationId: "gid://shopify/Location/77",
+      toLocationId: "gid://shopify/Location/88",
+      delta: 21,
+    });
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        alertId: "a1",
+        kind: "reallocate_inventory",
+        idempotencyKey: "key-inv-1",
+        params: expect.objectContaining({
+          inventory_item_id: "gid://shopify/InventoryItem/123",
+          from_location_id: "gid://shopify/Location/77",
+          to_location_id: "gid://shopify/Location/88",
+          delta: 21,
+          shopify_operation_id: "gid://shopify/InventoryAdjustmentGroup/9",
+        }),
+      }),
+    );
+    expect(acknowledgeAlert).toHaveBeenCalledWith(expect.anything(), "shop-1", "a1");
+  });
+
+  it("422s with invalid_inventory_evidence when the alert lacks a transfer plan, without mutating", async () => {
+    alertsGet.mockResolvedValueOnce(makeAlert({ evidence: { region: "US-TX" } }));
+    const res = (await alertAction({
+      request: post(url, body),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_inventory_evidence");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(actionsExecute).not.toHaveBeenCalled();
+  });
+
+  it("403s when the alert's detector does not expose reallocate_inventory", async () => {
+    alertsGet.mockResolvedValueOnce(makeAlert({ detector_id: "campaign_below_breakeven" }));
+    const res = (await alertAction({
+      request: post(url, body),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("action_not_allowed");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("403s when the alert's impact exceeds the guardrail dollar cap", async () => {
+    guardrailsGet.mockResolvedValueOnce({ dollar_cap_cents: 1_000 });
+    const res = (await alertAction({
+      request: post(url, body),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("guardrail_dollar_cap");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("422s on an unsupported action type and a missing idempotency key", async () => {
+    for (const bad of [
+      { type: "pause_campaign", idempotency_key: "k" },
+      { type: "reallocate_inventory" },
+    ]) {
+      const res = (await alertAction({
+        request: post(url, bad),
+        params: { id: "a1" },
+        context: {},
+      })) as Response;
+      expect(res.status).toBe(422);
+    }
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("502s as action_failed when the Shopify mutation throws, without writing an audit row", async () => {
+    inventoryAdjustQuantities.mockRejectedValueOnce(new Error("THROTTLED: try later"));
+    const res = (await alertAction({
+      request: post(url, body),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("action_failed");
+    expect(actionsExecute).not.toHaveBeenCalled();
+    expect(acknowledgeAlert).not.toHaveBeenCalled();
+  });
+
+  it("405s non-POST methods", async () => {
+    const res = (await alertAction({
+      request: post(url, body, "PUT"),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(405);
   });
 });
 

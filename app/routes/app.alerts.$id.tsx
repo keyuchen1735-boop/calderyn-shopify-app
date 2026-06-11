@@ -32,7 +32,10 @@ import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
-import { inventoryAdjustQuantities } from "~/lib/shopify/inventory.server";
+import {
+  inventoryAdjustQuantities,
+  transferPlanFromEvidence,
+} from "~/lib/shopify/inventory.server";
 import {
   buildPoDraft,
   derivePoQuantity,
@@ -207,13 +210,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     if (kind === "reallocate_inventory") {
       // Inventory mutation inputs come from the alert's evidence, not the form.
-      const ev = alert.evidence ?? {};
-      const inventoryItemId = stringOrEmpty(ev.inventory_item_id);
-      const fromLocationId = stringOrEmpty(ev.from_location_id);
-      const toLocationId = stringOrEmpty(ev.to_location_id);
-      const delta = Number(ev.recommended_delta ?? ev.delta ?? 0);
-
-      if (!inventoryItemId || !fromLocationId || !toLocationId || !delta) {
+      const plan = transferPlanFromEvidence(alert.evidence ?? {});
+      if (!plan) {
         throw new CalderynError({
           code: "INVALID_INVENTORY_EVIDENCE",
           status: 422,
@@ -222,17 +220,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
-      const { operationId } = await inventoryAdjustQuantities(admin, {
-        inventoryItemId,
-        fromLocationId,
-        toLocationId,
-        delta,
-      });
+      const { operationId } = await inventoryAdjustQuantities(admin, plan);
 
-      execParams.inventory_item_id = inventoryItemId;
-      execParams.from_location_id = fromLocationId;
-      execParams.to_location_id = toLocationId;
-      execParams.delta = delta;
+      execParams.inventory_item_id = plan.inventoryItemId;
+      execParams.from_location_id = plan.fromLocationId;
+      execParams.to_location_id = plan.toLocationId;
+      execParams.delta = plan.delta;
       execParams.shopify_operation_id = operationId;
     }
 
