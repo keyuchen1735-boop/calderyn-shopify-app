@@ -23,6 +23,7 @@ import { metaClientForShop } from "./meta/client.server";
 import { setCampaignStatus } from "./meta/campaigns.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
+import { DEFAULT_GUARDRAILS } from "./guardrail-defaults";
 import { recoveredDollarsForAlertAction } from "./actions/execute.server";
 import { dailyActionBudgetUsedCents } from "./recovered";
 
@@ -721,12 +722,15 @@ export function calderynClient(shop: string) {
           if (error) throw error;
           // A shop that hasn't saved guardrails yet (fresh install, pre-
           // onboarding) gets the same defaults the onboarding form pre-fills
-          // ($2,500/day, $1,000/action, 30 min) instead of a 404 that blanks
-          // the home + onboarding loaders. Read-only: the row is created when
-          // the merchant first saves.
+          // instead of a 404 that blanks the home + onboarding loaders.
+          // Read-only: the row is created when the merchant first saves.
           if (!data) {
             return rowToGuardrails(
-              { daily_action_budget: 2500, dollar_impact_cap_without_2fa: 1000 },
+              {
+                daily_action_budget: DEFAULT_GUARDRAILS.daily_action_budget_cents / 100,
+                dollar_impact_cap_without_2fa: DEFAULT_GUARDRAILS.dollar_cap_cents / 100,
+                cooldown_minutes_per_campaign: DEFAULT_GUARDRAILS.cooldown_minutes,
+              },
               await dailyUsedCents(shopId),
             );
           }

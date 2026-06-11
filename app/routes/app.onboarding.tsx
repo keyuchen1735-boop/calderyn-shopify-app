@@ -31,16 +31,19 @@ import {
 } from "~/lib/calderyn.server";
 import { useActionToast } from "~/lib/toast";
 import { providerPaired } from "~/lib/integrations";
+import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
 import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
+// Only Shop + Guardrails are required; the stepper marks the rest so an
+// 8-step wall doesn't read as 8 mandatory commitments.
 const STEPS = [
   { key: "shopify", label: "Shop" },
   { key: "guardrails", label: "Guardrails" },
-  { key: "google", label: "Google Ads" },
-  { key: "meta", label: "Meta Ads" },
-  { key: "quickbooks", label: "QuickBooks" },
+  { key: "google", label: "Google Ads (optional)" },
+  { key: "meta", label: "Meta Ads (optional)" },
+  { key: "quickbooks", label: "QuickBooks (optional)" },
   { key: "creative", label: "Creative mapping" },
   { key: "consent", label: "Consent" },
   { key: "complete", label: "Complete" },
@@ -198,16 +201,12 @@ export default function Onboarding() {
         )}
         {error && (
           <Banner tone="critical" title="Couldn't load onboarding state">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Onboarding action failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
 
@@ -335,12 +334,19 @@ function GuardrailsStep({
   submitting: boolean;
 }) {
   const [budget, setBudget] = useState(
-    String(Math.round((guardrails?.daily_action_budget_cents ?? 250000) / 100)),
+    String(
+      Math.round(
+        (guardrails?.daily_action_budget_cents ?? DEFAULT_GUARDRAILS.daily_action_budget_cents) /
+          100,
+      ),
+    ),
   );
   const [cap, setCap] = useState(
-    String(Math.round((guardrails?.dollar_cap_cents ?? 100000) / 100)),
+    String(Math.round((guardrails?.dollar_cap_cents ?? DEFAULT_GUARDRAILS.dollar_cap_cents) / 100)),
   );
-  const [cooldown, setCooldown] = useState(String(guardrails?.cooldown_minutes ?? 30));
+  const [cooldown, setCooldown] = useState(
+    String(guardrails?.cooldown_minutes ?? DEFAULT_GUARDRAILS.cooldown_minutes),
+  );
 
   return (
     <BlockStack gap="400">
@@ -348,8 +354,10 @@ function GuardrailsStep({
         Set your guardrails
       </Text>
       <Text as="p" tone="subdued">
-        Calderyn will never execute an action that violates these. Every guardrail is enforced
-        inside the action gateway before any external API call.
+        By default, Calderyn only acts when you approve it — nothing runs on its own. These
+        limits apply if you later turn on Autopilot, and cap any action you approve. Every
+        limit is enforced before a change reaches your ad accounts. You can adjust them
+        anytime in Settings.
       </Text>
       <Box padding="300" background="bg-surface-secondary" borderRadius="200">
         <GuardrailMeter
@@ -472,6 +480,10 @@ function OAuthStep({
       </Text>
       <Text as="p" tone="subdued">
         {cfg.blurb}
+      </Text>
+      <Text as="p" tone="subdued" variant="bodySm">
+        Clicking Connect opens the provider&apos;s secure sign-in in this window — you&apos;ll
+        be brought back here after you approve access.
       </Text>
       <Box padding="300" background="bg-surface-secondary" borderRadius="200">
         <InlineStack align="space-between" blockAlign="center">
