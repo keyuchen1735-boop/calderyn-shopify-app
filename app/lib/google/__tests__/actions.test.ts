@@ -95,4 +95,61 @@ describe("googleActionAdapterForShop mutate errors", () => {
     const adapter = await googleActionAdapterForShop("shop-1");
     await expect(adapter!.pause("777")).rejects.toThrow(/DEVELOPER_TOKEN_NOT_APPROVED/);
   });
+
+  it("setDailyBudget resolves the campaign's budget resourceName before mutating", async () => {
+    // Regression: the real mutate ignored campaignExternalId and sent a
+    // campaignBudgets update with NO resourceName — every Google budget edit
+    // failed. The budget is its own resource and must be looked up first.
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = "devtok";
+    process.env.GOOGLE_ADS_CLIENT_ID = "cid";
+    process.env.GOOGLE_ADS_CLIENT_SECRET = "sec";
+    const fetchMock = vi
+      .fn()
+      // 1st: oauth token exchange (search path)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "tok" })))
+      // 2nd: googleAds:search -> campaign.campaignBudget
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: [{ campaign: { campaignBudget: "customers/123/campaignBudgets/456" } }],
+          }),
+        ),
+      )
+      // 3rd: oauth token exchange (mutate path)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "tok" })))
+      // 4th: campaignBudgets:mutate -> ok
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{}] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = await googleActionAdapterForShop("shop-1");
+    await adapter!.setDailyBudget("777", 5000);
+
+    const searchCall = fetchMock.mock.calls[1];
+    expect(String(searchCall[0])).toContain("googleAds:search");
+    expect(String(searchCall[1]?.body)).toContain("campaign.id = 777");
+
+    const mutateCall = fetchMock.mock.calls[3];
+    expect(String(mutateCall[0])).toContain("campaignBudgets:mutate");
+    const body = JSON.parse(String(mutateCall[1]?.body)) as {
+      operations: Array<{ update: { resourceName?: string; amountMicros?: number } }>;
+    };
+    expect(body.operations[0].update.resourceName).toBe("customers/123/campaignBudgets/456");
+    expect(body.operations[0].update.amountMicros).toBe(50_000_000);
+  });
+
+  it("setDailyBudget fails actionably when the campaign has no budget row", async () => {
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = "devtok";
+    process.env.GOOGLE_ADS_CLIENT_ID = "cid";
+    process.env.GOOGLE_ADS_CLIENT_SECRET = "sec";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "tok" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = await googleActionAdapterForShop("shop-1");
+    await expect(adapter!.setDailyBudget("777", 5000)).rejects.toThrow(
+      /no campaign budget found/,
+    );
+  });
 });
