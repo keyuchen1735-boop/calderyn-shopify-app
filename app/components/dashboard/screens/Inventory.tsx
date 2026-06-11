@@ -7,10 +7,9 @@
 import { useEffect, useState } from "react";
 import { Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { BrandGlyph, brandTitle } from "../../calderyn/brand-icons";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
-import type { SkuVM, AlertVM, SkuSource } from "../view-models";
+import type { SkuVM, AlertVM } from "../view-models";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -48,20 +47,6 @@ function LocationBar({ locations }: { locations: Record<string, number> }) {
           ),
       )}
     </div>
-  );
-}
-
-/* ---------- Per-SKU data sources (cost + ad platforms) ---------- */
-function SourceIcons({ sources }: { sources: SkuSource[] }) {
-  if (!sources.length) return <span className="cd-caption">—</span>;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "help" }}>
-      {sources.map((s) => (
-        <span key={s} title={brandTitle(s)}>
-          <BrandGlyph name={s} size={12} />
-        </span>
-      ))}
-    </span>
   );
 }
 
@@ -104,7 +89,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         ? s.status === "healthy"
         : s.status !== "healthy",
   );
-  const attention = skus.filter((s) => s.status !== "healthy").length;
 
   // A SKU row is clickable when an open alert references it. The prototype keyed
   // on the alert's `sku` string starting with the SKU title prefix.
@@ -116,7 +100,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen">
       <ScreenHeaderInline
-        attention={attention}
         loading={loading}
         total={skus.length}
         filter={filter}
@@ -137,8 +120,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 52, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 104 }}>By location</span>
-              <span style={{ width: 72 }}>Sources</span>
-              <span style={{ width: 92 }}></span>
+              <span style={{ width: 92, textAlign: "right" }}>Status</span>
             </div>
             <div className="cd-rows">
               {shown.map((s) => {
@@ -198,9 +180,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     <span style={{ width: 104 }}>
                       <LocationBar locations={s.locations} />
                     </span>
-                    <span style={{ width: 72 }}>
-                      <SourceIcons sources={s.sources} />
-                    </span>
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <Pill tone={st.tone}>{st.label}</Pill>
                     </span>
@@ -221,13 +200,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
 
 /* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
 function ScreenHeaderInline({
-  attention,
   loading,
   total,
   filter,
   onFilter,
 }: {
-  attention: number;
   loading: boolean;
   total: number;
   filter: Filter;
@@ -240,7 +217,7 @@ function ScreenHeaderInline({
         <p className="cd-sub">
           {loading
             ? "Loading SKUs across your locations…"
-            : `${total} tracked SKUs · ${attention} need attention`}
+            : `${total} tracked SKUs`}
         </p>
       </div>
       <div className="flex items-center gap-2.5">
