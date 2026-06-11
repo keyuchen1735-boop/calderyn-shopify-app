@@ -36,7 +36,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!fromLocationId || !toLocationId) return jsonError(422, "missing_location");
   if (!Number.isInteger(quantity) || quantity <= 0) return jsonError(422, "invalid_quantity");
 
-  const skuId = String(params.id);
+  const skuId = String(params.id ?? "");
+  if (!skuId) return jsonError(422, "missing_sku_id");
 
   return dashboardJson(async () => {
     const { admin } = await unauthenticated.admin(session.shopDomain);

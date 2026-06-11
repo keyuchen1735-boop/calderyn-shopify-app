@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { action } from "../../../routes/dashboard.api.skus.$id.relocate";
+import type * as SessionServer from "../session.server";
+import type * as HttpServer from "../http.server";
+import type * as InventoryRelocateServer from "../../actions/inventory-relocate.server";
 
 const requireDashboardSession = vi.fn();
 const requireSameOrigin = vi.fn();
@@ -7,15 +10,15 @@ const executeInventoryRelocation = vi.fn();
 const unauthenticatedAdmin = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../session.server")>()),
+  ...(await importOriginal<typeof SessionServer>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
 vi.mock("../http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../http.server")>()),
+  ...(await importOriginal<typeof HttpServer>()),
   requireSameOrigin: (...a: unknown[]) => requireSameOrigin(...a),
 }));
 vi.mock("../../actions/inventory-relocate.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../actions/inventory-relocate.server")>()),
+  ...(await importOriginal<typeof InventoryRelocateServer>()),
   executeInventoryRelocation: (...a: unknown[]) => executeInventoryRelocation(...a),
 }));
 vi.mock("../../supabase.server", () => ({ getSupabase: () => ({ mocked: true }) }));
@@ -86,6 +89,12 @@ describe("dashboard.api.skus.$id.relocate", () => {
     expect((res as Response).status).toBe(422);
   });
 
+  it("422s on missing sku id without executing", async () => {
+    const res = await action({ request: post(BODY), params: {}, context: {} } as never);
+    expect((res as Response).status).toBe(422);
+    expect(executeInventoryRelocation).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["missing idempotency key", { ...BODY, idempotency_key: "" }],
     ["zero quantity", { ...BODY, quantity: 0 }],
@@ -99,9 +108,9 @@ describe("dashboard.api.skus.$id.relocate", () => {
   });
 
   it("maps RelocationError to a 422 with its code", async () => {
-    const { RelocationError } = await vi.importActual<
-      typeof import("../../actions/inventory-relocate.server")
-    >("../../actions/inventory-relocate.server");
+    const { RelocationError } = await vi.importActual<typeof InventoryRelocateServer>(
+      "../../actions/inventory-relocate.server",
+    );
     executeInventoryRelocation.mockRejectedValue(
       new RelocationError("QTY_EXCEEDS_AVAILABLE", "Only 5 units available."),
     );
