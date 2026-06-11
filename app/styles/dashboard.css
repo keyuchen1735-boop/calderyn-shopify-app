@@ -540,3 +540,22 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
+
+  /* ============ predictor media drop ============ */
+  .cd-mediadrop {
+    display: flex; align-items: center; gap: 14px;
+    min-height: 92px; padding: 12px 14px;
+    background: var(--gray-bg); border: 1.5px dashed var(--hairline-strong);
+    border-radius: 12px; cursor: pointer; user-select: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .cd-mediadrop:hover { border-color: var(--text-3); }
+  .cd-mediadrop:focus-visible { outline: none; box-shadow: 0 0 0 3.5px color-mix(in oklch, var(--accent) 28%, transparent); }
+  .cd-mediadrop.is-over { border-color: var(--accent); background: color-mix(in oklch, var(--accent) 8%, var(--gray-bg)); }
+  .cd-mediadrop.is-disabled { opacity: 0.5; pointer-events: none; }
+  .cd-mediadrop-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 9px; flex-shrink: 0; }
+  .cd-mediadrop-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .cd-mediadrop-meta b { font-size: calc(13px * var(--type-scale)); font-weight: 600; color: var(--text-1); }
+  .cd-mediadrop-meta span { font-size: calc(12px * var(--type-scale)); color: var(--text-2); }
+  .cd-mediadrop-meta u { text-underline-offset: 2px; }
+  .cd-mediadrop-err { margin: 0; font-size: calc(12px * var(--type-scale)); color: var(--red); }

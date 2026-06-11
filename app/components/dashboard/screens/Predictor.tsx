@@ -1,12 +1,12 @@
-// Calderyn DashV2 — Creative Predictor screen (SIMULATED).
-// Faithful port of the prototype's screen-predictor.jsx. Scores an ad creative
-// before spend: animated scoring run → composite RingGauge → 13-dimension
-// scorecard (grouped, with reasoning) → predicted ROAS band + outcomes → tips →
-// beating variants → "original ad" drop-zone. Source data = SCORECARD (demo.ts).
+// Calderyn DashV2 — Creative Predictor screen.
+// Scores an ad creative before spend: mandatory media drop box (the actual
+// image/video) → live /dashboard/api/screener run → composite RingGauge →
+// 13-dimension scorecard → predicted ROAS band + outcomes → tips.
 //
-// TODO(other-agent): replace with live predictor/generator API. This screen runs
-// entirely on demo data + a simulated staged run; no backend is wired.
-import { useState, type ReactNode } from "react";
+// The manual form scores LIVE. The "pick a live ad" list and the generated-
+// variants demo remain simulated (SCORECARD from demo.ts) —
+// TODO(other-agent): wire those to the live predictor/generator API too.
+import { useEffect, useState, type ReactNode } from "react";
 import { Card, RingGauge, ScoreBar, Btn, Pill, GradePill } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
@@ -14,8 +14,16 @@ import { SCORECARD, GROUP_LABELS } from "../demo";
 // Side-effect import: registers the <image-slot> custom element on the client.
 // Self-guards SSR (typeof window) so this is import-safe under Remix SSR.
 import "../image-slot";
+import MediaDrop from "../MediaDrop";
 import type { DashboardCtx } from "../context";
 import type { Scorecard, ScorecardMetric } from "../view-models";
+import {
+  adaptScreenRun,
+  fetchLatestScreenRun,
+  screenCreative,
+} from "~/lib/dashboard/client";
+import type { ProcessedCreativeMedia } from "~/lib/creative-media";
+import type { CreativeScreenRun } from "~/lib/screener/types";
 
 // Staged scoring run copy (matches the prototype's SCORE_STEPS).
 const SCORE_STEPS = [
@@ -145,12 +153,85 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
       "Heavyweight organic cotton, reinforced seams, and a fit tested on 40-mile weekends. The Summit Tee is the one you'll reach for every time.",
     cta: "Shop Now",
     audience: "Broad US, outdoors interests, 24–54",
+    destinationUrl: "",
     spend: "500",
   });
-  const sc = SCORECARD;
+  // Mandatory creative media: processed client-side (downscale / frame-extract).
+  const [media, setMedia] = useState<ProcessedCreativeMedia | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [scoring, setScoring] = useState(false);
+  // The latest real run; the demo SCORECARD stays as the first-visit preview.
+  const [liveRun, setLiveRun] = useState<CreativeScreenRun | null>(null);
+  const liveSc = liveRun ? adaptScreenRun(liveRun) : null;
+  const sc = liveSc ?? SCORECARD;
 
-  // Simulated staged scoring run — TODO(other-agent): replace with live predictor API.
-  const run = () => {
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestScreenRun()
+      .then((run) => {
+        if (!cancelled && run?.status === "done" && run.scorecard) setLiveRun(run);
+      })
+      .catch(() => {
+        // No session / transient failure → keep the demo preview; the live
+        // score path surfaces its own errors on submit.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Live scoring genuinely takes ~20–30s: advance the staged copy slowly and
+  // hold the last step until the request returns (mirrors the extension).
+  useEffect(() => {
+    if (!scoring || phase !== "running" || step >= SCORE_STEPS.length - 1) return;
+    const t = setTimeout(() => setStep((s) => s + 1), 3500 + Math.random() * 1500);
+    return () => clearTimeout(t);
+  }, [scoring, phase, step]);
+
+  // Live scoring for the manual form — the media drop is mandatory.
+  const runLive = async () => {
+    if (!media) {
+      setFormError("Add the actual ad creative — drop its image or video in the box.");
+      return;
+    }
+    setFormError(null);
+    setScoring(true);
+    setPhase("running");
+    setStep(0);
+    try {
+      const spendNum = Number(form.spend);
+      const run = await screenCreative({
+        headline: form.headline,
+        primaryText: form.primaryText,
+        cta: form.cta,
+        destinationUrl: form.destinationUrl,
+        audience: form.audience,
+        assumedSpendCents:
+          Number.isFinite(spendNum) && spendNum > 0 ? Math.round(spendNum * 100) : 50_000,
+        mediaKind: media.kind,
+        imageUrl: media.imageUrl,
+        ...(media.kind === "video"
+          ? { videoFrameUrls: media.frameUrls, videoDurationSec: media.durationSec }
+          : {}),
+      });
+      if (run.status !== "done" || !run.scorecard) {
+        throw new Error(run.error ?? "Couldn't score this ad — try again.");
+      }
+      setLiveRun(run);
+      setPhase("result");
+      app.toast(`Creative scored — composite ${run.scorecard.composite}.`, "sparkle");
+    } catch (err) {
+      setPhase("form");
+      setFormError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScoring(false);
+    }
+  };
+
+  // Simulated staged run for the demo "pick a live ad" placeholders.
+  const runDemo = () => {
+    setFormError(null);
+    setLiveRun(null);
     setPhase("running");
     setStep(0);
     let i = 0;
@@ -228,12 +309,32 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
                 onChange={(e) => setForm({ ...form, audience: e.target.value })}
               />
             </label>
+            <label className="cd-field">
+              <span>Where the click goes</span>
+              <input
+                className="cd-input"
+                placeholder="https://yourstore.com/products/..."
+                value={form.destinationUrl}
+                onChange={(e) => setForm({ ...form, destinationUrl: e.target.value })}
+              />
+            </label>
+            <MediaDrop
+              value={media}
+              onChange={(m) => {
+                setMedia(m);
+                setFormError(null);
+              }}
+              disabled={scoring}
+            />
+            {formError && <p className="cd-mediadrop-err">{formError}</p>}
             <div className="flex items-center gap-3 mt-1">
-              <Btn kind="primary" icon="sparkle" onClick={run}>
+              <Btn kind="primary" icon="sparkle" onClick={runLive} disabled={!media || scoring}>
                 Score creative
               </Btn>
               <span className="cd-caption">
-                ~20 seconds · uses your last 90 days of ad history
+                {media
+                  ? "~20 seconds · uses your last 90 days of ad history"
+                  : "Add the ad's image or video to score it"}
               </span>
             </div>
           </Card>
@@ -244,7 +345,7 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
               "UGC — “Three weeks on the JMT”",
               "Carousel — Rain shell in real rain",
             ].map((name) => (
-              <button key={name} className="cd-action-btn" onClick={run}>
+              <button key={name} className="cd-action-btn" onClick={runDemo}>
                 <CDIcon name="megaphone" size={15} />
                 <span className="flex-1 text-left truncate">{name}</span>
                 <CDIcon name="chevronRight" size={14} />
@@ -284,20 +385,35 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
       {phase === "result" && (
         <>
           <Card className="flex items-center gap-6 flex-wrap">
-            <image-slot
-              id="original-ad"
-              shape="rounded"
-              radius="14"
-              fit="cover"
-              placeholder="Drop the original ad"
-              style={{ width: 120, height: 120, flexShrink: 0 }}
-            ></image-slot>
+            {liveRun?.creativeInput?.imageUrl ? (
+              <img
+                src={liveRun.creativeInput.imageUrl}
+                alt="Ad creative"
+                style={{
+                  width: 120,
+                  height: 120,
+                  objectFit: "cover",
+                  borderRadius: 14,
+                  flexShrink: 0,
+                }}
+              />
+            ) : (
+              <image-slot
+                id="original-ad"
+                shape="rounded"
+                radius="14"
+                fit="cover"
+                placeholder="Drop the original ad"
+                style={{ width: 120, height: 120, flexShrink: 0 }}
+              ></image-slot>
+            )}
             <RingGauge value={sc.composite} size={120} label="composite" />
             <div className="min-w-0 flex-1" style={{ minWidth: 240 }}>
               <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                 <h2 className="cd-h2">{sc.ad_name}</h2>
                 <GradePill grade={sc.grade} />
                 <Pill>confidence: {sc.confidence}</Pill>
+                {liveRun?.creativeInput?.mediaKind === "video" && <Pill>video creative</Pill>}
               </div>
               <p className="cd-body" style={{ maxWidth: "60ch" }}>
                 {sc.summary}
@@ -333,6 +449,11 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
               </Card>
               <Card className="flex flex-col gap-3">
                 <h2 className="cd-h2">Generated variants that beat it</h2>
+                {sc.variants.length === 0 && (
+                  <p className="cd-caption">
+                    No generated variants yet — remake it in the Ad Generator.
+                  </p>
+                )}
                 {sc.variants.map((v) => (
                   <div key={v.mode} className="cd-variant">
                     <div className="flex items-center gap-2">
