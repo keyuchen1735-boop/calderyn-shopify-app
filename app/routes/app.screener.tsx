@@ -24,6 +24,7 @@ import {
   Button,
   ButtonGroup,
   Card,
+  DropZone,
   FormLayout,
   InlineGrid,
   InlineStack,
@@ -33,6 +34,11 @@ import {
   Text,
   TextField,
 } from "@shopify/polaris";
+import {
+  MEDIA_ACCEPT,
+  processCreativeMedia,
+  type ProcessedCreativeMedia,
+} from "~/lib/creative-media";
 import { authenticate } from "../shopify.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
 import { getLatestRun, listRuns, saveVariants } from "~/lib/screener/runs.server";
@@ -51,6 +57,7 @@ import {
   type ScreenableAd,
   type Variant,
 } from "~/lib/screener/types";
+import { validateCreativeMedia } from "~/lib/screener/media.server";
 import { gateScoreDeps } from "~/lib/screener/score-one.server";
 import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
@@ -77,8 +84,22 @@ export function clampSpend(raw: FormDataEntryValue | null): number {
 export function parseCreativeForm(form: FormData): CreativeInput {
   const str = (k: string) => String(form.get(k) ?? "").trim();
   const imageUrl = str("imageUrl");
+  const mediaKind = str("mediaKind");
+  let videoFrameUrls: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(str("videoFrameUrls") || "[]");
+    if (Array.isArray(parsed)) {
+      videoFrameUrls = parsed.filter((f): f is string => typeof f === "string");
+    }
+  } catch {
+    // Malformed frames payload → no frames; validateCreativeMedia rejects it.
+  }
+  const durationRaw = Number(str("videoDurationSec"));
   return {
     imageUrl: imageUrl || null,
+    mediaKind: mediaKind === "image" || mediaKind === "video" ? mediaKind : null,
+    videoFrameUrls,
+    videoDurationSec: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : null,
     headline: str("headline"),
     primaryText: str("primaryText"),
     cta: str("cta") || "SHOP_NOW",
@@ -86,6 +107,7 @@ export function parseCreativeForm(form: FormData): CreativeInput {
     audience: str("audience"),
   };
 }
+
 
 export function isMetaSubmit(form: FormData): { metaAdId: string } | null {
   if (String(form.get("source") ?? "") !== "meta_ad") return null;
@@ -215,6 +237,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(run);
   }
   const input = parseCreativeForm(form);
+  const mediaError = validateCreativeMedia(input);
+  if (mediaError) return json({ formError: mediaError });
   const run = await executeScreen({ shop: session.shop, input, assumedSpendCents });
   return json(run);
 };
@@ -536,6 +560,10 @@ export default function Screener() {
     data && typeof data === "object" && "generateError" in data
       ? (data as { generateError?: string }).generateError
       : undefined;
+  const formError =
+    data && typeof data === "object" && "formError" in data
+      ? (data as { formError?: string }).formError
+      : undefined;
   const busy = fetcher.state !== "idle";
   const intent = busy ? String(fetcher.formData?.get("intent") ?? "") : "";
   const scoring = busy && intent === "";
@@ -551,6 +579,27 @@ export default function Screener() {
   const [spend, setSpend] = useState<string>(
     String((latest?.assumedSpendCents ?? DEFAULT_SPEND_CENTS) / 100),
   );
+  // Mandatory creative media: processed entirely client-side (downscale /
+  // frame-extract), submitted as data URLs via hidden inputs.
+  const [media, setMedia] = useState<ProcessedCreativeMedia | null>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaProcessing, setMediaProcessing] = useState(false);
+  const handleDrop = async (_files: File[], accepted: File[], rejected: File[]) => {
+    setMediaError(null);
+    // A rejected (wrong-type) file still goes through processCreativeMedia so
+    // the merchant gets the specific "use PNG/JPEG/… or MP4/WebM" message.
+    const file = accepted[0] ?? rejected[0];
+    if (!file) return;
+    setMediaProcessing(true);
+    try {
+      setMedia(await processCreativeMedia(file));
+    } catch (err) {
+      setMedia(null);
+      setMediaError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMediaProcessing(false);
+    }
+  };
   const [genMode, setGenMode] = useState<"copy" | "image">("copy");
   const hasMetaAds = metaAds.length > 0;
 
@@ -571,6 +620,9 @@ export default function Screener() {
       // Require a scorecard, not just status, so a malformed "done" run can't
       // strand the page on an empty result phase.
       setPhase(r.status === "done" && r.scorecard ? "result" : "form");
+    } else if (d && typeof d === "object" && "formError" in d) {
+      // Server-side mandatory-media rejection: return to the form to show it.
+      setPhase("form");
     }
   }, [fetcher.state, fetcher.data]);
   // Advance the staged copy while the real score request is in flight; the last
@@ -615,6 +667,11 @@ export default function Screener() {
                   <Text as="h2" variant="headingSm">
                     Creative
                   </Text>
+                  {formError && (
+                    <Banner tone="critical">
+                      <p>{formError}</p>
+                    </Banner>
+                  )}
                   <FormLayout>
                     <TextField
                       label="Headline"
@@ -653,29 +710,106 @@ export default function Screener() {
                       placeholder="Women 25–44 interested in skincare"
                       helpText="One-line description of who it targets."
                     />
-                    <FormLayout.Group>
-                      <TextField
-                        label="Where the click goes"
-                        name="destinationUrl"
-                        autoComplete="off"
-                        placeholder="https://yourstore.com/products/..."
-                        helpText="The product or landing page URL."
-                      />
-                      <TextField
-                        label="Image link (optional)"
-                        name="imageUrl"
-                        autoComplete="off"
-                        placeholder="https://…/creative.jpg"
-                        helpText="We'll score the visual too."
-                      />
-                    </FormLayout.Group>
+                    <TextField
+                      label="Where the click goes"
+                      name="destinationUrl"
+                      autoComplete="off"
+                      placeholder="https://yourstore.com/products/..."
+                      helpText="The product or landing page URL."
+                    />
+                    <BlockStack gap="150">
+                      <Text as="span" variant="bodyMd">
+                        Ad creative (required)
+                      </Text>
+                      <DropZone
+                        accept={MEDIA_ACCEPT}
+                        allowMultiple={false}
+                        type="file"
+                        onDrop={handleDrop}
+                        disabled={busy}
+                      >
+                        {media ? (
+                          <Box padding="300">
+                            <InlineStack gap="300" blockAlign="center" wrap={false}>
+                              <img
+                                src={media.imageUrl}
+                                alt="Creative preview"
+                                style={{
+                                  width: 72,
+                                  height: 72,
+                                  objectFit: "cover",
+                                  borderRadius: 8,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <BlockStack gap="050">
+                                <Text as="span" variant="bodySm" fontWeight="medium">
+                                  {media.kind === "video"
+                                    ? `Video · ~${Math.round(media.durationSec)}s · ${media.frameUrls.length} key frame${media.frameUrls.length === 1 ? "" : "s"} captured`
+                                    : "Image ready to score"}
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  Drop a new file to replace it.
+                                </Text>
+                              </BlockStack>
+                            </InlineStack>
+                          </Box>
+                        ) : mediaProcessing ? (
+                          <Box padding="400">
+                            <InlineStack gap="200" blockAlign="center" align="center">
+                              <Spinner size="small" />
+                              <Text as="span" variant="bodySm">
+                                Reading your creative…
+                              </Text>
+                            </InlineStack>
+                          </Box>
+                        ) : (
+                          <DropZone.FileUpload
+                            actionTitle="Add image or video"
+                            actionHint="The actual creative that will run — we score the visual itself."
+                          />
+                        )}
+                      </DropZone>
+                      {mediaError && (
+                        <Text as="p" variant="bodySm" tone="critical">
+                          {mediaError}
+                        </Text>
+                      )}
+                    </BlockStack>
+                    {media && (
+                      <>
+                        <input type="hidden" name="mediaKind" value={media.kind} />
+                        <input type="hidden" name="imageUrl" value={media.imageUrl} />
+                        {media.kind === "video" && (
+                          <>
+                            <input
+                              type="hidden"
+                              name="videoFrameUrls"
+                              value={JSON.stringify(media.frameUrls)}
+                            />
+                            <input
+                              type="hidden"
+                              name="videoDurationSec"
+                              value={String(media.durationSec)}
+                            />
+                          </>
+                        )}
+                      </>
+                    )}
                     <input type="hidden" name="assumedSpendCents" value={spendCents} />
                     <InlineStack gap="300" blockAlign="center">
-                      <Button submit variant="primary" loading={scoring} disabled={busy}>
+                      <Button
+                        submit
+                        variant="primary"
+                        loading={scoring}
+                        disabled={busy || !media || mediaProcessing}
+                      >
                         Score creative
                       </Button>
                       <Text as="span" variant="bodySm" tone="subdued">
-                        ~20 seconds · uses your ad history
+                        {media
+                          ? "~20 seconds · uses your ad history"
+                          : "Add the ad's image or video to score it"}
                       </Text>
                     </InlineStack>
                   </FormLayout>
@@ -818,6 +952,9 @@ export default function Screener() {
                       </Text>
                       <Badge tone={gradeTone[card.grade]}>{gradeLabel[card.grade]}</Badge>
                       <Badge>{`confidence: ${card.confidence}`}</Badge>
+                      {run?.creativeInput?.mediaKind === "video" && (
+                        <Badge tone="info">Video creative</Badge>
+                      )}
                     </InlineStack>
                     <Box paddingBlockStart="150">
                       <Text as="p">{card.summary}</Text>

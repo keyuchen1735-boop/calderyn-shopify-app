@@ -80,9 +80,17 @@ export interface ScoreCard {
   tips: string[];
 }
 
+export type MediaKind = "image" | "video";
+
 /** What the merchant enters (Plan 1) or what we fetch from Meta (Plan 2). */
 export interface CreativeInput {
+  /** Image creative, or the poster (first frame) for a video. data: or https:. */
   imageUrl: string | null;
+  /** Absent/null on legacy rows and Meta-sourced creatives. */
+  mediaKind?: MediaKind | null;
+  /** Extracted key frames (data URLs, start → end). Video only. */
+  videoFrameUrls?: string[];
+  videoDurationSec?: number | null;
   headline: string;
   primaryText: string;
   cta: string;

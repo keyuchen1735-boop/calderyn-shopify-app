@@ -27,9 +27,11 @@ import type {
   Grade,
   IntegrationVM,
   OverviewVM,
+  Scorecard,
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
+import type { CreativeScreenRun } from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
@@ -553,5 +555,79 @@ export async function sendAssistantMessage(
   return {
     conversationId: String(body.conversation_id),
     message: body.message as AssistantMessage,
+  };
+}
+
+// --- creative screener (Predictor) ------------------------------------------
+
+export async function fetchLatestScreenRun(): Promise<CreativeScreenRun | null> {
+  const data = await apiGet<{ latest: CreativeScreenRun | null }>("/dashboard/api/screener");
+  return data.latest;
+}
+
+export interface ScreenCreativePayload {
+  headline: string;
+  primaryText: string;
+  cta: string;
+  destinationUrl: string;
+  audience: string;
+  assumedSpendCents: number;
+  mediaKind: "image" | "video";
+  imageUrl: string;
+  videoFrameUrls?: string[];
+  videoDurationSec?: number;
+}
+
+export async function screenCreative(
+  payload: ScreenCreativePayload,
+): Promise<CreativeScreenRun> {
+  const data = await apiSend<{ run: CreativeScreenRun }>(
+    "POST",
+    "/dashboard/api/screener",
+    payload,
+  );
+  return data.run;
+}
+
+/** Live run DTO → the Scorecard view-model the Predictor screen renders. */
+export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
+  const sc = run.scorecard;
+  if (!sc) return null;
+  return {
+    ad_name:
+      run.creativeInput?.headline?.trim() ||
+      (run.source === "meta_ad" ? "Meta ad" : "Your ad"),
+    composite: sc.composite,
+    grade: sc.grade,
+    confidence: sc.confidence,
+    summary: sc.summary,
+    outcomes: {
+      estimatedRoas: sc.outcomes.estimatedRoas,
+      roasLow: sc.outcomes.roasLow,
+      roasHigh: sc.outcomes.roasHigh,
+      breakEvenRoas: sc.outcomes.breakEvenRoas,
+      predictedCtr: sc.outcomes.predictedCtr,
+      holdRate: sc.outcomes.holdRate,
+      assumedSpendCents: sc.outcomes.assumedSpendCents,
+      predictedRevenueCents: sc.outcomes.predictedRevenueCents,
+      mappedSku: sc.outcomes.mappedSku ?? "No SKU",
+      skuPriceCents: sc.outcomes.skuPriceCents ?? 0,
+    },
+    metrics: sc.metrics.map((m) => ({
+      id: m.id,
+      group: m.group,
+      label: m.label,
+      score: m.score,
+      reasoning: m.reasoning,
+    })),
+    tips: sc.tips,
+    variants: run.variants.map((v) => ({
+      mode: v.mode,
+      composite: v.composite,
+      delta: v.delta,
+      summary: v.summary,
+      headline: v.input.headline,
+      cta: v.input.cta,
+    })),
   };
 }

@@ -49,6 +49,36 @@ describe("parseCreativeForm", () => {
     expect(out.headline).toBe("Hi");
     expect(out.imageUrl).toBeNull();
     expect(out.cta).toBe("SHOP_NOW");
+    expect(out.mediaKind).toBeNull();
+    expect(out.videoFrameUrls).toEqual([]);
+    expect(out.videoDurationSec).toBeNull();
+  });
+
+  it("parses the uploaded-media fields (kind, frames JSON, duration)", () => {
+    const fd = new FormData();
+    fd.set("mediaKind", "video");
+    fd.set("imageUrl", "data:image/webp;base64,AA");
+    fd.set(
+      "videoFrameUrls",
+      JSON.stringify(["data:image/webp;base64,AA", "data:image/webp;base64,BB"]),
+    );
+    fd.set("videoDurationSec", "12.4");
+    const out = parseCreativeForm(fd);
+    expect(out.mediaKind).toBe("video");
+    expect(out.imageUrl).toBe("data:image/webp;base64,AA");
+    expect(out.videoFrameUrls).toHaveLength(2);
+    expect(out.videoDurationSec).toBe(12.4);
+  });
+
+  it("survives malformed frames JSON and bogus kinds without throwing", () => {
+    const fd = new FormData();
+    fd.set("mediaKind", "gif");
+    fd.set("videoFrameUrls", "{not json");
+    fd.set("videoDurationSec", "-2");
+    const out = parseCreativeForm(fd);
+    expect(out.mediaKind).toBeNull();
+    expect(out.videoFrameUrls).toEqual([]);
+    expect(out.videoDurationSec).toBeNull();
   });
 });
 
