@@ -30,10 +30,21 @@ const ORIG = {
 function mockSb(orig: Record<string, unknown> | null) {
   const single = vi.fn(async () => ({ data: { id: "audit-undo-1" }, error: null }));
   const builder: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "update", "insert", "order", "limit"]) {
+  for (const m of ["eq", "update", "insert", "order", "limit"]) {
     builder[m] = vi.fn(() => builder);
   }
-  builder.maybeSingle = vi.fn(async () => ({ data: orig, error: null }));
+  // The builder is shared across from() calls, so key maybeSingle on the most
+  // recent select arg: the double-undo guard probes with select("id") and must
+  // see no prior undo, while the full-column orig lookup gets the orig row.
+  let lastSelect = "";
+  builder.select = vi.fn((cols: string) => {
+    lastSelect = cols;
+    return builder;
+  });
+  builder.maybeSingle = vi.fn(async () => ({
+    data: lastSelect === "id" ? null : orig,
+    error: null,
+  }));
   builder.single = single;
   return { from: vi.fn(() => builder) } as never;
 }

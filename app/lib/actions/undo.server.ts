@@ -15,12 +15,33 @@ export async function undoAction(
 ): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec")
+    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
   if (error) throw error;
   if (!orig) throw new Error(`audit ${auditId} not found for shop`);
+
+  // An undo row replays state (or, for inventory, a delta) — undoing it again
+  // or undoing twice must be refused server-side, not just hidden by the UI's
+  // undo_eligible flag (rule 12: the API is the real boundary). Read-then-act
+  // guard, not a true unique constraint — a race between two concurrent undos
+  // remains theoretically possible; the DB index is deliberately out of scope
+  // for this branch.
+  if (orig.undo_of) {
+    throw new Error(`audit ${auditId} is itself an undo; cannot undo an undo`);
+  }
+  const { data: existingUndo, error: uErr } = await sb
+    .from("action_audit")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("undo_of", orig.id)
+    .limit(1)
+    .maybeSingle();
+  if (uErr) throw uErr;
+  if (existingUndo) {
+    throw new Error(`audit ${auditId} was already undone (${existingUndo.id})`);
+  }
 
   const params = (orig.params ?? {}) as { external_id?: string; platform?: string };
   const pre = (orig.pre_state ?? {}) as { status?: string; daily_budget_cents?: number | null };

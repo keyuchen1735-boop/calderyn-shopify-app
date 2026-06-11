@@ -11,16 +11,29 @@ vi.mock("../../ads/action-registry.server", () => ({ actionAdapterForShop }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
-function fakeSb(original: Record<string, unknown> | null) {
+function fakeSb(
+  original: Record<string, unknown> | null,
+  existingUndo: { id: string } | null = null,
+) {
   const calls = {
     inserts: [] as Array<{ table: string; rows: unknown }>,
     updates: [] as Array<{ table: string; payload: unknown }>,
   };
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
-    chain.select = vi.fn(() => chain);
+    let selected = "";
+    chain.select = vi.fn((cols: string) => {
+      selected = cols;
+      return chain;
+    });
     chain.eq = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({ data: table === "action_audit" ? original : null, error: null }));
+    chain.limit = vi.fn(() => chain);
+    // The double-undo guard selects only "id"; the orig lookup selects the full
+    // column list. Key the resolved row on that so each query gets its own data.
+    chain.maybeSingle = vi.fn(async () => ({
+      data: table !== "action_audit" ? null : selected === "id" ? existingUndo : original,
+      error: null,
+    }));
     chain.single = vi.fn(async () => ({ data: { id: "undo1" }, error: null }));
     chain.insert = vi.fn((rows: unknown) => { calls.inserts.push({ table, rows }); return chain; });
     chain.update = vi.fn((payload: unknown) => { calls.updates.push({ table, payload }); return chain; });
@@ -115,6 +128,22 @@ describe("undoAction", () => {
     await undoAction(SHOP, "aud1", sb);
     expect(calls.updates.filter((u) => u.table === "alerts")).toEqual([]);
   });
+
+  it("refuses when the audit was already undone, without any platform call", async () => {
+    const { sb, calls } = fakeSb(pauseAudit, { id: "undo-prior" });
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/already undone/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(adapter.pause).not.toHaveBeenCalled();
+    expect(calls.inserts).toEqual([]);
+  });
+
+  it("refuses to undo a row that is itself an undo, without any platform call", async () => {
+    const { sb, calls } = fakeSb({ ...pauseAudit, undo_of: "aud0" });
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/cannot undo an undo/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(adapter.pause).not.toHaveBeenCalled();
+    expect(calls.inserts).toEqual([]);
+  });
 });
 
 describe("undoAction · reallocate_budget", () => {
@@ -142,9 +171,16 @@ describe("undoAction · reallocate_budget", () => {
     const inserts: Array<Record<string, unknown>> = [];
     function builder() {
       const chain: Record<string, unknown> = {};
-      chain.select = vi.fn(() => chain);
+      let selected = "";
+      chain.select = vi.fn((cols: string) => {
+        selected = cols;
+        return chain;
+      });
       chain.eq = vi.fn(() => chain);
-      chain.maybeSingle = vi.fn(async () => ({ data: orig, error: null }));
+      chain.limit = vi.fn(() => chain);
+      // select("id") is the double-undo guard's existence probe — resolve it
+      // empty so the orig row only answers the full-column lookup.
+      chain.maybeSingle = vi.fn(async () => ({ data: selected === "id" ? null : orig, error: null }));
       chain.insert = vi.fn((rows: Record<string, unknown>) => {
         inserts.push(rows);
         return chain;
@@ -178,9 +214,16 @@ describe("undoAction · unhandled action kind guard", () => {
     const inserts: Array<Record<string, unknown>> = [];
     function builder() {
       const chain: Record<string, unknown> = {};
-      chain.select = vi.fn(() => chain);
+      let selected = "";
+      chain.select = vi.fn((cols: string) => {
+        selected = cols;
+        return chain;
+      });
       chain.eq = vi.fn(() => chain);
-      chain.maybeSingle = vi.fn(async () => ({ data: orig, error: null }));
+      chain.limit = vi.fn(() => chain);
+      // select("id") is the double-undo guard's existence probe — resolve it
+      // empty so the orig row only answers the full-column lookup.
+      chain.maybeSingle = vi.fn(async () => ({ data: selected === "id" ? null : orig, error: null }));
       chain.insert = vi.fn((rows: Record<string, unknown>) => {
         inserts.push(rows);
         return chain;
