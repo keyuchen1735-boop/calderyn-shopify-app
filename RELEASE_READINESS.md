@@ -49,6 +49,42 @@ Adoption model (full detail in `ADOPTION_SIMULATION.md`): ~15–20% of installs 
 ~5% active at day 30. Biggest blocker = U1. Strongest trust assets = audit log + undo
 (surface them earlier).
 
+### ⭐ Batch 2 (owner-seeded 2026-06-11 ~09:40 UTC) — sweep of the NOT-YET-SWEPT areas
+
+A second local sweep covered the areas this log marked un-swept (oauth.*, webhooks deeper,
+remaining crons, campaigns index/score UI, assistant slideout, ads/* + attribution/* +
+dashboard/* re-verify). Verify each against current code, then act. C-prefixed = code bugs,
+V-prefixed = UX. Same rules: safe fixes pre-approved; auth/webhook/schema items are
+NEEDS-HUMAN (verify + log only, do not auto-edit).
+
+| ID | Pri | Item | File(s) | Class |
+|----|-----|------|---------|-------|
+| C1 | P1 | `topAdNames` selects `ad_campaign_dim(name)` — feeds **campaign** names to the screener as "top ad names"; also unordered (`limit(50)`, no `.order`). Use `ad_engagement_fact.ad_name` + order by engagement desc | `app/lib/screener/history.server.ts:183-194` | safe fix (resolves F12) |
+| C2 | P1 | `reconcileAttributedRevenue` UPDATEs `ad_spend_fact` filtered only by `campaign_id`+`day` — add `.eq("shop_id", shopId)` (defence-in-depth on a service-role write) | `app/lib/attribution/revenue.server.ts:48-53` | safe fix |
+| C3 | P1 | `rotateRefreshToken` never selects/checks `expires_at` — expired refresh tokens rotate forever | `app/lib/mcp_tokens.server.ts:183-194` | NEEDS-HUMAN (auth) |
+| C4 | P1 | OAuth DCR endpoint has no rate limit (acknowledged TODO at `oauth.register.tsx:9`) — deploy gate if `MCP_OAUTH_ENABLED` ever set in prod | `app/routes/oauth.register.tsx` | NEEDS-HUMAN (infra) |
+| C5 | P2 | All 3 forwarding webhooks (orders.create / products.update / inventory_levels.update) lack `X-Shopify-Webhook-Id` dedup — Shopify retries can double-ingest orders/inventory | `app/routes/webhooks.*.tsx` | NEEDS-HUMAN (pipeline dedup design) |
+| C6 | P2 | `webhooks.app.uninstalled`: session delete skipped when `session` is null (common on uninstall) — drop the `if (session)` guard, `deleteMany` is safe on zero rows | `app/routes/webhooks.app.uninstalled.tsx:12-14` | safe fix (webhook file but logic-only, no auth change) |
+| C7 | P2 | `edit_budget` action accepts `newCents = 0` — server clamps ≥0 but doesn't reject 0; merchant can zero a campaign budget with no warning | `app/routes/app.campaigns._index.tsx:260` | safe fix |
+| C8 | P2 | Assistant `DraftActionCard` divides `action.dollarImpact` by 100 — verify the `DraftedAction` unit; if dollars, display is 100× off | `app/components/Assistant/DraftActionCard.tsx:5-21` | safe fix after unit check |
+| C9 | P2 | `meta-push` idempotency: write a pending sentinel to `action_idempotency` BEFORE the Meta API call; current order allows double-push on crash (closes F5) | `app/lib/screener/meta-push.server.ts:79-162` | safe-ish — judge carefully, mark [CHANGED] |
+| C10 | P3 | `campaign-detail` hides valid ROAS when `contribution_margin === 0` (loss-leaders show "no data") — split the guards | `app/lib/ads/campaign-detail.server.ts:22` | safe fix |
+| C11 | P3 | Campaign↔alert linkage via `a.campaign.includes(c.name)` substring — wrong badge counts on prefix-named campaigns; key on id where available | `app/routes/app.campaigns._index.tsx:483` | safe fix |
+| C12 | P3 | `ads/ingest` upsert `onConflict: "campaign_id,day"` omits `shop_id` — align with the DB unique constraint or document why | `app/lib/ads/ingest.server.ts:92` | verify constraint first (schema check pending — Supabase access expired locally) |
+| C13 | P3 | GDPR/uninstall webhooks `console.log` shop domain — drop or structure the log | `app/routes/webhooks.gdpr.tsx:13` | safe fix |
+| C14 | P3 | `.well-known/oauth-authorization-server` missing `Access-Control-Allow-Origin: *` (RFC 8414 metadata is fetched cross-origin) | `app/routes/[.]well-known.oauth-authorization-server.tsx` | safe fix |
+| V1 | High | Campaigns index: NO empty state when 0 campaigns + no error — blank table with headers; add EmptyState pointing to Settings integrations | `app/routes/app.campaigns._index.tsx:545` | safe fix |
+| V2 | High | Assistant slideout: multiline TextField has no Enter-to-submit (Shift+Enter = newline) — chat convention | `app/components/Assistant/AssistantSlideout.tsx:165-178` | safe fix |
+| V3 | Med | Assistant slideout: optimistic user bubble not removed/marked on send failure | `app/components/Assistant/AssistantSlideout.tsx:80-88` | safe fix |
+| V4 | Low | `oauth.consent` passes `_auth` JWT as a query param (60s TTL; leaks to access logs/history) | `app/routes/oauth.consent.tsx:48` | NEEDS-HUMAN (auth flow) |
+
+Confirmed CLEAN this sweep (don't re-sweep): `ads/{adapter,actions,backoff,concurrency,registry,action-registry}`,
+`attribution/{match,parse,apply}`, `dashboard/{http,session,shopify-oauth}.server` + all `dashboard.api.*`
+auth gates, the full recovered/audit-impact unit chain (dollars-in-DB ↔ cents-in-app verified hop-by-hop),
+`cron.ingest`, `cron.ingest-quickbooks`, `app.campaigns.$campaignId.score.tsx`, `dashboard.login` state cookie.
+Note: the C12/C1 DB-constraint questions need Supabase schema access — the owner's local Supabase MCP token
+expired before verification; re-verify via migrations files in `supabase/migrations/` if present, else log.
+
 ---
 
 ## Summary
