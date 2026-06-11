@@ -5,9 +5,9 @@
 // cover, velocity, a location distribution bar, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
 import { useEffect, useState } from "react";
-import { Card, Pill, Segmented, Placeholder } from "../ui";
+import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
+import { fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
 
@@ -58,6 +58,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const [skus, setSkus] = useState<SkuVM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [relocating, setRelocating] = useState<SkuVM | null>(null);
+  const [busy, setBusy] = useState(false);
+  // app.refresh() reloads the shell's data but not this screen's self-fetched
+  // SKUs; bump this counter to re-run the fetch after a successful relocate.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -80,7 +85,34 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
+
+  async function confirmRelocate(skuId: string, fromId: string, toId: string, qty: number) {
+    setBusy(true);
+    try {
+      const { outcome } = await relocateSku(skuId, {
+        fromLocationId: fromId,
+        toLocationId: toId,
+        quantity: qty,
+      });
+      if (outcome === "succeeded") {
+        app.toast("Inventory transfer executed", "box", "success");
+        setRelocating(null);
+        setReloadKey((k) => k + 1);
+        app.refresh();
+      } else {
+        app.toast("Transfer recorded as failed — check the audit log", "warn", "critical");
+      }
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't move inventory.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const shown = skus.filter((s) =>
     filter === "All"
@@ -120,6 +152,8 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 52, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 104 }}>By location</span>
+              <span style={{ width: 120 }}>Main demand</span>
+              <span style={{ width: 84 }}></span>
               <span style={{ width: 92, textAlign: "right" }}>Status</span>
             </div>
             <div className="cd-rows">
@@ -180,6 +214,35 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     <span style={{ width: 104 }}>
                       <LocationBar locations={s.locations} />
                     </span>
+                    <span style={{ width: 120 }}>
+                      {s.demand ? (
+                        <span
+                          className="cd-caption tabular-nums"
+                          title={`${s.demand.units_30d} units/30d in ${s.demand.region} · ${s.demand.stock_in_region} in stock there`}
+                          style={{
+                            color:
+                              s.demand.stock_in_region === 0 ? "var(--red)" : "var(--text-2)",
+                          }}
+                        >
+                          {s.demand.region} · {s.demand.units_30d}/30d
+                        </span>
+                      ) : (
+                        <span className="cd-caption">—</span>
+                      )}
+                    </span>
+                    {/* Wrapper stops click/keydown bubbling to the row, which
+                        otherwise navigates to the linked alert. */}
+                    <span
+                      style={{ width: 84, display: "flex", justifyContent: "flex-end" }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      {s.suggested_transfer && (
+                        <Btn small onClick={() => setRelocating(s)}>
+                          Relocate
+                        </Btn>
+                      )}
+                    </span>
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <Pill tone={st.tone}>{st.label}</Pill>
                     </span>
@@ -194,6 +257,163 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         <CDIcon name="box" size={13} /> Location shading runs from your largest fulfillment center
         down. Rows with an open alert are clickable.
       </p>
+      {relocating && (
+        <RelocateDialog
+          sku={relocating}
+          busy={busy}
+          onClose={() => setRelocating(null)}
+          onConfirm={(fromId, toId, qty) => confirmRelocate(relocating.id, fromId, toId, qty)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- Relocate dialog ---------- */
+// No shared modal primitive exists in the dashboard kit yet, so this renders a
+// minimal fixed backdrop + centered Card, with cd-field/cd-input form controls
+// (the Predictor screen's form styling).
+function RelocateDialog({
+  sku,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  sku: SkuVM;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (fromId: string, toId: string, qty: number) => void;
+}) {
+  const suggestion = sku.suggested_transfer;
+  const sources = sku.locations_detail.filter((l) => l.available > 0);
+  // The dashboard API has no shop-locations endpoint; destinations are the
+  // SKU's own locations plus the suggested destination (deduped by id).
+  const destinations = [
+    ...sku.locations_detail,
+    ...(suggestion && !sku.locations_detail.some((l) => l.id === suggestion.to_location_id)
+      ? [
+          {
+            id: suggestion.to_location_id,
+            name: suggestion.to_location_name,
+            region: null,
+            available: 0,
+          },
+        ]
+      : []),
+  ];
+
+  const [fromId, setFromId] = useState(
+    suggestion && sources.some((l) => l.id === suggestion.from_location_id)
+      ? suggestion.from_location_id
+      : sources[0]?.id ?? "",
+  );
+  const [toId, setToId] = useState(suggestion?.to_location_id ?? destinations[0]?.id ?? "");
+  const [qty, setQty] = useState(suggestion ? String(suggestion.recommended_delta) : "");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const source = sources.find((l) => l.id === fromId);
+  const qtyNum = /^\d+$/.test(qty.trim()) ? Number(qty.trim()) : NaN;
+  const valid =
+    qtyNum > 0 &&
+    fromId !== "" &&
+    toId !== "" &&
+    fromId !== toId &&
+    source != null &&
+    qtyNum <= source.available;
+
+  return (
+    // Backdrop click closes; Escape is handled above, so the static-element
+    // click handler is a pointer convenience, not the only dismissal path.
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 80,
+        background: "color-mix(in oklch, black 32%, transparent)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Relocate ${sku.title}`}
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 420 }}
+      >
+        <Card>
+          <div className="cd-h2" style={{ marginBottom: 6 }}>
+            Relocate {sku.title}
+          </div>
+          {sku.demand && (
+            <p className="cd-caption" style={{ marginBottom: 12 }}>
+              {sku.demand.units_30d} units sold in {sku.demand.region} over 30 days ·{" "}
+              {sku.demand.stock_in_region} in stock there.
+            </p>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <label className="cd-field">
+              <span>From</span>
+              <select
+                className="cd-input"
+                value={fromId}
+                onChange={(e) => setFromId(e.target.value)}
+              >
+                {sources.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name} ({l.available} available)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="cd-field">
+              <span>To</span>
+              <select className="cd-input" value={toId} onChange={(e) => setToId(e.target.value)}>
+                {destinations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="cd-field">
+              <span>Quantity</span>
+              <input
+                className="cd-input tabular-nums"
+                inputMode="numeric"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+              />
+            </label>
+            <p className="cd-caption">
+              Recorded in the audit log. Reversible via Undo for 24 hours.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn onClick={onClose} disabled={busy}>
+                Cancel
+              </Btn>
+              <Btn
+                kind="primary"
+                onClick={() => onConfirm(fromId, toId, qtyNum)}
+                disabled={busy || !valid}
+              >
+                Move inventory
+              </Btn>
+            </div>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -70,6 +70,18 @@ export interface SkuVM {
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];
+  /** Top demand region over the last 30 days; null when the SKU has no sales. */
+  demand: { region: string; units_30d: number; share: number; stock_in_region: number } | null;
+  /** Concrete transfer plan; null when no demand/stock mismatch exists. */
+  suggested_transfer: {
+    from_location_id: string;
+    from_location_name: string;
+    to_location_id: string;
+    to_location_name: string;
+    recommended_delta: number;
+  } | null;
+  /** Per-location availability with Shopify GIDs (relocate dialog options). */
+  locations_detail: Array<{ id: string; name: string; region: string | null; available: number }>;
 }
 
 export interface GuardrailVM {
