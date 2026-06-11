@@ -69,10 +69,11 @@ V-prefixed = UX. Same rules: safe fixes pre-approved; auth/webhook/schema items 
 NEEDS-HUMAN (verify + log only, do not auto-edit).
 
 **STATUS (2026-06-11 ~10:15 sweep, same run as Batch 1):** C1 [FIXED `6aa6573`] ·
-C2 [FIXED `1d84795`] · C3 [NEEDS-HUMAN = F18] · C4 [NEEDS-HUMAN = F23] · C5
-[NEEDS-HUMAN — pipeline dedup design; note `internal.forwardWebhook` already stores
-`X-Shopify-Webhook-Id` on the raw row, so the dedup key exists, the consumer-side
-check doesn't] · C6 [FIXED `d00bba1`] · C7 [FIXED `a2eb6bb`] · C8 [WONTFIX — unit
+C2 [FIXED `1d84795`] · C3 [FIXED `44aa1f7` — owner approved 2026-06-11: rotation now rejects expired grants] · C4 [NEEDS-HUMAN = F23] · C5
+[FIXED `f337f90` — owner approved 2026-06-11: routes now pass the real
+`X-Shopify-Webhook-Id` (was random fallback), `forwardWebhook` checks the insert
+error treating 23505 as idempotent success, and forward failures return 500 so
+Shopify redelivers] · C6 [FIXED `d00bba1`] · C7 [FIXED `a2eb6bb`] · C8 [WONTFIX — unit
 verified: `DraftedAction.dollarImpact` is cents ("mirrors Alert.dollar_impact",
 converted at calderyn.server.ts:102); display switched to shared `fmtMoney` this run]
 · C9 [OPEN — judged too risky to rush: pre-reserving the idempotency key before the
@@ -340,7 +341,7 @@ expired before verification; re-verify via migrations files in `supabase/migrati
   no masking); typecheck 0; eslint `--max-warnings=0` both files 0; build 0; vitest google+ingest+cron
   118/118; full suite 832/5-skip. Commit `81a9f77`.
 
-### [NEEDS-HUMAN] F17 — GDPR customer-redact / data-request forward failures are silently dropped (no retry, no reconciler)
+### [FIXED `f337f90`, owner approved 2026-06-11] F17 — GDPR customer-redact / data-request forward failures are silently dropped (no retry, no reconciler)
 - **Where:** `app/routes/webhooks.gdpr.tsx:21-37` (the `try/catch` around `forwardWebhook`
   for `customers/data_request` and `customers/redact`).
 - **Observed:** the handler forwards each GDPR webhook to the engine, and on ANY forward
