@@ -204,16 +204,12 @@ export default function Settings() {
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load settings">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Settings update failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
         {notice &&
@@ -277,13 +273,10 @@ export default function Settings() {
           >
             <Card>
               <BlockStack gap="200">
-                <Checkbox label="Email me a 6:00am ET digest of overnight alerts" checked />
-                <Checkbox label="Email me immediately for Critical alerts" checked />
-                <Checkbox label="Email me when an automatic action fails" checked />
-                <Checkbox
-                  label="Slack notifications"
-                  helpText="Requires Slack connection."
-                />
+                <Banner tone="info" title="Email and Slack notifications are coming soon">
+                  Until then, new alerts appear on the Home screen and in the Alerts queue,
+                  and every action Calderyn takes is recorded in the Audit log.
+                </Banner>
               </BlockStack>
             </Card>
           </Layout.AnnotatedSection>

@@ -4,7 +4,7 @@ import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { minimizeOrderWebhook } from "~/lib/ingest/mappers.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
+  const { topic, shop, payload, webhookId } = await authenticate.webhook(request);
   try {
     // Store only the order fields the pipeline uses — never the customer PII
     // (name/email/phone/addresses) Shopify includes on this webhook.
@@ -12,7 +12,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await calderynClient(shop).internal.forwardWebhook(
       "/internal/webhooks/shopify/orders_create",
       minimal,
-      { "X-Shopify-Topic": topic },
+      // Shopify's delivery id keys the unique(webhook_id) dedup, so the 500
+      // below can safely trigger a redelivery without double-counting revenue.
+      { "X-Shopify-Topic": topic, "X-Shopify-Webhook-Id": webhookId },
     );
   } catch (err) {
     if (err instanceof CalderynError) {
@@ -20,6 +22,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } else {
       console.error(`Failed to forward orders/create for ${shop}`, err);
     }
+    // Non-2xx → Shopify retries the delivery; an unforwarded order is lost
+    // revenue data, not something to swallow.
+    return new Response(null, { status: 500 });
   }
   return new Response();
 };

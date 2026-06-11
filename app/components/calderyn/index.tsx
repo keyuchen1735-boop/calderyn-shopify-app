@@ -30,6 +30,7 @@ import {
   DETECTOR_LABELS,
   DETECTOR_TERMS,
   EVIDENCE_PAIRS,
+  INTERNAL_EVIDENCE_ID_KEYS,
   formatEvidenceKey,
   getEvidenceFormatter,
 } from "~/lib/labels";
@@ -247,6 +248,14 @@ export function GuardrailMeter({
 
 /* ───────────────────────────── AlertCard ───────────────────────────── */
 
+/**
+ * One explanation for the projected-impact dollar figure, shared by the alert
+ * card and the alert detail so the label + methodology never drift apart.
+ */
+export const IMPACT_LABEL = "Projected 30-day impact";
+export const IMPACT_METHODOLOGY =
+  "Estimated from this alert's evidence — current spend, margin-adjusted return, and sales velocity — projected over the next 30 days if nothing changes. An estimate, not a guarantee; the audit log records the realized impact after you act.";
+
 export function AlertCard({
   alert,
   onReview,
@@ -273,9 +282,11 @@ export function AlertCard({
         </BlockStack>
         <InlineStack gap="400" blockAlign="center" wrap={false}>
           <BlockStack gap="050" inlineAlign="end">
-            <Text as="span" variant="bodyXs" tone="subdued">
-              30-DAY LOSS
-            </Text>
+            <Tooltip content={IMPACT_METHODOLOGY}>
+              <Text as="span" variant="bodyXs" tone="subdued">
+                {IMPACT_LABEL}
+              </Text>
+            </Tooltip>
             <Text as="span" variant="headingMd" tone="critical">
               <span className="cdn-tnum">{fmtMoney(alert.dollar_impact)}</span>
             </Text>
@@ -306,7 +317,13 @@ export function NarrativeCard({ rank, children }: { rank?: number; children: Rea
               The take
             </Text>
           </InlineStack>
-          {rank !== undefined && <Badge tone="info">{`Rank #${rank}`}</Badge>}
+          {rank !== undefined && (
+            <Tooltip
+              content={`Priority #${rank} of your open alerts, ranked by estimated dollar impact, severity, and recency.`}
+            >
+              <Badge tone="info">{`Priority #${rank}`}</Badge>
+            </Tooltip>
+          )}
         </InlineStack>
         <Text as="p" variant="bodyLg">
           {children}
@@ -369,7 +386,10 @@ export function EvidencePanel({
   /** Evidence keys to suppress (e.g. ones already shown in the page header). */
   hideKeys?: string[];
 }) {
-  const skipSet = new Set(hideKeys);
+  // Raw platform identifiers are always suppressed — rendering them reads as
+  // a debug screen (or, for merchants who haven't connected that platform, as
+  // covert access). See INTERNAL_EVIDENCE_ID_KEYS in lib/labels.ts.
+  const skipSet = new Set<string>([...INTERNAL_EVIDENCE_ID_KEYS, ...hideKeys]);
   const present = new Set(
     Object.keys(evidence ?? {}).filter(
       (k) => !skipSet.has(k) && evidence[k] != null && !isNumberArray(evidence[k]),

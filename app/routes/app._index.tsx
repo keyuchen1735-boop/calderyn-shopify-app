@@ -14,6 +14,7 @@ import {
   Layout,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -149,7 +150,7 @@ export default function Dashboard() {
   return (
     <Page
       title="Calderyn"
-      subtitle="Watching ad spend and inventory — together."
+      subtitle="Catching money leaks across your ad spend and inventory — before they compound."
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
       secondaryActions={[
         { content: "Settings", onAction: () => navigate("/app/settings") },
@@ -169,9 +170,7 @@ export default function Dashboard() {
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load dashboard data">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
 
@@ -265,9 +264,11 @@ export default function Dashboard() {
           <Layout.Section>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingSm">
-                  Top alerts — ranked by Claude
-                </Text>
+                <Tooltip content="Ranked by estimated dollar impact, severity, and how recently the problem appeared.">
+                  <Text as="h2" variant="headingSm">
+                    Top alerts — ranked by priority
+                  </Text>
+                </Tooltip>
                 <Button variant="plain" onClick={() => navigate("/app/alerts")}>
                   View all
                 </Button>
@@ -275,15 +276,34 @@ export default function Dashboard() {
               {top.length === 0 ? (
                 <Card>
                   <Box padding="400">
-                    <BlockStack gap="100" inlineAlign="center">
-                      <Text as="p" variant="headingMd">
-                        All clear
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        You&apos;ve cleared everything Calderyn is watching. We&apos;ll surface the
-                        next problem the moment it appears.
-                      </Text>
-                    </BlockStack>
+                    {/* A shop with no alerts AND no action history is almost
+                        certainly a fresh install whose first scan hasn't
+                        finished — "All clear" there reads as "the app does
+                        nothing". Show a syncing state instead. Not on a loader
+                        error, though: the empty arrays are the failure, not a
+                        fresh install. */}
+                    {audit.length === 0 && !error ? (
+                      <BlockStack gap="100" inlineAlign="center">
+                        <Text as="p" variant="headingMd">
+                          First scan in progress
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Calderyn is analyzing your orders, inventory, and ad spend. Alerts
+                          appear here as detections complete — usually within a few hours of
+                          setup.
+                        </Text>
+                      </BlockStack>
+                    ) : (
+                      <BlockStack gap="100" inlineAlign="center">
+                        <Text as="p" variant="headingMd">
+                          All clear
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          You&apos;ve cleared everything Calderyn is watching. We&apos;ll surface
+                          the next problem the moment it appears.
+                        </Text>
+                      </BlockStack>
+                    )}
                   </Box>
                 </Card>
               ) : (

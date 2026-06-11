@@ -21,11 +21,18 @@ function fakeSb(opts: {
   idemInsertError?: { message: string };
   alertImpactDollars?: number;
 }) {
-  const calls = { inserts: [] as Array<{ table: string; rows: unknown }> };
+  const calls = {
+    inserts: [] as Array<{ table: string; rows: unknown }>,
+    updates: [] as Array<{ table: string; payload: unknown }>,
+  };
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
+    chain.update = vi.fn((payload: unknown) => {
+      calls.updates.push({ table, payload });
+      return chain;
+    });
     chain.maybeSingle = vi.fn(async () => {
       if (table === "action_idempotency") return { data: opts.idempotent ?? null, error: null };
       if (table === "ad_campaign_dim") return { data: opts.campaign ?? null, error: null };
@@ -68,6 +75,28 @@ describe("executeAction", () => {
       pre_state: { status: "active", daily_budget_cents: 5000 },
     });
     expect(calls.inserts.some((i) => i.table === "action_idempotency")).toBe(true);
+  });
+
+  it("acknowledges the alert (open → acknowledged) on a succeeded action with an alert", async () => {
+    // Centralized in insertAuditWithIdempotency so EVERY executor path —
+    // autopilot, dashboard API, reallocation — closes the alert, not just
+    // the alert-detail route.
+    const { sb, calls } = fakeSb({ campaign, alertImpactDollars: 100 });
+    await executeAction(SHOP, { alertId: "alert-1", kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kack" }, sb);
+    expect(calls.updates).toContainEqual({ table: "alerts", payload: { status: "acknowledged" } });
+  });
+
+  it("does not acknowledge the alert when the platform call fails", async () => {
+    adapter.pause.mockRejectedValueOnce(new Error("platform down"));
+    const { sb, calls } = fakeSb({ campaign, alertImpactDollars: 100 });
+    await executeAction(SHOP, { alertId: "alert-1", kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kackf" }, sb);
+    expect(calls.updates.filter((u) => u.table === "alerts")).toEqual([]);
+  });
+
+  it("does not touch alerts on a succeeded action without an alert", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kackn" }, sb);
+    expect(calls.updates.filter((u) => u.table === "alerts")).toEqual([]);
   });
 
   it("records the alert's at-stake dollars as recovered impact for a value-recovering action", async () => {

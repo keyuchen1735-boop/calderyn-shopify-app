@@ -45,9 +45,13 @@ export async function reconcileAttributedRevenue(
   }
 
   for (const { campaignId, day, cents } of sums.values()) {
+    // shop_id scope on the write: the service-role client bypasses RLS, so
+    // the tenant filter is the only cross-shop guard (same convention as the
+    // reads above).
     const { error: uErr } = await sb
       .from("ad_spend_fact")
       .update({ revenue_attrib_cents: cents })
+      .eq("shop_id", shopId)
       .eq("campaign_id", campaignId)
       .eq("day", day);
     if (uErr) throw uErr;

@@ -7,6 +7,7 @@ export const fmtMoneyDec = (cents: number) =>
 
 export const fmtRelTime = (iso: string) => {
   const t = new Date(iso);
+  if (!Number.isFinite(t.getTime())) return "—";
   const diff = Date.now() - t.getTime();
   const m = Math.floor(diff / 60000);
   if (m < 1) return "just now";
@@ -14,7 +15,9 @@ export const fmtRelTime = (iso: string) => {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  return `${d}d ago`;
+  // "247d ago" stops being readable — past a month, the date itself is clearer.
+  if (d <= 30) return `${d}d ago`;
+  return t.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 
 export const fmtAbsTime = (iso: string) =>

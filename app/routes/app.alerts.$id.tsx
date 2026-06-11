@@ -21,6 +21,7 @@ import {
   Page,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
@@ -49,6 +50,8 @@ import {
   DetectorTag,
   EvidencePanel,
   GuardrailMeter,
+  IMPACT_LABEL,
+  IMPACT_METHODOLOGY,
   NarrativeCard,
   SeverityBadge,
 } from "~/components/calderyn";
@@ -441,9 +444,7 @@ export default function AlertDetail() {
     return (
       <Page>
         <Banner tone="critical" title="Couldn't load alert">
-          <p>
-            {error.code}: {error.message}
-          </p>
+          <p>{error.message}</p>
           <Button onClick={() => navigate("/app/alerts")}>Back to alerts</Button>
         </Banner>
       </Page>
@@ -481,9 +482,7 @@ export default function AlertDetail() {
           <BlockStack gap="400">
             {actionData?.error && (
               <Banner tone="critical" title="Action failed">
-                <p>
-                  {actionData.error.code}: {actionData.error.message}
-                </p>
+                <p>{actionData.error.message}</p>
               </Banner>
             )}
             <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
@@ -509,9 +508,11 @@ export default function AlertDetail() {
                   <Text as="h2" variant="headingSm">
                     Recommended actions
                   </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    30-day projected impact
-                  </Text>
+                  <Tooltip content={IMPACT_METHODOLOGY}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {IMPACT_LABEL}
+                    </Text>
+                  </Tooltip>
                   <Text as="p" variant="headingLg">
                     {fmtMoney(alert.dollar_impact)}
                   </Text>
@@ -555,10 +556,12 @@ export default function AlertDetail() {
                 <BlockStack gap="300">
                   <BlockStack gap="100">
                     <Text as="h2" variant="headingSm">
-                      Before Calderyn acts
+                      {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
                     </Text>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      These checks decide whether this action can run automatically. If any fail, you have to confirm it yourself.
+                      {guardrails.autopilot_enabled
+                        ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
+                        : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
                     </Text>
                   </BlockStack>
                   <GuardrailMeter
@@ -730,7 +733,12 @@ function ExecuteActionModal({
                 loading={submitting}
                 disabled={submitting || !!missingInventoryFields}
               >
-                {`Execute · ${fmtMoney(alert.dollar_impact)}`}
+                {/* The button names the action, not a bare "Execute" — and only
+                    value-recovering kinds claim a saving (a snooze defers the
+                    loss, it doesn't recover it). */}
+                {kind === "snooze_alert" || alert.dollar_impact <= 0
+                  ? ACTION_LABELS[kind]
+                  : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
               </Button>
             </InlineStack>
           </BlockStack>

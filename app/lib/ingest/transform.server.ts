@@ -72,18 +72,23 @@ async function applyInventory(shopId: string, payload: Record<string, unknown>):
   const sb = getSupabase();
   const p = parseInventoryWebhook(payload);
 
-  const { data: sku } = await sb
+  // Surface DB errors instead of masking them as "unresolved sku/location":
+  // an ignored error here leaves `data` null, so a transient failure would be
+  // mislabelled in the DLQ. Throw so the caller's catch records the real cause.
+  const { data: sku, error: skuErr } = await sb
     .from("sku_dim")
     .select("id")
     .eq("shop_id", shopId)
     .eq("inventory_item_id", p.inventory_item_external_id)
     .maybeSingle();
-  const { data: loc } = await sb
+  if (skuErr) throw skuErr;
+  const { data: loc, error: locErr } = await sb
     .from("location_dim")
     .select("id")
     .eq("shop_id", shopId)
     .eq("external_id", p.location_external_id)
     .maybeSingle();
+  if (locErr) throw locErr;
 
   if (!sku || !loc) {
     throw new Error(
@@ -129,10 +134,14 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
 
   if (!lines.length) return 1;
 
-  const { data: skus } = await sb
+  // Check the error: an ignored DB failure here yields an empty map, which would
+  // silently write every order line with sku_id=null AND mark the webhook
+  // processed — corrupting data on a transient blip. Throw to route it to the DLQ.
+  const { data: skus, error: skuErr } = await sb
     .from("sku_dim")
     .select("id, external_id")
     .eq("shop_id", shopId);
+  if (skuErr) throw skuErr;
   const variantToSku = new Map(
     (skus ?? []).map((r) => [
       (r as { external_id: string; id: string }).external_id,

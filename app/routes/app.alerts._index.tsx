@@ -65,17 +65,15 @@ export default function AlertList() {
   return (
     <Page
       title="Alerts"
-      subtitle={`${openAlerts.length} open · ranked by Claude · ${fmtMoney(
+      subtitle={`${openAlerts.length} open · ranked by priority · ${fmtMoney(
         projectedImpact,
-      )} projected 30-day impact`}
+      )} total projected 30-day impact`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Couldn't load alerts">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         </Box>
       )}
@@ -98,10 +96,10 @@ export default function AlertList() {
               <ChoiceList
                 title="Status"
                 choices={[
+                  { label: "All", value: "all" },
                   { label: "Open", value: "open" },
                   { label: "Acknowledged", value: "acknowledged" },
                   { label: "Resolved", value: "resolved" },
-                  { label: "All", value: "all" },
                 ]}
                 selected={status}
                 onChange={(v) => setStatus(v as ("all" | AlertStatus)[])}

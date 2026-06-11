@@ -12,7 +12,10 @@ vi.mock("../../ads/action-registry.server", () => ({ actionAdapterForShop }));
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
 function fakeSb(original: Record<string, unknown> | null) {
-  const calls = { inserts: [] as Array<{ table: string; rows: unknown }> };
+  const calls = {
+    inserts: [] as Array<{ table: string; rows: unknown }>,
+    updates: [] as Array<{ table: string; payload: unknown }>,
+  };
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
@@ -20,6 +23,7 @@ function fakeSb(original: Record<string, unknown> | null) {
     chain.maybeSingle = vi.fn(async () => ({ data: table === "action_audit" ? original : null, error: null }));
     chain.single = vi.fn(async () => ({ data: { id: "undo1" }, error: null }));
     chain.insert = vi.fn((rows: unknown) => { calls.inserts.push({ table, rows }); return chain; });
+    chain.update = vi.fn((payload: unknown) => { calls.updates.push({ table, payload }); return chain; });
     return chain;
   }
   const sb = { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
@@ -73,6 +77,23 @@ describe("undoAction", () => {
   it("throws when the audit is not found for the shop", async () => {
     const { sb } = fakeSb(null);
     await expect(undoAction(SHOP, "missing", sb)).rejects.toThrow(/not found/i);
+  });
+
+  it("re-opens the acknowledged alert and carries alert_id onto the undo row", async () => {
+    // acknowledge-on-execute closed the alert; every undo surface (dashboard
+    // route, reallocate delegation) goes through undoAction, so the re-open
+    // must live here — not only in the legacy calderyn.server.ts wrapper.
+    const { sb, calls } = fakeSb({ ...pauseAudit, alert_id: "al-9" });
+    await undoAction(SHOP, "aud1", sb);
+    expect(calls.updates).toContainEqual({ table: "alerts", payload: { status: "open" } });
+    const undo = calls.inserts.find((i) => i.table === "action_audit");
+    expect((undo?.rows as Record<string, unknown>).alert_id).toBe("al-9");
+  });
+
+  it("does not touch alerts when the original action had none", async () => {
+    const { sb, calls } = fakeSb(pauseAudit);
+    await undoAction(SHOP, "aud1", sb);
+    expect(calls.updates.filter((u) => u.table === "alerts")).toEqual([]);
   });
 });
 

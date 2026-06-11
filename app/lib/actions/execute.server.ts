@@ -9,6 +9,7 @@ import type { ActionKind } from "../types";
 import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
+import { acknowledgeAlert } from "../alerts.server";
 
 export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
 
@@ -145,6 +146,16 @@ export async function insertAuditWithIdempotency(
     // now would provoke the duplicate execution the key prevents. Surface
     // the lost dedup protection loudly instead (rule 12).
     console.error(`[actions] idempotency insert failed for audit ${auditId} (key ${idempotencyKey})`, idemErr);
+  }
+
+  // A succeeded action against an alert closes it (open → acknowledged) on
+  // EVERY executor path — autopilot, dashboard API, reallocation — not just
+  // the alert-detail route. Every undo surface re-opens it (undo.server.ts
+  // for the gateway paths, calderyn.server.ts for the legacy wrapper), and
+  // the detector still owns resolution. Best-effort: acknowledgeAlert logs
+  // and returns false rather than failing the already-executed action.
+  if (audit.outcome === "succeeded" && audit.alert_id) {
+    await acknowledgeAlert(sb, shopId, audit.alert_id);
   }
 
   return { id: auditId, outcome: audit.outcome };

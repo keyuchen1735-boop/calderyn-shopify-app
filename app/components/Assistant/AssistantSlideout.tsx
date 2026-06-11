@@ -54,11 +54,23 @@ export function AssistantSlideout() {
     }
   }, [history.data]);
 
+  // The optimistically-added user turn for the in-flight send; rolled back on
+  // error so the transcript never shows a message the server didn't process.
+  const pendingRef = useRef<{ id: string; text: string } | null>(null);
+
   // Reconcile the assistant reply when a send completes.
   useEffect(() => {
     if (send.state === "idle" && send.data) {
+      const pending = pendingRef.current;
+      pendingRef.current = null;
       if (send.data.error) {
         setErrorText(send.data.error.message);
+        if (pending) {
+          // Remove the unprocessed optimistic turn and put the text back in
+          // the composer so the merchant can retry without retyping.
+          setMessages((prev) => prev.filter((m) => m.id !== pending.id));
+          setInput((cur) => cur || pending.text);
+        }
         return;
       }
       setErrorText(null);
@@ -77,9 +89,11 @@ export function AssistantSlideout() {
   function submit() {
     const text = input.trim();
     if (!text || sending) return;
+    const id = nextLocalId();
+    pendingRef.current = { id, text };
     setMessages((prev) => [
       ...prev,
-      { id: nextLocalId(), role: "user", content: text, draftedAction: null, createdAt: new Date().toISOString() },
+      { id, role: "user", content: text, draftedAction: null, createdAt: new Date().toISOString() },
     ]);
     const fd = new FormData();
     fd.set("message", text);
@@ -162,13 +176,24 @@ export function AssistantSlideout() {
 
       <div className="calderyn-assistant-composer">
         <InlineStack gap="200" blockAlign="center" wrap={false}>
-          <div style={{ flex: 1 }}>
+          <div
+            style={{ flex: 1 }}
+            onKeyDown={(e) => {
+              // Chat convention: Enter sends, Shift+Enter inserts a newline.
+              // (Polaris TextField doesn't expose onKeyDown; intercepting on
+              // the wrapper still cancels the textarea's default insert.)
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          >
             <TextField
               label="Message"
               labelHidden
               value={input}
               onChange={setInput}
-              placeholder="Ask about your data…"
+              placeholder="Ask about your data… (Shift+Enter for a new line)"
               autoComplete="off"
               multiline
             />

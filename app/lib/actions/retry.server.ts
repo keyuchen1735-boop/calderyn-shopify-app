@@ -1,23 +1,21 @@
 // app/lib/actions/retry.server.ts
 //
-// Slice 5 — action-retry drain SKELETON (queue-less, PostgREST-only).
+// Slice 5 — action-retry drain (queue-less, PostgREST-only).
 //
-// Ported in shape from the monorepo `workers/action-retry`, but the
-// executor/audit-repo layer that worker depends on
-// (`EXECUTOR_REGISTRY`, `markSucceeded`/`markFailed`,
-// `apiClientFor(shop_id)`) does NOT exist in this repo yet. So this is a
-// cron-shaped drain whose registry is intentionally EMPTY: it selects
-// due `retrying` rows from `action_audit` and, because no executor is
-// registered, leaves each row UNTOUCHED (counted as `skipped`).
+// Ported in shape from the monorepo `workers/action-retry`. The
+// `EXECUTOR_REGISTRY` below now covers the executable campaign kinds
+// (pause/resume/reduce/reallocate budget), so this cron actively REPLAYS
+// due `retrying` rows from `action_audit` against the per-shop adapter:
+// it selects due rows, re-resolves the adapter, replays the action, and
+// marks the row `succeeded` (with recovered dollars backfilled) or, on a
+// permanent failure / attempt-cap, terminally `failed` (running any
+// registered compensator first).
 //
-// HONEST CAVEAT (rule 9/12): this currently replays NOTHING. It must be
-// INERT until executors are ported — it must NOT mutate rows. Marking a
-// due `retrying` row `failed` here would terminally fail out legitimate
-// retries the moment the cron ships (and `failed` is terminal, so they'd
-// never be retried even after executors land). So the empty-registry
-// path is a no-op skip, not a write. Wiring (selection, attempt cap,
-// backoff gating, per-row isolation) is real and tested; the replay —
-// and only then the failure bookkeeping — is the follow-up.
+// Kinds with NO registered executor (e.g. snooze_alert) carry no platform
+// replay: the drain leaves those rows UNTOUCHED (counted as `skipped`). A
+// due `retrying` row is never marked `failed` just for lacking an executor
+// — `failed` is terminal, so that would permanently kill a legitimate
+// retry (rule 12: visible, non-destructive skip).
 //
 // Enum values are the LIVE `action_outcome` enum:
 //   succeeded | failed | pending | retrying

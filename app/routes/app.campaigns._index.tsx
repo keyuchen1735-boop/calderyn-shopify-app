@@ -257,7 +257,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     case "edit_budget": {
       kind = "reduce_campaign_budget";
-      const newCents = Math.max(0, Math.round(Number(formData.get("dailyBudgetCents") || 0)));
+      const newCents = Math.round(Number(formData.get("dailyBudgetCents") || 0));
+      // A $0 daily budget effectively pauses the campaign with no warning —
+      // refuse it here; pausing has its own explicit, undoable action.
+      if (!Number.isFinite(newCents) || newCents <= 0) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_BUDGET",
+              message: "Daily budget must be greater than $0. To stop spend entirely, pause the campaign instead.",
+            },
+            toast: { message: "Daily budget must be greater than $0", isError: true },
+          },
+          { status: 400 },
+        );
+      }
       params.daily_budget_cents = newCents;
       break;
     }
@@ -557,19 +572,33 @@ export default function Campaigns() {
       <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load campaigns">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Action failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
 
+        {campaigns.length === 0 && !error ? (
+          <Card>
+            <Box padding="600">
+              <BlockStack gap="300" inlineAlign="center">
+                <Text as="p" variant="headingMd">
+                  No campaigns yet
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Connect an ad platform and your campaigns appear here within a few minutes
+                  of the first sync.
+                </Text>
+                <Button variant="primary" onClick={() => navigate("/app/settings")}>
+                  Connect an ad platform
+                </Button>
+              </BlockStack>
+            </Box>
+          </Card>
+        ) : (
         <Card padding="0">
           <DataTable
             columnContentTypes={[
@@ -608,6 +637,7 @@ export default function Campaigns() {
             }}
           />
         </Card>
+        )}
       </BlockStack>
 
       {pending?.kind === "pause" && (

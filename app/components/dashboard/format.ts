@@ -2,6 +2,10 @@
 // Ported verbatim from the prototype's data.js (money/moneyK) and ui.jsx (SEV_STYLE).
 
 export function money(cents: number): string {
+  // Guard non-finite input (null/undefined/NaN coerced from partial live rows)
+  // so a missing value renders "$0" instead of "$NaN". moneyK delegates here on
+  // NaN (its `>= 1000` branch is false), so this covers both formatters.
+  if (!Number.isFinite(cents)) return "$0";
   return (
     (cents < 0 ? "-$" : "$") +
     Math.abs(cents / 100).toLocaleString("en-US", {

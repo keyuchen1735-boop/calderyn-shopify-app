@@ -1,10 +1,7 @@
 import { Box, Button, InlineStack, Text } from "@shopify/polaris";
 import type { DraftedAction } from "~/lib/assistant/types";
 import { useEmbeddedNavigate } from "~/lib/embedded-nav";
-
-function dollars(cents: number): string {
-  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
-}
+import { fmtMoney } from "~/lib/format";
 
 export function DraftActionCard({ action }: { action: DraftedAction }) {
   const navigate = useEmbeddedNavigate();
@@ -18,7 +15,7 @@ export function DraftActionCard({ action }: { action: DraftedAction }) {
     >
       <InlineStack align="space-between" blockAlign="center" gap="200">
         <Text as="span" variant="bodySm" fontWeight="semibold">
-          Proposed: {action.label} · {dollars(action.dollarImpact)}/30d
+          Proposed: {action.label} · {fmtMoney(action.dollarImpact)}/30d
         </Text>
         <Button
           variant="primary"

@@ -48,7 +48,9 @@ describe("reconcileAttributedRevenue", () => {
     const { sb, calls } = fakeSb(attr, orders);
     await reconcileAttributedRevenue(SHOP, sb);
     expect(calls.updates).toContainEqual({
-      match: { campaign_id: "u-meta", day: "2026-06-01" },
+      // shop_id scope on the write is part of the contract (service-role
+      // client bypasses RLS; the tenant filter is the cross-shop guard).
+      match: { shop_id: SHOP, campaign_id: "u-meta", day: "2026-06-01" },
       values: { revenue_attrib_cents: 15000 },
     });
   });

@@ -108,9 +108,7 @@ export default function Analytics() {
       <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load analytics">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
 

@@ -114,9 +114,7 @@ export default function SKUs() {
       {error && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Couldn't load SKUs">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         </Box>
       )}

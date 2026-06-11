@@ -412,9 +412,7 @@ export default function CampaignDetailPage() {
         backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
       >
         <Banner tone="critical" title="Couldn't load campaign">
-          <p>
-            {error?.code}: {error?.message}
-          </p>
+          <p>{error?.message ?? "Unknown error."}</p>
         </Banner>
       </Page>
     );
@@ -491,9 +489,7 @@ export default function CampaignDetailPage() {
                 </Text>
                 {creativesError && (
                   <Banner tone="info" title="Couldn't load ad creatives">
-                    <p>
-                      {creativesError.code}: {creativesError.message}
-                    </p>
+                    <p>{creativesError.message}</p>
                   </Banner>
                 )}
               </BlockStack>
@@ -644,7 +640,7 @@ function AdScorecardSlot({
     }
     const message = data.ok
       ? (data.scorecard.error ?? "Scoring produced no scorecard.")
-      : `${data.error.code}: ${data.error.message}`;
+      : data.error.message;
     return (
       <Text as="p" variant="bodySm" tone="subdued">
         Analysis unavailable: {message}
@@ -701,8 +697,9 @@ function moneyOrDash(cents: number | null): string {
   return cents == null ? "—" : fmtMoney(cents);
 }
 
-// Live-metrics gap marker (rule 12): explicit "no data", never a fabricated 0.
-const NO_DATA = "— (no data)";
+// Live-metrics gap marker (rule 12): an em dash means "no data synced", never a
+// fabricated 0. (The parenthetical "(no data)" read as clutter at table scale.)
+const NO_DATA = "—";
 
 function moneyOrNoData(cents: number | null): string {
   return cents == null ? NO_DATA : fmtMoney(cents);

@@ -147,6 +147,36 @@ describe("runAutopilotForShop", () => {
     );
   });
 
+  it("blocks (not throws) a budget cut when the candidate has no current budget", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [{ ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null }],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(executeReallocation).not.toHaveBeenCalled();
+    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1 });
+  });
+
+  it("keeps draining the remaining candidates after a null-budget block", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [
+        { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null },
+        { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+      ],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
+      sb,
+    );
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1 });
+  });
+
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
     checkGuardrails.mockResolvedValue({ allowed: false, reason: "destination campaign in cooldown" });
     pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
