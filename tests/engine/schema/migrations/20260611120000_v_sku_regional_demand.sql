@@ -1,9 +1,19 @@
 -- v_sku_regional_demand: per-SKU demand by region + transfer candidates for
--- the inventory page (embedded app + dashboard). Demand attribution matches
--- the regional_shortage_risk detector (order lines -> successful fulfillment
--- -> location_dim.region); the 30-day window anchors to the shop's latest
--- order like v_skus_flat, so the demand column never disagrees with the
--- velocity column rendered beside it.
+-- the inventory page (embedded app + dashboard).
+--
+-- Demand attribution: order lines joined to DISTINCT (shop_id, order_id,
+-- location_id) tuples from successful fulfillments, then to
+-- location_dim.region.  Using DISTINCT means a split shipment (two success
+-- rows for the same order+location) counts only once; an order genuinely
+-- fulfilled from locations in two different regions still counts once per
+-- location.  Rows from null-region locations are excluded, so demand_share
+-- is the share of REGIONALIZED demand only.
+--
+-- Window: same 30-day anchor as v_skus_flat (shop's latest order_fact row),
+-- so demand_units_30d is directly comparable to that view's velocity column.
+-- Small divergence from the regional_shortage_risk detector (which does not
+-- dedupe or filter null regions) is intentional: this view sizes real
+-- transfers and must not overcount.
 create or replace view public.v_sku_regional_demand as
 with max_order_day as (
   select shop_id, max(created_at_source) as anchor_ts
@@ -14,7 +24,7 @@ latest_inv as (
   select distinct on (i.sku_id, i.location_id)
          i.shop_id, i.sku_id, i.location_id, i.available
   from public.inventory_level_fact i
-  order by i.sku_id, i.location_id, i.observed_at desc
+  order by i.sku_id, i.location_id, i.observed_at desc, i.source_version desc
 ),
 regional_demand as (
   select ol.shop_id, ol.sku_id, l.region,
@@ -22,8 +32,11 @@ regional_demand as (
   from public.order_line_fact ol
   join public.order_fact o on o.id = ol.order_id and o.shop_id = ol.shop_id
   join max_order_day m on m.shop_id = ol.shop_id
-  join public.fulfillment_fact f
-    on f.order_id = ol.order_id and f.shop_id = ol.shop_id and f.status = 'success'
+  join (
+    select distinct shop_id, order_id, location_id
+    from public.fulfillment_fact
+    where status = 'success'
+  ) f on f.order_id = ol.order_id and f.shop_id = ol.shop_id
   join public.location_dim l on l.id = f.location_id
   where o.created_at_source > (m.anchor_ts - interval '30 days')
     and o.created_at_source <= m.anchor_ts
@@ -80,6 +93,9 @@ left join lateral (
   limit 1
 ) dest on true
 -- Source: largest available holder OUTSIDE the demand region.
+-- Inactive source locations are allowed deliberately: draining an inactive
+-- location is valid.  Only the DESTINATION must be active; the executor
+-- (executeInventoryRelocation) enforces that constraint at mutation time.
 left join lateral (
   select l.external_id, l.name, li.available
   from latest_inv li
