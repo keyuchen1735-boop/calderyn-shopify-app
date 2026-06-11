@@ -19,9 +19,12 @@ export interface CampaignPerformance {
 }
 
 export function buildCampaignPerformance(campaign: Campaign | null): CampaignPerformance {
-  const hasMetrics =
-    campaign != null && campaign.roas_7d > 0 && campaign.contribution_margin > 0;
-  if (!campaign || !hasMetrics) {
+  // Split guards: a loss-leader (valid ROAS, zero/unknown margin) has REAL
+  // reported performance — hiding it behind "no data" was misleading. Only
+  // the margin-derived metrics stay null without a positive margin.
+  const hasRoas = campaign != null && campaign.roas_7d > 0;
+  const hasMargin = campaign != null && campaign.contribution_margin > 0;
+  if (!campaign || !hasRoas) {
     return {
       available: false,
       spend7dCents: campaign && campaign.spend_7d > 0 ? campaign.spend_7d : null,
@@ -35,8 +38,8 @@ export function buildCampaignPerformance(campaign: Campaign | null): CampaignPer
     available: true,
     spend7dCents: campaign.spend_7d,
     reportedRoas: campaign.roas_7d,
-    realRoas: campaign.roas_7d * campaign.contribution_margin,
-    contributionMargin: campaign.contribution_margin,
+    realRoas: hasMargin ? campaign.roas_7d * campaign.contribution_margin : null,
+    contributionMargin: hasMargin ? campaign.contribution_margin : null,
     dailyBudgetCents: campaign.daily_budget_cents,
   };
 }
