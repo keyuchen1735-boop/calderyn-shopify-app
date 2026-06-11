@@ -16,8 +16,8 @@ import {
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { Icon } from "~/components/calderyn";
-import { BrandGlyph, brandTitle } from "~/components/calderyn/brand-icons";
-import type { Alert, SKU, SkuSource } from "~/lib/types";
+import { BrandGlyph } from "~/components/calderyn/brand-icons";
+import type { Alert, SKU } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
@@ -72,17 +72,6 @@ export default function SKUs() {
   const totalUnits = useMemo(
     () => skus.reduce((sum, s) => sum + (s.on_hand ?? 0), 0),
     [skus],
-  );
-
-  const attentionCount = useMemo(
-    () =>
-      skus.filter(
-        (s) =>
-          (alertsBySku.get(s.id) ?? 0) > 0 ||
-          (s.on_hand ?? 0) === 0 ||
-          (hasSales(s) && (s.days_of_cover ?? 0) < 7),
-      ).length,
-    [skus, alertsBySku],
   );
 
   const filtered = useMemo(() => {
@@ -147,11 +136,6 @@ export default function SKUs() {
               <Text as="span" tone="subdued">
                 · {totalUnits.toLocaleString()} units on hand
               </Text>
-              {attentionCount > 0 && (
-                <Text as="span" tone="caution" fontWeight="medium">
-                  · {attentionCount} need attention
-                </Text>
-              )}
             </InlineStack>
             <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
               <TextField
@@ -199,7 +183,6 @@ export default function SKUs() {
               onClick={() => toggleSort("velocity")}
             />
             <div role="columnheader" className="cdn-skutable__cell">Locations</div>
-            <div role="columnheader" className="cdn-skutable__cell">Sources</div>
             <div role="columnheader" className="cdn-skutable__cell cdn-skutable__cell--center">Alerts</div>
           </div>
           {sorted.map((s) => {
@@ -261,9 +244,6 @@ export default function SKUs() {
                 <div className="cdn-skutable__cell" role="cell">
                   <LocationCell locations={s.locations ?? {}} />
                 </div>
-                <div className="cdn-skutable__cell" role="cell">
-                  <SourceIcons sources={s.sources ?? []} />
-                </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
                   {alertCount > 0 && <Badge tone="warning">{String(alertCount)}</Badge>}
                 </div>
@@ -290,28 +270,6 @@ function ShopifySourcePill() {
     <span className="cdn-source-pill">
       <BrandGlyph name="shopify" />
       Synced from Shopify
-    </span>
-  );
-}
-
-/** Per-SKU enrichment sources: cost data (QuickBooks, vendor invoices) and
- * mapped ad creatives (Google, Meta, TikTok). Catalog/stock always come from
- * Shopify, so that isn't repeated on every row. */
-function SourceIcons({ sources }: { sources: SkuSource[] }) {
-  if (sources.length === 0) {
-    return (
-      <Text as="span" tone="subdued" variant="bodySm">
-        Shopify only
-      </Text>
-    );
-  }
-  return (
-    <span className="cdn-srcicons">
-      {sources.map((s) => (
-        <span key={s} title={brandTitle(s)}>
-          <BrandGlyph name={s} />
-        </span>
-      ))}
     </span>
   );
 }
