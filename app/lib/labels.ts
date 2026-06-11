@@ -57,6 +57,33 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   snooze_alert: "Snoozed alert",
 };
 
+// Who acted, in the merchant's terms. Raw actor_user_id values ("merchant",
+// "autopilot") read as system internals; unknown values (e.g. a teammate's
+// email) pass through via actorLabel below.
+export const ACTOR_LABELS: Record<string, string> = {
+  merchant: "You",
+  autopilot: "Autopilot",
+  system: "System",
+};
+
+export function actorLabel(actor: string): string {
+  return ACTOR_LABELS[actor] ?? actor;
+}
+
+// Evidence keys that are raw platform identifiers (Shopify GIDs, internal
+// uuids) — plumbing for the action executor, never merchant-facing evidence.
+// EvidencePanel suppresses these unconditionally; human-readable *_name
+// variants still render. Keep next to EVIDENCE_LABELS so a new detector's
+// keys get classified (label vs suppress) in one place.
+export const INTERNAL_EVIDENCE_ID_KEYS = [
+  "inventory_item_id",
+  "from_location_id",
+  "to_location_id",
+  "location_id",
+  "campaign_id",
+  "sku_id",
+] as const;
+
 // Plain-language labels for evidence keys shown on alert detail pages. Keys
 // that aren't in this map fall back to the underscore-stripped/title-cased
 // form so a new detector emitting an unknown key still renders sensibly.
