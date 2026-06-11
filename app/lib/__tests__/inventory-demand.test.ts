@@ -77,6 +77,20 @@ describe("suggestedTransferFromRow", () => {
   it("returns null when there is no demand", () => {
     expect(suggestedTransferFromRow({ ...ROW, daily_demand: "0" })).toBeNull();
   });
+
+  it("returns null when daily_demand is malformed (NaN must not reach the mutation)", () => {
+    expect(
+      suggestedTransferFromRow({ ...ROW, daily_demand: "not-a-number" as unknown as string }),
+    ).toBeNull();
+  });
+
+  it("returns null when src_available is 0", () => {
+    expect(suggestedTransferFromRow({ ...ROW, src_available: 0 })).toBeNull();
+  });
+
+  it("returns null when src_available is negative", () => {
+    expect(suggestedTransferFromRow({ ...ROW, src_available: -5 })).toBeNull();
+  });
 });
 
 describe("locationsDetailFromRow", () => {
@@ -91,13 +105,18 @@ describe("locationsDetailFromRow", () => {
     expect(locationsDetailFromRow({ ...ROW, locations_detail: null })).toEqual([]);
   });
 
-  it("coerces string numbers in available", () => {
+  it("coerces null available to 0", () => {
     const row = {
       ...ROW,
       locations_detail: [
-        { external_id: "gid://shopify/Location/9", name: "NY Warehouse", region: "NY", available: 80 },
+        {
+          external_id: "gid://shopify/Location/9",
+          name: "NY Warehouse",
+          region: "NY",
+          available: null as unknown as number,
+        },
       ],
     };
-    expect(locationsDetailFromRow(row)[0].available).toBe(80);
+    expect(locationsDetailFromRow(row)[0].available).toBe(0);
   });
 });

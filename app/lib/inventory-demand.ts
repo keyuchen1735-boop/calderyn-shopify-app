@@ -6,19 +6,22 @@
 
 import type { SkuDemand, SkuLocationDetail, SuggestedTransfer } from "./types";
 
-/** Raw row shape from PostgREST. numerics arrive as strings. */
+/**
+ * Raw row shape from PostgREST. Uncast numerics arrive as strings; int-cast
+ * columns arrive as numbers — both coerced via Number() at the call site.
+ */
 export interface SkuDemandViewRow {
   sku_id: string;
   main_demand_region: string;
-  demand_units_30d: number;
+  demand_units_30d: string | number;
   daily_demand: string | number;
   demand_share: string | number;
-  stock_in_region: number;
+  stock_in_region: string | number;
   dest_location_external_id: string | null;
   dest_location_name: string | null;
   src_location_external_id: string | null;
   src_location_name: string | null;
-  src_available: number;
+  src_available: string | number;
   inventory_item_id: string | null;
   locations_detail:
     | Array<{ external_id: string; name: string; region: string | null; available: number }>
@@ -45,15 +48,15 @@ export function locationsDetailFromRow(r: SkuDemandViewRow): SkuLocationDetail[]
 
 export function suggestedTransferFromRow(r: SkuDemandViewRow): SuggestedTransfer | null {
   const dailyDemand = Number(r.daily_demand ?? 0);
-  if (dailyDemand <= 0) return null;
+  if (!(dailyDemand > 0)) return null;
   const shortfall = Math.ceil(dailyDemand * 7 - Number(r.stock_in_region ?? 0));
-  if (shortfall < 1) return null;
+  if (!(shortfall >= 1)) return null;
   if (!r.inventory_item_id || !r.dest_location_external_id || !r.src_location_external_id) {
     return null;
   }
   if (r.dest_location_external_id === r.src_location_external_id) return null;
   const delta = Math.min(shortfall, Number(r.src_available ?? 0));
-  if (delta < 1) return null;
+  if (!(delta >= 1)) return null;
   return {
     inventory_item_id: r.inventory_item_id,
     from_location_id: r.src_location_external_id,
