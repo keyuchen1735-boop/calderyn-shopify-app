@@ -82,6 +82,7 @@ export async function executeInventoryRelocation(
       "This SKU has no Shopify inventory item, so stock can't be moved.",
     );
   }
+  const inventoryItemId = String(sku.inventory_item_id);
 
   // 4. Validate location ownership via location_dim (shop-scoped).
   const { data: locs, error: lErr } = await sb
@@ -118,10 +119,11 @@ export async function executeInventoryRelocation(
     .maybeSingle();
   if (iErr) throw iErr;
   const fromAvailable = Number(inv?.available ?? 0);
-  if (input.quantity > fromAvailable) {
+  if (!Number.isFinite(fromAvailable) || input.quantity > fromAvailable) {
+    const displayQty = Number.isFinite(fromAvailable) ? fromAvailable : 0;
     throw new RelocationError(
       "QTY_EXCEEDS_AVAILABLE",
-      `Only ${fromAvailable} unit${fromAvailable === 1 ? "" : "s"} available at ${from.name}.`,
+      `Only ${displayQty} unit${displayQty === 1 ? "" : "s"} available at ${from.name}.`,
     );
   }
 
@@ -131,7 +133,7 @@ export async function executeInventoryRelocation(
   let operationId: string | null = null;
   try {
     ({ operationId } = await inventoryAdjustQuantities(admin, {
-      inventoryItemId: String(sku.inventory_item_id),
+      inventoryItemId: inventoryItemId,
       fromLocationId: input.fromLocationId,
       toLocationId: input.toLocationId,
       delta: input.quantity,
@@ -154,7 +156,7 @@ export async function executeInventoryRelocation(
         target: String(sku.title ?? sku.sku ?? input.skuId),
         sku: sku.sku,
         sku_id: input.skuId,
-        inventory_item_id: sku.inventory_item_id,
+        inventory_item_id: inventoryItemId,
         from_location_id: input.fromLocationId,
         from_location_name: from.name,
         to_location_id: input.toLocationId,

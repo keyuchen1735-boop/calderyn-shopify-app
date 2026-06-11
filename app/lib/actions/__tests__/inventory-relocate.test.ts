@@ -3,6 +3,7 @@ import {
   executeInventoryRelocation,
   RelocationError,
 } from "../inventory-relocate.server";
+import type * as InventoryServer from "../../shopify/inventory.server";
 
 const priorExecutionForKey = vi.fn();
 const insertAuditWithIdempotency = vi.fn();
@@ -13,7 +14,7 @@ vi.mock("../execute.server", () => ({
 
 const inventoryAdjustQuantities = vi.fn();
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../shopify/inventory.server")>()),
+  ...(await importOriginal<typeof InventoryServer>()),
   inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
 }));
 
@@ -92,9 +93,14 @@ describe("executeInventoryRelocation", () => {
       delta: 40,
       shopify_operation_id: "gid://op/1",
       target: "Widget",
+      sku: "W-1",
+      sku_id: "sku-1",
+      from_location_name: "NY",
+      to_location_name: "LA",
     });
     expect(audit.pre_state).toEqual({ from_location_available: 80 });
     expect(audit.post_state).toEqual({ from_location_available: 40 });
+    expect(audit.actor_user_id).toBe("merchant");
   });
 
   it("returns the prior outcome on a replayed idempotency key", async () => {
@@ -104,59 +110,78 @@ describe("executeInventoryRelocation", () => {
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
   });
 
+  it("idempotency check fires before validation: replayed key with quantity 0 returns prior, does not throw", async () => {
+    priorExecutionForKey.mockResolvedValue({ id: "audit-0", outcome: "succeeded" });
+    const res = await executeInventoryRelocation(
+      SHOP,
+      { ...INPUT, quantity: 0 },
+      mockSb(),
+      ADMIN,
+    );
+    expect(res).toEqual({ id: "audit-0", outcome: "succeeded" });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["zero quantity", { quantity: 0 }, "INVALID_QUANTITY"],
     ["fractional quantity", { quantity: 1.5 }, "INVALID_QUANTITY"],
     ["NaN quantity", { quantity: Number.NaN }, "INVALID_QUANTITY"],
     ["same location", { toLocationId: INPUT.fromLocationId }, "SAME_LOCATION"],
   ])("throws on %s with no audit row", async (_n, patch, code) => {
-    await expect(
-      executeInventoryRelocation(SHOP, { ...INPUT, ...patch }, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code });
+    const p = executeInventoryRelocation(SHOP, { ...INPUT, ...patch }, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code });
     expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("throws SKU_NOT_FOUND for a foreign or missing sku", async () => {
     skuRow = null;
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "SKU_NOT_FOUND" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "SKU_NOT_FOUND" });
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("throws INVALID_TRANSFER_PLAN when the sku has no inventory item", async () => {
     skuRow = { ...skuRow!, inventory_item_id: null };
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("throws INVALID_TRANSFER_PLAN when a location is foreign or missing", async () => {
     locRows = [locRows[0]]; // destination missing
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("throws INVALID_TRANSFER_PLAN when the destination is inactive", async () => {
     locRows = [locRows[0], { ...locRows[1], active: false }];
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "INVALID_TRANSFER_PLAN" });
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("throws QTY_EXCEEDS_AVAILABLE against FRESH availability", async () => {
     invRow = { available: 39 };
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "QTY_EXCEEDS_AVAILABLE" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "QTY_EXCEEDS_AVAILABLE" });
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("treats a missing inventory row as zero availability", async () => {
     invRow = null;
-    await expect(
-      executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN),
-    ).rejects.toMatchObject({ code: "QTY_EXCEEDS_AVAILABLE" });
+    const p = executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+    await expect(p).rejects.toBeInstanceOf(RelocationError);
+    await expect(p).rejects.toMatchObject({ code: "QTY_EXCEEDS_AVAILABLE" });
+    expect(insertAuditWithIdempotency).not.toHaveBeenCalled();
   });
 
   it("records a FAILED audit row when Shopify rejects the mutation (rule 12)", async () => {
