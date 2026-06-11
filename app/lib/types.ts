@@ -80,6 +80,39 @@ export type SkuSource =
   | "meta"
   | "tiktok";
 
+export interface SkuLocationDetail {
+  /** Shopify Location GID (location_dim.external_id). */
+  id: string;
+  name: string;
+  region: string | null;
+  available: number;
+}
+
+export interface SkuDemand {
+  region: string;
+  units_30d: number;
+  /** Fraction (0..1) of this SKU's total 30-day demand in that region. */
+  share: number;
+  stock_in_region: number;
+}
+
+export interface SuggestedTransfer {
+  inventory_item_id: string;
+  from_location_id: string;
+  from_location_name: string;
+  to_location_id: string;
+  to_location_name: string;
+  recommended_delta: number;
+}
+
+export interface ShopLocation {
+  /** Shopify Location GID. */
+  id: string;
+  name: string;
+  region: string | null;
+  active: boolean;
+}
+
 export interface SKU {
   id: string;
   title: string;
@@ -88,6 +121,12 @@ export interface SKU {
   velocity: number;
   locations: Record<string, number>;
   sources: SkuSource[];
+  /** null when the SKU has no 30-day sales. */
+  demand: SkuDemand | null;
+  /** null when no demand/stock mismatch or no viable source+destination. */
+  suggested_transfer: SuggestedTransfer | null;
+  /** Per-location availability with Shopify GIDs (relocate modal source options). */
+  locations_detail: SkuLocationDetail[];
 }
 
 export interface Integration {

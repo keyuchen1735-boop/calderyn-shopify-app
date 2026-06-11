@@ -170,6 +170,9 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
     velocity: Number(r.velocity ?? 0),
     locations: (r.locations as Record<string, number>) ?? {},
     sources,
+    demand: null,
+    suggested_transfer: null,
+    locations_detail: [],
   };
 }
 
