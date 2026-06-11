@@ -515,7 +515,7 @@ export default function Campaigns() {
         "—"
       ),
       linked.length ? <Badge tone="warning">{String(linked.length)}</Badge> : "—",
-      <ButtonGroup key={`act-${c.id}`}>
+      <InlineStack key={`act-${c.id}`} gap="200" blockAlign="center" wrap={false}>
         {c.status === "active" ? (
           <Button onClick={() => setPending({ kind: "pause", campaign: c })}>Pause</Button>
         ) : (
@@ -537,7 +537,7 @@ export default function Campaigns() {
         >
           Reallocate
         </Button>
-      </ButtonGroup>,
+      </InlineStack>,
     ];
   });
 
@@ -589,8 +589,8 @@ export default function Campaigns() {
               "Status",
               "Daily budget",
               "7d spend",
-              <Tooltip key="roas" content="Reported ROAS — revenue ÷ ad spend, before product costs">
-                <span>Ad return</span>
+              <Tooltip key="roas" content="ROAS — revenue ÷ ad spend, before product costs">
+                <span>ROAS</span>
               </Tooltip>,
               <Tooltip key="madj" content="Margin-adjusted ROAS — return after product costs are taken out">
                 <span>Real return</span>
@@ -652,40 +652,51 @@ export default function Campaigns() {
         </CampaignActionModal>
       )}
 
-      {pending?.kind === "edit_budget" && (
-        <CampaignActionModal
-          title={`Edit budget · ${pending.campaign.name}`}
-          intent="edit_budget"
-          campaign={pending.campaign}
-          submitting={submitting}
-          onClose={() => setPending(null)}
-          primaryLabel={`Save · ${fmtMoney(Number(budgetInput) * 100)}/day`}
-          extraHidden={
-            <input
-              type="hidden"
-              name="dailyBudgetCents"
-              value={String(Math.max(0, Number(budgetInput) * 100))}
-            />
-          }
-        >
-          <BlockStack gap="300">
-            <Text as="p" tone="subdued">
-              Current daily budget:{" "}
-              <Text as="span" fontWeight="semibold">
-                {fmtMoney(pending.campaign.daily_budget_cents)}
-              </Text>
-            </Text>
-            <TextField
-              label="New daily budget (USD)"
-              type="number"
-              value={budgetInput}
-              onChange={setBudgetInput}
-              autoComplete="off"
-              autoFocus
-            />
-          </BlockStack>
-        </CampaignActionModal>
-      )}
+      {pending?.kind === "edit_budget" &&
+        (() => {
+          const currentCents = pending.campaign.daily_budget_cents;
+          const parsed = Number(budgetInput);
+          const validNumber =
+            budgetInput.trim() !== "" && Number.isFinite(parsed) && parsed >= 0;
+          const newCents = validNumber ? Math.round(parsed * 100) : 0;
+          const changed = validNumber && newCents !== currentCents;
+          return (
+            <CampaignActionModal
+              title={`Edit budget · ${pending.campaign.name}`}
+              intent="edit_budget"
+              campaign={pending.campaign}
+              submitting={submitting}
+              onClose={() => setPending(null)}
+              primaryLabel={changed ? `Save · ${fmtMoney(newCents)}/day` : "Save"}
+              primaryDisabled={!changed}
+              extraHidden={
+                <input type="hidden" name="dailyBudgetCents" value={String(newCents)} />
+              }
+            >
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued">
+                  Current daily budget:{" "}
+                  <Text as="span" fontWeight="semibold">
+                    {fmtMoney(currentCents)}
+                  </Text>
+                </Text>
+                <TextField
+                  label="New daily budget (USD)"
+                  type="number"
+                  value={budgetInput}
+                  onChange={setBudgetInput}
+                  autoComplete="off"
+                  autoFocus
+                  helpText={
+                    validNumber && !changed
+                      ? "Same as the current budget — enter a different amount to save."
+                      : undefined
+                  }
+                />
+              </BlockStack>
+            </CampaignActionModal>
+          );
+        })()}
 
       {pending?.kind === "reallocate" && (
         <ReallocateBudgetModal
@@ -708,6 +719,7 @@ function CampaignActionModal({
   onClose,
   primaryLabel,
   primaryDestructive,
+  primaryDisabled,
   children,
   extraHidden,
 }: {
@@ -718,6 +730,7 @@ function CampaignActionModal({
   onClose: () => void;
   primaryLabel: string;
   primaryDestructive?: boolean;
+  primaryDisabled?: boolean;
   children: React.ReactNode;
   extraHidden?: React.ReactNode;
 }) {
@@ -746,7 +759,7 @@ function CampaignActionModal({
                   variant="primary"
                   tone={primaryDestructive ? "critical" : undefined}
                   loading={submitting}
-                  disabled={submitting}
+                  disabled={submitting || primaryDisabled}
                 >
                   {primaryLabel}
                 </Button>
