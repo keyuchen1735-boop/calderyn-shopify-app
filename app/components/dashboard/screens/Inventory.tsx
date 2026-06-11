@@ -87,28 +87,50 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     };
   }, [reloadKey]);
 
-  async function confirmRelocate(skuId: string, fromId: string, toId: string, qty: number) {
+  /**
+   * Executes the transfer. Returns true when the dialog's idempotency key was
+   * burned server-side (a terminal failure was recorded or the request was
+   * rejected) and must be rotated before a retry; false when it must be kept.
+   */
+  async function confirmRelocate(
+    skuId: string,
+    fromId: string,
+    toId: string,
+    qty: number,
+    idempotencyKey: string,
+  ): Promise<boolean> {
     setBusy(true);
     try {
       const { outcome } = await relocateSku(skuId, {
         fromLocationId: fromId,
         toLocationId: toId,
         quantity: qty,
+        idempotencyKey,
       });
       if (outcome === "succeeded") {
         app.toast("Inventory transfer executed", "box", "success");
         setRelocating(null);
         setReloadKey((k) => k + 1);
         app.refresh();
-      } else {
-        app.toast("Transfer recorded as failed — check the audit log", "warn", "critical");
+        return false;
       }
+      app.toast("Transfer recorded as failed — check the audit log", "warn", "critical");
+      // The server recorded a terminal failed outcome under this key; a retry
+      // must mint a fresh key or it would replay the failed audit forever.
+      return true;
     } catch (err) {
       app.toast(
         err instanceof DashboardApiError ? err.message : "Couldn't move inventory.",
         "warn",
         "critical",
       );
+      // DashboardApiError means the server actually responded (apiSend throws
+      // it only on a 4xx/5xx response): it recorded a terminal state or
+      // rejected the request, so the key is burned — rotate. Anything else is
+      // a network-level failure (fetch rejected with no server response): the
+      // transfer may have been applied, so KEEP the key and let the retry
+      // dedupe via priorExecutionForKey.
+      return err instanceof DashboardApiError;
     } finally {
       setBusy(false);
     }
@@ -262,7 +284,9 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           sku={relocating}
           busy={busy}
           onClose={() => setRelocating(null)}
-          onConfirm={(fromId, toId, qty) => confirmRelocate(relocating.id, fromId, toId, qty)}
+          onConfirm={(fromId, toId, qty, key) =>
+            confirmRelocate(relocating.id, fromId, toId, qty, key)
+          }
         />
       )}
     </div>
@@ -282,7 +306,8 @@ function RelocateDialog({
   sku: SkuVM;
   busy: boolean;
   onClose: () => void;
-  onConfirm: (fromId: string, toId: string, qty: number) => void;
+  /** Resolves true when the idempotency key was burned and must be rotated. */
+  onConfirm: (fromId: string, toId: string, qty: number, idempotencyKey: string) => Promise<boolean>;
 }) {
   const suggestion = sku.suggested_transfer;
   const sources = sku.locations_detail.filter((l) => l.available > 0);
@@ -306,6 +331,11 @@ function RelocateDialog({
       : []),
   ];
 
+  // One key per relocation intent, minted on dialog mount: an in-flight
+  // double-click or a retry after a network timeout replays, not re-executes.
+  // Rotated only when onConfirm reports the server burned it (terminal
+  // failure or rejected request).
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [fromId, setFromId] = useState(
     suggestion && sources.some((l) => l.id === suggestion.from_location_id)
       ? suggestion.from_location_id
@@ -409,7 +439,11 @@ function RelocateDialog({
               </Btn>
               <Btn
                 kind="primary"
-                onClick={() => onConfirm(fromId, toId, qtyNum)}
+                onClick={() => {
+                  void onConfirm(fromId, toId, qtyNum, idempotencyKey).then((burned) => {
+                    if (burned) setIdempotencyKey(crypto.randomUUID());
+                  });
+                }}
                 disabled={busy || !valid}
               >
                 Move inventory

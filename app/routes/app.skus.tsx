@@ -514,8 +514,18 @@ function RelocateModal({
   const [fromId, setFromId] = useState(plan.from_location_id);
   const [toId, setToId] = useState(plan.to_location_id);
   const [qty, setQty] = useState(String(plan.recommended_delta));
-  // One key per modal-open: double-clicking Confirm replays, not re-executes.
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  // One key per relocation intent: double-clicking Confirm while a submit is
+  // in flight replays, not re-executes.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const data = fetcher.data;
+  useEffect(() => {
+    // A terminal failure burned this key server-side; mint a fresh one so the
+    // merchant's retry (possibly with edited inputs) actually executes instead
+    // of replaying the failed audit. Rotating after a 422 validation reject is
+    // harmless (no marker was written). Each response is a fresh object, so
+    // consecutive failures rotate the key each time.
+    if (data && !data.ok) setIdempotencyKey(crypto.randomUUID());
+  }, [data]);
 
   const sourceOptions = sku.locations_detail
     .filter((l) => l.available > 0)

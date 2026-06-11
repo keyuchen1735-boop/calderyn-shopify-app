@@ -714,7 +714,15 @@ export function calderynClient(shop: string) {
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
           if (adMapRes.error) throw adMapRes.error;
-          if (demandRes.error) throw demandRes.error;
+          // Demand enrichment is optional (demand: null is the no-data state) — a
+          // missing/unmigrated view must not take down the whole SKU surface. Loud
+          // log instead of throw (rule 12: visible, not fatal).
+          if (demandRes.error) {
+            console.error(
+              "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
+              demandRes.error,
+            );
+          }
 
           const sourcesBySku = new Map<string, Set<SkuSource>>();
           const addSource = (skuId: unknown, raw: unknown) => {
@@ -730,8 +738,10 @@ export function calderynClient(shop: string) {
           for (const r of adMapRes.data ?? []) addSource(r.sku_id, r.platform);
 
           const demandBySku = new Map<string, SkuDemandViewRow>();
-          for (const r of (demandRes.data ?? []) as unknown as SkuDemandViewRow[]) {
-            demandBySku.set(String(r.sku_id), r);
+          if (!demandRes.error) {
+            for (const r of (demandRes.data ?? []) as unknown as SkuDemandViewRow[]) {
+              demandBySku.set(String(r.sku_id), r);
+            }
           }
 
           return (skuRes.data ?? []).map((r) => {
