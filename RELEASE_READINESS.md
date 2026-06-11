@@ -6,22 +6,21 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
 
 ## Summary
 
-- **Last run:** 2026-06-11 07:48 UTC
+- **Last run:** 2026-06-11 08:35 UTC
 - **Correctness gate:** GREEN — `npm ci` 0, `typecheck` 0, `lint` 0 (12 pre-existing
-  warnings in untouched files), `build` 0, `npm test` 832 passed / 5 skipped (135 files).
+  warnings in untouched test files), `build` 0, `npm test` 832 passed / 5 skipped (135 files).
 - **Canonical check (pause → Recovered KPI):** PASS against live data (unchanged).
   Audit row `5af82d74…` (`pause_campaign`, succeeded, `dollar_impact_at_exec`=12861.94)
   equals `get_shop_stats.recovered_7d`=12861.94. Contract still closes on both surfaces.
 - **Open bugs:** 1 code (F15 Predictor div-by-zero, latent/demo-only — guard before live);
   F12 (topAdNames embed shape, needs schema verification) + F6 (date-format, visual call)
   OPEN; F5 (meta-push idempotency gap) still OPEN.
-- **Fixed this run:** 1 — F16 (two remaining swallowed-`sync_status`-write spots, same
-  class as F7/F8/F9: `google/ingest.server.ts recordSyncError` + `cron.ingest-ads.tsx
-  setSync` — both on error-recording paths, fixed without masking the original ingestion
-  error). Gate green; commit `81a9f77`.
-- **Needs human:** 4 (F1 cross-surface guardrail day-boundary, F2 demo-config check,
+- **Fixed this run:** 0 — rotation areas swept clean (no clear low-risk fix surfaced). 1
+  new finding logged (F17, GDPR customer-redact drop — webhook edit, NEEDS-HUMAN).
+- **Needs human:** 5 (F1 cross-surface guardrail day-boundary, F2 demo-config check,
   F13 backfill inventory timeseries fabricated at run-time, F14 Predictor/Generator ship
-  demo data labeled live with false "synced from Meta" copy — **gate before launch**).
+  demo data labeled live with false "synced from Meta" copy — **gate before launch**,
+  F17 GDPR customer-redact/data-request forward failures silently dropped — **compliance**).
 
 ## Coverage log
 
@@ -32,8 +31,9 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
 | 2026-06-11 05:45 | Correctness gate (full, GREEN). Canonical pause→Recovered re-verified live (PASS, unchanged) + traced dashboard read side (both surfaces use shared `recovered()`). Rotation: `attribution/*` (revenue/apply/match/parse), `meta/transform.ts`, `gdpr/sweep.server.ts`, `screener/*` (orchestrate/calibrate/image-gen-limit + E2E trace), `ingest/*` (found+fixed F7 in `transform.server.ts`; google/tiktok/quickbooks/meta-ingest scanned clean via sub-agent). UI code review: `routes/app.audit.tsx`, `app.campaigns._index.tsx`, `app.screener.tsx` (clean), `components/dashboard/*` (format/view-models/live + `Dashboard.tsx`/`Alerts.tsx` — found F6 raw `created_at` render). Unit check: `dollar_impact*` dollars→cents at `calderyn.server.ts:102,119` confirmed consistent with `fmtMoney`. |
 | 2026-06-11 06:43 | Correctness gate (full, GREEN — 832 pass). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`). Rotation — **screener internals** `screener/{generate,score,score-one,meta-creative,higgsfield,history,runs,campaign-ads,pick-generator}.server.ts` (found+fixed F8 swallowed errors in `history`; F12 topAdNames embed-shape + F15 Predictor latent div-by-zero logged); **ingest/PO internals** `ingest/{backfill,dlq,enqueue,mappers,shopify-admin}.server.ts` + `po/{draft,pdf}.server.ts` (found+fixed F9 backfill terminal write + F10 mappers NaN `source_version`; F13 inventory-timeseries logged). UI code review: `components/dashboard/screens/{Analytics,Inventory,Settings,Generator,Predictor,Campaigns}.tsx` + `format.ts` (found+fixed F11 `money()` `$NaN`; F14 Predictor/Generator demo-data-as-live logged; Settings + Analytics/Inventory/Campaigns state-handling clean). |
 | 2026-06-11 07:48 | Correctness gate (full, GREEN — 832 pass). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`; guardrails still demo $1M/day, used 0 → F1/F2 unchanged). Rotation — **meta/* internals** `meta/{insights,ad-insights,actions,campaigns,creatives,ingest,oauth-state}.server.ts` (clean; documented limitations: creatives single-page >25-ad truncation, ingest currency-default-on-error); **assistant/*** `assistant/{anthropic,loop,tools,prompt,request,snapshot,conversations}.server.ts` (clean — model `claude-sonnet-4-6` correct; verified `snapshot.dollars()` consumes cents-shaped `dollar_impact` per `calderyn.server.ts:102`, no unit bug); **adapter internals deep-read** via sub-agent `google/* tiktok/* quickbooks/* ads/*` (found F16 in google `recordSyncError` + cron.ingest-ads `setSync`; rest clean). UI code review: `routes/app.skus.tsx` (clean — auth/error/empty states, location cell), `app.generator.tsx` (clean live feature — auth both sides, quota refund, error/empty/loading states). |
+| 2026-06-11 08:35 | Correctness gate (full, GREEN — 832 pass / 5 skip). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`; guardrails still demo $1M/day, used 0 → F1/F2 unchanged). Rotation — **ingest internals (remaining)** `ingest/{dlq,enqueue,shopify-admin}.server.ts` (clean — dlq logs-never-throws correctly, enqueue throws on error, shopify-admin checks GraphQL `body.errors` + documents slice-1 page-size caps); **assistant glue** `assistant/{action-param,types}.ts` + `app.assistant.tsx` resource route (clean — auth, `parseAssistantRequest` validation, error-path saves user turn but not broken assistant turn); **GDPR plumbing** `webhooks.gdpr.tsx` + `cron.gdpr.tsx` + `gdpr/sweep.server.ts` (found F17 — customer-redact/data-request forward-drop; shop_redact reconciled by sweep, customer-level NOT); **meta client deep-read** `meta/client.server.ts` (read-only, clean — checks `error` on creds read, decrypts token; no `res.ok` guard but Graph API returns `{error}` JSON consumed by callers). UI code review: `routes/app.campaigns.$campaignId.tsx` (clean — strong loader error isolation per-fetch, honest `— (no data)`/`CREATIVE_ID_UNAVAILABLE` gap states, Predicted/Actual badges, good BlockStack/InlineGrid structure). |
 
-**Not yet swept (rotate here next):** `app/lib/meta/{oauth,client}.server.ts` deeper read (oauth = read-only, no auth edits), `cron.gdpr.tsx` + `webhooks.gdpr.tsx`, `app/lib/assistant/{action-param,types}.ts` + `app.assistant.tsx` route UI, `app/routes/oauth.*` + `mcp_oauth` (read-only review only — no auth edits), `app.campaigns.$campaignId*` UI, `app/lib/ingest/{dlq,enqueue,shopify-admin}.server.ts` deeper read, `history.server.ts` topAdNames schema verification (F12 — needs Supabase schema access). Swept this run: meta/* internals, assistant/* internals, google/tiktok/quickbooks/ads adapter internals (deep), skus + generator UI.
+**Not yet swept (rotate here next):** `app/routes/oauth.*` (authorize/consent/register/token) + `cron.mcp-oauth-cleanup.tsx` + `[.]well-known.oauth-authorization-server.tsx` (read-only review only — no auth edits), `app.campaigns._index.tsx` + `app.campaigns.$campaignId.score.tsx` UI, `app.assistant` slideout client component (the route is a resource route — find the React slideout UI), `webhooks.{orders.create,products.update,inventory_levels.update}.tsx` deeper read, `app/lib/ads/*` + `attribution/*` re-verify, `history.server.ts` topAdNames schema verification (F12 — needs Supabase schema access). Swept this run: ingest dlq/enqueue/shopify-admin, assistant action-param/types + assistant route, GDPR webhooks/cron/sweep, meta client, campaign-detail UI.
 
 ## Findings
 
@@ -222,8 +222,35 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
   no masking); typecheck 0; eslint `--max-warnings=0` both files 0; build 0; vitest google+ingest+cron
   118/118; full suite 832/5-skip. Commit `81a9f77`.
 
+### [NEEDS-HUMAN] F17 — GDPR customer-redact / data-request forward failures are silently dropped (no retry, no reconciler)
+- **Where:** `app/routes/webhooks.gdpr.tsx:21-37` (the `try/catch` around `forwardWebhook`
+  for `customers/data_request` and `customers/redact`).
+- **Observed:** the handler forwards each GDPR webhook to the engine, and on ANY forward
+  failure it logs and returns `new Response()` (HTTP 200). A 200 tells Shopify the webhook
+  was processed, so Shopify does NOT retry. For `shop/redact` this is fine — the daily
+  `cron.gdpr` sweep (`gdpr/sweep.server.ts`) independently cascading-deletes uninstalled
+  shops past the 30-day grace window, so a dropped forward is reconciled. But
+  `customers/data_request` and `customers/redact` have **no** such reconciler: they are
+  forward-only, so if the engine POST fails (engine down/transient), the customer-level
+  GDPR obligation is lost with no retry and no second path — a launch compliance gap.
+- **Note on the pattern:** every webhook handler in the repo uses this same best-effort
+  forward-then-200 shape (orders.create, products.update, inventory_levels.update), so this
+  is a deliberate architecture choice, not an inconsistency. The data webhooks are safe
+  because the Shopify backfill cron re-syncs; the customer-GDPR webhooks are the one case
+  with neither retry nor reconciler.
+- **Why not auto-fixed:** changing a webhook handler's response semantics (return non-200
+  on forward failure so Shopify retries — it backs off GDPR webhooks over ~48h) is a
+  webhook edit, explicitly DO-NOT-FIX per the run's fix protocol. Also a product/legal call.
+- **Ask for human:** either (a) return a non-2xx on forward failure for the two customer
+  GDPR topics so Shopify retries, or (b) persist the raw customer-GDPR webhook and add a
+  reconciling sweep (mirror the shop_redact path). Parity TODO for the engine repo, which
+  owns `/internal/gdpr/*`.
+
 ## Fixed this cycle
 
+- **(2026-06-11 08:35 run)** No code fix — rotation areas (ingest dlq/enqueue/shopify-admin,
+  assistant glue + route, GDPR webhooks/cron/sweep, meta client, campaign-detail UI) swept clean;
+  no clear low-risk fix surfaced. One new finding logged: F17 (GDPR customer-redact drop, NEEDS-HUMAN).
 - **F16** — google `ingest.server.ts recordSyncError` + cron `ingest-ads.tsx setSync`: the last two
   swallowed-`sync_status`-write spots now surface the Supabase error (log on error-recording paths,
   throw on the cron success path) without masking the original ingestion error. Commit `81a9f77`.
@@ -238,5 +265,6 @@ dashboard `format.money()` `$NaN`; F7 — ingest `transform.server.ts` 3 swallow
 - **F1** — canonical day boundary for daily action budget (UTC vs merchant tz); engine/app disagree. Parity TODO for dashboard/engine repo. **← most important.**
 - **F14** — Predictor/Generator dashboard screens render demo data as live with false "synced from Meta" copy; gate behind a Preview/Demo affordance before launch (credibility risk). Parity TODO for dashboard repo.
 - **F13** — backfill fabricates the inventory time series (all points at run-time, not actual stock-change time); design call (bulk-ops API or accept limitation).
+- **F17** — GDPR `customers/data_request` + `customers/redact` forward failures return 200 with no retry and no reconciler (only `shop/redact` is reconciled by the sweep) — compliance gap; decide retry-on-failure vs persist-and-reconcile. Parity TODO for the engine repo.
 - **F2** — confirm production default guardrails (current MCP shop shows $1M/day budget, $10M/action cap — likely seed only).
 - **F6** — choose display format for dashboard alert timestamps (raw ISO currently shown); low-risk once the format is decided. file:line in F6 above.
