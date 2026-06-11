@@ -142,6 +142,36 @@ describe("drainActionRetries", () => {
     });
   });
 
+  it("records state-derived recovered dollars when a NO-ALERT replayed action succeeds", async () => {
+    // Campaigns-page actions park with alert_id=null; on replay success the
+    // recovered dollars come from the row's own pre/post budget states.
+    const row = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      shop_id: SHOP,
+      alert_id: null,
+      action_kind: "pause_campaign",
+      attempts: 1,
+      outcome: "retrying",
+      completed_at: "2026-06-01T00:00:00.000Z",
+      pre_state: { status: "active", daily_budget_cents: 5000 },
+      params: { campaign_id: "dim1", external_id: "ext1", platform: "meta", daily_budget_cents: null },
+    };
+    const adapter = makeFakeAdapter();
+    const { sb, updates } = makeFakeSb({ rows: [row] });
+
+    const result = await drainActionRetries(sb, {
+      now: () => FIXED_NOW,
+      resolveAdapter: async () => adapter,
+    });
+
+    expect(result.succeeded).toBe(1);
+    const audit = updates.find((u) => u.table === "action_audit");
+    expect(audit?.payload).toMatchObject({
+      outcome: "succeeded",
+      dollar_impact_at_exec: 50, // 5000c/day stopped
+    });
+  });
+
   it("acknowledges the alert when a replayed action succeeds", async () => {
     // The synchronous execute path only acknowledges on an immediate
     // success; a success via the retry drain must do it here or the alert

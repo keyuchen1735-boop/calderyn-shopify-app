@@ -77,6 +77,30 @@ describe("executeAction", () => {
     expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(1693.03);
   });
 
+  it("records the stopped daily budget as recovered impact for a no-alert pause", async () => {
+    // Campaigns-page / dashboard-API pauses have no alert to claw back from;
+    // the recovered dollars are the daily spend being stopped.
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "knp" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(50); // 5000c/day stopped
+  });
+
+  it("records the daily delta as recovered impact for a no-alert budget reduction", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "knb", dailyBudgetCents: 3500 }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(15); // 5000→3500
+  });
+
+  it("records zero recovered impact for a no-alert resume (neutral)", async () => {
+    const paused = { ...campaign, status: "paused" };
+    const { sb, calls } = fakeSb({ campaign: paused });
+    await executeAction(SHOP, { alertId: null, kind: "resume_campaign", campaignId: CAMP, idempotencyKey: "knr" }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(0);
+  });
+
   it("records zero recovered impact for a neutral action even with an alert", async () => {
     const paused = { ...campaign, status: "paused" };
     const { sb, calls } = fakeSb({ campaign: paused, alertImpactDollars: 1693.03 });

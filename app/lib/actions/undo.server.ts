@@ -9,7 +9,7 @@ import { actionAdapterForShop } from "../ads/action-registry.server";
 export async function undoAction(shopId: string, auditId: string, sb: SupabaseClient): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, action_kind, params, pre_state, post_state")
+    .select("id, shop_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
@@ -70,6 +70,12 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
       outcome: "succeeded",
       pre_state: orig.post_state,
       post_state: orig.pre_state,
+      // Signed pull-back: the undo row carries the negated impact of the action
+      // it reverses, mirroring the alert-execute undo path (calderyn.server.ts).
+      // recovered() excludes undo rows AND undone originals by id, so this value
+      // never double-counts there; it keeps the audit ledger self-netting for
+      // any naive SUM (e.g. the dashboard monorepo's query).
+      dollar_impact_at_exec: orig.dollar_impact_at_exec ? -Number(orig.dollar_impact_at_exec) : 0,
       undo_of: orig.id,
       actor_user_id: "merchant",
       completed_at: new Date().toISOString(),

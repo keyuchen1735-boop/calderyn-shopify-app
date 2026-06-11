@@ -31,6 +31,7 @@ const pauseAudit = {
   params: { external_id: "c1", platform: "meta" },
   pre_state: { status: "active", daily_budget_cents: 5000 },
   post_state: { status: "paused", daily_budget_cents: 5000 },
+  dollar_impact_at_exec: 5000,
 };
 
 describe("undoAction", () => {
@@ -41,7 +42,11 @@ describe("undoAction", () => {
     await undoAction(SHOP, "aud1", sb);
     expect(adapter.resume).toHaveBeenCalledWith("c1");
     const undo = calls.inserts.find((i) => i.table === "action_audit");
-    expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud1", outcome: "succeeded" });
+    expect((undo?.rows as Record<string, unknown>)).toMatchObject({
+      undo_of: "aud1",
+      outcome: "succeeded",
+      dollar_impact_at_exec: -5000, // pulls the original's recovered impact back out
+    });
   });
 
   it("re-pauses a campaign on a resume_campaign undo (restores pre status)", async () => {

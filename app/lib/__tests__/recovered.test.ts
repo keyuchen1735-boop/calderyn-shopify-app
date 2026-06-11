@@ -5,7 +5,8 @@ const entry = (
   outcome: string,
   dollar_impact_at_exec: number,
   undo_of?: string | null,
-) => ({ outcome, dollar_impact_at_exec, undo_of });
+  id?: string,
+) => ({ id, outcome, dollar_impact_at_exec, undo_of });
 
 describe("recovered — succeeded actions excluding undo rows", () => {
   test("sums succeeded actions and counts them", () => {
@@ -24,6 +25,24 @@ describe("recovered — succeeded actions excluding undo rows", () => {
       entry("succeeded", 12_000, "au-1"), // the undo of au-1
     ]);
     expect(result).toEqual({ cents: 12_000, count: 1 });
+  });
+
+  test("pulls back the original action's impact once it has been undone", () => {
+    const result = recovered([
+      entry("succeeded", 12_000, null, "au-1"), // the original
+      entry("succeeded", -12_000, "au-1", "au-2"), // its undo
+      entry("succeeded", 8_000, null, "au-3"), // an unrelated, still-standing action
+    ]);
+    // au-1 is undone → excluded; au-2 is an undo row → excluded; only au-3 counts.
+    expect(result).toEqual({ cents: 8_000, count: 1 });
+  });
+
+  test("pull-back is robust even when the undo row records no negative impact", () => {
+    const result = recovered([
+      entry("succeeded", 12_000, null, "au-1"),
+      entry("succeeded", 0, "au-1", "au-2"), // undo row with impact omitted/zero
+    ]);
+    expect(result).toEqual({ cents: 0, count: 0 });
   });
 
   test("treats a missing dollar impact as zero", () => {
