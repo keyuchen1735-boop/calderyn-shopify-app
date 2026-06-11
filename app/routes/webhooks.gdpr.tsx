@@ -10,7 +10,9 @@ const TOPIC_TO_PATH: Record<string, string> = {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
-  console.log(`Received GDPR webhook ${topic} for ${shop}`);
+  // Topic only — no shop domain in GDPR-path logs (data-minimization; the
+  // forward below carries the full context to the engine).
+  console.log(`[webhooks.gdpr] received ${topic}`);
 
   const path = TOPIC_TO_PATH[topic];
   if (!path) {

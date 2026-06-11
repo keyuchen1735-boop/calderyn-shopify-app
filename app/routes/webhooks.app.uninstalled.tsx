@@ -6,12 +6,13 @@ import { markShopUninstalled } from "~/lib/supabase.server";
 import { revokeAllSessionsForShop } from "~/lib/dashboard/session.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticate.webhook(request);
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
-  }
+  // No `if (session)` guard: on uninstall the offline session is often already
+  // invalid, so authenticate.webhook returns session=null — exactly the case
+  // where stale rows must still be purged. deleteMany is a no-op on zero rows.
+  await db.session.deleteMany({ where: { shop } });
 
   try {
     await markShopUninstalled(shop);
