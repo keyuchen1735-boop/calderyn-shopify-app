@@ -45,6 +45,40 @@ async def test_fires_when_geo_spend_high_but_local_stock_empty(
 
 
 @pytest.mark.asyncio
+async def test_emits_transfer_plan_evidence_for_reallocate_inventory(
+    pg_pool, seed_shop, seed_regional_starved_scenario
+) -> None:
+    """The alert must carry the concrete source→dest transfer that the
+    ``reallocate_inventory`` action replays into Shopify's
+    inventoryAdjustQuantities: the SKU's Shopify inventory item, an active
+    destination location in the starved region, the source location elsewhere
+    that actually holds stock, and a delta bounded by that source.
+    """
+    await seed_shop(SHOP)
+    # 3 units/day velocity ⇒ a week of demand is 21 units; the 'other'
+    # warehouse holds 200, so the recommended transfer is the full 21.
+    await seed_regional_starved_scenario(
+        SHOP,
+        region="CA",
+        spend=Decimal("800"),
+        ca_stock=0,
+        other_stock=200,
+        velocity=Decimal("3"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert len(results) == 1
+    ev = results[0].evidence
+    # These four flow verbatim into the Shopify mutation, so they must be the
+    # dims' Shopify external ids (GIDs), never internal uuids.
+    assert ev["inventory_item_id"] == "gid://shopify/InventoryItem/44440001"
+    assert ev["to_location_id"] == "loc-region"   # active location in the starved region
+    assert ev["from_location_id"] == "loc-other"  # warehouse elsewhere holding stock
+    assert ev["recommended_delta"] == 21          # min(velocity*7, source stock)
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_region_has_stock(
     pg_pool, seed_shop, seed_regional_starved_scenario
 ) -> None:
