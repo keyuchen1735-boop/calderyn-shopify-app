@@ -19,22 +19,28 @@ export async function deliverEmail(opts: {
   apiKey: string;
   from: string;
   to: string;
+  cc?: string[];
   subject: string;
   text: string;
+  html?: string;
 }): Promise<DeliveryResult> {
   try {
+    const payload: Record<string, unknown> = {
+      from: opts.from,
+      to: [opts.to],
+      subject: opts.subject,
+      text: opts.text,
+    };
+    if (opts.cc && opts.cc.length) payload.cc = opts.cc;
+    // html is preferred by clients that support it; text remains the fallback part.
+    if (opts.html) payload.html = opts.html;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${opts.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: opts.from,
-        to: [opts.to],
-        subject: opts.subject,
-        text: opts.text,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {

@@ -27,7 +27,10 @@ export interface CommitInfo {
   sha: string;
   /** First line of the commit message (subject). */
   subject: string;
+  /** Display name from the commit (git author.name). */
   author: string;
+  /** GitHub account login that authored the commit (""→ unknown) — used for attribution. */
+  login: string;
   branch: string;
   isoDate: string;
 }
@@ -181,6 +184,7 @@ export async function collectActivity(opts: {
         sha: it.sha,
         subject: firstLine(it.commit?.message ?? ""),
         author: it.commit?.author?.name ?? it.author?.login ?? "unknown",
+        login: it.author?.login ?? "",
         branch,
         isoDate: it.commit?.author?.date ?? "",
       });
