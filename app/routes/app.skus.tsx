@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Badge,
@@ -15,9 +15,15 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import {
+  executeInventoryRelocation,
+  RelocationError,
+} from "~/lib/actions/inventory-relocate.server";
+import { getSupabase, resolveShopId } from "~/lib/supabase.server";
+import type { ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
-import type { Alert, SKU } from "~/lib/types";
+import type { Alert, ShopLocation, SKU } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
@@ -26,25 +32,102 @@ type SortDir = "asc" | "desc";
 type LoaderPayload = {
   skus: SKU[];
   alerts: Alert[];
+  locations: ShopLocation[];
   error: { code: string; message: string } | null;
+};
+
+export type RelocatePayload = ActionToast & {
+  error?: { code: string; message: string };
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [skus, alerts] = await Promise.all([
+    const [skus, alerts, locations] = await Promise.all([
       client.skus.list(request.signal),
       client.alerts.list({}, request.signal),
+      client.locations.list(request.signal),
     ]);
-    return json<LoaderPayload>({ skus, alerts, error: null });
+    return json<LoaderPayload>({ skus, alerts, locations, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       skus: [],
       alerts: [],
+      locations: [],
       error: { code: e.code ?? "ERROR", message: e.message },
     });
+  }
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session, admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+
+  // Boundary validation — never trust the modal's FormData (repo rule).
+  const skuId = String(formData.get("sku_id") ?? "").trim();
+  const fromLocationId = String(formData.get("from_location_id") ?? "").trim();
+  const toLocationId = String(formData.get("to_location_id") ?? "").trim();
+  const qtyRaw = String(formData.get("quantity") ?? "").trim();
+  const idempotencyKey = String(formData.get("idempotency_key") ?? "").trim();
+
+  if (
+    !skuId ||
+    !fromLocationId ||
+    !toLocationId ||
+    !idempotencyKey ||
+    !/^\d+$/.test(qtyRaw) ||
+    Number(qtyRaw) <= 0
+  ) {
+    return json<RelocatePayload>(
+      {
+        ok: false,
+        error: { code: "INVALID_INPUT", message: "Quantity must be a positive whole number." },
+        toast: { message: "Quantity must be a positive whole number.", isError: true },
+      },
+      { status: 422 },
+    );
+  }
+
+  try {
+    const shopId = await resolveShopId(session.shop);
+    const result = await executeInventoryRelocation(
+      shopId,
+      {
+        alertId: null,
+        skuId,
+        fromLocationId,
+        toLocationId,
+        quantity: Number(qtyRaw),
+        idempotencyKey,
+      },
+      getSupabase(),
+      admin,
+    );
+    const ok = result.outcome === "succeeded";
+    return json<RelocatePayload>({
+      ok,
+      toast: ok
+        ? { message: "Inventory transfer executed — see the audit log" }
+        : { message: "Transfer recorded as failed — check the audit log", isError: true },
+    });
+  } catch (err) {
+    if (err instanceof RelocationError) {
+      return json<RelocatePayload>(
+        {
+          ok: false,
+          error: { code: err.code, message: err.message },
+          toast: { message: err.message, isError: true },
+        },
+        { status: 422 },
+      );
+    }
+    const message = err instanceof Error ? err.message : "Inventory transfer failed.";
+    return json<RelocatePayload>(
+      { ok: false, error: { code: "ACTION_FAILED", message }, toast: { message, isError: true } },
+      { status: 500 },
+    );
   }
 };
 
