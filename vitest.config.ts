@@ -6,5 +6,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["app/**/*.test.ts"],
+    // Live Meta tests (META_LIVE_TEST=1) mutate one shared real campaign;
+    // interleaved files would corrupt each other's pre-state reads/restores.
+    fileParallelism: process.env.META_LIVE_TEST !== "1",
   },
 });
