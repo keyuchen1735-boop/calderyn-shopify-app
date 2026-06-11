@@ -6,21 +6,19 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
 
 ## Summary
 
-- **Last run:** 2026-06-11 06:43 UTC
+- **Last run:** 2026-06-11 07:48 UTC
 - **Correctness gate:** GREEN — `npm ci` 0, `typecheck` 0, `lint` 0 (12 pre-existing
-  warnings in untouched files), `build` 0, `npm test` 832 passed / 5 skipped (134
-  files; +4 new `format.test.ts` cases this run).
+  warnings in untouched files), `build` 0, `npm test` 832 passed / 5 skipped (135 files).
 - **Canonical check (pause → Recovered KPI):** PASS against live data (unchanged).
   Audit row `5af82d74…` (`pause_campaign`, succeeded, `dollar_impact_at_exec`=12861.94)
   equals `get_shop_stats.recovered_7d`=12861.94. Contract still closes on both surfaces.
 - **Open bugs:** 1 code (F15 Predictor div-by-zero, latent/demo-only — guard before live);
   F12 (topAdNames embed shape, needs schema verification) + F6 (date-format, visual call)
   OPEN; F5 (meta-push idempotency gap) still OPEN.
-- **Fixed this run:** 4 — F8 (screener `history.server` swallowed 6 Supabase errors →
-  cold-start masking), F9 (ingest `backfill` terminal `sync_status` write unchecked →
-  "completed but didn't"), F10 (ingest `mappers` NaN `source_version`), F11 (dashboard
-  `format.money()` rendered `$NaN`). Gate green each; commits `89090a0`, `8bae8cf`,
-  `e2989e4`, `1ce0c71`.
+- **Fixed this run:** 1 — F16 (two remaining swallowed-`sync_status`-write spots, same
+  class as F7/F8/F9: `google/ingest.server.ts recordSyncError` + `cron.ingest-ads.tsx
+  setSync` — both on error-recording paths, fixed without masking the original ingestion
+  error). Gate green; commit `81a9f77`.
 - **Needs human:** 4 (F1 cross-surface guardrail day-boundary, F2 demo-config check,
   F13 backfill inventory timeseries fabricated at run-time, F14 Predictor/Generator ship
   demo data labeled live with false "synced from Meta" copy — **gate before launch**).
@@ -33,8 +31,9 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
 | 2026-06-11 04:38 | Correctness gate (full, GREEN). Canonical pause→Recovered re-verified live (PASS, unchanged). Rotation: `app/lib/actions/retry.server.ts` (drain/registry/compensator/backoff — found+fixed stale header F4) + `cron.action-retry.tsx`, `actions/autopilot.server.ts` (clean), `screener/meta-push.server.ts` (gap F5). UI code review: `routes/app.alerts.$id.tsx` + `app.alerts._index.tsx` (Polaris layout/copy/guardrail meter — clean). |
 | 2026-06-11 05:45 | Correctness gate (full, GREEN). Canonical pause→Recovered re-verified live (PASS, unchanged) + traced dashboard read side (both surfaces use shared `recovered()`). Rotation: `attribution/*` (revenue/apply/match/parse), `meta/transform.ts`, `gdpr/sweep.server.ts`, `screener/*` (orchestrate/calibrate/image-gen-limit + E2E trace), `ingest/*` (found+fixed F7 in `transform.server.ts`; google/tiktok/quickbooks/meta-ingest scanned clean via sub-agent). UI code review: `routes/app.audit.tsx`, `app.campaigns._index.tsx`, `app.screener.tsx` (clean), `components/dashboard/*` (format/view-models/live + `Dashboard.tsx`/`Alerts.tsx` — found F6 raw `created_at` render). Unit check: `dollar_impact*` dollars→cents at `calderyn.server.ts:102,119` confirmed consistent with `fmtMoney`. |
 | 2026-06-11 06:43 | Correctness gate (full, GREEN — 832 pass). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`). Rotation — **screener internals** `screener/{generate,score,score-one,meta-creative,higgsfield,history,runs,campaign-ads,pick-generator}.server.ts` (found+fixed F8 swallowed errors in `history`; F12 topAdNames embed-shape + F15 Predictor latent div-by-zero logged); **ingest/PO internals** `ingest/{backfill,dlq,enqueue,mappers,shopify-admin}.server.ts` + `po/{draft,pdf}.server.ts` (found+fixed F9 backfill terminal write + F10 mappers NaN `source_version`; F13 inventory-timeseries logged). UI code review: `components/dashboard/screens/{Analytics,Inventory,Settings,Generator,Predictor,Campaigns}.tsx` + `format.ts` (found+fixed F11 `money()` `$NaN`; F14 Predictor/Generator demo-data-as-live logged; Settings + Analytics/Inventory/Campaigns state-handling clean). |
+| 2026-06-11 07:48 | Correctness gate (full, GREEN — 832 pass). Canonical pause→Recovered re-verified live (PASS, unchanged; audit `5af82d74…`=12861.94=`recovered_7d`; guardrails still demo $1M/day, used 0 → F1/F2 unchanged). Rotation — **meta/* internals** `meta/{insights,ad-insights,actions,campaigns,creatives,ingest,oauth-state}.server.ts` (clean; documented limitations: creatives single-page >25-ad truncation, ingest currency-default-on-error); **assistant/*** `assistant/{anthropic,loop,tools,prompt,request,snapshot,conversations}.server.ts` (clean — model `claude-sonnet-4-6` correct; verified `snapshot.dollars()` consumes cents-shaped `dollar_impact` per `calderyn.server.ts:102`, no unit bug); **adapter internals deep-read** via sub-agent `google/* tiktok/* quickbooks/* ads/*` (found F16 in google `recordSyncError` + cron.ingest-ads `setSync`; rest clean). UI code review: `routes/app.skus.tsx` (clean — auth/error/empty states, location cell), `app.generator.tsx` (clean live feature — auth both sides, quota refund, error/empty/loading states). |
 
-**Not yet swept (rotate here next):** `app/lib/meta/{insights,ad-insights,oauth,oauth-state,actions,creatives,campaigns,client}.server.ts`, `app/lib/google/*` + `tiktok/*` + `quickbooks/*` adapter internals (sub-agent scanned for common bug classes 2026-06-11 05:45, clean — a deeper read still owed), `app/lib/ingest/{dlq,enqueue,shopify-admin}.server.ts` deeper read + cron.ingest routes, `cron.gdpr.tsx` + `webhooks.gdpr.tsx`, `app/lib/assistant/*` (anthropic/loop/prompt/tools/snapshot/conversations), `app/routes/oauth.*` + `mcp_oauth` (read-only review only — no auth edits), `app.skus.tsx` + `app.campaigns.$campaignId*` UI, `app.generator.tsx` route UI, `history.server.ts` topAdNames schema verification (F12). Swept this run: screener internals, ingest/po internals, dashboard screens.
+**Not yet swept (rotate here next):** `app/lib/meta/{oauth,client}.server.ts` deeper read (oauth = read-only, no auth edits), `cron.gdpr.tsx` + `webhooks.gdpr.tsx`, `app/lib/assistant/{action-param,types}.ts` + `app.assistant.tsx` route UI, `app/routes/oauth.*` + `mcp_oauth` (read-only review only — no auth edits), `app.campaigns.$campaignId*` UI, `app/lib/ingest/{dlq,enqueue,shopify-admin}.server.ts` deeper read, `history.server.ts` topAdNames schema verification (F12 — needs Supabase schema access). Swept this run: meta/* internals, assistant/* internals, google/tiktok/quickbooks/ads adapter internals (deep), skus + generator UI.
 
 ## Findings
 
@@ -206,19 +205,33 @@ runs: reconcile against it so findings are never duplicated. Status vocabulary:
   cheap but should land with the live-API wiring, not against throwaway demo data. Guard the
   denominator (`Math.max(ε, roasHigh - roasLow)`) and `ms.length === 0` when this goes live.
 
+### [FIXED] F16 — two remaining swallowed `sync_status` writes (google ingest + cron.ingest-ads)
+- **Where:** `app/lib/google/ingest.server.ts` `recordSyncError` (was ~104-112) and
+  `app/routes/cron.ingest-ads.tsx` `setSync` (was ~11-19) + its catch-block call (was ~43).
+- **Observed:** the last two terminal `shop_integrations` status writes in the F7/F8/F9 swallowed-
+  error class — both destructured nothing/`.data` and ignored `.error` (supabase-js returns
+  `{ error }` without throwing). `setSync` on the cron SUCCESS path (lines 34/38): a dropped write
+  reports a sync that never persisted → stale `pending` (endless re-backfill) or missed
+  `last_sync_at`. `recordSyncError`: an unrecorded error-status write left the row inconsistent.
+- **Fix (with the error-recording-path subtlety):** both spots run inside a caller's catch that
+  re-throws the ORIGINAL ingestion error, so a naive "check + throw" would mask it. `recordSyncError`
+  now checks `error` and **logs** (never throws). `setSync` now throws on write error — correct for
+  its two success-path callers (turns a false success into a real pool failure) — and the catch-path
+  call is wrapped in its own try/catch so a failed error-status write can't mask the original error.
+  Ingest plumbing (internal) — exempt from dashboard parity. **Gate:** `/code-review` [] (additive,
+  no masking); typecheck 0; eslint `--max-warnings=0` both files 0; build 0; vitest google+ingest+cron
+  118/118; full suite 832/5-skip. Commit `81a9f77`.
+
 ## Fixed this cycle
 
-- **F8** — screener `history.server.ts`: 6 calibration reads now surface Supabase `error` instead
-  of swallowing it into cold-start defaults. Commit `89090a0`.
-- **F9** — ingest `backfill.server.ts`: terminal `sync_status="ready"` write now checks its error
-  (no more "completed but didn't"). Commit `8bae8cf`.
-- **F10** — ingest `mappers.server.ts`: order-webhook `source_version` falls back to now instead of
-  `NaN` when both timestamps are absent. Commit `e2989e4`.
-- **F11** — dashboard `format.money()`: non-finite input renders `$0`, not `$NaN`; +4 test cases.
-  Commit `1ce0c71`.
+- **F16** — google `ingest.server.ts recordSyncError` + cron `ingest-ads.tsx setSync`: the last two
+  swallowed-`sync_status`-write spots now surface the Supabase error (log on error-recording paths,
+  throw on the cron success path) without masking the original ingestion error. Commit `81a9f77`.
 
-_(Prior cycles: F7 — ingest `transform.server.ts` 3 swallowed selects; F4 — `retry.server.ts` stale
-"INERT skeleton" header.)_
+_(Prior cycles: F8 — screener `history.server.ts` 6 swallowed calibration reads; F9 — ingest
+`backfill.server.ts` terminal write; F10 — ingest `mappers.server.ts` NaN `source_version`; F11 —
+dashboard `format.money()` `$NaN`; F7 — ingest `transform.server.ts` 3 swallowed selects; F4 —
+`retry.server.ts` stale "INERT skeleton" header.)_
 
 ## Needs human
 
