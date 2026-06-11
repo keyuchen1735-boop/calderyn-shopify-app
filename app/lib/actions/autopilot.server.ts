@@ -61,10 +61,27 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     if (!kind) continue;
 
     const currentBudgetCents = c.daily_budget_cents ?? null;
+
+    // A budget cut needs a known current budget to cut from. executeAction
+    // refuses a missing/zero target budget (it would otherwise zero the live
+    // campaign), and an uncaught throw here would abort the whole run — so
+    // count it blocked and keep draining the remaining candidates.
+    if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
+      blocked += 1;
+      continue;
+    }
+
     const newBudgetCents =
       kind === "reduce_campaign_budget" && currentBudgetCents != null
         ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
         : undefined;
+
+    // Same refusal in executeAction: a cut that lands on $0 would zero the
+    // live campaign budget (that's a pause, not a reduction) — blocked.
+    if (kind === "reduce_campaign_budget" && !newBudgetCents) {
+      blocked += 1;
+      continue;
+    }
 
     // Budget detectors: prefer REDIRECTING the cut to a winning campaign on
     // another platform over shrinking total spend. Falls back to the plain
