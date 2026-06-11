@@ -17,7 +17,6 @@ import {
   Button,
   Card,
   DataTable,
-  EmptyState,
   InlineGrid,
   InlineStack,
   Page,
@@ -28,7 +27,7 @@ import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
 import { recovered as recoveredOf } from "~/lib/recovered";
-import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS } from "~/lib/labels";
+import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS, actorLabel } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
@@ -110,21 +109,28 @@ export default function Audit() {
         {error && (
           <Box paddingBlockEnd="400">
             <Banner tone="critical" title="Couldn't load audit log">
-              <p>
-                {error.code}: {error.message}
-              </p>
+              <p>{error.message}</p>
             </Banner>
           </Box>
         )}
         <Card>
-          <EmptyState
-            heading="No actions yet"
-            action={{ content: "Open alerts", onAction: () => navigate("/app/alerts") }}
-            secondaryAction={{ content: "Manage campaigns", onAction: () => navigate("/app/campaigns") }}
-            image=""
-          >
-            <p>Execute an alert recommendation or pause a campaign to log your first action.</p>
-          </EmptyState>
+          <Box padding="600">
+            <BlockStack gap="300" inlineAlign="center">
+              <Text as="p" variant="headingMd">
+                No actions yet
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Every action Calderyn takes — and your one-click Undo for each — is recorded
+                here. Approve an alert recommendation or pause a campaign to log your first.
+              </Text>
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={() => navigate("/app/alerts")}>
+                  Open alerts
+                </Button>
+                <Button onClick={() => navigate("/app/campaigns")}>Manage campaigns</Button>
+              </InlineStack>
+            </BlockStack>
+          </Box>
         </Card>
       </Page>
     );
@@ -186,7 +192,7 @@ export default function Audit() {
       </Text>
     ),
     <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
-      {a.actor}
+      {actorLabel(a.actor)}
     </Text>,
     <Box key={`i-${a.id}`}>
       <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
@@ -239,16 +245,12 @@ export default function Audit() {
       <BlockStack gap="500">
         {error && (
           <Banner tone="critical" title="Couldn't load audit log">
-            <p>
-              {error.code}: {error.message}
-            </p>
+            <p>{error.message}</p>
           </Banner>
         )}
         {actionData?.error && (
           <Banner tone="critical" title="Undo failed">
-            <p>
-              {actionData.error.code}: {actionData.error.message}
-            </p>
+            <p>{actionData.error.message}</p>
           </Banner>
         )}
         <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
