@@ -20,8 +20,20 @@ const ROW: SkuDemandViewRow = {
   src_available: 80,
   inventory_item_id: "gid://shopify/InventoryItem/1",
   locations_detail: [
-    { external_id: "gid://shopify/Location/9", name: "NY Warehouse", region: "NY", available: 80 },
-    { external_id: "gid://shopify/Location/2", name: "LA Warehouse", region: "CA", available: 5 },
+    {
+      external_id: "gid://shopify/Location/9",
+      name: "NY Warehouse",
+      region: "NY",
+      available: 80,
+      active: true,
+    },
+    {
+      external_id: "gid://shopify/Location/2",
+      name: "LA Warehouse",
+      region: "CA",
+      available: 5,
+      active: false,
+    },
   ],
 };
 
@@ -96,9 +108,31 @@ describe("suggestedTransferFromRow", () => {
 describe("locationsDetailFromRow", () => {
   it("maps external_id to id and coerces numbers", () => {
     expect(locationsDetailFromRow(ROW)).toEqual([
-      { id: "gid://shopify/Location/9", name: "NY Warehouse", region: "NY", available: 80 },
-      { id: "gid://shopify/Location/2", name: "LA Warehouse", region: "CA", available: 5 },
+      {
+        id: "gid://shopify/Location/9",
+        name: "NY Warehouse",
+        region: "NY",
+        available: 80,
+        active: true,
+      },
+      {
+        id: "gid://shopify/Location/2",
+        name: "LA Warehouse",
+        region: "CA",
+        available: 5,
+        active: false,
+      },
     ]);
+  });
+
+  it("defaults active to true when absent (older payloads)", () => {
+    const row = {
+      ...ROW,
+      locations_detail: [
+        { external_id: "gid://shopify/Location/9", name: "NY Warehouse", region: "NY", available: 80 },
+      ],
+    };
+    expect(locationsDetailFromRow(row)[0].active).toBe(true);
   });
 
   it("returns empty array when locations_detail is null", () => {

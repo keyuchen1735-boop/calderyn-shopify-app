@@ -287,9 +287,12 @@ function RelocateDialog({
   const suggestion = sku.suggested_transfer;
   const sources = sku.locations_detail.filter((l) => l.available > 0);
   // The dashboard API has no shop-locations endpoint; destinations are the
-  // SKU's own locations plus the suggested destination (deduped by id).
+  // SKU's own ACTIVE locations (the server rejects inactive destinations)
+  // plus the suggested destination (active by construction in the view's
+  // dest pick), deduped by id. Sources stay unfiltered: draining an
+  // inactive location is valid.
   const destinations = [
-    ...sku.locations_detail,
+    ...sku.locations_detail.filter((l) => l.active),
     ...(suggestion && !sku.locations_detail.some((l) => l.id === suggestion.to_location_id)
       ? [
           {
@@ -297,6 +300,7 @@ function RelocateDialog({
             name: suggestion.to_location_name,
             region: null,
             available: 0,
+            active: true,
           },
         ]
       : []),

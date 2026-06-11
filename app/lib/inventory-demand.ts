@@ -24,7 +24,13 @@ export interface SkuDemandViewRow {
   src_available: string | number;
   inventory_item_id: string | null;
   locations_detail:
-    | Array<{ external_id: string; name: string; region: string | null; available: number }>
+    | Array<{
+        external_id: string;
+        name: string;
+        region: string | null;
+        available: number;
+        active?: boolean;
+      }>
     | null;
 }
 
@@ -43,6 +49,8 @@ export function locationsDetailFromRow(r: SkuDemandViewRow): SkuLocationDetail[]
     name: l.name,
     region: l.region,
     available: Number(l.available ?? 0),
+    // Older payloads predate the 'active' key; treat them as active.
+    active: Boolean(l.active ?? true),
   }));
 }
 

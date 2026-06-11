@@ -2,12 +2,12 @@
 -- the inventory page (embedded app + dashboard).
 --
 -- Demand attribution: order lines joined to DISTINCT (shop_id, order_id,
--- location_id) tuples from successful fulfillments, then to
--- location_dim.region.  Using DISTINCT means a split shipment (two success
--- rows for the same order+location) counts only once; an order genuinely
--- fulfilled from locations in two different regions still counts once per
--- location.  Rows from null-region locations are excluded, so demand_share
--- is the share of REGIONALIZED demand only.
+-- region) tuples from successful fulfillments resolved through
+-- location_dim.region — one count per order per REGION.  Split shipments
+-- within a region (same or different locations) count only once; an order
+-- genuinely fulfilled from locations in two different regions counts once
+-- per region.  Rows from null-region locations are excluded, so
+-- demand_share is the share of REGIONALIZED demand only.
 --
 -- Window: same 30-day anchor as v_skus_flat (shop's latest order_fact row),
 -- so demand_units_30d is directly comparable to that view's velocity column.
@@ -27,22 +27,24 @@ latest_inv as (
   order by i.sku_id, i.location_id, i.observed_at desc, i.source_version desc
 ),
 regional_demand as (
-  select ol.shop_id, ol.sku_id, l.region,
+  select ol.shop_id, ol.sku_id, f.region,
          sum(ol.quantity)::numeric / 30.0 as daily_demand
   from public.order_line_fact ol
   join public.order_fact o on o.id = ol.order_id and o.shop_id = ol.shop_id
   join max_order_day m on m.shop_id = ol.shop_id
+  -- One demand attribution per order per REGION: split shipments within a
+  -- region (same or different locations) count once; an order genuinely
+  -- fulfilled from locations in two different regions counts once per region.
   join (
-    select distinct shop_id, order_id, location_id
-    from public.fulfillment_fact
-    where status = 'success'
+    select distinct f.shop_id, f.order_id, l.region
+    from public.fulfillment_fact f
+    join public.location_dim l on l.id = f.location_id
+    where f.status = 'success' and l.region is not null
   ) f on f.order_id = ol.order_id and f.shop_id = ol.shop_id
-  join public.location_dim l on l.id = f.location_id
   where o.created_at_source > (m.anchor_ts - interval '30 days')
     and o.created_at_source <= m.anchor_ts
     and ol.sku_id is not null
-    and l.region is not null
-  group by ol.shop_id, ol.sku_id, l.region
+  group by ol.shop_id, ol.sku_id, f.region
 ),
 top_region as (
   select distinct on (rd.shop_id, rd.sku_id)
@@ -115,7 +117,8 @@ left join lateral (
              'external_id', l.external_id,
              'name', l.name,
              'region', l.region,
-             'available', li.available)
+             'available', li.available,
+             'active', l.active)
            order by li.available desc, l.external_id) as locations_detail
   from latest_inv li
   join public.location_dim l on l.id = li.location_id

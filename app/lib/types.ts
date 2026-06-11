@@ -86,6 +86,7 @@ export interface SkuLocationDetail {
   name: string;
   region: string | null;
   available: number;
+  active: boolean;
 }
 
 export interface SkuDemand {

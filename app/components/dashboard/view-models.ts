@@ -81,7 +81,13 @@ export interface SkuVM {
     recommended_delta: number;
   } | null;
   /** Per-location availability with Shopify GIDs (relocate dialog options). */
-  locations_detail: Array<{ id: string; name: string; region: string | null; available: number }>;
+  locations_detail: Array<{
+    id: string;
+    name: string;
+    region: string | null;
+    available: number;
+    active: boolean;
+  }>;
 }
 
 export interface GuardrailVM {

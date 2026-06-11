@@ -16,10 +16,12 @@ OTHER_LOC = "dddddddd-dddd-dddd-dddd-dddddddd3333"
 SHOP_TWO = "00000000-0000-0000-0000-0000000000e1"   # two-region share test
 SHOP_TIE = "00000000-0000-0000-0000-0000000000e2"   # tie-break test
 SHOP_FAN = "00000000-0000-0000-0000-0000000000e3"   # fan-out pin test
+SHOP_SPL = "00000000-0000-0000-0000-0000000000e4"   # same-region split test
 
 SKU_TWO = "e1eeeeee-eeee-eeee-eeee-eeeeeeee1111"   # two-region SKU (SHOP_TWO)
 SKU_TIE = "e2eeeeee-eeee-eeee-eeee-eeeeeeee1111"   # tie-break SKU (SHOP_TIE)
 SKU_FAN = "e3eeeeee-eeee-eeee-eeee-eeeeeeee1111"   # fan-out SKU  (SHOP_FAN)
+SKU_SPL = "e4eeeeee-eeee-eeee-eeee-eeeeeeee1111"   # split SKU    (SHOP_SPL)
 
 # Location IDs for the extra test shops (also distinct per-shop)
 LOC_TWO_CA = "e1eeeeee-eeee-eeee-eeee-eeeeeeee2222"  # CA location (SHOP_TWO)
@@ -27,12 +29,15 @@ LOC_TWO_NY = "e1eeeeee-eeee-eeee-eeee-eeeeeeee3333"  # NY location (SHOP_TWO)
 LOC_TIE_CA = "e2eeeeee-eeee-eeee-eeee-eeeeeeee2222"  # CA location (SHOP_TIE)
 LOC_TIE_NY = "e2eeeeee-eeee-eeee-eeee-eeeeeeee3333"  # NY location (SHOP_TIE)
 LOC_FAN_CA = "e3eeeeee-eeee-eeee-eeee-eeeeeeee2222"  # CA location (SHOP_FAN)
+LOC_SPL_CA1 = "e4eeeeee-eeee-eeee-eeee-eeeeeeee2222"  # 1st CA location (SHOP_SPL)
+LOC_SPL_CA2 = "e4eeeeee-eeee-eeee-eeee-eeeeeeee3333"  # 2nd CA location (SHOP_SPL)
 
 ORD_TWO_CA = "e1eeeeee-eeee-eeee-eeee-eeeeeeee5555"  # CA order (SHOP_TWO)
 ORD_TWO_NY = "e1eeeeee-eeee-eeee-eeee-eeeeeeee6666"  # NY order (SHOP_TWO)
 ORD_TIE_CA = "e2eeeeee-eeee-eeee-eeee-eeeeeeee5555"  # CA order (SHOP_TIE)
 ORD_TIE_NY = "e2eeeeee-eeee-eeee-eeee-eeeeeeee6666"  # NY order (SHOP_TIE)
 ORD_FAN    = "e3eeeeee-eeee-eeee-eeee-eeeeeeee5555"  # order   (SHOP_FAN)
+ORD_SPL    = "e4eeeeee-eeee-eeee-eeee-eeeeeeee5555"  # order   (SHOP_SPL)
 
 FF_TWO_CA = "e1eeeeee-eeee-eeee-eeee-eeeeeeee7777"   # CA fulfillment (SHOP_TWO)
 FF_TWO_NY = "e1eeeeee-eeee-eeee-eeee-eeeeeeee8888"   # NY fulfillment (SHOP_TWO)
@@ -40,6 +45,8 @@ FF_TIE_CA = "e2eeeeee-eeee-eeee-eeee-eeeeeeee7777"   # CA fulfillment (SHOP_TIE)
 FF_TIE_NY = "e2eeeeee-eeee-eeee-eeee-eeeeeeee8888"   # NY fulfillment (SHOP_TIE)
 FF_FAN_1  = "e3eeeeee-eeee-eeee-eeee-eeeeeeee7777"   # 1st fulfillment (SHOP_FAN)
 FF_FAN_2  = "e3eeeeee-eeee-eeee-eeee-eeeeeeee8888"   # 2nd fulfillment (SHOP_FAN, fan-out)
+FF_SPL_1  = "e4eeeeee-eeee-eeee-eeee-eeeeeeee7777"   # 1st fulfillment (SHOP_SPL, CA loc 1)
+FF_SPL_2  = "e4eeeeee-eeee-eeee-eeee-eeeeeeee8888"   # 2nd fulfillment (SHOP_SPL, CA loc 2)
 
 
 async def _fetch_row(pg_pool, shop_id: str, sku_id: str = SKU_ID):
@@ -113,6 +120,9 @@ async def test_source_is_largest_holder_outside_region(
     assert row["inventory_item_id"] == "gid://shopify/InventoryItem/9"
     detail = row["locations_detail"]
     assert detail is not None  # jsonb array with both locations, available desc
+    import json
+    parsed = json.loads(detail) if isinstance(detail, str) else detail
+    assert all("active" in loc for loc in parsed)  # relocate dialog filters destinations on it
 
 
 # --------------------------------------------------------------------------
@@ -335,4 +345,72 @@ async def test_fan_out_pin(pg_pool, seed_shop) -> None:
     assert row["demand_units_30d"] == 300, (
         f"Fan-out bug: expected 300 but got {row['demand_units_30d']} "
         "(two fulfillment rows for same order+location doubled the count)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_region_split_fulfillment_counts_once(pg_pool, seed_shop) -> None:
+    """One order (qty 300) fulfilled from TWO DIFFERENT locations in the SAME
+    region must count as 300, not 600.  Demand attribution is once per order
+    per REGION, not per location.
+    """
+    await seed_shop(SHOP_SPL)
+    async with pg_pool.acquire() as conn:
+        await _cleanup_extra(conn, SHOP_SPL)
+        await conn.execute(
+            "INSERT INTO public.shops (id, shop_domain) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+            SHOP_SPL, "test-extra-e4.myshopify.com",
+        )
+        await conn.execute(
+            """INSERT INTO public.sku_dim
+                 (id, shop_id, external_id, product_id, sku, title, unit_cost_cents, currency)
+               VALUES ($1, $2, 'ext-e4-1', 'prod-e4-1', 'E4-1', 'Split SKU', 1000, 'USD')""",
+            SKU_SPL, SHOP_SPL,
+        )
+        # TWO locations, both in CA
+        await conn.execute(
+            """INSERT INTO public.location_dim (id, shop_id, external_id, name, country, region, active)
+               VALUES ($1, $2, 'loc-e4-ca1', 'CA WH 1', 'US', 'CA', true)""",
+            LOC_SPL_CA1, SHOP_SPL,
+        )
+        await conn.execute(
+            """INSERT INTO public.location_dim (id, shop_id, external_id, name, country, region, active)
+               VALUES ($1, $2, 'loc-e4-ca2', 'CA WH 2', 'US', 'CA', true)""",
+            LOC_SPL_CA2, SHOP_SPL,
+        )
+        # Single order, 300 units
+        await conn.execute(
+            """INSERT INTO public.order_fact
+                 (id, shop_id, external_id, order_number, created_at_source,
+                  total_cents, subtotal_cents, source_version)
+               VALUES ($1, $2, 'ord-e4-1', '#E4-1', now() - interval '5 days',
+                       90000, 90000, 1)""",
+            ORD_SPL, SHOP_SPL,
+        )
+        await conn.execute(
+            """INSERT INTO public.order_line_fact
+                 (shop_id, order_id, sku_id, external_line_id,
+                  quantity, price_cents, total_cents, unit_cost_cents_snapshot)
+               VALUES ($1, $2, $3, 'line-e4-1', 300, 300, 90000, 1000)""",
+            SHOP_SPL, ORD_SPL, SKU_SPL,
+        )
+        # TWO success fulfillment rows for the SAME order from DIFFERENT CA locations
+        await conn.execute(
+            """INSERT INTO public.fulfillment_fact
+                 (id, shop_id, order_id, external_id, location_id, status, source_version)
+               VALUES ($1, $2, $3, 'ff-e4-1', $4, 'success', 1)""",
+            FF_SPL_1, SHOP_SPL, ORD_SPL, LOC_SPL_CA1,
+        )
+        await conn.execute(
+            """INSERT INTO public.fulfillment_fact
+                 (id, shop_id, order_id, external_id, location_id, status, source_version)
+               VALUES ($1, $2, $3, 'ff-e4-2', $4, 'success', 2)""",
+            FF_SPL_2, SHOP_SPL, ORD_SPL, LOC_SPL_CA2,
+        )
+
+    row = await _fetch_row(pg_pool, SHOP_SPL, SKU_SPL)
+    assert row is not None, "View returned no row for SHOP_SPL"
+    assert row["demand_units_30d"] == 300, (
+        f"Same-region split bug: expected 300 but got {row['demand_units_30d']} "
+        "(an order fulfilled from two locations in the same region was counted twice)"
     )
