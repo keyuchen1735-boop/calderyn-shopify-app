@@ -84,6 +84,27 @@ async def test_does_not_fire_when_spend_trend_is_flat(
 
 
 @pytest.mark.asyncio
+async def test_does_not_fire_when_already_stocked_out(
+    pg_pool, seed_shop, seed_scaling_risk_scenario
+) -> None:
+    await seed_shop(SHOP)
+    # On-hand stock is already 0 (days_of_cover = 0) while spend is scaling.
+    # This is an active stockout, not a "may sell out" risk — it belongs to
+    # sku_stockout_vs_spend, so this detector must stay silent rather than emit
+    # copy that contradicts the evidence (merchant review item 4).
+    await seed_scaling_risk_scenario(
+        SHOP,
+        velocity=Decimal("20"),
+        stock=0,
+        spend_trend=Decimal("2.0"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []
+
+
+@pytest.mark.asyncio
 async def test_threshold_constants_pinned() -> None:
     assert DAYS_OF_COVER_THRESHOLD == Decimal("5")
     assert SPEND_TREND_THRESHOLD == Decimal("1.5")

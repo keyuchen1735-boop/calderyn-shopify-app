@@ -11,6 +11,11 @@ Plan 03 Task 13. Combines two signals:
 Together these mean: we are pouring money into a SKU and we will run out
 before the orders we've already paid to acquire can be filled.
 
+The SKU must also still have **on-hand stock** (> 0). A SKU already at zero
+isn't a "may sell out" risk — it's an active stockout, owned by
+``sku_stockout_vs_spend``. Firing here on zero stock would contradict the
+alert's own evidence (stock 0 / days-of-cover 0).
+
 Dollar impact estimates the gross profit lost during the projected
 stockout window using ``estimate_stockout_loss`` with
 ``stockout_days = max(0, 7 - days_of_cover)``.
@@ -111,6 +116,13 @@ WHERE lf.days_of_cover < $2
   AND coalesce(sw.spend_prev_cents, 0) > 0
   AND (coalesce(sw.spend_this_cents, 0) / NULLIF(sw.spend_prev_cents, 0)) >= $3
   AND coalesce(v.units, 0) > 0
+  -- "Best-seller may sell out" only holds while there is still stock to sell.
+  -- A SKU already at zero on-hand isn't a forward-looking fulfillment risk —
+  -- it's an active stockout, which sku_stockout_vs_spend (sum(available) <= 0
+  -- AND spend over threshold) is the correct detector for. Without this guard
+  -- the alert copy contradicts its own evidence (Total stock 0 / Days until
+  -- sold out 0). See merchant review item 4.
+  AND coalesce(ss.qty, 0) > 0
 """
 
 
