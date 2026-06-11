@@ -502,8 +502,8 @@ function OutcomePanel({ o }: { o: ScoreCard["outcomes"] }) {
           </Text>
         </div>
         <InlineGrid columns={2} gap="200">
-          <MiniStat value={pct(o.predictedCtr)} label="predicted CTR" />
-          <MiniStat value={pct(o.holdRate)} label="hold rate" />
+          <MiniStat value={pct(o.predictedCtr)} label="predicted click-through rate" />
+          <MiniStat value={pct(o.holdRate)} label="viewers who keep watching" />
           <MiniStat
             value={dollars(o.predictedRevenueCents)}
             label={`est. revenue @ ${dollars(o.assumedSpendCents)}`}
