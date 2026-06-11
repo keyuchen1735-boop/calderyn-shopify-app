@@ -324,7 +324,13 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
     })) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ audit_id: "audit-3" });
-    expect(undoAction).toHaveBeenCalledWith("shop-1", "a1", expect.anything());
+    expect(undoAction).toHaveBeenCalledWith(
+      "shop-1",
+      "a1",
+      expect.anything(),
+      // inventory undos need a Shopify admin client; the route passes one through
+      expect.objectContaining({ admin: expect.anything() }),
+    );
   });
 });
 

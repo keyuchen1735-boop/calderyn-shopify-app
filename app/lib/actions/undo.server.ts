@@ -5,8 +5,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import { actionAdapterForShop } from "../ads/action-registry.server";
+import { inventoryAdjustQuantities, type AdminGraphqlClient } from "../shopify/inventory.server";
 
-export async function undoAction(shopId: string, auditId: string, sb: SupabaseClient): Promise<{ id: string }> {
+export async function undoAction(
+  shopId: string,
+  auditId: string,
+  sb: SupabaseClient,
+  deps: { admin?: AdminGraphqlClient } = {},
+): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
     .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec")
@@ -21,8 +27,13 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
   const externalId = String(params.external_id ?? "");
   const platform = String(params.platform ?? "") as Platform;
 
-  const adapter = await actionAdapterForShop(shopId, platform);
-  if (!adapter) throw new Error(`${platform} not connected; cannot undo`);
+  // Resolved lazily so only campaign-kind undos demand an ads integration —
+  // an inventory undo goes through the Shopify admin client instead.
+  const requireAdapter = async () => {
+    const adapter = await actionAdapterForShop(shopId, platform);
+    if (!adapter) throw new Error(`${platform} not connected; cannot undo`);
+    return adapter;
+  };
 
   // Optimistic mirror restore for single-campaign undos: put ad_campaign_dim
   // back to pre_state so the campaigns view reflects the reversal immediately
@@ -45,13 +56,16 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
   if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
     // Both are status flips, so both undo the same way: put the campaign back
     // in whatever state pre_state recorded.
+    const adapter = await requireAdapter();
     if (pre.status === "active") await adapter.resume(externalId);
     else await adapter.pause(externalId);
     await mirrorBackToPreState();
   } else if (orig.action_kind === "reduce_campaign_budget") {
+    const adapter = await requireAdapter();
     if (pre.daily_budget_cents != null) await adapter.setDailyBudget(externalId, pre.daily_budget_cents);
     await mirrorBackToPreState();
   } else if (orig.action_kind === "reallocate_budget") {
+    const adapter = await requireAdapter();
     // Two-sided undo. `adapter` (resolved above from params.platform) IS the
     // dest adapter — replay params are written dest-side. Restore the dest
     // budget FIRST (reduce before increase: a mid-undo failure leaves the
@@ -75,6 +89,29 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
     if (rpre.source?.daily_budget_cents != null) {
       await srcAdapter.setDailyBudget(String(rp.source_external_id ?? ""), rpre.source.daily_budget_cents);
     }
+  } else if (orig.action_kind === "reallocate_inventory") {
+    // Reverse transfer: same inventory item, locations swapped. Refuse loudly
+    // without an admin client rather than record a success that never touched
+    // Shopify (rule 12).
+    if (!deps.admin) {
+      throw new Error("Shopify admin client unavailable; cannot undo an inventory transfer");
+    }
+    const ip = (orig.params ?? {}) as {
+      inventory_item_id?: string;
+      from_location_id?: string;
+      to_location_id?: string;
+      delta?: number;
+    };
+    const delta = Number(ip.delta ?? 0);
+    if (!ip.inventory_item_id || !ip.from_location_id || !ip.to_location_id || !delta) {
+      throw new Error(`audit ${auditId} lacks a replayable transfer plan; cannot undo`);
+    }
+    await inventoryAdjustQuantities(deps.admin, {
+      inventoryItemId: ip.inventory_item_id,
+      fromLocationId: ip.to_location_id,
+      toLocationId: ip.from_location_id,
+      delta,
+    });
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).

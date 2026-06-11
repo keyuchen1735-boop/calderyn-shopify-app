@@ -337,12 +337,20 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // Composite reallocations have a real two-sided platform undo —
-          // delegate to the action-gateway undo (adapter-based, restores BOTH
-          // budgets) instead of the legacy path below, which would record a
-          // success without touching either platform (rule 12).
-          if (orig.action_kind === "reallocate_budget") {
-            const res = await undoAction(shopId, auditId, supabase);
+          // Composite reallocations have a real platform undo — delegate to
+          // the action-gateway undo (budget: adapter-based, restores BOTH
+          // budgets; inventory: reverse Shopify transfer) instead of the
+          // legacy path below, which would record a success without touching
+          // either platform (rule 12).
+          if (orig.action_kind === "reallocate_budget" || orig.action_kind === "reallocate_inventory") {
+            // Lazy import: ~/shopify.server initializes shopifyApp (env,
+            // Prisma session storage) at module load — keep it out of the
+            // module graph of every test that imports calderyn.server.
+            const deps =
+              orig.action_kind === "reallocate_inventory"
+                ? { admin: (await (await import("~/shopify.server")).unauthenticated.admin(shop)).admin }
+                : {};
+            const res = await undoAction(shopId, auditId, supabase, deps);
             const { data: view, error: vErr } = await supabase
               .from("v_audit_view")
               .select("*")
