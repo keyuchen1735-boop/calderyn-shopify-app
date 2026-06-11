@@ -74,6 +74,26 @@ describe("undoAction", () => {
     expect(adapter.setDailyBudget).toHaveBeenCalledWith("c1", 5000);
   });
 
+  // Same optimistic-mirror gap as executeAction: undo reverses the platform but
+  // the campaigns view (ad_campaign_dim via v_campaigns_flat) stays stale until
+  // the next sync. Undo restores pre_state, so write pre_state back.
+  it("writes the restored status into ad_campaign_dim when undoing a pause", async () => {
+    const { sb, calls } = fakeSb(pauseAudit);
+    await undoAction(SHOP, "aud1", sb);
+    const mirror = calls.updates.find((u) => u.table === "ad_campaign_dim");
+    expect(mirror?.payload).toMatchObject({ status: "active" });
+  });
+
+  it("writes the restored budget into ad_campaign_dim when undoing a budget change", async () => {
+    const budgetAudit = { ...pauseAudit, action_kind: "reduce_campaign_budget",
+      pre_state: { status: "active", daily_budget_cents: 5000 },
+      post_state: { status: "active", daily_budget_cents: 2500 } };
+    const { sb, calls } = fakeSb(budgetAudit);
+    await undoAction(SHOP, "aud1", sb);
+    const mirror = calls.updates.find((u) => u.table === "ad_campaign_dim");
+    expect(mirror?.payload).toMatchObject({ daily_budget_cents: 5000 });
+  });
+
   it("throws when the audit is not found for the shop", async () => {
     const { sb } = fakeSb(null);
     await expect(undoAction(SHOP, "missing", sb)).rejects.toThrow(/not found/i);
