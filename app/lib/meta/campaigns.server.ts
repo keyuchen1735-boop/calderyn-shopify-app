@@ -1,9 +1,24 @@
+import { RateLimitError } from "../ads/backoff";
+
 export type MetaResponse = {
   data?: unknown;
   success?: boolean;
   error?: { message: string; code?: number; type?: string; fbtrace_id?: string };
   [k: string]: unknown;
 };
+
+// Meta throttle codes: 4/17/32/613 app-/user-/page-level limits, 80000/80004
+// BUC "too many calls" for insights and ads-management objects.
+const META_RATE_CODES = new Set([4, 17, 32, 613, 80000, 80004]);
+
+/** Throw RateLimitError on a Meta throttle so withRetry can back off. */
+export function assertNotRateLimited(r: MetaResponse): MetaResponse {
+  const code = r.error?.code;
+  if (code !== undefined && META_RATE_CODES.has(code)) {
+    throw new RateLimitError(`Meta rate limit (code ${code})`);
+  }
+  return r;
+}
 
 export type MetaClient = {
   get(path: string, params?: Record<string, string>): Promise<MetaResponse>;
@@ -19,6 +34,9 @@ export type MetaCampaign = {
 };
 
 export function check(r: MetaResponse): MetaResponse {
+  // Throttles become RateLimitError FIRST so withRetry callers can back off;
+  // every other error stays a plain failure.
+  assertNotRateLimited(r);
   if (r.error) {
     const code = r.error.code != null ? ` (code ${r.error.code})` : "";
     throw new Error(`Meta API error: ${r.error.message}${code}`);

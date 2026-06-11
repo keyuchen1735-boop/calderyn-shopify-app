@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 import { listCampaigns, type MetaClient, type MetaResponse } from "./campaigns.server";
+import { throttleMetaClient } from "./throttle.server";
 import { metaCampaignToNormalized } from "./transform";
 import { fetchMetaInsights, assertNotRateLimited } from "./insights.server";
 import type { AdPlatformAdapter, ShopAdSource } from "../ads/adapter";
@@ -78,7 +79,7 @@ export const metaAdapter: AdPlatformAdapter = {
     if (!data || !data.access_token_encrypted || !data.external_account_id) return null;
     const token = decrypt(data.access_token_encrypted as string);
     const adAccountId = String(data.external_account_id);
-    const builtClient = buildClient(token);
+    const builtClient = throttleMetaClient(buildClient(token), shopId);
     const acct = assertNotRateLimited(await builtClient.get(`/${adAccountId}`, { fields: "currency" }));
     const currency =
       typeof (acct as { currency?: unknown }).currency === "string"
