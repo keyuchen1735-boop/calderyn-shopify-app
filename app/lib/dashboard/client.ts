@@ -30,6 +30,10 @@ import type {
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
+import type {
+  ChatMessage as AssistantMessage,
+  ConversationSummary as AssistantConversation,
+} from "~/lib/assistant/types";
 
 // --- error type ------------------------------------------------------------
 
@@ -487,4 +491,67 @@ export async function getRealtimeToken(): Promise<{
 
 export async function logout(): Promise<void> {
   await apiSend<{ ok: true }>("POST", "/dashboard/api/logout");
+}
+
+// --- assistant ---------------------------------------------------------------
+
+export interface AssistantHistory {
+  conversations: AssistantConversation[];
+  conversationId: string | null;
+  messages: AssistantMessage[];
+}
+
+export async function fetchAssistantHistory(): Promise<AssistantHistory> {
+  const data = await apiGet<{
+    conversations: AssistantConversation[];
+    conversation_id: string | null;
+    messages: AssistantMessage[];
+  }>("/dashboard/api/assistant");
+  return {
+    conversations: data.conversations,
+    conversationId: data.conversation_id,
+    messages: data.messages,
+  };
+}
+
+/**
+ * Send failure that still carries the server-side conversation id — the user
+ * turn may already be persisted, so retries should stay in the same thread.
+ */
+export class AssistantSendError extends Error {
+  readonly conversationId: string | null;
+
+  constructor(message: string, conversationId: string | null) {
+    super(message);
+    this.name = "AssistantSendError";
+    this.conversationId = conversationId;
+  }
+}
+
+export async function sendAssistantMessage(
+  message: string,
+  conversationId: string | null,
+): Promise<{ conversationId: string; message: AssistantMessage }> {
+  // Raw fetch (not apiSend): the 502 error body carries conversation_id and
+  // its `message` field is a string, not the AssistantMessage of the 200 body.
+  const res = await fetch("/dashboard/api/assistant", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Origin: location.origin },
+    body: JSON.stringify({ message, conversation_id: conversationId ?? undefined }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    conversation_id?: string;
+    message?: AssistantMessage | string;
+    error?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      typeof body.message === "string" ? body.message : body.error ?? "Could not reach Calderyn";
+    throw new AssistantSendError(msg, body.conversation_id ?? null);
+  }
+  return {
+    conversationId: String(body.conversation_id),
+    message: body.message as AssistantMessage,
+  };
 }
