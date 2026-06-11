@@ -152,6 +152,7 @@ export async function loadCalibrationInputs(
     .eq("shop_id", shopId)
     .gte("day", sinceISO)
     .limit(5000);
+  if (spend.error) throw spend.error;
   const { ctr, cpmCents, cvr } = aggregateSpend((spend.data ?? []) as SpendRow[]);
 
   // Engagement rate (trailing 30d) + total distinct ads run (all-time, capped).
@@ -161,6 +162,7 @@ export async function loadCalibrationInputs(
     .eq("shop_id", shopId)
     .order("day", { ascending: false })
     .limit(2000);
+  if (engagement.error) throw engagement.error;
   const { engagementRate, historyAdCount } = aggregateEngagement(
     (engagement.data ?? []) as EngagementRow[],
     sinceISO,
@@ -172,6 +174,7 @@ export async function loadCalibrationInputs(
     .select("break_even_roas")
     .eq("shop_id", shopId)
     .limit(200);
+  if (grades.error) throw grades.error;
   const breakEvens = (grades.data ?? [])
     .map((r) => Number((r as { break_even_roas?: unknown }).break_even_roas))
     .filter((n) => Number.isFinite(n) && n > 0);
@@ -185,6 +188,7 @@ export async function loadCalibrationInputs(
     .select("ad_campaign_dim(name)")
     .eq("shop_id", shopId)
     .limit(50);
+  if (eng.error) throw eng.error;
   const topAdNames = Array.from(
     new Set(
       (eng.data ?? [])
@@ -203,6 +207,7 @@ export async function loadCalibrationInputs(
       .eq("shop_id", shopId)
       .eq("sku", mappedSku)
       .maybeSingle();
+    if (sku.error) throw sku.error;
     const skuId = (sku.data as { id?: string } | null)?.id;
     if (skuId) {
       const lines = await sb
@@ -211,6 +216,7 @@ export async function loadCalibrationInputs(
         .eq("shop_id", shopId)
         .eq("sku_id", skuId)
         .limit(500);
+      if (lines.error) throw lines.error;
       skuPriceCents = avgPriceCents((lines.data ?? []) as PriceLine[]);
     }
   }
