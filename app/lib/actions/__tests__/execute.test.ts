@@ -246,4 +246,37 @@ describe("executeAction", () => {
     const audit = calls.inserts.find((i) => i.table === "action_audit");
     expect((audit?.rows as Record<string, unknown>).actor_user_id).toBe("autopilot");
   });
+
+  // Optimistic mirror update: the campaigns view reads ad_campaign_dim (via
+  // v_campaigns_flat), refreshed only by ingestion. After a succeeded action we
+  // already KNOW the new state, so write it back immediately — no extra
+  // platform call, and the next sync still reconciles.
+  it("writes the new paused status into ad_campaign_dim after a succeeded pause", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "km1" }, sb);
+    const mirror = calls.updates.find((u) => u.table === "ad_campaign_dim");
+    expect(mirror?.payload).toMatchObject({ status: "paused" });
+  });
+
+  it("writes the new active status into ad_campaign_dim after a succeeded resume", async () => {
+    const paused = { ...campaign, status: "paused" };
+    const { sb, calls } = fakeSb({ campaign: paused });
+    await executeAction(SHOP, { alertId: null, kind: "resume_campaign", campaignId: CAMP, idempotencyKey: "km2" }, sb);
+    const mirror = calls.updates.find((u) => u.table === "ad_campaign_dim");
+    expect(mirror?.payload).toMatchObject({ status: "active" });
+  });
+
+  it("writes the new daily budget into ad_campaign_dim after a succeeded budget change", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "km3", dailyBudgetCents: 3500 }, sb);
+    const mirror = calls.updates.find((u) => u.table === "ad_campaign_dim");
+    expect(mirror?.payload).toMatchObject({ daily_budget_cents: 3500 });
+  });
+
+  it("does NOT update ad_campaign_dim when the platform call fails (no lying about state)", async () => {
+    adapter.pause.mockRejectedValueOnce(new ActionError("meta", "invalid token", { retriable: false }));
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "km4" }, sb);
+    expect(calls.updates.filter((u) => u.table === "ad_campaign_dim")).toEqual([]);
+  });
 });

@@ -24,13 +24,33 @@ export async function undoAction(shopId: string, auditId: string, sb: SupabaseCl
   const adapter = await actionAdapterForShop(shopId, platform);
   if (!adapter) throw new Error(`${platform} not connected; cannot undo`);
 
+  // Optimistic mirror restore for single-campaign undos: put ad_campaign_dim
+  // back to pre_state so the campaigns view reflects the reversal immediately
+  // (it reads the mirror via v_campaigns_flat; ingestion alone would otherwise
+  // refresh it). No extra platform call; the next sync reconciles. Best-effort —
+  // the platform reversal already happened, so a mirror-write failure must not
+  // fail the undo. (reallocate_budget is two-sided; left to the next sync.)
+  const mirrorBackToPreState = async () => {
+    const { error: mirrorErr } = await sb
+      .from("ad_campaign_dim")
+      .update({ status: pre.status, daily_budget_cents: pre.daily_budget_cents })
+      .eq("shop_id", shopId)
+      .eq("platform", platform)
+      .eq("external_id", externalId);
+    if (mirrorErr) {
+      console.error(`[undo] mirror restore failed for campaign ${externalId} (corrects on next sync)`, mirrorErr);
+    }
+  };
+
   if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
     // Both are status flips, so both undo the same way: put the campaign back
     // in whatever state pre_state recorded.
     if (pre.status === "active") await adapter.resume(externalId);
     else await adapter.pause(externalId);
+    await mirrorBackToPreState();
   } else if (orig.action_kind === "reduce_campaign_budget") {
     if (pre.daily_budget_cents != null) await adapter.setDailyBudget(externalId, pre.daily_budget_cents);
+    await mirrorBackToPreState();
   } else if (orig.action_kind === "reallocate_budget") {
     // Two-sided undo. `adapter` (resolved above from params.platform) IS the
     // dest adapter — replay params are written dest-side. Restore the dest
