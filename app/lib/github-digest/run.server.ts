@@ -33,6 +33,8 @@ export interface DigestRunSummary {
   branchesTotal: number;
   summaryMode: "ai" | "template" | "empty" | "none";
   delivery: DeliveryResult;
+  to: string;
+  cc: string[];
   notes: string[];
   error: string | null;
 }
@@ -57,6 +59,8 @@ function empty(repo: string, sinceIso: string, error: string): DigestRunSummary 
     branchesTotal: 0,
     summaryMode: "none",
     delivery: { sent: false, error: "not attempted" },
+    to: "",
+    cc: [],
     notes: [],
     error,
   };
@@ -91,12 +95,24 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.DIGEST_FROM;
   const to = process.env.DIGEST_TO || DEFAULT_TO;
+  const cc = (process.env.DIGEST_CC || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   let delivery: DeliveryResult;
   if (!apiKey || !from) {
     const missing = [!apiKey && "RESEND_API_KEY", !from && "DIGEST_FROM"].filter(Boolean).join(", ");
     delivery = { sent: false, error: `email not configured (${missing})` };
   } else {
-    delivery = await deliverEmail({ apiKey, from, to, subject: content.subject, text: content.text });
+    delivery = await deliverEmail({
+      apiKey,
+      from,
+      to,
+      cc,
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
+    });
   }
 
   return {
@@ -109,6 +125,8 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
     branchesTotal: activity.branchesTotal,
     summaryMode: content.mode,
     delivery,
+    to,
+    cc,
     notes,
     error: null,
   };
