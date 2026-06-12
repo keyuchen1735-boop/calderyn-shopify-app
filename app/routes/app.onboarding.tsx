@@ -20,6 +20,7 @@ import {
   InlineGrid,
   InlineStack,
   Page,
+  ProgressBar,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -48,6 +49,11 @@ const STEPS = [
   { key: "consent", label: "Consent" },
   { key: "complete", label: "Complete" },
 ] as const;
+
+// Only these two gate completion; every other step is skippable. Drives the
+// "Required/Optional" marker on the stepper so an 8-step flow doesn't read as 8
+// mandatory commitments.
+const REQUIRED_KEYS = new Set<string>(["shopify", "guardrails"]);
 
 type LoaderPayload = {
   step: number;
@@ -182,6 +188,43 @@ export default function Onboarding() {
   return (
     <Page title="Welcome to Calderyn" subtitle="A 4-minute setup that gets Calderyn watching your store.">
       <BlockStack gap="500">
+        {error && (
+          <Banner tone="critical" title="Couldn't load onboarding state">
+            <p>{error.message}</p>
+          </Banner>
+        )}
+        {actionData?.error && (
+          <Banner tone="critical" title="Onboarding action failed">
+            <p>{actionData.error.message}</p>
+          </Banner>
+        )}
+
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center" gap="200">
+              <Text as="h2" variant="headingSm">
+                Step {safeStep + 1} of {STEPS.length} ·{" "}
+                {STEPS[safeStep].label.replace(" (optional)", "")}
+              </Text>
+              {key !== "complete" &&
+                (REQUIRED_KEYS.has(key) ? (
+                  <Badge tone="info">Required</Badge>
+                ) : (
+                  <Badge>Optional</Badge>
+                ))}
+            </InlineStack>
+            <ProgressBar
+              progress={(safeStep / (STEPS.length - 1)) * 100}
+              size="small"
+              tone="primary"
+            />
+            <Text as="p" variant="bodySm" tone="subdued">
+              Only Shop and Guardrails are required — you can skip the rest and set them up
+              later from Settings.
+            </Text>
+          </BlockStack>
+        </Card>
+
         {devBypass && (
           <Banner tone="warning" title="Temporary testing shortcut">
             <BlockStack gap="200">
@@ -199,29 +242,6 @@ export default function Onboarding() {
             </BlockStack>
           </Banner>
         )}
-        {error && (
-          <Banner tone="critical" title="Couldn't load onboarding state">
-            <p>{error.message}</p>
-          </Banner>
-        )}
-        {actionData?.error && (
-          <Banner tone="critical" title="Onboarding action failed">
-            <p>{actionData.error.message}</p>
-          </Banner>
-        )}
-
-        <Card>
-          <InlineStack gap="200" wrap>
-            {STEPS.map((s, i) => (
-              <Badge
-                key={s.key}
-                tone={i < safeStep ? "success" : i === safeStep ? "info" : undefined}
-              >
-                {`${i + 1}. ${s.label}`}
-              </Badge>
-            ))}
-          </InlineStack>
-        </Card>
 
         <Card>
           {key === "shopify" && (
