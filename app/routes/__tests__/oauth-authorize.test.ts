@@ -12,7 +12,7 @@ vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
 });
 
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
-import { getClient } from "../../lib/mcp_oauth.server";
+import { getClient, setPendingOauth } from "../../lib/mcp_oauth.server";
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
 import { loader, action } from "../oauth.authorize";
 
@@ -148,12 +148,65 @@ describe("/oauth/authorize POST (pick-shop)", () => {
   beforeEach(() => {
     process.env.MCP_OAUTH_ENABLED = "true";
     process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
+    (setPendingOauth as unknown as ReturnType<typeof vi.fn>).mockClear();
     (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       client_id: "cal_client_x",
       client_name: "Claude",
       redirect_uris: ["https://claude.ai/cb"],
       token_endpoint_auth_method: "none",
     });
+  });
+
+  it("400s and does not pre-seed state on response_type != code", async () => {
+    const form = new FormData();
+    form.set("shop", "myshop.myshopify.com");
+    for (const [k, v] of Object.entries({ ...VALID_PARAMS, response_type: "token" })) {
+      form.set(k, v);
+    }
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+    expect(setPendingOauth).not.toHaveBeenCalled();
+  });
+
+  it("400s and does not pre-seed state on code_challenge_method != S256", async () => {
+    const form = new FormData();
+    form.set("shop", "myshop.myshopify.com");
+    for (const [k, v] of Object.entries({ ...VALID_PARAMS, code_challenge_method: "plain" })) {
+      form.set(k, v);
+    }
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+    expect(setPendingOauth).not.toHaveBeenCalled();
+  });
+
+  it("400s and does not pre-seed state on scope != read", async () => {
+    const form = new FormData();
+    form.set("shop", "myshop.myshopify.com");
+    for (const [k, v] of Object.entries({ ...VALID_PARAMS, scope: "write" })) {
+      form.set(k, v);
+    }
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+    expect(setPendingOauth).not.toHaveBeenCalled();
+  });
+
+  it("400s and does not pre-seed state on missing code_challenge", async () => {
+    const form = new FormData();
+    form.set("shop", "myshop.myshopify.com");
+    for (const [k, v] of Object.entries({ ...VALID_PARAMS, code_challenge: "" })) {
+      form.set(k, v);
+    }
+    const res = await action({
+      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
+    } as never);
+    expect(res.status).toBe(400);
+    expect(setPendingOauth).not.toHaveBeenCalled();
   });
 
   it("400s when shop is empty", async () => {
