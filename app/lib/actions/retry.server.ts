@@ -275,7 +275,7 @@ export async function drainActionRetries(
         // alert-driven rows claw back the alert's at-stake dollars, no-alert
         // rows recover what their own budget states prove they stopped.
         update.dollar_impact_at_exec = raw.alert_id
-          ? await recoveredDollarsForAlertAction(sb, raw.alert_id, raw.action_kind)
+          ? await recoveredDollarsForAlertAction(sb, raw.alert_id, raw.action_kind, raw.shop_id)
           : recoveredCentsFromStates(
               raw.action_kind as ActionKind,
               raw.pre_state,
