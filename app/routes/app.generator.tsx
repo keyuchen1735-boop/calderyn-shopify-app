@@ -334,17 +334,12 @@ export default function Generator() {
                     Render settings
                   </Text>
 
-                  <BlockStack gap="150">
+                  <BlockStack gap="050">
                     <Text as="span" variant="bodySm" fontWeight="medium">
                       Format
                     </Text>
-                    <ButtonGroup variant="segmented">
-                      <Button pressed>Static image</Button>
-                      <Button disabled>UGC video</Button>
-                      <Button disabled>Carousel</Button>
-                    </ButtonGroup>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Video and carousel can&apos;t be re-scored yet — images first.
+                      Static image — video and carousel can&apos;t be re-scored yet.
                     </Text>
                   </BlockStack>
 
