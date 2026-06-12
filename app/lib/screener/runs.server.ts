@@ -41,11 +41,13 @@ export async function startRun(
   return rowToRun(data);
 }
 
-export async function completeRun(id: string, scorecard: ScoreCard, creativeInput: CreativeInput): Promise<CreativeScreenRun> {
+export async function completeRun(shop: string, id: string, scorecard: ScoreCard, creativeInput: CreativeInput): Promise<CreativeScreenRun> {
   const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
   const { data, error } = await sb
     .from("creative_screen_run")
     .update({ status: "done", scorecard, creative_input: creativeInput, completed_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
     .eq("id", id)
     .select()
     .single();
@@ -53,11 +55,13 @@ export async function completeRun(id: string, scorecard: ScoreCard, creativeInpu
   return rowToRun(data);
 }
 
-export async function saveVariants(id: string, variants: Variant[]): Promise<CreativeScreenRun> {
+export async function saveVariants(shop: string, id: string, variants: Variant[]): Promise<CreativeScreenRun> {
   const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
   const { data, error } = await sb
     .from("creative_screen_run")
     .update({ variants })
+    .eq("shop_id", shopId)
     .eq("id", id)
     .select()
     .single();
@@ -65,11 +69,13 @@ export async function saveVariants(id: string, variants: Variant[]): Promise<Cre
   return rowToRun(data);
 }
 
-export async function failRun(id: string, message: string): Promise<CreativeScreenRun> {
+export async function failRun(shop: string, id: string, message: string): Promise<CreativeScreenRun> {
   const sb = getSupabase();
+  const shopId = await resolveShopId(shop);
   const { data, error } = await sb
     .from("creative_screen_run")
     .update({ status: "error", error: message, completed_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
     .eq("id", id)
     .select()
     .single();

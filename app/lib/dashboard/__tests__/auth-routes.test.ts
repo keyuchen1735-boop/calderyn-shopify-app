@@ -74,6 +74,54 @@ describe("dashboard.login loader", () => {
       decodeURIComponent(cookie.match(/dash_oauth=([^;]+)/)![1]).split(":")[0],
     );
   });
+
+  it("auto-redirects to Shopify using the remembered shop when no ?shop is given", async () => {
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login", {
+        headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
+      }),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe(
+      "https://remembered.myshopify.com/admin/oauth/authorize",
+    );
+  });
+
+  it("shows an HTML landing (not raw JSON) when no shop is known", async () => {
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    expect(await res.text()).not.toContain("invalid_shop");
+  });
+
+  it("does not auto-redirect (loop) when bounced back with an error", async () => {
+    const res = (await loginLoader({
+      request: new Request(
+        "https://calderyncompany.com/dashboard/login?error=oauth_failed",
+        { headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" } },
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+  });
+
+  it("still 422s when an explicit ?shop is malformed", async () => {
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+  });
 });
 
 describe("dashboard.auth.callback loader", () => {
@@ -96,6 +144,7 @@ describe("dashboard.auth.callback loader", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=dash_live_token");
+    expect(res.headers.get("Set-Cookie")).toContain("__Host-dash_shop=x.myshopify.com");
     expect(exchangeCodeForToken).toHaveBeenCalledOnce();
     expect(createSession).toHaveBeenCalledWith("x.myshopify.com");
   });

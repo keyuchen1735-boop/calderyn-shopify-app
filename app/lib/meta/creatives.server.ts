@@ -115,6 +115,12 @@ export async function listCampaignCreatives(
   client: MetaClient,
   campaignId: string,
 ): Promise<CampaignCreative[]> {
+  // Injection safety: campaignId must be a Meta numeric id. NEVER interpolate
+  // untrusted text into the request path.
+  if (!/^\d+$/.test(campaignId)) {
+    throw new Error("Invalid Meta campaign id");
+  }
+
   const body: MetaResponse = await client.get(`/${campaignId}/ads`, { fields: CREATIVE_FIELDS });
   check(body);
   const data = (body.data as unknown[]) ?? [];
