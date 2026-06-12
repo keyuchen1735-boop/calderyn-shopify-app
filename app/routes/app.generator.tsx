@@ -156,7 +156,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       { generator, scoreOne },
     );
     // Winners also land on the pre-screen's "variants that beat it" card.
-    if (result.variants.length > 0) await saveVariants(latest.id, result.variants);
+    if (result.variants.length > 0) await saveVariants(session.shop, latest.id, result.variants);
     // Release slots for images that were paid for but never produced.
     const unused = reservation.eventIds.slice(result.generated);
     for (const id of unused) await releaseImageGen(id);

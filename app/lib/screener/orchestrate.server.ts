@@ -17,8 +17,8 @@ export interface ScreenDeps {
     topAdNames: string[],
   ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: string[] }>;
   startRun: (shop: string, source: RunSource, assumedSpendCents: number, metaAdId?: string | null) => Promise<CreativeScreenRun>;
-  completeRun: (id: string, scorecard: ScoreCard, creativeInput: CreativeInput) => Promise<CreativeScreenRun>;
-  failRun: (id: string, message: string) => Promise<CreativeScreenRun>;
+  completeRun: (shop: string, id: string, scorecard: ScoreCard, creativeInput: CreativeInput) => Promise<CreativeScreenRun>;
+  failRun: (shop: string, id: string, message: string) => Promise<CreativeScreenRun>;
 }
 
 /** Best-effort creative→SKU from the destination URL's UTM tags. */
@@ -71,12 +71,12 @@ export async function executeScreen(
       outcomes,
       tips: scored.tips,
     };
-    return await deps.completeRun(run.id, scorecard, args.input);
+    return await deps.completeRun(args.shop, run.id, scorecard, args.input);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (run) {
       try {
-        return await deps.failRun(run.id, message);
+        return await deps.failRun(args.shop, run.id, message);
       } catch {
         // failRun itself failed — fall through to a synthetic error DTO.
       }

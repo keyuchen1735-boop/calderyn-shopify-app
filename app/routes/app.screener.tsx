@@ -186,7 +186,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         { generator, scoreOne },
       );
-      const saved = await saveVariants(latest.id, result.variants);
+      const saved = await saveVariants(session.shop, latest.id, result.variants);
       return json(saved);
     } catch (err) {
       // A generator/API failure (e.g. Higgsfield rejecting a request) must land
