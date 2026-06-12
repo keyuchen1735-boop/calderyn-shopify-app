@@ -1,14 +1,20 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { registerClient } from "~/lib/mcp_oauth.server";
+import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
-  // TODO(post-ship): add per-IP rate limit (10/hr) via Vercel KV before public launch.
-  //   See docs/superpowers/specs/2026-06-08-claude-connector-oauth-design.md §8.3.
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+
+  if (!rateLimit(clientIpKey(request, "oauth_register"), 10, 60 * 60 * 1000)) {
+    return json(
+      { error: "too_many_requests", error_description: "rate limit exceeded; try again later" },
+      { status: 429 },
+    );
+  }
 
   let body: unknown;
   try {
