@@ -158,7 +158,12 @@ export async function syncShopAds(
         });
       } else {
         await deps.poll(source, adapter.platform, shopId, sb);
+        // A successful poll must reset sync_status to "live", not just clear
+        // the error message. Otherwise a row that previously hit sync_status:
+        // "error" stays in error state forever even after subsequent polls
+        // succeed, because no path here flips it back.
         await setSync(sb, shopId, adapter.integrationKind, {
+          sync_status: "live",
           sync_error: null,
           last_sync_at: now,
         });

@@ -3,6 +3,7 @@ import { makeTikTokSource, shopCurrencyFallback } from "../ingest.server";
 import { buildTikTokClient } from "../client.server";
 import type { TikTokClient } from "../client.server";
 import type { TikTokReportRow, TikTokCampaignPayload } from "../types";
+import { RateLimitError } from "../../ads/backoff";
 
 const SHOP = "00000000-0000-0000-0000-000000000004";
 const ADV = "adv_123";
@@ -140,6 +141,47 @@ describe("buildTikTokClient.getAdvertiserCurrency", () => {
     const c = buildTikTokClient("test-token");
     const currency = await c.getAdvertiserCurrency(ADV);
     expect(currency).toBeNull();
+  });
+});
+
+// TikTok intermittently returns HTTP 200 with envelope code 50002 ("Internal
+// service timeout") on their own backend hiccups. These must surface as
+// RateLimitError so withRetry recovers from the blip instead of failing the
+// whole sync and persisting a stale error to shop_integrations.sync_error.
+describe("buildTikTokClient transient-error handling", () => {
+  it("throws RateLimitError (not a generic Error) on envelope code 50002", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 50002, message: "Internal service timeout", data: {} }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    await expect(c.getCampaigns(ADV)).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it("throws RateLimitError on the full 50000-59999 transient range", async () => {
+    for (const code of [50000, 50001, 50003, 51000, 59999]) {
+      const mockFetch = vi.fn(async () => ({
+        status: 200,
+        json: async () => ({ code, message: "server error", data: {} }),
+      } as Response));
+      vi.stubGlobal("fetch", mockFetch);
+      const c = buildTikTokClient("test-token");
+      await expect(c.getCampaigns(ADV)).rejects.toBeInstanceOf(RateLimitError);
+    }
+  });
+
+  it("still throws a generic Error on non-transient codes (e.g. 40002 invalid arg)", async () => {
+    const mockFetch = vi.fn(async () => ({
+      status: 200,
+      json: async () => ({ code: 40002, message: "Invalid argument", data: {} }),
+    } as Response));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const c = buildTikTokClient("test-token");
+    await expect(c.getCampaigns(ADV)).rejects.toThrow(/TikTok campaign error/);
+    await expect(c.getCampaigns(ADV)).rejects.not.toBeInstanceOf(RateLimitError);
   });
 });
 

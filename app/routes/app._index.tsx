@@ -155,7 +155,10 @@ export default function Dashboard() {
           </Banner>
         )}
 
-        {!bannerDismissed && (
+        {/* The "Today's focus" card below is the single hero CTA when an alert is
+            in focus; showing the critical banner too would stack two near-identical
+            Review actions. Only surface the banner when there's no focus card. */}
+        {!bannerDismissed && !focus && (
           <AmbientAlertBanner
             criticalCount={critical.length}
             atRiskCents={atRisk}

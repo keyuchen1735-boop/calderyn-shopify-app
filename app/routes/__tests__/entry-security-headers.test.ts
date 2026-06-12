@@ -1,19 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-
-// entry.server statically imports shopify.server, which builds shopifyApp() at
-// module-eval and throws on an empty appUrl. Seed the minimal Shopify env
-// BEFORE that import resolves (vi.hoisted runs above imports) so this suite is
-// self-sufficient instead of depending on another test file's env pollution
-// happening to load first in the same vitest worker.
-vi.hoisted(() => {
-  process.env.SHOPIFY_API_KEY ||= "test_api_key";
-  process.env.SHOPIFY_API_SECRET ||= "test_api_secret";
-  process.env.SHOPIFY_APP_URL ||= "https://app.test.example";
-  process.env.SCOPES ||= "read_products";
-});
-
-// eslint-disable-next-line import/first -- must follow the hoisted env seed above
 import { applySecurityHeaders } from "../../entry.server";
+
+// entry.server pulls in ./shopify.server, which calls shopifyApp() at module
+// load — that throws without SHOPIFY_APP_URL (and inits Prisma session storage),
+// failing this suite in CI. Stub the one symbol entry.server needs so
+// applySecurityHeaders is testable in isolation. vi.mock is hoisted above the
+// imports by vitest, so the stub is in place before entry.server loads (matches
+// the shopify.server mock every other route test uses).
+vi.mock("../../shopify.server", () => ({
+  addDocumentResponseHeaders: () => {},
+}));
 
 // The embedded-app iframe depends on the `frame-ancestors` CSP that Shopify's
 // addDocumentResponseHeaders sets. applySecurityHeaders runs AFTER that helper

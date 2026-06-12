@@ -287,6 +287,16 @@ export function adaptSku(s: SKU): SkuVM {
   };
 }
 
+/**
+ * Default inventory ordering: most-stocked SKUs first. The dashboard Inventory
+ * screen has no column-sort UI, so this is the load order merchants see. Stable
+ * (equal on-hand keeps the API's order) and non-mutating; a missing on_hand
+ * coerces to 0 so unsynced rows sink to the bottom.
+ */
+export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
+  return [...skus].sort((a, b) => (b.on_hand ?? 0) - (a.on_hand ?? 0));
+}
+
 const INTEGRATION_ORDER = [
   "shopify",
   "meta_ads",
@@ -384,7 +394,7 @@ export async function fetchCampaign(
 
 export async function fetchSkus(): Promise<SkuVM[]> {
   const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
-  return data.skus.map(adaptSku);
+  return sortSkusByOnHandDesc(data.skus.map(adaptSku));
 }
 
 export async function fetchAudit(): Promise<AuditVM[]> {

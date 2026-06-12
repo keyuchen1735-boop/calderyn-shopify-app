@@ -82,7 +82,16 @@ describe("auth.tiktok loader", () => {
       shop_id: "shop-1", kind: "tiktok_ads", access_token_encrypted: "enc(tok)", external_account_id: "adv-1",
     });
     const integ = upsertCalls.find((c) => c.table === "shop_integrations")!;
-    expect(integ.row).toMatchObject({ shop_id: "shop-1", kind: "tiktok_ads", sync_status: "pending" });
+    // sync_error must be cleared on reconnect — otherwise Settings keeps showing
+    // a stale failure message from the previous sync ("TikTok campaign error:
+    // internal service timeout") next to a fresh "Connected" badge. Mirrors
+    // auth.google.$.tsx which has the same explicit reset.
+    expect(integ.row).toMatchObject({
+      shop_id: "shop-1",
+      kind: "tiktok_ads",
+      sync_status: "pending",
+      sync_error: null,
+    });
   });
 
   it("returns via the admin deep link on a user-declined error too", async () => {
