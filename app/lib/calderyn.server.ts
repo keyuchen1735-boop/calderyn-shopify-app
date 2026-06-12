@@ -7,10 +7,17 @@ import type {
   DailyRoasRow,
   GuardrailConfig,
   Integration,
+  ShopLocation,
   SKU,
   SkuSource,
   TopAdRow,
 } from "./types";
+import {
+  demandFromRow,
+  locationsDetailFromRow,
+  suggestedTransferFromRow,
+  type SkuDemandViewRow,
+} from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { newIdempotencyKey } from "./ids";
 import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
@@ -168,6 +175,9 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
     velocity: Number(r.velocity ?? 0),
     locations: (r.locations as Record<string, number>) ?? {},
     sources,
+    demand: null,
+    suggested_transfer: null,
+    locations_detail: [],
   };
 }
 
@@ -325,24 +335,33 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // Composite reallocations have a real two-sided platform undo —
-          // delegate to the action-gateway undo (adapter-based) instead of the
-          // legacy path below. undoAction resolves the RIGHT platform adapter
-          // (meta/google/tiktok) from the campaign, reverses through it,
-          // restores ad_campaign_dim, and re-opens the alert. The old path here
+          // Platform-reversible kinds delegate to the action-gateway undo
+          // instead of the legacy path below. undoAction resolves the RIGHT
+          // platform adapter (meta/google/tiktok) from the campaign, reverses
+          // through it, restores ad_campaign_dim, and re-opens the alert; for
+          // inventory it fires the reverse Shopify transfer. The old path here
           // forced every status undo through the Meta client, so a TikTok or
           // Google undo either failed (UNDO_META_UNAVAILABLE) or hit Meta with a
-          // foreign campaign id. The legacy manual-insert path below now only
-          // serves non-platform kinds (e.g. create_po_draft) that have no
-          // adapter reversal — they just record the inverse audit row.
+          // foreign campaign id — and recorded inventory "undos" that never
+          // touched Shopify (rule 12). The legacy manual-insert path below now
+          // only serves non-platform kinds (e.g. create_po_draft) that have no
+          // platform reversal — they just record the inverse audit row.
           const GATEWAY_UNDO_KINDS = new Set([
             "reallocate_budget",
             "pause_campaign",
             "resume_campaign",
             "reduce_campaign_budget",
+            "reallocate_inventory",
           ]);
           if (GATEWAY_UNDO_KINDS.has(String(orig.action_kind))) {
-            const res = await undoAction(shopId, auditId, supabase);
+            // Lazy import: ~/shopify.server initializes shopifyApp (env,
+            // Prisma session storage) at module load — keep it out of the
+            // module graph of every test that imports calderyn.server.
+            const deps =
+              orig.action_kind === "reallocate_inventory"
+                ? { admin: (await (await import("~/shopify.server")).unauthenticated.admin(shop)).admin }
+                : {};
+            const res = await undoAction(shopId, auditId, supabase, deps);
             const { data: view, error: vErr } = await supabase
               .from("v_audit_view")
               .select("*")
@@ -652,7 +671,7 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes] = await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -670,10 +689,26 @@ export function calderynClient(shop: string) {
               .select("sku_id, platform")
               .eq("shop_id", shopId)
               .limit(10000),
+            // One row per SKU-with-sales; explicit cap per the PostgREST 1000-row
+            // default-truncation convention above.
+            supabase
+              .from("v_sku_regional_demand")
+              .select("*")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
           if (adMapRes.error) throw adMapRes.error;
+          // Demand enrichment is optional (demand: null is the no-data state) — a
+          // missing/unmigrated view must not take down the whole SKU surface. Loud
+          // log instead of throw (rule 12: visible, not fatal).
+          if (demandRes.error) {
+            console.error(
+              "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
+              demandRes.error,
+            );
+          }
 
           const sourcesBySku = new Map<string, Set<SkuSource>>();
           const addSource = (skuId: unknown, raw: unknown) => {
@@ -688,13 +723,50 @@ export function calderynClient(shop: string) {
           for (const r of cogsRes.data ?? []) addSource(r.sku_id, r.source);
           for (const r of adMapRes.data ?? []) addSource(r.sku_id, r.platform);
 
+          const demandBySku = new Map<string, SkuDemandViewRow>();
+          if (!demandRes.error) {
+            for (const r of (demandRes.data ?? []) as unknown as SkuDemandViewRow[]) {
+              demandBySku.set(String(r.sku_id), r);
+            }
+          }
+
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
             const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
-            return rowToSku(r, sources);
+            const sku = rowToSku(r, sources);
+            const demandRow = demandBySku.get(sku.id);
+            if (demandRow) {
+              sku.demand = demandFromRow(demandRow);
+              sku.suggested_transfer = suggestedTransferFromRow(demandRow);
+              sku.locations_detail = locationsDetailFromRow(demandRow);
+            }
+            return sku;
           });
         } catch (err) {
           rethrow("skus.list", err);
+        }
+      },
+    },
+
+    locations: {
+      async list(_signal?: AbortSignal): Promise<ShopLocation[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("location_dim")
+            .select("external_id, name, region, active")
+            .eq("shop_id", shopId)
+            .order("name", { ascending: true })
+            .limit(1000);
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            id: String(r.external_id),
+            name: String(r.name ?? r.external_id),
+            region: r.region == null ? null : String(r.region),
+            active: Boolean(r.active),
+          }));
+        } catch (err) {
+          rethrow("locations.list", err);
         }
       },
     },

@@ -33,11 +33,16 @@ const { insertSpy, setStatusSpy, metaForShopSpy, tiktokAdapter, actionAdapterFor
 vi.mock("../supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => ({
-      select: () => {
+      select: (cols?: string) => {
         const b = {
           eq: () => b,
-          // orig lookup: .select("*").eq(shop_id).eq(id).maybeSingle()
-          maybeSingle: async () => ({ data: sbState.origRow, error: null }),
+          limit: () => b,
+          // The already-undone guard probes with .select("id")...maybeSingle()
+          // (no existing undo row); the orig lookup uses .select("*").
+          maybeSingle: async () =>
+            cols === "id"
+              ? { data: null, error: null }
+              : { data: sbState.origRow, error: null },
           // v_audit_view re-read of the inserted undo row
           single: async () => ({
             data: { id: "undo-1", action_kind: sbState.origRow.action_kind, outcome: "succeeded" },
@@ -109,6 +114,7 @@ describe("audit.undo platform-aware reversal (not Meta-only)", () => {
       alert_id: null,
       params: { campaign_id: "dim-tt", external_id: "tt-ext-1", platform: "tiktok", daily_budget_cents: null },
       dollar_impact_at_exec: 0,
+      outcome: "succeeded",
     };
 
     const client = calderynClient("acme.myshopify.com");
@@ -134,6 +140,7 @@ describe("audit.undo safety", () => {
       alert_id: null,
       params: { external_id: "120", platform: "meta" },
       dollar_impact_at_exec: 0,
+      outcome: "succeeded",
     };
 
     const client = calderynClient("acme.myshopify.com");
@@ -159,6 +166,7 @@ describe("audit.undo platform restore", () => {
       alert_id: null,
       params: { campaign_id: "dim-uuid-1", external_id: "120", platform: "tiktok", daily_budget_cents: null },
       dollar_impact_at_exec: 0,
+      outcome: "succeeded",
     };
 
     const client = calderynClient("acme.myshopify.com");
@@ -178,6 +186,7 @@ describe("audit.undo platform restore", () => {
       alert_id: null,
       params: { campaign_id: "dim-uuid-2", external_id: "121", platform: "tiktok", daily_budget_cents: null },
       dollar_impact_at_exec: 0,
+      outcome: "succeeded",
     };
 
     const client = calderynClient("acme.myshopify.com");
@@ -201,6 +210,7 @@ describe("audit.undo alert re-open", () => {
       alert_id: "al-1",
       params: { po: { po_number: "PO-1" } },
       dollar_impact_at_exec: 0,
+      outcome: "succeeded",
     };
 
     const client = calderynClient("acme.myshopify.com");

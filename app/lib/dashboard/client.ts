@@ -281,6 +281,9 @@ export function adaptSku(s: SKU): SkuVM {
     locations: s.locations,
     status,
     sources: s.sources ?? [],
+    demand: s.demand ?? null,
+    suggested_transfer: s.suggested_transfer ?? null,
+    locations_detail: s.locations_detail ?? [],
   };
 }
 
@@ -487,6 +490,33 @@ export async function executeAlertAction(
     { type: input.type, idempotency_key: crypto.randomUUID() },
   );
   return { auditId: data.audit_id, outcome: data.outcome, acknowledged: data.acknowledged };
+}
+
+export async function relocateSku(
+  skuId: string,
+  input: {
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+    /**
+     * Owned by the caller (one key per relocation intent, minted when the
+     * dialog opens) so a retry after a timeout dedupes against a possibly
+     * applied transfer instead of executing it twice.
+     */
+    idempotencyKey: string;
+  },
+): Promise<{ auditId: string; outcome: string }> {
+  const data = await apiSend<{ audit_id: string; outcome: string }>(
+    "POST",
+    `/dashboard/api/skus/${encodeURIComponent(skuId)}/relocate`,
+    {
+      from_location_id: input.fromLocationId,
+      to_location_id: input.toLocationId,
+      quantity: input.quantity,
+      idempotency_key: input.idempotencyKey,
+    },
+  );
+  return { auditId: data.audit_id, outcome: data.outcome };
 }
 
 export async function undoAudit(auditId: string): Promise<{ auditId: string }> {

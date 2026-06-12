@@ -5,14 +5,16 @@ through the pg_pool fixture (same as the detector tests).
 
 DAY adjustment note: seed_breakeven_scenario inserts ad_spend_fact with
 ``day = current_date`` and order_fact with ``created_at_source = now()``,
-so the seeded rows always land on *today*. We therefore derive DAY =
-date.today() so the window always ends on today and ``window_days=7`` covers
-the seeded data.
+so the seeded rows always land on the DATABASE's *today* — which is UTC.
+DAY must therefore be the UTC date, not the local one: with a local
+``date.today()`` the suite fails every evening once UTC rolls past
+midnight (e.g. after 8pm EDT) because the seeded spend lands one day
+after the grading window ends.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -21,7 +23,7 @@ from calderyn_engine.campaign_grade_repo import grade_campaigns_for_shop
 from calderyn_engine.db import with_shop_context
 
 SHOP = "00000000-0000-0000-0000-0000000000c1"
-DAY = date.today()
+DAY = datetime.now(UTC).date()
 
 
 @pytest.mark.asyncio
