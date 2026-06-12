@@ -5,6 +5,7 @@ import { adaptSku } from "../client";
 const BASE = {
   id: "sku-1",
   title: "Widget",
+  sku: "WGT-001",
   on_hand: 85,
   days_of_cover: 4,
   velocity: 10,
@@ -25,8 +26,10 @@ const BASE = {
 };
 
 describe("adaptSku demand passthrough", () => {
-  it("carries demand, suggestion, and location detail into the VM", () => {
+  it("carries the sku code, demand, suggestion, and location detail into the VM", () => {
     const vm = adaptSku(BASE as never);
+    // The sku code is the join key alerts use — never silently a title.
+    expect(vm.sku).toBe("WGT-001");
     expect(vm.demand?.region).toBe("CA");
     expect(vm.suggested_transfer?.recommended_delta).toBe(65);
     expect(vm.locations_detail).toHaveLength(1);
@@ -42,5 +45,10 @@ describe("adaptSku demand passthrough", () => {
     expect(vm.demand).toBeNull();
     expect(vm.suggested_transfer).toBeNull();
     expect(vm.locations_detail).toEqual([]);
+  });
+
+  it("falls back to the title only when the sku code is missing or empty", () => {
+    expect(adaptSku({ ...BASE, sku: "" } as never).sku).toBe("Widget");
+    expect(adaptSku({ ...BASE, sku: undefined } as never).sku).toBe("Widget");
   });
 });

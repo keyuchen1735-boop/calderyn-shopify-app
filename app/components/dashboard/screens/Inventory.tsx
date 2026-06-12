@@ -4,10 +4,12 @@
 // Renders the prototype's inventory table: title, sku code, on-hand, days of
 // cover, velocity, a location distribution bar, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
+import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
+import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
+import { money } from "../format";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
 
@@ -59,6 +61,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [relocating, setRelocating] = useState<SkuVM | null>(null);
+  const [alertsFor, setAlertsFor] = useState<SkuVM | null>(null);
   const [busy, setBusy] = useState(false);
   // app.refresh() reloads the shell's data but not this screen's self-fetched
   // SKUs; bump this counter to re-run the fetch after a successful relocate.
@@ -136,6 +139,28 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     }
   }
 
+  async function runAlertAction(alertId: string, kind: string) {
+    setBusy(true);
+    try {
+      const { outcome } = await executeAlertAction(alertId, { type: kind });
+      if (outcome === "succeeded") {
+        app.toast(kind === "snooze_alert" ? "Alert snoozed" : "Inventory transfer executed", "box", "success");
+        setReloadKey((k) => k + 1);
+        app.refresh();
+      } else {
+        app.toast("Action recorded as failed — check the audit log", "warn", "critical");
+      }
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't execute the action.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const shown = skus.filter((s) =>
     filter === "All"
       ? true
@@ -144,12 +169,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         : s.status !== "healthy",
   );
 
-  // A SKU row is clickable when an open alert references it. The prototype keyed
-  // on the alert's `sku` string starting with the SKU title prefix.
-  const linkedAlert = (sku: SkuVM): AlertVM | undefined =>
-    app.alerts.find(
-      (a) => a.status === "open" && a.sku != null && sku.title.startsWith(a.sku.split(" — ")[0]),
-    );
+  // Alerts reference SKUs by their sku code — exact match (the prototype's
+  // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
+  // same helper the extension page uses.
+  const alertsBySku = useMemo(() => openAlertsBySku(app.alerts), [app.alerts]);
+  const openAlertsFor = (sku: SkuVM): AlertVM[] => alertsBySku.get(sku.sku) ?? [];
 
   return (
     <div className="cd-screen">
@@ -176,12 +200,15 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 104 }}>By location</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
+              <span style={{ width: 56, textAlign: "center" }}>Alerts</span>
               <span style={{ width: 92, textAlign: "right" }}>Status</span>
             </div>
             <div className="cd-rows">
               {shown.map((s) => {
                 const st = SKU_STATUS[s.status] ?? SKU_STATUS.healthy;
-                const alert = linkedAlert(s);
+                const skuAlerts = openAlertsFor(s);
+                const alert = skuAlerts[0];
+                const canRelocate = s.locations_detail.some((l) => l.available > 0);
                 return (
                   <div
                     key={s.id}
@@ -259,10 +286,28 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
-                      {s.suggested_transfer && (
+                      {canRelocate && (
                         <Btn small onClick={() => setRelocating(s)}>
                           Relocate
                         </Btn>
+                      )}
+                    </span>
+                    {/* Same bubbling guard: opening the alert panel must not
+                        also trigger the row's navigate-to-alert handler. */}
+                    <span
+                      style={{ width: 56, display: "flex", justifyContent: "center" }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      {skuAlerts.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setAlertsFor(s)}
+                          aria-label={`${skuAlerts.length} open alerts`}
+                          style={{ background: "none", border: 0, padding: 0, cursor: "pointer" }}
+                        >
+                          <Pill tone="warn">{String(skuAlerts.length)}</Pill>
+                        </button>
                       )}
                     </span>
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
@@ -277,8 +322,18 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
       </Card>
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <CDIcon name="box" size={13} /> Location shading runs from your largest fulfillment center
-        down. Rows with an open alert are clickable.
+        down. Rows with an open alert are clickable; the alert count opens inline actions.
       </p>
+      {alertsFor && (
+        <AlertActionsDialog
+          sku={alertsFor}
+          alerts={openAlertsFor(alertsFor)}
+          busy={busy}
+          onClose={() => setAlertsFor(null)}
+          onExecute={runAlertAction}
+          onOpenAlert={(id) => app.navigate("alerts", id)}
+        />
+      )}
       {relocating && (
         <RelocateDialog
           sku={relocating}
@@ -289,6 +344,111 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           }
         />
       )}
+    </div>
+  );
+}
+
+/* ---------- Per-SKU alert actions dialog ---------- */
+// Mirror of the extension's alerts popover: each open alert with its
+// inline-executable actions; form-based actions open the alert detail.
+function AlertActionsDialog({
+  sku,
+  alerts,
+  busy,
+  onClose,
+  onExecute,
+  onOpenAlert,
+}: {
+  sku: SkuVM;
+  alerts: AlertVM[];
+  busy: boolean;
+  onClose: () => void;
+  onExecute: (alertId: string, kind: string) => Promise<void>;
+  onOpenAlert: (alertId: string) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 80,
+        background: "color-mix(in oklch, black 32%, transparent)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Alerts for ${sku.title}`}
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 440 }}
+      >
+        <Card>
+          <div className="cd-h2" style={{ marginBottom: 10 }}>
+            Alerts — {sku.title}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {alerts.length === 0 && (
+              <p className="cd-caption">No open alerts for this SKU anymore.</p>
+            )}
+            {alerts.map((a) => {
+              const actions = inventoryAlertActions(a);
+              return (
+                <div key={a.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <button
+                    type="button"
+                    className="cd-row-title"
+                    onClick={() => onOpenAlert(a.id)}
+                    style={{
+                      background: "none",
+                      border: 0,
+                      padding: 0,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    {a.title}
+                  </button>
+                  <span className="cd-caption tabular-nums">
+                    {money(a.dollar_impact)} at stake
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {actions.map((act) =>
+                      act.mode === "execute" ? (
+                        <Btn
+                          key={act.kind}
+                          small
+                          disabled={busy}
+                          onClick={() => void onExecute(a.id, act.kind)}
+                        >
+                          {act.kind === "reallocate_inventory" ? "Move stock" : "Snooze"}
+                        </Btn>
+                      ) : (
+                        <Btn key={act.kind} small onClick={() => onOpenAlert(a.id)}>
+                          Draft PO
+                        </Btn>
+                      ),
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

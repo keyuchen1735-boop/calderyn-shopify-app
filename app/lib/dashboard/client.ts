@@ -255,9 +255,9 @@ export function adaptAudit(e: AuditEntry): AuditVM {
 }
 
 export function adaptSku(s: SKU): SkuVM {
-  // The raw SKU type carries no sku-code or category field; fall back where the
-  // view-model expects one. TODO(api): sku code + category on SKU.
-  const skuCode = (s as { sku?: string }).sku ?? s.title;
+  // Older payloads may carry an empty code; fall back to the title so the row
+  // still labels itself. TODO(api): category on SKU.
+  const skuCode = s.sku || s.title;
   const category = (s as { category?: string }).category ?? "";
 
   const total = Object.values(s.locations ?? {}).reduce((sum, n) => sum + n, 0);
