@@ -102,6 +102,7 @@ export default function Analytics() {
 
   return (
     <Page
+      fullWidth
       title="Analytics"
       subtitle={`Ad performance over the last ${WINDOW_DAYS} days: return on ad spend, per-campaign grade, and the ads driving engagement.`}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}

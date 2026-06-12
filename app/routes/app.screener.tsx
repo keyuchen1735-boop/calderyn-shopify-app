@@ -644,6 +644,7 @@ export default function Screener() {
 
   return (
     <Page
+      fullWidth
       title="Ad Pre-Screen"
       subtitle="Score an ad before you spend — calibrated to your account history and SKU economics."
       primaryAction={

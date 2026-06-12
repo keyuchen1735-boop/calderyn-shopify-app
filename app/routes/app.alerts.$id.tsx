@@ -473,6 +473,7 @@ export default function AlertDetail() {
 
   return (
     <Page
+      fullWidth
       title={headline}
       backAction={{ content: "Alerts", onAction: () => navigate("/app/alerts") }}
       titleMetadata={

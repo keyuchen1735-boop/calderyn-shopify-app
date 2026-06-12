@@ -203,6 +203,7 @@ export default function McpTokens() {
 
   return (
     <Page
+      fullWidth
       title="MCP tokens"
       subtitle="Bearer tokens for the calderyn MCP server"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}

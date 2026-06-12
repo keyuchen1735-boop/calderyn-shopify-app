@@ -115,6 +115,25 @@ describe("syncShopAds — on-demand per-shop ingest", () => {
     expect(result.synced).toEqual(["meta"]);
   });
 
+  it("a successful poll resets sync_status back to 'live' (not just clears the error)", async () => {
+    // Otherwise a row that previously failed stays in sync_status: 'error'
+    // forever, because no path here flips it back. The badge reads "Not
+    // connected" even though the platform is happily syncing.
+    const { sb, updates } = sbStub();
+    const item = workItem("live", "tiktok");
+    const result = await syncShopAds(sb, "shop-1", {
+      adaptersForShop: async () => [item],
+      backfill: vi.fn(async () => {}),
+      poll: vi.fn(async () => {}),
+    });
+
+    expect(result.synced).toEqual(["tiktok"]);
+    const pollPatch = updates.find((u) => u.kind === "tiktok_ads");
+    expect(pollPatch).toBeTruthy();
+    expect(pollPatch!.patch.sync_status).toBe("live");
+    expect(pollPatch!.patch.sync_error).toBeNull();
+  });
+
   it("skips an integration whose adapter cannot connect", async () => {
     const { sb } = sbStub();
     const item = workItem("live", "google", null);

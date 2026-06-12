@@ -568,6 +568,7 @@ export default function Campaigns() {
 
   return (
     <Page
+      fullWidth
       title="Campaigns"
       subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
