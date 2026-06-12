@@ -461,6 +461,7 @@ export function calderynClient(shop: string) {
             supabase,
             opts.alertId,
             opts.kind,
+            shopId,
           );
 
           // For Phase 1 (no Python engines) executions just record an audit row.
