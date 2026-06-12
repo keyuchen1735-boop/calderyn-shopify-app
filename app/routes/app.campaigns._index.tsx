@@ -9,6 +9,7 @@ import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
+  ActionList,
   Badge,
   BlockStack,
   Banner,
@@ -21,12 +22,14 @@ import {
   Link,
   Modal,
   Page,
+  Popover,
   Select,
   Text,
   TextField,
   Tooltip,
 } from "@shopify/polaris";
 import type { SelectGroup } from "@shopify/polaris";
+import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -47,7 +50,7 @@ import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney, fmtMoneyDec } from "~/lib/format";
-import type { ActionKind, Alert, Campaign } from "~/lib/types";
+import type { ActionKind, Campaign } from "~/lib/types";
 
 type PendingAction =
   | { kind: "pause"; campaign: Campaign }
@@ -64,7 +67,6 @@ type ReallocationPrefill = {
 
 type LoaderPayload = {
   campaigns: Campaign[];
-  alerts: Alert[];
   reallocation: ReallocationPrefill | null;
   error: { code: string; message: string } | null;
 };
@@ -112,7 +114,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } else {
       campaigns = ingested;
     }
-    const alerts = await client.alerts.list({}, request.signal);
 
     // Best-effort grade-driven prefill for the reallocate modal. Failure
     // degrades VISIBLY to "no suggestion" (no Suggested badges, defaults
@@ -136,12 +137,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } catch {
       reallocation = null;
     }
-    return json<LoaderPayload>({ campaigns, alerts, reallocation, error: null });
+    return json<LoaderPayload>({ campaigns, reallocation, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       campaigns: [],
-      alerts: [],
       reallocation: null,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
@@ -467,9 +467,80 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/** Per-row overflow menu: collapses pause/resume, edit budget, and reallocate
+ * into a single kebab so the action cell stays one column wide (the old inline
+ * button row pushed the table past its card on normal admin widths). */
+function RowActions({
+  campaign: c,
+  reallocEligible,
+  setPending,
+  setBudgetInput,
+}: {
+  campaign: Campaign;
+  reallocEligible: boolean;
+  setPending: (p: PendingAction) => void;
+  setBudgetInput: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  return (
+    <Popover
+      active={open}
+      onClose={close}
+      preferredAlignment="right"
+      activator={
+        <Button
+          variant="tertiary"
+          icon={MenuHorizontalIcon}
+          accessibilityLabel={`Actions for ${c.name}`}
+          onClick={() => setOpen((v) => !v)}
+        />
+      }
+    >
+      <ActionList
+        actionRole="menuitem"
+        items={[
+          c.status === "active"
+            ? {
+                content: "Pause",
+                destructive: true,
+                onAction: () => {
+                  close();
+                  setPending({ kind: "pause", campaign: c });
+                },
+              }
+            : {
+                content: "Resume",
+                onAction: () => {
+                  close();
+                  setPending({ kind: "resume", campaign: c });
+                },
+              },
+          {
+            content: "Edit budget",
+            onAction: () => {
+              close();
+              setBudgetInput(Math.round(c.daily_budget_cents / 100).toString());
+              setPending({ kind: "edit_budget", campaign: c });
+            },
+          },
+          {
+            content: "Reallocate budget",
+            disabled: c.status !== "active" || c.daily_budget_cents <= 0 || !reallocEligible,
+            onAction: () => {
+              close();
+              setPending({ kind: "reallocate", sourceId: c.id });
+            },
+          },
+        ]}
+      />
+    </Popover>
+  );
+}
+
 export default function Campaigns() {
   const navigate = useEmbeddedNavigate();
-  const { campaigns, alerts, reallocation, error } = useLoaderData<typeof loader>();
+  const { campaigns, reallocation, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
@@ -494,7 +565,6 @@ export default function Campaigns() {
     3: (c) => c.daily_budget_cents,
     4: (c) => c.spend_7d,
     5: (c) => c.roas_7d,
-    6: (c) => c.roas_7d * c.contribution_margin,
   };
   const [sortIndex, setSortIndex] = useState(4);
   const [sortDir, setSortDir] = useState<"ascending" | "descending">("descending");
@@ -505,9 +575,6 @@ export default function Campaigns() {
   });
 
   const rows = sorted.map((c) => {
-    const linked = alerts.filter((a) => a.campaign && a.campaign.includes(c.name));
-    const hasPerf = c.roas_7d > 0 && c.contribution_margin > 0;
-    const marginAdj = c.roas_7d * c.contribution_margin;
     return [
       <Link
         key={`n-${c.id}`}
@@ -527,42 +594,13 @@ export default function Campaigns() {
       c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
       fmtMoney(c.spend_7d),
       c.roas_7d > 0 ? `${c.roas_7d.toFixed(1)}×` : "—",
-      hasPerf ? (
-        <Text
-          key={`m-${c.id}`}
-          as="span"
-          tone={marginAdj < 1 ? "critical" : undefined}
-          fontWeight="semibold"
-        >
-          {marginAdj.toFixed(1)}×
-        </Text>
-      ) : (
-        "—"
-      ),
-      linked.length ? <Badge tone="warning">{String(linked.length)}</Badge> : "—",
-      <InlineStack key={`act-${c.id}`} gap="200" blockAlign="center" wrap={false}>
-        {c.status === "active" ? (
-          <Button onClick={() => setPending({ kind: "pause", campaign: c })}>Pause</Button>
-        ) : (
-          <Button onClick={() => setPending({ kind: "resume", campaign: c })}>Resume</Button>
-        )}
-        <Button
-          variant="plain"
-          onClick={() => {
-            setBudgetInput(Math.round(c.daily_budget_cents / 100).toString());
-            setPending({ kind: "edit_budget", campaign: c });
-          }}
-        >
-          Edit budget
-        </Button>
-        <Button
-          variant="plain"
-          disabled={c.status !== "active" || c.daily_budget_cents <= 0 || reallocEligibleCount < 2}
-          onClick={() => setPending({ kind: "reallocate", sourceId: c.id })}
-        >
-          Reallocate
-        </Button>
-      </InlineStack>,
+      <RowActions
+        key={`act-${c.id}`}
+        campaign={c}
+        reallocEligible={reallocEligibleCount >= 2}
+        setPending={setPending}
+        setBudgetInput={setBudgetInput}
+      />,
     ];
   });
 
@@ -619,8 +657,6 @@ export default function Campaigns() {
               "numeric",
               "numeric",
               "numeric",
-              "numeric",
-              "text",
               "text",
             ]}
             headings={[
@@ -632,14 +668,10 @@ export default function Campaigns() {
               <Tooltip key="roas" content="ROAS — revenue ÷ ad spend, before product costs">
                 <span>ROAS</span>
               </Tooltip>,
-              <Tooltip key="madj" content="Margin-adjusted ROAS — return after product costs are taken out">
-                <span>Real return</span>
-              </Tooltip>,
-              "Alerts",
               "Actions",
             ]}
             rows={rows}
-            sortable={[false, false, false, true, true, true, true, false, false]}
+            sortable={[false, false, false, true, true, true, false]}
             defaultSortDirection="descending"
             initialSortColumnIndex={4}
             onSort={(index, direction) => {
