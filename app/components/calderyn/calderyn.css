@@ -348,3 +348,17 @@
     animation: none;
   }
 }
+
+/* Full-width feature pages would otherwise run edge-to-edge, which (a) leaves no
+   breathing room and (b) puts content under the fixed "Ask Calderyn" launcher in
+   the bottom-right corner. Add a symmetric horizontal gutter — matched on both
+   sides — wide enough that the launcher sits in the right margin rather than over
+   content, scaling with the viewport so it stays comfortable embedded in the
+   admin. The bottom clearance keeps page actions / the last row above the
+   launcher. Two classes so this beats Polaris's single-class default and its
+   responsive padding without !important.
+   Scoped to --fullWidth, so the centered onboarding / auth screens are untouched. */
+.Polaris-Page.Polaris-Page--fullWidth {
+  padding-inline: clamp(24px, 9vw, 160px);
+  padding-block-end: 72px;
+}
