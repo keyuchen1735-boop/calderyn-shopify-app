@@ -193,8 +193,8 @@ describe("listCampaignCreatives", () => {
         },
       ],
     }));
-    const rows = await listCampaignCreatives(fakeClient({ get }), "990099");
-    expect(get).toHaveBeenCalledWith("/990099/ads", {
+    const rows = await listCampaignCreatives(fakeClient({ get }), "23842999");
+    expect(get).toHaveBeenCalledWith("/23842999/ads", {
       fields: CREATIVE_FIELDS,
     });
     expect(rows).toHaveLength(2);
@@ -208,17 +208,17 @@ describe("listCampaignCreatives", () => {
     const client = fakeClient({
       get: vi.fn(async () => ({ error: { message: "Invalid token", code: 190 } })),
     });
-    await expect(listCampaignCreatives(client, "990099")).rejects.toThrow(/Invalid token/);
+    await expect(listCampaignCreatives(client, "23842999")).rejects.toThrow(/Invalid token/);
   });
 
   it("returns an empty array when data is absent", async () => {
-    const rows = await listCampaignCreatives(fakeClient({ get: vi.fn(async () => ({})) }), "7");
+    const rows = await listCampaignCreatives(fakeClient({ get: vi.fn(async () => ({})) }), "23842999");
     expect(rows).toEqual([]);
   });
 
-  it("rejects a non-numeric campaign id (path-injection guard)", async () => {
-    const get = vi.fn(async () => ({ data: [] }));
-    await expect(listCampaignCreatives(fakeClient({ get }), "990099/insights?x=")).rejects.toThrow(
+  it("rejects a non-numeric campaign id before issuing a request (injection guard)", async () => {
+    const get = vi.fn();
+    await expect(listCampaignCreatives(fakeClient({ get }), "camp_99")).rejects.toThrow(
       /Invalid Meta campaign id/,
     );
     expect(get).not.toHaveBeenCalled();

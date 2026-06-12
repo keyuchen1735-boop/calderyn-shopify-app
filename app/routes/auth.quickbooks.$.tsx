@@ -86,6 +86,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop_id: shopId,
       kind: "quickbooks",
       sync_status: "ready",
+      // Clear any sync_error from a prior failed sync so Settings doesn't keep
+      // showing a stale failure message for this fresh pairing (mirrors
+      // auth.google.$.tsx).
+      sync_error: null,
       external_account_id: realmId,
       connected_at: now,
       updated_at: now,

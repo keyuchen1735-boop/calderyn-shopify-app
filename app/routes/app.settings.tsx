@@ -238,6 +238,7 @@ export default function Settings() {
 
   return (
     <Page
+      fullWidth
       title="Settings"
       subtitle="Guardrails, integrations, notifications, privacy"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}

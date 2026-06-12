@@ -42,7 +42,7 @@ describe("quickbooksClientForShop", () => {
   it("refreshes, persists the ROTATED refresh token, and exposes a working queryItems", async () => {
     const { sb, updatePatch } = fakeSb({
       access_token_encrypted: encrypt("ref1"),
-      external_account_id: "9130350",
+      external_account_id: "9341452",
     });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
@@ -54,7 +54,7 @@ describe("quickbooksClientForShop", () => {
 
     const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
     expect(conn).not.toBeNull();
-    expect(conn!.realmId).toBe("9130350");
+    expect(conn!.realmId).toBe("9341452");
 
     // Rotated refresh token persisted (encrypted).
     expect(updatePatch.value).not.toBeNull();
@@ -63,12 +63,12 @@ describe("quickbooksClientForShop", () => {
     const items = await conn!.client.queryItems();
     expect(items).toEqual({ QueryResponse: { Item: [{ Id: "1", Sku: "MUG", PurchaseCost: 8 }] } });
     const calledUrl = httpFetch.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/v3/company/9130350/query");
+    expect(calledUrl).toContain("/v3/company/9341452/query");
     expect((httpFetch.mock.calls[0][1] as { headers: Record<string, string> }).headers.Authorization).toBe("Bearer acc");
   });
 
   it("paginates: keeps fetching while a full page (1000) returns, then stops", async () => {
-    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9130350" });
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
     });
@@ -89,7 +89,7 @@ describe("quickbooksClientForShop", () => {
   });
 
   it("queryHomeCurrency reads the company home currency from Preferences", async () => {
-    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9130350" });
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
     });
@@ -103,7 +103,7 @@ describe("quickbooksClientForShop", () => {
   });
 
   it("queryHomeCurrency returns null when the currency can't be determined", async () => {
-    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9130350" });
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
     });
@@ -113,7 +113,7 @@ describe("quickbooksClientForShop", () => {
   });
 
   it("throws when the QBO query returns a non-ok status", async () => {
-    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9130350" });
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
     });
@@ -124,11 +124,15 @@ describe("quickbooksClientForShop", () => {
     await expect(conn!.client.queryItems()).rejects.toThrow(/AuthenticationFailed/);
   });
 
-  it("rejects a non-numeric realm id (path-injection guard)", async () => {
-    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9130350/items?x=" });
+  it("rejects a non-numeric realm id before issuing a query (injection guard)", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "realm-9" });
     const fetcher = vi.fn().mockResolvedValue({
       access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
     });
-    await expect(quickbooksClientForShop("s1", { sb, fetcher })).rejects.toThrow(/Invalid QuickBooks realm id/);
+    const httpFetch = vi.fn();
+    await expect(
+      quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch }),
+    ).rejects.toThrow(/Invalid QuickBooks realm id/);
+    expect(httpFetch).not.toHaveBeenCalled();
   });
 });

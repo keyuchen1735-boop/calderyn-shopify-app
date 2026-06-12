@@ -40,7 +40,10 @@ async function runOne(item: AdWorkItem, summary: Summary): Promise<void> {
       summary.backfilled.push(tag);
     } else {
       await pollAdsDaily(source, adapter.platform, shopId, sb);
-      await setSync(shopId, adapter.integrationKind, { sync_error: null, last_sync_at: now });
+      // A successful poll must reset sync_status to "live", not just clear the
+      // error message — otherwise a row that previously hit "error" stays in
+      // error state forever even after polls succeed (no other path flips it).
+      await setSync(shopId, adapter.integrationKind, { sync_status: "live", sync_error: null, last_sync_at: now });
       summary.polled.push(tag);
     }
   } catch (err) {

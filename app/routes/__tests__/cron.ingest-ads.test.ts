@@ -5,14 +5,23 @@ const { adaptersForShops, backfillAds, pollAdsDaily, updateSync } = vi.hoisted((
   adaptersForShops: vi.fn(),
   backfillAds: vi.fn(async () => {}),
   pollAdsDaily: vi.fn(async () => {}),
-  updateSync: vi.fn(async () => {}),
+  updateSync: vi.fn(async (_patch: Record<string, unknown>) => {}),
 }));
 
 vi.mock("~/lib/ads/registry.server", () => ({ adaptersForShops }));
 vi.mock("~/lib/ads/ingest.server", () => ({ backfillAds, pollAdsDaily }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({ update: () => ({ eq: () => ({ eq: () => { updateSync(); return Promise.resolve({ error: null }); } }) }) }),
+    from: () => ({
+      update: (patch: Record<string, unknown>) => ({
+        eq: () => ({
+          eq: () => {
+            updateSync(patch);
+            return Promise.resolve({ error: null });
+          },
+        }),
+      }),
+    }),
   }),
 }));
 
@@ -46,6 +55,21 @@ describe("cron.ingest-ads loader", () => {
     expect(pollAdsDaily).toHaveBeenCalledTimes(1);
     expect(body.errors).toHaveLength(1);
     expect(body.errors[0]).toContain("s3");
+  });
+
+  it("a successful poll resets sync_status to 'live' (not just clears the error)", async () => {
+    // Mirrors syncShopAds: otherwise a row that previously failed stays in
+    // sync_status: 'error' forever, even as polls succeed. Without this the
+    // Settings badge reads "Not connected" while ingest is working fine.
+    const source = { fetchCampaigns: vi.fn(), fetchBackfillSpend: vi.fn(), fetchDailySpend: vi.fn() };
+    adaptersForShops.mockResolvedValue([
+      { shopId: "s1", status: "live", adapter: { platform: "tiktok", integrationKind: "tiktok_ads", connect: async () => source } },
+    ]);
+    await loader({ request: req("Bearer s3cret") } as never);
+    expect(pollAdsDaily).toHaveBeenCalledTimes(1);
+    expect(updateSync).toHaveBeenCalledWith(
+      expect.objectContaining({ sync_status: "live", sync_error: null, last_sync_at: expect.any(String) }),
+    );
   });
 
   it("skips shops with no connection", async () => {
