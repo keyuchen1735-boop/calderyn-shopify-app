@@ -423,7 +423,6 @@ export default function CampaignDetailPage() {
   const metricsByAd = new Map(adMetrics.map((m) => [m.adId, m]));
   return (
     <Page
-      fullWidth
       title={detail.name}
       titleMetadata={
         <Badge tone={detail.status === "active" ? "success" : "attention"}>
