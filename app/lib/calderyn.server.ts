@@ -170,6 +170,7 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
   return {
     id: String(r.id),
     title: String(r.title),
+    sku: String(r.sku ?? ""),
     on_hand: Number(r.on_hand ?? 0),
     days_of_cover: Number(r.days_of_cover ?? 0),
     velocity: Number(r.velocity ?? 0),

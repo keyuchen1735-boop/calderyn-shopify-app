@@ -117,6 +117,8 @@ export interface ShopLocation {
 export interface SKU {
   id: string;
   title: string;
+  /** Human SKU code (sku_dim.sku) — the key alerts reference SKUs by. */
+  sku: string;
   on_hand: number;
   days_of_cover: number;
   velocity: number;
