@@ -438,9 +438,25 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       {/* Sidebar */}
       <aside className="cd-sidebar" data-screen-label="Sidebar">
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
-          <div className="cd-logo cd-logo-mark" aria-hidden="true">
-            C
-          </div>
+          <svg
+            className="cd-logo cd-logo-mark"
+            viewBox="0 0 32 32"
+            fill="none"
+            role="img"
+            aria-label="Calderyn"
+          >
+            <path
+              d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
+              fill="#24556E"
+            />
+            <path
+              d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
+              stroke="#fff"
+              strokeWidth="3.6"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </svg>
           <div>
             <div className="cd-brand-name">Calderyn</div>
             <div className="cd-brand-sub">{shopDomain}</div>
