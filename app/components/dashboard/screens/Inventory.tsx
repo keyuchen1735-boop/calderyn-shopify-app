@@ -9,6 +9,7 @@ import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
+import { formatDemandUnits } from "~/lib/inventory-demand";
 import { money } from "../format";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
@@ -266,14 +267,31 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     <span style={{ width: 120 }}>
                       {s.demand ? (
                         <span
-                          className="cd-caption tabular-nums"
-                          title={`${s.demand.units_30d} units/30d in ${s.demand.region} · ${s.demand.stock_in_region} in stock there`}
-                          style={{
-                            color:
-                              s.demand.stock_in_region === 0 ? "var(--red)" : "var(--text-2)",
-                          }}
+                          className="min-w-0"
+                          title={`${formatDemandUnits(s.demand.units_30d)} in ${s.demand.region} · ${s.demand.stock_in_region} in stock there`}
+                          style={{ display: "flex", flexDirection: "column" }}
                         >
-                          {s.demand.region} · {s.demand.units_30d}/30d
+                          <span
+                            className="truncate"
+                            style={{
+                              color:
+                                s.demand.stock_in_region === 0
+                                  ? "var(--red)"
+                                  : "var(--text-2)",
+                            }}
+                          >
+                            {s.demand.region}
+                          </span>
+                          <span
+                            className="cd-caption tabular-nums truncate"
+                            style={
+                              s.demand.stock_in_region === 0
+                                ? { color: "var(--red)" }
+                                : undefined
+                            }
+                          >
+                            {formatDemandUnits(s.demand.units_30d)}
+                          </span>
                         </span>
                       ) : (
                         <span className="cd-caption">—</span>

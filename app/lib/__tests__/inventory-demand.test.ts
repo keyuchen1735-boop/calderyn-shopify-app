@@ -3,6 +3,7 @@ import {
   demandFromRow,
   suggestedTransferFromRow,
   locationsDetailFromRow,
+  formatDemandUnits,
   type SkuDemandViewRow,
 } from "../inventory-demand";
 
@@ -102,6 +103,24 @@ describe("suggestedTransferFromRow", () => {
 
   it("returns null when src_available is negative", () => {
     expect(suggestedTransferFromRow({ ...ROW, src_available: -5 })).toBeNull();
+  });
+});
+
+describe("formatDemandUnits", () => {
+  it("spells out the units and the trailing-30-day window (was the cryptic '10/30d')", () => {
+    expect(formatDemandUnits(10)).toBe("10 units sold/30d");
+  });
+
+  it("uses the singular noun for exactly one unit", () => {
+    expect(formatDemandUnits(1)).toBe("1 unit sold/30d");
+  });
+
+  it("renders zero demand with the plural noun", () => {
+    expect(formatDemandUnits(0)).toBe("0 units sold/30d");
+  });
+
+  it("groups thousands so large run-rates stay readable", () => {
+    expect(formatDemandUnits(1500)).toBe("1,500 units sold/30d");
   });
 });
 
