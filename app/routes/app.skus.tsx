@@ -18,11 +18,15 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import {
   executeInventoryRelocation,
   RelocationError,
 } from "~/lib/actions/inventory-relocate.server";
+import {
+  executeInventoryAlertAction,
+  type InventoryAlertActionKind,
+} from "~/lib/actions/alert-action.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { useActionToast, type ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
@@ -68,6 +72,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
+
+  // Per-row alert actions share the relocate route; everything that drives
+  // the mutation is re-derived server-side from the shop-scoped alert.
+  if (String(formData.get("intent") ?? "") === "alert_action") {
+    return alertAction(formData, session.shop, admin, request.signal);
+  }
 
   // Boundary validation — never trust the modal's FormData (repo rule).
   const skuId = String(formData.get("sku_id") ?? "").trim();
@@ -138,6 +148,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 /** A SKU with no recent sales has no meaningful velocity or days-of-cover
  * (the engine caps cover at 999 in that case). */
 const hasSales = (s: SKU) => (s.velocity ?? 0) > 0;
+
+const ALERT_ACTION_KINDS: InventoryAlertActionKind[] = [
+  "reallocate_inventory",
+  "snooze_alert",
+];
+
+async function alertAction(
+  formData: FormData,
+  shop: string,
+  admin: Parameters<typeof executeInventoryAlertAction>[0]["admin"],
+  signal: AbortSignal,
+) {
+  const alertId = String(formData.get("alert_id") ?? "").trim();
+  const kind = String(formData.get("kind") ?? "").trim() as InventoryAlertActionKind;
+  const idempotencyKey = String(formData.get("idempotency_key") ?? "").trim();
+  if (!alertId || !idempotencyKey || !ALERT_ACTION_KINDS.includes(kind)) {
+    const message = "Invalid alert action.";
+    return json<RelocatePayload>(
+      { ok: false, error: { code: "INVALID_INPUT", message }, toast: { message, isError: true } },
+      { status: 422 },
+    );
+  }
+
+  try {
+    const shopId = await resolveShopId(shop);
+    const { outcome } = await executeInventoryAlertAction({
+      client: calderynClient(shop),
+      admin,
+      sb: getSupabase(),
+      shopId,
+      alertId,
+      kind,
+      idempotencyKey,
+      signal,
+    });
+    const ok = outcome === "succeeded";
+    return json<RelocatePayload>({
+      ok,
+      toast: ok
+        ? {
+            message:
+              kind === "snooze_alert"
+                ? "Alert snoozed"
+                : "Inventory transfer executed — see the audit log",
+          }
+        : { message: "Action recorded as failed — check the audit log", isError: true },
+    });
+  } catch (err) {
+    if (err instanceof CalderynError) {
+      return json<RelocatePayload>(
+        {
+          ok: false,
+          error: { code: err.code, message: err.message },
+          toast: { message: err.message, isError: true },
+        },
+        { status: err.status },
+      );
+    }
+    const message = err instanceof Error ? err.message : "Alert action failed.";
+    return json<RelocatePayload>(
+      { ok: false, error: { code: "ACTION_FAILED", message }, toast: { message, isError: true } },
+      { status: 500 },
+    );
+  }
+}
 
 export default function SKUs() {
   const navigate = useEmbeddedNavigate();
