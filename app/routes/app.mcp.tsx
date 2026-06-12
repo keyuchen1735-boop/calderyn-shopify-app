@@ -204,14 +204,14 @@ export default function McpTokens() {
   return (
     <Page
       fullWidth
-      title="MCP tokens"
-      subtitle="Bearer tokens for the calderyn MCP server"
+      title="Claude connections"
+      subtitle="Access keys that let Claude read your store's data"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
-      primaryAction={{ content: "Generate token", onAction: () => setCreateOpen(true) }}
+      primaryAction={{ content: "Create access key", onAction: () => setCreateOpen(true) }}
     >
       <BlockStack gap="500">
         {error && (
-          <Banner tone="critical" title="Couldn't load tokens">
+          <Banner tone="critical" title="Couldn't load access keys">
             <p>{error.message}</p>
           </Banner>
         )}
@@ -223,10 +223,10 @@ export default function McpTokens() {
             <Card>
               {tokens.length === 0 ? (
                 <BlockStack gap="200">
-                  <Text as="p">No MCP tokens yet. Click "Generate token" to create one.</Text>
+                  <Text as="p">No access keys yet. Click "Create access key" to make one.</Text>
                   <Text as="p" tone="subdued" variant="bodySm">
-                    A token authenticates an external MCP client (e.g. Claude.ai connector)
-                    against this shop's read-only data surface.
+                    An access key lets an external Claude client (like the Claude.ai
+                    connector) read this store&apos;s data.
                   </Text>
                 </BlockStack>
               ) : (
