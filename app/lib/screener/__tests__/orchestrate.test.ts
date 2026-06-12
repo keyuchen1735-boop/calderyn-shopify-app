@@ -28,8 +28,8 @@ function deps(over: Partial<ScreenDeps> = {}): ScreenDeps {
       tips: ["t"],
     }),
     startRun: async () => run,
-    completeRun: async (_id, scorecard) => ({ ...run, status: "done", scorecard }),
-    failRun: async (_id, message) => ({ ...run, status: "error", error: message }),
+    completeRun: async (_shop, _id, scorecard) => ({ ...run, status: "done", scorecard }),
+    failRun: async (_shop, _id, message) => ({ ...run, status: "error", error: message }),
     ...over,
   };
 }
@@ -63,7 +63,7 @@ describe("executeScreen", () => {
             creativeInput: null, variants: [],
           };
         },
-        completeRun: async (_id, scorecard) => ({
+        completeRun: async (_shop, _id, scorecard) => ({
           id: "run-9", status: "done", source: "meta_ad", metaAdId: "ad-9",
           assumedSpendCents: 50000, scorecard, error: null, createdAt: "t", completedAt: "t2",
           creativeInput: null, variants: [],

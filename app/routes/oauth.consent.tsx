@@ -60,6 +60,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     client_id: client.client_id,
     shop,
     scopes: pendingRow.scope.split(" ").filter(Boolean),
+    redirect_uri: pendingRow.redirect_uri,
     auth_token: authToken,
   });
 };
@@ -112,12 +113,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export default function Consent() {
-  const { client_name, shop, scopes, auth_token } = useLoaderData<typeof loader>() as {
+  const { client_name, shop, scopes, redirect_uri, auth_token } = useLoaderData<typeof loader>() as {
     client_name: string;
     shop: string;
     scopes: string[];
+    redirect_uri: string;
     auth_token: string;
   };
+
+  let destinationHost = redirect_uri;
+  try {
+    destinationHost = new URL(redirect_uri).host;
+  } catch {
+    // redirect_uri is validated as https upstream; fall back to the raw value.
+  }
   const fetcher = useFetcher<{ redirect_url?: string; error?: string }>();
   const submitting = fetcher.state !== "idle";
 
@@ -151,6 +160,9 @@ export default function Consent() {
           <BlockStack gap="400">
             <Text as="p" variant="bodyMd">
               <b>{client_name}</b> is requesting access to your Calderyn data for <b>{shop}</b>.
+            </Text>
+            <Text as="p" variant="bodyMd">
+              Data will be sent to: <b>{destinationHost}</b>
             </Text>
             <Text as="p" variant="bodyMd">
               Permissions requested:
