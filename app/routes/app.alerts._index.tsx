@@ -70,6 +70,7 @@ export default function AlertList() {
 
   return (
     <Page
+      fullWidth
       title="Alerts"
       subtitle={
         isFiltered

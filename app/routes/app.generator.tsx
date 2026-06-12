@@ -223,6 +223,7 @@ export default function Generator() {
 
   return (
     <Page
+      fullWidth
       title="Ad Generator"
       subtitle="Turns the pre-screen's critique into a remake brief, rendered by Higgsfield and re-scored before you spend."
       backAction={{ content: "Ad Pre-Screen", onAction: () => navigate("/app/screener") }}

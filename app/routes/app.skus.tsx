@@ -107,6 +107,7 @@ export default function SKUs() {
 
   return (
     <Page
+      fullWidth
       title="Inventory"
       titleMetadata={<ShopifySourcePill />}
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
