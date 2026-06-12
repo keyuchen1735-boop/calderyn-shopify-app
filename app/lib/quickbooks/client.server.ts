@@ -88,6 +88,12 @@ export async function quickbooksClientForShop(
   const base = qboApiBase(process.env.QBO_ENV);
   const realmId = row.external_account_id;
 
+  // Injection safety: realmId must be an Intuit numeric id. NEVER interpolate
+  // untrusted text into the request path.
+  if (!/^\d+$/.test(realmId)) {
+    throw new Error("Invalid QuickBooks realm id");
+  }
+
   // Run one QBO query; throws on a non-2xx (never silently parses an error body).
   async function runQuery(qbql: string): Promise<unknown> {
     const u = `${base}/v3/company/${realmId}/query?query=${encodeURIComponent(qbql)}&minorversion=65`;
