@@ -57,7 +57,9 @@ export function recoveredCentsFromStates(
       Math.round(budgetCents(preState, "source") - budgetCents(postState, "source")),
     );
   }
-  // Alert-driven-only kinds (create_po_draft, exclude_geo, reallocate_inventory)
-  // have no budget states to derive from.
+  // These kinds (create_po_draft, exclude_geo, reallocate_inventory) have no
+  // budget pre/post states to derive from, so they recover $0 here. When
+  // executed without an alert (e.g. merchant-initiated inventory relocation)
+  // there is no at-stake amount either — recovering $0 by design is correct.
   return 0;
 }

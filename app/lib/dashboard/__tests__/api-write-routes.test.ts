@@ -324,7 +324,30 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
     })) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ audit_id: "audit-3" });
-    expect(undoAction).toHaveBeenCalledWith("shop-1", "a1", expect.anything());
+    expect(undoAction).toHaveBeenCalledWith(
+      "shop-1",
+      "a1",
+      expect.anything(),
+      // inventory undos need a Shopify admin client; the route passes one through
+      expect.objectContaining({ admin: expect.anything() }),
+    );
+  });
+
+  it("still performs campaign undos when no offline Shopify session exists", async () => {
+    // Admin construction is best-effort: only inventory undos need it, and the
+    // executor refuses those loudly itself when admin is missing.
+    unauthenticatedAdmin.mockRejectedValueOnce(new Error("no offline session"));
+    undoAction.mockResolvedValueOnce({ id: "audit-4" });
+    const res = (await undoRoute({
+      request: post("https://calderyncompany.com/dashboard/api/audit/a1/undo", {}),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ audit_id: "audit-4" });
+    expect(undoAction).toHaveBeenCalledWith("shop-1", "a1", expect.anything(), {
+      admin: undefined,
+    });
   });
 });
 
