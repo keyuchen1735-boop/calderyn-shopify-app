@@ -57,7 +57,7 @@ import {
   type ScreenableAd,
   type Variant,
 } from "~/lib/screener/types";
-import { validateCreativeMedia } from "~/lib/screener/media.server";
+import { validateCreativeMedia, validateCreativeMediaUrls } from "~/lib/screener/media.server";
 import { gateScoreDeps } from "~/lib/screener/score-one.server";
 import { generateImprovements } from "~/lib/screener/generate.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
@@ -239,6 +239,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const input = parseCreativeForm(form);
   const mediaError = validateCreativeMedia(input);
   if (mediaError) return json({ formError: mediaError });
+  // SSRF guard on the manual path too — same untrusted URLs reach the model/Higgsfield
+  // sinks as the dashboard API (the Meta path above is exempt: URLs come from the live ad).
+  const urlError = validateCreativeMediaUrls(input);
+  if (urlError) return json({ formError: urlError });
   const run = await executeScreen({ shop: session.shop, input, assumedSpendCents });
   return json(run);
 };
