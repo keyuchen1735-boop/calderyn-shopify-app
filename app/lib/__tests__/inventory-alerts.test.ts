@@ -78,6 +78,23 @@ describe("inventoryAlertActions", () => {
     expect(actions.map((a) => a.kind)).not.toContain("create_po_draft");
   });
 
+  it("accepts dashboard view-model alerts (string detector ids, stringified evidence)", () => {
+    const vmAlert = {
+      detector_id: "regional_spend_starved_stock" as string,
+      evidence: {
+        inventory_item_id: "gid://shopify/InventoryItem/1",
+        from_location_id: "gid://shopify/Location/9",
+        to_location_id: "gid://shopify/Location/2",
+        recommended_delta: "21",
+      } as Record<string, string>,
+    };
+    expect(inventoryAlertActions(vmAlert)).toContainEqual({
+      kind: "reallocate_inventory",
+      mode: "execute",
+    });
+    expect(inventoryAlertActions({ detector_id: "not_a_detector", evidence: {} })).toEqual([]);
+  });
+
   it("accepts a legacy delta field in place of recommended_delta", () => {
     const actions = inventoryAlertActions(
       makeAlert({ evidence: { ...TRANSFER_EVIDENCE, recommended_delta: undefined, delta: 21 } }),

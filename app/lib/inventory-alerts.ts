@@ -3,8 +3,14 @@
 // the inventory page must join on the code or the join silently matches
 // nothing (the bug that left the Alerts column permanently empty).
 
-import type { Alert } from "./types";
+import type { Alert, DetectorId } from "./types";
 import { DETECTOR_TO_ACTIONS } from "./labels";
+
+/** Structural subset shared by the Alert DTO and the dashboard AlertVM. */
+export interface AlertActionSource {
+  detector_id: string;
+  evidence: Record<string, unknown>;
+}
 
 export interface InventoryAlertAction {
   kind: "reallocate_inventory" | "snooze_alert" | "create_po_draft";
@@ -40,8 +46,8 @@ function hasTransferPlan(evidence: Record<string, unknown>): boolean {
  * reallocate only when the evidence can actually drive the mutation — an
  * action that would 422 must not render (absence of action, not a dead button).
  */
-export function inventoryAlertActions(alert: Alert): InventoryAlertAction[] {
-  const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? [];
+export function inventoryAlertActions(alert: AlertActionSource): InventoryAlertAction[] {
+  const allowed = DETECTOR_TO_ACTIONS[alert.detector_id as DetectorId] ?? [];
   const actions: InventoryAlertAction[] = [];
   if (allowed.includes("reallocate_inventory") && hasTransferPlan(alert.evidence ?? {})) {
     actions.push({ kind: "reallocate_inventory", mode: "execute" });
