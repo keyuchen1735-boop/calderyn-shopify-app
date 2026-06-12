@@ -3,21 +3,13 @@
 // already include IG spend. A publisher_platform breakdown (FB vs IG) is a
 // later/UI concern; Slice 1 only needs per-campaign daily spend.
 
-import type { MetaClient, MetaResponse } from "./campaigns.server";
+import { assertNotRateLimited, type MetaClient } from "./campaigns.server";
 import { metaInsightToSpend, type MetaInsightRow } from "./transform";
 import type { NormalizedSpendRow } from "../ads/adapter";
-import { RateLimitError } from "../ads/backoff";
 
-const META_RATE_CODES = new Set([4, 17, 32, 613]); // app/user/account rate limits
-
-/** Throw RateLimitError on a Meta throttle so withRetry can back off. */
-export function assertNotRateLimited(r: MetaResponse): MetaResponse {
-  const code = r.error?.code;
-  if (code !== undefined && META_RATE_CODES.has(code)) {
-    throw new RateLimitError(`Meta rate limit (code ${code})`);
-  }
-  return r;
-}
+// Throttle classification lives with MetaResponse in campaigns.server.ts;
+// re-exported here so existing importers (ingest, ad-insights) keep working.
+export { assertNotRateLimited };
 
 export interface InsightsWindow {
   datePreset?: string; // e.g. "last_90d"

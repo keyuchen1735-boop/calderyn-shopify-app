@@ -1,6 +1,7 @@
 import { getSupabase, resolveShopId } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 import type { MetaClient, MetaResponse } from "./campaigns.server";
+import { throttleMetaClient } from "./throttle.server";
 
 const GRAPH_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -37,5 +38,5 @@ export async function metaClientForShop(shopDomain: string): Promise<MetaConnect
       return (await res.json()) as MetaResponse;
     },
   };
-  return { client, adAccountId };
+  return { client: throttleMetaClient(client, shopId), adAccountId };
 }

@@ -88,11 +88,24 @@ export async function undoAction(
   // campaign kinds, whose reversals are absolute-state and safe to retry.
   let appliedInventoryOperationId: string | null = null;
 
+  // Single-campaign undos act on the campaign's external id. A blank id (e.g. a
+  // legacy row that never recorded params.external_id) would hit the platform
+  // with an empty campaign id — fail loudly instead of pausing/resuming nothing.
+  if (
+    orig.action_kind === "pause_campaign" ||
+    orig.action_kind === "resume_campaign" ||
+    orig.action_kind === "reduce_campaign_budget"
+  ) {
+    if (!externalId) throw new Error(`cannot undo ${String(orig.action_kind)}: missing campaign external id`);
+  }
+
   if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
     // Both are status flips, so both undo the same way: put the campaign back
-    // in whatever state pre_state recorded.
+    // in whatever state pre_state recorded. Case-insensitive: orchestrator rows
+    // snapshot lowercase ("active") from ad_campaign_dim, but legacy rows from
+    // the old actions.execute path recorded Meta's uppercase ("ACTIVE").
     const adapter = await requireAdapter();
-    if (pre.status === "active") await adapter.resume(externalId);
+    if (String(pre.status).toLowerCase() === "active") await adapter.resume(externalId);
     else await adapter.pause(externalId);
     await mirrorBackToPreState();
   } else if (orig.action_kind === "reduce_campaign_budget") {

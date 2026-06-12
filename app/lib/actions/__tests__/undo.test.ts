@@ -55,6 +55,16 @@ const pauseAudit = {
 describe("undoAction", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("refuses to undo a campaign row with no external id (never calls the platform with a blank id)", async () => {
+    // Legacy rows could lack params.external_id; reversing with "" would hit the
+    // ad platform with a blank campaign id (404 or silent no-op). Fail loudly.
+    const noExternalId = { ...pauseAudit, params: { platform: "meta" } };
+    const { sb } = fakeSb(noExternalId);
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/external id|campaign id/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(adapter.pause).not.toHaveBeenCalled();
+  });
+
   it("resumes a paused campaign and writes an undo audit", async () => {
     const { sb, calls } = fakeSb(pauseAudit);
     await undoAction(SHOP, "aud1", sb);
@@ -65,6 +75,16 @@ describe("undoAction", () => {
       outcome: "succeeded",
       dollar_impact_at_exec: -5000, // pulls the original's recovered impact back out
     });
+  });
+
+  it("treats pre_state status case-insensitively (legacy rows stored uppercase)", async () => {
+    // The pre-gateway actions.execute path recorded Meta's uppercase "ACTIVE".
+    // Routing those through undo must still resume (not pause) on undo.
+    const legacyUpper = { ...pauseAudit, pre_state: { status: "ACTIVE", daily_budget_cents: 5000 } };
+    const { sb } = fakeSb(legacyUpper);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.resume).toHaveBeenCalledWith("c1");
+    expect(adapter.pause).not.toHaveBeenCalled();
   });
 
   it("re-pauses a campaign on a resume_campaign undo (restores pre status)", async () => {

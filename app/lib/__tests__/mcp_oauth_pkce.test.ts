@@ -85,7 +85,11 @@ describe("pending OAuth cookie", () => {
 
   it("rejects a tampered payload", async () => {
     const jwt = await signPendingOauth(_ctx);
-    const tampered = jwt.slice(0, -1) + (jwt.endsWith("a") ? "b" : "a");
+    // Flip a bit the signature actually uses: the final base64url char carries
+    // two unused padding bits, so an 'a'↔'b' flip can decode to the identical
+    // signature and (correctly) verify — a 1-in-16 flake. 'A'↔'Q' differ in a
+    // high, used bit, so the tamper always corrupts the real signature.
+    const tampered = jwt.slice(0, -1) + (jwt.endsWith("A") ? "Q" : "A");
     await expect(verifyPendingOauth(tampered)).rejects.toThrow();
   });
 

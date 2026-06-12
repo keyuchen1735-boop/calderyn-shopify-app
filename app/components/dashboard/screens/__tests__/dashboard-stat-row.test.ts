@@ -69,6 +69,9 @@ function auditEntry(
     outcome,
     actor: "merchant",
     when: "2026-06-10T18:00:00.000Z",
+    // Recovered (7d) on the Dashboard screen windows by the real clock, so keep
+    // these fixtures inside the window regardless of when the suite runs.
+    created_at: new Date().toISOString(),
     undo_eligible: true,
     undo_of,
     pre: "—",

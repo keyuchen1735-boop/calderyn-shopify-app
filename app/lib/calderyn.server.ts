@@ -26,8 +26,6 @@ import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
 import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
-import { metaClientForShop } from "./meta/client.server";
-import { setCampaignStatus } from "./meta/campaigns.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
 import { DEFAULT_GUARDRAILS } from "./guardrail-defaults";
@@ -337,12 +335,25 @@ export function calderynClient(shop: string) {
             throw new CalderynError({ code: "AUDIT_NOT_FOUND", status: 404, message: `Audit ${auditId} not found` });
           }
 
-          // Composite reallocations have a real platform undo — delegate to
-          // the action-gateway undo (budget: adapter-based, restores BOTH
-          // budgets; inventory: reverse Shopify transfer) instead of the
-          // legacy path below, which would record a success without touching
-          // either platform (rule 12).
-          if (orig.action_kind === "reallocate_budget" || orig.action_kind === "reallocate_inventory") {
+          // Platform-reversible kinds delegate to the action-gateway undo
+          // instead of the legacy path below. undoAction resolves the RIGHT
+          // platform adapter (meta/google/tiktok) from the campaign, reverses
+          // through it, restores ad_campaign_dim, and re-opens the alert; for
+          // inventory it fires the reverse Shopify transfer. The old path here
+          // forced every status undo through the Meta client, so a TikTok or
+          // Google undo either failed (UNDO_META_UNAVAILABLE) or hit Meta with a
+          // foreign campaign id — and recorded inventory "undos" that never
+          // touched Shopify (rule 12). The legacy manual-insert path below now
+          // only serves non-platform kinds (e.g. create_po_draft) that have no
+          // platform reversal — they just record the inverse audit row.
+          const GATEWAY_UNDO_KINDS = new Set([
+            "reallocate_budget",
+            "pause_campaign",
+            "resume_campaign",
+            "reduce_campaign_budget",
+            "reallocate_inventory",
+          ]);
+          if (GATEWAY_UNDO_KINDS.has(String(orig.action_kind))) {
             // Lazy import: ~/shopify.server initializes shopifyApp (env,
             // Prisma session storage) at module load — keep it out of the
             // module graph of every test that imports calderyn.server.
@@ -359,31 +370,6 @@ export function calderynClient(shop: string) {
               .single();
             if (vErr) throw vErr;
             return rowToAudit(view);
-          }
-
-          // For real ad-platform pauses/resumes, restore the prior status on
-          // Meta first. executeAction snapshots lowercase statuses from
-          // ad_campaign_dim while legacy rows recorded Meta's uppercase —
-          // normalize before matching. The platform campaign id lives in
-          // post_state.campaign_id on legacy rows but only in
-          // params.external_id on orchestrator rows.
-          if (orig.action_kind === "pause_campaign" || orig.action_kind === "resume_campaign") {
-            const priorStatus = (orig.pre_state as { status?: string } | null)?.status?.toUpperCase();
-            const campaignId =
-              (orig.post_state as { campaign_id?: string } | null)?.campaign_id ??
-              (orig.params as { external_id?: string } | null)?.external_id;
-            if (priorStatus === "ACTIVE" || priorStatus === "PAUSED") {
-              const restore: "ACTIVE" | "PAUSED" = priorStatus;
-              const meta = await metaClientForShop(shop);
-              if (!meta || !campaignId) {
-                throw new CalderynError({
-                  code: "UNDO_META_UNAVAILABLE",
-                  status: 400,
-                  message: "Cannot undo: Meta is not connected or campaign id missing.",
-                });
-              }
-              await setCampaignStatus(meta.client, campaignId, restore);
-            }
           }
 
           const undoRow = {
