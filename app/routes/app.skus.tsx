@@ -425,7 +425,7 @@ export default function SKUs() {
                   )}
                 </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
-                  <AlertsCell alerts={skuAlerts} />
+                  {skuAlerts.length > 0 && <AlertsCell alerts={skuAlerts} />}
                 </div>
               </div>
             );
@@ -520,9 +520,9 @@ function AlertsCell({ alerts }: { alerts: Alert[] }) {
                         key={act.kind}
                         size="micro"
                         disabled={submitting}
-                        onClick={() =>
-                          execute(a.id, act.kind as "reallocate_inventory" | "snooze_alert")
-                        }
+                        onClick={() => {
+                          if (act.kind !== "create_po_draft") execute(a.id, act.kind);
+                        }}
                       >
                         {act.kind === "reallocate_inventory" ? "Move stock" : "Snooze"}
                       </Button>
@@ -726,7 +726,7 @@ function RelocateModal({
       : qtyNum > available
         ? `Only ${available.toLocaleString()} available at the source`
         : undefined;
-  const invalid = Boolean(qtyError) || fromId === toId;
+  const invalid = Boolean(qtyError) || !fromId || !toId || fromId === toId;
   const submitting = fetcher.state !== "idle";
 
   const submit = () => {

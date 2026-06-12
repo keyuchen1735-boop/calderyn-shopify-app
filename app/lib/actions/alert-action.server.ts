@@ -46,6 +46,16 @@ export async function executeInventoryAlertAction(opts: {
 
   const alert = await client.alerts.get(alertId, signal);
 
+  // Stale UIs (an open popover after a refresh, a replayed tab) must not
+  // re-fire actions against an alert that already left the open queue.
+  if (alert.status !== "open") {
+    throw new CalderynError({
+      code: "alert_not_open",
+      status: 409,
+      message: `This alert is ${alert.status}; actions only apply to open alerts.`,
+    });
+  }
+
   const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
   if (!allowed.includes(kind)) {
     throw new CalderynError({

@@ -154,6 +154,23 @@ describe("executeInventoryAlertAction — snooze_alert", () => {
   });
 });
 
+describe("alert status gate", () => {
+  it("refuses to act on a non-open alert (stale UI must not re-fire actions)", async () => {
+    alertsGet.mockResolvedValue(makeAlert({ status: "acknowledged" }));
+    await expect(run("reallocate_inventory")).rejects.toMatchObject({
+      code: "alert_not_open",
+      status: 409,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(actionsExecute).not.toHaveBeenCalled();
+  });
+
+  it("refuses to snooze a resolved alert", async () => {
+    alertsGet.mockResolvedValue(makeAlert({ status: "resolved" }));
+    await expect(run("snooze_alert")).rejects.toMatchObject({ code: "alert_not_open" });
+  });
+});
+
 describe("error propagation", () => {
   it("propagates a foreign/missing alert error untouched", async () => {
     alertsGet.mockRejectedValue(

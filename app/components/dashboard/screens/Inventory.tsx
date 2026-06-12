@@ -4,11 +4,11 @@
 // Renders the prototype's inventory table: title, sku code, on-hand, days of
 // cover, velocity, a location distribution bar, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
-import { inventoryAlertActions } from "~/lib/inventory-alerts";
+import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { money } from "../format";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
@@ -170,9 +170,10 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   );
 
   // Alerts reference SKUs by their sku code — exact match (the prototype's
-  // title-prefix heuristic never matched real sku codes).
-  const openAlertsFor = (sku: SkuVM): AlertVM[] =>
-    app.alerts.filter((a) => a.status === "open" && a.sku === sku.sku);
+  // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
+  // same helper the extension page uses.
+  const alertsBySku = useMemo(() => openAlertsBySku(app.alerts), [app.alerts]);
+  const openAlertsFor = (sku: SkuVM): AlertVM[] => alertsBySku.get(sku.sku) ?? [];
 
   return (
     <div className="cd-screen">

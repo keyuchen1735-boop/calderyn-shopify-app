@@ -3,7 +3,7 @@
 // the inventory page must join on the code or the join silently matches
 // nothing (the bug that left the Alerts column permanently empty).
 
-import type { Alert, DetectorId } from "./types";
+import type { DetectorId } from "./types";
 import { DETECTOR_TO_ACTIONS } from "./labels";
 
 /** Structural subset shared by the Alert DTO and the dashboard AlertVM. */
@@ -18,9 +18,12 @@ export interface InventoryAlertAction {
   mode: "execute" | "link";
 }
 
-/** Open alerts grouped by sku code, preserving input order. */
-export function openAlertsBySku(alerts: Alert[]): Map<string, Alert[]> {
-  const map = new Map<string, Alert[]>();
+/** Open alerts grouped by sku code, preserving input order. Generic so both
+ * the Alert DTO and the dashboard AlertVM (same status/sku fields) share it. */
+export function openAlertsBySku<T extends { status: string; sku: string | null }>(
+  alerts: T[],
+): Map<string, T[]> {
+  const map = new Map<string, T[]>();
   for (const a of alerts) {
     if (a.status !== "open" || !a.sku) continue;
     const list = map.get(a.sku) ?? [];
@@ -30,7 +33,10 @@ export function openAlertsBySku(alerts: Alert[]): Map<string, Alert[]> {
   return map;
 }
 
-/** The alert's evidence carries a complete, executable transfer plan. */
+/** The alert's evidence carries a complete, executable transfer plan.
+ * Client-safe twin of transferPlanFromEvidence (app/lib/shopify/
+ * inventory.server.ts) — the .server boundary forbids importing it here.
+ * KEEP THE TWO GATES IN SYNC or the UI renders buttons the server 422s. */
 function hasTransferPlan(evidence: Record<string, unknown>): boolean {
   const delta = Number(evidence.recommended_delta ?? evidence.delta ?? 0);
   return Boolean(

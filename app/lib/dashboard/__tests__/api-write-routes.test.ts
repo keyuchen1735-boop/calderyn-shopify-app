@@ -213,6 +213,26 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
     expect(acknowledgeAlert).toHaveBeenCalledWith(expect.anything(), "shop-1", "a1");
   });
 
+  it("snoozes without any Shopify mutation or guardrail check, leaving the alert open", async () => {
+    const res = (await alertAction({
+      request: post(url, { type: "snooze_alert", idempotency_key: "key-snooze-1" }),
+      params: { id: "a1" },
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      audit_id: "audit-inv-1",
+      outcome: "succeeded",
+      acknowledged: false,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(guardrailsGet).not.toHaveBeenCalled();
+    expect(acknowledgeAlert).not.toHaveBeenCalled();
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ alertId: "a1", kind: "snooze_alert" }),
+    );
+  });
+
   it("422s with invalid_inventory_evidence when the alert lacks a transfer plan, without mutating", async () => {
     alertsGet.mockResolvedValueOnce(makeAlert({ evidence: { region: "US-TX" } }));
     const res = (await alertAction({

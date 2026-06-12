@@ -22,6 +22,8 @@ export type AdminGraphqlClient = {
  * evidence lacks one (no inventory item, no source/destination location, or
  * no usable delta). Shared by the embedded-app and dashboard alert action
  * routes so both surfaces accept exactly the same evidence shape.
+ * Client-safe twin: hasTransferPlan in app/lib/inventory-alerts.ts gates the
+ * UI on the same four fields — keep the two in sync.
  */
 export function transferPlanFromEvidence(
   evidence: Record<string, unknown>,
