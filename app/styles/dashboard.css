@@ -73,12 +73,16 @@
   /* ============ layout ============ */
   .cd-sidebar {
     width: 230px; flex-shrink: 0; display: flex; flex-direction: column;
-    background: transparent;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent) 12%, transparent),
+      transparent 46%
+    );
     padding: 20px 14px 16px;
     gap: 22px;
   }
   .cd-side-brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px; cursor: pointer; }
-  .cd-logo { width: 34px; height: 34px; border-radius: 8px; }
+  .cd-logo { width: 34px; height: 34px; display: block; flex-shrink: 0; }
   .cd-brand-name { font-size: 15px; font-weight: 650; letter-spacing: -0.015em; }
   .cd-brand-sub { font-size: 11px; color: var(--text-3); margin-top: 1px; letter-spacing: -0.002em; }
   .cd-side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
