@@ -38,6 +38,16 @@ function readShopHint(request: Request): string | null {
   return null;
 }
 
+// Only same-origin dashboard paths may be carried through the OAuth round-trip,
+// so a crafted ?return_to= can't turn login into an open redirect. Rejects
+// absolute URLs, protocol-relative (`//host`), and backslash tricks.
+export function safeDashboardReturnTo(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/dashboard/")) return null;
+  if (raw.startsWith("//") || raw.includes("\\") || raw.includes("://")) return null;
+  return raw;
+}
+
 // Friendly HTML for the cases we cannot auto-redirect: a cold visitor we have
 // no shop for, or a bounce-back from a failed OAuth round-trip (where blindly
 // re-redirecting would loop). Beats dumping raw JSON at a person's browser.
@@ -92,10 +102,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
     state,
   });
 
+  // Carry a validated post-login destination (e.g. /dashboard/connect?t=…) in
+  // the state cookie so it survives the OAuth round-trip. URL-encoded so its
+  // query string can't collide with the cookie's `:` field separators.
+  const returnTo = safeDashboardReturnTo(url.searchParams.get("return_to"));
+  const stateValue = returnTo
+    ? `${state}:${shop}:${encodeURIComponent(returnTo)}`
+    : `${state}:${shop}`;
+
   const headers = new Headers();
   headers.append(
     "Set-Cookie",
-    `${STATE_COOKIE_NAME}=${state}:${shop}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    `${STATE_COOKIE_NAME}=${stateValue}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax`,
   );
   headers.append("Set-Cookie", shopHintCookieHeader(shop));
   return redirect(authorizeUrl, { headers });

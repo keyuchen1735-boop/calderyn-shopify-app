@@ -68,7 +68,6 @@ const _ctx = {
   code_challenge: "ch",
   scope: "read",
   state: "abc",
-  shop: "myshop.myshopify.com",
 };
 
 describe("pending OAuth cookie", () => {

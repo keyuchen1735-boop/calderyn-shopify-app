@@ -36,15 +36,6 @@ vi.mock("../../shopify.server", () => ({
   authenticate: { admin: async () => ({ session: { shop: "acme.myshopify.com" } }) },
 }));
 
-vi.mock("~/lib/mcp_oauth.server", () => ({
-  PENDING_COOKIE_NAME: "pending_oauth",
-  verifyPendingOauth: async () => {
-    throw new Error("none");
-  },
-  getPendingOauth: async () => null,
-  signConsentAuth: async () => "jwt",
-}));
-
 vi.mock("~/lib/calderyn.server", () => ({
   calderynClient: () => ({
     alerts: { list: (...a: unknown[]) => listAlertsSpy(...a) },

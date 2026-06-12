@@ -1,4 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// entry.server statically imports shopify.server, which builds shopifyApp() at
+// module-eval and throws on an empty appUrl. Seed the minimal Shopify env
+// BEFORE that import resolves (vi.hoisted runs above imports) so this suite is
+// self-sufficient instead of depending on another test file's env pollution
+// happening to load first in the same vitest worker.
+vi.hoisted(() => {
+  process.env.SHOPIFY_API_KEY ||= "test_api_key";
+  process.env.SHOPIFY_API_SECRET ||= "test_api_secret";
+  process.env.SHOPIFY_APP_URL ||= "https://app.test.example";
+  process.env.SCOPES ||= "read_products";
+});
+
+// eslint-disable-next-line import/first -- must follow the hoisted env seed above
 import { applySecurityHeaders } from "../../entry.server";
 
 // The embedded-app iframe depends on the `frame-ancestors` CSP that Shopify's
