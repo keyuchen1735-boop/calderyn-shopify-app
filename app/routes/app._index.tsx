@@ -167,7 +167,6 @@ export default function Dashboard() {
 
   return (
     <Page
-      fullWidth
       title="Calderyn"
       subtitle="Catching money leaks across your ad spend and inventory — before they compound."
       primaryAction={{ content: "All alerts", onAction: () => navigate("/app/alerts") }}
