@@ -185,7 +185,15 @@ export async function issueAuthCode(req: IssueCodeReq): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 8: Pending-OAuth JWT cookie helpers (HS256, 10-min TTL)
+// Pending-OAuth JWT carrier (HS256, 10-min TTL)
+//
+// Signed by /oauth/authorize, carried in the ?t= URL param into the embedded
+// /app/connect (and /dashboard/connect) consent routes. URL params survive the
+// token-exchange even when the SameSite=None cookie dies across Vercel-alias
+// domains. The JWT deliberately carries NO shop — the consent routes ALWAYS
+// issue the auth code against the *authenticated session* shop. Keeping shop
+// out of the token entirely is what makes the pre-seed High unreintroducible:
+// there is nothing shop-shaped here for a future caller to bind issuance to.
 // ---------------------------------------------------------------------------
 
 export interface PendingOauthCtx {
@@ -194,7 +202,6 @@ export interface PendingOauthCtx {
   code_challenge: string;
   scope: string;
   state: string;
-  shop: string;
 }
 
 function cookieKey(): Uint8Array {
@@ -225,112 +232,42 @@ export async function verifyPendingOauth(token: string): Promise<PendingOauthCtx
     code_challenge: String(payload.code_challenge),
     scope: String(payload.scope),
     state: String(payload.state),
-    shop: String(payload.shop),
   };
 }
 
-export const PENDING_COOKIE_NAME = "__cal_pending_oauth";
-// SameSite=None so the cookie travels when /app loads as an iframe. Even with
-// this, the cookie can't cross Vercel-domain-aliases (app.calderyncompany.com
-// vs shopify-app-rho-ruby.vercel.app), which is why we ALSO write a
-// mcp_pending_oauth row keyed by shop. The DB row is the authoritative carrier;
-// the cookie is a same-domain fast-path that exists for completeness.
-export const PENDING_COOKIE_OPTS = `Path=/; Max-Age=${PENDING_TTL_SEC}; HttpOnly; Secure; SameSite=None`;
-
 // ---------------------------------------------------------------------------
-// Pending OAuth (server-side, replaces cross-domain cookie reliance)
-// ---------------------------------------------------------------------------
-
-export interface PendingOauthRow {
-  shop_domain: string;
-  client_id: string;
-  redirect_uri: string;
-  code_challenge: string;
-  scope: string;
-  client_state: string;
-  expires_at: string;
-}
-
-const PENDING_DB_TTL_SEC = 10 * 60;
-
-export async function setPendingOauth(req: {
-  shop_domain: string;
-  client_id: string;
-  redirect_uri: string;
-  code_challenge: string;
-  scope: string;
-  client_state: string;
-}): Promise<void> {
-  const expires_at = new Date(Date.now() + PENDING_DB_TTL_SEC * 1000).toISOString();
-  const { error } = await getSupabase()
-    .from("mcp_pending_oauth")
-    .upsert(
-      {
-        shop_domain: req.shop_domain,
-        client_id: req.client_id,
-        redirect_uri: req.redirect_uri,
-        code_challenge: req.code_challenge,
-        scope: req.scope,
-        client_state: req.client_state,
-        expires_at,
-      },
-      { onConflict: "shop_domain" },
-    );
-  if (error) throw error;
-}
-
-export async function getPendingOauth(shop_domain: string): Promise<PendingOauthRow | null> {
-  const { data, error } = await getSupabase()
-    .from("mcp_pending_oauth")
-    .select("shop_domain, client_id, redirect_uri, code_challenge, scope, client_state, expires_at")
-    .eq("shop_domain", shop_domain)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  const row = data as PendingOauthRow;
-  if (new Date(row.expires_at).getTime() < Date.now()) return null;
-  return row;
-}
-
-export async function deletePendingOauth(shop_domain: string): Promise<void> {
-  const { error } = await getSupabase()
-    .from("mcp_pending_oauth")
-    .delete()
-    .eq("shop_domain", shop_domain);
-  if (error) throw error;
-}
-
-// ---------------------------------------------------------------------------
-// Consent-auth JWT
+// Consent-decision redirect builders (shared by /app/connect + /dashboard/connect)
 //
-// /app/_index.tsx successfully authenticates via authenticate.admin (it's
-// under the AppProvider layout that initializes App Bridge). /oauth/consent
-// is OUTSIDE that layout and can't reliably do the same — App Bridge isn't
-// initialized and 3P-cookie-blocking browsers won't carry session state across
-// the 302 from /app to /oauth/consent inside the embedded admin iframe.
-//
-// Solution: /app/_index proves shop ownership server-side, mints a short-lived
-// signed JWT bound to that shop, and includes it in the redirect URL.
-// /oauth/consent verifies the JWT instead of calling authenticate.admin.
+// Both consent surfaces hand the exact same shapes back to the OAuth client, so
+// the assembly lives here — one chokepoint, no cross-surface drift, and the
+// security-relevant "code goes to the client-registered redirect_uri carried in
+// the signed ctx" rule is auditable in a single place.
 // ---------------------------------------------------------------------------
 
-const CONSENT_AUTH_TTL_SEC = 60;
-
-export interface ConsentAuthPayload {
-  shop: string;
+/** Display host of a redirect_uri (validated as registered https upstream). */
+export function destinationHost(redirectUri: string): string {
+  try {
+    return new URL(redirectUri).host;
+  } catch {
+    return redirectUri;
+  }
 }
 
-export async function signConsentAuth(payload: ConsentAuthPayload): Promise<string> {
-  return new SignJWT({ shop: payload.shop })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(`${CONSENT_AUTH_TTL_SEC}s`)
-    .sign(cookieKey());
+/** Success: `redirect_uri?code=…[&state=…]`. */
+export function buildAuthCodeRedirect(redirectUri: string, code: string, state: string): string {
+  const url = new URL(redirectUri);
+  url.searchParams.set("code", code);
+  if (state) url.searchParams.set("state", state);
+  return url.toString();
 }
 
-export async function verifyConsentAuth(token: string): Promise<ConsentAuthPayload> {
-  const { payload } = await jwtVerify(token, cookieKey(), { algorithms: ["HS256"] });
-  return { shop: String(payload.shop) };
+/** Denial: `redirect_uri?error=access_denied&error_description=…[&state=…]`. */
+export function buildDenyRedirect(redirectUri: string, state: string): string {
+  const url = new URL(redirectUri);
+  url.searchParams.set("error", "access_denied");
+  url.searchParams.set("error_description", "merchant denied authorization");
+  if (state) url.searchParams.set("state", state);
+  return url.toString();
 }
 
 // ---------------------------------------------------------------------------

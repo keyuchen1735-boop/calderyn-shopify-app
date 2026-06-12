@@ -1,10 +1,20 @@
 // app/routes/oauth.authorize.tsx
-import { useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+//
+// OAuth 2.1 authorize endpoint for the Claude.ai MCP connector.
+//
+// This endpoint NO LONGER pre-seeds any consumable state. It validates the
+// OAuth request, mints a signed pending JWT carrying the request context, and
+// renders an interstitial that deep-links the merchant into the embedded,
+// authenticated consent route (/app/connect?t=<jwt>). Consent + code issuance
+// happen there, bound to the merchant's authenticated session shop — which is
+// what closes the pre-seed High. No DB row, no cookie, no /app auto-route.
+import { useMemo, useState } from "react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import {
   AppProvider as PolarisAppProvider,
+  BlockStack,
   Button,
   Card,
   FormLayout,
@@ -14,13 +24,7 @@ import {
 } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
-import {
-  getClient,
-  signPendingOauth,
-  setPendingOauth,
-  PENDING_COOKIE_NAME,
-  PENDING_COOKIE_OPTS,
-} from "~/lib/mcp_oauth.server";
+import { getClient, signPendingOauth } from "~/lib/mcp_oauth.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
@@ -51,21 +55,9 @@ function readParams(url: URL): AuthorizeParams {
   };
 }
 
-// Shared validation of the OAuth grant shape (response_type / PKCE method / scope).
-// Returns a stable error code on violation, or null when the params are acceptable.
-// The loader maps these to redirect_uri errors; the action maps them to plain 400s.
-function validateGrantShape(
-  params: AuthorizeParams,
-): "unsupported_response_type" | "invalid_request" | null {
-  if (params.response_type !== "code") return "unsupported_response_type";
-  if (params.code_challenge_method !== "S256") return "invalid_request";
-  if (params.scope && params.scope.split(" ").some((s) => s !== "read")) return "invalid_request";
-  return null;
-}
-
 function redirectError(
   params: AuthorizeParams,
-  code: "invalid_request" | "unsupported_response_type" | "access_denied",
+  code: "invalid_request" | "unsupported_response_type",
   detail: string,
 ): Response {
   const url = new URL(params.redirect_uri);
@@ -110,156 +102,119 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirectError(params, "invalid_request", "only scope=read is supported in v1");
   }
 
-  // ?shop= shortcut: if shop is already in the URL, skip the form and start the handoff.
-  const shop = url.searchParams.get("shop")?.toLowerCase();
-  if (shop && SHOP_RE.test(shop)) {
-    // Write authoritative server-side state. Cookie is best-effort fallback
-    // for same-domain testing — modern Chrome blocks 3P cookies across the
-    // Vercel-alias domain change to the embedded admin iframe.
-    await setPendingOauth({
-      shop_domain: shop,
-      client_id: params.client_id,
-      redirect_uri: params.redirect_uri,
-      code_challenge: params.code_challenge,
-      scope: params.scope,
-      client_state: params.state,
-    });
-    const jwt = await signPendingOauth({
-      client_id: params.client_id,
-      redirect_uri: params.redirect_uri,
-      code_challenge: params.code_challenge,
-      scope: params.scope,
-      state: params.state,
-      shop,
-    });
-    const headers = new Headers();
-    headers.append("set-cookie", `${PENDING_COOKIE_NAME}=${jwt}; ${PENDING_COOKIE_OPTS}`);
-    headers.set("location", `/auth/login?shop=${encodeURIComponent(shop)}`);
-    return new Response(null, { status: 302, headers });
-  }
-
-  return json({
-    phase: "pick-shop",
-    client_name: client.client_name,
-    client_id: client.client_id,
-    response_type: params.response_type,
-    redirect_uri: params.redirect_uri,
-    code_challenge: params.code_challenge,
-    code_challenge_method: params.code_challenge_method,
-    scope: params.scope,
-    state: params.state,
-  });
-};
-
-export const action = async ({ request }: ActionFunctionArgs) => {
-  // TODO(security): bind pending OAuth to an unguessable transaction id, not shop_domain only — see consent pre-seed finding.
-  if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
-
-  const form = await request.formData();
-  const params: AuthorizeParams = {
-    response_type: String(form.get("response_type") ?? ""),
-    client_id: String(form.get("client_id") ?? ""),
-    redirect_uri: String(form.get("redirect_uri") ?? ""),
-    code_challenge: String(form.get("code_challenge") ?? ""),
-    code_challenge_method: String(form.get("code_challenge_method") ?? "S256"),
-    scope: String(form.get("scope") ?? "read"),
-    state: String(form.get("state") ?? ""),
-    shop: String(form.get("shop") ?? "").trim().toLowerCase(),
-  };
-
-  // Re-validate (this endpoint is also reachable via direct POST)
-  const client = await getClient(params.client_id);
-  if (!client) return new Response("invalid_request", { status: 400 });
-  if (!client.redirect_uris.includes(params.redirect_uri)) {
-    return new Response("invalid_request", { status: 400 });
-  }
-  // The loader guards response_type/code_challenge_method/scope, but this action
-  // is reachable via direct POST and must apply the same guards before pre-seeding.
-  const grantError = validateGrantShape(params);
-  if (grantError) return new Response(grantError, { status: 400 });
-  // The loader rejects a missing code_challenge as a required-param error; the
-  // direct-POST path must too, or it pre-seeds an unusable PKCE-less grant.
-  if (!params.code_challenge) return new Response("invalid_request", { status: 400 });
-  if (!params.shop || !SHOP_RE.test(params.shop)) {
-    return new Response("invalid_shop", { status: 400 });
-  }
-
-  // Write authoritative server-side state (carries across Vercel-alias domains).
-  await setPendingOauth({
-    shop_domain: params.shop,
-    client_id: params.client_id,
-    redirect_uri: params.redirect_uri,
-    code_challenge: params.code_challenge,
-    scope: params.scope,
-    client_state: params.state,
-  });
+  // Mint the signed pending JWT. It carries the OAuth request context across the
+  // embedded token-exchange (URL params survive even when the SameSite=None
+  // cookie dies across Vercel-alias domains). It carries NO shop — the consent
+  // routes ALWAYS issue against the authenticated session shop. The `?shop=`
+  // hint below is used only to build a nicer deep link, never put in the token.
+  const shopHint = url.searchParams.get("shop")?.toLowerCase();
+  const validShop = shopHint && SHOP_RE.test(shopHint) ? shopHint : null;
   const jwt = await signPendingOauth({
     client_id: params.client_id,
     redirect_uri: params.redirect_uri,
     code_challenge: params.code_challenge,
     scope: params.scope,
     state: params.state,
-    shop: params.shop,
   });
 
-  const headers = new Headers();
-  headers.append("set-cookie", `${PENDING_COOKIE_NAME}=${jwt}; ${PENDING_COOKIE_OPTS}`);
-  headers.set("location", `/auth/login?shop=${encodeURIComponent(params.shop)}`);
-  return new Response(null, { status: 302, headers });
+  return json({
+    client_name: client.client_name,
+    token: jwt,
+    apiKey: process.env.SHOPIFY_API_KEY ?? "",
+    appUrl: process.env.SHOPIFY_APP_URL ?? "",
+    dashboardUrl: process.env.DASHBOARD_PUBLIC_URL ?? "https://calderyncompany.com",
+    shop: validShop,
+  });
 };
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
-type PickShopData = {
-  phase: "pick-shop";
+type InterstitialData = {
   client_name: string;
-  client_id: string;
-  response_type: string;
-  redirect_uri: string;
-  code_challenge: string;
-  code_challenge_method: string;
-  scope: string;
-  state: string;
+  token: string;
+  apiKey: string;
+  appUrl: string;
+  dashboardUrl: string;
+  shop: string | null;
 };
 
-const HIDDEN_FIELDS: Array<keyof PickShopData> = [
-  "response_type",
-  "client_id",
-  "redirect_uri",
-  "code_challenge",
-  "code_challenge_method",
-  "scope",
-  "state",
-];
+// The connect route lives inside the embedded admin. When we know the shop, an
+// admin.shopify.com deep link is the most reliable carrier — Shopify admin
+// preserves its own URLs through login, so the ?t= token survives an
+// unauthenticated landing. Otherwise we fall back to the app URL and let the
+// app's standard auth resolve the shop.
+function buildConnectUrl(data: InterstitialData, shop: string | null): string {
+  const t = encodeURIComponent(data.token);
+  if (shop && SHOP_RE.test(shop) && data.apiKey) {
+    const handle = shop.replace(/\.myshopify\.com$/i, "");
+    return `https://admin.shopify.com/store/${handle}/apps/${data.apiKey}/app/connect?t=${t}`;
+  }
+  return `${data.appUrl}/app/connect?t=${t}`;
+}
 
-export default function AuthorizePickShop() {
-  const data = useLoaderData<typeof loader>() as PickShopData;
+export default function AuthorizeInterstitial() {
+  const data = useLoaderData<typeof loader>() as InterstitialData;
   const [shop, setShop] = useState("");
+
+  const knownShop = data.shop;
+  const directUrl = useMemo(() => buildConnectUrl(data, knownShop), [data, knownShop]);
+  const dashboardUrl = `${data.dashboardUrl}/dashboard/connect?t=${encodeURIComponent(data.token)}`;
+
+  const go = (target: string) => {
+    try {
+      if (typeof window !== "undefined" && window.top) {
+        window.top.location.href = target;
+        return;
+      }
+    } catch {
+      // top-window navigation may be blocked; fall through to same-window.
+    }
+    window.location.href = target;
+  };
+
   return (
     <PolarisAppProvider i18n={polarisTranslations}>
       <Page title="Connect Claude.ai">
         <Card>
-          <Form method="post">
-            <FormLayout>
-              <Text variant="bodyMd" as="p">
-                <b>{data.client_name}</b> is asking to connect to your Calderyn data. Enter your shop
-                domain to sign in and approve.
-              </Text>
-              <TextField
-                type="text"
-                name="shop"
-                label="Shop domain"
-                helpText="example.myshopify.com"
-                value={shop}
-                onChange={setShop}
-                autoComplete="on"
-              />
-              {HIDDEN_FIELDS.map((k) => (
-                <input key={k} type="hidden" name={k} value={data[k] ?? ""} />
-              ))}
-              <Button submit>Continue</Button>
-            </FormLayout>
-          </Form>
+          <BlockStack gap="400">
+            <Text as="p" variant="bodyMd">
+              <b>{data.client_name}</b> wants to connect to your Calderyn data. Approve this from
+              inside your Shopify admin, where we can confirm it&apos;s really you.
+            </Text>
+            {knownShop ? (
+              <Button variant="primary" onClick={() => go(directUrl)}>
+                Open Calderyn in your Shopify admin to approve
+              </Button>
+            ) : (
+              <FormLayout>
+                <Text as="p" variant="bodyMd">
+                  Enter your shop domain to open the approval screen in your admin.
+                </Text>
+                <TextField
+                  type="text"
+                  name="shop"
+                  label="Shop domain"
+                  helpText="example.myshopify.com"
+                  value={shop}
+                  onChange={setShop}
+                  autoComplete="on"
+                />
+                <Button
+                  variant="primary"
+                  disabled={!SHOP_RE.test(shop.trim().toLowerCase())}
+                  onClick={() => go(buildConnectUrl(data, shop.trim().toLowerCase()))}
+                >
+                  Continue
+                </Button>
+              </FormLayout>
+            )}
+            <Text as="p" variant="bodySm" tone="subdued">
+              Prefer the web dashboard?{" "}
+              <Button variant="plain" onClick={() => go(dashboardUrl)}>
+                Approve in the Calderyn dashboard
+              </Button>
+            </Text>
+          </BlockStack>
         </Card>
       </Page>
     </PolarisAppProvider>

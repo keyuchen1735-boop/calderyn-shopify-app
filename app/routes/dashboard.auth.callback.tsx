@@ -13,15 +13,35 @@ import {
 import { createSession, sessionCookieHeader } from "~/lib/dashboard/session.server";
 import { jsonError, rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 import { resolveShopId } from "~/lib/supabase.server";
-import { STATE_COOKIE_NAME, shopHintCookieHeader } from "./dashboard.login";
+import {
+  STATE_COOKIE_NAME,
+  shopHintCookieHeader,
+  safeDashboardReturnTo,
+} from "./dashboard.login";
 
-function readStateCookie(request: Request): { nonce: string; shop: string } | null {
+function readStateCookie(
+  request: Request,
+): { nonce: string; shop: string; returnTo: string | null } | null {
   const header = request.headers.get("Cookie") ?? "";
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
     if (name === STATE_COOKIE_NAME) {
-      const [nonce, shop] = decodeURIComponent(rest.join("=")).split(":");
-      if (nonce && shop) return { nonce, shop };
+      // Cookie format is `nonce:shop[:enc(returnTo)]`. Only the returnTo segment
+      // is URL-encoded (login.tsx), so split first and decode that segment ONCE
+      // — decoding the whole value would double-decode returnTo and throw on a
+      // surviving `%` sequence (a 500 on the post-login redirect).
+      const [nonce, shop, ...ret] = rest.join("=").split(":");
+      if (nonce && shop) {
+        let returnTo: string | null = null;
+        if (ret.length) {
+          try {
+            returnTo = decodeURIComponent(ret.join(":"));
+          } catch {
+            returnTo = null; // malformed encoding — fall back to /dashboard
+          }
+        }
+        return { nonce, shop, returnTo };
+      }
     }
   }
   return null;
@@ -78,5 +98,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     "Set-Cookie",
     `${STATE_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
   );
-  return redirect(`${publicUrl}/dashboard`, { headers });
+  // Honour a validated post-login destination (re-checked here, never trusted
+  // straight from the cookie) so the connector consent flow resumes at
+  // /dashboard/connect?t=…; default to the dashboard home.
+  const dest = safeDashboardReturnTo(cookieState.returnTo) ?? "/dashboard";
+  return redirect(`${publicUrl}${dest}`, { headers });
 }

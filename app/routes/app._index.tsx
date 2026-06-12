@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Form, useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import {
   Banner,
   BlockStack,
@@ -18,12 +18,6 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
-import {
-  PENDING_COOKIE_NAME,
-  verifyPendingOauth,
-  getPendingOauth,
-  signConsentAuth,
-} from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
@@ -54,37 +48,6 @@ const RECOVERED_WINDOW_DAYS = 7;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-
-  // Pending-OAuth handoff: if a Claude.ai connector flow stashed state for this
-  // shop before sending the merchant through Shopify auth, jump them to
-  // /oauth/consent instead of rendering the dashboard.
-  //
-  // We're under the AppProvider layout, so authenticate.admin worked here.
-  // /oauth/consent sits outside that layout and can't reliably re-auth in the
-  // iframe, so we mint a short-lived signed JWT bound to the verified shop and
-  // pass it through the redirect URL. /oauth/consent will verify the JWT
-  // instead of calling authenticate.admin.
-  const handoff = async (shop: string) => {
-    const auth = await signConsentAuth({ shop });
-    return redirect(`/oauth/consent?_auth=${encodeURIComponent(auth)}`);
-  };
-
-  const pendingRow = await getPendingOauth(session.shop);
-  if (pendingRow) {
-    return handoff(session.shop);
-  }
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const m = cookieHeader.match(new RegExp(`${PENDING_COOKIE_NAME}=([^;]+)`));
-  if (m) {
-    try {
-      const ctx = await verifyPendingOauth(m[1]);
-      if (ctx.shop === session.shop) {
-        return handoff(session.shop);
-      }
-    } catch {
-      // expired / tampered / wrong shop — fall through to normal dashboard load
-    }
-  }
 
   // Sign-in-with-Shopify entry point of the external merchant dashboard; the
   // merchant's live admin session completes the OAuth round-trip silently.

@@ -1,4 +1,8 @@
 // app/routes/__tests__/oauth-authorize.test.ts
+//
+// /oauth/authorize validates the OAuth request and renders an interstitial that
+// deep-links into the embedded /app/connect consent route. It must NOT write any
+// consumable pending state (no DB row, no cookie) — that pre-seed was the High.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
@@ -7,14 +11,13 @@ vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   return {
     ...actual,
     getClient: vi.fn(),
-    setPendingOauth: vi.fn().mockResolvedValue(undefined),
   };
 });
 
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
-import { getClient, setPendingOauth } from "../../lib/mcp_oauth.server";
+import { getClient } from "../../lib/mcp_oauth.server";
 // eslint-disable-next-line import/first -- module under test must import after vi.mock() hoisting
-import { loader, action } from "../oauth.authorize";
+import { loader } from "../oauth.authorize";
 
 const VALID_PARAMS: Record<string, string> = {
   response_type: "code",
@@ -26,15 +29,29 @@ const VALID_PARAMS: Record<string, string> = {
   state: "abc",
 };
 
+const getClientMock = getClient as unknown as ReturnType<typeof vi.fn>;
+
 function reqWith(params: Record<string, string>): { request: Request } {
   const url = new URL("http://x/oauth/authorize");
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   return { request: new Request(url.toString()) };
 }
 
+function clientFixture() {
+  return {
+    client_id: "cal_client_x",
+    client_name: "Claude",
+    redirect_uris: ["https://claude.ai/cb"],
+    token_endpoint_auth_method: "none",
+  };
+}
+
 beforeEach(() => {
   process.env.MCP_OAUTH_ENABLED = "true";
-  (getClient as unknown as ReturnType<typeof vi.fn>).mockReset();
+  process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
+  process.env.SHOPIFY_API_KEY = "apikey123";
+  process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+  getClientMock.mockReset();
 });
 
 describe("/oauth/authorize loader", () => {
@@ -49,30 +66,25 @@ describe("/oauth/authorize loader", () => {
     expect(r.status).toBe(400);
   });
 
+  it("400 on missing code_challenge", async () => {
+    const r = await loader(reqWith({ ...VALID_PARAMS, code_challenge: "" }) as never);
+    expect(r.status).toBe(400);
+  });
+
   it("400 on unknown client_id", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    getClientMock.mockResolvedValue(null);
     const r = await loader(reqWith(VALID_PARAMS) as never);
     expect(r.status).toBe(400);
   });
 
   it("400 when redirect_uri not in client whitelist (no redirect)", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://other.example/cb"],
-      token_endpoint_auth_method: "none",
-    });
+    getClientMock.mockResolvedValue({ ...clientFixture(), redirect_uris: ["https://other.example/cb"] });
     const r = await loader(reqWith(VALID_PARAMS) as never);
     expect(r.status).toBe(400);
   });
 
   it("302 to redirect_uri with error=invalid_request on bad code_challenge_method", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
+    getClientMock.mockResolvedValue(clientFixture());
     const r = await loader(reqWith({ ...VALID_PARAMS, code_challenge_method: "plain" }) as never);
     expect(r.status).toBe(302);
     const loc = r.headers.get("location") ?? "";
@@ -82,165 +94,52 @@ describe("/oauth/authorize loader", () => {
   });
 
   it("302 to redirect_uri with error=unsupported_response_type when response_type != code", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
+    getClientMock.mockResolvedValue(clientFixture());
     const r = await loader(reqWith({ ...VALID_PARAMS, response_type: "token" }) as never);
     expect(r.status).toBe(302);
     expect(r.headers.get("location") ?? "").toContain("error=unsupported_response_type");
   });
 
-  it("renders the which-shop page when no ?shop= and all params are valid", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
-    const r = await loader(reqWith(VALID_PARAMS) as never);
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(j.phase).toBe("pick-shop");
-    expect(j.client_name).toBe("Claude");
-    expect(j.client_id).toBe("cal_client_x");
-  });
-
-  it("with ?shop=...: sets cookie and 302s to /auth/login", async () => {
-    process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
-    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "myshop.myshopify.com" }) as never);
+  it("302 to redirect_uri with error=invalid_request on a non-read scope", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(reqWith({ ...VALID_PARAMS, scope: "write" }) as never);
     expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toContain("/auth/login?shop=myshop.myshopify.com");
-    expect(r.headers.get("set-cookie") ?? "").toContain("__cal_pending_oauth=");
+    expect(r.headers.get("location") ?? "").toContain("error=invalid_request");
   });
 
-  it("loader returns OAuth params alongside client info in pick-shop response", async () => {
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
+  it("renders the interstitial (200, signed token, no cookie) for a valid request", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
     const r = await loader(reqWith(VALID_PARAMS) as never);
     expect(r.status).toBe(200);
+    // Crucially: no consumable pre-seed state is written.
+    expect(r.headers.get("set-cookie")).toBeNull();
     const j = await r.json();
-    expect(j.phase).toBe("pick-shop");
     expect(j.client_name).toBe("Claude");
-    expect(j.client_id).toBe("cal_client_x");
-    expect(j.redirect_uri).toBe("https://claude.ai/cb");
-    expect(j.code_challenge).toBe("challenge");
-    expect(j.code_challenge_method).toBe("S256");
-    expect(j.scope).toBe("read");
-    expect(j.state).toBe("abc");
-    expect(j.response_type).toBe("code");
-  });
-});
-
-describe("/oauth/authorize POST (pick-shop)", () => {
-  beforeEach(() => {
-    process.env.MCP_OAUTH_ENABLED = "true";
-    process.env.MCP_OAUTH_COOKIE_SECRET = "a".repeat(64);
-    (setPendingOauth as unknown as ReturnType<typeof vi.fn>).mockClear();
-    (getClient as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      client_id: "cal_client_x",
-      client_name: "Claude",
-      redirect_uris: ["https://claude.ai/cb"],
-      token_endpoint_auth_method: "none",
-    });
+    expect(typeof j.token).toBe("string");
+    expect(j.token.length).toBeGreaterThan(20);
+    expect(j.shop).toBeNull();
   });
 
-  it("400s and does not pre-seed state on response_type != code", async () => {
-    const form = new FormData();
-    form.set("shop", "myshop.myshopify.com");
-    for (const [k, v] of Object.entries({ ...VALID_PARAMS, response_type: "token" })) {
-      form.set(k, v);
-    }
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-    expect(setPendingOauth).not.toHaveBeenCalled();
+  it("passes a validated ?shop= through as a deep-link hint (no /auth/login redirect)", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "MyShop.myshopify.com" }) as never);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("set-cookie")).toBeNull();
+    const j = await r.json();
+    expect(j.shop).toBe("myshop.myshopify.com");
+    expect(j.apiKey).toBe("apikey123");
   });
 
-  it("400s and does not pre-seed state on code_challenge_method != S256", async () => {
-    const form = new FormData();
-    form.set("shop", "myshop.myshopify.com");
-    for (const [k, v] of Object.entries({ ...VALID_PARAMS, code_challenge_method: "plain" })) {
-      form.set(k, v);
-    }
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-    expect(setPendingOauth).not.toHaveBeenCalled();
+  it("drops a malformed ?shop= hint rather than trusting it", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "not-a-shop" }) as never);
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.shop).toBeNull();
   });
 
-  it("400s and does not pre-seed state on scope != read", async () => {
-    const form = new FormData();
-    form.set("shop", "myshop.myshopify.com");
-    for (const [k, v] of Object.entries({ ...VALID_PARAMS, scope: "write" })) {
-      form.set(k, v);
-    }
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-    expect(setPendingOauth).not.toHaveBeenCalled();
-  });
-
-  it("400s and does not pre-seed state on missing code_challenge", async () => {
-    const form = new FormData();
-    form.set("shop", "myshop.myshopify.com");
-    for (const [k, v] of Object.entries({ ...VALID_PARAMS, code_challenge: "" })) {
-      form.set(k, v);
-    }
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-    expect(setPendingOauth).not.toHaveBeenCalled();
-  });
-
-  it("400s when shop is empty", async () => {
-    const form = new FormData();
-    form.set("shop", "");
-    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-  });
-
-  it("400s on non-myshopify.com shop", async () => {
-    const form = new FormData();
-    form.set("shop", "not-shopify");
-    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(400);
-  });
-
-  it("sets pending cookie and redirects to /auth/login on valid shop", async () => {
-    const form = new FormData();
-    form.set("shop", "myshop.myshopify.com");
-    for (const [k, v] of Object.entries(VALID_PARAMS)) form.set(k, v);
-    const res = await action({
-      request: new Request("http://x/oauth/authorize", { method: "POST", body: form }),
-    } as never);
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("/auth/login?shop=myshop.myshopify.com");
-    const cookieHeader = res.headers.get("set-cookie") ?? "";
-    expect(cookieHeader).toContain("__cal_pending_oauth=");
-    expect(cookieHeader).toContain("HttpOnly");
-    expect(cookieHeader).toContain("Secure");
+  it("does not export an action (no direct-POST pre-seed surface)", async () => {
+    const mod = await import("../oauth.authorize");
+    expect((mod as Record<string, unknown>).action).toBeUndefined();
   });
 });
