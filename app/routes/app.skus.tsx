@@ -13,6 +13,7 @@ import {
   InlineStack,
   Modal,
   Page,
+  Popover,
   Select,
   Text,
   TextField,
@@ -33,6 +34,11 @@ import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
 import type { Alert, ShopLocation, SKU } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
+import { fmtMoney } from "~/lib/format";
+import {
+  inventoryAlertActions,
+  openAlertsBySku,
+} from "~/lib/inventory-alerts";
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
 type SortDir = "asc" | "desc";
@@ -228,14 +234,9 @@ export default function SKUs() {
     if (fetcher.data?.ok) setRelocating(null);
   }, [fetcher.data]);
 
-  const alertsBySku = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const a of alerts) {
-      if (!a.sku) continue;
-      map.set(a.sku, (map.get(a.sku) ?? 0) + 1);
-    }
-    return map;
-  }, [alerts]);
+  // Alerts reference SKUs by their human sku code (alerts.sku), NOT the
+  // sku_dim uuid — joining on s.id matched nothing and left the column empty.
+  const alertsBySku = useMemo(() => openAlertsBySku(alerts), [alerts]);
 
   const totalUnits = useMemo(
     () => skus.reduce((sum, s) => sum + (s.on_hand ?? 0), 0),
@@ -354,7 +355,8 @@ export default function SKUs() {
             <div role="columnheader" className="cdn-skutable__cell cdn-skutable__cell--center">Alerts</div>
           </div>
           {sorted.map((s) => {
-            const alertCount = alertsBySku.get(s.id) ?? 0;
+            const skuAlerts = alertsBySku.get(s.sku) ?? [];
+            const canRelocate = s.locations_detail.some((l) => l.available > 0);
             const selling = hasSales(s);
             const onHandTone =
               s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined;
@@ -416,14 +418,14 @@ export default function SKUs() {
                   <DemandCell demand={s.demand} />
                 </div>
                 <div className="cdn-skutable__cell" role="cell">
-                  {s.suggested_transfer && (
+                  {canRelocate && (
                     <Button size="slim" onClick={() => setRelocating(s)}>
                       Relocate
                     </Button>
                   )}
                 </div>
                 <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
-                  {alertCount > 0 && <Badge tone="warning">{String(alertCount)}</Badge>}
+                  <AlertsCell alerts={skuAlerts} />
                 </div>
               </div>
             );
@@ -448,6 +450,99 @@ export default function SKUs() {
         />
       )}
     </Page>
+  );
+}
+
+/** Per-row open alerts: badge opens a popover with each alert's actions,
+ * executable without leaving the inventory page. Form-based actions deep-link
+ * to the alert detail with its modal pre-opened. */
+function AlertsCell({ alerts }: { alerts: Alert[] }) {
+  const navigate = useEmbeddedNavigate();
+  const fetcher = useFetcher<RelocatePayload>();
+  useActionToast(fetcher.data);
+  const [open, setOpen] = useState(false);
+  // One key per merchant intent: minted per response so a double-click
+  // replays, but the NEXT action (possibly a different alert) never collides
+  // with a burned key.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const data = fetcher.data;
+  useEffect(() => {
+    if (data) setIdempotencyKey(crypto.randomUUID());
+  }, [data]);
+
+  if (alerts.length === 0) return null;
+  const submitting = fetcher.state !== "idle";
+  const execute = (alertId: string, kind: "reallocate_inventory" | "snooze_alert") => {
+    fetcher.submit(
+      { intent: "alert_action", alert_id: alertId, kind, idempotency_key: idempotencyKey },
+      { method: "post" },
+    );
+  };
+
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      preferredAlignment="right"
+      activator={
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={`${alerts.length} open alert${alerts.length === 1 ? "" : "s"}`}
+          style={{ background: "none", border: 0, padding: 0, cursor: "pointer" }}
+        >
+          <Badge tone="warning">{String(alerts.length)}</Badge>
+        </button>
+      }
+    >
+      <Box padding="300" minWidth="280px">
+        <BlockStack gap="300">
+          {alerts.map((a) => {
+            const actions = inventoryAlertActions(a);
+            return (
+              <BlockStack gap="100" key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/alerts/${a.id}`)}
+                  style={{ background: "none", border: 0, padding: 0, cursor: "pointer", textAlign: "left" }}
+                >
+                  <Text as="span" variant="bodySm" fontWeight="medium">
+                    {a.title}
+                  </Text>
+                </button>
+                <Text as="span" tone="subdued" variant="bodySm">
+                  {fmtMoney(a.dollar_impact)} at stake
+                </Text>
+                <InlineStack gap="150">
+                  {actions.map((act) =>
+                    act.mode === "execute" ? (
+                      <Button
+                        key={act.kind}
+                        size="micro"
+                        disabled={submitting}
+                        onClick={() =>
+                          execute(a.id, act.kind as "reallocate_inventory" | "snooze_alert")
+                        }
+                      >
+                        {act.kind === "reallocate_inventory" ? "Move stock" : "Snooze"}
+                      </Button>
+                    ) : (
+                      <Button
+                        key={act.kind}
+                        size="micro"
+                        onClick={() => navigate(`/app/alerts/${a.id}?action=create_po_draft`)}
+                      >
+                        Draft PO
+                      </Button>
+                    ),
+                  )}
+                </InlineStack>
+              </BlockStack>
+            );
+          })}
+        </BlockStack>
+      </Box>
+    </Popover>
   );
 }
 
@@ -584,11 +679,19 @@ function RelocateModal({
   fetcher: ReturnType<typeof useFetcher<RelocatePayload>>;
   onClose: () => void;
 }) {
-  // Safe: the modal is only rendered from rows with a suggested transfer.
-  const plan = sku.suggested_transfer!;
-  const [fromId, setFromId] = useState(plan.from_location_id);
-  const [toId, setToId] = useState(plan.to_location_id);
-  const [qty, setQty] = useState(String(plan.recommended_delta));
+  // With a suggested transfer the modal opens prefilled; without one it's a
+  // manual transfer: source defaults to the largest holder, destination to
+  // the first other active location, quantity left for the merchant.
+  const plan = sku.suggested_transfer;
+  const fallbackFrom = sku.locations_detail.find((l) => l.available > 0)?.id ?? "";
+  const initialFrom = plan?.from_location_id ?? fallbackFrom;
+  const [fromId, setFromId] = useState(initialFrom);
+  const [toId, setToId] = useState(
+    plan?.to_location_id ??
+      locations.find((l) => l.active && l.id !== initialFrom)?.id ??
+      "",
+  );
+  const [qty, setQty] = useState(plan ? String(plan.recommended_delta) : "");
   // One key per relocation intent: double-clicking Confirm while a submit is
   // in flight replays, not re-executes.
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
@@ -676,7 +779,7 @@ function RelocateModal({
             value={qty}
             onChange={setQty}
             error={qtyError}
-            helpText="Suggested to cover one week of regional demand."
+            helpText={plan ? "Suggested to cover one week of regional demand." : undefined}
           />
           <Text as="p" tone="subdued" variant="bodySm">
             Transfers via Shopify, recorded in the audit log. Reversible via Undo for 24
