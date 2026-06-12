@@ -10,6 +10,7 @@ import {
   Box,
   Button,
   Card,
+  IndexTable,
   InlineStack,
   Modal,
   Page,
@@ -17,6 +18,8 @@ import {
   Select,
   Text,
   TextField,
+  Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -228,6 +231,7 @@ export default function SKUs() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [query, setQuery] = useState("");
   const [relocating, setRelocating] = useState<SKU | null>(null);
+  const { smDown } = useBreakpoints();
   const fetcher = useFetcher<RelocatePayload>();
   useActionToast(fetcher.data);
   useEffect(() => {
@@ -261,13 +265,16 @@ export default function SKUs() {
     return sortDir === "asc" ? arr : arr.reverse();
   }, [filtered, sortKey, sortDir]);
 
-  const toggleSort = (key: SortKey) => {
-    if (key === sortKey) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
+  // IndexTable sort ↔ our SortKey. null marks an unsortable column.
+  const SORT_COLUMNS: (SortKey | null)[] = [
+    null, "title", "on_hand", "days_of_cover", "velocity", null, null, null, null,
+  ];
+  const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
+  const handleSort = (index: number, direction: "ascending" | "descending") => {
+    const key = SORT_COLUMNS[index];
+    if (!key) return;
+    setSortKey(key);
+    setSortDir(direction === "ascending" ? "asc" : "desc");
   };
 
   const countLabel = query.trim()
@@ -320,42 +327,38 @@ export default function SKUs() {
             </div>
           </InlineStack>
         </Box>
-        <div className="cdn-skutable" role="table" aria-label="SKUs">
-          <div className="cdn-skutable__head" role="row">
-            <div role="columnheader" className="cdn-skutable__cell">SKU</div>
-            <SortHeader
-              label="Title"
-              active={sortKey === "title"}
-              dir={sortDir}
-              onClick={() => toggleSort("title")}
-            />
-            <SortHeader
-              label="On hand"
-              align="end"
-              active={sortKey === "on_hand"}
-              dir={sortDir}
-              onClick={() => toggleSort("on_hand")}
-            />
-            <SortHeader
-              label="Days of cover"
-              align="end"
-              active={sortKey === "days_of_cover"}
-              dir={sortDir}
-              onClick={() => toggleSort("days_of_cover")}
-            />
-            <SortHeader
-              label="Velocity"
-              align="end"
-              active={sortKey === "velocity"}
-              dir={sortDir}
-              onClick={() => toggleSort("velocity")}
-            />
-            <div role="columnheader" className="cdn-skutable__cell">Locations</div>
-            <div role="columnheader" className="cdn-skutable__cell">Main demand</div>
-            <div role="columnheader" className="cdn-skutable__cell">Actions</div>
-            <div role="columnheader" className="cdn-skutable__cell cdn-skutable__cell--center">Alerts</div>
-          </div>
-          {sorted.map((s) => {
+        <IndexTable
+          condensed={smDown}
+          resourceName={{ singular: "SKU", plural: "SKUs" }}
+          itemCount={sorted.length}
+          selectable={false}
+          headings={[
+            { title: "SKU" },
+            { title: "Title" },
+            { title: "On hand", alignment: "end" },
+            { title: "Days of cover", alignment: "end" },
+            { title: "Velocity", alignment: "end" },
+            { title: "Locations" },
+            { title: "Main demand" },
+            { title: "Actions" },
+            { title: "Alerts", alignment: "center" },
+          ]}
+          sortable={[false, true, true, true, true, false, false, false, false]}
+          sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
+          sortDirection={sortDir === "asc" ? "ascending" : "descending"}
+          defaultSortDirection="ascending"
+          onSort={handleSort}
+          emptyState={
+            <Box padding="400">
+              <Text as="p" tone="subdued" alignment="center">
+                {query.trim()
+                  ? `No SKUs match "${query.trim()}".`
+                  : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
+              </Text>
+            </Box>
+          }
+        >
+          {sorted.map((s, index) => {
             const skuAlerts = alertsBySku.get(s.sku) ?? [];
             const canRelocate = s.locations_detail.some((l) => l.available > 0);
             const selling = hasSales(s);
@@ -370,77 +373,79 @@ export default function SKUs() {
                   : undefined
               : undefined;
             return (
-              <div key={s.id} className="cdn-skutable__row" role="row">
-                <div className="cdn-skutable__cell" role="cell">
+              <IndexTable.Row id={s.id} key={s.id} position={index}>
+                <IndexTable.Cell>
                   <SkuId id={s.id} />
-                </div>
-                <div className="cdn-skutable__cell cdn-skutable__cell--truncate" role="cell" title={s.title}>
-                  <Text as="span" fontWeight="medium">
-                    {s.title}
-                  </Text>
-                </div>
-                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
-                  <Text as="span" fontWeight="semibold" tone={onHandTone}>
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <Tooltip content={s.title}>
+                    <Text as="span" fontWeight="medium" truncate>
+                      {s.title}
+                    </Text>
+                  </Tooltip>
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <Text as="p" alignment="end" fontWeight="semibold" tone={onHandTone}>
                     <span className="cdn-tnum">{(s.on_hand ?? 0).toLocaleString()}</span>
                   </Text>
-                </div>
-                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   {selling ? (
-                    <>
-                      <Text as="span" fontWeight={coverTone ? "semibold" : undefined} tone={coverTone}>
-                        <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                    <Text
+                      as="p"
+                      alignment="end"
+                      fontWeight={coverTone ? "semibold" : undefined}
+                      tone={coverTone}
+                    >
+                      <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                      <Text as="span" tone="subdued">
+                        {" "}
+                        d
                       </Text>
-                      <Text as="span" tone="subdued"> d</Text>
-                    </>
+                    </Text>
                   ) : (
-                    <span title="No recent sales, so days of cover isn't meaningful">
-                      <Text as="span" tone="subdued">—</Text>
-                    </span>
+                    <Tooltip content="No recent sales, so days of cover isn't meaningful">
+                      <Text as="p" alignment="end" tone="subdued">
+                        —
+                      </Text>
+                    </Tooltip>
                   )}
-                </div>
-                <div className="cdn-skutable__cell cdn-skutable__cell--num" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   {selling ? (
-                    <>
-                      <Text as="span">
-                        <span className="cdn-tnum">{(s.velocity ?? 0).toFixed(1)}</span>
+                    <Text as="p" alignment="end">
+                      <span className="cdn-tnum">{(s.velocity ?? 0).toFixed(1)}</span>
+                      <Text as="span" tone="subdued">
+                        {" "}
+                        /day
                       </Text>
-                      <Text as="span" tone="subdued"> /day</Text>
-                    </>
+                    </Text>
                   ) : (
-                    <Text as="span" tone="subdued" variant="bodySm">
+                    <Text as="p" alignment="end" tone="subdued" variant="bodySm">
                       No sales
                     </Text>
                   )}
-                </div>
-                <div className="cdn-skutable__cell" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   <LocationCell locations={s.locations ?? {}} />
-                </div>
-                <div className="cdn-skutable__cell" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   <DemandCell demand={s.demand} />
-                </div>
-                <div className="cdn-skutable__cell" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   {canRelocate && (
                     <Button size="slim" onClick={() => setRelocating(s)}>
                       Relocate
                     </Button>
                   )}
-                </div>
-                <div className="cdn-skutable__cell cdn-skutable__cell--center" role="cell">
+                </IndexTable.Cell>
+                <IndexTable.Cell>
                   {skuAlerts.length > 0 && <AlertsCell alerts={skuAlerts} />}
-                </div>
-              </div>
+                </IndexTable.Cell>
+              </IndexTable.Row>
             );
           })}
-          {sorted.length === 0 && !error && (
-            <div className="cdn-skutable__empty">
-              <Text as="p" tone="subdued">
-                {query.trim()
-                  ? `No SKUs match "${query.trim()}".`
-                  : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
-              </Text>
-            </div>
-          )}
-        </div>
+        </IndexTable>
       </Card>
       {relocating && (
         <RelocateModal
@@ -556,36 +561,6 @@ function ShopifySourcePill() {
   );
 }
 
-function SortHeader({
-  label,
-  active,
-  dir,
-  onClick,
-  align = "start",
-}: {
-  label: string;
-  active: boolean;
-  dir: SortDir;
-  onClick: () => void;
-  align?: "start" | "end";
-}) {
-  const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
-  return (
-    <button
-      type="button"
-      role="columnheader"
-      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
-      className={`cdn-skutable__cell cdn-skutable__sort ${
-        align === "end" ? "cdn-skutable__cell--num" : ""
-      } ${active ? "cdn-skutable__sort--active" : ""}`}
-      onClick={onClick}
-    >
-      <span>{label}</span>
-      <span aria-hidden="true" className="cdn-skutable__sort-arrow">{arrow}</span>
-    </button>
-  );
-}
-
 function SkuId({ id }: { id: string }) {
   const display = isUuid(id) ? id.slice(-6).toUpperCase() : id;
   return (
@@ -604,40 +579,43 @@ function LocationCell({ locations }: { locations: Record<string, number> }) {
       </Text>
     );
   }
-  // Show the top 3 locations by stock (most useful info first), with "+N more"
-  // when there are extras. Tooltip lists every location with its exact count.
+  // A compact "N locations" summary with the full per-location breakdown on hover
+  // (a single location shows its name + count inline). A Polaris Tooltip keeps it
+  // consistent with the rest of the app; `anyOut` flags that some location is at 0.
   const sorted = [...entries].sort(([, a], [, b]) => b - a);
-  const visible = sorted.slice(0, 3);
-  const hidden = sorted.length - visible.length;
-  const fullLabel = sorted.map(([l, v]) => `${l}: ${v.toLocaleString()}`).join("\n");
+  const anyOut = sorted.some(([, qty]) => qty === 0);
+  const summary =
+    sorted.length === 1
+      ? `${shortLoc(sorted[0][0])} · ${sorted[0][1].toLocaleString()}`
+      : `${sorted.length} locations`;
   return (
-    <span className="cdn-loccell-inline" title={fullLabel}>
-      {visible.map(([loc, qty], i) => (
-        <span key={loc} className="cdn-loccell-item">
-          <Text as="span" variant="bodySm" tone="subdued">
-            {shortLoc(loc)}{" "}
-          </Text>
-          <Text
-            as="span"
-            variant="bodySm"
-            tone={qty === 0 ? "critical" : undefined}
-            fontWeight={qty === 0 ? "semibold" : undefined}
-          >
-            <span className="cdn-tnum">{qty.toLocaleString()}</span>
-          </Text>
-          {i < visible.length - 1 || hidden > 0 ? (
-            <Text as="span" variant="bodySm" tone="subdued">
-              {" · "}
-            </Text>
-          ) : null}
-        </span>
-      ))}
-      {hidden > 0 && (
-        <Text as="span" variant="bodySm" tone="subdued">
-          +{hidden} more
-        </Text>
-      )}
-    </span>
+    <Tooltip
+      content={
+        <Box minWidth="180px">
+          <BlockStack gap="050">
+            {sorted.map(([loc, qty]) => (
+              <InlineStack key={loc} align="space-between" gap="400" wrap={false}>
+                <Text as="span" variant="bodySm">
+                  {loc}
+                </Text>
+                <Text
+                  as="span"
+                  variant="bodySm"
+                  tone={qty === 0 ? "critical" : undefined}
+                  fontWeight={qty === 0 ? "semibold" : undefined}
+                >
+                  <span className="cdn-tnum">{qty.toLocaleString()}</span>
+                </Text>
+              </InlineStack>
+            ))}
+          </BlockStack>
+        </Box>
+      }
+    >
+      <Text as="span" variant="bodySm" tone={anyOut ? "caution" : "subdued"}>
+        {summary}
+      </Text>
+    </Tooltip>
   );
 }
 
