@@ -1,5 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { applySecurityHeaders } from "../../entry.server";
+
+// entry.server pulls in ./shopify.server, which calls shopifyApp() at module
+// load — that throws without SHOPIFY_APP_URL (and inits Prisma session storage),
+// failing this suite in CI. Stub the one symbol entry.server needs so
+// applySecurityHeaders is testable in isolation. vi.mock is hoisted above the
+// imports by vitest, so the stub is in place before entry.server loads (matches
+// the shopify.server mock every other route test uses).
+vi.mock("../../shopify.server", () => ({
+  addDocumentResponseHeaders: () => {},
+}));
 
 // The embedded-app iframe depends on the `frame-ancestors` CSP that Shopify's
 // addDocumentResponseHeaders sets. applySecurityHeaders runs AFTER that helper
