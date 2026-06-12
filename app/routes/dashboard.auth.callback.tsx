@@ -13,7 +13,7 @@ import {
 import { createSession, sessionCookieHeader } from "~/lib/dashboard/session.server";
 import { jsonError, rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 import { resolveShopId } from "~/lib/supabase.server";
-import { STATE_COOKIE_NAME } from "./dashboard.login";
+import { STATE_COOKIE_NAME, shopHintCookieHeader } from "./dashboard.login";
 
 function readStateCookie(request: Request): { nonce: string; shop: string } | null {
   const header = request.headers.get("Cookie") ?? "";
@@ -72,6 +72,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { raw } = await createSession(shop);
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookieHeader(raw));
+  // Remember the shop so a future expired-session visit auto-redirects.
+  headers.append("Set-Cookie", shopHintCookieHeader(shop));
   headers.append(
     "Set-Cookie",
     `${STATE_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
