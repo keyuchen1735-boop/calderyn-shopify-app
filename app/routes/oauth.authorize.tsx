@@ -51,6 +51,18 @@ function readParams(url: URL): AuthorizeParams {
   };
 }
 
+// Shared validation of the OAuth grant shape (response_type / PKCE method / scope).
+// Returns a stable error code on violation, or null when the params are acceptable.
+// The loader maps these to redirect_uri errors; the action maps them to plain 400s.
+function validateGrantShape(
+  params: AuthorizeParams,
+): "unsupported_response_type" | "invalid_request" | null {
+  if (params.response_type !== "code") return "unsupported_response_type";
+  if (params.code_challenge_method !== "S256") return "invalid_request";
+  if (params.scope && params.scope.split(" ").some((s) => s !== "read")) return "invalid_request";
+  return null;
+}
+
 function redirectError(
   params: AuthorizeParams,
   code: "invalid_request" | "unsupported_response_type" | "access_denied",
@@ -140,6 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  // TODO(security): bind pending OAuth to an unguessable transaction id, not shop_domain only — see consent pre-seed finding.
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
 
   const form = await request.formData();
@@ -160,6 +173,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!client.redirect_uris.includes(params.redirect_uri)) {
     return new Response("invalid_request", { status: 400 });
   }
+  // The loader guards response_type/code_challenge_method/scope, but this action
+  // is reachable via direct POST and must apply the same guards before pre-seeding.
+  const grantError = validateGrantShape(params);
+  if (grantError) return new Response(grantError, { status: 400 });
+  // The loader rejects a missing code_challenge as a required-param error; the
+  // direct-POST path must too, or it pre-seeds an unusable PKCE-less grant.
+  if (!params.code_challenge) return new Response("invalid_request", { status: 400 });
   if (!params.shop || !SHOP_RE.test(params.shop)) {
     return new Response("invalid_shop", { status: 400 });
   }

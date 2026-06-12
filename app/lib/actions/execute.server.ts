@@ -69,11 +69,16 @@ export async function priorExecutionForKey(
  * silently never counts toward the Recovered-impact total. A lookup failure
  * must never block the action — the platform call already happened — so it
  * falls back to 0.
+ *
+ * Scoped to the acting shop: a cross-tenant `alert_id` (shop A supplying shop
+ * B's alert) resolves to no row and contributes 0 — never another tenant's
+ * dollar_impact toward this shop's Recovered total.
  */
 export async function recoveredDollarsForAlertAction(
   sb: SupabaseClient,
   alertId: string | null,
   actionKind: string,
+  shopId: string,
 ): Promise<number> {
   if (!alertId) return 0;
   try {
@@ -81,6 +86,7 @@ export async function recoveredDollarsForAlertAction(
       .from("alerts")
       .select("dollar_impact")
       .eq("id", alertId)
+      .eq("shop_id", shopId)
       .maybeSingle();
     const atStakeCents = Math.round(Number(al?.dollar_impact ?? 0) * 100);
     return recoveredCentsForAction(actionKind as ActionKind, atStakeCents) / 100;
@@ -115,7 +121,7 @@ export async function insertAuditWithIdempotency(
   const dollarImpactAtExec =
     audit.outcome === "succeeded"
       ? audit.alert_id
-        ? await recoveredDollarsForAlertAction(sb, audit.alert_id, audit.action_kind)
+        ? await recoveredDollarsForAlertAction(sb, audit.alert_id, audit.action_kind, shopId)
         : recoveredCentsFromStates(
             audit.action_kind as ActionKind,
             audit.pre_state,

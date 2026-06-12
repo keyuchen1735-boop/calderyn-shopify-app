@@ -6,7 +6,11 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
 import { getLatestRun } from "~/lib/screener/runs.server";
-import { creativeInputFromJson, validateCreativeMedia } from "~/lib/screener/media.server";
+import {
+  creativeInputFromJson,
+  validateCreativeMedia,
+  validateCreativeMediaUrls,
+} from "~/lib/screener/media.server";
 import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
@@ -33,6 +37,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const input = creativeInputFromJson(body);
   const mediaError = validateCreativeMedia(input);
   if (mediaError) return jsonError(422, "missing_creative_media", mediaError);
+
+  const urlError = validateCreativeMediaUrls(input);
+  if (urlError) return jsonError(422, "disallowed_media_url", urlError);
 
   const spendRaw = Math.round(Number(body.assumedSpendCents));
   const assumedSpendCents = Number.isFinite(spendRaw)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { executeAction } from "../execute.server";
+import { executeAction, recoveredDollarsForAlertAction } from "../execute.server";
 import { ActionError } from "../../ads/actions";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -278,5 +278,55 @@ describe("executeAction", () => {
     const { sb, calls } = fakeSb({ campaign });
     await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "km4" }, sb);
     expect(calls.updates.filter((u) => u.table === "ad_campaign_dim")).toEqual([]);
+  });
+});
+
+// Cross-tenant accounting guard: the alerts lookup that drives recovered-impact
+// dollars must be scoped to the acting shop. A merchant for shop A supplying an
+// alert_id owned by shop B must NOT count shop B's dollar_impact toward shop A
+// (it resolves to no row → 0), while a legitimately-owned alert still returns
+// its impact.
+const SHOP_A = "aaaaaaaa-0000-0000-0000-000000000001";
+const SHOP_B = "bbbbbbbb-0000-0000-0000-000000000002";
+
+// Fake supabase whose `alerts` lookup HONORS the shop_id eq filter, unlike the
+// permissive fakeSb above. The alert exists only for the shop it belongs to.
+function fakeAlertsSb(opts: { alertId: string; ownerShop: string; dollars: number }) {
+  function builder(table: string) {
+    const filters: Record<string, unknown> = {};
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn((col: string, val: unknown) => {
+      filters[col] = val;
+      return chain;
+    });
+    chain.maybeSingle = vi.fn(async () => {
+      if (table !== "alerts") return { data: null, error: null };
+      const idMatch = filters.id === opts.alertId;
+      // shop_id is present in filters only after the fix threads it through.
+      const shopMatch = !("shop_id" in filters) || filters.shop_id === opts.ownerShop;
+      return idMatch && shopMatch
+        ? { data: { dollar_impact: opts.dollars }, error: null }
+        : { data: null, error: null };
+    });
+    return chain;
+  }
+  return { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
+}
+
+describe("recoveredDollarsForAlertAction — cross-tenant scoping", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns 0 when the alert belongs to another shop (cross-tenant alert_id)", async () => {
+    // Alert is owned by shop B; shop A acts with shop B's alert_id.
+    const sb = fakeAlertsSb({ alertId: "alert-of-B", ownerShop: SHOP_B, dollars: 1693.03 });
+    const recovered = await recoveredDollarsForAlertAction(sb, "alert-of-B", "pause_campaign", SHOP_A);
+    expect(recovered).toBe(0);
+  });
+
+  it("returns the alert's impact when it belongs to the acting shop", async () => {
+    const sb = fakeAlertsSb({ alertId: "alert-of-A", ownerShop: SHOP_A, dollars: 1693.03 });
+    const recovered = await recoveredDollarsForAlertAction(sb, "alert-of-A", "pause_campaign", SHOP_A);
+    expect(recovered).toBe(1693.03);
   });
 });
