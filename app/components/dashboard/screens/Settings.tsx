@@ -151,44 +151,50 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               }
             />
           </SettingRow>
-          <SettingRow label="Daily action cap" sub="Maximum automated actions per day.">
-            <Segmented
-              small
-              value={String(g.autopilot_daily_action_cap)}
-              onChange={(v) => commit("autopilot_daily_action_cap", Number(v))}
-              options={["3", "6", "12"]}
-            />
-          </SettingRow>
-          <SettingRow
-            label="Max budget cut"
-            sub="Autopilot never reduces a campaign budget by more than this."
-          >
-            <Segmented
-              small
-              value={String(g.autopilot_max_budget_cut_pct)}
-              onChange={(v) => commit("autopilot_max_budget_cut_pct", Number(v))}
-              options={[
-                { value: "15", label: "15%" },
-                { value: "30", label: "30%" },
-                { value: "50", label: "50%" },
-              ]}
-            />
-          </SettingRow>
-          <SettingRow
-            label="Minimum spend to act"
-            sub="Autopilot only touches a campaign once it has spent at least this much."
-          >
-            <Segmented
-              small
-              value={String(g.autopilot_min_spend_cents)}
-              onChange={(v) => commit("autopilot_min_spend_cents", Number(v))}
-              options={[
-                { value: "5000", label: "$50" },
-                { value: "10000", label: "$100" },
-                { value: "25000", label: "$250" },
-              ]}
-            />
-          </SettingRow>
+          {/* Limits only appear once autopilot is on — mirrors the embedded
+              settings page, reinforcing that autopilot is off by default. */}
+          {g.autopilot_enabled && (
+            <>
+              <SettingRow label="Daily action cap" sub="Maximum automated actions per day.">
+                <Segmented
+                  small
+                  value={String(g.autopilot_daily_action_cap)}
+                  onChange={(v) => commit("autopilot_daily_action_cap", Number(v))}
+                  options={["3", "6", "12"]}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Max budget cut"
+                sub="Autopilot never reduces a campaign budget by more than this."
+              >
+                <Segmented
+                  small
+                  value={String(g.autopilot_max_budget_cut_pct)}
+                  onChange={(v) => commit("autopilot_max_budget_cut_pct", Number(v))}
+                  options={[
+                    { value: "15", label: "15%" },
+                    { value: "30", label: "30%" },
+                    { value: "50", label: "50%" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Minimum spend to act"
+                sub="Autopilot only touches a campaign once it has spent at least this much."
+              >
+                <Segmented
+                  small
+                  value={String(g.autopilot_min_spend_cents)}
+                  onChange={(v) => commit("autopilot_min_spend_cents", Number(v))}
+                  options={[
+                    { value: "5000", label: "$50" },
+                    { value: "10000", label: "$100" },
+                    { value: "25000", label: "$250" },
+                  ]}
+                />
+              </SettingRow>
+            </>
+          )}
         </Card>
       </section>
 

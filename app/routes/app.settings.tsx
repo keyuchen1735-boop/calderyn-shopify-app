@@ -240,7 +240,7 @@ export default function Settings() {
     <Page
       fullWidth
       title="Settings"
-      subtitle="Guardrails, integrations, notifications, privacy"
+      subtitle="Guardrails, integrations, and account data"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       <BlockStack gap="500">
@@ -315,53 +315,50 @@ export default function Settings() {
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
-            id="notifications"
-            title="Notifications"
-            description="When Calderyn alerts you, and how."
+            id="account-data"
+            title="Account & data"
+            description="Notifications, privacy, and removing Calderyn."
           >
-            <Card>
-              <BlockStack gap="200">
-                <Banner tone="info" title="Email and Slack notifications are coming soon">
-                  Until then, new alerts appear on the Home screen and in the Alerts queue,
-                  and every action Calderyn takes is recorded in the Audit log.
-                </Banner>
-              </BlockStack>
-            </Card>
-          </Layout.AnnotatedSection>
-
-          <Layout.AnnotatedSection
-            id="privacy"
-            title="Privacy & data residency"
-            description="How Calderyn handles your shop data."
-          >
-            <Card>
-              <BlockStack gap="300">
-                <Banner tone="info" title="Peer-baseline consent: Enabled">
-                  Your shop_id is hashed with HMAC-SHA256 before any peer aggregate is read.
-                  Withdraw consent at any time; your contribution is purged within 30 days.
-                </Banner>
-                <ButtonGroup>
-                  <Button>Withdraw consent</Button>
-                  <Button>Download my data (GDPR)</Button>
-                </ButtonGroup>
-              </BlockStack>
-            </Card>
-          </Layout.AnnotatedSection>
-
-          <Layout.AnnotatedSection
-            id="uninstall"
-            title="Uninstall"
-            description="Remove Calderyn from your store."
-          >
-            <Card>
-              <BlockStack gap="300">
-                <Text as="p" tone="subdued" variant="bodySm">
-                  When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
-                  cascade purge of all merchant data within 30 days.
-                </Text>
-                <Button tone="critical">Uninstall Calderyn</Button>
-              </BlockStack>
-            </Card>
+            <BlockStack gap="400">
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">
+                    Notifications
+                  </Text>
+                  <Banner tone="info" title="Email and Slack notifications are coming soon">
+                    Until then, new alerts appear on the Home screen and in the Alerts queue,
+                    and every action Calderyn takes is recorded in the Audit log.
+                  </Banner>
+                </BlockStack>
+              </Card>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingSm">
+                    Privacy & data residency
+                  </Text>
+                  <Banner tone="info" title="Peer-baseline consent: Enabled">
+                    Your shop_id is hashed with HMAC-SHA256 before any peer aggregate is read.
+                    Withdraw consent at any time; your contribution is purged within 30 days.
+                  </Banner>
+                  <ButtonGroup>
+                    <Button>Withdraw consent</Button>
+                    <Button>Download my data (GDPR)</Button>
+                  </ButtonGroup>
+                </BlockStack>
+              </Card>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingSm">
+                    Uninstall
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
+                    cascade purge of all merchant data within 30 days.
+                  </Text>
+                  <Button tone="critical">Uninstall Calderyn</Button>
+                </BlockStack>
+              </Card>
+            </BlockStack>
           </Layout.AnnotatedSection>
         </Layout>
       </BlockStack>
@@ -457,82 +454,110 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           name="autopilot_max_budget_cut_pct"
           value={String(Math.max(0, Number(autopilotMaxBudgetCutPct)))}
         />
-        <FormLayout>
-          <FormLayout.Group>
-            <TextField
-              label="Total dollar value of changes Calderyn can make per day (USD)"
-              type="number"
-              value={budget}
-              autoComplete="off"
-              onChange={setBudget}
-              helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
-            />
-            <TextField
-              label="Require my approval for any change bigger than (USD)"
-              type="number"
-              value={cap}
-              autoComplete="off"
-              onChange={setCap}
-              helpText="Single-action impact above this prompts re-authentication."
-            />
-          </FormLayout.Group>
-          <FormLayout.Group>
-            <TextField
-              label="Minimum wait between changes to the same campaign (minutes)"
-              type="number"
-              value={cooldown}
-              autoComplete="off"
-              onChange={setCooldown}
-              helpText="Prevents thrash on the same campaign / SKU."
-            />
-            <TextField
-              label="Business hours"
-              value={`${guardrails.business_hours.start}–${guardrails.business_hours.end}`}
-              autoComplete="off"
-              disabled
-              helpText={`Timezone: ${guardrails.business_hours.tz}`}
-            />
-          </FormLayout.Group>
-          <Checkbox
-            label="Let Calderyn pause money-losing campaigns on its own"
-            checked={autopilotEnabled}
-            onChange={setAutopilotEnabled}
-            helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
-          />
-          <FormLayout.Group>
-            <TextField
-              label="Most automatic changes per day"
-              type="number"
-              value={autopilotDailyActionCap}
-              autoComplete="off"
-              onChange={setAutopilotDailyActionCap}
-              helpText="Calderyn will not take more than this many automatic actions in a single day."
-            />
-            <TextField
-              label="Ignore campaigns that have spent less than (USD)"
-              type="number"
-              value={autopilotMinSpend}
-              autoComplete="off"
-              onChange={setAutopilotMinSpend}
-              helpText="Campaigns with less than this trailing spend are skipped — not enough data."
-            />
-          </FormLayout.Group>
-          <FormLayout.Group>
-            <TextField
-              label="Most Calderyn can cut a campaign's budget at once (%)"
-              type="number"
-              value={autopilotMaxBudgetCutPct}
-              autoComplete="off"
-              onChange={setAutopilotMaxBudgetCutPct}
-              helpText="Budget-reduction actions will not cut more than this percentage in a single step."
-            />
-          </FormLayout.Group>
+        <BlockStack gap="400">
+          <FormLayout>
+            <FormLayout.Group>
+              <TextField
+                label="Total dollar value of changes Calderyn can make per day (USD)"
+                type="number"
+                value={budget}
+                autoComplete="off"
+                onChange={setBudget}
+                helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
+              />
+              <TextField
+                label="Require my approval for any change bigger than (USD)"
+                type="number"
+                value={cap}
+                autoComplete="off"
+                onChange={setCap}
+                helpText="Single-action impact above this prompts re-authentication."
+              />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField
+                label="Minimum wait between changes to the same campaign (minutes)"
+                type="number"
+                value={cooldown}
+                autoComplete="off"
+                onChange={setCooldown}
+                helpText="Prevents thrash on the same campaign / SKU."
+              />
+              <TextField
+                label="Business hours"
+                value={`${guardrails.business_hours.start}–${guardrails.business_hours.end}`}
+                autoComplete="off"
+                disabled
+                helpText={`Timezone: ${guardrails.business_hours.tz}`}
+              />
+            </FormLayout.Group>
+          </FormLayout>
+
+          {/* Autopilot lives in its own tinted sub-card so its limits never read
+              as more of the hard guardrails above; the limit fields only appear
+              once it's switched on — reinforcing that autopilot is off by default. */}
+          <Box
+            padding="400"
+            background="bg-surface-secondary"
+            borderColor="border"
+            borderWidth="025"
+            borderRadius="200"
+          >
+            <BlockStack gap="300">
+              <Checkbox
+                label="Let Calderyn pause money-losing campaigns on its own"
+                checked={autopilotEnabled}
+                onChange={setAutopilotEnabled}
+                helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
+              />
+              {autopilotEnabled && (
+                <Box paddingBlockStart="300" borderColor="border" borderBlockStartWidth="025">
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingSm">
+                      Autopilot limits
+                    </Text>
+                    <FormLayout>
+                      <FormLayout.Group>
+                        <TextField
+                          label="Most automatic changes per day"
+                          type="number"
+                          value={autopilotDailyActionCap}
+                          autoComplete="off"
+                          onChange={setAutopilotDailyActionCap}
+                          helpText="Calderyn will not take more than this many automatic actions in a single day."
+                        />
+                        <TextField
+                          label="Ignore campaigns that have spent less than (USD)"
+                          type="number"
+                          value={autopilotMinSpend}
+                          autoComplete="off"
+                          onChange={setAutopilotMinSpend}
+                          helpText="Campaigns with less than this trailing spend are skipped — not enough data."
+                        />
+                      </FormLayout.Group>
+                      <FormLayout.Group>
+                        <TextField
+                          label="Most Calderyn can cut a campaign's budget at once (%)"
+                          type="number"
+                          value={autopilotMaxBudgetCutPct}
+                          autoComplete="off"
+                          onChange={setAutopilotMaxBudgetCutPct}
+                          helpText="Budget-reduction actions will not cut more than this percentage in a single step."
+                        />
+                      </FormLayout.Group>
+                    </FormLayout>
+                  </BlockStack>
+                </Box>
+              )}
+            </BlockStack>
+          </Box>
+
           <InlineStack align="end">
             <Button submit variant="primary" loading={submitting} disabled={submitting}>
               Save guardrails
             </Button>
           </InlineStack>
-          </FormLayout>
+        </BlockStack>
         </fetcher.Form>
       </BlockStack>
     </Card>
