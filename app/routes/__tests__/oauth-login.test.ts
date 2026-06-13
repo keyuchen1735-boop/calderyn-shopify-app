@@ -84,6 +84,12 @@ describe("/oauth/login loader", () => {
 });
 
 describe("/oauth/login action", () => {
+  it("404 when MCP_OAUTH_ENABLED is off", async () => {
+    process.env.MCP_OAUTH_ENABLED = "false";
+    const r = (await action(postReq({ t: "x", shop: "s.myshopify.com" }) as never)) as Response;
+    expect(r.status).toBe(404);
+  });
+
   it("302s to the admin deep link and remembers the shop on a valid submit", async () => {
     const token = await signPendingOauth(CTX);
     const r = (await action(postReq({ t: token, shop: "MyShop.myshopify.com" }) as never)) as Response;
@@ -100,6 +106,8 @@ describe("/oauth/login action", () => {
     expect(r.status).toBe(422);
     expect(r.headers.get("set-cookie")).toBeNull();
     expect(r.headers.get("location")).toBeNull();
+    // The pending JWT must not be echoed back in the response body.
+    expect(await r.text()).not.toContain(token);
   });
 
   it("400s when the token is invalid", async () => {

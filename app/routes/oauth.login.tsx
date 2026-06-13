@@ -67,7 +67,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (!SHOP_RE.test(shop)) {
-    return json({ error: "invalid_shop", token }, { status: 422 });
+    // Don't echo the token back — the form re-reads it from the loader, and a
+    // response body is a needless extra place for the pending JWT to land.
+    return json({ error: "invalid_shop" }, { status: 422 });
   }
 
   return redirect(buildAppConnectUrl({ shop, apiKey, appUrl, token }), {
