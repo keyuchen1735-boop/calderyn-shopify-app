@@ -37,6 +37,12 @@ function reqWith(params: Record<string, string>): { request: Request } {
   return { request: new Request(url.toString()) };
 }
 
+function reqWithCookie(params: Record<string, string>, cookie: string): { request: Request } {
+  const url = new URL("http://x/oauth/authorize");
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  return { request: new Request(url.toString(), { headers: { Cookie: cookie } }) };
+}
+
 function clientFixture() {
   return {
     client_id: "cal_client_x",
@@ -141,5 +147,31 @@ describe("/oauth/authorize loader", () => {
   it("does not export an action (no direct-POST pre-seed surface)", async () => {
     const mod = await import("../oauth.authorize");
     expect((mod as Record<string, unknown>).action).toBeUndefined();
+  });
+
+  it("uses the __Host-cala_shop cookie as the shop when there is no ?shop= hint", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=cookieshop.myshopify.com") as never);
+    expect(r.status).toBe(200);
+    // Invariant: authorize never writes consumable pre-seed state.
+    expect(r.headers.get("set-cookie")).toBeNull();
+    const j = await r.json();
+    expect(j.shop).toBe("cookieshop.myshopify.com");
+  });
+
+  it("prefers an explicit ?shop= hint over the remembered cookie", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(
+      reqWithCookie({ ...VALID_PARAMS, shop: "hint.myshopify.com" }, "__Host-cala_shop=cookieshop.myshopify.com") as never,
+    );
+    const j = await r.json();
+    expect(j.shop).toBe("hint.myshopify.com");
+  });
+
+  it("ignores a malformed __Host-cala_shop cookie", async () => {
+    getClientMock.mockResolvedValue(clientFixture());
+    const r = await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=not-a-shop") as never);
+    const j = await r.json();
+    expect(j.shop).toBeNull();
   });
 });
