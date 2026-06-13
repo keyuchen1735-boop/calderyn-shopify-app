@@ -17,6 +17,7 @@ const alertsGet = vi.fn();
 const actionsExecute = vi.fn();
 const inventoryAdjustQuantities = vi.fn();
 const acknowledgeAlert = vi.fn();
+const snoozeAlert = vi.fn();
 const unauthenticatedAdmin = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
@@ -63,6 +64,11 @@ vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: unknown[]) => acknowledgeAlert(...a),
 }));
+// Export both so session.server's `import { resurfaceAllSnoozes }` still resolves.
+vi.mock("../../actions/snooze.server", () => ({
+  snoozeAlert: (...a: unknown[]) => snoozeAlert(...a),
+  resurfaceAllSnoozes: vi.fn(),
+}));
 vi.mock("../../../shopify.server", () => ({
   unauthenticated: { admin: (...a: unknown[]) => unauthenticatedAdmin(...a) },
 }));
@@ -102,6 +108,7 @@ beforeEach(() => {
   actionsExecute.mockResolvedValue({ id: "audit-inv-1" });
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://shopify/InventoryAdjustmentGroup/9" });
   acknowledgeAlert.mockResolvedValue(true);
+  snoozeAlert.mockResolvedValue(true);
   unauthenticatedAdmin.mockResolvedValue({ admin: { graphql: vi.fn() } });
 });
 
@@ -213,7 +220,7 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
     expect(acknowledgeAlert).toHaveBeenCalledWith(expect.anything(), "shop-1", "a1");
   });
 
-  it("snoozes without any Shopify mutation or guardrail check, leaving the alert open", async () => {
+  it("defers via snooze — no Shopify mutation, no guardrail, hides instead of acknowledging", async () => {
     const res = (await alertAction({
       request: post(url, { type: "snooze_alert", idempotency_key: "key-snooze-1" }),
       params: { id: "a1" },
@@ -227,7 +234,9 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
     });
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
     expect(guardrailsGet).not.toHaveBeenCalled();
+    // Snooze hides the alert (status -> snoozed + deadline) rather than closing it.
     expect(acknowledgeAlert).not.toHaveBeenCalled();
+    expect(snoozeAlert).toHaveBeenCalledWith(expect.anything(), "shop-1", "a1");
     expect(actionsExecute).toHaveBeenCalledWith(
       expect.objectContaining({ alertId: "a1", kind: "snooze_alert" }),
     );

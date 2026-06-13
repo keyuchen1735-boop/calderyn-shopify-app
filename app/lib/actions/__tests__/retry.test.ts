@@ -202,7 +202,7 @@ describe("drainActionRetries", () => {
       expect.arrayContaining([
         ["shop_id", SHOP],
         ["id", row.alert_id],
-        ["status", "open"],
+        ["status", ["open", "snoozed"]],
       ]),
     );
   });
@@ -506,6 +506,10 @@ function makeFakeSb(opts: { rows: unknown[]; alertImpactDollars?: number }): {
           const filters: Array<[string, unknown]> = [];
           const builder = {
             eq(column: string, value: unknown) {
+              filters.push([column, value]);
+              return builder;
+            },
+            in(column: string, value: unknown) {
               filters.push([column, value]);
               return builder;
             },

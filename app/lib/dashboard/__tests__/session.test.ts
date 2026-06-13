@@ -23,6 +23,11 @@ vi.mock("../../supabase.server", () => ({
   resolveShopId: vi.fn(async (domain: string) => `shop-id-for-${domain}`),
 }));
 
+const resurfaceAllSnoozes = vi.fn();
+vi.mock("../../actions/snooze.server", () => ({
+  resurfaceAllSnoozes: (...a: unknown[]) => resurfaceAllSnoozes(...a),
+}));
+
 beforeEach(() => {
   process.env.DASHBOARD_SESSION_PEPPER = "test-pepper-that-is-at-least-32-chars!!";
 });
@@ -86,6 +91,16 @@ describe("createSession", () => {
     expect(row.shop_domain).toBe("x.myshopify.com");
     expect(row.token_hash).toEqual(hashSessionToken(raw));
     expect(row.token_hash).not.toContain(raw.slice(10)); // raw never stored
+  });
+
+  it("re-surfaces the shop's snoozed alerts on a fresh login", async () => {
+    setSupabaseResponses([{ data: { id: "sess-1" }, error: null }]);
+    await createSession("x.myshopify.com");
+    // "next login" trigger: snoozes don't survive a login boundary.
+    expect(resurfaceAllSnoozes).toHaveBeenCalledWith(
+      expect.anything(),
+      "shop-id-for-x.myshopify.com",
+    );
   });
 });
 

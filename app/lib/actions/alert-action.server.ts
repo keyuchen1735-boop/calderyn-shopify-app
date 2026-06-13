@@ -9,6 +9,7 @@ import { CalderynError } from "../calderyn.server";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import { fmtMoney } from "../format";
 import { acknowledgeAlert } from "../alerts.server";
+import { snoozeAlert } from "./snooze.server";
 import {
   inventoryAdjustQuantities,
   transferPlanFromEvidence,
@@ -112,9 +113,14 @@ export async function executeInventoryAlertAction(opts: {
 
   const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey });
 
-  // Snooze is a deferral, not a resolution — leave the alert in the open queue.
-  const acknowledged =
-    kind === "snooze_alert" ? false : await acknowledgeAlert(sb, shopId, alertId);
+  // Snooze defers (hide for 1 day / until next login) rather than resolving;
+  // every other kind closes the alert by acknowledging it.
+  let acknowledged = false;
+  if (kind === "snooze_alert") {
+    await snoozeAlert(sb, shopId, alertId);
+  } else {
+    acknowledged = await acknowledgeAlert(sb, shopId, alertId);
+  }
 
   return { auditId: audit.id, outcome: audit.outcome ?? "succeeded", acknowledged };
 }

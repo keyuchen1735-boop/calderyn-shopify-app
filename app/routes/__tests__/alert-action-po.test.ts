@@ -239,9 +239,10 @@ describe("alert action — acknowledges the alert after success", () => {
       expect.arrayContaining([
         ["shop_id", "shop-uuid-1"],
         ["id", ALERT.id],
-        ["status", "open"],
       ]),
     );
+    // acknowledge matches open OR a re-surfaced (lapsed) snooze.
+    expect(getRecorded("in")).toContainEqual(["status", ["open", "snoozed"]]);
   });
 
   it("surfaces an acknowledge failure in the toast without failing the action", async () => {
@@ -258,7 +259,7 @@ describe("alert action — acknowledges the alert after success", () => {
     expect(getRecorded("update")).toEqual([]);
   });
 
-  it("does not acknowledge on snooze — a deferral must keep the alert open", async () => {
+  it("snoozes instead of acknowledging — defers the alert without resolving it", async () => {
     const fd = new FormData();
     fd.set("kind", "snooze_alert");
     fd.set("alertId", ALERT.id);
@@ -271,7 +272,19 @@ describe("alert action — acknowledges the alert after success", () => {
     expect(body.ok).toBe(true);
     expect(executeSpy).toHaveBeenCalledTimes(1);
     expect(body.toast.message).toBe("Snoozed alert executed");
-    expect(getRecorded("update")).toEqual([]);
+    // Hides the alert (status -> snoozed + deadline), guarded on still-open;
+    // never flips it to acknowledged/resolved.
+    expect(getRecorded("update")).toContainEqual([
+      expect.objectContaining({ status: "snoozed", snoozed_until: expect.any(String) }),
+    ]);
+    expect(getRecorded("update")).not.toContainEqual([{ status: "acknowledged" }]);
+    expect(getRecorded("eq")).toEqual(
+      expect.arrayContaining([
+        ["shop_id", "shop-uuid-1"],
+        ["id", ALERT.id],
+      ]),
+    );
+    expect(getRecorded("in")).toContainEqual(["status", ["open", "snoozed"]]);
   });
 });
 
