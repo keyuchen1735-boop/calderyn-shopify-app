@@ -164,6 +164,8 @@ describe("/oauth/authorize loader", () => {
     const r = await loader(
       reqWithCookie({ ...VALID_PARAMS, shop: "hint.myshopify.com" }, "__Host-cala_shop=cookieshop.myshopify.com") as never,
     );
+    // Invariant holds even when both shop sources are present.
+    expect(r.headers.get("set-cookie")).toBeNull();
     const j = await r.json();
     expect(j.shop).toBe("hint.myshopify.com");
   });

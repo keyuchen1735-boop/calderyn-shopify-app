@@ -30,7 +30,7 @@ describe("/oauth/authorize interstitial", () => {
   it("no shop: renders a 'Log in with Shopify' link to /oauth/login and NO shop field", () => {
     const html = render({ ...BASE, shop: null });
     expect(html).toContain("Log in with Shopify");
-    expect(html).toContain("/oauth/login?t=tok123");
+    expect(html).toContain("https://app.calderyncompany.com/oauth/login?t=tok123");
     expect(html).not.toContain("Enter your shop domain");
     expect(html).not.toContain('name="shop"');
   });
