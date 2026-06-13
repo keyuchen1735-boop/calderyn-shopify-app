@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildScoreCardMetrics,
   buildUserContent,
+  parseTips,
   scoreCreative,
   toImageBlock,
   SCORE_TOOL_NAME,
@@ -26,7 +27,12 @@ function fakeToolResult(overrides?: Record<string, unknown>) {
       {
         type: "tool_use",
         name: SCORE_TOOL_NAME,
-        input: { summary: "ok", dimensions: dims, tips: ["fix the hook"], ...overrides },
+        input: {
+        summary: "ok",
+        dimensions: dims,
+        tips: [{ title: "fix the hook", detail: "rewrite the opening line" }],
+        ...overrides,
+      },
       },
     ],
   };
@@ -108,6 +114,25 @@ describe("buildUserContent media handling", () => {
   });
 });
 
+describe("parseTips", () => {
+  it("keeps structured {title, detail} tips, trimming whitespace", () => {
+    expect(parseTips([{ title: "  Add a headline ", detail: " do it " }])).toEqual([
+      { title: "Add a headline", detail: "do it" },
+    ]);
+  });
+
+  it("normalizes legacy string tips to title-only (back-compat)", () => {
+    expect(parseTips(["front-load the offer"])).toEqual([
+      { title: "front-load the offer", detail: "" },
+    ]);
+  });
+
+  it("drops tips with no usable title and handles non-arrays", () => {
+    expect(parseTips([{ detail: "no title" }, "", { title: "  " }, 42])).toEqual([]);
+    expect(parseTips(undefined)).toEqual([]);
+  });
+});
+
 describe("scoreCreative", () => {
   it("calls the forced tool and returns metrics + summary + tips", async () => {
     const res = await scoreCreative(input, ["Top Ad A"], {
@@ -115,7 +140,7 @@ describe("scoreCreative", () => {
       model: "test-model",
     });
     expect(res.summary).toBe("ok");
-    expect(res.tips).toContain("fix the hook");
+    expect(res.tips).toEqual([{ title: "fix the hook", detail: "rewrite the opening line" }]);
     expect(res.metrics).toHaveLength(13);
   });
 

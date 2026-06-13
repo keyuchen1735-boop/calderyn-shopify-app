@@ -1,6 +1,6 @@
 // app/lib/screener/score.server.ts
 import type Anthropic from "@anthropic-ai/sdk";
-import { DIMENSIONS, type CreativeInput, type MetricScore } from "./types";
+import { DIMENSIONS, type CreativeInput, type MetricScore, type TipDetail } from "./types";
 
 export type CreateMessageFn = (
   params: Anthropic.MessageCreateParamsNonStreaming,
@@ -36,9 +36,23 @@ export const SCORE_TOOL: Anthropic.Tool = {
       },
       tips: {
         type: "array",
-        items: { type: "string" },
-        description:
-          "Ranked fixes, biggest lever first. Every tip is specific to THIS creative: it names the exact weakness (quoting the real headline/text/image/destination/audience), gives a ready-to-paste example written for this exact product, and states the expected effect on a named dimension. No generic ad advice, no placeholders, no hedging.",
+        items: {
+          type: "object",
+          properties: {
+            title: {
+              type: "string",
+              description:
+                "A short imperative action line, max 8 words, no trailing period (e.g. \"Add a benefit-led headline\", \"Swap the Marketplace link for a PDP\"). This is what the merchant scans first.",
+            },
+            detail: {
+              type: "string",
+              description:
+                "The specifics behind the title: name the exact weakness (quote the real headline/text/image/destination/audience), give a ready-to-paste example written for THIS product, and state the expected effect on a named dimension. No generic advice, no placeholders, no hedging.",
+            },
+          },
+          required: ["title", "detail"],
+        },
+        description: "Ranked fixes, biggest lever first. 3-5 tips. Each is specific to THIS creative.",
       },
     },
     required: ["summary", "dimensions", "tips"],
@@ -73,11 +87,10 @@ export function buildSystemPrompt(): string {
     "Score each named dimension 0-100 and give one concrete sentence of reasoning. Be opinionated and specific.",
     "When the merchant's top historical ads are provided, compare against them and reference them by name in your reasoning.",
     "",
-    "Then write ranked improvement tips — biggest lever first. Each tip MUST be about THIS exact creative, never generic ad advice. Every tip has three parts:",
-    "1. THE WEAKNESS — name what is actually wrong in what you were given, quoting or describing the real headline, primary text, image, destination URL, or audience (e.g. \"your headline field is blank\", \"your primary text opens with 'A serum for your skin', which states a fact instead of hooking a desire\", \"your destination is a Facebook Marketplace link, not a product page\").",
-    "2. THE FIX, AS AN EXAMPLE — infer the product and brand from the image, destination, and copy, then give a ready-to-paste example written for THIS specific product: real headline text, the actual first line to use, a concrete offer. Never a placeholder like 'e.g. a benefit-led headline' — write the line out.",
-    "3. THE PAYOFF — state what the fix does and which dimension it lifts (e.g. \"this gives a scroller a reason to stop in the first line, raising hook strength and CTR\").",
-    "Be direct and declarative — tell the merchant exactly what to change and show them the change. Do not hedge with 'presumably', 'consider', or 'you might'. If you must reference a winning historical ad, name it and say what to copy from it specifically.",
+    "Then write 3-5 ranked improvement tips — biggest lever first. Each tip MUST be about THIS exact creative, never generic ad advice. Each tip has a `title` and a `detail`:",
+    "- `title`: a short imperative action line, max 8 words, no trailing period — the one thing to do (e.g. \"Add a benefit-led headline\", \"Hook the first line before 'See More'\", \"Swap the Marketplace link for a PDP\"). The merchant scans these first, so make them sharp and scannable.",
+    "- `detail`: the specifics behind the title, in 1-3 sentences with three beats: (1) THE WEAKNESS — name what is actually wrong, quoting the real headline/primary text/image/destination/audience (e.g. \"your headline field is blank\", \"your destination is a Facebook Marketplace link, not a product page\"); (2) THE FIX AS AN EXAMPLE — infer the product/brand and write a ready-to-paste line for THIS product (real headline text, the actual first line, a concrete offer — never a placeholder like 'e.g. a benefit-led headline'); (3) THE PAYOFF — what the fix does and which named dimension it lifts.",
+    "Keep the `title` short and the `detail` specific. Be direct and declarative — do not hedge with 'presumably', 'consider', or 'you might'. If you reference a winning historical ad, name it and say what to copy from it specifically.",
     `Always call the ${SCORE_TOOL_NAME} tool.`,
   ].join("\n");
 }
@@ -145,7 +158,7 @@ export async function scoreCreative(
   input: CreativeInput,
   topAdNames: string[],
   opts: { createMessage: CreateMessageFn; model: string },
-): Promise<{ summary: string; metrics: MetricScore[]; tips: string[] }> {
+): Promise<{ summary: string; metrics: MetricScore[]; tips: TipDetail[] }> {
   const res = await opts.createMessage({
     model: opts.model,
     max_tokens: MAX_TOKENS,
@@ -162,6 +175,25 @@ export async function scoreCreative(
   return {
     summary: typeof out.summary === "string" ? out.summary : "",
     metrics: buildScoreCardMetrics(out.dimensions),
-    tips: Array.isArray(out.tips) ? out.tips.filter((t): t is string => typeof t === "string") : [],
+    tips: parseTips(out.tips),
   };
+}
+
+/** Coerce the tool's `tips` into TipDetail[], tolerating legacy string tips and
+ *  partial objects. Drops tips with no title (rule 12: skip the unusable, don't
+ *  render an empty bullet). */
+export function parseTips(raw: unknown): TipDetail[] {
+  if (!Array.isArray(raw)) return [];
+  const tips: TipDetail[] = [];
+  for (const t of raw) {
+    if (typeof t === "string") {
+      if (t.trim()) tips.push({ title: t.trim(), detail: "" });
+    } else if (t && typeof t === "object") {
+      const o = t as { title?: unknown; detail?: unknown };
+      const title = typeof o.title === "string" ? o.title.trim() : "";
+      const detail = typeof o.detail === "string" ? o.detail.trim() : "";
+      if (title) tips.push({ title, detail });
+    }
+  }
+  return tips;
 }
