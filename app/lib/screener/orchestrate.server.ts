@@ -6,7 +6,7 @@ import { loadCalibrationInputs as realLoad } from "./history.server";
 import { scoreCreative as realScore } from "./score.server";
 import { startRun as realStart, completeRun as realComplete, failRun as realFail } from "./runs.server";
 import type {
-  CalibrationInputs, CreativeInput, CreativeScreenRun, RunSource, ScoreCard,
+  CalibrationInputs, CreativeInput, CreativeScreenRun, RunSource, ScoreCard, TipDetail,
 } from "./types";
 
 export interface ScreenDeps {
@@ -15,7 +15,7 @@ export interface ScreenDeps {
   scoreCreative: (
     input: CreativeInput,
     topAdNames: string[],
-  ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: string[] }>;
+  ) => Promise<{ summary: string; metrics: ScoreCard["metrics"]; tips: TipDetail[] }>;
   startRun: (shop: string, source: RunSource, assumedSpendCents: number, metaAdId?: string | null) => Promise<CreativeScreenRun>;
   completeRun: (shop: string, id: string, scorecard: ScoreCard, creativeInput: CreativeInput) => Promise<CreativeScreenRun>;
   failRun: (shop: string, id: string, message: string) => Promise<CreativeScreenRun>;

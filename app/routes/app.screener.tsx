@@ -24,6 +24,7 @@ import {
   Button,
   ButtonGroup,
   Card,
+  Collapsible,
   DropZone,
   FormLayout,
   InlineGrid,
@@ -49,12 +50,14 @@ import {
   METRIC_GROUPS,
   METRIC_GROUP_LABELS,
   MIN_SPEND_CENTS,
+  normalizeTip,
   type CreativeInput,
   type CreativeScreenRun,
   type Grade,
   type MetricGroup,
   type ScoreCard,
   type ScreenableAd,
+  type Tip,
   type Variant,
 } from "~/lib/screener/types";
 import { validateCreativeMedia, validateCreativeMediaUrls } from "~/lib/screener/media.server";
@@ -284,6 +287,63 @@ const scoreColor = (score: number) =>
 
 const GRAY_BG = "var(--p-color-bg-surface-secondary)";
 const ACCENT = "var(--p-color-text-emphasis)";
+
+// One improvement tip: numbered chip + concise title; the product-specific
+// detail expands on click (mirrors the dashboard Predictor's "How to improve it").
+function ScreenerTipRow({ tip, index }: { tip: Tip; index: number }) {
+  const t = normalizeTip(tip);
+  const [open, setOpen] = useState(false);
+  const expandable = t.detail.length > 0;
+  const panelId = `screener-tip-${index}`;
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="200" blockAlign="center" wrap={false}>
+        <span
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: GRAY_BG,
+            color: ACCENT,
+            fontSize: 11.5,
+            fontWeight: 650,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {index + 1}
+        </span>
+        {expandable ? (
+          <Button
+            variant="plain"
+            textAlign="left"
+            disclosure={open ? "up" : "down"}
+            ariaExpanded={open}
+            ariaControls={panelId}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {t.title}
+          </Button>
+        ) : (
+          <Text as="span" variant="bodySm">
+            {t.title}
+          </Text>
+        )}
+      </InlineStack>
+      {expandable && (
+        <Collapsible id={panelId} open={open}>
+          <Box paddingInlineStart="600" paddingBlockEnd="100">
+            <Text as="p" variant="bodySm" tone="subdued">
+              {t.detail}
+            </Text>
+          </Box>
+        </Collapsible>
+      )}
+    </BlockStack>
+  );
+}
 
 function CheckMark() {
   return (
@@ -1006,29 +1066,7 @@ export default function Screener() {
                         How to improve it
                       </Text>
                       {card.tips.map((tip, i) => (
-                        <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                          <span
-                            style={{
-                              width: 20,
-                              height: 20,
-                              borderRadius: "50%",
-                              flexShrink: 0,
-                              marginTop: 1,
-                              background: GRAY_BG,
-                              color: ACCENT,
-                              fontSize: 11.5,
-                              fontWeight: 650,
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            {i + 1}
-                          </span>
-                          <Text as="p" variant="bodySm">
-                            {tip}
-                          </Text>
-                        </div>
+                        <ScreenerTipRow key={i} tip={tip} index={i} />
                       ))}
                     </BlockStack>
                   </Card>

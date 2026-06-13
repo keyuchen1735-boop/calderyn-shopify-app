@@ -7,6 +7,7 @@ import {
   Banner,
   BlockStack,
   Box,
+  Button,
   Card,
   Collapsible,
   Divider,
@@ -18,9 +19,11 @@ import {
 import {
   METRIC_GROUPS,
   METRIC_GROUP_LABELS,
+  normalizeTip,
   type Grade,
   type MetricGroup,
   type ScoreCard,
+  type Tip,
 } from "~/lib/screener/types";
 
 const gradeTone: Record<Grade, "success" | "warning" | "critical"> = {
@@ -28,6 +31,62 @@ const gradeTone: Record<Grade, "success" | "warning" | "critical"> = {
   okay: "warning",
   poor: "critical",
 };
+
+// One improvement tip: concise title; the product-specific detail expands on click.
+function TipItem({ tip, index }: { tip: Tip; index: number }) {
+  const t = normalizeTip(tip);
+  const [open, setOpen] = useState(false);
+  const expandable = t.detail.length > 0;
+  const panelId = `scorecard-tip-${index}`;
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="200" blockAlign="center" wrap={false}>
+        <span
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: "var(--p-color-bg-surface-secondary)",
+            color: "var(--p-color-text-emphasis)",
+            fontSize: 11.5,
+            fontWeight: 650,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {index + 1}
+        </span>
+        {expandable ? (
+          <Button
+            variant="plain"
+            textAlign="left"
+            disclosure={open ? "up" : "down"}
+            ariaExpanded={open}
+            ariaControls={panelId}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {t.title}
+          </Button>
+        ) : (
+          <Text as="span" variant="bodySm">
+            {t.title}
+          </Text>
+        )}
+      </InlineStack>
+      {expandable && (
+        <Collapsible id={panelId} open={open}>
+          <Box paddingInlineStart="600" paddingBlockEnd="100">
+            <Text as="p" variant="bodySm" tone="subdued">
+              {t.detail}
+            </Text>
+          </Box>
+        </Collapsible>
+      )}
+    </BlockStack>
+  );
+}
 
 const dollars = (cents: number) =>
   `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -184,15 +243,11 @@ export function Scorecard({ card }: { card: ScoreCard }) {
             <Text as="h2" variant="headingSm">
               How to make it better
             </Text>
-            <ol style={{ margin: 0, paddingInlineStart: 18 }}>
+            <BlockStack gap="150">
               {card.tips.map((t, i) => (
-                <li key={i}>
-                  <Text as="span" variant="bodySm">
-                    {t}
-                  </Text>
-                </li>
+                <TipItem key={i} tip={t} index={i} />
               ))}
-            </ol>
+            </BlockStack>
           </BlockStack>
         </Card>
       )}
