@@ -11,6 +11,10 @@ const acknowledgeAlert = vi.fn();
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: unknown[]) => acknowledgeAlert(...a),
 }));
+const snoozeAlert = vi.fn();
+vi.mock("../snooze.server", () => ({
+  snoozeAlert: (...a: unknown[]) => snoozeAlert(...a),
+}));
 
 const TRANSFER_EVIDENCE = {
   inventory_item_id: "gid://shopify/InventoryItem/1",
@@ -69,6 +73,7 @@ beforeEach(() => {
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
   actionsExecute.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
   acknowledgeAlert.mockResolvedValue(true);
+  snoozeAlert.mockResolvedValue(true);
 });
 
 describe("executeInventoryAlertAction — reallocate_inventory", () => {
@@ -137,12 +142,14 @@ describe("executeInventoryAlertAction — reallocate_inventory", () => {
 });
 
 describe("executeInventoryAlertAction — snooze_alert", () => {
-  it("audits a snooze without touching Shopify and leaves the alert open", async () => {
+  it("audits a snooze, defers the alert, and never acknowledges it", async () => {
     const res = await run("snooze_alert");
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
     expect(actionsExecute).toHaveBeenCalledWith(
       expect.objectContaining({ alertId: "al-1", kind: "snooze_alert" }),
     );
+    // Snooze hides the alert (status -> snoozed + deadline) instead of closing it.
+    expect(snoozeAlert).toHaveBeenCalledWith(SB, "shop-1", "al-1");
     // Snooze is a deferral, not a resolution — never acknowledge.
     expect(acknowledgeAlert).not.toHaveBeenCalled();
     expect(res).toEqual({ auditId: "audit-1", outcome: "succeeded", acknowledged: false });

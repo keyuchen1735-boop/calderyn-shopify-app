@@ -6,8 +6,9 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { provisionShop } from "./lib/supabase.server";
+import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server";
 import { enqueueShopifyBackfill } from "./lib/ingest/enqueue.server";
+import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -22,6 +23,10 @@ const shopify = shopifyApp({
       try {
         await provisionShop(session.shop);
         await enqueueShopifyBackfill(session.shop);
+        // A fresh login re-surfaces alerts snoozed in a prior session (snooze
+        // hides until +1 day or next login, whichever first). Kept last so it
+        // can never disrupt provisioning/backfill.
+        await resurfaceAllSnoozes(getSupabase(), await resolveShopId(session.shop));
       } catch (err) {
         console.error(
           `[afterAuth] failed to provision/enqueue shop ${session.shop} in Supabase`,

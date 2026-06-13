@@ -262,11 +262,23 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         );
       };
 
-      // snooze: local-only, no API call.
+      // snooze: real deferral. The server flips the alert to 'snoozed' and the
+      // alerts view hides it until it lapses (+1 day) or the next login. Drop it
+      // from the local list to mirror that — it is hidden, not resolved.
       if (kind === "snooze_alert") {
-        markResolved();
-        logAudit(0);
-        toast(`${label} — alert snoozed for 7 days.`, "snooze");
+        try {
+          await client.executeAlertAction(alert.id, { type: kind });
+          setAlerts((as) => as.filter((a) => a.id !== alert.id));
+          // Re-fetch audit so the server's authoritative row replaces our view.
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(`${label} — back tomorrow or at your next login.`, "snooze");
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
         return;
       }
 
