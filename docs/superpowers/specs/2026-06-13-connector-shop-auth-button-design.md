@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-13
 **Branch:** `feat/connector-shop-auth` (worktree)
-**Scope:** the custom Claude.ai MCP connector sign-in only. Do **not** touch the shared general logins (`/auth/login`, `/dashboard/login`).
+**Scope:** the custom Claude.ai MCP connector sign-in, on **both** surfaces — embedded
+(`/oauth/authorize` + new `/oauth/login`) and dashboard (`/dashboard/login` cold path). Leave
+the embedded general login `/auth/login` untouched.
 
 ## Problem
 
@@ -84,15 +86,28 @@ Mirrors `dashboard.login.tsx`'s `__Host-dash_shop` helpers, host-scoped to the a
   (invalid → re-render with error, **no** `Set-Cookie`, **no** redirect). Valid →
   `Set-Cookie: shopHintCookieHeader(shop)` + 302 to `buildAppConnectUrl(...)`.
 
-## Dashboard parity (stated position)
+### 5. `app/routes/dashboard.login.tsx` — dashboard mirror (in scope)
 
-Per CLAUDE.md the connector ships on two surfaces. The dashboard connector path
-(`/dashboard/connect` → `/dashboard/login`) **already** auto-redirects returning merchants via
-the existing `__Host-dash_shop` remembered-shop cookie — so its warm (one-click-equivalent)
-path already matches the new behavior. The user scoped this change to the custom MCP connector
-and explicitly excluded the shared `/dashboard/login` redesign, so we deliberately do **not**
-modify it here. The interstitial's "Prefer the web dashboard?" link is unchanged. This is a
-conscious single-surface change for the *new* affordance, documented here per the parity rule.
+Per CLAUDE.md, `app/routes/dashboard.*` *is* the dashboard code; mirror here using the
+dashboard's own primitives (`cd-card`/`cd-btn`, `dashboard.css`) — **not** Polaris.
+
+Connector flow on the web surface: interstitial "Prefer the web dashboard?" →
+`/dashboard/connect?t=` → (no session) → `/dashboard/login?return_to=/dashboard/connect?t=`.
+
+- **Warm path already exists — unchanged:** `/dashboard/login` auto-redirects to Shopify
+  authorize when it has a shop (`__Host-dash_shop` cookie or `?shop=`) — the one-click
+  equivalent.
+- **Cold path (the mirror):** today `/dashboard/login` with no shop + no cookie renders a
+  dead-end info page (`loginInfoPage`: "Open Calderyn from your Shopify admin"). Replace that
+  *non-errored, no-shop* case with a **shop-entry login form** (the dashboard's "Log in with
+  Shopify" page) styled with `cd-card`/`cd-btn`. The form is `method=GET action=/dashboard/login`
+  with a `shop` field + a hidden `return_to`, so it re-enters the **existing** loader `?shop=`
+  branch — which already validates the shop, sets `__Host-dash_shop`, and 302s to Shopify
+  authorize carrying `return_to`. **No new server logic** — the dead end becomes a real entry.
+  The `errored` case keeps its friendly retry page.
+
+Result: both surfaces match — remembered shop → one click; no cache → a branded shop-entry
+login page instead of a raw inline field (embedded) / a dead end (dashboard).
 
 ## Testing (TDD: red → green)
 
@@ -121,11 +136,21 @@ action invalid `t` → 400.
 no-shop branch renders the "Log in with Shopify" link to `/oauth/login` and **no** shop
 `TextField`.
 
+**Dashboard mirror — extend `dashboard-login-returnto.test.ts`:**
+- NEW: no `?shop=`, no `__Host-dash_shop` cookie, no `error` → 200 HTML containing a shop-entry
+  `<form>` (the new login page), **not** the "Open Calderyn from your Shopify admin" dead end.
+- NEW: that form carries the validated `return_to` (via `safeDashboardReturnTo`) in a hidden
+  field so the `/dashboard/connect?t=` destination survives.
+- REGRESSION (must still pass): `?shop=` valid → 302 to Shopify authorize + `Set-Cookie
+  __Host-dash_shop`; `__Host-dash_shop` cookie present (no `?shop=`) → auto-302; `?error` →
+  the retry page.
+
 ## Out of scope / non-goals
 - No `shopify.server.ts` `afterAuth` or managed `/auth/login` changes (fragile cross-domain
   cookie per existing comments).
 - No "Sign in with Shop" (shop.app) — returns consumer identity, not the store.
-- No changes to `/dashboard/login` / `/auth/login`.
+- No changes to the embedded general login `/auth/login` (the connector cold path is the only
+  login surface touched; the dashboard mirror reuses the existing `/dashboard/login` loader).
 
 ## Pre-commit gate (CLAUDE.md)
 `/code-review` → patch sanity → `npm run typecheck` → `npm run lint` (`--max-warnings=0` on
