@@ -20,6 +20,7 @@ import {
 import { money } from "../format";
 import { CDIcon } from "../icons";
 import { fetchAnalytics, executeCampaignAction, DashboardApiError } from "~/lib/dashboard/client";
+import { sortActiveFirst } from "~/lib/campaign-sort";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM, Platform } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
@@ -313,10 +314,13 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     return <CampaignDetail app={app} c={selected} onBack={() => app.navigate("campaigns")} />;
   }
 
-  const shown = joined
-    .filter((c) => platform === "All" || c.platform === platform)
-    .slice()
-    .sort((a, b) => b.spend_7d - a.spend_7d);
+  // Active campaigns sort to the top; within each status group, highest 7d
+  // spend first. Paused rows still render (dimmed via CampaignRow's data-dim),
+  // just pushed below the active ones.
+  const shown = sortActiveFirst(
+    joined.filter((c) => platform === "All" || c.platform === platform),
+    (a, b) => b.spend_7d - a.spend_7d,
+  );
 
   const totalSpend = joined.reduce((s, c) => s + c.spend_7d, 0);
   const withData = joined.filter((c) => c.spend_7d > 0 && c.status === "active");
