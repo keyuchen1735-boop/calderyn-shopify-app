@@ -88,10 +88,21 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     expect(body).toContain("<form");
     expect(body).toContain('name="shop"');
     expect(body).toContain('action="/dashboard/login"');
-    // The connector destination survives into the form so it resumes after login.
+    // The connector destination survives into the form (in the attribute, not
+    // just prose) so it resumes after login.
     expect(body).toContain('name="return_to"');
-    expect(body).toContain("/dashboard/connect?t=abc");
+    expect(body).toContain('value="/dashboard/connect?t=abc"');
     // No longer the old dead-end copy.
     expect(body).not.toContain("Open Calderyn from your Shopify admin");
+  });
+
+  it("renders the form WITHOUT a hidden return_to when none is given", async () => {
+    const r = (await loader(
+      req("https://app.calderyncompany.com/dashboard/login") as never,
+    )) as Response;
+    expect(r.status).toBe(200);
+    const body = await r.text();
+    expect(body).toContain("<form");
+    expect(body).not.toContain('name="return_to"');
   });
 });
