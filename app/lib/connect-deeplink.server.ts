@@ -25,5 +25,9 @@ export function readShopHintCookie(request: Request): string | null {
 }
 
 export function shopHintCookieHeader(shop: string): string {
+  // Defense-in-depth: callers (/oauth/login) already validate the shop, but the
+  // writer self-guards so a future caller can't emit a cookie with an
+  // unvalidated — or header-injecting — value. Fail loudly (rule 12).
+  if (!SHOP_RE.test(shop)) throw new Error(`shopHintCookieHeader: invalid shop "${shop}"`);
   return `${SHOP_HINT_COOKIE_NAME}=${shop}; Max-Age=${MAX_AGE}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }

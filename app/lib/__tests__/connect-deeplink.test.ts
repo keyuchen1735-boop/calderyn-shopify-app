@@ -59,4 +59,9 @@ describe("__Host-cala_shop cookie helpers", () => {
     });
     expect(readShopHintCookie(req)).toBeNull();
   });
+
+  it("throws rather than emit a cookie for an invalid shop (writer self-guard)", () => {
+    expect(() => shopHintCookieHeader("evil.com")).toThrow();
+    expect(() => shopHintCookieHeader("x; Path=/; Secure")).toThrow();
+  });
 });
