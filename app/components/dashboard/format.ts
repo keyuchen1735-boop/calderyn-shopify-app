@@ -1,5 +1,13 @@
 // Calderyn DashV2 — pure formatters + label maps.
 // Ported verbatim from the prototype's data.js (money/moneyK) and ui.jsx (SEV_STYLE).
+// Evidence label/value formatting delegates to app/lib/labels.ts (the single
+// source of truth shared with the embedded app) so both surfaces show identical
+// plain-language labels instead of raw keys like "cac_per_unit_usd".
+import {
+  formatEvidenceKey,
+  getEvidenceFormatter,
+  INTERNAL_EVIDENCE_ID_KEYS,
+} from "~/lib/labels";
 
 export function money(cents: number): string {
   // Guard non-finite input (null/undefined/NaN coerced from partial live rows)
@@ -63,3 +71,21 @@ export const SEV_STYLE: Record<string, SevStyle> = {
   medium: { fg: "var(--yellow-fg)", label: "Medium" },
   low: { fg: "var(--text-2)", label: "Low" },
 };
+
+const INTERNAL_EVIDENCE_KEYS = new Set<string>(INTERNAL_EVIDENCE_ID_KEYS);
+
+/** Plain-language label for an evidence key ("cac_per_unit_usd" → "Ad cost per sale"). */
+export function evidenceLabel(key: string): string {
+  return formatEvidenceKey(key);
+}
+
+/** Display string for an evidence value ("139.47" → "$139", "0.49" → "49%"). */
+export function evidenceValue(key: string, v: string): string {
+  const fmt = getEvidenceFormatter(key);
+  return fmt ? fmt(v) : v;
+}
+
+/** Raw platform identifiers (GIDs/uuids) are plumbing — never merchant-facing. */
+export function isInternalEvidenceKey(key: string): boolean {
+  return INTERNAL_EVIDENCE_KEYS.has(key);
+}

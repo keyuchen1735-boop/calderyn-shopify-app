@@ -13,7 +13,14 @@ import {
   PlatformMark,
   Placeholder,
 } from "../ui";
-import { money, DETECTOR_TERMS, ACTION_LABELS } from "../format";
+import {
+  money,
+  DETECTOR_TERMS,
+  ACTION_LABELS,
+  evidenceLabel,
+  evidenceValue,
+  isInternalEvidenceKey,
+} from "../format";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM, CampaignVM } from "../view-models";
@@ -146,6 +153,12 @@ function AlertDetail({
     ? app.campaigns.find((c) => c.id === alert.campaign_id) ?? null
     : null;
 
+  // Merchant-facing evidence: drop raw platform IDs and empty values, then map
+  // each key/value through the shared labeler/formatter (see ../format).
+  const evidenceCells = Object.entries(alert.evidence).filter(
+    ([k, v]) => !isInternalEvidenceKey(k) && v != null && v !== "",
+  );
+
   const run = async (kind: ActionKind) => {
     if (busy || resolved) return;
     setAttempted(kind);
@@ -209,16 +222,16 @@ function AlertDetail({
               {alert.narrative}
             </p>
           </Card>
-          {Object.keys(alert.evidence).length > 0 && (
+          {evidenceCells.length > 0 && (
             <Card pad={false}>
               <div className="cd-pad-x cd-pad-t">
                 <h2 className="cd-h2">Evidence</h2>
               </div>
               <div className="cd-evidence">
-                {Object.entries(alert.evidence).map(([k, v]) => (
+                {evidenceCells.map(([k, v]) => (
                   <div key={k} className="cd-evidence-cell">
-                    <div className="cd-caption">{k}</div>
-                    <div className="cd-h3 tabular-nums">{v}</div>
+                    <div className="cd-caption">{evidenceLabel(k)}</div>
+                    <div className="cd-h3 tabular-nums">{evidenceValue(k, v)}</div>
                   </div>
                 ))}
               </div>
