@@ -27,9 +27,9 @@ function render(data: Record<string, unknown>): string {
 }
 
 describe("/oauth/authorize interstitial", () => {
-  it("no shop: renders a 'Log in with Shopify' link to /oauth/login and NO shop field", () => {
+  it("no shop: renders a 'Sign in with Shopify' link to /oauth/login and NO shop field", () => {
     const html = render({ ...BASE, shop: null });
-    expect(html).toContain("Log in with Shopify");
+    expect(html).toContain("Sign in with Shopify");
     expect(html).toContain("https://app.calderyncompany.com/oauth/login?t=tok123");
     expect(html).not.toContain("Enter your shop domain");
     expect(html).not.toContain('name="shop"');
@@ -37,7 +37,7 @@ describe("/oauth/authorize interstitial", () => {
 
   it("known shop: renders the one-click admin button and no login link", () => {
     const html = render({ ...BASE, shop: "myshop.myshopify.com" });
-    expect(html).toContain("Open Calderyn in your Shopify admin");
+    expect(html).toContain("Approve in Shopify admin");
     expect(html).not.toContain("/oauth/login?t=");
   });
 });
