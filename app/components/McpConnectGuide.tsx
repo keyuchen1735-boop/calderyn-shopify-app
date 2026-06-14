@@ -33,11 +33,15 @@ const STEP_ICON: Record<GuideIcon, typeof SettingsIcon> = {
   signin: KeyIcon,
 };
 
+// Calderyn brand accent (the hexagon mark's teal). Polaris Box can't take a
+// brand color, so the hero + step badge use it via inline style.
+const BRAND_TEAL = "#24556E";
+
 function Hero() {
   return (
     <div
       style={{
-        background: "#24556E",
+        background: BRAND_TEAL,
         borderRadius: "12px",
         padding: "28px 24px",
         color: "#fff",
@@ -84,7 +88,7 @@ export function McpConnectGuide({
     <BlockStack gap="400">
       <Hero />
 
-      <ButtonGroup>
+      <ButtonGroup variant="segmented">
         {GUIDE_TABS.map((t) => (
           <Button key={t.id} pressed={tab === t.id} onClick={() => setTab(t.id)}>
             {t.label}
@@ -102,7 +106,7 @@ export function McpConnectGuide({
                   width: 28,
                   height: 28,
                   borderRadius: 999,
-                  background: "#24556E",
+                  background: BRAND_TEAL,
                   color: "#fff",
                   display: "inline-flex",
                   alignItems: "center",
