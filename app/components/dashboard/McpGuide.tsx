@@ -31,10 +31,13 @@ function CopyChip({ text, label }: { text: string; label: string }) {
       <button
         type="button"
         className="cd-btn cd-btn-secondary cd-mcp-copy"
-        aria-label={label}
+        aria-label={copied ? "Copied" : label}
         onClick={() => {
           void navigator.clipboard?.writeText(text);
           setCopied(true);
+          // Reset the ✓ so the chip stays re-copyable (React 18 ignores the
+          // late setState if the component has unmounted).
+          setTimeout(() => setCopied(false), 1500);
         }}
       >
         <CDIcon name={copied ? "check" : "doc"} size={15} />
