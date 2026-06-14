@@ -36,6 +36,15 @@ describe("safeDashboardReturnTo", () => {
     expect(safeDashboardReturnTo("/other/path")).toBeNull();
     expect(safeDashboardReturnTo(null)).toBeNull();
   });
+
+  it("rejects control characters (CRLF header-injection guard)", () => {
+    const LF = String.fromCharCode(10), CR = String.fromCharCode(13), TAB = String.fromCharCode(9);
+    expect(safeDashboardReturnTo("/dashboard/connect" + LF + "X-Evil: 1")).toBeNull();
+    expect(safeDashboardReturnTo("/dashboard/connect" + CR + LF + "Set-Cookie: a=b")).toBeNull();
+    expect(safeDashboardReturnTo("/dashboard/x" + TAB)).toBeNull();
+    // a plain space is NOT a control char - still allowed.
+    expect(safeDashboardReturnTo("/dashboard/a b")).toBe("/dashboard/a b");
+  });
 });
 
 describe("/dashboard/login carries a validated return_to into the state cookie", () => {

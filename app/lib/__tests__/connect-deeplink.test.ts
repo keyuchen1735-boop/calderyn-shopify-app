@@ -30,6 +30,12 @@ describe("buildAppConnectUrl", () => {
       "https://app.calderyncompany.com/app/connect?t=tok%20123",
     );
   });
+
+  it("lowercases the handle even when SHOP_RE accepted a mixed-case shop", () => {
+    expect(buildAppConnectUrl({ ...base, shop: "MyStore.myshopify.com" })).toBe(
+      "https://admin.shopify.com/store/mystore/apps/apikey123/app/connect?t=tok%20123",
+    );
+  });
 });
 
 describe("__Host-cala_shop cookie helpers", () => {

@@ -21,7 +21,9 @@ export interface BuildConnectUrlOpts {
 export function buildAppConnectUrl({ shop, apiKey, appUrl, token }: BuildConnectUrlOpts): string {
   const t = encodeURIComponent(token);
   if (shop && SHOP_RE.test(shop) && apiKey) {
-    const handle = shop.replace(/\.myshopify\.com$/i, "");
+    // SHOP_RE is case-insensitive, but admin.shopify.com store handles are
+    // lowercase — normalize so a mixed-case shop can't yield a 404 deep link.
+    const handle = shop.replace(/\.myshopify\.com$/i, "").toLowerCase();
     return `https://admin.shopify.com/store/${handle}/apps/${apiKey}/app/connect?t=${t}`;
   }
   return `${appUrl}/app/connect?t=${t}`;
