@@ -216,7 +216,7 @@ export default function McpTokens() {
           </Banner>
         )}
 
-        <McpConnectCards />
+        <McpConnectCards onSetup={() => navigate("/app/settings")} />
 
         <Layout>
           <Layout.Section>
