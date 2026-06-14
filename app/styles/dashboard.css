@@ -583,3 +583,38 @@
   .cd-mediadrop-meta span { font-size: calc(12px * var(--type-scale)); color: var(--text-2); }
   .cd-mediadrop-meta u { text-underline-offset: 2px; }
   .cd-mediadrop-err { margin: 0; font-size: calc(12px * var(--type-scale)); color: var(--red); }
+
+/* Claude connector install guide (Settings → Claude connector) */
+.cd-mcp { display: flex; flex-direction: column; gap: 16px; }
+.cd-mcp-hero {
+  background: var(--accent); color: #fff; border-radius: 14px;
+  padding: 26px 22px; text-align: center;
+}
+.cd-mcp-hero-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 52px; height: 52px; border-radius: 13px; background: #fff; margin-bottom: 10px;
+}
+.cd-mcp-hero-title { font-size: 19px; font-weight: 680; letter-spacing: -0.01em; }
+.cd-mcp-hero-sub { font-size: 13px; opacity: 0.86; margin-top: 4px; max-width: 42ch; margin-inline: auto; }
+.cd-mcp-steps { display: flex; flex-direction: column; gap: 14px; }
+.cd-mcp-step { display: flex; gap: 12px; align-items: flex-start; }
+.cd-mcp-badge {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cd-mcp-step-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.cd-mcp-step-title { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 14px; }
+.cd-mcp-step-title svg { color: var(--accent); }
+.cd-mcp-chip {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  background: var(--accent-bg); border: 1px solid rgba(120, 120, 128, 0.2);
+  border-radius: 9px; padding: 7px 8px 7px 11px;
+}
+.cd-mcp-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  overflow-x: auto; white-space: nowrap; flex: 1;
+}
+.cd-mcp-copy { flex: 0 0 auto; padding: 5px 8px; }
+.cd-mcp-cli { display: flex; flex-direction: column; gap: 8px; }
+.cd-mcp-foot { padding-top: 2px; }

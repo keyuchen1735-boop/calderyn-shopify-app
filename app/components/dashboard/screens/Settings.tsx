@@ -15,6 +15,7 @@ import { putConsent, putGuardrails, DashboardApiError } from "~/lib/dashboard/cl
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
+import { McpGuide } from "../McpGuide";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -321,6 +322,11 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             })
           )}
         </Card>
+      </section>
+
+      <section>
+        <SectionTitle>Claude connector</SectionTitle>
+        <McpGuide />
       </section>
     </div>
   );
