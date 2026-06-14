@@ -36,6 +36,15 @@ describe("safeDashboardReturnTo", () => {
     expect(safeDashboardReturnTo("/other/path")).toBeNull();
     expect(safeDashboardReturnTo(null)).toBeNull();
   });
+
+  it("rejects control characters (CRLF header-injection guard)", () => {
+    const LF = String.fromCharCode(10), CR = String.fromCharCode(13), TAB = String.fromCharCode(9);
+    expect(safeDashboardReturnTo("/dashboard/connect" + LF + "X-Evil: 1")).toBeNull();
+    expect(safeDashboardReturnTo("/dashboard/connect" + CR + LF + "Set-Cookie: a=b")).toBeNull();
+    expect(safeDashboardReturnTo("/dashboard/x" + TAB)).toBeNull();
+    // a plain space is NOT a control char - still allowed.
+    expect(safeDashboardReturnTo("/dashboard/a b")).toBe("/dashboard/a b");
+  });
 });
 
 describe("/dashboard/login carries a validated return_to into the state cookie", () => {
@@ -74,5 +83,35 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     const cookie = r.headers.get("set-cookie") ?? "";
     expect(cookie).toContain("dash_oauth=");
     expect(cookie).not.toContain("evil.example");
+  });
+
+  it("renders a shop-entry form (not a dead end) when there is no shop and no cookie", async () => {
+    const r = (await loader(
+      req(
+        "https://app.calderyncompany.com/dashboard/login?return_to=%2Fdashboard%2Fconnect%3Ft%3Dabc",
+      ) as never,
+    )) as Response;
+    expect(r.status).toBe(200);
+    expect(r.headers.get("Content-Type")).toContain("text/html");
+    const body = await r.text();
+    expect(body).toContain("<form");
+    expect(body).toContain('name="shop"');
+    expect(body).toContain('action="/dashboard/login"');
+    // The connector destination survives into the form (in the attribute, not
+    // just prose) so it resumes after login.
+    expect(body).toContain('name="return_to"');
+    expect(body).toContain('value="/dashboard/connect?t=abc"');
+    // No longer the old dead-end copy.
+    expect(body).not.toContain("Open Calderyn from your Shopify admin");
+  });
+
+  it("renders the form WITHOUT a hidden return_to when none is given", async () => {
+    const r = (await loader(
+      req("https://app.calderyncompany.com/dashboard/login") as never,
+    )) as Response;
+    expect(r.status).toBe(200);
+    const body = await r.text();
+    expect(body).toContain("<form");
+    expect(body).not.toContain('name="return_to"');
   });
 });

@@ -40,11 +40,15 @@ function readShopHint(request: Request): string | null {
 
 // Only same-origin dashboard paths may be carried through the OAuth round-trip,
 // so a crafted ?return_to= can't turn login into an open redirect. Rejects
-// absolute URLs, protocol-relative (`//host`), and backslash tricks.
+// absolute URLs, protocol-relative (`//host`), backslash tricks, and control
+// chars — a CR/LF survives the round-trip into the callback's Location header
+// (CRLF injection / response splitting / a 500 when the runtime rejects it).
 export function safeDashboardReturnTo(raw: string | null): string | null {
   if (!raw) return null;
   if (!raw.startsWith("/dashboard/")) return null;
   if (raw.startsWith("//") || raw.includes("\\") || raw.includes("://")) return null;
+  // eslint-disable-next-line no-control-regex -- intentionally matching control chars
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return null;
   return raw;
 }
 
@@ -59,6 +63,22 @@ function loginInfoPage(shop: string | null, errored: boolean): Response {
     ? "We couldn't complete sign-in."
     : "Open Calderyn from your Shopify admin to sign in.";
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Calderyn — Sign in</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;color:#1a1a1a}h1{font-size:1.25rem}a{color:#5b3df5}</style></head><body><h1>Calderyn dashboard</h1><p>${lead}</p><p>From your store admin, open the Calderyn app and choose <strong>Open dashboard</strong>.</p>${retry}</body></html>`;
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+// Cold-path shop entry: when we have no shop and no remembered cookie, ask for it
+// here (the dashboard's "Log in with Shopify" page) instead of dead-ending. The
+// form GETs back into THIS loader's ?shop= branch, which validates the shop, sets
+// __Host-dash_shop, and 302s to Shopify authorize carrying return_to. Inline-styled
+// to match loginInfoPage (shown pre-auth, outside the dashboard shell).
+function loginFormPage(returnTo: string | null): Response {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const hidden = returnTo ? `<input type="hidden" name="return_to" value="${esc(returnTo)}">` : "";
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Calderyn — Sign in</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;color:#1a1a1a}h1{font-size:1.25rem}label{display:block;font-weight:600;margin:0 0 .5rem}input[name=shop]{width:100%;padding:.6rem .75rem;font-size:1rem;border:1px solid #cbd2e0;border-radius:.5rem;box-sizing:border-box}button{margin-top:1rem;padding:.6rem 1rem;font-size:1rem;font-weight:600;color:#fff;background:#5b3df5;border:0;border-radius:.5rem;cursor:pointer}p{color:#4a4a4a}</style></head><body><h1>Calderyn dashboard</h1><p>Enter your Shopify store to sign in and approve the connection.</p><form method="get" action="/dashboard/login"><label for="shop">Store domain</label><input id="shop" name="shop" type="text" required placeholder="example.myshopify.com" pattern="[A-Za-z0-9][A-Za-z0-9-]*\\.[Mm][Yy][Ss][Hh][Oo][Pp][Ii][Ff][Yy]\\.[Cc][Oo][Mm]" autocomplete="on">${hidden}<button type="submit">Log in with Shopify</button></form></body></html>`;
   return new Response(body, {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
@@ -88,8 +108,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     shop = readShopHint(request);
   }
 
-  if (!shop || errored) {
-    return loginInfoPage(shop, errored);
+  if (errored) {
+    return loginInfoPage(shop, true);
+  }
+  if (!shop) {
+    return loginFormPage(safeDashboardReturnTo(url.searchParams.get("return_to")));
   }
 
   const state = randomBytes(16).toString("hex");

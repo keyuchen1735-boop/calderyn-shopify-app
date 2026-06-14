@@ -8,7 +8,7 @@
 // authenticated consent route (/app/connect?t=<jwt>). Consent + code issuance
 // happen there, bound to the merchant's authenticated session shop — which is
 // what closes the pre-seed High. No DB row, no cookie, no /app auto-route.
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
@@ -17,18 +17,16 @@ import {
   BlockStack,
   Button,
   Card,
-  FormLayout,
   Page,
   Text,
-  TextField,
 } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { getClient, signPendingOauth } from "~/lib/mcp_oauth.server";
+import { buildAppConnectUrl, SHOP_RE } from "~/lib/connect-deeplink";
+import { readShopHintCookie } from "~/lib/connect-deeplink.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
-
-const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 interface AuthorizeParams {
   response_type: string;
@@ -108,7 +106,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // routes ALWAYS issue against the authenticated session shop. The `?shop=`
   // hint below is used only to build a nicer deep link, never put in the token.
   const shopHint = url.searchParams.get("shop")?.toLowerCase();
-  const validShop = shopHint && SHOP_RE.test(shopHint) ? shopHint : null;
+  const hintShop = shopHint && SHOP_RE.test(shopHint) ? shopHint : null;
+  // Fall back to the remembered shop (written by /oauth/login on this same
+  // origin). READ ONLY: /oauth/authorize must never Set-Cookie — that no-pre-seed
+  // rule is the PR #107 invariant.
+  const validShop = hintShop ?? readShopHintCookie(request);
   const jwt = await signPendingOauth({
     client_id: params.client_id,
     redirect_uri: params.redirect_uri,
@@ -138,26 +140,15 @@ type InterstitialData = {
   shop: string | null;
 };
 
-// The connect route lives inside the embedded admin. When we know the shop, an
-// admin.shopify.com deep link is the most reliable carrier — Shopify admin
-// preserves its own URLs through login, so the ?t= token survives an
-// unauthenticated landing. Otherwise we fall back to the app URL and let the
-// app's standard auth resolve the shop.
-function buildConnectUrl(data: InterstitialData, shop: string | null): string {
-  const t = encodeURIComponent(data.token);
-  if (shop && SHOP_RE.test(shop) && data.apiKey) {
-    const handle = shop.replace(/\.myshopify\.com$/i, "");
-    return `https://admin.shopify.com/store/${handle}/apps/${data.apiKey}/app/connect?t=${t}`;
-  }
-  return `${data.appUrl}/app/connect?t=${t}`;
-}
-
 export default function AuthorizeInterstitial() {
   const data = useLoaderData<typeof loader>() as InterstitialData;
-  const [shop, setShop] = useState("");
 
   const knownShop = data.shop;
-  const directUrl = useMemo(() => buildConnectUrl(data, knownShop), [data, knownShop]);
+  const directUrl = useMemo(
+    () => buildAppConnectUrl({ shop: knownShop, apiKey: data.apiKey, appUrl: data.appUrl, token: data.token }),
+    [data, knownShop],
+  );
+  const loginUrl = `${data.appUrl}/oauth/login?t=${encodeURIComponent(data.token)}`;
   const dashboardUrl = `${data.dashboardUrl}/dashboard/connect?t=${encodeURIComponent(data.token)}`;
 
   const go = (target: string) => {
@@ -186,27 +177,9 @@ export default function AuthorizeInterstitial() {
                 Open Calderyn in your Shopify admin to approve
               </Button>
             ) : (
-              <FormLayout>
-                <Text as="p" variant="bodyMd">
-                  Enter your shop domain to open the approval screen in your admin.
-                </Text>
-                <TextField
-                  type="text"
-                  name="shop"
-                  label="Shop domain"
-                  helpText="example.myshopify.com"
-                  value={shop}
-                  onChange={setShop}
-                  autoComplete="on"
-                />
-                <Button
-                  variant="primary"
-                  disabled={!SHOP_RE.test(shop.trim().toLowerCase())}
-                  onClick={() => go(buildConnectUrl(data, shop.trim().toLowerCase()))}
-                >
-                  Continue
-                </Button>
-              </FormLayout>
+              <Button variant="primary" url={loginUrl}>
+                Log in with Shopify
+              </Button>
             )}
             <Text as="p" variant="bodySm" tone="subdued">
               Prefer the web dashboard?{" "}

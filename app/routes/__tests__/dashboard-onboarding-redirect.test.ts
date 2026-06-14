@@ -10,14 +10,12 @@ const {
   campaignsListSpy,
   guardrailsGetSpy,
   getStateSpy,
-  getPendingOauthSpy,
 } = vi.hoisted(() => ({
   alertsListSpy: vi.fn(),
   auditListSpy: vi.fn(),
   campaignsListSpy: vi.fn(),
   guardrailsGetSpy: vi.fn(),
   getStateSpy: vi.fn(),
-  getPendingOauthSpy: vi.fn(),
 }));
 
 // Importing the route module pulls its UI imports; stub them so no real UI lib
@@ -68,13 +66,6 @@ vi.mock("~/lib/calderyn.server", () => ({
   }),
 }));
 
-vi.mock("~/lib/mcp_oauth.server", () => ({
-  PENDING_COOKIE_NAME: "cdn_pending_oauth",
-  getPendingOauth: (...a: unknown[]) => getPendingOauthSpy(...a),
-  verifyPendingOauth: vi.fn(),
-  signConsentAuth: vi.fn(),
-}));
-
 function callLoader(url = "http://localhost/app?shop=acme.myshopify.com&host=abc&embedded=1") {
   return loader({ request: new Request(url) } as unknown as LoaderFunctionArgs);
 }
@@ -85,8 +76,6 @@ beforeEach(() => {
     spy.mockResolvedValue([]);
   }
   guardrailsGetSpy.mockResolvedValue(null);
-  getPendingOauthSpy.mockReset();
-  getPendingOauthSpy.mockResolvedValue(null);
 });
 
 describe("dashboard loader — onboarding redirect (no client-side flash)", () => {
@@ -152,20 +141,5 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
 
     expect(res.status).toBe(200);
     expect(body.error).toEqual({ code: "ERROR", message: "alerts query failed" });
-  });
-
-  it("lets the Claude.ai pending-OAuth handoff take priority over the onboarding redirect", async () => {
-    getPendingOauthSpy.mockResolvedValue({ shop: "acme.myshopify.com" });
-    getStateSpy.mockResolvedValue({ step: 1, done: false });
-
-    // The handoff RETURNS its redirect (vs. the onboarding path which throws),
-    // so it resolves rather than rejects.
-    const res = (await callLoader()) as Response;
-
-    expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toContain("/oauth/consent");
-    // Onboarding state is never consulted when a handoff is pending.
-    expect(getStateSpy).not.toHaveBeenCalled();
   });
 });
