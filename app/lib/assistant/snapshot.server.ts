@@ -8,10 +8,14 @@ function dollars(cents: number): string {
 
 /** A compact, cheap-to-tokenize snapshot of the shop's open state for the system prompt. */
 export async function buildSnapshot(client: CalderynClient): Promise<string> {
+  // Best-effort: this is background context, not the answer. One source erroring
+  // (a provider outage surfacing as a CalderynError) must not fail the whole
+  // turn — the user's message has already been persisted. Degrade to empty.
+  const settle = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
   const [alerts, campaigns, skus] = await Promise.all([
-    client.alerts.list({ status: "open" }),
-    client.campaigns.list(),
-    client.skus.list(),
+    settle(client.alerts.list({ status: "open" })),
+    settle(client.campaigns.list()),
+    settle(client.skus.list()),
   ]);
 
   const bySeverity: Record<string, number> = {};
