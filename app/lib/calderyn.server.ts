@@ -73,6 +73,7 @@ const ONBOARDING_STEPS = [
   "guardrails",
   "google",
   "meta",
+  "tiktok",
   "quickbooks",
   "creative_mapping",
   "consent",

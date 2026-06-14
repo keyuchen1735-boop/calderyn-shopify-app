@@ -233,8 +233,8 @@ describe("onboarding action — finish and unknown intents", () => {
   it("marks onboarding complete and redirects to the dashboard", async () => {
     const res = await callAction(postRequest({ intent: "finish" }));
 
-    // 8 steps total; the client clamps to the final "complete" step server-side.
-    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    // 9 steps total; the client clamps to the final "complete" step server-side.
+    expect(advanceSpy).toHaveBeenCalledWith(9, expect.anything());
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/app");
   });

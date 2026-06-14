@@ -44,6 +44,7 @@ const STEPS = [
   { key: "guardrails", label: "Guardrails" },
   { key: "google", label: "Google Ads (optional)" },
   { key: "meta", label: "Meta Ads (optional)" },
+  { key: "tiktok", label: "TikTok Ads (optional)" },
   { key: "quickbooks", label: "QuickBooks (optional)" },
   { key: "creative", label: "Creative mapping" },
   { key: "consent", label: "Consent" },
@@ -268,7 +269,7 @@ export default function Onboarding() {
               submitting={submitting}
             />
           )}
-          {(key === "google" || key === "meta" || key === "quickbooks") && (
+          {(key === "google" || key === "meta" || key === "tiktok" || key === "quickbooks") && (
             <OAuthStep
               provider={key}
               connected={providerPaired(integrations, key)}
@@ -531,7 +532,13 @@ function OAuthStep({
       <Box padding="300" background="bg-surface-secondary" borderRadius="200">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="p" fontWeight="semibold">
-            {provider === "google" ? "Google Ads" : provider === "meta" ? "Meta Ads" : "QuickBooks Online"}
+            {provider === "google"
+              ? "Google Ads"
+              : provider === "meta"
+                ? "Meta Ads"
+                : provider === "tiktok"
+                  ? "TikTok Ads"
+                  : "QuickBooks Online"}
           </Text>
           {connected ? (
             <Badge tone="success">Connected</Badge>
