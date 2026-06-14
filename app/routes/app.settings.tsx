@@ -49,6 +49,7 @@ import {
   kindToProvider,
 } from "~/lib/integrations";
 import { GuardrailMeter } from "~/components/calderyn";
+import { McpConnectGuide } from "~/components/McpConnectGuide";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
 type LoaderPayload = {
@@ -330,6 +331,16 @@ export default function Settings() {
                 </Card>
               )}
             </BlockStack>
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="claude-connector"
+            title="Claude connector"
+            description="Connect Claude (or Claude Code) to read your store over MCP."
+          >
+            <Card>
+              <McpConnectGuide onManage={() => navigate("/app/mcp")} />
+            </Card>
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
