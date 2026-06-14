@@ -37,6 +37,7 @@ import type {
 } from "./view-models";
 
 import AssistantPanel from "./AssistantPanel";
+import BugReportButton from "./BugReportButton";
 import ScreenDashboard from "./screens/Dashboard";
 import ScreenAlerts from "./screens/Alerts";
 import ScreenCampaigns from "./screens/Campaigns";
@@ -480,6 +481,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       </main>
 
       <AssistantPanel app={app} />
+      <BugReportButton app={app} />
 
       <ToastHost toasts={toasts} />
 
