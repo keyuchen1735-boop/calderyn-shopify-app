@@ -70,6 +70,18 @@ export function moneyK(cents: number): string {
   return money(cents);
 }
 
+/**
+ * Blended ROAS label (revenue ÷ spend) for the chart tooltip. Returns "—" when
+ * spend is zero/non-finite so a zero-spend day (organic sales, pre-launch)
+ * renders an em dash instead of "Infinity×" / "NaN×".
+ */
+export function blendedRoas(revenueCents: number, spendCents: number): string {
+  if (!Number.isFinite(revenueCents) || !Number.isFinite(spendCents) || spendCents <= 0) {
+    return "—";
+  }
+  return `${(revenueCents / spendCents).toFixed(1)}×`;
+}
+
 export const ACTION_LABELS: Record<string, string> = {
   pause_campaign: "Pause campaign",
   reduce_campaign_budget: "Reduce budget",

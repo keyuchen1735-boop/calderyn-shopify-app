@@ -168,6 +168,12 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
   const landingSite = p.landing_site ?? null;
   const referringSite = p.referring_site ?? null;
   const { utm, clickIds } = parseLandingSite(landingSite);
+  // Fail loudly on a missing id rather than coercing to the string "undefined",
+  // which would collapse every malformed order/line onto one sentinel external
+  // id and silently overwrite real rows. Shopify always sends this field.
+  if (!p.admin_graphql_api_id) {
+    throw new Error("orders webhook missing admin_graphql_api_id");
+  }
   const order: ParsedOrderHeader = {
     external_id: String(p.admin_graphql_api_id),
     order_number: String(p.name),
@@ -189,6 +195,9 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
     utm_term: utm.utm_term ?? null,
   };
   const lines: OrderLineRow[] = (p.line_items ?? []).map((ln) => {
+    if (!ln.admin_graphql_api_id) {
+      throw new Error("orders webhook line item missing admin_graphql_api_id");
+    }
     const priceCents = moneyToCents(ln.price);
     return {
       sku_external_id: ln.variant_id ? `gid://shopify/ProductVariant/${ln.variant_id}` : null,

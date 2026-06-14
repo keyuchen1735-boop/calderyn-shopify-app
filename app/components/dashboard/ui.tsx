@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { money, moneyK, SEV_STYLE } from "./format";
+import { blendedRoas, money, moneyK, SEV_STYLE } from "./format";
 import { CDIcon } from "./icons";
 import { PlatformIcon } from "../PlatformIcon";
 import type { DailyRow, Severity, Grade, Platform, Toast } from "./view-models";
@@ -378,8 +378,12 @@ export function AreaChart({
     padB = 22;
   const innerW = w - padL - padR,
     innerH = height - padT - padB;
-  const maxV = Math.max(...rows.map((r) => r.revenue_cents)) * 1.08;
-  const x = (i: number) => padL + (i / (rows.length - 1)) * innerW;
+  // Floor the divisors: an all-zero-revenue series would make maxV 0 (every
+  // y() → NaN) and a single-point series would make length-1 0 (every x → NaN),
+  // poisoning the SVG path coordinates.
+  const maxV = Math.max(1, ...rows.map((r) => r.revenue_cents)) * 1.08;
+  const span = Math.max(1, rows.length - 1);
+  const x = (i: number) => padL + (i / span) * innerW;
   const y = (v: number) => padT + innerH - (v / maxV) * innerH;
   const line = (key: "revenue_cents" | "spend_cents") =>
     rows.map((r, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(r[key]).toFixed(1)).join(" ");
@@ -492,7 +496,7 @@ export function AreaChart({
           <div className="flex items-center gap-2 cd-caption">
             Blended ROAS{" "}
             <b className="ml-auto tabular-nums" style={{ color: "var(--text-1)" }}>
-              {(h.revenue_cents / h.spend_cents).toFixed(1)}×
+              {blendedRoas(h.revenue_cents, h.spend_cents)}
             </b>
           </div>
         </div>
