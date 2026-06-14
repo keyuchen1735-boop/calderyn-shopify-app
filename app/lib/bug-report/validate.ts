@@ -60,7 +60,7 @@ export function validateBugReportInput(raw: {
       return { ok: false, code: "FILE_TOO_LARGE", message: "Each image must be 5 MB or smaller." };
     }
     const ext = a.filename.split(".").pop()?.toLowerCase() ?? "";
-    const typeOk = (ALLOWED_IMAGE_TYPES as readonly string[]).includes(a.contentType);
+    const typeOk = (ALLOWED_IMAGE_TYPES as readonly string[]).includes(a.contentType.toLowerCase());
     const extOk = ALLOWED_EXTENSIONS.includes(ext);
     if (!typeOk || !extOk) {
       return { ok: false, code: "UNSUPPORTED_FILE", message: "Only PNG, JPG, GIF, or WebP images." };

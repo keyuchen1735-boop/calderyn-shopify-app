@@ -64,4 +64,10 @@ describe("validateBugReportInput", () => {
     ];
     expect(validateBugReportInput({ ...ok, attachments: atts })).toMatchObject({ ok: true });
   });
+
+  it("accepts an uppercased content-type (normalizes case)", () => {
+    expect(
+      validateBugReportInput({ ...ok, attachments: [img({ filename: "a.png", contentType: "Image/PNG" })] }),
+    ).toMatchObject({ ok: true });
+  });
 });
