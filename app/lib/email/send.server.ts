@@ -1,9 +1,16 @@
-// app/lib/github-digest/deliver.server.ts
+// app/lib/email/send.server.ts
 //
-// Email delivery for the daily digest via the Resend REST API (no SDK dep —
-// one `fetch` to https://api.resend.com/emails). Returns a structured result;
-// it never throws, so the caller can record a delivery failure in the cron
-// summary and surface it (rule 12) rather than 500-ing the whole route opaquely.
+// Generic transactional email via the Resend REST API (no SDK — one `fetch` to
+// https://api.resend.com/emails). Extracted from github-digest/deliver.server.ts
+// so multiple features (digest, bug reports) share one sender. Never throws;
+// returns a structured result so callers can record a delivery failure (rule 12).
+
+export interface EmailAttachment {
+  filename: string;
+  /** base64-encoded file content */
+  content: string;
+  contentType?: string;
+}
 
 export interface DeliveryResult {
   sent: boolean;
@@ -15,25 +22,34 @@ interface ResendOk {
   id: string;
 }
 
-export async function deliverEmail(opts: {
+export async function sendEmail(opts: {
   apiKey: string;
   from: string;
-  to: string;
+  to: string | string[];
   cc?: string[];
+  replyTo?: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: EmailAttachment[];
 }): Promise<DeliveryResult> {
   try {
     const payload: Record<string, unknown> = {
       from: opts.from,
-      to: [opts.to],
+      to: Array.isArray(opts.to) ? opts.to : [opts.to],
       subject: opts.subject,
       text: opts.text,
     };
     if (opts.cc && opts.cc.length) payload.cc = opts.cc;
-    // html is preferred by clients that support it; text remains the fallback part.
+    if (opts.replyTo) payload.reply_to = opts.replyTo;
     if (opts.html) payload.html = opts.html;
+    if (opts.attachments && opts.attachments.length) {
+      payload.attachments = opts.attachments.map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        ...(a.contentType ? { content_type: a.contentType } : {}),
+      }));
+    }
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
