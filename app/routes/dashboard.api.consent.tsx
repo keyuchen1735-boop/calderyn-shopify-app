@@ -28,6 +28,10 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   if (typeof body.consent !== "boolean") return jsonError(422, "invalid_consent");
 
-  await calderynClient(session.shopDomain).consent.set(body.consent);
-  return dashboardJson(async () => ({ consent: body.consent as boolean }));
+  // Keep the write inside dashboardJson so a Supabase failure returns the
+  // structured {error} envelope the client parses, not a raw 500.
+  return dashboardJson(async () => {
+    await calderynClient(session.shopDomain).consent.set(body.consent as boolean);
+    return { consent: body.consent as boolean };
+  });
 }

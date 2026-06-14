@@ -411,6 +411,17 @@ describe("PUT /dashboard/api/consent", () => {
     })) as Response;
     expect(res.status).toBe(405);
   });
+
+  it("returns a 500 JSON envelope when the write throws, not a raw rejection", async () => {
+    consentSet.mockRejectedValueOnce(new Error("supabase down"));
+    const res = (await consentAction({
+      request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("internal_error");
+  });
 });
 
 describe("POST /dashboard/api/audit/:id/undo", () => {

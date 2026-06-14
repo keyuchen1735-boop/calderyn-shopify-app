@@ -19,6 +19,7 @@ import {
   useTweaks,
 } from "./tweaks-panel";
 import { useLiveFeed } from "./live";
+import { applyUndo } from "./undo";
 import type {
   ActionKind,
   DashboardCtx,
@@ -359,12 +360,10 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const undoAction = useCallback(
     async (entry: AuditVM) => {
       try {
-        await client.undoAudit(entry.id);
-        setAudit((au) =>
-          au.map((a) =>
-            a.id === entry.id ? { ...a, undo_eligible: false, post: "Reverted" } : a,
-          ),
-        );
+        const { auditId } = await client.undoAudit(entry.id);
+        // Insert the undo row (with the server's id) so the "Recovered" total
+        // claws this action's dollars back immediately, not 15s later.
+        setAudit((au) => applyUndo(au, entry, auditId));
         toast("Action undone — previous state restored.", "undo");
       } catch (err) {
         const msg = err instanceof DashboardApiError ? err.message : "Undo failed.";
