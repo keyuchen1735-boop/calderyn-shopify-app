@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Form, useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
@@ -42,7 +42,6 @@ type LoaderPayload = {
   audit: AuditEntry[];
   campaigns: Campaign[];
   guardrails: GuardrailConfig | null;
-  onboardingDone: boolean;
   error: { code: string; message: string } | null;
   dashboardLoginUrl: string;
   // Recovered impact over the trailing 7 days — windowed server-side so the
@@ -54,6 +53,9 @@ const RECOVERED_WINDOW_DAYS = 7;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  // Carried onto the onboarding redirect below so the embedded iframe keeps its
+  // shop/host/embedded params and can re-authenticate on the document request.
+  const url = new URL(request.url);
 
   // Pending-OAuth handoff: if a Claude.ai connector flow stashed state for this
   // shop before sending the merchant through Shopify auth, jump them to
@@ -101,6 +103,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.guardrails.get(request.signal),
       client.onboarding.getState(request.signal),
     ]);
+    // Redirect a not-yet-onboarded merchant server-side, before any dashboard
+    // markup renders — the old client-side useEffect bump flashed the empty
+    // dashboard first. url.search preserves shop/host/embedded so the embedded
+    // document request authenticates. Only the loader-success path redirects:
+    // on a data-load error we render the dashboard with its error banner rather
+    // than risk an onboarding<->dashboard bounce if getState is also failing.
+    if (!onboarding.done) {
+      throw redirect(`/app/onboarding${url.search}`);
+    }
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
@@ -109,19 +120,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       audit,
       campaigns,
       guardrails,
-      onboardingDone: onboarding.done,
       error: null,
       dashboardLoginUrl,
       recovered7d: recoveredWithin(audit, sinceIso),
     });
   } catch (err) {
+    // The onboarding redirect (and any auth bounce) is a thrown Response — let
+    // it propagate instead of being misread as a data-load failure.
+    if (err instanceof Response) throw err;
     const e = err as CalderynError;
     return json<LoaderPayload>({
       alerts: [],
       audit: [],
       campaigns: [],
       guardrails: null,
-      onboardingDone: true,
       error: { code: e.code ?? "ERROR", message: e.message },
       dashboardLoginUrl,
       recovered7d: { cents: 0, count: 0 },
@@ -136,16 +148,11 @@ export default function Dashboard() {
     audit,
     campaigns,
     guardrails,
-    onboardingDone,
     error,
     dashboardLoginUrl,
     recovered7d,
   } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
-
-  useEffect(() => {
-    if (!onboardingDone) navigate("/app/onboarding");
-  }, [onboardingDone, navigate]);
 
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");
