@@ -18,7 +18,7 @@
 import { collectActivity } from "./collect.server";
 import { collectWaitlistSignups } from "./waitlist.server";
 import { summarize } from "./summarize.server";
-import { deliverEmail, type DeliveryResult } from "./deliver.server";
+import { sendEmail, type DeliveryResult } from "~/lib/email/send.server";
 
 const DEFAULT_REPO = "keyuchen1735-boop/calderyn-shopify-app";
 const DEFAULT_TO = "kennethlee@calderyncompany.com";
@@ -113,7 +113,7 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
     const missing = [!apiKey && "RESEND_API_KEY", !from && "DIGEST_FROM"].filter(Boolean).join(", ");
     delivery = { sent: false, error: `email not configured (${missing})` };
   } else {
-    delivery = await deliverEmail({
+    delivery = await sendEmail({
       apiKey,
       from,
       to,

@@ -584,6 +584,44 @@
   .cd-mediadrop-meta u { text-underline-offset: 2px; }
   .cd-mediadrop-err { margin: 0; font-size: calc(12px * var(--type-scale)); color: var(--red); }
 
+  /* ============ report-a-bug ============ */
+  /* Launcher stacks above the Ask Calderyn launcher (which sits at bottom:84px). */
+  .cd-bug-launcher {
+    position: fixed; right: 20px; bottom: 140px; z-index: 59;
+    display: inline-flex; align-items: center; gap: 8px;
+    border: none; cursor: pointer; font-family: inherit;
+    background: var(--card-solid); color: var(--text-1);
+    font-size: 13px; font-weight: 600; letter-spacing: -0.008em;
+    padding: 9px 15px; border-radius: 999px;
+    box-shadow: var(--shadow-pop);
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .cd-bug-launcher:hover { transform: translateY(-1px); opacity: 0.94; }
+
+  .cd-bug-overlay {
+    position: fixed; inset: 0; z-index: 80;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.32); padding: 16px;
+  }
+  .cd-bug-modal {
+    width: 460px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--card-solid); border-radius: var(--radius);
+    box-shadow: var(--shadow-pop);
+  }
+  .cd-bug-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+  .cd-bug-foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 16px; border-top: 0.5px solid var(--hairline-strong);
+  }
+  .cd-bug-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cd-bug-thumb { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; }
+  .cd-bug-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .cd-bug-thumb button {
+    position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%;
+    border: none; cursor: pointer; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; line-height: 1;
+  }
+
 /* Claude connector install guide (Settings → Claude connector) */
 .cd-mcp { display: flex; flex-direction: column; gap: 16px; }
 .cd-mcp-hero {
