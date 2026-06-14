@@ -32,4 +32,15 @@ describe("trueRoas — spend-weighted, margin-adjusted blended ROAS", () => {
     expect(trueRoas([])).toBe("—");
     expect(trueRoas([campaign(0, 0, 0)])).toBe("—");
   });
+
+  test("includes money-losing (negative-margin) campaigns so they drag the blend down", () => {
+    // margin < 0 is a real money-loser and must count; margin === 0 stays the
+    // "unknown data" sentinel and is still excluded.
+    const result = trueRoas([
+      campaign(100_000, 3, 0.5), // winner: 100000·3·0.5 = 150000
+      campaign(100_000, 1, -0.5), // loser:  100000·1·-0.5 = -50000
+    ]);
+    // (150000 - 50000) / 200000 = 0.5 → "0.5×" (vs the rosy "1.5×" when losers hide)
+    expect(result).toBe("0.5×");
+  });
 });

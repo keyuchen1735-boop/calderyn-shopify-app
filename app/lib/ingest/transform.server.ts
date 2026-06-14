@@ -118,6 +118,26 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
   const sb = getSupabase();
   const { order, lines, clickRef } = parseOrderWebhook(payload as Parameters<typeof parseOrderWebhook>[0]);
 
+  // Supabase has no client-side transaction, so do every failure-prone READ
+  // before any WRITE. Otherwise a transient sku_dim read failure (the most likely
+  // blip) lands AFTER the order_fact header is committed, leaving a published
+  // order with revenue but no line items until the DLQ replay. Reading first
+  // means such a failure aborts before anything is written.
+  // Check the error: an ignored DB failure here yields an empty map, which would
+  // silently write every order line with sku_id=null — corrupting data.
+  const variantToSku = new Map<string, string>();
+  if (lines.length) {
+    const { data: skus, error: skuErr } = await sb
+      .from("sku_dim")
+      .select("id, external_id")
+      .eq("shop_id", shopId);
+    if (skuErr) throw skuErr;
+    for (const r of skus ?? []) {
+      const row = r as { external_id: string; id: string };
+      variantToSku.set(row.external_id, row.id);
+    }
+  }
+
   // Slice-1: last-writer-wins (see backfill.server.ts note on §7.1 deviation).
   const { data: oUp, error: oErr } = await sb
     .from("order_fact")
@@ -133,21 +153,6 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
   await applyAttribution(shopId, orderId, order.total_cents, clickRef, sb);
 
   if (!lines.length) return 1;
-
-  // Check the error: an ignored DB failure here yields an empty map, which would
-  // silently write every order line with sku_id=null AND mark the webhook
-  // processed — corrupting data on a transient blip. Throw to route it to the DLQ.
-  const { data: skus, error: skuErr } = await sb
-    .from("sku_dim")
-    .select("id, external_id")
-    .eq("shop_id", shopId);
-  if (skuErr) throw skuErr;
-  const variantToSku = new Map(
-    (skus ?? []).map((r) => [
-      (r as { external_id: string; id: string }).external_id,
-      (r as { external_id: string; id: string }).id,
-    ]),
-  );
 
   const lineRows = lines.map((l) => ({
     shop_id: shopId,
