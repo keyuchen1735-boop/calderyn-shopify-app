@@ -41,6 +41,16 @@ export async function parseBugReportForm(
   const files = form
     .getAll("screenshots")
     .filter((f): f is File => f instanceof File && f.size > 0);
+
+  // Validate against count/size/type limits using File metadata BEFORE reading any
+  // bytes, so an oversized or over-count submission is rejected without buffering it.
+  const validated = validateBugReportInput({
+    description: form.get("description"),
+    email: form.get("email"),
+    attachments: files.map((f) => ({ filename: f.name, contentType: f.type, size: f.size })),
+  });
+  if (!validated.ok) return validated;
+
   const attachments: ParsedAttachment[] = [];
   for (const f of files) {
     attachments.push({
@@ -50,13 +60,6 @@ export async function parseBugReportForm(
       bytes: new Uint8Array(await f.arrayBuffer()),
     });
   }
-
-  const validated = validateBugReportInput({
-    description: form.get("description"),
-    email: form.get("email"),
-    attachments: attachments.map(({ filename, contentType, size }) => ({ filename, contentType, size })),
-  });
-  if (!validated.ok) return validated;
 
   const screenRaw = form.get("screen");
   return {
@@ -92,7 +95,10 @@ function recipients(): { to: string[]; from?: string; apiKey?: string } {
 }
 
 function safeName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "image";
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  if (cleaned.length <= 80) return cleaned || "image";
+  const ext = cleaned.match(/\.[^.]+$/)?.[0] ?? "";
+  return (cleaned.slice(0, 80 - ext.length) + ext) || "image";
 }
 
 function emailText(input: BugReportInput): string {
@@ -168,22 +174,28 @@ export async function submitBugReport(input: BugReportInput): Promise<SubmitResu
     });
   }
 
-  // 3. Persist with the true delivery status so a failed send is recoverable.
-  const shopId = await resolveShopId(input.shopDomain);
-  const { error: insertError } = await sb.from("bug_report").insert({
-    id: reportId,
-    shop_id: shopId,
-    shop_domain: input.shopDomain,
-    reporter_email: input.reporterEmail,
-    description: input.description,
-    surface: input.surface,
-    context: input.context,
-    attachments: stored,
-    email_status: delivery.sent ? "sent" : "failed",
-    email_error: delivery.sent ? null : delivery.error ?? "unknown",
-  });
-  if (insertError) {
-    console.error("[bug-report] row insert failed", insertError.message);
+  // 3. Persist with the true delivery status. Never throw: the email is the
+  //    primary channel, so a shop-resolution or insert failure must not surface
+  //    as an error after the report was already emailed — just log it.
+  try {
+    const shopId = await resolveShopId(input.shopDomain);
+    const { error: insertError } = await sb.from("bug_report").insert({
+      id: reportId,
+      shop_id: shopId,
+      shop_domain: input.shopDomain,
+      reporter_email: input.reporterEmail,
+      description: input.description,
+      surface: input.surface,
+      context: input.context,
+      attachments: stored,
+      email_status: delivery.sent ? "sent" : "failed",
+      email_error: delivery.sent ? null : delivery.error ?? "unknown",
+    });
+    if (insertError) {
+      console.error("[bug-report] row insert failed", insertError.message);
+    }
+  } catch (err) {
+    console.error("[bug-report] persist failed", err);
   }
 
   return { id: reportId, emailStatus: delivery.sent ? "sent" : "failed" };

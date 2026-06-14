@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { sendEmail } from "../../email/send.server";
-import { submitBugReport } from "../submit.server";
+import { resolveShopId } from "../../supabase.server";
+import { submitBugReport, parseBugReportForm } from "../submit.server";
 import type { BugReportInput } from "../submit.server";
 
 const inserted: Record<string, unknown>[] = [];
@@ -48,6 +49,7 @@ beforeEach(() => {
   process.env.RESEND_API_KEY = "re_test";
   process.env.DIGEST_FROM = "Calderyn <bugs@calderyn.com>";
   process.env.BUG_REPORT_TO = "a@x.com,b@x.com";
+  (resolveShopId as Mock).mockResolvedValue("shop-uuid");
 });
 
 describe("submitBugReport", () => {
@@ -100,5 +102,49 @@ describe("submitBugReport", () => {
     expect(out.emailStatus).toBe("failed");
     expect(inserted[0].email_status).toBe("failed");
     expect(String(inserted[0].email_error)).toContain("RESEND_API_KEY");
+  });
+
+  it("never throws when shop resolution fails after the email was sent", async () => {
+    (sendEmail as Mock).mockResolvedValue({ sent: true, id: "e" });
+    (resolveShopId as Mock).mockRejectedValueOnce(new Error("shop not found"));
+    const out = await submitBugReport(baseInput());
+    expect(out.emailStatus).toBe("sent");
+    expect(inserted).toHaveLength(0);
+  });
+});
+
+describe("parseBugReportForm", () => {
+  const png = (name = "a.png", bytes = [65, 66]) =>
+    new File([new Uint8Array(bytes)], name, { type: "image/png" });
+  const formWith = (over: { description?: string; email?: string; files?: File[]; screen?: string }) => {
+    const fd = new FormData();
+    fd.set("description", over.description ?? "broke");
+    fd.set("email", over.email ?? "me@store.com");
+    if (over.screen !== undefined) fd.set("screen", over.screen);
+    for (const f of over.files ?? []) fd.append("screenshots", f, f.name);
+    return fd;
+  };
+  const opts = { shopDomain: "s.myshopify.com", surface: "app" as const, userAgent: "UA" };
+
+  it("normalizes a valid submission and reads file bytes", async () => {
+    const r = await parseBugReportForm(formWith({ files: [png("a.png"), png("b.png")], screen: "/x" }), opts);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.reporterEmail).toBe("me@store.com");
+      expect(r.value.surface).toBe("app");
+      expect(r.value.context.screen).toBe("/x");
+      expect(r.value.attachments).toHaveLength(2);
+      expect(r.value.attachments[0].bytes).toBeInstanceOf(Uint8Array);
+    }
+  });
+
+  it("returns the validation error for a bad email", async () => {
+    const r = await parseBugReportForm(formWith({ email: "nope" }), opts);
+    expect(r).toMatchObject({ ok: false, code: "INVALID_EMAIL" });
+  });
+
+  it("rejects an over-count submission (more than 3 files)", async () => {
+    const r = await parseBugReportForm(formWith({ files: [png(), png(), png(), png()] }), opts);
+    expect(r).toMatchObject({ ok: false, code: "TOO_MANY_FILES" });
   });
 });
