@@ -16,7 +16,7 @@ import {
   RingGauge,
   GradePill,
 } from "../ui";
-import { money, DETECTOR_TERMS, ACTION_LABELS } from "../format";
+import { money, DETECTOR_TERMS, ACTION_LABELS, timeAgo } from "../format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
@@ -83,7 +83,7 @@ function FocusCard({ app }: { app: DashboardCtx }) {
         <div className="flex items-center gap-2">
           <SevBadge severity={focus.severity} />
           <span className="cd-caption">
-            {DETECTOR_TERMS[focus.detector_id] || focus.detector_id} · {focus.created_at}
+            {DETECTOR_TERMS[focus.detector_id] || focus.detector_id} · {timeAgo(focus.created_at)}
           </span>
           <span className="cd-caption ml-auto">Top priority</span>
         </div>

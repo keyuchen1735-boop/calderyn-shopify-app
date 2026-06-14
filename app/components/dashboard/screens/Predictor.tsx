@@ -65,7 +65,9 @@ function GroupScores({ metrics }: { metrics: ScorecardMetric[] }) {
     <div className="flex flex-col gap-5">
       {groups.map((g) => {
         const ms = metrics.filter((m) => m.group === g);
-        const avg = Math.round(ms.reduce((s, m) => s + m.score, 0) / ms.length);
+        // Guard divide-by-zero: a live run may return no metrics for a group,
+        // which would otherwise render "avg NaN".
+        const avg = ms.length ? Math.round(ms.reduce((s, m) => s + m.score, 0) / ms.length) : 0;
         return (
           <div key={g}>
             <div className="flex items-center justify-between mb-2">
@@ -123,6 +125,11 @@ function TipRow({ tip }: { tip: Tip }) {
 /* ---------- Predicted outcomes: ROAS band + mini-stats ---------- */
 function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
   const above = o.estimatedRoas >= o.breakEvenRoas;
+  // Position a value within the [low, high] ROAS band as a 0–100% offset,
+  // clamped. Guards a flat band (high === low) that would yield NaN/Infinity.
+  const span = o.roasHigh - o.roasLow;
+  const bandPct = (v: number): number =>
+    span > 0 ? Math.max(0, Math.min(100, ((v - o.roasLow) / span) * 100)) : 50;
   return (
     <Card className="flex flex-col gap-3">
       <h2 className="cd-h2">Predicted outcomes</h2>
@@ -137,7 +144,7 @@ function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
           <div
             className="cd-band-marker"
             style={{
-              left: `${((o.estimatedRoas - o.roasLow) / (o.roasHigh - o.roasLow)) * 100}%`,
+              left: `${bandPct(o.estimatedRoas)}%`,
             }}
           >
             <span className="cd-band-val tabular-nums">{o.estimatedRoas.toFixed(1)}×</span>
@@ -145,7 +152,7 @@ function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
           <div
             className="cd-band-be"
             style={{
-              left: `${((o.breakEvenRoas - o.roasLow) / (o.roasHigh - o.roasLow)) * 100}%`,
+              left: `${bandPct(o.breakEvenRoas)}%`,
             }}
             title={`Break-even ${o.breakEvenRoas.toFixed(1)}×`}
           ></div>

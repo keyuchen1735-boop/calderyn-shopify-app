@@ -23,6 +23,47 @@ export function money(cents: number): string {
   );
 }
 
+/**
+ * Compact relative-time for user-facing display, e.g. "just now", "5m ago",
+ * "3h ago", "2d ago", or "Jun 12, 2026" for anything older than a week. Guards
+ * non-parseable input (returns "—") so a missing/partial timestamp renders an
+ * em dash rather than a raw ISO string or a dangling " · " separator. Keeps the
+ * year on absolute dates to match the embedded app's audit-log contract (an
+ * audit log can straddle a year boundary, so "Jun 12" alone is ambiguous).
+ */
+export function timeAgo(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "—";
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 45) return "just now";
+  if (s < 90) return "1m ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + "d ago";
+  return new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/**
+ * Full absolute timestamp for hover/title text, e.g. "Jun 12, 2026, 2:03 PM".
+ * Pairs with timeAgo so a compact relative time still exposes the exact moment
+ * on hover — required on the audit log where precise execution time matters.
+ * Returns "" on non-parseable input so callers can omit the title attribute.
+ */
+export function absTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function moneyK(cents: number): string {
   const d = cents / 100;
   if (Math.abs(d) >= 1000) return (d < 0 ? "-$" : "$") + (Math.abs(d) / 1000).toFixed(1) + "k";

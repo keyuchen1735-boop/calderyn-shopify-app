@@ -198,8 +198,10 @@ export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): Campaign
     status: c.status,
     daily_budget_cents: c.daily_budget_cents,
     spend_7d: c.spend_7d,
-    roas_7d: c.roas_7d,
-    contribution_margin: c.contribution_margin,
+    // Coerce non-finite live values to 0 so the screen's `.toFixed(1)` calls
+    // can't throw on a null/undefined ROAS or margin from a partial API row.
+    roas_7d: Number.isFinite(c.roas_7d) ? c.roas_7d : 0,
+    contribution_margin: Number.isFinite(c.contribution_margin) ? c.contribution_margin : 0,
     breakeven_roas,
     grade,
     // TODO(api): per-campaign roas series — no per-campaign trend exists yet.
