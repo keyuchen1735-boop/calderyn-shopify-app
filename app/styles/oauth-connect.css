@@ -9,6 +9,8 @@
  */
 
 :root { color-scheme: light; }
+/* border-box so width:100% + padding never exceeds the container (matches dashboard.css) */
+* { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: #f5f5f7; }
 
 .cdc-page {
