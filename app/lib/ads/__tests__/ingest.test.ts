@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { backfillAds, pollAdsDaily } from "../ingest.server";
+import { backfillAds, pollAdsDaily, recentSpendDays } from "../ingest.server";
 import type { ShopAdSource, NormalizedCampaign, NormalizedSpendRow } from "../adapter";
 
 const SHOP = "00000000-0000-0000-0000-000000000002";
@@ -126,5 +126,31 @@ describe("pollAdsDaily", () => {
     const { sb } = makeFakeSupabase([{ id: "u1", external_id: "1" }]);
     await pollAdsDaily(src, "meta", SHOP, sb);
     expect(src.fetchDailySpend).toHaveBeenCalledWith("2026-06-05");
+  });
+
+  it("polls a 3-day window centered on UTC-yesterday so the account's own timezone day is always covered", async () => {
+    const src = fakeSource([cmp("1")], [fact("1", "2026-06-05", 7)]);
+    const { sb } = makeFakeSupabase([{ id: "u1", external_id: "1" }]);
+    await pollAdsDaily(src, "meta", SHOP, sb);
+    const days = vi.mocked(src.fetchDailySpend).mock.calls.map((c) => c[0]);
+    expect(new Set(days)).toEqual(new Set(["2026-06-06", "2026-06-05", "2026-06-04"]));
+  });
+});
+
+describe("recentSpendDays", () => {
+  it("returns today, yesterday, and the day before in UTC (newest first)", () => {
+    expect(recentSpendDays(new Date("2026-06-06T03:00:00Z"))).toEqual([
+      "2026-06-06",
+      "2026-06-05",
+      "2026-06-04",
+    ]);
+  });
+
+  it("crosses month boundaries correctly", () => {
+    expect(recentSpendDays(new Date("2026-07-01T12:00:00Z"))).toEqual([
+      "2026-07-01",
+      "2026-06-30",
+      "2026-06-29",
+    ]);
   });
 });

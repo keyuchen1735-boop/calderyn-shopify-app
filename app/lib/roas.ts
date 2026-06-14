@@ -10,8 +10,12 @@ export interface TrueRoasInput {
 }
 
 export function trueRoas(campaigns: TrueRoasInput[]): string {
+  // margin < 0 is a real money-loser and must count (it drags the blend down);
+  // margin === 0 is the "no margin data" sentinel (calderyn.server coerces a
+  // missing margin to 0) and stays excluded. Without this, the headline number
+  // read rosier than reality precisely when campaigns were losing money.
   const withData = campaigns.filter(
-    (c) => c.spend_7d > 0 && c.roas_7d > 0 && c.contribution_margin > 0,
+    (c) => c.spend_7d > 0 && c.roas_7d > 0 && c.contribution_margin !== 0,
   );
   const totalSpend = withData.reduce((s, c) => s + c.spend_7d, 0);
   if (totalSpend === 0) return "—";

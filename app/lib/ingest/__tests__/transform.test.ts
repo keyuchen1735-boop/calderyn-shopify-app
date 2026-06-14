@@ -41,9 +41,14 @@ const deletes: Array<{ table: string }> = [];
 // Records updates (e.g. processed_at stamps) made during a test run.
 const updates: Array<{ table: string; set: unknown }> = [];
 
+// Tables whose SELECT should resolve with an error (simulate a transient read
+// failure). Cleared each test.
+const failReadTables = new Set<string>();
+
 function makeBuilder(table: string): any {
   const filters: Array<[string, any]> = [];
   const matches = () => (store[table] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v));
+  const readErr = () => (failReadTables.has(table) ? new Error(`read failed: ${table}`) : null);
 
   const api: any = {
     select: (_cols?: string) => api,
@@ -51,7 +56,7 @@ function makeBuilder(table: string): any {
     limit: () => api,
     is: () => api,
     eq: (k: string, v: any) => { filters.push([k, v]); return api; },
-    maybeSingle: async () => ({ data: matches()[0] ?? null, error: null }),
+    maybeSingle: async () => ({ data: matches()[0] ?? null, error: readErr() }),
     single: async () => ({ data: store[table + "_upsert_result"]?.[0] ?? { id: ORDER_UUID }, error: null }),
     upsert: (rows: unknown, opts?: unknown) => {
       upserts.push({ table, rows, opts });
@@ -76,8 +81,8 @@ function makeBuilder(table: string): any {
       deletes.push({ table });
       return api;
     },
-    then: (resolve: (r: { data: any; error: null }) => unknown) =>
-      resolve({ data: matches(), error: null }),
+    then: (resolve: (r: { data: any; error: any }) => unknown) =>
+      resolve({ data: matches(), error: readErr() }),
   };
   return api;
 }
@@ -97,6 +102,52 @@ beforeEach(() => {
   inserts.length = 0;
   deletes.length = 0;
   updates.length = 0;
+  failReadTables.clear();
+});
+
+describe("transformPendingWebhooks — order write ordering", () => {
+  function seedOrderWithLines() {
+    store["raw_shopify_webhook"] = [
+      {
+        id: "wh-ord",
+        shop_id: SHOP_ID,
+        topic: "ORDERS_CREATE",
+        payload: {
+          admin_graphql_api_id: "gid://shopify/Order/9",
+          name: "#1009",
+          created_at: "2026-06-01T00:00:00Z",
+          updated_at: "2026-06-01T00:00:00Z",
+          total_price: "50.00",
+          currency: "USD",
+          line_items: [
+            { admin_graphql_api_id: "gid://shopify/LineItem/1", quantity: 1, price: "50.00", variant_id: 200 },
+          ],
+        },
+      },
+    ];
+    store["sku_dim"] = [{ id: "sku-1", shop_id: SHOP_ID, external_id: "gid://shopify/ProductVariant/200" }];
+  }
+
+  it("does not write the order header when the sku_dim read fails (no revenue-without-lines)", async () => {
+    seedOrderWithLines();
+    failReadTables.add("sku_dim");
+
+    await transformPendingWebhooks();
+
+    // Reads happen before any write, so a transient sku_dim read failure aborts
+    // before the order_fact header is committed — no partial order is left behind.
+    expect(upserts.some((u) => u.table === "order_fact")).toBe(false);
+    expect(upserts.some((u) => u.table === "order_line_fact")).toBe(false);
+  });
+
+  it("writes header and lines together on the happy path", async () => {
+    seedOrderWithLines();
+
+    await transformPendingWebhooks();
+
+    expect(upserts.some((u) => u.table === "order_fact")).toBe(true);
+    expect(upserts.some((u) => u.table === "order_line_fact")).toBe(true);
+  });
 });
 
 describe("transformPendingWebhooks — attribution", () => {

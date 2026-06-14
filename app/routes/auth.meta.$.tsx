@@ -19,9 +19,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
+  const oauthError = url.searchParams.get("error");
   const appId = process.env.META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
   const appUrl = process.env.SHOPIFY_APP_URL;
+
+  // Embedded App Bridge context (shop/host) carried through `state`, used to
+  // re-embed the merchant in the Shopify admin on the final redirect (a bare
+  // top-level redirect dead-ends on a 410 HTML page).
+  const returnCtx = parseOAuthState(state ?? "");
+
+  // Surface a user-declined consent cleanly rather than as a 400 (mirrors
+  // auth.google/tiktok/quickbooks). Facebook sends ?error=...&state=... with no
+  // code when the merchant clicks Cancel.
+  if (oauthError) {
+    return redirect(
+      embeddedReturnUrl("/app/settings", { meta: "error", reason: oauthError }, returnCtx),
+    );
+  }
   if (!code || !state || !appId || !appSecret || !appUrl) {
     throw new Response("Missing OAuth parameters", { status: 400 });
   }
@@ -32,11 +47,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const sb = getSupabase();
   const shopId = await consumeOAuthState(sb, state);
   if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
-
-  // Embedded App Bridge context (shop/host) carried through `state`, used to
-  // re-embed the merchant in the Shopify admin on the final redirect (a bare
-  // top-level redirect dead-ends on a 410 HTML page).
-  const returnCtx = parseOAuthState(state);
 
   const fetcher = async (u: string): Promise<GraphTokenResponse> =>
     (await fetch(u)).json() as Promise<GraphTokenResponse>;
