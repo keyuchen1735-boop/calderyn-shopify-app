@@ -50,4 +50,20 @@ describe("sendEmail", () => {
     expect(out.sent).toBe(false);
     expect(out.error).toContain("Resend 422");
   });
+
+  it("includes the html part in the payload when provided", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ id: "e3" }), { status: 200 }));
+    await sendEmail({ apiKey: "k", from: "f", to: "y@x.com", subject: "s", text: "t", html: "<b>t</b>" });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.html).toBe("<b>t</b>");
+  });
+
+  it("returns a structured error (never throws) when fetch itself rejects", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+    const out = await sendEmail({ apiKey: "k", from: "f", to: "y@x.com", subject: "s", text: "t" });
+    expect(out.sent).toBe(false);
+    expect(out.error).toBe("ECONNREFUSED");
+  });
 });
