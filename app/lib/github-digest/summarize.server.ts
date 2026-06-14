@@ -17,6 +17,7 @@ import {
   type RenderInput,
 } from "./render.server";
 import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
+import type { WaitlistSignup } from "./waitlist.server";
 
 export interface DigestContent {
   subject: string;
@@ -98,27 +99,40 @@ function fallbackOverview(activity: Activity): string {
   return `${c} commit${c === 1 ? "" : "s"} and ${m} pull request${m === 1 ? "" : "s"} merged across the team in the last 24 hours.`;
 }
 
-export async function summarize(activity: Activity, opts: { dateLabel: string }): Promise<DigestContent> {
+export async function summarize(
+  activity: Activity,
+  opts: { dateLabel: string; signups?: WaitlistSignup[] },
+): Promise<DigestContent> {
   const subject = `Calderyn dev digest — ${opts.dateLabel}`;
+  const signups = opts.signups ?? [];
+  const gitEmpty = isEmpty(activity);
 
-  if (isEmpty(activity)) {
+  // Quiet day only when there is NOTHING to report — no code AND no signups.
+  if (gitEmpty && signups.length === 0) {
     return {
       subject,
-      text: "No commits or PRs in the last 24h.",
+      text: "No commits, PRs, or new waitlist signups in the last 24h.",
       html: renderEmptyHtml(opts.dateLabel),
       mode: "empty",
     };
   }
 
   const groups = groupByActor(activity);
-  let input: RenderInput = { dateLabel: opts.dateLabel, overview: fallbackOverview(activity), prose: {} };
+  // The AI prompt summarizes git work only; signups (which carry PII) are
+  // rendered deterministically and never sent to the model.
+  let input: RenderInput = {
+    dateLabel: opts.dateLabel,
+    overview: gitEmpty ? "" : fallbackOverview(activity),
+    prose: {},
+    signups,
+  };
   let mode: DigestContent["mode"] = "template";
 
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (!gitEmpty && process.env.ANTHROPIC_API_KEY) {
     try {
       const ai = await aiStructured(groups, opts.dateLabel);
       if (ai) {
-        input = { dateLabel: opts.dateLabel, overview: ai.overview, prose: ai.people };
+        input = { dateLabel: opts.dateLabel, overview: ai.overview, prose: ai.people, signups };
         mode = "ai";
       }
     } catch {

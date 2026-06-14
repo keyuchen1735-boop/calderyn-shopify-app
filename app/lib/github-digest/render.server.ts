@@ -10,6 +10,7 @@
 // John = terracotta, anyone else = neutral grey.
 
 import type { Activity, CommitInfo, PullInfo } from "./collect.server";
+import type { WaitlistSignup } from "./waitlist.server";
 
 const BRAND = {
   accent: "#24556E",
@@ -101,6 +102,8 @@ export interface RenderInput {
   overview: string;
   /** actor.key -> one-line plain-English summary of what they did (may be absent). */
   prose: Record<string, string>;
+  /** New waitlist signups in the digest window (may be absent/empty). */
+  signups?: WaitlistSignup[];
 }
 
 function prLine(p: PullInfo): { html: string; text: string } {
@@ -116,6 +119,76 @@ function personMeta(g: PersonGroup): string {
   if (g.mergedPRs.length) bits.push(`${g.mergedPRs.length} merged`);
   if (g.openedPRs.length) bits.push(`${g.openedPRs.length} opened`);
   return bits.join(" · ");
+}
+
+// Local-parts that are role/non-personal mailboxes — we lead with the email
+// for these instead of inventing a person's name.
+const ROLE_LOCAL = /^(info|hello|team|admin|support|sales|contact|hi|hey|mail|e?mail|help|press|founders?|billing|accounts?|office|no-?reply|do-?not-?reply)$/i;
+
+/**
+ * Best-effort display name derived from an email's local-part:
+ *   jane.doe@x.com -> "Jane Doe", john_smith@x -> "John Smith".
+ * Returns null when the local-part isn't humanizable (role mailbox like info@,
+ * or alphanumeric noise like x7y@) so the caller can lead with the email.
+ */
+export function deriveDisplayName(email: string): string | null {
+  const local = (email.split("@")[0] ?? "").split("+")[0];
+  if (ROLE_LOCAL.test(local)) return null;
+  const tokens = local.split(/[._-]+/).filter((t) => /^[a-zA-Z]{2,}$/.test(t));
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
+}
+
+/** Short "Jun 13, 2:30 PM ET" stamp for a signup; "" if the ISO is unparseable. */
+function signupTime(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  return `${new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(ms))} ET`;
+}
+
+/** One signup row: name (or email) headline + a meta line of the rest. */
+function signupRowHtml(s: WaitlistSignup): string {
+  const name = deriveDisplayName(s.email);
+  const headline = name ?? s.email;
+  const initial = esc(headline.charAt(0).toUpperCase() || "?");
+  const meta: string[] = [];
+  if (name) meta.push(esc(s.email));
+  if (s.phone) meta.push(esc(s.phone));
+  if (s.referredBy) meta.push(`referred by ${esc(s.referredBy)}`);
+  const when = signupTime(s.createdAtIso);
+  if (when) meta.push(esc(when));
+  const metaHtml = meta.length
+    ? `<div style="margin-top:2px;color:${BRAND.text2};font-size:13px;line-height:1.5">${meta.join(" · ")}</div>`
+    : "";
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px"><tr>
+      <td width="36" valign="top">
+        <div style="width:28px;height:28px;border-radius:50%;background:${BRAND.green};color:#fff;font-weight:700;font-size:13px;text-align:center;line-height:28px;font-family:${FONT}">${initial}</div>
+      </td>
+      <td valign="top" style="padding-left:11px">
+        <div style="font-size:15px;font-weight:600;color:${BRAND.text1};letter-spacing:-0.01em">${esc(headline)}</div>
+        ${metaHtml}
+      </td>
+    </tr></table>`;
+}
+
+/** "New waitlist signups" card section; "" when there are none (no empty block). */
+function waitlistSectionHtml(signups: WaitlistSignup[]): string {
+  if (signups.length === 0) return "";
+  const rows = signups.map(signupRowHtml).join("");
+  return `
+    <tr><td style="padding:6px 26px 8px">
+      <div style="border-top:1px solid ${BRAND.border};padding-top:18px">
+        <div style="font-size:13px;font-weight:700;color:${BRAND.text1};letter-spacing:-0.01em">New waitlist signups<span style="color:${BRAND.green};font-weight:700"> · ${signups.length}</span></div>
+        ${rows}
+      </div>
+    </td></tr>`;
 }
 
 /** Branded HTML email. Table + inline-style layout for broad email-client support. */
@@ -170,6 +243,7 @@ export function renderHtml(activity: Activity, groups: PersonGroup[], input: Ren
         <tr><td style="padding:0 26px 8px">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${personBlocks}</table>
         </td></tr>
+        ${waitlistSectionHtml(input.signups ?? [])}
         <tr><td style="padding:16px 26px 24px;border-top:1px solid ${BRAND.border}">
           <div style="font-size:12px;color:${BRAND.text3}">Automated daily digest · <a href="${REPO_URL}" style="color:${BRAND.text3}">calderyn-shopify-app</a></div>
         </td></tr>
@@ -190,6 +264,17 @@ export function renderText(activity: Activity, groups: PersonGroup[], input: Ren
     const merged = g.mergedPRs.slice(0, 8);
     for (const p of merged) lines.push(`  merged ${prLine(p).text}`);
     if (g.mergedPRs.length > merged.length) lines.push(`  +${g.mergedPRs.length - merged.length} more merged`);
+    lines.push("");
+  }
+  const signups = input.signups ?? [];
+  if (signups.length) {
+    lines.push(`New waitlist signups (${signups.length})`);
+    for (const s of signups) {
+      const name = deriveDisplayName(s.email);
+      const bits = [s.phone, s.referredBy ? `referred by ${s.referredBy}` : "", signupTime(s.createdAtIso)].filter(Boolean);
+      const tail = bits.length ? ` · ${bits.join(" · ")}` : "";
+      lines.push(name ? `  ${name} — ${s.email}${tail}` : `  ${s.email}${tail}`);
+    }
     lines.push("");
   }
   for (const n of activity.notes) lines.push(`Note: ${n}`);
