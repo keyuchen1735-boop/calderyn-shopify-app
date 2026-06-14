@@ -10,6 +10,8 @@ const {
   guardrailsUpdateSpy,
   integrationsListSpy,
   startOAuthSpy,
+  consentGetSpy,
+  consentSetSpy,
 } = vi.hoisted(() => ({
   getStateSpy: vi.fn(),
   advanceSpy: vi.fn(),
@@ -17,6 +19,8 @@ const {
   guardrailsUpdateSpy: vi.fn(),
   integrationsListSpy: vi.fn(),
   startOAuthSpy: vi.fn(),
+  consentGetSpy: vi.fn(),
+  consentSetSpy: vi.fn(),
 }));
 
 // Stub Polaris so importing the route module doesn't pull the real UI lib.
@@ -61,6 +65,10 @@ vi.mock("~/lib/calderyn.server", () => ({
       list: (...a: unknown[]) => integrationsListSpy(...a),
       startOAuth: (...a: unknown[]) => startOAuthSpy(...a),
     },
+    consent: {
+      get: (...a: unknown[]) => consentGetSpy(...a),
+      set: (...a: unknown[]) => consentSetSpy(...a),
+    },
   }),
 }));
 
@@ -82,10 +90,14 @@ beforeEach(() => {
     guardrailsUpdateSpy,
     integrationsListSpy,
     startOAuthSpy,
+    consentGetSpy,
+    consentSetSpy,
   ]) {
     spy.mockReset();
   }
   advanceSpy.mockResolvedValue(undefined);
+  consentGetSpy.mockResolvedValue(false);
+  consentSetSpy.mockResolvedValue(undefined);
 });
 
 describe("onboarding action — step advancement", () => {
@@ -229,6 +241,28 @@ describe("onboarding action — integration connect", () => {
     expect(body.ok).toBe(false);
     expect(body.error?.code).toBe("META_NOT_CONFIGURED");
     expect(body.toast?.isError).toBe(true);
+  });
+});
+
+describe("onboarding action — consent", () => {
+  it("persists an opt-in then advances", async () => {
+    const res = await callAction(postRequest({ intent: "save_consent", step: "8", consent: "true" }));
+    const body = (await res.json()) as { ok: boolean };
+
+    expect(body.ok).toBe(true);
+    expect(consentSetSpy).toHaveBeenCalledWith(true, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    // consent is written before the step advances
+    expect(consentSetSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      advanceSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("records a decline (consent=false) and still advances", async () => {
+    await callAction(postRequest({ intent: "save_consent", step: "8", consent: "false" }));
+
+    expect(consentSetSpy).toHaveBeenCalledWith(false, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
   });
 });
 

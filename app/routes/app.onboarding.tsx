@@ -63,6 +63,7 @@ type LoaderPayload = {
   shopDomain: string;
   guardrails: GuardrailConfig | null;
   integrations: Record<string, Integration>;
+  consent: boolean;
   error: { code: string; message: string } | null;
   devBypass: boolean;
 };
@@ -99,10 +100,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   const client = calderynClient(session.shop);
   try {
-    const [state, guardrails, integrations] = await Promise.all([
+    const [state, guardrails, integrations, consent] = await Promise.all([
       client.onboarding.getState(request.signal),
       client.guardrails.get(request.signal),
       client.integrations.list(request.signal),
+      client.consent.get(request.signal),
     ]);
     return json<LoaderPayload>({
       step: state.step,
@@ -110,6 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: session.shop,
       guardrails,
       integrations,
+      consent,
       error: null,
       devBypass: ONBOARDING_DEV_BYPASS,
     });
@@ -121,6 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: session.shop,
       guardrails: null,
       integrations: {},
+      consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
       devBypass: ONBOARDING_DEV_BYPASS,
     });
@@ -175,6 +179,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
     }
+    if (intent === "save_consent") {
+      // Persist the peer-baseline consent choice (opt-in: the box defaults
+      // off), then advance. This is the only writer of peer_data_consent in the
+      // onboarding flow — without it the checkbox was decorative.
+      const consent = formData.get("consent") === "true";
+      await client.consent.set(consent, request.signal);
+      const step = Number(formData.get("step") || 0);
+      await client.onboarding.advance(step, request.signal);
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: consent ? "Peer baseline enabled" : "Saved — not contributing to peer baselines" },
+      });
+    }
     if (intent === "finish") {
       await client.onboarding.advance(STEPS.length, request.signal);
       return redirect("/app");
@@ -202,7 +219,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Onboarding() {
-  const { step, shopDomain, guardrails, integrations, error, devBypass } =
+  const { step, shopDomain, guardrails, integrations, consent, error, devBypass } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -294,7 +311,12 @@ export default function Onboarding() {
             <CreativeStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
           )}
           {key === "consent" && (
-            <ConsentStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
+            <ConsentStep
+              consent={consent}
+              nextStep={safeStep + 1}
+              prevStep={safeStep - 1}
+              submitting={submitting}
+            />
           )}
           {key === "complete" && (
             <CompleteStep prevStep={safeStep - 1} submitting={submitting} />
@@ -623,15 +645,19 @@ function CreativeStep({
 }
 
 function ConsentStep({
+  consent: initialConsent,
   nextStep,
   prevStep,
   submitting,
 }: {
+  consent: boolean;
   nextStep: number;
   prevStep: number;
   submitting: boolean;
 }) {
-  const [consent, setConsent] = useState(true);
+  // Opt-in: seed from the stored value (false for a new shop) rather than
+  // defaulting checked, so clicking Continue never silently enrolls a merchant.
+  const [consent, setConsent] = useState(initialConsent);
   return (
     <BlockStack gap="400">
       <Text as="h2" variant="headingMd">
@@ -649,11 +675,16 @@ function ConsentStep({
       />
       <InlineStack align="space-between">
         <BackButton step={prevStep} submitting={submitting} />
-        <AdvanceForm step={nextStep}>
+        {/* save_consent persists the choice (the checkbox value) and then
+            advances — sibling form, not nested, same reason as GuardrailsStep. */}
+        <Form method="post" style={{ display: "inline" }}>
+          <input type="hidden" name="intent" value="save_consent" />
+          <input type="hidden" name="step" value={String(nextStep)} />
+          <input type="hidden" name="consent" value={consent ? "true" : "false"} />
           <Button submit variant="primary" loading={submitting} disabled={submitting}>
             Continue
           </Button>
-        </AdvanceForm>
+        </Form>
       </InlineStack>
     </BlockStack>
   );
