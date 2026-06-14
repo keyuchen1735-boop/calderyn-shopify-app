@@ -332,6 +332,37 @@ describe("PUT /dashboard/api/guardrails", () => {
     })) as Response;
     expect(res.status).toBe(405);
   });
+
+  it.each([
+    ["zero budget", { daily_action_budget_cents: 0 }],
+    ["negative cap", { dollar_cap_cents: -100 }],
+    ["non-numeric budget", { daily_action_budget_cents: "lots" }],
+    ["negative cooldown", { cooldown_minutes: -5 }],
+  ])("422s on %s and never calls update (parity with onboarding guard)", async (_label, patch) => {
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a zero cooldown and an autopilot-only patch (no budget/cap to validate)", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 0 });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { cooldown_minutes: 0, autopilot_enabled: true },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 0, autopilot_enabled: true });
+  });
 });
 
 describe("POST /dashboard/api/audit/:id/undo", () => {

@@ -128,21 +128,41 @@ describe("onboarding action — guardrails", () => {
     );
   });
 
-  it("clamps negative guardrail values to zero instead of persisting them", async () => {
+  it.each([
+    ["negative budget/cap", { budget: "-50", cap: "-1", cooldown: "30" }],
+    ["zero budget", { budget: "0", cap: "50", cooldown: "30" }],
+    ["zero cap", { budget: "100", cap: "0", cooldown: "30" }],
+    ["blank budget", { budget: "", cap: "50", cooldown: "30" }],
+    ["non-numeric budget", { budget: "abc", cap: "50", cooldown: "30" }],
+  ])(
+    "rejects %s with a 400 and persists nothing (no silent $0 guardrail)",
+    async (_label, fields) => {
+      guardrailsUpdateSpy.mockResolvedValue({});
+
+      const res = await callAction(postRequest({ intent: "save_guardrails", step: "2", ...fields }));
+      const body = (await res.json()) as { ok: boolean; error?: { code: string }; toast?: { isError?: boolean } };
+
+      expect(res.status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error?.code).toBe("INVALID_GUARDRAILS");
+      expect(body.toast?.isError).toBe(true);
+      // The invalid values are never written, and the step does not advance.
+      expect(guardrailsUpdateSpy).not.toHaveBeenCalled();
+      expect(advanceSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a zero cooldown (no wait between actions is valid)", async () => {
     guardrailsUpdateSpy.mockResolvedValue({});
 
-    await callAction(
-      postRequest({
-        intent: "save_guardrails",
-        step: "2",
-        budget: "-50",
-        cap: "-1",
-        cooldown: "-10",
-      }),
+    const res = await callAction(
+      postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50", cooldown: "0" }),
     );
+    const body = (await res.json()) as { ok: boolean };
 
+    expect(body.ok).toBe(true);
     expect(guardrailsUpdateSpy).toHaveBeenCalledWith(
-      { daily_action_budget_cents: 0, dollar_cap_cents: 0, cooldown_minutes: 0 },
+      { daily_action_budget_cents: 10000, dollar_cap_cents: 5000, cooldown_minutes: 0 },
       expect.anything(),
     );
   });

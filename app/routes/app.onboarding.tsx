@@ -127,10 +127,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json<ActionPayload>({ ok: true });
     }
     if (intent === "save_guardrails") {
+      const budget = Number(formData.get("budget"));
+      const cap = Number(formData.get("cap"));
+      const cooldown = Number(formData.get("cooldown"));
+      // Validate at the action boundary (don't trust FormData): a $0 / blank /
+      // NaN budget or cap would silently disable the guardrail it represents,
+      // letting a merchant finish setup with no real limits. Reject instead of
+      // persisting a no-op. Cooldown of 0 (no wait between actions) is allowed.
+      if (!(budget > 0) || !(cap > 0) || !Number.isFinite(cooldown) || cooldown < 0) {
+        const message = "Enter a daily budget and per-action cap greater than $0.";
+        return json<ActionPayload>(
+          { ok: false, error: { code: "INVALID_GUARDRAILS", message }, toast: { message, isError: true } },
+          { status: 400 },
+        );
+      }
       const patch: Partial<GuardrailConfig> = {
-        daily_action_budget_cents: Math.max(0, Math.round(Number(formData.get("budget") || 0)) * 100),
-        dollar_cap_cents: Math.max(0, Math.round(Number(formData.get("cap") || 0)) * 100),
-        cooldown_minutes: Math.max(0, Math.round(Number(formData.get("cooldown") || 0))),
+        daily_action_budget_cents: Math.round(budget) * 100,
+        dollar_cap_cents: Math.round(cap) * 100,
+        cooldown_minutes: Math.round(cooldown),
       };
       await client.guardrails.update(patch, request.signal);
       const step = Number(formData.get("step") || 0);
@@ -367,6 +381,10 @@ function GuardrailsStep({
   const [cooldown, setCooldown] = useState(
     String(guardrails?.cooldown_minutes ?? DEFAULT_GUARDRAILS.cooldown_minutes),
   );
+  // Mirror the server-side guard: a positive daily budget AND per-action cap
+  // are required. Gating Continue here turns the rejection into a non-event for
+  // the common case instead of a round-trip error toast.
+  const guardrailsValid = Number(budget) > 0 && Number(cap) > 0;
 
   return (
     <BlockStack gap="400">
@@ -433,7 +451,12 @@ function GuardrailsStep({
             <input type="hidden" name="budget" value={budget} />
             <input type="hidden" name="cap" value={cap} />
             <input type="hidden" name="cooldown" value={cooldown} />
-            <Button submit variant="primary" loading={submitting} disabled={submitting}>
+            <Button
+              submit
+              variant="primary"
+              loading={submitting}
+              disabled={submitting || !guardrailsValid}
+            >
               Continue
             </Button>
           </Form>
