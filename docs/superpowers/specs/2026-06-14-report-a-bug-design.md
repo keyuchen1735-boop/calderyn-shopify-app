@@ -141,8 +141,8 @@ Reuses the existing Resend integration. The generic sender currently in
 
 `github-digest` updates its import to the new location (no behavior change there).
 
-- **To:** `BUG_REPORT_TO` (new env; default `keyuchen@calderyncompany.com,
-  john@calderyncompany.com, kennethlee@calderyncompany.com`).
+- **To:** `BUG_REPORT_TO` if set, otherwise `DIGEST_TO` + `DIGEST_CC` (already configured
+  in prod, and they are exactly the three teammates). No new env var needed to launch.
 - **From:** reuse `DIGEST_FROM` (verified Resend sender).
 - **API key:** reuse `RESEND_API_KEY`.
 - **Subject:** e.g. `🐞 Bug report from {shopDomain}`.
@@ -200,9 +200,10 @@ email.
   Net effect ≈ email-attachment-only. Merchant is not blocked.
 - **Email fails:** row is still saved with `email_status='failed'` and `email_error`, so the
   report is never lost. Merchant still sees success (they did their part).
-- **Resend not configured (no key/sender):** treated as an email failure — row saved,
-  `email_status='failed'`. Surfaced as a launch dependency (set `RESEND_API_KEY` /
-  `DIGEST_FROM` / `BUG_REPORT_TO` in the Vercel `shopify-app` env).
+- **Resend send fails (any reason):** treated as an email failure — row saved,
+  `email_status='failed'` with `email_error`. Resend creds, sender, and recipients
+  (`RESEND_API_KEY`, `DIGEST_FROM`, `DIGEST_TO`, `DIGEST_CC`) are already configured in
+  prod (shipped with the GitHub digest), so this is the rare-error path, not a setup gap.
 
 ## Files
 
@@ -220,16 +221,21 @@ email.
 - `app/routes/app.tsx` — mount `BugReportButton` near the assistant.
 - `app/components/dashboard/DashboardApp.tsx` — mount dashboard `BugReportButton`.
 - `app/lib/github-digest/deliver.server.ts` — import generic sender from new location.
-- `.env.example` — add `BUG_REPORT_TO`; note `RESEND_API_KEY` / `DIGEST_FROM` reuse.
+- `.env.example` — document optional `BUG_REPORT_TO` (recipients fall back to `DIGEST_TO` + `DIGEST_CC`).
 - Dashboard CSS — styles for the new launcher/panel (`app/styles/dashboard.css`).
 
 ## Configuration / env
 
-| var               | status | purpose                                                   |
-|-------------------|--------|-----------------------------------------------------------|
-| `RESEND_API_KEY`  | reuse  | Resend API auth                                           |
-| `DIGEST_FROM`     | reuse  | verified Resend sender ("from")                           |
-| `BUG_REPORT_TO`   | new    | comma-separated recipients (defaults to the 3 teammates)  |
+| var                      | status                | purpose                                                   |
+|--------------------------|-----------------------|-----------------------------------------------------------|
+| `RESEND_API_KEY`         | already set in prod ✓ | Resend API auth                                           |
+| `DIGEST_FROM`            | already set in prod ✓ | verified Resend sender ("from")                           |
+| `DIGEST_TO`, `DIGEST_CC` | already set in prod ✓ | existing digest recipients = the same 3 teammates; used as the recipient fallback |
+| `BUG_REPORT_TO`          | optional (new)        | override recipient list; if unset, falls back to `DIGEST_TO` + `DIGEST_CC`. No setup required to launch. |
+
+**Verified 2026-06-14** via `vercel env ls production` on `shopify-app`: `RESEND_API_KEY`,
+`DIGEST_FROM`, `DIGEST_TO`, `DIGEST_CC` are all present in Production. The feature ships
+with no new env configuration.
 
 ## Testing
 
