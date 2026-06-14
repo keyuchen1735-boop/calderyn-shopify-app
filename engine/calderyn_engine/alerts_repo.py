@@ -1,11 +1,25 @@
 # apps/engine/calderyn_engine/alerts_repo.py
 """Idempotent alert + evidence upsert.
 
-Plan 03 Task 5: ``upsert_alert`` writes one row to ``alerts`` keyed by
-``(shop_id, detector_id, entity_ref, day_bucket)`` and one row to
-``alert_context`` keyed by ``alert_id``. Both statements use ON CONFLICT
-DO UPDATE so re-running a detector for the same day refreshes the impact /
-narrative / evidence in place rather than producing duplicates.
+``upsert_alert`` writes one row to ``alerts`` keyed by the ongoing
+*condition* ``(shop_id, detector_id, entity_ref)`` and one row to
+``alert_context`` keyed by ``alert_id``. The alerts upsert targets the
+partial unique index ``alerts_active_condition_key`` (active statuses
+only), so re-running a detector — on the same day OR a later one —
+refreshes the impact / narrative / evidence / ``day_bucket`` of the same
+open/acknowledged/snoozed alert rather than minting a fresh row per day.
+
+A condition that recurs AFTER its alert was resolved/dismissed falls
+outside the partial index and correctly opens a new alert. ``day_bucket``
+is no longer part of the key — it records the latest day the condition was
+detected.
+
+Status on refresh: an ``acknowledged`` alert (the merchant acted, but the
+detector "still owns resolution and may re-open it" — see
+``app/lib/alerts.server.ts``) is flipped back to ``open`` when the condition
+re-fires, so a still-true problem the merchant thought was handled returns to
+the open queue. A ``snoozed`` alert keeps its status (snooze is a deliberate
+timed deferral, re-surfaced by its deadline / next login, not by detection).
 """
 from __future__ import annotations
 
@@ -23,13 +37,20 @@ INSERT INTO alerts (
     first_seen_at, last_seen_at
 )
 VALUES ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7, $8, now(), now())
-ON CONFLICT (shop_id, detector_id, entity_ref, day_bucket)
+ON CONFLICT (shop_id, detector_id, entity_ref)
+    WHERE status IN ('open', 'acknowledged', 'snoozed')
 DO UPDATE SET
     dollar_impact   = EXCLUDED.dollar_impact,
     severity        = EXCLUDED.severity,
     claude_narrative = EXCLUDED.claude_narrative,
     claude_rank     = EXCLUDED.claude_rank,
-    last_seen_at    = now()
+    day_bucket      = EXCLUDED.day_bucket,
+    last_seen_at    = now(),
+    -- Re-open an acknowledged alert whose condition is still firing; leave
+    -- snoozed (timed deferral) and open untouched.
+    status = CASE WHEN alerts.status = 'acknowledged'
+                  THEN 'open'::alert_status
+                  ELSE alerts.status END
 RETURNING id
 """
 
