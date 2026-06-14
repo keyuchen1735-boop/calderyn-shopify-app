@@ -11,7 +11,6 @@ import {
   Button,
   ButtonGroup,
   Icon,
-  InlineStack,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -99,7 +98,7 @@ export function McpConnectGuide({
       {tab === "connector" ? (
         <BlockStack gap="400">
           {CONNECTOR_STEPS.map((s) => (
-            <InlineStack key={s.n} gap="300" blockAlign="start" wrap={false}>
+            <div key={s.n} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
               <div
                 style={{
                   flex: "0 0 auto",
@@ -117,13 +116,16 @@ export function McpConnectGuide({
               >
                 {s.n}
               </div>
-              <BlockStack gap="100">
-                <InlineStack gap="150" blockAlign="center">
+              {/* Plain flex column so the icon+title row groups at the left;
+                  Polaris InlineStack here stretched full-width and shoved the
+                  title to the right edge. */}
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <Icon source={STEP_ICON[s.icon]} tone="subdued" />
                   <Text as="h3" variant="headingSm">
                     {s.title}
                   </Text>
-                </InlineStack>
+                </div>
                 <Text as="p" variant="bodyMd">
                   {s.body}
                 </Text>
@@ -144,8 +146,8 @@ export function McpConnectGuide({
                     }
                   />
                 )}
-              </BlockStack>
-            </InlineStack>
+              </div>
+            </div>
           ))}
         </BlockStack>
       ) : (
