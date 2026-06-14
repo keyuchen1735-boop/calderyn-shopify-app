@@ -34,6 +34,7 @@ import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
+import { sortActiveFirst } from "~/lib/campaign-sort";
 // Campaigns load from the live Meta API, where c.id is the Meta external id (e.g.
 // "1234567890"), but executeAction keys off the ad_campaign_dim UUID. The route
 // reverse-looks-up that UUID (resolveCampaignDimId) and, when found, runs the
@@ -569,7 +570,9 @@ export default function Campaigns() {
   const [sortIndex, setSortIndex] = useState(4);
   const [sortDir, setSortDir] = useState<"ascending" | "descending">("descending");
 
-  const sorted = [...campaigns].sort((a, b) => {
+  // Active campaigns always sort to the top; the chosen column orders rows
+  // within each status group (paused never interleave with active).
+  const sorted = sortActiveFirst(campaigns, (a, b) => {
     const key = SORT_KEYS[sortIndex] ?? ((c: Campaign) => c.spend_7d);
     return sortDir === "ascending" ? key(a) - key(b) : key(b) - key(a);
   });

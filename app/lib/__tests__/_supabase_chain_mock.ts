@@ -60,6 +60,7 @@ export function buildChain(): unknown {
     "delete",
     "select",
     "eq",
+    "in",
     "is",
     "lt",
     "lte",

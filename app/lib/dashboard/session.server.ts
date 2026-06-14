@@ -7,6 +7,7 @@
 import { redirect } from "@remix-run/node";
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
+import { resurfaceAllSnoozes } from "../actions/snooze.server";
 
 export const SESSION_COOKIE_NAME = "__Host-calderyn_dash";
 const SESSION_TTL_MS = 30 * 86_400_000; // 30 days
@@ -65,6 +66,12 @@ export async function createSession(shopDomain: string): Promise<{ raw: string }
     .select("id")
     .single();
   if (error) throw error;
+
+  // A fresh login re-surfaces any alerts snoozed in a prior session — snooze
+  // hides an alert until +1 day OR the next login, whichever comes first.
+  // Best-effort (resurfaceAllSnoozes swallows + logs its own errors).
+  await resurfaceAllSnoozes(getSupabase(), shopId);
+
   return { raw };
 }
 

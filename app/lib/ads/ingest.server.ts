@@ -8,10 +8,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NormalizedCampaign, NormalizedSpendRow, Platform, ShopAdSource } from "./adapter";
 
-function yesterdayISO(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+/**
+ * The 3 UTC dates centered on yesterday: [today, yesterday, day-before].
+ *
+ * Ad platforms report metrics in the AD ACCOUNT's own timezone, not UTC, so a
+ * single UTC "yesterday" can miss or mis-key the account's just-closed local day
+ * (off by ±1 day depending on the account's offset). Polling this window covers
+ * the account's last complete day for any timezone, and also picks up the late
+ * conversion restatements platforms apply for a day or two. Re-fetching is safe:
+ * ad_spend_fact upserts on (campaign_id, day).
+ */
+export function recentSpendDays(now: Date): string[] {
+  return [0, 1, 2].map((back) => {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - back);
+    return d.toISOString().slice(0, 10);
+  });
 }
 
 async function upsertCampaigns(
@@ -112,6 +124,12 @@ export async function pollAdsDaily(
   sb: SupabaseClient,
 ): Promise<void> {
   await upsertCampaigns(await source.fetchCampaigns(), sb);
-  const day = yesterdayISO();
-  await upsertSpendFacts(await source.fetchDailySpend(day), shopId, platform, sb);
+  // Poll a 3-day window (today + 2 prior, UTC) so the account's own last complete
+  // day is captured regardless of its timezone, and late restatements land. The
+  // (campaign_id, day) upsert keeps re-fetched days idempotent.
+  const rows: NormalizedSpendRow[] = [];
+  for (const day of recentSpendDays(new Date())) {
+    rows.push(...(await source.fetchDailySpend(day)));
+  }
+  await upsertSpendFacts(rows, shopId, platform, sb);
 }

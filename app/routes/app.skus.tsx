@@ -42,6 +42,7 @@ import {
   inventoryAlertActions,
   openAlertsBySku,
 } from "~/lib/inventory-alerts";
+import { formatDemandUnits } from "~/lib/inventory-demand";
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
 type SortDir = "asc" | "desc";
@@ -227,8 +228,8 @@ export default function SKUs() {
   const navigate = useEmbeddedNavigate();
   const { skus, alerts, locations, error } = useLoaderData<typeof loader>();
 
-  const [sortKey, setSortKey] = useState<SortKey>("days_of_cover");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortKey, setSortKey] = useState<SortKey>("on_hand");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [query, setQuery] = useState("");
   const [relocating, setRelocating] = useState<SKU | null>(null);
   const { smDown } = useBreakpoints();
@@ -641,7 +642,7 @@ function DemandCell({ demand }: { demand: SKU["demand"] }) {
         {shortLoc(demand.region)}
       </Text>{" "}
       <Text as="span" variant="bodySm" tone="subdued">
-        <span className="cdn-tnum">{demand.units_30d.toLocaleString()}</span>/30d
+        <span className="cdn-tnum">{formatDemandUnits(demand.units_30d)}</span>
       </Text>
     </span>
   );

@@ -39,4 +39,21 @@ describe("buildSnapshot", () => {
     expect(text).toContain("Open alerts: 0");
     expect(text).toContain("No open alerts.");
   });
+
+  it("degrades gracefully when one source fails (best-effort context)", async () => {
+    // The snapshot is best-effort context for the assistant. One source erroring
+    // (e.g. a Meta/QuickBooks outage) must not fail the whole turn after the
+    // user's message was already persisted.
+    const base = fakeClient(3);
+    const client = {
+      alerts: base.alerts,
+      campaigns: { list: async () => { throw new Error("provider down"); } },
+      skus: base.skus,
+    } as unknown as CalderynClient;
+
+    const text = await buildSnapshot(client);
+    expect(text).toContain("Open alerts: 3");
+    expect(text).toContain("Campaigns: 0"); // failed source degrades to 0
+    expect(text).toContain("SKUs: 1");
+  });
 });

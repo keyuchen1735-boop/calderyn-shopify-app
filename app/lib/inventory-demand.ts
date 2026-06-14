@@ -34,6 +34,17 @@ export interface SkuDemandViewRow {
     | null;
 }
 
+/**
+ * Human label for a SKU's main-region demand. Replaces the cryptic "10/30d"
+ * with "10 units sold/30d" so the column reads as sales volume over the
+ * trailing 30 days. Shared by both inventory surfaces (extension SKUs table +
+ * dashboard Inventory screen) so the wording can't drift between them.
+ */
+export function formatDemandUnits(units30d: number): string {
+  const noun = units30d === 1 ? "unit" : "units";
+  return `${units30d.toLocaleString("en-US")} ${noun} sold/30d`;
+}
+
 export function demandFromRow(r: SkuDemandViewRow): SkuDemand {
   return {
     region: r.main_demand_region,

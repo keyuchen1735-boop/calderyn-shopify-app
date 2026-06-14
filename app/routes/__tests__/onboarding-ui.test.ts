@@ -54,6 +54,7 @@ function loaderData(overrides: Record<string, unknown> = {}): Record<string, unk
     shopDomain: "acme.myshopify.com",
     guardrails: null,
     integrations: {},
+    consent: false,
     error: null,
     devBypass: false,
     ...overrides,
@@ -157,11 +158,11 @@ describe("onboarding wizard — button wiring", () => {
     expect(forms.some((f) => f.fields.intent === "connect_integration")).toBe(false);
   });
 
-  it("step 4 (quickbooks, not connected): offers Skip; Continue gated like every connector", () => {
+  it("step 4 (tiktok, not connected): offers Connect and Skip; Continue gated", () => {
     const forms = formsOf(render({ step: 4, integrations: {} }));
 
     const connect = forms.find((f) => f.fields.intent === "connect_integration");
-    expect(connect?.fields.provider).toBe("quickbooks");
+    expect(connect?.fields.provider).toBe("tiktok");
 
     // Skip (enabled) and Continue (gated) both advance to 5.
     const toNext = forms.filter((f) => f.fields.intent === "advance" && f.fields.step === "5");
@@ -169,18 +170,40 @@ describe("onboarding wizard — button wiring", () => {
     expect(toNext.map((f) => f.buttonDisabled).sort()).toEqual([false, true]);
   });
 
-  it("step 7 (complete): Open dashboard submits finish, Back returns to consent", () => {
-    const forms = formsOf(render({ step: 7 }));
+  it("step 5 (quickbooks, not connected): offers Skip; Continue gated like every connector", () => {
+    const forms = formsOf(render({ step: 5, integrations: {} }));
 
-    const finish = forms.find((f) => f.fields.intent === "finish");
-    expect(finish?.buttonDisabled).toBe(false);
+    const connect = forms.find((f) => f.fields.intent === "connect_integration");
+    expect(connect?.fields.provider).toBe("quickbooks");
+
+    // Skip (enabled) and Continue (gated) both advance to 6.
+    const toNext = forms.filter((f) => f.fields.intent === "advance" && f.fields.step === "6");
+    expect(toNext).toHaveLength(2);
+    expect(toNext.map((f) => f.buttonDisabled).sort()).toEqual([false, true]);
+  });
+
+  it("step 7 (consent): Continue submits save_consent carrying the checkbox value; Back to creative", () => {
+    const forms = formsOf(render({ step: 7, consent: false }));
+
+    const save = forms.find((f) => f.fields.intent === "save_consent");
+    expect(save?.fields).toEqual({ intent: "save_consent", step: "8", consent: "false" });
     expect(forms).toContainEqual(
       expect.objectContaining({ fields: { intent: "advance", step: "6" } }),
     );
   });
 
+  it("step 8 (complete): Open dashboard submits finish, Back returns to consent", () => {
+    const forms = formsOf(render({ step: 8 }));
+
+    const finish = forms.find((f) => f.fields.intent === "finish");
+    expect(finish?.buttonDisabled).toBe(false);
+    expect(forms).toContainEqual(
+      expect.objectContaining({ fields: { intent: "advance", step: "7" } }),
+    );
+  });
+
   it("never nests forms on any step — a nested form re-parents its buttons", () => {
-    for (let step = 0; step < 8; step++) {
+    for (let step = 0; step < 9; step++) {
       const html = render({ step, devBypass: true });
       expect(maxFormDepth(html), `form nesting on step ${step}`).toBe(1);
     }

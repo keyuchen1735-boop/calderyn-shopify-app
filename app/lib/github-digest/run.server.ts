@@ -16,6 +16,7 @@
 //   ANTHROPIC_API_KEY  (already used by the in-app assistant) enables AI prose
 
 import { collectActivity } from "./collect.server";
+import { collectWaitlistSignups } from "./waitlist.server";
 import { summarize } from "./summarize.server";
 import { sendEmail, type DeliveryResult } from "~/lib/email/send.server";
 
@@ -31,6 +32,7 @@ export interface DigestRunSummary {
   openedPRCount: number;
   branchesScanned: number;
   branchesTotal: number;
+  waitlistSignupCount: number;
   summaryMode: "ai" | "template" | "empty" | "none";
   delivery: DeliveryResult;
   to: string;
@@ -57,6 +59,7 @@ function empty(repo: string, sinceIso: string, error: string): DigestRunSummary 
     openedPRCount: 0,
     branchesScanned: 0,
     branchesTotal: 0,
+    waitlistSignupCount: 0,
     summaryMode: "none",
     delivery: { sent: false, error: "not attempted" },
     to: "",
@@ -85,8 +88,14 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
   }
 
   const notes = [...activity.notes];
+
+  // New waitlist signups in the same trailing window. Independent of GitHub:
+  // a failure here is surfaced as a note, not a thrown digest (rule 12).
+  const waitlist = await collectWaitlistSignups({ sinceMs });
+  if (waitlist.note) notes.push(waitlist.note);
+
   const dateLabel = dateLabelET(nowMs);
-  const content = await summarize(activity, { dateLabel });
+  const content = await summarize(activity, { dateLabel, signups: waitlist.signups });
   if (process.env.ANTHROPIC_API_KEY && content.mode === "template") {
     notes.push("AI summary unavailable — fell back to grouped template.");
   }
@@ -123,6 +132,7 @@ export async function runGithubDigest(opts?: { nowMs?: number }): Promise<Digest
     openedPRCount: activity.openedPRs.length,
     branchesScanned: activity.branchesScanned,
     branchesTotal: activity.branchesTotal,
+    waitlistSignupCount: waitlist.signups.length,
     summaryMode: content.mode,
     delivery,
     to,

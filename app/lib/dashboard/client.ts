@@ -78,12 +78,27 @@ async function toApiError(res: Response): Promise<DashboardApiError> {
   return new DashboardApiError(res.status, code, message, body.audit_id);
 }
 
+// A 401 means the dashboard session is gone (expired/revoked/not sent). Sending
+// the user to re-login is the only real recovery — toasting it as a data error
+// or (in the poller) swallowing it just leaves a dead, looping dashboard. Guard
+// so the live poller's parallel fan-out triggers a single navigation, not one
+// per in-flight request.
+let redirectingToLogin = false;
+function redirectToLogin(): void {
+  // Latch only when we actually navigate, so a no-op environment (SSR, tests)
+  // can't trip the guard and suppress a real later redirect.
+  if (redirectingToLogin || typeof location === "undefined") return;
+  redirectingToLogin = true;
+  location.assign("/dashboard/login");
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(path, {
     method: "GET",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
   });
+  if (res.status === 401) redirectToLogin();
   if (!res.ok) throw await toApiError(res);
   return (await res.json()) as T;
 }
@@ -104,6 +119,7 @@ export async function apiSend<T>(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401) redirectToLogin();
   if (!res.ok) throw await toApiError(res);
   return (await res.json()) as T;
 }
@@ -198,8 +214,10 @@ export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): Campaign
     status: c.status,
     daily_budget_cents: c.daily_budget_cents,
     spend_7d: c.spend_7d,
-    roas_7d: c.roas_7d,
-    contribution_margin: c.contribution_margin,
+    // Coerce non-finite live values to 0 so the screen's `.toFixed(1)` calls
+    // can't throw on a null/undefined ROAS or margin from a partial API row.
+    roas_7d: Number.isFinite(c.roas_7d) ? c.roas_7d : 0,
+    contribution_margin: Number.isFinite(c.contribution_margin) ? c.contribution_margin : 0,
     breakeven_roas,
     grade,
     // TODO(api): per-campaign roas series — no per-campaign trend exists yet.
@@ -285,6 +303,16 @@ export function adaptSku(s: SKU): SkuVM {
     suggested_transfer: s.suggested_transfer ?? null,
     locations_detail: s.locations_detail ?? [],
   };
+}
+
+/**
+ * Default inventory ordering: most-stocked SKUs first. The dashboard Inventory
+ * screen has no column-sort UI, so this is the load order merchants see. Stable
+ * (equal on-hand keeps the API's order) and non-mutating; a missing on_hand
+ * coerces to 0 so unsynced rows sink to the bottom.
+ */
+export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
+  return [...skus].sort((a, b) => (b.on_hand ?? 0) - (a.on_hand ?? 0));
 }
 
 const INTEGRATION_ORDER = [
@@ -384,7 +412,7 @@ export async function fetchCampaign(
 
 export async function fetchSkus(): Promise<SkuVM[]> {
   const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
-  return data.skus.map(adaptSku);
+  return sortSkusByOnHandDesc(data.skus.map(adaptSku));
 }
 
 export async function fetchAudit(): Promise<AuditVM[]> {
@@ -415,6 +443,16 @@ function toGuardrailVM(g: GuardrailConfig): GuardrailVM {
     autopilot_actions_today: (g as { autopilot_actions_today?: number })
       .autopilot_actions_today ?? 0,
   };
+}
+
+export async function fetchConsent(): Promise<boolean> {
+  const data = await apiGet<{ consent: boolean }>("/dashboard/api/consent");
+  return Boolean(data.consent);
+}
+
+export async function putConsent(consent: boolean): Promise<boolean> {
+  const data = await apiSend<{ consent: boolean }>("PUT", "/dashboard/api/consent", { consent });
+  return Boolean(data.consent);
 }
 
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
@@ -598,6 +636,7 @@ export async function sendAssistantMessage(
     message?: AssistantMessage | string;
     error?: string;
   };
+  if (res.status === 401) redirectToLogin();
   if (!res.ok) {
     const msg =
       typeof body.message === "string" ? body.message : body.error ?? "Could not reach Calderyn";
@@ -640,6 +679,12 @@ export async function screenCreative(
   return data.run;
 }
 
+/** Coerce a possibly null/undefined/NaN model number to a finite value so the
+ * Predictor's `.toFixed(1)` / arithmetic renders can never throw. */
+function fin(n: unknown, fallback = 0): number {
+  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
+}
+
 /** Live run DTO → the Scorecard view-model the Predictor screen renders. */
 export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
   const sc = run.scorecard;
@@ -648,27 +693,27 @@ export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
     ad_name:
       run.creativeInput?.headline?.trim() ||
       (run.source === "meta_ad" ? "Meta ad" : "Your ad"),
-    composite: sc.composite,
+    composite: fin(sc.composite),
     grade: sc.grade,
     confidence: sc.confidence,
     summary: sc.summary,
     outcomes: {
-      estimatedRoas: sc.outcomes.estimatedRoas,
-      roasLow: sc.outcomes.roasLow,
-      roasHigh: sc.outcomes.roasHigh,
-      breakEvenRoas: sc.outcomes.breakEvenRoas,
-      predictedCtr: sc.outcomes.predictedCtr,
-      holdRate: sc.outcomes.holdRate,
-      assumedSpendCents: sc.outcomes.assumedSpendCents,
-      predictedRevenueCents: sc.outcomes.predictedRevenueCents,
+      estimatedRoas: fin(sc.outcomes.estimatedRoas),
+      roasLow: fin(sc.outcomes.roasLow),
+      roasHigh: fin(sc.outcomes.roasHigh),
+      breakEvenRoas: fin(sc.outcomes.breakEvenRoas),
+      predictedCtr: fin(sc.outcomes.predictedCtr),
+      holdRate: fin(sc.outcomes.holdRate),
+      assumedSpendCents: fin(sc.outcomes.assumedSpendCents),
+      predictedRevenueCents: fin(sc.outcomes.predictedRevenueCents),
       mappedSku: sc.outcomes.mappedSku ?? "No SKU",
-      skuPriceCents: sc.outcomes.skuPriceCents ?? 0,
+      skuPriceCents: fin(sc.outcomes.skuPriceCents),
     },
     metrics: sc.metrics.map((m) => ({
       id: m.id,
       group: m.group,
       label: m.label,
-      score: m.score,
+      score: fin(m.score),
       reasoning: m.reasoning,
     })),
     tips: sc.tips,

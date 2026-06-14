@@ -9,6 +9,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, RingGauge, ScoreBar, Btn, Pill, GradePill } from "../ui";
 import { CDIcon } from "../icons";
+import { TipIcon, categorizeTip } from "../tip-icons";
 import { money } from "../format";
 import { SCORECARD, GROUP_LABELS } from "../demo";
 // Side-effect import: registers the <image-slot> custom element on the client.
@@ -23,7 +24,7 @@ import {
   screenCreative,
 } from "~/lib/dashboard/client";
 import type { ProcessedCreativeMedia } from "~/lib/creative-media";
-import type { CreativeScreenRun } from "~/lib/screener/types";
+import { normalizeTip, type CreativeScreenRun, type Tip } from "~/lib/screener/types";
 
 // Staged scoring run copy (matches the prototype's SCORE_STEPS).
 const SCORE_STEPS = [
@@ -64,7 +65,9 @@ function GroupScores({ metrics }: { metrics: ScorecardMetric[] }) {
     <div className="flex flex-col gap-5">
       {groups.map((g) => {
         const ms = metrics.filter((m) => m.group === g);
-        const avg = Math.round(ms.reduce((s, m) => s + m.score, 0) / ms.length);
+        // Guard divide-by-zero: a live run may return no metrics for a group,
+        // which would otherwise render "avg NaN".
+        const avg = ms.length ? Math.round(ms.reduce((s, m) => s + m.score, 0) / ms.length) : 0;
         return (
           <div key={g}>
             <div className="flex items-center justify-between mb-2">
@@ -87,9 +90,46 @@ function GroupScores({ metrics }: { metrics: ScorecardMetric[] }) {
   );
 }
 
+/* ---------- One improvement tip: icon + scannable title, click to expand ---------- */
+function TipRow({ tip }: { tip: Tip }) {
+  const t = normalizeTip(tip);
+  const [open, setOpen] = useState(false);
+  const expandable = t.detail.length > 0;
+  return (
+    <div className="cd-improve">
+      <button
+        type="button"
+        className="cd-improve-head"
+        onClick={() => expandable && setOpen((o) => !o)}
+        aria-expanded={expandable ? open : undefined}
+        disabled={!expandable}
+      >
+        <span className="cd-tip-ico">
+          <TipIcon category={categorizeTip(tip)} />
+        </span>
+        <span className="cd-improve-title">{t.title}</span>
+        {expandable && (
+          <CDIcon
+            name="chevronRight"
+            size={14}
+            className="cd-improve-chev"
+            style={{ transform: open ? "rotate(90deg)" : "none" }}
+          />
+        )}
+      </button>
+      {expandable && open && <p className="cd-improve-detail">{t.detail}</p>}
+    </div>
+  );
+}
+
 /* ---------- Predicted outcomes: ROAS band + mini-stats ---------- */
 function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
   const above = o.estimatedRoas >= o.breakEvenRoas;
+  // Position a value within the [low, high] ROAS band as a 0–100% offset,
+  // clamped. Guards a flat band (high === low) that would yield NaN/Infinity.
+  const span = o.roasHigh - o.roasLow;
+  const bandPct = (v: number): number =>
+    span > 0 ? Math.max(0, Math.min(100, ((v - o.roasLow) / span) * 100)) : 50;
   return (
     <Card className="flex flex-col gap-3">
       <h2 className="cd-h2">Predicted outcomes</h2>
@@ -104,7 +144,7 @@ function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
           <div
             className="cd-band-marker"
             style={{
-              left: `${((o.estimatedRoas - o.roasLow) / (o.roasHigh - o.roasLow)) * 100}%`,
+              left: `${bandPct(o.estimatedRoas)}%`,
             }}
           >
             <span className="cd-band-val tabular-nums">{o.estimatedRoas.toFixed(1)}×</span>
@@ -112,7 +152,7 @@ function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
           <div
             className="cd-band-be"
             style={{
-              left: `${((o.breakEvenRoas - o.roasLow) / (o.roasHigh - o.roasLow)) * 100}%`,
+              left: `${bandPct(o.breakEvenRoas)}%`,
             }}
             title={`Break-even ${o.breakEvenRoas.toFixed(1)}×`}
           ></div>
@@ -436,15 +476,10 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
             </Card>
             <div className="flex flex-col gap-4 min-w-0">
               <OutcomePanel o={sc.outcomes} />
-              <Card className="flex flex-col gap-2.5">
+              <Card className="flex flex-col gap-1.5">
                 <h2 className="cd-h2">How to improve it</h2>
                 {sc.tips.map((tip, i) => (
-                  <div key={i} className="flex gap-2.5 items-start">
-                    <span className="cd-tip-num">{i + 1}</span>
-                    <p className="cd-body" style={{ fontSize: "calc(13.5px * var(--type-scale))" }}>
-                      {tip}
-                    </p>
-                  </div>
+                  <TipRow key={i} tip={tip} />
                 ))}
               </Card>
               <Card className="flex flex-col gap-3">

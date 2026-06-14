@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Form, useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
@@ -18,12 +18,6 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
-import {
-  PENDING_COOKIE_NAME,
-  verifyPendingOauth,
-  getPendingOauth,
-  signConsentAuth,
-} from "~/lib/mcp_oauth.server";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
@@ -42,7 +36,6 @@ type LoaderPayload = {
   audit: AuditEntry[];
   campaigns: Campaign[];
   guardrails: GuardrailConfig | null;
-  onboardingDone: boolean;
   error: { code: string; message: string } | null;
   dashboardLoginUrl: string;
   // Recovered impact over the trailing 7 days — windowed server-side so the
@@ -54,37 +47,9 @@ const RECOVERED_WINDOW_DAYS = 7;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-
-  // Pending-OAuth handoff: if a Claude.ai connector flow stashed state for this
-  // shop before sending the merchant through Shopify auth, jump them to
-  // /oauth/consent instead of rendering the dashboard.
-  //
-  // We're under the AppProvider layout, so authenticate.admin worked here.
-  // /oauth/consent sits outside that layout and can't reliably re-auth in the
-  // iframe, so we mint a short-lived signed JWT bound to the verified shop and
-  // pass it through the redirect URL. /oauth/consent will verify the JWT
-  // instead of calling authenticate.admin.
-  const handoff = async (shop: string) => {
-    const auth = await signConsentAuth({ shop });
-    return redirect(`/oauth/consent?_auth=${encodeURIComponent(auth)}`);
-  };
-
-  const pendingRow = await getPendingOauth(session.shop);
-  if (pendingRow) {
-    return handoff(session.shop);
-  }
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const m = cookieHeader.match(new RegExp(`${PENDING_COOKIE_NAME}=([^;]+)`));
-  if (m) {
-    try {
-      const ctx = await verifyPendingOauth(m[1]);
-      if (ctx.shop === session.shop) {
-        return handoff(session.shop);
-      }
-    } catch {
-      // expired / tampered / wrong shop — fall through to normal dashboard load
-    }
-  }
+  // Carried onto the onboarding redirect below so the embedded iframe keeps its
+  // shop/host/embedded params and can re-authenticate on the document request.
+  const url = new URL(request.url);
 
   // Sign-in-with-Shopify entry point of the external merchant dashboard; the
   // merchant's live admin session completes the OAuth round-trip silently.
@@ -93,13 +58,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }/dashboard/login?shop=${encodeURIComponent(session.shop)}`;
 
   const client = calderynClient(session.shop);
+
+  // Gate on onboarding FIRST, decisively, and server-side — the old client-side
+  // useEffect bump flashed the empty dashboard before redirecting. An unreadable
+  // state almost always means the shops row isn't provisioned yet (afterAuth
+  // swallows provisioning errors): route to onboarding, which provisions
+  // defensively and shows its own error UI, rather than render a broken
+  // dashboard. An incomplete state likewise belongs in the wizard. url.search
+  // preserves shop/host/embedded so the embedded document request re-auths.
+  let onboardingDone: boolean;
   try {
-    const [alerts, audit, campaigns, guardrails, onboarding] = await Promise.all([
+    onboardingDone = (await client.onboarding.getState(request.signal)).done;
+  } catch {
+    throw redirect(`/app/onboarding${url.search}`);
+  }
+  if (!onboardingDone) {
+    throw redirect(`/app/onboarding${url.search}`);
+  }
+
+  // Onboarded: load dashboard data, failing soft (error banner) on a transient
+  // error instead of trapping the merchant.
+  try {
+    const [alerts, audit, campaigns, guardrails] = await Promise.all([
       client.alerts.list({ status: "open" }, request.signal),
       client.audit.list(request.signal),
       client.campaigns.list(request.signal),
       client.guardrails.get(request.signal),
-      client.onboarding.getState(request.signal),
     ]);
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -109,19 +93,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       audit,
       campaigns,
       guardrails,
-      onboardingDone: onboarding.done,
       error: null,
       dashboardLoginUrl,
       recovered7d: recoveredWithin(audit, sinceIso),
     });
   } catch (err) {
+    // Any auth bounce thrown as a Response must propagate, not be misread as a
+    // data-load failure.
+    if (err instanceof Response) throw err;
     const e = err as CalderynError;
     return json<LoaderPayload>({
       alerts: [],
       audit: [],
       campaigns: [],
       guardrails: null,
-      onboardingDone: true,
       error: { code: e.code ?? "ERROR", message: e.message },
       dashboardLoginUrl,
       recovered7d: { cents: 0, count: 0 },
@@ -136,16 +121,11 @@ export default function Dashboard() {
     audit,
     campaigns,
     guardrails,
-    onboardingDone,
     error,
     dashboardLoginUrl,
     recovered7d,
   } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
-
-  useEffect(() => {
-    if (!onboardingDone) navigate("/app/onboarding");
-  }, [onboardingDone, navigate]);
 
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");

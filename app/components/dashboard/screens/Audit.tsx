@@ -8,7 +8,7 @@
 import { useState, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
-import { money } from "../format";
+import { money, timeAgo, absTime } from "../format";
 import { recovered } from "~/lib/recovered";
 import type { DashboardCtx } from "../context";
 import type { AuditVM } from "../view-models";
@@ -81,8 +81,8 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
             +{money(entry.dollar_impact_at_exec)}
           </div>
         )}
-        <div className="cd-caption">
-          {entry.actor} · {entry.when}
+        <div className="cd-caption" title={absTime(entry.when) || undefined}>
+          {entry.actor} · {timeAgo(entry.when)}
         </div>
       </div>
       {entry.undo_eligible && !undone && (

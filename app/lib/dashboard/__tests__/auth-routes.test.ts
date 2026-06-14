@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
+import type * as SessionMod from "../session.server";
+import type * as ShopifyOauthMod from "../shopify-oauth.server";
 
 import { loader as loginLoader } from "../../../routes/dashboard.login";
 import { loader as callbackLoader } from "../../../routes/dashboard.auth.callback";
@@ -11,7 +13,7 @@ const { createSession, resolveShopId, exchangeCodeForToken } = vi.hoisted(() => 
 }));
 
 vi.mock("../session.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../session.server")>()),
+  ...(await importOriginal<typeof SessionMod>()),
   createSession,
 }));
 vi.mock("../../supabase.server", () => ({
@@ -19,7 +21,7 @@ vi.mock("../../supabase.server", () => ({
   resolveShopId,
 }));
 vi.mock("../shopify-oauth.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../shopify-oauth.server")>()),
+  ...(await importOriginal<typeof ShopifyOauthMod>()),
   exchangeCodeForToken,
 }));
 
@@ -175,6 +177,43 @@ describe("dashboard.auth.callback loader", () => {
       context: {},
     })) as Response;
     expect(res.headers.get("Location")).toContain("error=oauth_failed");
+  });
+
+  it("honours a validated return_to carried in the state cookie", async () => {
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const returnTo = encodeURIComponent("/dashboard/connect?t=abc.def.ghi");
+    const res = (await callbackLoader({
+      request: callbackRequest(url, `nonce-1:x.myshopify.com:${returnTo}`),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "https://calderyncompany.com/dashboard/connect?t=abc.def.ghi",
+    );
+  });
+
+  it("falls back to /dashboard (no crash) on a malformed return_to encoding", async () => {
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    // A trailing '%' is not a valid percent-encoding; decodeURIComponent throws
+    // and the consumer must swallow it rather than 500 the OAuth round-trip.
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com:bad%"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard");
   });
 
   it("403s app_not_installed when the shop is unknown", async () => {

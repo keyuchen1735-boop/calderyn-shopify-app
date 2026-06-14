@@ -1,42 +1,16 @@
-import { Banner, BlockStack, Button, Card, InlineGrid, Text, TextField } from "@shopify/polaris";
-import { useCallback } from "react";
+import { Banner } from "@shopify/polaris";
 
-const MCP_URL = "https://calderyn-mcp.vercel.app/mcp";
-
-export function McpConnectCards() {
-  const copy = useCallback(() => {
-    void navigator.clipboard.writeText(MCP_URL);
-  }, []);
-
+// The full install guide now lives under Settings → "Claude connector". This
+// slim banner points there so the "Claude connections" page stays focused on
+// key/connection management.
+export function McpConnectCards({ onSetup }: { onSetup?: () => void }) {
   return (
-    <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-      <Card>
-        <BlockStack gap="200">
-          <Text as="h3" variant="headingSm">
-            Connect via Claude.ai (recommended)
-          </Text>
-          <Text as="p" variant="bodyMd">
-            In Claude.ai, open <b>Add connector</b>, paste the URL below, then approve the Calderyn
-            consent screen that appears.
-          </Text>
-          <TextField label="MCP URL" value={MCP_URL} autoComplete="off" readOnly />
-          <Button onClick={copy}>Copy URL</Button>
-        </BlockStack>
-      </Card>
-      <Card>
-        <BlockStack gap="200">
-          <Text as="h3" variant="headingSm">
-            Connect via bearer token (advanced)
-          </Text>
-          <Text as="p" variant="bodyMd">
-            For custom MCP clients that don't speak OAuth. Generate a token below and paste it as an{" "}
-            <code>Authorization: Bearer …</code> header. Read-only.
-          </Text>
-          <Banner tone="info">
-            <p>If your client speaks OAuth, use the recommended path on the left.</p>
-          </Banner>
-        </BlockStack>
-      </Card>
-    </InlineGrid>
+    <Banner
+      tone="info"
+      title="Set up the Claude connector"
+      action={onSetup ? { content: "Open setup guide", onAction: onSetup } : undefined}
+    >
+      <p>New here? The step-by-step connector setup lives under Settings → Claude connector.</p>
+    </Banner>
   );
 }

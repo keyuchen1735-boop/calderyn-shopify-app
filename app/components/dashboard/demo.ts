@@ -119,9 +119,21 @@ export const SCORECARD: Scorecard = {
     },
   ],
   tips: [
-    "Open with the JMT creator clip — your UGC ads hold 2.9× longer than statics.",
-    "Swap “Shop Now” for “Get trail-ready — free shipping over $75”.",
-    "Add a one-line review overlay: 4.8★ from 1,200+ hikers.",
+    {
+      title: "Lead with the JMT creator clip",
+      detail:
+        "Your hero frame is a flat-lay product shot, which scrolls past. Open on the “Three weeks on the JMT” UGC clip instead — your UGC ads hold 2.9× longer than statics, lifting hook strength and hold rate.",
+    },
+    {
+      title: "Make the CTA an offer",
+      detail:
+        "“Shop Now” gives no reason to act today. Swap it for “Get trail-ready — free shipping over $75”, which pairs intent with a concrete incentive and lifts the offer/conversion score.",
+    },
+    {
+      title: "Add a social-proof overlay",
+      detail:
+        "There’s no proof on the creative. Overlay one line — “4.8★ from 1,200+ hikers” — to raise trust and CTR without crowding the image.",
+    },
   ],
   variants: [
     {

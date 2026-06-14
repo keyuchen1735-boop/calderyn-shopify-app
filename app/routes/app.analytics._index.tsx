@@ -91,13 +91,14 @@ export default function Analytics() {
     <Text key={`c-${a.ad_external_id}`} as="span" tone="subdued">
       {a.campaign_name}
     </Text>,
-    String(a.reactions),
-    String(a.comments),
-    String(a.shares),
-    String(a.saves),
-    <Text key={`t-${a.ad_external_id}`} as="span" fontWeight="semibold">
-      {a.engagement}
-    </Text>,
+    <Tooltip
+      key={`e-${a.ad_external_id}`}
+      content={`${a.reactions.toLocaleString()} reactions · ${a.comments.toLocaleString()} comments · ${a.shares.toLocaleString()} shares · ${a.saves.toLocaleString()} saves`}
+    >
+      <Text as="span" fontWeight="semibold">
+        {a.engagement.toLocaleString()}
+      </Text>
+    </Tooltip>,
   ]);
 
   return (
@@ -188,8 +189,17 @@ export default function Analytics() {
             </Box>
           ) : (
             <DataTable
-              columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-              headings={["Ad", "Campaign", "Reactions", "Comments", "Shares", "Saves", "Total"]}
+              columnContentTypes={["text", "text", "numeric"]}
+              headings={[
+                "Ad",
+                "Campaign",
+                <Tooltip
+                  key="eng"
+                  content="Reactions + comments + shares + saves over the window. Hover a row for the breakdown."
+                >
+                  <span>Engagement</span>
+                </Tooltip>,
+              ]}
               rows={adRows}
             />
           )}

@@ -73,6 +73,7 @@ const ONBOARDING_STEPS = [
   "guardrails",
   "google",
   "meta",
+  "tiktok",
   "quickbooks",
   "creative_mapping",
   "consent",
@@ -1019,6 +1020,40 @@ export function calderynClient(shop: string) {
           if (error) throw error;
         } catch (err) {
           rethrow("onboarding.advance", err);
+        }
+      },
+    },
+
+    // Peer-baseline consent (shops.peer_data_consent). Opt-in: the column
+    // defaults to false, and the engine's moat emitter only contributes a shop's
+    // metrics when this is true. The onboarding consent step and the Settings
+    // toggle both flow through here so the displayed state always matches what
+    // the engine actually reads.
+    consent: {
+      async get(_signal?: AbortSignal): Promise<boolean> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("shops")
+            .select("peer_data_consent")
+            .eq("id", shopId)
+            .single();
+          if (error) throw error;
+          return Boolean(data.peer_data_consent);
+        } catch (err) {
+          rethrow("consent.get", err);
+        }
+      },
+      async set(value: boolean, _signal?: AbortSignal): Promise<void> {
+        try {
+          const shopId = await shopIdP;
+          const { error } = await supabase
+            .from("shops")
+            .update({ peer_data_consent: value, updated_at: new Date().toISOString() })
+            .eq("id", shopId);
+          if (error) throw error;
+        } catch (err) {
+          rethrow("consent.set", err);
         }
       },
     },

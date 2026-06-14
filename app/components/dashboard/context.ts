@@ -50,6 +50,8 @@ export interface DashboardCtx {
   audit: AuditVM[];
   guardrails: GuardrailVM | null;
   integrations: IntegrationVM[];
+  /** Peer-baseline consent (shops.peer_data_consent); null until loaded. */
+  consent: boolean | null;
   overview: OverviewVM | null;
 
   // --- live engine ---

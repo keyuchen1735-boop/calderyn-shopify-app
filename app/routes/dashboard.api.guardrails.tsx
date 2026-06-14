@@ -4,6 +4,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";
+import { validateGuardrailPatch } from "~/lib/dashboard/guardrails-validation";
 import type { GuardrailConfig } from "~/lib/types";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -41,6 +42,25 @@ export async function action({ request }: ActionFunctionArgs) {
     if (key in body) (patch as Record<string, unknown>)[key] = body[key];
   }
   if (Object.keys(patch).length === 0) return jsonError(422, "empty_patch");
+
+  // Mirror the onboarding guard (app/routes/app.onboarding.tsx): a present
+  // budget or per-action cap must be a positive number, and cooldown >= 0 —
+  // otherwise the patch would silently disable the guardrail. Only validate
+  // keys actually in the patch, since this is a partial update.
+  const positive = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v > 0;
+  const nonNegative = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  if ("daily_action_budget_cents" in patch && !positive(patch.daily_action_budget_cents)) {
+    return jsonError(422, "invalid_guardrails");
+  }
+  if ("dollar_cap_cents" in patch && !positive(patch.dollar_cap_cents)) {
+    return jsonError(422, "invalid_guardrails");
+  }
+  if ("cooldown_minutes" in patch && !nonNegative(patch.cooldown_minutes)) {
+    return jsonError(422, "invalid_guardrails");
+  }
+  // Autopilot limits + business_hours are persisted and later trusted by the
+  // autopilot executor; bound them so e.g. a 999% budget-cut can't be stored.
+  if (validateGuardrailPatch(patch)) return jsonError(422, "invalid_guardrails");
 
   return dashboardJson(async () => ({
     guardrails: await calderynClient(session.shopDomain).guardrails.update(patch),

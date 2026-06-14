@@ -49,6 +49,21 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
     );
 
+    // Hitting the token cap truncates the response — any tool_use block is
+    // incomplete and unsafe to dispatch, and the text (if any) is partial. Don't
+    // treat it as a finished turn: surface what we have, or a clear message, so
+    // the user never gets a silent blank reply.
+    if (res.stop_reason === "max_tokens") {
+      const partial = extractText(res);
+      return {
+        text:
+          partial ||
+          "I ran out of room before I could finish that. Try narrowing the question or asking for one thing at a time.",
+        draftedAction,
+        stoppedAtCap: true,
+      };
+    }
+
     if (res.stop_reason !== "tool_use" || toolUses.length === 0) {
       return { text: extractText(res), draftedAction, stoppedAtCap: false };
     }

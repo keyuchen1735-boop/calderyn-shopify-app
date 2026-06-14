@@ -469,7 +469,9 @@ export default function CampaignDetailPage() {
               Ad creatives
             </Text>
             {creatives.length > 0 ? (
-              <BlockStack gap="500">
+              // Tile creatives 2-up on wide screens so each ad's preview +
+              // scorecard uses the horizontal space instead of a tall column.
+              <InlineGrid columns={{ xs: 1, lg: 2 }} gap="500">
                 {creatives.map((c, i) => (
                   <CreativeWithScorecard
                     key={c.adId || `ad-${i}`}
@@ -481,7 +483,7 @@ export default function CampaignDetailPage() {
                     campaignIdParam={campaignIdParam}
                   />
                 ))}
-              </BlockStack>
+              </InlineGrid>
             ) : (
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd" tone="subdued">

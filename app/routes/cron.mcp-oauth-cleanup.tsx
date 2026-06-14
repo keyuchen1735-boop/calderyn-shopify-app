@@ -25,19 +25,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ ok: false, error: codes.error.message ?? String(codes.error) }, { status: 500 });
   }
 
-  // Pending-OAuth rows also expire; reap anything past TTL (already +24h grace).
-  const pending = await sb
-    .from("mcp_pending_oauth")
-    .delete({ count: "exact" })
-    .lt("expires_at", cutoff);
-  if (pending.error) {
-    console.error("[cron.mcp-oauth-cleanup] pending delete failed", pending.error);
-    return json({ ok: false, error: pending.error.message ?? String(pending.error) }, { status: 500 });
-  }
-
+  // The connector consent flow no longer persists pending-OAuth rows — the
+  // pending state is a short-lived signed JWT carried in the URL, so there is
+  // nothing to reap here beyond expired auth codes.
   return json({
     ok: true,
     deleted_codes: codes.count ?? 0,
-    deleted_pending: pending.count ?? 0,
   });
 };

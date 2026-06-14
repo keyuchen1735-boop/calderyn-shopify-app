@@ -4,6 +4,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   AppProvider as PolarisAppProvider,
+  BlockStack,
   Button,
   Card,
   FormLayout,
@@ -36,26 +37,36 @@ export default function Auth() {
 
   return (
     <PolarisAppProvider i18n={loaderData.polarisTranslations}>
-      <Page>
+      <Page narrowWidth>
         <Card>
-          <Form method="post">
-            <FormLayout>
-              <Text variant="headingMd" as="h2">
-                Log in to Calderyn
+          <BlockStack gap="400">
+            <BlockStack gap="100">
+              <Text variant="headingLg" as="h1">
+                Calderyn
               </Text>
-              <TextField
-                type="text"
-                name="shop"
-                label="Shop domain"
-                helpText="example.myshopify.com"
-                value={shop}
-                onChange={setShop}
-                autoComplete="on"
-                error={"shop" in errors ? errors.shop : undefined}
-              />
-              <Button submit>Log in</Button>
-            </FormLayout>
-          </Form>
+              <Text as="p" tone="subdued">
+                The AI ops copilot for your Shopify store — watching ad spend and inventory
+                together, and flagging money leaks before they compound.
+              </Text>
+            </BlockStack>
+            <Form method="post">
+              <FormLayout>
+                <TextField
+                  type="text"
+                  name="shop"
+                  label="Shop domain"
+                  helpText="Enter your store to open Calderyn in your Shopify admin (example.myshopify.com)."
+                  value={shop}
+                  onChange={setShop}
+                  autoComplete="on"
+                  error={"shop" in errors ? errors.shop : undefined}
+                />
+                <Button submit variant="primary">
+                  Log in
+                </Button>
+              </FormLayout>
+            </Form>
+          </BlockStack>
         </Card>
       </Page>
     </PolarisAppProvider>

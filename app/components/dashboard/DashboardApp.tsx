@@ -19,6 +19,7 @@ import {
   useTweaks,
 } from "./tweaks-panel";
 import { useLiveFeed } from "./live";
+import { applyUndo } from "./undo";
 import type {
   ActionKind,
   DashboardCtx,
@@ -120,6 +121,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [audit, setAudit] = useState<AuditVM[]>([]);
   const [guardrails, setGuardrails] = useState<GuardrailVM | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationVM[]>([]);
+  const [consent, setConsent] = useState<boolean | null>(null);
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -143,12 +145,13 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ] = await Promise.all([
+    const [ov, al, au, gr, integ, co] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
       client.fetchGuardrails(),
       client.fetchIntegrations(),
+      client.fetchConsent(),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -156,6 +159,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setAudit(au);
     setGuardrails(gr);
     setIntegrations(integ);
+    setConsent(co);
   }, []);
 
   useEffect(() => {
@@ -263,11 +267,23 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         );
       };
 
-      // snooze: local-only, no API call.
+      // snooze: real deferral. The server flips the alert to 'snoozed' and the
+      // alerts view hides it until it lapses (+1 day) or the next login. Drop it
+      // from the local list to mirror that — it is hidden, not resolved.
       if (kind === "snooze_alert") {
-        markResolved();
-        logAudit(0);
-        toast(`${label} — alert snoozed for 7 days.`, "snooze");
+        try {
+          await client.executeAlertAction(alert.id, { type: kind });
+          setAlerts((as) => as.filter((a) => a.id !== alert.id));
+          // Re-fetch audit so the server's authoritative row replaces our view.
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(`${label} — back tomorrow or at your next login.`, "snooze");
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
         return;
       }
 
@@ -345,12 +361,10 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const undoAction = useCallback(
     async (entry: AuditVM) => {
       try {
-        await client.undoAudit(entry.id);
-        setAudit((au) =>
-          au.map((a) =>
-            a.id === entry.id ? { ...a, undo_eligible: false, post: "Reverted" } : a,
-          ),
-        );
+        const { auditId } = await client.undoAudit(entry.id);
+        // Insert the undo row (with the server's id) so the "Recovered" total
+        // claws this action's dollars back immediately, not 15s later.
+        setAudit((au) => applyUndo(au, entry, auditId));
         toast("Action undone — previous state restored.", "undo");
       } catch (err) {
         const msg = err instanceof DashboardApiError ? err.message : "Undo failed.";
@@ -403,6 +417,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     audit,
     guardrails,
     integrations,
+    consent,
     overview,
     feed,
     liveOn,
@@ -439,9 +454,25 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       {/* Sidebar */}
       <aside className="cd-sidebar" data-screen-label="Sidebar">
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
-          <div className="cd-logo cd-logo-mark" aria-hidden="true">
-            C
-          </div>
+          <svg
+            className="cd-logo cd-logo-mark"
+            viewBox="0 0 32 32"
+            fill="none"
+            role="img"
+            aria-label="Calderyn"
+          >
+            <path
+              d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
+              fill="#24556E"
+            />
+            <path
+              d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
+              stroke="#fff"
+              strokeWidth="3.6"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </svg>
           <div>
             <div className="cd-brand-name">Calderyn</div>
             <div className="cd-brand-sub">{shopDomain}</div>

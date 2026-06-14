@@ -78,6 +78,30 @@ describe("runAssistantTurn", () => {
     expect(createMessage).toHaveBeenCalledTimes(2); // turn 0 + turn 1 (cap)
   });
 
+  it("does not drop the turn when the model hits max_tokens mid-tool-call", async () => {
+    // stop_reason "max_tokens" with a (truncated, un-dispatchable) tool_use block:
+    // the old code treated this as a final turn and returned empty text, so the
+    // user saw a blank reply and the tool never ran.
+    const truncated = {
+      id: "m",
+      type: "message",
+      role: "assistant",
+      model: "x",
+      stop_reason: "max_tokens",
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
+      content: [{ type: "tool_use", id: "t1", name: "list_alerts", input: {} }],
+    } as unknown as Anthropic.Message;
+    const createMessage = vi.fn(async () => truncated);
+    const dispatchTool = vi.fn(async (): Promise<ToolDispatchResult> => ({ content: "{}" }));
+
+    const res = await runAssistantTurn({ ...base, createMessage, dispatchTool });
+
+    expect(res.text.trim().length).toBeGreaterThan(0); // not a blank reply
+    expect(res.stoppedAtCap).toBe(true);
+    expect(dispatchTool).not.toHaveBeenCalled(); // truncated tool call must not run
+  });
+
   it("propagates a tool error into the tool_result (is_error)", async () => {
     const createMessage = vi
       .fn()
