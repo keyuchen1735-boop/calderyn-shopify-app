@@ -11,7 +11,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { money } from "../format";
-import { putGuardrails, DashboardApiError } from "~/lib/dashboard/client";
+import { putConsent, putGuardrails, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
@@ -77,6 +77,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // PUT reverts the touched field back to the server value.
   const [g, setG] = useState<GuardrailVM | null>(app.guardrails);
   const [saving, setSaving] = useState(false);
+  const [savingConsent, setSavingConsent] = useState(false);
 
   useEffect(() => {
     setG(app.guardrails);
@@ -105,6 +106,27 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       app.toast(message, "x", "critical");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Peer-baseline consent toggle. Mirrors the embedded Settings control; writes
+  // through the dashboard consent route, then refresh + toast. There is no
+  // optimistic local copy — app.consent is re-read on refresh().
+  const commitConsent = async (value: boolean) => {
+    if (savingConsent || app.consent === null) return;
+    setSavingConsent(true);
+    try {
+      await putConsent(value);
+      app.refresh();
+      app.toast(
+        value ? "Peer baseline enabled" : "Consent withdrawn — purged within 30 days",
+        "check",
+      );
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Couldn't update consent.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setSavingConsent(false);
     }
   };
 
@@ -258,6 +280,22 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             <Pill tone={g.in_business_hours ? "success" : "neutral"} icon="clock">
               {g.in_business_hours ? "In window now" : "Outside window"}
             </Pill>
+          </SettingRow>
+        </Card>
+      </section>
+
+      <section>
+        <SectionTitle>Privacy</SectionTitle>
+        <Card pad={false}>
+          <SettingRow
+            label="Peer baseline"
+            sub="Contribute anonymized, hashed metrics so Calderyn can benchmark you against peer shops in your category. Withdraw anytime — your contribution is purged within 30 days."
+          >
+            <Toggle
+              value={app.consent ?? false}
+              disabled={savingConsent || app.consent === null}
+              onChange={(v) => commitConsent(v)}
+            />
           </SettingRow>
         </Card>
       </section>

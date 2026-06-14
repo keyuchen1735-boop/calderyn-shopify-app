@@ -56,7 +56,7 @@ vi.mock("../supabase.server", () => ({
 // eslint-disable-next-line import/first -- import must follow vi.mock so the supabase fake is registered before the module under test loads
 import { calderynClient } from "../calderyn.server";
 
-const TOTAL_STEPS = 8; // mirrors STEPS in app.onboarding.tsx and ONBOARDING_STEPS in calderyn.server.ts
+const TOTAL_STEPS = 9; // mirrors STEPS in app.onboarding.tsx and ONBOARDING_STEPS in calderyn.server.ts
 
 beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k];
@@ -106,6 +106,7 @@ describe("onboarding state persistence", () => {
       "guardrails",
       "google",
       "meta",
+      "tiktok",
       "quickbooks",
       "creative_mapping",
       "consent",

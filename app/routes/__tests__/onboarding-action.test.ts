@@ -10,6 +10,8 @@ const {
   guardrailsUpdateSpy,
   integrationsListSpy,
   startOAuthSpy,
+  consentGetSpy,
+  consentSetSpy,
 } = vi.hoisted(() => ({
   getStateSpy: vi.fn(),
   advanceSpy: vi.fn(),
@@ -17,6 +19,8 @@ const {
   guardrailsUpdateSpy: vi.fn(),
   integrationsListSpy: vi.fn(),
   startOAuthSpy: vi.fn(),
+  consentGetSpy: vi.fn(),
+  consentSetSpy: vi.fn(),
 }));
 
 // Stub Polaris so importing the route module doesn't pull the real UI lib.
@@ -38,6 +42,9 @@ vi.mock("@shopify/polaris", () => {
   };
 });
 vi.mock("~/lib/toast", () => ({ useActionToast: () => {} }));
+// The onboarding loader self-heals a missing shops row via provisionShop before
+// reading state; stub it so the loader tests don't hit a real Supabase client.
+vi.mock("~/lib/supabase.server", () => ({ provisionShop: vi.fn(async () => {}) }));
 vi.mock("~/components/calderyn", () => ({ GuardrailMeter: () => null }));
 
 vi.mock("../../shopify.server", () => ({
@@ -57,6 +64,10 @@ vi.mock("~/lib/calderyn.server", () => ({
     integrations: {
       list: (...a: unknown[]) => integrationsListSpy(...a),
       startOAuth: (...a: unknown[]) => startOAuthSpy(...a),
+    },
+    consent: {
+      get: (...a: unknown[]) => consentGetSpy(...a),
+      set: (...a: unknown[]) => consentSetSpy(...a),
     },
   }),
 }));
@@ -79,10 +90,14 @@ beforeEach(() => {
     guardrailsUpdateSpy,
     integrationsListSpy,
     startOAuthSpy,
+    consentGetSpy,
+    consentSetSpy,
   ]) {
     spy.mockReset();
   }
   advanceSpy.mockResolvedValue(undefined);
+  consentGetSpy.mockResolvedValue(false);
+  consentSetSpy.mockResolvedValue(undefined);
 });
 
 describe("onboarding action — step advancement", () => {
@@ -128,21 +143,41 @@ describe("onboarding action — guardrails", () => {
     );
   });
 
-  it("clamps negative guardrail values to zero instead of persisting them", async () => {
+  it.each([
+    ["negative budget/cap", { budget: "-50", cap: "-1", cooldown: "30" }],
+    ["zero budget", { budget: "0", cap: "50", cooldown: "30" }],
+    ["zero cap", { budget: "100", cap: "0", cooldown: "30" }],
+    ["blank budget", { budget: "", cap: "50", cooldown: "30" }],
+    ["non-numeric budget", { budget: "abc", cap: "50", cooldown: "30" }],
+  ])(
+    "rejects %s with a 400 and persists nothing (no silent $0 guardrail)",
+    async (_label, fields) => {
+      guardrailsUpdateSpy.mockResolvedValue({});
+
+      const res = await callAction(postRequest({ intent: "save_guardrails", step: "2", ...fields }));
+      const body = (await res.json()) as { ok: boolean; error?: { code: string }; toast?: { isError?: boolean } };
+
+      expect(res.status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error?.code).toBe("INVALID_GUARDRAILS");
+      expect(body.toast?.isError).toBe(true);
+      // The invalid values are never written, and the step does not advance.
+      expect(guardrailsUpdateSpy).not.toHaveBeenCalled();
+      expect(advanceSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a zero cooldown (no wait between actions is valid)", async () => {
     guardrailsUpdateSpy.mockResolvedValue({});
 
-    await callAction(
-      postRequest({
-        intent: "save_guardrails",
-        step: "2",
-        budget: "-50",
-        cap: "-1",
-        cooldown: "-10",
-      }),
+    const res = await callAction(
+      postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50", cooldown: "0" }),
     );
+    const body = (await res.json()) as { ok: boolean };
 
+    expect(body.ok).toBe(true);
     expect(guardrailsUpdateSpy).toHaveBeenCalledWith(
-      { daily_action_budget_cents: 0, dollar_cap_cents: 0, cooldown_minutes: 0 },
+      { daily_action_budget_cents: 10000, dollar_cap_cents: 5000, cooldown_minutes: 0 },
       expect.anything(),
     );
   });
@@ -209,12 +244,34 @@ describe("onboarding action — integration connect", () => {
   });
 });
 
+describe("onboarding action — consent", () => {
+  it("persists an opt-in then advances", async () => {
+    const res = await callAction(postRequest({ intent: "save_consent", step: "8", consent: "true" }));
+    const body = (await res.json()) as { ok: boolean };
+
+    expect(body.ok).toBe(true);
+    expect(consentSetSpy).toHaveBeenCalledWith(true, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    // consent is written before the step advances
+    expect(consentSetSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      advanceSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("records a decline (consent=false) and still advances", async () => {
+    await callAction(postRequest({ intent: "save_consent", step: "8", consent: "false" }));
+
+    expect(consentSetSpy).toHaveBeenCalledWith(false, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+  });
+});
+
 describe("onboarding action — finish and unknown intents", () => {
   it("marks onboarding complete and redirects to the dashboard", async () => {
     const res = await callAction(postRequest({ intent: "finish" }));
 
-    // 8 steps total; the client clamps to the final "complete" step server-side.
-    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    // 9 steps total; the client clamps to the final "complete" step server-side.
+    expect(advanceSpy).toHaveBeenCalledWith(9, expect.anything());
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/app");
   });

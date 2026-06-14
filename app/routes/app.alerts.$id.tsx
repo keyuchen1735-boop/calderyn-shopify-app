@@ -25,6 +25,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
+import { snoozeAlert } from "~/lib/actions/snooze.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -350,11 +351,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       idempotencyKey,
     });
 
-    // Snooze is a deferral, not a resolution — leave the alert in the open
-    // queue; every other kind moves it out after a successful execution.
-    const acknowledged =
-      kind === "snooze_alert" ||
-      (await acknowledgeAlert(getSupabase(), await resolveShopId(session.shop), alertId));
+    // Snooze defers (hide for 1 day / until next login) rather than resolving;
+    // every other kind moves the alert out of the open queue on success.
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    let acknowledged = true;
+    if (kind === "snooze_alert") {
+      await snoozeAlert(sb, shopId, alertId);
+    } else {
+      acknowledged = await acknowledgeAlert(sb, shopId, alertId);
+    }
     return json<ActionPayload>({
       ok: true,
       toast: {

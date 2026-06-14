@@ -427,6 +427,16 @@ function toGuardrailVM(g: GuardrailConfig): GuardrailVM {
   };
 }
 
+export async function fetchConsent(): Promise<boolean> {
+  const data = await apiGet<{ consent: boolean }>("/dashboard/api/consent");
+  return Boolean(data.consent);
+}
+
+export async function putConsent(consent: boolean): Promise<boolean> {
+  const data = await apiSend<{ consent: boolean }>("PUT", "/dashboard/api/consent", { consent });
+  return Boolean(data.consent);
+}
+
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
   const data = await apiGet<{ integrations: Record<string, Integration> }>(
     "/dashboard/api/integrations",

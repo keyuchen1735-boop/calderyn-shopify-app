@@ -70,6 +70,29 @@ export interface PredictedOutcomes {
   skuPriceCents: number | null;
 }
 
+/**
+ * One improvement tip. `title` is a short, scannable action line (what to do);
+ * `detail` is the product-specific weakness → paste-ready example → payoff,
+ * revealed on click. Split so the UI stays concise by default but keeps the
+ * specificity merchants act on (see PR #79).
+ */
+export interface TipDetail {
+  title: string;
+  detail: string;
+}
+
+/**
+ * A tip is normally a {@link TipDetail}, but runs persisted before tips were
+ * structured stored a plain string. Accept both; render through
+ * {@link normalizeTip} so old scorecards keep working.
+ */
+export type Tip = string | TipDetail;
+
+/** Coerce a legacy string tip or a structured tip into {@link TipDetail}. */
+export function normalizeTip(tip: Tip): TipDetail {
+  return typeof tip === "string" ? { title: tip, detail: "" } : tip;
+}
+
 export interface ScoreCard {
   composite: number;             // 0..100
   grade: Grade;
@@ -77,7 +100,7 @@ export interface ScoreCard {
   summary: string;
   metrics: MetricScore[];
   outcomes: PredictedOutcomes;
-  tips: string[];
+  tips: Tip[];
 }
 
 export type MediaKind = "image" | "video";

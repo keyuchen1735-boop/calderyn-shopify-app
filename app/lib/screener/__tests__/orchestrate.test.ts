@@ -25,7 +25,7 @@ function deps(over: Partial<ScreenDeps> = {}): ScreenDeps {
     scoreCreative: async () => ({
       summary: "ok",
       metrics: DIMENSIONS.map((d) => ({ id: d.id, group: d.group, label: d.label, score: 70, reasoning: "" })),
-      tips: ["t"],
+      tips: [{ title: "t", detail: "" }],
     }),
     startRun: async () => run,
     completeRun: async (_shop, _id, scorecard) => ({ ...run, status: "done", scorecard }),

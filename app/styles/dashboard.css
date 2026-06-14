@@ -343,10 +343,29 @@
     animation: cd-spin 0.7s linear infinite;
   }
   @keyframes cd-spin { to { transform: rotate(360deg); } }
-  .cd-tip-num {
-    width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; margin-top: 1px;
-    background: var(--accent-bg); color: var(--accent); font-size: 11.5px; font-weight: 650;
+  /* "How to improve it" — icon chip + scannable title, click to expand detail */
+  .cd-tip-ico {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent-bg); color: var(--accent);
     display: inline-flex; align-items: center; justify-content: center;
+  }
+  .cd-improve { display: flex; flex-direction: column; }
+  .cd-improve-head {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    background: none; border: none; margin: 0; padding: 6px 4px;
+    font: inherit; color: inherit; text-align: left; cursor: pointer;
+    border-radius: 8px; transition: background 0.12s ease;
+  }
+  .cd-improve-head:hover:not(:disabled) { background: var(--gray-bg); }
+  .cd-improve-head:disabled { cursor: default; }
+  .cd-improve-title {
+    flex: 1; min-width: 0; color: var(--text-1);
+    font-size: calc(13.5px * var(--type-scale)); font-weight: 550; letter-spacing: -0.004em;
+  }
+  .cd-improve-chev { color: var(--text-3); flex-shrink: 0; transition: transform 0.18s ease; }
+  .cd-improve-detail {
+    margin: 0 4px 6px 38px; color: var(--text-2);
+    font-size: calc(12.5px * var(--type-scale)); line-height: 1.5; text-wrap: pretty;
   }
   .cd-variant { background: var(--gray-bg); border-radius: 12px; padding: 12px 14px; }
   .cd-field { display: flex; flex-direction: column; gap: 5px; }

@@ -3,8 +3,10 @@
 // scored flaws; the re-score gate judges every candidate with the SAME scorer and
 // keeps only those that beat the original. Generation is never trusted blindly.
 import type Anthropic from "@anthropic-ai/sdk";
-import type {
-  CreativeInput, GeneratedCandidate, GenerationMode, MetricScore, ScoreCard, Variant,
+import {
+  normalizeTip,
+  type CreativeInput, type GeneratedCandidate, type GenerationMode, type MetricScore,
+  type ScoreCard, type Variant,
 } from "./types";
 
 export type CreateMessageFn = (
@@ -61,7 +63,7 @@ export async function generateImprovements(
   const candidates = await deps.generator.generate({
     input: args.original,
     weakMetrics,
-    tips: args.originalScorecard.tips,
+    tips: args.originalScorecard.tips.map((t) => normalizeTip(t).title),
     styleRefs: args.styleRefs ?? [],
     count: args.count ?? 3,
     extraDirection: args.extraDirection,
