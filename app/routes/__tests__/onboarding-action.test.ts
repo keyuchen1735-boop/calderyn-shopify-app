@@ -38,6 +38,9 @@ vi.mock("@shopify/polaris", () => {
   };
 });
 vi.mock("~/lib/toast", () => ({ useActionToast: () => {} }));
+// The onboarding loader self-heals a missing shops row via provisionShop before
+// reading state; stub it so the loader tests don't hit a real Supabase client.
+vi.mock("~/lib/supabase.server", () => ({ provisionShop: vi.fn(async () => {}) }));
 vi.mock("~/components/calderyn", () => ({ GuardrailMeter: () => null }));
 
 vi.mock("../../shopify.server", () => ({

@@ -95,23 +95,33 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }/dashboard/login?shop=${encodeURIComponent(session.shop)}`;
 
   const client = calderynClient(session.shop);
+
+  // Gate on onboarding FIRST, decisively, and server-side — the old client-side
+  // useEffect bump flashed the empty dashboard before redirecting. An unreadable
+  // state almost always means the shops row isn't provisioned yet (afterAuth
+  // swallows provisioning errors): route to onboarding, which provisions
+  // defensively and shows its own error UI, rather than render a broken
+  // dashboard. An incomplete state likewise belongs in the wizard. url.search
+  // preserves shop/host/embedded so the embedded document request re-auths.
+  let onboardingDone: boolean;
   try {
-    const [alerts, audit, campaigns, guardrails, onboarding] = await Promise.all([
+    onboardingDone = (await client.onboarding.getState(request.signal)).done;
+  } catch {
+    throw redirect(`/app/onboarding${url.search}`);
+  }
+  if (!onboardingDone) {
+    throw redirect(`/app/onboarding${url.search}`);
+  }
+
+  // Onboarded: load dashboard data, failing soft (error banner) on a transient
+  // error instead of trapping the merchant.
+  try {
+    const [alerts, audit, campaigns, guardrails] = await Promise.all([
       client.alerts.list({ status: "open" }, request.signal),
       client.audit.list(request.signal),
       client.campaigns.list(request.signal),
       client.guardrails.get(request.signal),
-      client.onboarding.getState(request.signal),
     ]);
-    // Redirect a not-yet-onboarded merchant server-side, before any dashboard
-    // markup renders — the old client-side useEffect bump flashed the empty
-    // dashboard first. url.search preserves shop/host/embedded so the embedded
-    // document request authenticates. Only the loader-success path redirects:
-    // on a data-load error we render the dashboard with its error banner rather
-    // than risk an onboarding<->dashboard bounce if getState is also failing.
-    if (!onboarding.done) {
-      throw redirect(`/app/onboarding${url.search}`);
-    }
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
@@ -125,8 +135,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       recovered7d: recoveredWithin(audit, sinceIso),
     });
   } catch (err) {
-    // The onboarding redirect (and any auth bounce) is a thrown Response — let
-    // it propagate instead of being misread as a data-load failure.
+    // Any auth bounce thrown as a Response must propagate, not be misread as a
+    // data-load failure.
     if (err instanceof Response) throw err;
     const e = err as CalderynError;
     return json<LoaderPayload>({

@@ -30,6 +30,7 @@ import {
   type CalderynError,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
+import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
 import { providerPaired } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
@@ -85,6 +86,17 @@ const ONBOARDING_DEV_BYPASS = process.env.ONBOARDING_DEV_BYPASS === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  // Self-heal a missed install-time provision: afterAuth calls provisionShop
+  // but swallows its errors, so the shops row can be absent here. provisionShop
+  // is idempotent — ensure the row exists BEFORE constructing the client (whose
+  // shop-id lookup is created eagerly and would otherwise reject for the whole
+  // request), so a fresh merchant never dead-ends on onboarding.
+  try {
+    await provisionShop(session.shop);
+  } catch (err) {
+    console.error(`[onboarding.loader] provisionShop failed for ${session.shop}`, err);
+    // Fall through: getState below surfaces a readable error if the row is still missing.
+  }
   const client = calderynClient(session.shop);
   try {
     const [state, guardrails, integrations] = await Promise.all([

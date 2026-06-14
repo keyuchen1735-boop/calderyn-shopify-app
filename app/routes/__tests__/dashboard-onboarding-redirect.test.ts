@@ -118,18 +118,40 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
     expect(body).not.toHaveProperty("onboardingDone");
   });
 
-  it("does NOT redirect to onboarding on a data-load error — renders the dashboard with its error banner", async () => {
-    // A getState failure must not bounce into onboarding (which could itself be
-    // failing); the dashboard renders soft with the error instead.
+  it("redirects to onboarding when onboarding state is unreadable (e.g. shop not provisioned yet)", async () => {
+    // An unreadable state almost always means the shops row isn't provisioned;
+    // route to onboarding (which provisions defensively) instead of rendering a
+    // broken dashboard with an error banner.
     getStateSpy.mockRejectedValue(
-      Object.assign(new Error("shops lookup failed"), { code: "ERROR", status: 500 }),
+      Object.assign(new Error("Shop not found in Supabase"), { code: "ERROR", status: 500 }),
     );
 
-    const res = await callLoader();
-    const body = (await (res as Response).json()) as { error: { message: string } | null };
+    const thrown = await callLoader().then(
+      () => null,
+      (e) => e,
+    );
 
-    expect((res as Response).status).toBe(200);
-    expect(body.error).toEqual({ code: "ERROR", message: "shops lookup failed" });
+    expect(thrown).toBeInstanceOf(Response);
+    expect((thrown as Response).status).toBe(302);
+    expect((thrown as Response).headers.get("Location")).toBe(
+      "/app/onboarding?shop=acme.myshopify.com&host=abc&embedded=1",
+    );
+  });
+
+  it("fails soft (error banner) when onboarding is done but dashboard data fails to load", async () => {
+    // Once onboarding is confirmed complete, a transient data error must NOT
+    // bounce the merchant back to the wizard — render the dashboard with its
+    // error banner instead.
+    getStateSpy.mockResolvedValue({ step: 8, done: true });
+    alertsListSpy.mockRejectedValue(
+      Object.assign(new Error("alerts query failed"), { code: "ERROR", status: 500 }),
+    );
+
+    const res = (await callLoader()) as Response;
+    const body = (await res.json()) as { error: { message: string } | null };
+
+    expect(res.status).toBe(200);
+    expect(body.error).toEqual({ code: "ERROR", message: "alerts query failed" });
   });
 
   it("lets the Claude.ai pending-OAuth handoff take priority over the onboarding redirect", async () => {
