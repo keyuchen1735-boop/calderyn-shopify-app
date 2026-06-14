@@ -94,4 +94,47 @@ describe("adaptScreenRun", () => {
     );
     expect(meta?.ad_name).toBe("Meta ad");
   });
+
+  // The screen renders these straight into `.toFixed(1)`; a null/NaN from a
+  // partial model result would crash the render. The adapter must guarantee
+  // finite numbers so the (unguarded) Predictor render can never throw.
+  it("coerces non-finite scorecard numbers to finite values", () => {
+    const broken: ScoreCard = {
+      ...scorecard,
+      composite: NaN as unknown as number,
+      metrics: [{ ...scorecard.metrics[0], score: NaN as unknown as number }],
+      outcomes: {
+        ...scorecard.outcomes,
+        estimatedRoas: null as unknown as number,
+        roasLow: undefined as unknown as number,
+        roasHigh: NaN,
+        breakEvenRoas: null as unknown as number,
+        predictedCtr: NaN,
+        holdRate: undefined as unknown as number,
+        predictedRevenueCents: NaN,
+      },
+    };
+    const vm = adaptScreenRun(run({ scorecard: broken }))!;
+    expect(vm).not.toBeNull();
+    expect(Number.isFinite(vm.composite)).toBe(true);
+    expect(Number.isFinite(vm.metrics[0].score)).toBe(true);
+    for (const key of [
+      "estimatedRoas",
+      "roasLow",
+      "roasHigh",
+      "breakEvenRoas",
+      "predictedCtr",
+      "holdRate",
+      "predictedRevenueCents",
+    ] as const) {
+      expect(Number.isFinite(vm.outcomes[key]), `outcomes.${key} should be finite`).toBe(true);
+    }
+  });
+
+  it("preserves valid outcome numbers unchanged", () => {
+    const vm = adaptScreenRun(run({}))!;
+    expect(vm.outcomes.estimatedRoas).toBe(2.4);
+    expect(vm.outcomes.roasLow).toBe(1.1);
+    expect(vm.composite).toBe(72);
+  });
 });

@@ -239,6 +239,31 @@ describe("parseOrderWebhook", () => {
     });
     expect(parsed.lines[0].sku_external_id).toBeNull();
   });
+
+  // A missing admin_graphql_api_id (malformed payload) must fail loudly so the
+  // webhook is retried/DLQ'd — not coerced to the string "undefined", which
+  // collapses every such order/line onto one sentinel external id (silent loss).
+  it("throws when the order has no admin_graphql_api_id", () => {
+    expect(() =>
+      parseOrderWebhook({
+        name: "#1004",
+        created_at: "2026-05-04T00:00:00Z",
+        total_price: "5.00",
+      } as never),
+    ).toThrow();
+  });
+
+  it("throws when a line item has no admin_graphql_api_id", () => {
+    expect(() =>
+      parseOrderWebhook({
+        admin_graphql_api_id: "gid://shopify/Order/903",
+        name: "#1005",
+        created_at: "2026-05-05T00:00:00Z",
+        total_price: "5.00",
+        line_items: [{ quantity: 1, price: "5.00" } as never],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("moneyToCents empty string", () => {

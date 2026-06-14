@@ -3,10 +3,14 @@
 // /dashboard/login when unauthenticated); the client fetches all data on mount
 // so no server-only module leaks into the browser bundle.
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useRouteError } from "@remix-run/react";
 
 import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
 import DashboardApp from "~/components/dashboard/DashboardApp";
+import {
+  DashboardErrorBoundary,
+  DashboardErrorFallback,
+} from "~/components/dashboard/ErrorBoundary";
 
 import dashboardUtils from "~/styles/dashboard-utils.css?url";
 import dashboard from "~/styles/dashboard.css?url";
@@ -24,5 +28,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function DashboardRoute() {
   const { shopDomain } = useLoaderData<typeof loader>();
-  return <DashboardApp shopDomain={shopDomain} />;
+  // Class boundary catches client-side render throws in the SPA subtree
+  // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
+  return (
+    <DashboardErrorBoundary>
+      <DashboardApp shopDomain={shopDomain} />
+    </DashboardErrorBoundary>
+  );
+}
+
+// Remix route boundary: catches loader throws and SSR render errors — the
+// server-side counterpart to the in-tree class boundary above. Without either,
+// the whole SPA fell through to Remix's bare "Application error".
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return <DashboardErrorFallback error={error} />;
 }

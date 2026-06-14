@@ -4,6 +4,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";
+import { validateGuardrailPatch } from "~/lib/dashboard/guardrails-validation";
 import type { GuardrailConfig } from "~/lib/types";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -57,6 +58,9 @@ export async function action({ request }: ActionFunctionArgs) {
   if ("cooldown_minutes" in patch && !nonNegative(patch.cooldown_minutes)) {
     return jsonError(422, "invalid_guardrails");
   }
+  // Autopilot limits + business_hours are persisted and later trusted by the
+  // autopilot executor; bound them so e.g. a 999% budget-cut can't be stored.
+  if (validateGuardrailPatch(patch)) return jsonError(422, "invalid_guardrails");
 
   return dashboardJson(async () => ({
     guardrails: await calderynClient(session.shopDomain).guardrails.update(patch),

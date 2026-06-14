@@ -17,6 +17,7 @@ import {
   money,
   DETECTOR_TERMS,
   ACTION_LABELS,
+  timeAgo,
   evidenceLabel,
   evidenceValue,
   isInternalEvidenceKey,
@@ -66,7 +67,7 @@ function AlertRow({ a, onClick }: { a: AlertVM; onClick: () => void }) {
             " · " +
             (a.sku || a.campaign || "—") +
             " · " +
-            a.created_at}
+            timeAgo(a.created_at)}
         </div>
       </div>
       <div className="text-right whitespace-nowrap">
@@ -187,7 +188,7 @@ function AlertDetail({
             <span className="cd-caption">
               {(DETECTOR_TERMS[alert.detector_id] || alert.detector_id) +
                 " · detected " +
-                alert.created_at}
+                timeAgo(alert.created_at)}
             </span>
             {resolved && (
               <Pill tone="success" icon="check">
