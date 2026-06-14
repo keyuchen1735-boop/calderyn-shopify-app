@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   MCP_CONNECTOR_URL,
-  MCP_CONNECTOR_NAME,
   GUIDE_TABS,
   CONNECTOR_STEPS,
   CLI_COMMAND,
@@ -9,9 +8,8 @@ import {
 } from "../mcp-connect-guide";
 
 describe("mcp-connect-guide content", () => {
-  it("exposes the live MCP connector URL and name", () => {
+  it("exposes the live MCP connector URL", () => {
     expect(MCP_CONNECTOR_URL).toBe("https://calderyn-mcp.vercel.app/mcp");
-    expect(MCP_CONNECTOR_NAME).toBe("Calderyn");
   });
 
   it("has exactly the two tabs", () => {

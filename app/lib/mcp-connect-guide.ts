@@ -5,7 +5,6 @@
 // presentation. Each surface maps the abstract GuideIcon keys to its own icons.
 
 export const MCP_CONNECTOR_URL = "https://calderyn-mcp.vercel.app/mcp";
-export const MCP_CONNECTOR_NAME = "Calderyn";
 
 export type GuideTab = "connector" | "cli";
 

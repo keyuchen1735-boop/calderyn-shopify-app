@@ -326,7 +326,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
 
       <section>
         <SectionTitle>Claude connector</SectionTitle>
-        <McpGuide />
+        <Card>
+          <McpGuide />
+        </Card>
       </section>
     </div>
   );
