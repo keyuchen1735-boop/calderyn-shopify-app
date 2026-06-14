@@ -89,6 +89,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     audit: [],
     guardrails: GUARDRAILS,
     integrations: [],
+    consent: null,
     overview: null,
     feed: [],
     liveOn: false,

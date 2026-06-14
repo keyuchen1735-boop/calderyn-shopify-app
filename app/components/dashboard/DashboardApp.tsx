@@ -119,6 +119,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [audit, setAudit] = useState<AuditVM[]>([]);
   const [guardrails, setGuardrails] = useState<GuardrailVM | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationVM[]>([]);
+  const [consent, setConsent] = useState<boolean | null>(null);
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -142,12 +143,13 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ] = await Promise.all([
+    const [ov, al, au, gr, integ, co] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
       client.fetchGuardrails(),
       client.fetchIntegrations(),
+      client.fetchConsent(),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -155,6 +157,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setAudit(au);
     setGuardrails(gr);
     setIntegrations(integ);
+    setConsent(co);
   }, []);
 
   useEffect(() => {
@@ -414,6 +417,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     audit,
     guardrails,
     integrations,
+    consent,
     overview,
     feed,
     liveOn,

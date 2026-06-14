@@ -30,6 +30,7 @@ import {
   type CalderynError,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
+import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
 import { providerPaired } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
@@ -44,6 +45,7 @@ const STEPS = [
   { key: "guardrails", label: "Guardrails" },
   { key: "google", label: "Google Ads (optional)" },
   { key: "meta", label: "Meta Ads (optional)" },
+  { key: "tiktok", label: "TikTok Ads (optional)" },
   { key: "quickbooks", label: "QuickBooks (optional)" },
   { key: "creative", label: "Creative mapping" },
   { key: "consent", label: "Consent" },
@@ -61,6 +63,7 @@ type LoaderPayload = {
   shopDomain: string;
   guardrails: GuardrailConfig | null;
   integrations: Record<string, Integration>;
+  consent: boolean;
   error: { code: string; message: string } | null;
   devBypass: boolean;
 };
@@ -84,12 +87,24 @@ const ONBOARDING_DEV_BYPASS = process.env.ONBOARDING_DEV_BYPASS === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  // Self-heal a missed install-time provision: afterAuth calls provisionShop
+  // but swallows its errors, so the shops row can be absent here. provisionShop
+  // is idempotent — ensure the row exists BEFORE constructing the client (whose
+  // shop-id lookup is created eagerly and would otherwise reject for the whole
+  // request), so a fresh merchant never dead-ends on onboarding.
+  try {
+    await provisionShop(session.shop);
+  } catch (err) {
+    console.error(`[onboarding.loader] provisionShop failed for ${session.shop}`, err);
+    // Fall through: getState below surfaces a readable error if the row is still missing.
+  }
   const client = calderynClient(session.shop);
   try {
-    const [state, guardrails, integrations] = await Promise.all([
+    const [state, guardrails, integrations, consent] = await Promise.all([
       client.onboarding.getState(request.signal),
       client.guardrails.get(request.signal),
       client.integrations.list(request.signal),
+      client.consent.get(request.signal),
     ]);
     return json<LoaderPayload>({
       step: state.step,
@@ -97,6 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: session.shop,
       guardrails,
       integrations,
+      consent,
       error: null,
       devBypass: ONBOARDING_DEV_BYPASS,
     });
@@ -108,6 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: session.shop,
       guardrails: null,
       integrations: {},
+      consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
       devBypass: ONBOARDING_DEV_BYPASS,
     });
@@ -127,10 +144,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json<ActionPayload>({ ok: true });
     }
     if (intent === "save_guardrails") {
+      const budget = Number(formData.get("budget"));
+      const cap = Number(formData.get("cap"));
+      const cooldown = Number(formData.get("cooldown"));
+      // Validate at the action boundary (don't trust FormData): a $0 / blank /
+      // NaN budget or cap would silently disable the guardrail it represents,
+      // letting a merchant finish setup with no real limits. Reject instead of
+      // persisting a no-op. Cooldown of 0 (no wait between actions) is allowed.
+      if (!(budget > 0) || !(cap > 0) || !Number.isFinite(cooldown) || cooldown < 0) {
+        const message = "Enter a daily budget and per-action cap greater than $0.";
+        return json<ActionPayload>(
+          { ok: false, error: { code: "INVALID_GUARDRAILS", message }, toast: { message, isError: true } },
+          { status: 400 },
+        );
+      }
       const patch: Partial<GuardrailConfig> = {
-        daily_action_budget_cents: Math.max(0, Math.round(Number(formData.get("budget") || 0)) * 100),
-        dollar_cap_cents: Math.max(0, Math.round(Number(formData.get("cap") || 0)) * 100),
-        cooldown_minutes: Math.max(0, Math.round(Number(formData.get("cooldown") || 0))),
+        daily_action_budget_cents: Math.round(budget) * 100,
+        dollar_cap_cents: Math.round(cap) * 100,
+        cooldown_minutes: Math.round(cooldown),
       };
       await client.guardrails.update(patch, request.signal);
       const step = Number(formData.get("step") || 0);
@@ -147,6 +178,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
+    }
+    if (intent === "save_consent") {
+      // Persist the peer-baseline consent choice (opt-in: the box defaults
+      // off), then advance. This is the only writer of peer_data_consent in the
+      // onboarding flow — without it the checkbox was decorative.
+      const consent = formData.get("consent") === "true";
+      await client.consent.set(consent, request.signal);
+      const step = Number(formData.get("step") || 0);
+      await client.onboarding.advance(step, request.signal);
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: consent ? "Peer baseline enabled" : "Saved — not contributing to peer baselines" },
+      });
     }
     if (intent === "finish") {
       await client.onboarding.advance(STEPS.length, request.signal);
@@ -175,7 +219,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Onboarding() {
-  const { step, shopDomain, guardrails, integrations, error, devBypass } =
+  const { step, shopDomain, guardrails, integrations, consent, error, devBypass } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -254,7 +298,7 @@ export default function Onboarding() {
               submitting={submitting}
             />
           )}
-          {(key === "google" || key === "meta" || key === "quickbooks") && (
+          {(key === "google" || key === "meta" || key === "tiktok" || key === "quickbooks") && (
             <OAuthStep
               provider={key}
               connected={providerPaired(integrations, key)}
@@ -267,7 +311,12 @@ export default function Onboarding() {
             <CreativeStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
           )}
           {key === "consent" && (
-            <ConsentStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
+            <ConsentStep
+              consent={consent}
+              nextStep={safeStep + 1}
+              prevStep={safeStep - 1}
+              submitting={submitting}
+            />
           )}
           {key === "complete" && (
             <CompleteStep prevStep={safeStep - 1} submitting={submitting} />
@@ -367,6 +416,10 @@ function GuardrailsStep({
   const [cooldown, setCooldown] = useState(
     String(guardrails?.cooldown_minutes ?? DEFAULT_GUARDRAILS.cooldown_minutes),
   );
+  // Mirror the server-side guard: a positive daily budget AND per-action cap
+  // are required. Gating Continue here turns the rejection into a non-event for
+  // the common case instead of a round-trip error toast.
+  const guardrailsValid = Number(budget) > 0 && Number(cap) > 0;
 
   return (
     <BlockStack gap="400">
@@ -433,7 +486,12 @@ function GuardrailsStep({
             <input type="hidden" name="budget" value={budget} />
             <input type="hidden" name="cap" value={cap} />
             <input type="hidden" name="cooldown" value={cooldown} />
-            <Button submit variant="primary" loading={submitting} disabled={submitting}>
+            <Button
+              submit
+              variant="primary"
+              loading={submitting}
+              disabled={submitting || !guardrailsValid}
+            >
               Continue
             </Button>
           </Form>
@@ -508,7 +566,13 @@ function OAuthStep({
       <Box padding="300" background="bg-surface-secondary" borderRadius="200">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="p" fontWeight="semibold">
-            {provider === "google" ? "Google Ads" : provider === "meta" ? "Meta Ads" : "QuickBooks Online"}
+            {provider === "google"
+              ? "Google Ads"
+              : provider === "meta"
+                ? "Meta Ads"
+                : provider === "tiktok"
+                  ? "TikTok Ads"
+                  : "QuickBooks Online"}
           </Text>
           {connected ? (
             <Badge tone="success">Connected</Badge>
@@ -581,15 +645,19 @@ function CreativeStep({
 }
 
 function ConsentStep({
+  consent: initialConsent,
   nextStep,
   prevStep,
   submitting,
 }: {
+  consent: boolean;
   nextStep: number;
   prevStep: number;
   submitting: boolean;
 }) {
-  const [consent, setConsent] = useState(true);
+  // Opt-in: seed from the stored value (false for a new shop) rather than
+  // defaulting checked, so clicking Continue never silently enrolls a merchant.
+  const [consent, setConsent] = useState(initialConsent);
   return (
     <BlockStack gap="400">
       <Text as="h2" variant="headingMd">
@@ -607,11 +675,16 @@ function ConsentStep({
       />
       <InlineStack align="space-between">
         <BackButton step={prevStep} submitting={submitting} />
-        <AdvanceForm step={nextStep}>
+        {/* save_consent persists the choice (the checkbox value) and then
+            advances — sibling form, not nested, same reason as GuardrailsStep. */}
+        <Form method="post" style={{ display: "inline" }}>
+          <input type="hidden" name="intent" value="save_consent" />
+          <input type="hidden" name="step" value={String(nextStep)} />
+          <input type="hidden" name="consent" value={consent ? "true" : "false"} />
           <Button submit variant="primary" loading={submitting} disabled={submitting}>
             Continue
           </Button>
-        </AdvanceForm>
+        </Form>
       </InlineStack>
     </BlockStack>
   );

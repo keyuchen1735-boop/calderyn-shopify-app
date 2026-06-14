@@ -54,6 +54,7 @@ import type { GuardrailConfig, Integration } from "~/lib/types";
 type LoaderPayload = {
   guardrails: GuardrailConfig | null;
   integrations: Record<string, Integration>;
+  consent: boolean;
   error: { code: string; message: string } | null;
 };
 
@@ -69,16 +70,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [guardrails, integrations] = await Promise.all([
+    const [guardrails, integrations, consent] = await Promise.all([
       client.guardrails.get(request.signal),
       client.integrations.list(request.signal),
+      client.consent.get(request.signal),
     ]);
-    return json<LoaderPayload>({ guardrails, integrations, error: null });
+    return json<LoaderPayload>({ guardrails, integrations, consent, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       guardrails: null,
       integrations: {},
+      consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -91,6 +94,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const intent = String(formData.get("intent") || "");
 
   try {
+    if (intent === "set_consent") {
+      // Real peer-baseline consent toggle (the button used to be inert). The
+      // engine's moat emitter reads shops.peer_data_consent, so this directly
+      // controls whether the shop contributes.
+      const consent = String(formData.get("consent") || "") === "true";
+      await client.consent.set(consent, request.signal);
+      return json<ActionPayload>({
+        ok: true,
+        toast: {
+          message: consent
+            ? "Peer baseline enabled"
+            : "Consent withdrawn — your contribution is purged within 30 days",
+        },
+      });
+    }
     if (intent === "update_guardrails") {
       const patch: Partial<GuardrailConfig> = {};
       const setIfPresent = <K extends keyof GuardrailConfig>(
@@ -227,7 +245,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, error } = useLoaderData<typeof loader>();
+  const { guardrails, integrations, consent, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
   // One-shot pairing confirmation from the OAuth callback redirect
@@ -336,13 +354,22 @@ export default function Settings() {
                   <Text as="h3" variant="headingSm">
                     Privacy & data residency
                   </Text>
-                  <Banner tone="info" title="Peer-baseline consent: Enabled">
+                  <Banner
+                    tone={consent ? "success" : "info"}
+                    title={`Peer-baseline consent: ${consent ? "Enabled" : "Not enabled"}`}
+                  >
                     Your shop_id is hashed with HMAC-SHA256 before any peer aggregate is read.
-                    Withdraw consent at any time; your contribution is purged within 30 days.
+                    {consent
+                      ? " Withdraw at any time; your contribution is purged within 30 days."
+                      : " You are not contributing to peer baselines. Enable to benchmark against anonymized peer shops in your category."}
                   </Banner>
                   <ButtonGroup>
-                    <Button>Withdraw consent</Button>
-                    <Button>Download my data (GDPR)</Button>
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="set_consent" />
+                      <input type="hidden" name="consent" value={consent ? "false" : "true"} />
+                      <Button submit>{consent ? "Withdraw consent" : "Enable peer baseline"}</Button>
+                    </Form>
+                    <Button disabled>Download my data (GDPR)</Button>
                   </ButtonGroup>
                 </BlockStack>
               </Card>

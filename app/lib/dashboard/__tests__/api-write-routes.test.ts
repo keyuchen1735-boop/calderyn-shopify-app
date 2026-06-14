@@ -4,6 +4,7 @@ import { action as campaignAction } from "../../../routes/dashboard.api.campaign
 import { action as alertAction } from "../../../routes/dashboard.api.alerts.$id.action";
 import { action as undoRoute } from "../../../routes/dashboard.api.audit.$id.undo";
 import { action as guardrailsAction } from "../../../routes/dashboard.api.guardrails";
+import { action as consentAction } from "../../../routes/dashboard.api.consent";
 import { action as logoutAction } from "../../../routes/dashboard.api.logout";
 
 const requireDashboardSession = vi.fn();
@@ -12,6 +13,7 @@ const executeAction = vi.fn();
 const undoAction = vi.fn();
 const guardrailsGet = vi.fn();
 const guardrailsUpdate = vi.fn();
+const consentSet = vi.fn();
 const revokeSession = vi.fn();
 const alertsGet = vi.fn();
 const actionsExecute = vi.fn();
@@ -47,6 +49,9 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
       guardrails: {
         get: (...a: unknown[]) => guardrailsGet(...a),
         update: (...a: unknown[]) => guardrailsUpdate(...a),
+      },
+      consent: {
+        set: (...a: unknown[]) => consentSet(...a),
       },
       alerts: {
         get: (...a: unknown[]) => alertsGet(...a),
@@ -336,6 +341,71 @@ describe("PUT /dashboard/api/guardrails", () => {
   it("405s non-PUT methods", async () => {
     const res = (await guardrailsAction({
       request: post("https://calderyncompany.com/dashboard/api/guardrails", {}, "PATCH"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(405);
+  });
+
+  it.each([
+    ["zero budget", { daily_action_budget_cents: 0 }],
+    ["negative cap", { dollar_cap_cents: -100 }],
+    ["non-numeric budget", { daily_action_budget_cents: "lots" }],
+    ["negative cooldown", { cooldown_minutes: -5 }],
+  ])("422s on %s and never calls update (parity with onboarding guard)", async (_label, patch) => {
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a zero cooldown and an autopilot-only patch (no budget/cap to validate)", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 0 });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { cooldown_minutes: 0, autopilot_enabled: true },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 0, autopilot_enabled: true });
+  });
+});
+
+describe("PUT /dashboard/api/consent", () => {
+  it("sets consent and echoes the new value (parity with embedded toggle)", async () => {
+    consentSet.mockResolvedValueOnce(undefined);
+    const res = (await consentAction({
+      request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ consent: true });
+    expect(consentSet).toHaveBeenCalledWith(true);
+  });
+
+  it("422s when consent is not a boolean and never writes", async () => {
+    const res = (await consentAction({
+      request: post("https://calderyncompany.com/dashboard/api/consent", { consent: "yes" }, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_consent");
+    expect(consentSet).not.toHaveBeenCalled();
+  });
+
+  it("405s non-PUT methods", async () => {
+    const res = (await consentAction({
+      request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "POST"),
       params: {},
       context: {},
     })) as Response;
