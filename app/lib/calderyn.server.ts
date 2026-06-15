@@ -4,6 +4,7 @@ import type {
   AuditEntry,
   Campaign,
   CampaignGradeRow,
+  CostSource,
   DailyRoasRow,
   GuardrailConfig,
   Integration,
@@ -12,6 +13,7 @@ import type {
   SkuSource,
   TopAdRow,
 } from "./types";
+import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   demandFromRow,
   locationsDetailFromRow,
@@ -138,6 +140,8 @@ function rowToAudit(r: Record<string, unknown>): AuditEntry {
     detector_id: r.detector_id as AuditEntry["detector_id"],
     failure_reason: (r.failure_reason as string | undefined) ?? undefined,
     undo_of: (r.undo_of as string | undefined) ?? undefined,
+    trigger_reason: (r.trigger_reason as string | null) ?? null,
+    cost_sources: (r.cost_sources as AuditEntry["cost_sources"]) ?? [],
   };
 }
 
@@ -318,7 +322,55 @@ export function calderynClient(shop: string) {
             .order("created_at", { ascending: false })
             .limit(100);
           if (error) throw error;
-          return (data ?? []).map(rowToAudit);
+          const rows = data ?? [];
+
+          // One batched COGS-source lookup for every margin-action sku on the page.
+          const skuIds = Array.from(
+            new Set(
+              rows
+                .filter((r) => MARGIN_ACTIONS.has(String(r.action_kind) as ActionKind) && r.param_sku_id)
+                .map((r) => String(r.param_sku_id)),
+            ),
+          );
+          let cogsBySku = new Map<string, string>();
+          if (skuIds.length > 0) {
+            try {
+              const { data: costs, error: cErr } = await supabase
+                .from("sku_cost_history")
+                .select("sku_id, source, effective_from")
+                .in("sku_id", skuIds);
+              if (cErr) throw cErr;
+              // Keep the latest-effective source per sku.
+              const latest = new Map<string, string>();
+              for (const c of costs ?? []) {
+                const k = String(c.sku_id);
+                const prev = latest.get(k);
+                if (!prev || String(c.effective_from) > prev) latest.set(k, String(c.effective_from));
+              }
+              for (const c of costs ?? []) {
+                const k = String(c.sku_id);
+                if (latest.get(k) === String(c.effective_from)) cogsBySku.set(k, String(c.source));
+              }
+            } catch (err) {
+              // Fail visibly (rule 12): the log still loads; margin rows show
+              // "source unavailable" instead of blanking the whole audit page.
+              console.error(`[audit] cost-source lookup failed for shop ${shopId}`, err);
+              cogsBySku = new Map();
+            }
+          }
+
+          return rows.map((r) => {
+            const kind = String(r.action_kind) as ActionKind;
+            const cost_sources: CostSource[] = [];
+            if (AD_SPEND_ACTIONS.has(kind) && r.param_platform) {
+              cost_sources.push({ kind: "ad_spend", source: String(r.param_platform) });
+            } else if (MARGIN_ACTIONS.has(kind)) {
+              cost_sources.push({ kind: "price", source: "shopify" });
+              const skuId = r.param_sku_id ? String(r.param_sku_id) : "";
+              cost_sources.push({ kind: "cogs", source: cogsBySku.get(skuId) ?? "unavailable" });
+            }
+            return rowToAudit({ ...r, cost_sources });
+          });
         } catch (err) {
           rethrow("audit.list", err);
         }
