@@ -32,7 +32,10 @@ create or replace view public.v_audit_view as
     aa.undo_of,
     aa.trigger_reason,
     aa.params ->> 'sku_id' as param_sku_id,
-    aa.params ->> 'platform' as param_platform
+    aa.params ->> 'platform' as param_platform,
+    -- create_po_draft carries the SKU as a code in the first PO line (no top-level
+    -- sku_id); audit.list resolves it to a sku_id (shop-scoped) for cost lineage.
+    aa.params -> 'po' -> 'lines' -> 0 ->> 'sku' as param_po_sku
   from action_audit aa
   left join alerts al on al.id = aa.alert_id
   order by aa.created_at desc;

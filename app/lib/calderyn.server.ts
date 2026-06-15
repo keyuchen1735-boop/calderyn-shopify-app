@@ -324,40 +324,91 @@ export function calderynClient(shop: string) {
           if (error) throw error;
           const rows = data ?? [];
 
-          // One batched COGS-source lookup for every margin-action sku on the page.
-          const skuIds = Array.from(
-            new Set(
-              rows
-                .filter((r) => MARGIN_ACTIONS.has(String(r.action_kind) as ActionKind) && r.param_sku_id)
-                .map((r) => String(r.param_sku_id)),
-            ),
+          // Resolve a COGS source per margin-action row. Precedence (hybrid):
+          //   1. per-SKU sku_cost_history.source (precise: quickbooks vs vendor_invoice)
+          //   2. the shop's connected cost integration (QuickBooks live -> "quickbooks")
+          //   3. "shopify" (unit_cost synced from Shopify); "unavailable" only on error.
+          // Inventory rows carry a sku_id (uuid); create_po_draft carries a sku CODE in
+          // param_po_sku that must be resolved to a sku_id, shop-scoped (codes collide
+          // across shops).
+          const skuIdByCode = new Map<string, string>();
+          const cogsBySkuId = new Map<string, string>();
+          let connectedCostSource = "shopify";
+          const marginRows = rows.filter((r) =>
+            MARGIN_ACTIONS.has(String(r.action_kind) as ActionKind),
           );
-          let cogsBySku = new Map<string, string>();
-          if (skuIds.length > 0) {
+          if (marginRows.length > 0) {
             try {
-              const { data: costs, error: cErr } = await supabase
-                .from("sku_cost_history")
-                .select("sku_id, source, effective_from")
-                .in("sku_id", skuIds);
-              if (cErr) throw cErr;
-              // Keep the latest-effective source per sku.
-              const latest = new Map<string, string>();
-              for (const c of costs ?? []) {
-                const k = String(c.sku_id);
-                const prev = latest.get(k);
-                if (!prev || String(c.effective_from) > prev) latest.set(k, String(c.effective_from));
+              const codes = Array.from(
+                new Set(
+                  marginRows
+                    .map((r) => (r.param_po_sku ? String(r.param_po_sku) : ""))
+                    .filter(Boolean),
+                ),
+              );
+              if (codes.length > 0) {
+                const { data: dims, error: dErr } = await supabase
+                  .from("sku_dim")
+                  .select("id, sku")
+                  .eq("shop_id", shopId)
+                  .in("sku", codes);
+                if (dErr) throw dErr;
+                for (const d of dims ?? []) skuIdByCode.set(String(d.sku), String(d.id));
               }
-              for (const c of costs ?? []) {
-                const k = String(c.sku_id);
-                if (latest.get(k) === String(c.effective_from)) cogsBySku.set(k, String(c.source));
+
+              const skuIds = Array.from(
+                new Set(
+                  [
+                    ...marginRows.map((r) => (r.param_sku_id ? String(r.param_sku_id) : "")),
+                    ...codes.map((c) => skuIdByCode.get(c) ?? ""),
+                  ].filter(Boolean),
+                ),
+              );
+              if (skuIds.length > 0) {
+                const { data: costs, error: cErr } = await supabase
+                  .from("sku_cost_history")
+                  .select("sku_id, source, effective_from")
+                  .in("sku_id", skuIds);
+                if (cErr) throw cErr;
+                // Keep the latest-effective source per sku.
+                const latest = new Map<string, string>();
+                for (const c of costs ?? []) {
+                  const k = String(c.sku_id);
+                  const ef = String(c.effective_from);
+                  if (!latest.has(k) || ef > (latest.get(k) as string)) {
+                    latest.set(k, ef);
+                    cogsBySkuId.set(k, String(c.source));
+                  }
+                }
+              }
+
+              // Fallback source: the shop's connected cost integration.
+              const { data: qb } = await supabase
+                .from("shop_integrations")
+                .select("sync_status")
+                .eq("shop_id", shopId)
+                .eq("kind", "quickbooks")
+                .maybeSingle();
+              const s = qb?.sync_status;
+              if (s === "ready" || s === "ok" || s === "live" || s === "pending") {
+                connectedCostSource = "quickbooks";
               }
             } catch (err) {
-              // Fail visibly (rule 12): the log still loads; margin rows show
-              // "source unavailable" instead of blanking the whole audit page.
+              // Fail visibly (rule 12): the log still loads; margin rows fall back to
+              // "unavailable" rather than blanking the whole audit page.
               console.error(`[audit] cost-source lookup failed for shop ${shopId}`, err);
-              cogsBySku = new Map();
+              connectedCostSource = "unavailable";
             }
           }
+
+          const cogsSourceFor = (r: Record<string, unknown>): string => {
+            const skuId = r.param_sku_id
+              ? String(r.param_sku_id)
+              : r.param_po_sku
+                ? skuIdByCode.get(String(r.param_po_sku)) ?? ""
+                : "";
+            return (skuId && cogsBySkuId.get(skuId)) || connectedCostSource;
+          };
 
           return rows.map((r) => {
             const kind = String(r.action_kind) as ActionKind;
@@ -366,8 +417,7 @@ export function calderynClient(shop: string) {
               cost_sources.push({ kind: "ad_spend", source: String(r.param_platform) });
             } else if (MARGIN_ACTIONS.has(kind)) {
               cost_sources.push({ kind: "price", source: "shopify" });
-              const skuId = r.param_sku_id ? String(r.param_sku_id) : "";
-              cost_sources.push({ kind: "cogs", source: cogsBySku.get(skuId) ?? "unavailable" });
+              cost_sources.push({ kind: "cogs", source: cogsSourceFor(r) });
             }
             return rowToAudit({ ...r, cost_sources });
           });
