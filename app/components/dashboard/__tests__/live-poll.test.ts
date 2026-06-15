@@ -64,6 +64,12 @@ function auditEntry(id: string): AuditVM {
     undo_of: null,
     pre: "—",
     post: "—",
+    mode: "manual",
+    actorDisplay: "You",
+    marginBasis: "none",
+    marginBasisLabel: "No booked margin",
+    costLineage: [],
+    why: "Manual — dashboard",
   };
 }
 
