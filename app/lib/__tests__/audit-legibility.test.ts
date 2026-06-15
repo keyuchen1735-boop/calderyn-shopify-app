@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { auditLegibility } from "../audit-legibility";
+import { recoveredCentsFromStates } from "../audit-impact";
 import type { AuditEntry } from "../types";
 
 function row(over: Partial<AuditEntry>): AuditEntry {
@@ -85,8 +86,6 @@ describe("auditLegibility — why", () => {
     expect(l.why).toContain("Reversal of");
   });
 });
-
-import { recoveredCentsFromStates } from "../audit-impact";
 
 describe("marginBasis anti-drift", () => {
   it("a no-alert budget action that audit-impact measures from states reports 'measured'", () => {

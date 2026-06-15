@@ -4,6 +4,7 @@
 // Tips are shared with the screener engine; reuse its (string | {title,detail})
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
+import type { CostSource } from "~/lib/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -70,7 +71,7 @@ export interface AuditVM {
   actorDisplay: string;
   marginBasis: string;
   marginBasisLabel: string;
-  costLineage: import("~/lib/types").CostSource[];
+  costLineage: CostSource[];
   why: string;
   whyDetail?: string;
 }
