@@ -56,7 +56,8 @@ describe("POST /pilot/api/send-invite", () => {
     expect(await res.json()).toEqual({ sent: true, id: "email_1" });
     expect(sendEmail).toHaveBeenCalledTimes(1);
     const arg = sendEmail.mock.calls[0][0];
-    expect(arg.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    // No List-Unsubscribe header — keeps the invite out of Gmail's Promotions tab.
+    expect(arg.headers).toBeUndefined();
     expect(logInvite).toHaveBeenCalledWith(expect.objectContaining({ status: "sent", resendId: "email_1" }));
   });
   it("short-circuits with alreadyInvited when skip_if_invited and a prior send exists", async () => {
