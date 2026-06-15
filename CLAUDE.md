@@ -14,6 +14,7 @@
 - **Shopify auth:** every admin route must call `authenticate.admin(request)` from `app/shopify.server.ts` before any data access. Webhooks go through `authenticate.webhook`.
 - **GraphQL:** use the Admin client from the authenticated session. Run `graphql-codegen` after editing `.graphql` files; do not hand-edit generated types.
 - **UI:** compose with Polaris primitives. No raw CSS frameworks. App Bridge for navigation, toasts, modals — not `window.*`.
+- **Icons:** the dashboard surface standardizes on **Lucide** (`lucide-react`), exposed only through the `CDIcon` registry in `app/components/dashboard/icons.tsx`. To add a dashboard icon, import the component from `lucide-react` and add one line to `CD_ICONS` — do not hand-draw SVGs or pull in other icon sets. The embedded admin (`app/routes/app.*`) uses `@shopify/polaris-icons` instead (Polaris convention / App Store review); do not use Lucide there.
 - **DB:** all schema changes go through `prisma migrate dev`; never edit `migrations/` by hand. Wrap multi-step writes in `prisma.$transaction`.
 - **Secrets:** read from `process.env` server-side only. Never reference env in client bundles. Update `.env.example` when adding a key.
 - **Secret storage:** put all secrets and client IDs (Shopify API key/secret, OAuth client IDs, tokens) in `.env.local` only — never `.env`, never source. Ensure `.env.local` is listed in `.gitignore` and never committed.
