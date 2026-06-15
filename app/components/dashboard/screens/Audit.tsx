@@ -10,6 +10,7 @@ import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money, timeAgo, absTime } from "../format";
 import { recovered } from "~/lib/recovered";
+import { COST_SOURCE_LABELS } from "~/lib/labels";
 import type { DashboardCtx } from "../context";
 import type { AuditVM } from "../view-models";
 
@@ -28,11 +29,9 @@ function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
 /* ---------- Single history row ---------- */
 function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const failed = entry.outcome === "failed";
   const retrying = entry.outcome === "retrying";
-  // The live shell marks an undone row by flipping undo_eligible off and setting
-  // post → "Reverted" (there is no dedicated `undone` flag on the live VM, though
-  // the prototype carried one). Treat either signal as "undone".
   const undone =
     Boolean((entry as AuditVM & { undone?: boolean }).undone) || entry.post === "Reverted";
 
@@ -40,49 +39,55 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
     if (busy) return;
     setBusy(true);
     try {
-      // The shell owns the toast + state refresh; the entry becomes `undone`
-      // via a refreshed app.audit. We only guard the in-flight state locally.
       await app.undoAction(entry);
     } finally {
       setBusy(false);
     }
   };
 
-  const tone = failed ? "critical" : entry.actor === "Autopilot" ? "accent" : "success";
+  const tone = failed ? "critical" : entry.mode === "auto" ? "accent" : "success";
   const iconName = failed ? "warn" : CD_ACTION_ICON[entry.action_kind] ?? "bolt";
+  const showImpact = entry.dollar_impact_at_exec > 0 && !undone;
 
   return (
-    <div className="cd-row" style={{ cursor: "default" }} data-dim={failed ? "1" : "0"}>
+    <div className="cd-row" data-dim={failed ? "1" : "0"} style={{ flexWrap: "wrap" }}>
+      <button
+        className="cd-feed-icon"
+        data-tone={tone}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={open ? "Hide details" : "Show details"}
+        style={{ border: 0, cursor: "pointer", background: "transparent" }}
+      >
+        <CDIcon name={open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={1.9} />
+      </button>
       <span className="cd-feed-icon" data-tone={tone}>
         <CDIcon name={iconName} size={14} strokeWidth={1.9} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
+          <Pill tone={entry.mode === "auto" ? "accent" : "neutral"}>
+            {entry.mode === "auto" ? "Auto" : "Manual"}
+          </Pill>
           <span className="cd-row-title truncate">
-            {/* An undo row shares the original's verb; prefix it so the row reads
-                as a reversal rather than a fresh "Created PO draft" (mirrors the
-                extension audit log). */}
             {entry.undo_of ? "Reversed — " : ""}
             {entry.verb} — {entry.target}
           </span>
-          {failed && (
-            <Pill tone="critical" icon="x">
-              Blocked
-            </Pill>
-          )}
+          {failed && <Pill tone="critical" icon="x">Blocked</Pill>}
           {retrying && <Pill tone="warn" icon="clock">Retrying</Pill>}
           {undone && <Pill icon="undo">Undone</Pill>}
         </div>
-        {entry.detail && <div className="cd-caption truncate">{entry.detail}</div>}
+        <div className="cd-caption truncate">{entry.why}</div>
       </div>
       <div className="text-right whitespace-nowrap">
-        {entry.dollar_impact_at_exec > 0 && !undone && (
+        {showImpact && (
           <div className="cd-row-num tabular-nums" style={{ color: "var(--green)" }}>
             +{money(entry.dollar_impact_at_exec)}
           </div>
         )}
+        {showImpact && <div className="cd-caption">{entry.marginBasisLabel}</div>}
         <div className="cd-caption" title={absTime(entry.when) || undefined}>
-          {entry.actor} · {timeAgo(entry.when)}
+          {entry.actorDisplay} · {timeAgo(entry.when)}
         </div>
       </div>
       {entry.undo_eligible && !undone && (
@@ -90,6 +95,42 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
           {busy ? "Undoing…" : "Undo"}
         </Btn>
       )}
+      {open && (
+        <div className="cd-audit-detail" style={{ flexBasis: "100%", paddingLeft: 32, paddingTop: 8 }}>
+          <DetailBlock label="Why this fired">{entry.whyDetail ?? entry.why}</DetailBlock>
+          {showImpact && (
+            <DetailBlock label="Booked margin">
+              +{money(entry.dollar_impact_at_exec)} · {entry.marginBasisLabel}
+            </DetailBlock>
+          )}
+          {entry.costLineage.length > 0 && (
+            <DetailBlock label="Cost lineage">
+              <span className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                {entry.costLineage.map((s, i) => (
+                  <Pill key={i} tone={s.source === "unavailable" ? "warn" : "neutral"}>
+                    {s.kind === "ad_spend" ? "Ad spend" : s.kind === "cogs" ? "COGS" : "Price"}:{" "}
+                    {COST_SOURCE_LABELS[s.source] ?? s.source}
+                  </Pill>
+                ))}
+              </span>
+            </DetailBlock>
+          )}
+          {entry.pre !== "—" && (
+            <DetailBlock label="Before → after">
+              {entry.pre} → {entry.post}
+            </DetailBlock>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailBlock({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <span className="cd-caption" style={{ fontWeight: 600 }}>{label}: </span>
+      <span className="cd-caption">{children}</span>
     </div>
   );
 }
