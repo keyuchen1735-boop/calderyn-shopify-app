@@ -78,6 +78,14 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
           {undone && <Pill icon="undo">Undone</Pill>}
         </div>
         <div className="cd-caption truncate">{entry.why}</div>
+        {/* A failed row must surface WHY it failed without needing expansion
+            (rule 12 — fail visibly). The legibility `why` is the trigger, not
+            the failure, so show the machine failure message too. */}
+        {failed && entry.failure && (
+          <div className="cd-caption truncate" style={{ color: "var(--red)" }}>
+            {entry.failure}
+          </div>
+        )}
       </div>
       <div className="text-right whitespace-nowrap">
         {showImpact && (
@@ -98,6 +106,7 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
       {open && (
         <div className="cd-audit-detail" style={{ flexBasis: "100%", paddingLeft: 32, paddingTop: 8 }}>
           <DetailBlock label="Why this fired">{entry.whyDetail ?? entry.why}</DetailBlock>
+          {entry.failure && <DetailBlock label="Failure reason">{entry.failure}</DetailBlock>}
           {showImpact && (
             <DetailBlock label="Booked margin">
               +{money(entry.dollar_impact_at_exec)} · {entry.marginBasisLabel}
