@@ -445,6 +445,29 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
 
   const realized30 = new Map<string, Map<string, number>>(); // skuId -> region -> units
   const sold7 = new Map<string, number>();
+  // Ship cost: $4.25 base per order + $0.75 per additional unit beyond the first.
+  // Allocated to SKUs pro-rata by line quantity within each order.
+  const shipCostBySkuDay = new Map<string, number>();
+  const linesByOrderIdForShip = new Map<string, OrderLineRow[]>();
+  for (const l of orderLines) {
+    const arr = linesByOrderIdForShip.get(l.order_id) ?? [];
+    arr.push(l);
+    linesByOrderIdForShip.set(l.order_id, arr);
+  }
+  for (const order of orders) {
+    const lines = linesByOrderIdForShip.get(order.id) ?? [];
+    const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
+    if (totalQty === 0) continue;
+    const orderShipCost = 425 + Math.max(0, totalQty - 1) * 75;
+    const day = order.created_at_source.slice(0, 10);
+    for (const l of lines) {
+      const skuShare = l.quantity / totalQty;
+      const skuShipCost = Math.round(orderShipCost * skuShare);
+      const key = `${l.sku_id}|${day}`;
+      shipCostBySkuDay.set(key, (shipCostBySkuDay.get(key) ?? 0) + skuShipCost);
+    }
+  }
+
   const pnlBySkuDay = new Map<string, { revenue: number; cogs: number }>();
   for (const l of orderLines) {
     const order = orderById.get(l.order_id)!;
@@ -673,6 +696,7 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     const slot = pnlBySkuDay.get(key) ?? { revenue: 0, cogs: 0 };
     const returns = returnsBySkuDay.get(key) ?? 0;
     const adSpendAttrib = adAllocBySkuDay.get(key) ?? 0;
+    const shipCost = shipCostBySkuDay.get(key) ?? 0;
     skuPnl.push({
       id: uuidFrom(rng),
       shop_id: config.shopId,
@@ -682,7 +706,8 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
       cogs_cents: slot.cogs,
       ad_spend_attrib_cents: adSpendAttrib,
       return_cents: returns,
-      contribution_margin_cents: slot.revenue - slot.cogs - adSpendAttrib - returns,
+      ship_cost_cents: shipCost,
+      contribution_margin_cents: slot.revenue - slot.cogs - adSpendAttrib - returns - shipCost,
     });
   }
 

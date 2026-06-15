@@ -98,6 +98,7 @@ export interface SkuPnlRow {
   cogs_cents: number;
   ad_spend_attrib_cents: number;
   return_cents: number;
+  ship_cost_cents: number;
   contribution_margin_cents: number;
 }
 

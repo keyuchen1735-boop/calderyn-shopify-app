@@ -256,8 +256,11 @@ describe("generateSeedDataset: inventory + derived facts", () => {
     }
     for (const p of ds.skuPnl) {
       expect(p.revenue_cents, `${p.sku_id} ${p.day}`).toBe(lineRev.get(`${p.sku_id}|${p.day}`) ?? 0);
-      expect(p.contribution_margin_cents).toBe(
-        p.revenue_cents - p.cogs_cents - p.ad_spend_attrib_cents - p.return_cents,
+      // ship_cost_cents must be present and non-negative.
+      expect(p.ship_cost_cents, `ship_cost_cents missing on ${p.sku_id} ${p.day}`).toBeGreaterThanOrEqual(0);
+      // Margin formula must now include ship cost.
+      expect(p.contribution_margin_cents, `margin formula ${p.sku_id} ${p.day}`).toBe(
+        p.revenue_cents - p.cogs_cents - p.ad_spend_attrib_cents - p.return_cents - p.ship_cost_cents,
       );
     }
     const rate30 = (skuId: string) => {
@@ -274,6 +277,25 @@ describe("generateSeedDataset: inventory + derived facts", () => {
     for (const sku of ds.skus) {
       if (sku.id === ds.scenario.windbreakerSSkuId) continue;
       expect(rate30(sku.id), sku.sku).toBeLessThan(0.1);
+    }
+  });
+
+  it("populates ship_cost_cents on every pnl row and deducts it from contribution margin", () => {
+    // Every row with revenue must carry a positive ship cost (orders were shipped).
+    const rowsWithRevenue = ds.skuPnl.filter((p) => p.revenue_cents > 0);
+    expect(rowsWithRevenue.length).toBeGreaterThan(0);
+    for (const p of rowsWithRevenue) {
+      expect(p.ship_cost_cents, `${p.sku_id} ${p.day}`).toBeGreaterThan(0);
+    }
+    // Aggregate ship cost across all rows must be non-trivial (>1 % of revenue).
+    const totalRev = ds.skuPnl.reduce((s, p) => s + p.revenue_cents, 0);
+    const totalShip = ds.skuPnl.reduce((s, p) => s + p.ship_cost_cents, 0);
+    expect(totalShip / totalRev).toBeGreaterThan(0.01);
+    // Margin must equal revenue − cogs − ad_spend − returns − ship_cost on every row.
+    for (const p of ds.skuPnl) {
+      expect(p.contribution_margin_cents, `margin check ${p.sku_id} ${p.day}`).toBe(
+        p.revenue_cents - p.cogs_cents - p.ad_spend_attrib_cents - p.return_cents - p.ship_cost_cents,
+      );
     }
   });
 
