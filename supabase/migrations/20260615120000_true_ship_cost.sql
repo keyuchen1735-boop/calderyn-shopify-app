@@ -1,13 +1,19 @@
 -- True Ship Cost foundation: per-order resolved ship cost + weight + anchors.
 -- text+CHECK (not enum types) so phase-2 'actual_3pl' needs no ALTER TYPE.
+-- ship_cost_cents is integer (per-order); total_cents on shipping_cost_period is
+-- bigint (period aggregate) — the asymmetry is intentional.
 alter table public.order_fact
   add column if not exists ship_cost_cents integer,
-  add column if not exists ship_cost_source text
+  add column if not exists ship_cost_source text,
+  add column if not exists ship_cost_confidence text,
+  add column if not exists ship_cost_reconciled_at timestamptz;
+
+alter table public.order_fact
+  add constraint if not exists order_fact_ship_cost_source_check
     check (ship_cost_source in
       ('actual_invoice','actual_event','reconciled','modeled','fallback','manual')),
-  add column if not exists ship_cost_confidence text
-    check (ship_cost_confidence in ('high','med','low')),
-  add column if not exists ship_cost_reconciled_at timestamptz;
+  add constraint if not exists order_fact_ship_cost_confidence_check
+    check (ship_cost_confidence in ('high','med','low'));
 
 alter table public.order_line_fact add column if not exists grams integer;
 alter table public.sku_dim         add column if not exists grams integer;
@@ -19,8 +25,10 @@ create table if not exists public.shipping_cost_period (
   period_end   date not null,
   carrier      text,
   total_cents  bigint not null,
-  source       text not null check (source in ('upload','typed')),
-  created_at   timestamptz not null default now()
+  source       text not null,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  constraint shipping_cost_period_source_check check (source in ('upload','typed'))
 );
 create index if not exists shipping_cost_period_shop_idx
   on public.shipping_cost_period (shop_id, period_start, period_end);
@@ -28,7 +36,7 @@ create index if not exists shipping_cost_period_shop_idx
 create table if not exists public.shipping_invoice_line (
   id              uuid primary key default gen_random_uuid(),
   shop_id         uuid not null,
-  period_id       uuid references public.shipping_cost_period(id) on delete cascade,
+  period_id       uuid not null references public.shipping_cost_period(id) on delete cascade,
   order_ref       text,
   tracking_no     text,
   cost_cents      integer not null,
@@ -37,6 +45,9 @@ create table if not exists public.shipping_invoice_line (
 );
 create index if not exists shipping_invoice_line_shop_idx
   on public.shipping_invoice_line (shop_id, period_id);
+create index if not exists shipping_invoice_line_matched_order_idx
+  on public.shipping_invoice_line (matched_order_id)
+  where matched_order_id is not null;
 
 -- RLS: deny-by-default. Both tables are accessed only via the service-role key
 -- (BYPASSRLS), matching the pattern used by every other per-shop table in this
