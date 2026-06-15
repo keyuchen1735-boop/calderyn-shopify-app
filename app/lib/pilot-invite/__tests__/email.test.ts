@@ -31,6 +31,12 @@ describe("renderPilotEmail", () => {
     expect(out.subject).toBe("You're in, <b> — your free Calderyn pilot");
     expect(out.text).toContain("https://apps.shopify.com/calderynextension");
   });
+  it("ships a desktop (File 1) + mobile (File 2) layout toggled by a width media query", () => {
+    const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
+    expect(html).toContain('class="cd-desk"');
+    expect(html).toContain('class="cd-mob"');
+    expect(html).toContain("@media only screen and (max-width:600px)");
+  });
   it("falls back to generic copy when fields are blank", () => {
     const out = renderPilotEmail({ firstName: "", storeName: "", baseUrl: base, unsubscribeUrl: unsub });
     expect(out.subject).toBe("You're in — your free Calderyn pilot");
