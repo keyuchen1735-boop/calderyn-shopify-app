@@ -16,18 +16,21 @@ import {
   Box,
   Button,
   Card,
-  DataTable,
+  Collapsible,
+  IndexTable,
   InlineGrid,
   InlineStack,
   Page,
   Text,
   Tooltip,
 } from "@shopify/polaris";
+import { ChevronDownIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
 import { recovered as recoveredOf } from "~/lib/recovered";
-import { ACTION_LABELS, DETECTOR_LABELS, DETECTOR_TERMS, actorLabel } from "~/lib/labels";
+import { ACTION_LABELS, COST_SOURCE_LABELS } from "~/lib/labels";
+import { auditLegibility } from "~/lib/audit-legibility";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
@@ -95,6 +98,120 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+function DetailLine({ label, value }: { label: string; value: string }) {
+  return (
+    <InlineStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="semibold">{label}:</Text>
+      <Text as="span" variant="bodySm" tone="subdued">{value}</Text>
+    </InlineStack>
+  );
+}
+
+function AuditRowEx({
+  a, index, submitting,
+}: { a: AuditEntry; index: number; submitting: boolean }) {
+  const [open, setOpen] = useState(false);
+  const leg = auditLegibility(a);
+  const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
+  const canUndo = a.undo_eligible && !a.undo_of;
+  const hasPoPdf =
+    a.action_kind === "create_po_draft" && a.outcome === "succeeded" && Boolean(a.post_state?.po);
+  const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
+  const showEstimate =
+    !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
+  const showImpact = Boolean(a.dollar_impact_at_exec);
+
+  return (
+    <>
+      <IndexTable.Row id={a.id} position={index}>
+        <IndexTable.Cell>
+          <Button
+            variant="tertiary"
+            icon={open ? ChevronDownIcon : ChevronRightIcon}
+            onClick={() => setOpen((v) => !v)}
+            accessibilityLabel={open ? "Hide details" : "Show details"}
+          />
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Tooltip content={fmtAbsTime(a.created_at)}>
+            <Text as="span" variant="bodySm" fontWeight="semibold">{fmtRelTime(a.created_at)}</Text>
+          </Tooltip>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <BlockStack gap="050">
+            <Text as="p" variant="bodySm" fontWeight="semibold">
+              {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">{leg.why}</Text>
+          </BlockStack>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Badge tone={leg.mode === "auto" ? "info" : undefined}>
+            {leg.mode === "auto" ? "Auto" : "Manual"}
+          </Badge>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Tooltip content={a.target}><Text as="span" variant="bodySm">{shortId(a.target)}</Text></Tooltip>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <BlockStack gap="050" inlineAlign="end">
+            <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
+              {a.dollar_impact_at_exec < 0 ? "-" : ""}{fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
+            </Text>
+            {showImpact && <Text as="p" alignment="end" variant="bodySm" tone="subdued">{leg.marginBasisLabel}</Text>}
+            {showEstimate && <Text as="p" alignment="end" variant="bodySm" tone="subdued">est. {fmtMoney(estimateCents)}</Text>}
+          </BlockStack>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Badge tone={a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"}>
+            {a.outcome}
+          </Badge>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          {canUndo || hasPoPdf ? (
+            <InlineStack gap="200" wrap={false}>
+              {canUndo && (
+                <Form method="post">
+                  <input type="hidden" name="intent" value="undo" />
+                  <input type="hidden" name="auditId" value={a.id} />
+                  <Button submit variant="plain" loading={submitting} disabled={submitting}>Undo</Button>
+                </Form>
+              )}
+              {hasPoPdf && <DownloadPoButton auditId={a.id} />}
+            </InlineStack>
+          ) : (<Text as="span" tone="subdued">—</Text>)}
+        </IndexTable.Cell>
+      </IndexTable.Row>
+      <IndexTable.Row id={`${a.id}-d`} position={index + 0.5} disabled>
+        <IndexTable.Cell colSpan={8}>
+          <Collapsible id={`detail-${a.id}`} open={open} transition={{ duration: "150ms" }}>
+            <Box padding="300" background="bg-surface-secondary">
+              <BlockStack gap="150">
+                <DetailLine label="Why this fired" value={leg.whyDetail ?? leg.why} />
+                {a.failure_reason && <DetailLine label="Failure reason" value={a.failure_reason} />}
+                {showImpact && (
+                  <DetailLine label="Booked margin"
+                    value={`${a.dollar_impact_at_exec < 0 ? "-" : ""}${fmtMoney(Math.abs(a.dollar_impact_at_exec))} · ${leg.marginBasisLabel}`} />
+                )}
+                {leg.costLineage.length > 0 && (
+                  <InlineStack gap="150" blockAlign="center">
+                    <Text as="span" variant="bodySm" fontWeight="semibold">Cost lineage:</Text>
+                    {leg.costLineage.map((s, i) => (
+                      <Badge key={i} tone={s.source === "unavailable" ? "warning" : undefined}>
+                        {`${s.kind === "ad_spend" ? "Ad spend" : s.kind === "cogs" ? "COGS" : "Price"}: ${COST_SOURCE_LABELS[s.source] ?? s.source}`}
+                      </Badge>
+                    ))}
+                  </InlineStack>
+                )}
+              </BlockStack>
+            </Box>
+          </Collapsible>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    </>
+  );
+}
+
 export default function Audit() {
   const navigate = useEmbeddedNavigate();
   const { audit, error } = useLoaderData<typeof loader>();
@@ -143,100 +260,6 @@ export default function Audit() {
   // succeeded actions, undo rows excluded.
   const recovered = recoveredOf(audit).cents;
 
-  const rows = audit.map((a) => {
-    const canUndo = a.undo_eligible && !a.undo_of;
-    // The PDF route 404s for entries recorded before the PO snapshot existed,
-    // so only offer the download when the audit row actually carries one.
-    const hasPoPdf =
-      a.action_kind === "create_po_draft" &&
-      a.outcome === "succeeded" &&
-      Boolean(a.post_state?.po);
-    // Realized impact is attributed later (often $0 at exec time); fall back to
-    // the estimate snapshotted at execution so the column isn't a wall of $0.
-    // Not for snooze: a deferral recovers nothing, and showing the alert's
-    // full at-stake impact there would inflate the column.
-    const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
-    const showEstimate =
-      !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
-    const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
-    return [
-    // Relative time is the at-a-glance value; the absolute timestamp moves into a
-    // tooltip so this column stops forcing the table past the card (see merchant
-    // review — the trailing actions column was clipping at rest).
-    <Tooltip key={`t-${a.id}`} content={fmtAbsTime(a.created_at)}>
-      <Text as="span" variant="bodySm" fontWeight="semibold">
-        {fmtRelTime(a.created_at)}
-      </Text>
-    </Tooltip>,
-    <Box key={`a-${a.id}`} minWidth="130px">
-      <Text as="p" variant="bodySm" fontWeight="semibold">
-        {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
-      </Text>
-      {a.undo_of && (
-        <Text as="p" variant="bodySm" tone="subdued">
-          reverses {shortId(a.undo_of)}
-        </Text>
-      )}
-    </Box>,
-    <Tooltip key={`tg-${a.id}`} content={a.target}>
-      <Text as="span" variant="bodySm">
-        {shortId(a.target)}
-      </Text>
-    </Tooltip>,
-    DETECTOR_LABELS[a.detector_id] ? (
-      <Tooltip key={`d-${a.id}`} content={DETECTOR_TERMS[a.detector_id]}>
-        <Badge>{DETECTOR_LABELS[a.detector_id]}</Badge>
-      </Tooltip>
-    ) : (
-      <Text key={`d-${a.id}`} as="span" tone="subdued">
-        —
-      </Text>
-    ),
-    <Text key={`act-${a.id}`} as="span" variant="bodySm" tone="subdued">
-      {actorLabel(a.actor)}
-    </Text>,
-    <Box key={`i-${a.id}`}>
-      <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
-        {a.dollar_impact_at_exec < 0 ? "-" : ""}
-        {fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
-      </Text>
-      {showEstimate && (
-        <Text as="p" alignment="end" variant="bodySm" tone="subdued">
-          est. {fmtMoney(estimateCents)}
-        </Text>
-      )}
-    </Box>,
-    // `retrying` is parked for the retry cron — pending, not a failure
-    // (the alert page's own toast says "queued, will retry automatically").
-    <Badge
-      key={`s-${a.id}`}
-      tone={
-        a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"
-      }
-    >
-      {a.outcome}
-    </Badge>,
-    canUndo || hasPoPdf ? (
-      <InlineStack key={`u-${a.id}`} gap="200" wrap={false}>
-        {canUndo && (
-          <Form method="post">
-            <input type="hidden" name="intent" value="undo" />
-            <input type="hidden" name="auditId" value={a.id} />
-            <Button submit variant="plain" loading={submitting} disabled={submitting}>
-              Undo
-            </Button>
-          </Form>
-        )}
-        {hasPoPdf && <DownloadPoButton auditId={a.id} />}
-      </InlineStack>
-    ) : (
-      <Text key={`u-${a.id}`} as="span" tone="subdued">
-        —
-      </Text>
-    ),
-  ];
-  });
-
   return (
     <Page
       fullWidth
@@ -272,11 +295,18 @@ export default function Audit() {
         </InlineGrid>
 
         <Card padding="0">
-          <DataTable
-            columnContentTypes={["text", "text", "text", "text", "text", "numeric", "text", "text"]}
-            headings={["Time", "Action", "Target", "Detector", "Actor", "Impact", "Status", ""]}
-            rows={rows}
-          />
+          <IndexTable
+            selectable={false}
+            itemCount={audit.length}
+            headings={[
+              { title: "" }, { title: "Time" }, { title: "Action" }, { title: "Mode" },
+              { title: "Target" }, { title: "Impact", alignment: "end" }, { title: "Status" }, { title: "" },
+            ]}
+          >
+            {(audit as AuditEntry[]).map((a, i) => (
+              <AuditRowEx key={a.id} a={a} index={i} submitting={submitting} />
+            ))}
+          </IndexTable>
         </Card>
       </BlockStack>
     </Page>
