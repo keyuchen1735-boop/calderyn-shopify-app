@@ -119,7 +119,11 @@ function AuditRowEx({
   const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
   const showEstimate =
     !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
-  const showImpact = Boolean(a.dollar_impact_at_exec);
+  // The margin-source caption + booked-margin detail describe a genuine booked
+  // recovery — gate them to positive, non-reversal rows so a reversal (negative
+  // impact, undo_of set) never reads as "Estimated from alert" (matches the
+  // dashboard's `> 0 && !undone` intent). The impact figure itself still renders.
+  const showImpact = a.dollar_impact_at_exec > 0 && !a.undo_of;
 
   return (
     <>
