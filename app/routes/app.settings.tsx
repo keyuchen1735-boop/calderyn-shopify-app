@@ -9,7 +9,7 @@ import {
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
 import {
   Badge,
   Banner,
@@ -23,6 +23,7 @@ import {
   InlineStack,
   Layout,
   Page,
+  Select,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -51,12 +52,72 @@ import {
 import { GuardrailMeter } from "~/components/calderyn";
 import { McpConnectGuide } from "~/components/McpConnectGuide";
 import type { GuardrailConfig, Integration } from "~/lib/types";
+import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
+import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "~/lib/ship-cost/inputs.server";
+import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
+
+// ---------------------------------------------------------------------------
+// Pure FormData validation helpers (exported for unit tests)
+// ---------------------------------------------------------------------------
+
+export type ParseOk<T> = { ok: true; value: T };
+export type ParseErr = { ok: false; message: string };
+
+export interface PeriodTotalValue {
+  totalCents: number;
+  carrier: string | null;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export function parsePeriodTotalForm(
+  fd: FormData,
+): ParseOk<PeriodTotalValue> | ParseErr {
+  const amount = Number(String(fd.get("amount") ?? "").trim());
+  const carrier = String(fd.get("carrier") ?? "").trim() || null;
+  const periodStart = String(fd.get("period_start") ?? "").trim();
+  const periodEnd = String(fd.get("period_end") ?? "").trim();
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, message: "Enter a shipping total greater than $0." };
+  }
+  if (!periodStart || !periodEnd) {
+    return { ok: false, message: "Enter both a start and end date for the period." };
+  }
+  return {
+    ok: true,
+    value: { totalCents: Math.round(amount * 100), carrier, periodStart, periodEnd },
+  };
+}
+
+export interface ManualOverrideValue {
+  orderId: string;
+  /** null clears the override. */
+  cents: number | null;
+}
+
+export function parseManualOverrideForm(
+  fd: FormData,
+): ParseOk<ManualOverrideValue> | ParseErr {
+  const orderId = String(fd.get("order_id") ?? "").trim();
+  const raw = String(fd.get("amount") ?? "").trim();
+  if (!orderId) return { ok: false, message: "Missing order." };
+  if (raw === "") return { ok: true, value: { orderId, cents: null } };
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return { ok: false, message: "Override must be $0 or more." };
+  }
+  return { ok: true, value: { orderId, cents: Math.round(amount * 100) } };
+}
+
+// ---------------------------------------------------------------------------
 
 type LoaderPayload = {
   guardrails: GuardrailConfig | null;
   integrations: Record<string, Integration>;
   consent: boolean;
   error: { code: string; message: string } | null;
+  shipMode: string;
+  missingWeightPct: number;
 };
 
 type ActionPayload = {
@@ -65,6 +126,7 @@ type ActionPayload = {
   error?: { code: string; message: string };
   // External OAuth URL to open at the top level (escaping the embedded iframe).
   redirectUrl?: string;
+  uploadResult?: { matched: number; unmatchedRefs: string[]; parseErrors: string[] };
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -76,7 +138,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.integrations.list(request.signal),
       client.consent.get(request.signal),
     ]);
-    return json<LoaderPayload>({ guardrails, integrations, consent, error: null });
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    const [{ data: settingsRow }, { data: orderRows }] = await Promise.all([
+      sb.from("shop_settings").select("ship_cost_mode").eq("shop_id", shopId).maybeSingle(),
+      sb.from("order_fact").select("grams_sum").eq("shop_id", shopId),
+    ]);
+    const shipMode = (settingsRow?.ship_cost_mode as string | null) ?? "auto";
+    const missingWeight = missingWeightPct(
+      (orderRows ?? []).map((o: { grams_sum: number | null }) => ({ gramsSum: o.grams_sum ?? null })),
+    );
+    return json<LoaderPayload>({
+      guardrails,
+      integrations,
+      consent,
+      error: null,
+      shipMode,
+      missingWeightPct: missingWeight,
+    });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
@@ -84,6 +163,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       integrations: {},
       consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
+      shipMode: "auto",
+      missingWeightPct: 0,
     });
   }
 };
@@ -91,6 +172,79 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
+
+  // CSV upload is multipart — handle before formData() consumes the stream.
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const uploadHandler = unstable_createMemoryUploadHandler({ maxPartSize: 5_000_000 });
+    const mp = await unstable_parseMultipartFormData(request, uploadHandler);
+    if (String(mp.get("intent") || "") === "upload_invoice_csv") {
+      try {
+        const file = mp.get("file");
+        const carrier = String(mp.get("carrier") || "").trim() || null;
+        const periodStart = String(mp.get("period_start") || "").trim();
+        const periodEnd = String(mp.get("period_end") || "").trim();
+        if (!(file instanceof File) || file.size === 0) {
+          return json<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "NO_FILE", message: "Choose a CSV file to upload." },
+              toast: { message: "Choose a CSV file to upload.", isError: true },
+            },
+            { status: 422 },
+          );
+        }
+        if (!periodStart || !periodEnd) {
+          return json<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "INVALID_INPUT", message: "Enter the period dates the invoice covers." },
+              toast: { message: "Enter the period dates.", isError: true },
+            },
+            { status: 422 },
+          );
+        }
+        const csvText = await file.text();
+        const sb = getSupabase();
+        const shopId = await resolveShopId(session.shop);
+        const result = await ingestInvoiceCsv(sb, shopId, {
+          csvText,
+          carrier,
+          periodStart,
+          periodEnd,
+          shopCountry: await getShopCountry(sb, shopId),
+        });
+        const unmatchedRefs = result.unmatched.map((u) => u.orderRef ?? u.trackingNo ?? "?");
+        return json<ActionPayload>({
+          ok: true,
+          uploadResult: {
+            matched: result.matchedCount,
+            unmatchedRefs,
+            parseErrors: result.parseErrors.map((e) => `line ${e.line}: ${e.reason}`),
+          },
+          toast: {
+            message:
+              result.unmatched.length === 0 && result.parseErrors.length === 0
+                ? `Invoice uploaded — ${result.matchedCount} orders matched`
+                : `Uploaded — ${result.matchedCount} matched, ${result.unmatched.length} unmatched`,
+            isError: false,
+          },
+        });
+      } catch (err) {
+        if (err instanceof Response) throw err;
+        const e = err as CalderynError;
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: e.code ?? "ERROR", message: e.message },
+            toast: { message: e.message, isError: true },
+          },
+          { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+        );
+      }
+    }
+  }
+
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
@@ -220,6 +374,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const result = await syncShopAds(sb, shopId);
       const toast = formatSyncToast(result);
       return json<ActionPayload>({ ok: !toast.isError, toast });
+    }
+
+    if (intent === "set_ship_mode") {
+      const mode = String(formData.get("ship_cost_mode") || "");
+      if (!["auto", "force_measured", "force_reconciled"].includes(mode)) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_MODE", message: "Unknown mode." },
+            toast: { message: "Unknown mode", isError: true },
+          },
+          { status: 400 },
+        );
+      }
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      await sb
+        .from("shop_settings")
+        .upsert({ shop_id: shopId, ship_cost_mode: mode, updated_at: new Date().toISOString() });
+      return json<ActionPayload>({ ok: true, toast: { message: "Shipping cost mode saved" } });
+    }
+
+    if (intent === "add_period_total") {
+      const parsed = parsePeriodTotalForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      await saveTypedPeriodTotal(sb, shopId, {
+        ...parsed.value,
+        shopCountry: await getShopCountry(sb, shopId),
+      });
+      return json<ActionPayload>({ ok: true, toast: { message: "Shipping total saved — margins updated" } });
+    }
+
+    if (intent === "set_manual_override") {
+      const parsed = parseManualOverrideForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      await setManualOverride(sb, shopId, {
+        ...parsed.value,
+        shopCountry: await getShopCountry(sb, shopId),
+      });
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: parsed.value.cents == null ? "Override cleared" : "Override saved" },
+      });
     }
 
     return json<ActionPayload>(
