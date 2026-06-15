@@ -34,6 +34,7 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
       },
       update(payload: Record<string, unknown>) {
         const updateFilters: Record<string, unknown> = {};
+        // update chain collects eq filters for assertion but does not enforce them as row guards
         const updateChain: any = {
           eq(col: string, val: unknown) {
             updateFilters[col] = val;

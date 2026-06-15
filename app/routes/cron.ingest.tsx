@@ -75,7 +75,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopId = (row as { shop_id: string }).shop_id;
     try {
       await runShipCostResolution(sb, shopId, {
-        shopCountry: null, // TODO(plan2): source shop origin country
+        shopCountry: null, // TODO: source shop origin country (Plan 2)
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

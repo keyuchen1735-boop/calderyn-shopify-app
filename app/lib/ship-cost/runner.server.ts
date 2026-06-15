@@ -29,8 +29,9 @@ export async function runShipCostResolution(
 
   const { data: periods } = await sb
     .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId);
+  const periodRows = (periods ?? []) as { total_cents: number }[];
   const periodTotal =
-    (periods ?? []).reduce((s, p) => s + ((p as { total_cents: number }).total_cents ?? 0), 0) || null;
+    periodRows.reduce((s, p) => s + (p.total_cents ?? 0), 0) || null;
 
   const { data: invoices } = await sb
     .from("shipping_invoice_line").select("matched_order_id, cost_cents").eq("shop_id", shopId);
@@ -53,6 +54,7 @@ export async function runShipCostResolution(
   const fallbackFlat = periodTotal ? Math.round(periodTotal / orderRows.length) : 0;
   const nowIso = new Date().toISOString();
 
+  // Bounded per-shop serial updates; if order volume grows, batch via an RPC or add a LIMIT to v_order_ship_features.
   for (const o of orderRows) {
     const r = resolveOrderShipCost({
       manualOverrideCents: null,
@@ -137,6 +139,7 @@ export async function rollShipCostIntoSkuPnl(
       quantity: l.quantity,
     }));
     const split = splitOrderShipCost(order.ship_cost_cents, splitLines);
+    // created_at_source is UTC ISO-8601; sku_pnl.day must be UTC-keyed for this join to match (same convention as revenue.server.ts).
     const day = order.created_at_source.slice(0, 10);
     for (const line of lines) {
       if (!line.sku_id) continue;
@@ -156,6 +159,7 @@ export async function rollShipCostIntoSkuPnl(
   for (const row of pnlRows) {
     const key = `${row.sku_id}|${row.day}`;
     const shipCostCents = shipCostBySkuDay.get(key) ?? 0;
+    if (shipCostCents === 0) continue;
     const contributionMarginCents =
       row.revenue_cents -
       row.cogs_cents -
