@@ -10,11 +10,14 @@ export type ActionKind =
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
+  | "raise_free_ship_threshold"
+  | "exclude_sku_free_ship"
   | "snooze_alert";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"
   | "cogs_drift"
+  | "free_shipping_leakage"
   | "margin_erosion"
   | "negative_unit_economics"
   | "regional_shortage_risk"
