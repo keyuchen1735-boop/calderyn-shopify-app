@@ -21,6 +21,7 @@ describe("renderPilotEmail", () => {
   it("wires view-in-browser + unsubscribe links", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
     expect(html).toContain(`${base}/pilot?first_name=Jane`);
+    expect(html).toContain(`${base}/pilot?first_name=Jane&amp;store_name=Acme`); // href encodes & as &amp;
     expect(html).toContain(unsub);
   });
   it("escapes HTML in the fields and personalizes the subject", () => {

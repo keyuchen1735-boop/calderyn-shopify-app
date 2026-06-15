@@ -91,7 +91,7 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
             <td>
               <div style="display:none;max-height:0;overflow:hidden;">&nbsp;</div>
               <div style="font-size:11px;line-height:16px;text-align:center;color:#9A9AA0;padding:0 0 6px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-                <a href="${viewUrl}" style="color:#9A9AA0;text-decoration:underline;">View in browser</a>
+                <a href="${escapeHtml(viewUrl)}" style="color:#9A9AA0;text-decoration:underline;">View in browser</a>
               </div>
             </td>
           </tr>
@@ -330,7 +330,7 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
                     You joined the Calderyn waitlist. &nbsp;
                     <a href="https://calderyncompany.com" style="color:#9A9AA0; text-decoration:underline;">calderyncompany.com</a>
                     &nbsp;·&nbsp;
-                    <a href="${opts.unsubscribeUrl}" style="color:#9A9AA0; text-decoration:underline;">Unsubscribe</a>
+                    <a href="${escapeHtml(opts.unsubscribeUrl)}" style="color:#9A9AA0; text-decoration:underline;">Unsubscribe</a>
                   </td>
                 </tr>
               </table>
