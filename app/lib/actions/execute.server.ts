@@ -20,6 +20,9 @@ export interface ExecuteInput {
   idempotencyKey: string;
   dailyBudgetCents?: number;
   actor?: string;
+  /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
+   *  sets it; manual paths leave it undefined. */
+  triggerReason?: string;
 }
 
 export interface ExecutedAudit {
@@ -105,6 +108,7 @@ export interface AuditInsert {
   post_state: Record<string, unknown> | null;
   last_error: string | null;
   actor_user_id: string;
+  trigger_reason?: string | null;
 }
 
 /** The tail of every executor: ONE append-only audit row + its idempotency marker. */
@@ -264,6 +268,7 @@ export async function executeAction(
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
+      trigger_reason: input.triggerReason ?? null,
     },
     sb,
   );

@@ -24,6 +24,7 @@ export interface ReallocateInput {
   amountCents: number; // daily-budget cents moved source -> dest
   idempotencyKey: string;
   actor?: string;
+  triggerReason?: string;
 }
 
 interface CampaignRow {
@@ -187,6 +188,7 @@ export async function executeReallocation(
       post_state: outcome === "succeeded" ? postState : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
+      trigger_reason: input.triggerReason ?? null,
     },
     sb,
   );
