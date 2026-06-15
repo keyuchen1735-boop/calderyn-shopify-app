@@ -32,6 +32,7 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { auditLegibility } from "~/lib/audit-legibility";
 import type { CreativeScreenRun } from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
@@ -252,6 +253,7 @@ function summarizeState(state: unknown): string {
 }
 
 export function adaptAudit(e: AuditEntry): AuditVM {
+  const leg = auditLegibility(e);
   return {
     id: e.id,
     action_kind: e.action_kind,
@@ -269,6 +271,13 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     pre: summarizeState(e.pre_state),
     post: summarizeState(e.post_state),
     failure: e.failure_reason,
+    mode: leg.mode,
+    actorDisplay: leg.actorDisplay,
+    marginBasis: leg.marginBasis,
+    marginBasisLabel: leg.marginBasisLabel,
+    costLineage: leg.costLineage,
+    why: leg.why,
+    whyDetail: leg.whyDetail,
   };
 }
 
