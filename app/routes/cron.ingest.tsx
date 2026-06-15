@@ -4,6 +4,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
+import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
@@ -20,6 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
     attributionErrors: [] as string[],
+    shipCostErrors: [] as string[],
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -64,6 +66,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const msg = err instanceof Error ? err.message : String(err);
       summary.attributionErrors.push(`${shopId}: ${msg}`);
       console.error("[cron.ingest] attribution reconcile failed for shop", shopId, err);
+    }
+  }
+
+  // Phase 4: resolve ship-cost and roll into sku_pnl for all live shops (same
+  // per-shop isolation as Phase 3 — one shop's failure does not abort others).
+  for (const row of liveShops ?? []) {
+    const shopId = (row as { shop_id: string }).shop_id;
+    try {
+      await runShipCostResolution(sb, shopId, {
+        shopCountry: null, // TODO(plan2): source shop origin country
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.shipCostErrors.push(`${shopId}: ${msg}`);
+      console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
     }
   }
 
