@@ -40,6 +40,15 @@ export interface Alert {
   evidence: Record<string, any>;
 }
 
+/** One input that fed an action's booked-margin figure, with its data source.
+ *  `kind` is what the input is; `source` is the connected system it came from.
+ *  source ∈ "quickbooks" | "vendor_invoice" | "shopify" | "meta" | "google" |
+ *  "tiktok" | "unavailable" (when a margin action's COGS source couldn't be resolved). */
+export interface CostSource {
+  kind: "cogs" | "price" | "ad_spend";
+  source: string;
+}
+
 export interface AuditEntry {
   id: string;
   action_kind: ActionKind;
@@ -58,6 +67,12 @@ export interface AuditEntry {
   failure_code?: string;
   failure_reason?: string;
   undo_of?: string;
+  /** Plain-language reason the autopilot recorded at the decision point.
+   *  Null/absent on manual rows — the "why" is derived from the alert instead. */
+  trigger_reason?: string | null;
+  /** Booked-margin cost-data lineage, resolved server-side in audit.list.
+   *  Empty for actions with no margin inputs (snooze, resume). */
+  cost_sources?: CostSource[];
 }
 
 export interface Campaign {
