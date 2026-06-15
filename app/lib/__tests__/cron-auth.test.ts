@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAuthorizedCron } from "../cron-auth.server";
+import { isAuthorizedCron, isAuthorizedBearer } from "../cron-auth.server";
 
 describe("isAuthorizedCron", () => {
   it("accepts the exact bearer secret", () => {
@@ -18,8 +18,6 @@ describe("isAuthorizedCron", () => {
     expect(isAuthorizedCron(`Bearer short`, "a-much-longer-secret")).toBe(false);
   });
 });
-
-import { isAuthorizedBearer } from "../cron-auth.server";
 
 describe("isAuthorizedBearer", () => {
   it("is false when the secret is unset (fail closed)", () => {
