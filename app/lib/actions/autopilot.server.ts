@@ -7,6 +7,7 @@ import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
 import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
+import { DETECTOR_LABELS } from "../labels";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -25,6 +26,12 @@ interface Candidate {
   campaign_id: string;
   campaign_spend_cents: number;
   daily_budget_cents: number | null;
+}
+
+function autopilotReason(verb: string, detectorId: string, dollarImpact: number): string {
+  const label = DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId;
+  const stake = Math.round(Number(dollarImpact) || 0).toLocaleString("en-US");
+  return `${verb}: "${label}" — $${stake} at stake, within guardrails`;
 }
 
 export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): Promise<AutopilotSummary> {
@@ -130,6 +137,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
               amountCents,
               idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
               actor: "autopilot",
+              triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
             },
             sb,
           );
@@ -165,6 +173,11 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         idempotencyKey: `autopilot:${c.alert_id}:${kind}`,
         dailyBudgetCents: newBudgetCents,
         actor: "autopilot",
+        triggerReason: autopilotReason(
+          kind === "pause_campaign" ? "Auto-pause" : "Auto budget cut",
+          c.detector_id,
+          c.dollar_impact,
+        ),
       },
       sb,
     );

@@ -4,6 +4,7 @@ import type {
   AuditEntry,
   Campaign,
   CampaignGradeRow,
+  CostSource,
   DailyRoasRow,
   GuardrailConfig,
   Integration,
@@ -12,6 +13,7 @@ import type {
   SkuSource,
   TopAdRow,
 } from "./types";
+import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   demandFromRow,
   locationsDetailFromRow,
@@ -138,6 +140,8 @@ function rowToAudit(r: Record<string, unknown>): AuditEntry {
     detector_id: r.detector_id as AuditEntry["detector_id"],
     failure_reason: (r.failure_reason as string | undefined) ?? undefined,
     undo_of: (r.undo_of as string | undefined) ?? undefined,
+    trigger_reason: (r.trigger_reason as string | null) ?? null,
+    cost_sources: (r.cost_sources as AuditEntry["cost_sources"]) ?? [],
   };
 }
 
@@ -318,7 +322,105 @@ export function calderynClient(shop: string) {
             .order("created_at", { ascending: false })
             .limit(100);
           if (error) throw error;
-          return (data ?? []).map(rowToAudit);
+          const rows = data ?? [];
+
+          // Resolve a COGS source per margin-action row. Precedence (hybrid):
+          //   1. per-SKU sku_cost_history.source (precise: quickbooks vs vendor_invoice)
+          //   2. the shop's connected cost integration (QuickBooks live -> "quickbooks")
+          //   3. "shopify" (unit_cost synced from Shopify); "unavailable" only on error.
+          // Inventory rows carry a sku_id (uuid); create_po_draft carries a sku CODE in
+          // param_po_sku that must be resolved to a sku_id, shop-scoped (codes collide
+          // across shops).
+          const skuIdByCode = new Map<string, string>();
+          const cogsBySkuId = new Map<string, string>();
+          let connectedCostSource = "shopify";
+          const marginRows = rows.filter((r) =>
+            MARGIN_ACTIONS.has(String(r.action_kind) as ActionKind),
+          );
+          if (marginRows.length > 0) {
+            try {
+              const codes = Array.from(
+                new Set(
+                  marginRows
+                    .map((r) => (r.param_po_sku ? String(r.param_po_sku) : ""))
+                    .filter(Boolean),
+                ),
+              );
+              if (codes.length > 0) {
+                const { data: dims, error: dErr } = await supabase
+                  .from("sku_dim")
+                  .select("id, sku")
+                  .eq("shop_id", shopId)
+                  .in("sku", codes);
+                if (dErr) throw dErr;
+                for (const d of dims ?? []) skuIdByCode.set(String(d.sku), String(d.id));
+              }
+
+              const skuIds = Array.from(
+                new Set(
+                  [
+                    ...marginRows.map((r) => (r.param_sku_id ? String(r.param_sku_id) : "")),
+                    ...codes.map((c) => skuIdByCode.get(c) ?? ""),
+                  ].filter(Boolean),
+                ),
+              );
+              if (skuIds.length > 0) {
+                const { data: costs, error: cErr } = await supabase
+                  .from("sku_cost_history")
+                  .select("sku_id, source, effective_from")
+                  .in("sku_id", skuIds);
+                if (cErr) throw cErr;
+                // Keep the latest-effective source per sku.
+                const latest = new Map<string, string>();
+                for (const c of costs ?? []) {
+                  const k = String(c.sku_id);
+                  const ef = String(c.effective_from);
+                  if (!latest.has(k) || ef > (latest.get(k) as string)) {
+                    latest.set(k, ef);
+                    cogsBySkuId.set(k, String(c.source));
+                  }
+                }
+              }
+
+              // Fallback source: the shop's connected cost integration.
+              const { data: qb } = await supabase
+                .from("shop_integrations")
+                .select("sync_status")
+                .eq("shop_id", shopId)
+                .eq("kind", "quickbooks")
+                .maybeSingle();
+              const s = qb?.sync_status;
+              if (s === "ready" || s === "ok" || s === "live" || s === "pending") {
+                connectedCostSource = "quickbooks";
+              }
+            } catch (err) {
+              // Fail visibly (rule 12): the log still loads; margin rows fall back to
+              // "unavailable" rather than blanking the whole audit page.
+              console.error(`[audit] cost-source lookup failed for shop ${shopId}`, err);
+              connectedCostSource = "unavailable";
+            }
+          }
+
+          const cogsSourceFor = (r: Record<string, unknown>): string => {
+            const skuId = r.param_sku_id
+              ? String(r.param_sku_id)
+              : r.param_po_sku
+                ? skuIdByCode.get(String(r.param_po_sku)) ?? ""
+                : "";
+            return (skuId && cogsBySkuId.get(skuId)) || connectedCostSource;
+          };
+
+          return rows.map((r) => {
+            const kind = String(r.action_kind) as ActionKind;
+            const cost_sources: CostSource[] = [];
+            if (AD_SPEND_ACTIONS.has(kind) && r.param_platform) {
+              cost_sources.push({ kind: "ad_spend", source: String(r.param_platform) });
+            } else if (MARGIN_ACTIONS.has(kind)) {
+              cost_sources.push({ kind: "price", source: "shopify" });
+              cost_sources.push({ kind: "cogs", source: cogsSourceFor(r) });
+            }
+            return rowToAudit({ ...r, cost_sources });
+          });
         } catch (err) {
           rethrow("audit.list", err);
         }

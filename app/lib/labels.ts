@@ -62,6 +62,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
 // email) pass through via actorLabel below.
 export const ACTOR_LABELS: Record<string, string> = {
   merchant: "You",
+  "merchant:web-dashboard": "You (dashboard)",
   autopilot: "Autopilot",
   system: "System",
 };
@@ -69,6 +70,25 @@ export const ACTOR_LABELS: Record<string, string> = {
 export function actorLabel(actor: string): string {
   return ACTOR_LABELS[actor] ?? actor;
 }
+
+// Provenance of an audit row's booked-margin figure (see audit-legibility.ts).
+export const MARGIN_BASIS_LABELS: Record<string, string> = {
+  measured: "Measured from budget change",
+  alert_estimate: "Estimated from alert (at-stake)",
+  snapshot: "Estimate snapshot",
+  none: "No booked margin",
+};
+
+// Connected systems a booked-margin input can come from.
+export const COST_SOURCE_LABELS: Record<string, string> = {
+  quickbooks: "QuickBooks",
+  vendor_invoice: "Vendor invoice",
+  shopify: "Shopify",
+  meta: "Meta",
+  google: "Google",
+  tiktok: "TikTok",
+  unavailable: "source unavailable",
+};
 
 // Evidence keys that are raw platform identifiers (Shopify GIDs, internal
 // uuids) — plumbing for the action executor, never merchant-facing evidence.

@@ -186,4 +186,19 @@ describe("runAutopilotForShop", () => {
     expect(executeAction).not.toHaveBeenCalled();
     expect(r.blocked).toBe(1);
   });
+
+  it("passes a plain-language triggerReason containing the action verb and detector label to executeAction", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [candidate] }); // campaign_below_breakeven → pause
+    await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({
+        triggerReason: expect.stringContaining("Auto-pause"),
+      }),
+      sb,
+    );
+    const [, secondArg] = executeAction.mock.calls[0] as unknown as [unknown, { triggerReason?: string }];
+    expect(secondArg.triggerReason).toContain("Campaign is losing money");
+  });
 });
