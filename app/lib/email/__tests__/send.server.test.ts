@@ -66,4 +66,17 @@ describe("sendEmail", () => {
     expect(out.sent).toBe(false);
     expect(out.error).toBe("ECONNREFUSED");
   });
+
+  it("includes custom headers only when provided", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ id: "e4" }), { status: 200 }));
+    await sendEmail({ apiKey: "k", from: "f", to: "y@x.com", subject: "s", text: "t",
+      headers: { "List-Unsubscribe": "<https://x/u>" } });
+    const withHeaders = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(withHeaders.headers).toEqual({ "List-Unsubscribe": "<https://x/u>" });
+
+    await sendEmail({ apiKey: "k", from: "f", to: "y@x.com", subject: "s", text: "t" });
+    const noHeaders = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(noHeaders.headers).toBeUndefined();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAuthorizedCron } from "../cron-auth.server";
+import { isAuthorizedCron, isAuthorizedBearer } from "../cron-auth.server";
 
 describe("isAuthorizedCron", () => {
   it("accepts the exact bearer secret", () => {
@@ -16,5 +16,18 @@ describe("isAuthorizedCron", () => {
   });
   it("rejects a length-mismatched header without throwing", () => {
     expect(isAuthorizedCron(`Bearer short`, "a-much-longer-secret")).toBe(false);
+  });
+});
+
+describe("isAuthorizedBearer", () => {
+  it("is false when the secret is unset (fail closed)", () => {
+    expect(isAuthorizedBearer("Bearer x", undefined)).toBe(false);
+  });
+  it("is false on a missing or wrong header", () => {
+    expect(isAuthorizedBearer(null, "s3cret")).toBe(false);
+    expect(isAuthorizedBearer("Bearer nope", "s3cret")).toBe(false);
+  });
+  it("is true on an exact match", () => {
+    expect(isAuthorizedBearer("Bearer s3cret", "s3cret")).toBe(true);
   });
 });

@@ -32,6 +32,7 @@ export async function sendEmail(opts: {
   text: string;
   html?: string;
   attachments?: EmailAttachment[];
+  headers?: Record<string, string>;
 }): Promise<DeliveryResult> {
   try {
     const payload: Record<string, unknown> = {
@@ -50,6 +51,7 @@ export async function sendEmail(opts: {
         ...(a.contentType ? { content_type: a.contentType } : {}),
       }));
     }
+    if (opts.headers && Object.keys(opts.headers).length) payload.headers = opts.headers;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
