@@ -1,16 +1,19 @@
 // Shared favicon response. Browsers request /favicon.ico (and some /favicon.png)
 // on every top-level page (OAuth consent, dashboard login); with no route they
 // 404 into the production error logs as recurring noise. Content-Type, not the
-// file extension, decides how the browser treats it, so one SVG serves both.
-const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#1a1a2e"/>
-  <path d="M21.5 11.2a7 7 0 1 0 0 9.6" fill="none" stroke="#7ee0c3" stroke-width="3.2" stroke-linecap="round"/>
-</svg>`;
+// file extension, decides how the browser treats it, so one PNG serves both.
+//
+// Artwork: the Calderyn hex "C" brand mark (32×32, transparent). Base64-embedded
+// so it ships without a public/ static-asset pipeline (this app serves none).
+const FAVICON_PNG = Buffer.from(
+  "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",
+  "base64",
+);
 
 export function faviconResponse(): Response {
-  return new Response(FAVICON_SVG, {
+  return new Response(FAVICON_PNG, {
     headers: {
-      "Content-Type": "image/svg+xml",
+      "Content-Type": "image/png",
       "Cache-Control": "public, max-age=86400",
     },
   });
