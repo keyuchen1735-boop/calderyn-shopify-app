@@ -197,3 +197,43 @@ describe("transformPendingWebhooks — attribution", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Writer: grams field is included in order_line_fact upsert rows
+// ---------------------------------------------------------------------------
+
+describe("transformPendingWebhooks — grams in order_line_fact upsert", () => {
+  it("includes grams: null in the order_line_fact upsert rows (REST webhook has no weight)", async () => {
+    // Arrange: a REST webhook order with one line item. The REST payload has no
+    // variant weight — grams must be null, not missing/undefined, in the upsert.
+    store["raw_shopify_webhook"] = [
+      {
+        id: "wh-grams",
+        shop_id: SHOP_ID,
+        topic: "ORDERS_CREATE",
+        payload: {
+          admin_graphql_api_id: "gid://shopify/Order/10",
+          name: "#1010",
+          created_at: "2026-06-02T00:00:00Z",
+          updated_at: "2026-06-02T00:00:00Z",
+          total_price: "30.00",
+          currency: "USD",
+          line_items: [
+            { admin_graphql_api_id: "gid://shopify/LineItem/20", quantity: 2, price: "15.00", variant_id: 300 },
+          ],
+        },
+      },
+    ];
+    store["sku_dim"] = [{ id: "sku-2", shop_id: SHOP_ID, external_id: "gid://shopify/ProductVariant/300" }];
+
+    await transformPendingWebhooks();
+
+    const lineUpsert = upserts.find((u) => u.table === "order_line_fact");
+    expect(lineUpsert, "expected an order_line_fact upsert").toBeDefined();
+    const rows = lineUpsert!.rows as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    // grams must be explicitly present as null — not absent/undefined.
+    expect(Object.prototype.hasOwnProperty.call(rows[0], "grams")).toBe(true);
+    expect(rows[0].grams).toBeNull();
+  });
+});

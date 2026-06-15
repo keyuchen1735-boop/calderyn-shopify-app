@@ -88,7 +88,12 @@ describe("mapOrder / mapOrderLines", () => {
         {
           id: "gid://shopify/LineItem/1",
           quantity: 3,
-          variant: { id: "gid://shopify/ProductVariant/200" },
+          variant: {
+            id: "gid://shopify/ProductVariant/200",
+            inventoryItem: {
+              measurement: { weight: { value: 250, unit: "GRAMS" } },
+            },
+          },
           originalUnitPriceSet: { shopMoney: { amount: "18.00" } },
         },
       ],
@@ -119,7 +124,8 @@ describe("mapOrder / mapOrderLines", () => {
     });
   });
 
-  it("maps order lines, carrying the variant GID", () => {
+  it("maps order lines, carrying the variant GID and computed grams", () => {
+    // Fixture has weight: 250 g/unit × 3 qty = 750 g total.
     expect(mapOrderLines(orderNode)).toEqual([
       {
         sku_external_id: "gid://shopify/ProductVariant/200",
@@ -127,8 +133,145 @@ describe("mapOrder / mapOrderLines", () => {
         quantity: 3,
         price_cents: 1800,
         total_cents: 5400,
+        grams: 750,
       },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// grams: line-item weight ingestion
+// ---------------------------------------------------------------------------
+
+describe("mapOrderLines — grams", () => {
+  // Derive the node element type from mapOrderLines' parameter so this helper
+  // stays in sync with the function signature without requiring an extra export.
+  type OrderParam = Parameters<typeof mapOrderLines>[0];
+  type LineNode = NonNullable<NonNullable<OrderParam["lineItems"]>["nodes"]>[number];
+
+  // Shared order scaffold — only lineItems.nodes changes per case.
+  function makeOrder(nodes: LineNode[]) {
+    return {
+      id: "gid://shopify/Order/901",
+      name: "#1002",
+      createdAt: "2026-05-02T00:00:00Z",
+      updatedAt: "2026-05-02T00:00:00Z",
+      lineItems: { nodes },
+    };
+  }
+
+  it("stores total line grams (unit_grams × qty) when variant weight is in GRAMS", () => {
+    // 250 g/unit × 3 qty = 750 g total
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/10",
+        quantity: 3,
+        variant: {
+          id: "gid://shopify/ProductVariant/200",
+          inventoryItem: {
+            measurement: { weight: { value: 250, unit: "GRAMS" } },
+          },
+        },
+        originalUnitPriceSet: { shopMoney: { amount: "10.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBe(750);
+  });
+
+  it("converts KILOGRAMS to grams (×1000) before multiplying by quantity", () => {
+    // 0.5 kg/unit × 2 qty = 1000 g total
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/11",
+        quantity: 2,
+        variant: {
+          id: "gid://shopify/ProductVariant/201",
+          inventoryItem: {
+            measurement: { weight: { value: 0.5, unit: "KILOGRAMS" } },
+          },
+        },
+        originalUnitPriceSet: { shopMoney: { amount: "20.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBe(1000);
+  });
+
+  it("converts POUNDS to grams (×453.592) and rounds to nearest integer", () => {
+    // 1 lb/unit × 1 qty ≈ 454 g
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/12",
+        quantity: 1,
+        variant: {
+          id: "gid://shopify/ProductVariant/202",
+          inventoryItem: {
+            measurement: { weight: { value: 1, unit: "POUNDS" } },
+          },
+        },
+        originalUnitPriceSet: { shopMoney: { amount: "30.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBe(454);
+  });
+
+  it("converts OUNCES to grams (×28.3495) and rounds to nearest integer", () => {
+    // 16 oz/unit × 1 qty ≈ 454 g
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/13",
+        quantity: 1,
+        variant: {
+          id: "gid://shopify/ProductVariant/203",
+          inventoryItem: {
+            measurement: { weight: { value: 16, unit: "OUNCES" } },
+          },
+        },
+        originalUnitPriceSet: { shopMoney: { amount: "40.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBe(454);
+  });
+
+  it("yields null grams when variant is null (e.g. deleted product)", () => {
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/14",
+        quantity: 1,
+        variant: null,
+        originalUnitPriceSet: { shopMoney: { amount: "5.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBeNull();
+  });
+
+  it("yields null grams when inventoryItem is missing", () => {
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/15",
+        quantity: 1,
+        variant: { id: "gid://shopify/ProductVariant/204", inventoryItem: null },
+        originalUnitPriceSet: { shopMoney: { amount: "5.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBeNull();
+  });
+
+  it("yields null grams when measurement weight value is 0", () => {
+    // A variant with 0 weight is treated as unknown (not weighing nothing).
+    const order = makeOrder([
+      {
+        id: "gid://shopify/LineItem/16",
+        quantity: 2,
+        variant: {
+          id: "gid://shopify/ProductVariant/205",
+          inventoryItem: {
+            measurement: { weight: { value: 0, unit: "GRAMS" } },
+          },
+        },
+        originalUnitPriceSet: { shopMoney: { amount: "5.00" } },
+      },
+    ]);
+    expect(mapOrderLines(order)[0].grams).toBeNull();
   });
 });
 
@@ -201,6 +344,8 @@ describe("parseOrderWebhook", () => {
         quantity: 3,
         price_cents: 1800,
         total_cents: 5400,
+        // REST webhook has no variant weight data; grams is always null.
+        grams: null,
       },
     ]);
   });

@@ -106,6 +106,7 @@ export async function backfillShop(shopDomain: string): Promise<BackfillResult> 
         quantity: l.quantity,
         price_cents: l.price_cents,
         total_cents: l.total_cents,
+        grams: l.grams,
       }));
       if (lineRows.length) {
         const { error: lErr } = await sb
