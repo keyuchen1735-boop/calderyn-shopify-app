@@ -36,6 +36,7 @@ describe("renderPilotEmail", () => {
     expect(html).toContain('class="cd-desk"');
     expect(html).toContain('class="cd-mob"');
     expect(html).toContain("@media only screen and (max-width:600px)");
+    expect(html).toContain("max-width:1100px"); // desktop is fluid, fills up to ~1100px (File 1)
   });
   it("falls back to generic copy when fields are blank", () => {
     const out = renderPilotEmail({ firstName: "", storeName: "", baseUrl: base, unsubscribeUrl: unsub });

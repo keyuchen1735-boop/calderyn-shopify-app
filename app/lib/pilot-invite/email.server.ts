@@ -200,7 +200,7 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
     <tr>
       <td align="center" style="padding:28px 12px 40px;">
 
-        <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
+        <table role="presentation" class="container" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:1100px;">
 
           <!-- Top bar (shared) -->
           <tr>
@@ -238,13 +238,13 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
               <div class="cd-desk">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#24556E; border-radius:18px 18px 0 0;">
                   <tr>
-                    <td class="px" style="padding:40px 36px 40px;">
+                    <td class="px" style="padding:56px 48px;">
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                         <tr>
                           <!-- left: copy + CTA -->
-                          <td width="300" style="vertical-align:top; padding-right:20px;">
+                          <td width="56%" style="vertical-align:top; padding-right:28px;">
                             <div style="font-family:${FONT}; font-size:12px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:#7FA8BE;">Selected for the pilot</div>
-                            <div class="h1" style="font-family:${FONT}; font-size:40px; line-height:44px; font-weight:700; letter-spacing:-0.034em; color:#FFFFFF; padding-top:14px;">You're in,<br />${first}.</div>
+                            <div class="h1" style="font-family:${FONT}; font-size:52px; line-height:54px; font-weight:700; letter-spacing:-0.034em; color:#FFFFFF; padding-top:16px;">You're in,<br />${first}.</div>
                             <div style="font-family:${FONT}; font-size:15px; line-height:23px; color:#C3D4DE; letter-spacing:-0.004em; padding-top:16px;">${store} has a free seat in the Calderyn beta — ad spend + inventory, watched together.</div>
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="padding-top:26px;"><tr><td>
                               <!--[if mso]>
@@ -260,7 +260,7 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
                             <div style="font-family:${FONT}; font-size:12px; color:#9FBACB; padding-top:12px;">One-click · uninstall anytime</div>
                           </td>
                           <!-- right: alert card -->
-                          <td width="192" style="vertical-align:top;">
+                          <td width="44%" style="vertical-align:top;">
                             ${alertCard}
                           </td>
                         </tr>
