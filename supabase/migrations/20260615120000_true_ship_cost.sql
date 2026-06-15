@@ -8,11 +8,14 @@ alter table public.order_fact
   add column if not exists ship_cost_confidence text,
   add column if not exists ship_cost_reconciled_at timestamptz;
 
+-- Postgres has no ADD CONSTRAINT IF NOT EXISTS; drop-then-add keeps it idempotent.
 alter table public.order_fact
-  add constraint if not exists order_fact_ship_cost_source_check
+  drop constraint if exists order_fact_ship_cost_source_check,
+  add constraint order_fact_ship_cost_source_check
     check (ship_cost_source in
       ('actual_invoice','actual_event','reconciled','modeled','fallback','manual')),
-  add constraint if not exists order_fact_ship_cost_confidence_check
+  drop constraint if exists order_fact_ship_cost_confidence_check,
+  add constraint order_fact_ship_cost_confidence_check
     check (ship_cost_confidence in ('high','med','low'));
 
 alter table public.order_line_fact add column if not exists grams integer;
