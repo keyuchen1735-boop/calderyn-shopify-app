@@ -135,6 +135,38 @@ describe("runShipCostResolution — invoice line takes priority", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 2b: manual override (from v_order_ship_features) wins, stamps 'manual'
+// ---------------------------------------------------------------------------
+describe("runShipCostResolution — manual override", () => {
+  it("manual override wins over allocation and stamps source 'manual'", async () => {
+    const tables: Record<string, any[]> = {
+      v_order_ship_features: [
+        { id: "a", shop_id: "shop1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: 999 },
+        { id: "b", shop_id: "shop1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
+      ],
+      shipping_cost_period: [{ shop_id: "shop1", total_cents: 8000 }],
+      shipping_invoice_line: [],
+      order_fact: [],
+      order_line_fact: [],
+      sku_pnl: [],
+    };
+
+    const sb = makeSupabaseFake(tables);
+    await runShipCostResolution(sb as any, "shop1", { shopCountry: "US" });
+
+    const orderUpdates = sb._updates.filter((u: UpdateRecord) => u.table === "order_fact");
+    const a = orderUpdates.find((u: UpdateRecord) => u.filters["id"] === "a")!;
+    expect(a.payload.ship_cost_cents).toBe(999);
+    expect(a.payload.ship_cost_source).toBe("manual");
+    expect(a.payload.ship_cost_confidence).toBe("high");
+    // b has no override → still reconciled allocation
+    expect(
+      orderUpdates.find((u: UpdateRecord) => u.filters["id"] === "b")!.payload.ship_cost_source,
+    ).toBe("reconciled");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 3: rollShipCostIntoSkuPnl reduces contribution_margin_cents
 // ---------------------------------------------------------------------------
 describe("rollShipCostIntoSkuPnl", () => {
