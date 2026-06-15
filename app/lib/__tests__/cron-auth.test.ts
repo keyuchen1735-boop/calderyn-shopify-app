@@ -18,3 +18,18 @@ describe("isAuthorizedCron", () => {
     expect(isAuthorizedCron(`Bearer short`, "a-much-longer-secret")).toBe(false);
   });
 });
+
+import { isAuthorizedBearer } from "../cron-auth.server";
+
+describe("isAuthorizedBearer", () => {
+  it("is false when the secret is unset (fail closed)", () => {
+    expect(isAuthorizedBearer("Bearer x", undefined)).toBe(false);
+  });
+  it("is false on a missing or wrong header", () => {
+    expect(isAuthorizedBearer(null, "s3cret")).toBe(false);
+    expect(isAuthorizedBearer("Bearer nope", "s3cret")).toBe(false);
+  });
+  it("is true on an exact match", () => {
+    expect(isAuthorizedBearer("Bearer s3cret", "s3cret")).toBe(true);
+  });
+});
