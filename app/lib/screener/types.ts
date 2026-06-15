@@ -90,7 +90,25 @@ export type Tip = string | TipDetail;
 
 /** Coerce a legacy string tip or a structured tip into {@link TipDetail}. */
 export function normalizeTip(tip: Tip): TipDetail {
-  return typeof tip === "string" ? { title: tip, detail: "" } : tip;
+  return typeof tip === "string" ? parseLegacyTip(tip) : tip;
+}
+
+/**
+ * Legacy runs stored each tip as one plain string, usually shaped like
+ * "1. ACTION LINE — the product-specific detail…". Split it into the same
+ * {title, detail} shape new runs emit, so every surface shows a scannable title
+ * and reveals the rest on click. Splits on the FIRST separator only (details can
+ * contain their own dashes, e.g. a quoted headline) and strips any leading list
+ * marker. With no separator the whole string stays the title with no detail.
+ */
+function parseLegacyTip(raw: string): TipDetail {
+  const s = raw.trim().replace(/^(?:\d+[.)]|[-*•])\s+/, "");
+  // Title/detail boundary: an em/en dash, a spaced hyphen, or a colon.
+  const sep = /\s+[—–]\s+|\s+-\s+|:\s+/.exec(s);
+  if (!sep) return { title: s, detail: "" };
+  const title = s.slice(0, sep.index).trim();
+  const detail = s.slice(sep.index + sep[0].length).trim();
+  return title && detail ? { title, detail } : { title: s, detail: "" };
 }
 
 export interface ScoreCard {

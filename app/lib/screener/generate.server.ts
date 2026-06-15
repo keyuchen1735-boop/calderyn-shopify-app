@@ -63,7 +63,13 @@ export async function generateImprovements(
   const candidates = await deps.generator.generate({
     input: args.original,
     weakMetrics,
-    tips: args.originalScorecard.tips.map((t) => normalizeTip(t).title),
+    tips: args.originalScorecard.tips.map((t) => {
+      // Feed the generator the full fix (title + detail), not just the scannable
+      // title — normalizeTip now splits the action line off, so the title alone
+      // would drop the product-specific specifics the generator needs.
+      const d = normalizeTip(t);
+      return d.detail ? `${d.title} — ${d.detail}` : d.title;
+    }),
     styleRefs: args.styleRefs ?? [],
     count: args.count ?? 3,
     extraDirection: args.extraDirection,
