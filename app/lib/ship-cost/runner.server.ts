@@ -27,6 +27,10 @@ export async function runShipCostResolution(
   const orderRows = (orders ?? []) as OrderFeatureRow[];
   if (orderRows.length === 0) return;
 
+  if (opts.shopCountry == null) {
+    console.warn(`[ship-cost] shop ${shopId}: no origin country; all orders treated as domestic zone (allocation degraded)`);
+  }
+
   const { data: periods } = await sb
     .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId);
   const periodRows = (periods ?? []) as { total_cents: number }[];

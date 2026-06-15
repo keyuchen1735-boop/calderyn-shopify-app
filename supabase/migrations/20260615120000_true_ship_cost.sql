@@ -21,6 +21,9 @@ alter table public.order_fact
 alter table public.order_line_fact add column if not exists grams integer;
 alter table public.sku_dim         add column if not exists grams integer;
 
+-- per-SKU ship cost rolled up by the resolver; subtracted from contribution_margin_cents
+alter table public.sku_pnl add column if not exists ship_cost_cents integer not null default 0;
+
 create table if not exists public.shipping_cost_period (
   id           uuid primary key default gen_random_uuid(),
   shop_id      uuid not null,
