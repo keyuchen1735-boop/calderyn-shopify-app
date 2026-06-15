@@ -465,7 +465,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, consent, error } = useLoaderData<typeof loader>();
+  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
   // One-shot pairing confirmation from the OAuth callback redirect
@@ -560,6 +561,14 @@ export default function Settings() {
             <Card>
               <McpConnectGuide onManage={() => navigate("/app/mcp")} />
             </Card>
+          </Layout.AnnotatedSection>
+
+          <Layout.AnnotatedSection
+            id="shipping-cost"
+            title="Shipping cost"
+            description="Tell Calderyn what you pay to ship, so margin reflects true cost."
+          >
+            <ShippingCostSection shipMode={shipMode} missingWeightPct={missingWeight} />
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
@@ -904,5 +913,165 @@ function IntegrationCard({
         </InlineStack>
       </InlineStack>
     </Card>
+  );
+}
+
+function ShippingCostSection({
+  shipMode,
+  missingWeightPct,
+}: {
+  shipMode: string;
+  missingWeightPct: number;
+}) {
+  const actionData = useActionData<typeof action>();
+  const [mode, setMode] = useState(shipMode);
+  const upload = actionData?.uploadResult;
+  return (
+    <BlockStack gap="400">
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingSm">
+            Mode
+          </Text>
+          <Form method="post">
+            <input type="hidden" name="intent" value="set_ship_mode" />
+            <FormLayout>
+              <Select
+                label="How Calderyn estimates each order's shipping cost"
+                name="ship_cost_mode"
+                value={mode}
+                onChange={setMode}
+                options={[
+                  { label: "Automatic (recommended)", value: "auto" },
+                  { label: "Always use measured (invoice) costs", value: "force_measured" },
+                  { label: "Always allocate from my period total", value: "force_reconciled" },
+                ]}
+                helpText="Automatic picks the most trustworthy source per order: an invoice line, else an allocation of your period total."
+              />
+              <InlineStack align="end">
+                <Button submit variant="primary">
+                  Save mode
+                </Button>
+              </InlineStack>
+            </FormLayout>
+          </Form>
+        </BlockStack>
+      </Card>
+
+      {missingWeightPct > 0 && (
+        <Banner tone="warning" title={`${missingWeightPct}% of your orders are missing weight`}>
+          <p>
+            Shipping estimates are degraded for those orders. Add product weights in Shopify to
+            improve per-order accuracy.
+          </p>
+        </Banner>
+      )}
+
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingSm">
+            Period total
+          </Text>
+          <Text as="p" tone="subdued" variant="bodySm">
+            Enter what you actually paid your carrier for a period. Calderyn allocates it across
+            that period&rsquo;s orders by weight and destination.
+          </Text>
+          <Form method="post">
+            <input type="hidden" name="intent" value="add_period_total" />
+            <FormLayout>
+              <FormLayout.Group>
+                <TextField label="Total paid (USD)" name="amount" type="number" autoComplete="off" />
+                <TextField label="Carrier (optional)" name="carrier" autoComplete="off" />
+              </FormLayout.Group>
+              <FormLayout.Group>
+                <TextField label="Period start" name="period_start" type="date" autoComplete="off" />
+                <TextField label="Period end" name="period_end" type="date" autoComplete="off" />
+              </FormLayout.Group>
+              <InlineStack align="end">
+                <Button submit variant="primary">
+                  Save total
+                </Button>
+              </InlineStack>
+            </FormLayout>
+          </Form>
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingSm">
+            Upload a carrier invoice (CSV)
+          </Text>
+          <Text as="p" tone="subdued" variant="bodySm">
+            We match each line to an order by order number, then by tracking number. Unmatched
+            lines are listed below so nothing is silently dropped.
+          </Text>
+          <Form method="post" encType="multipart/form-data">
+            <input type="hidden" name="intent" value="upload_invoice_csv" />
+            <FormLayout>
+              <FormLayout.Group>
+                <TextField label="Period start" name="period_start" type="date" autoComplete="off" />
+                <TextField label="Period end" name="period_end" type="date" autoComplete="off" />
+              </FormLayout.Group>
+              <TextField label="Carrier (optional)" name="carrier" autoComplete="off" />
+              <input type="file" name="file" accept=".csv,text/csv" />
+              <InlineStack align="end">
+                <Button submit variant="primary">
+                  Upload invoice
+                </Button>
+              </InlineStack>
+            </FormLayout>
+          </Form>
+          {upload && (
+            <BlockStack gap="200">
+              <Banner
+                tone={upload.unmatchedRefs.length || upload.parseErrors.length ? "warning" : "success"}
+              >
+                <p>{upload.matched} lines matched to orders.</p>
+                {upload.unmatchedRefs.length > 0 && (
+                  <p>
+                    {upload.unmatchedRefs.length} unmatched (review):{" "}
+                    {upload.unmatchedRefs.join(", ")}
+                  </p>
+                )}
+                {upload.parseErrors.length > 0 && (
+                  <p>Skipped rows: {upload.parseErrors.join("; ")}</p>
+                )}
+              </Banner>
+            </BlockStack>
+          )}
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="200">
+          <Text as="h3" variant="headingSm">
+            Per-order correction
+          </Text>
+          <Text as="p" tone="subdued" variant="bodySm">
+            Override a single order&rsquo;s shipping cost. Enter the order ID and an amount, or
+            leave the amount blank to clear an override.
+          </Text>
+          <Form method="post">
+            <input type="hidden" name="intent" value="set_manual_override" />
+            <FormLayout>
+              <FormLayout.Group>
+                <TextField label="Order ID" name="order_id" autoComplete="off" />
+                <TextField
+                  label="Shipping cost (USD)"
+                  name="amount"
+                  type="number"
+                  autoComplete="off"
+                  helpText="Blank clears the override."
+                />
+              </FormLayout.Group>
+              <InlineStack align="end">
+                <Button submit>Save override</Button>
+              </InlineStack>
+            </FormLayout>
+          </Form>
+        </BlockStack>
+      </Card>
+    </BlockStack>
   );
 }
