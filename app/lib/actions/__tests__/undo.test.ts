@@ -231,6 +231,34 @@ describe("undoAction · reallocate_budget", () => {
   });
 });
 
+describe("undoAction · 24-hour window", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The differentiator is a *24-hour* undo. Beyond that window the recorded
+  // pre_state (campaign budgets) and the fixed reverse delta (inventory) are
+  // stale — stock has sold through, budgets have drifted — so reversing does
+  // more harm than good. v_audit_view.undo_eligible hides the button after 24h;
+  // this asserts the API enforces the same window (the real boundary).
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+
+  it("refuses to undo an action older than 24 hours, without any platform call", async () => {
+    const stale = { ...pauseAudit, created_at: hoursAgo(25) };
+    const { sb, calls } = fakeSb(stale);
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/24-hour|undo window/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(adapter.pause).not.toHaveBeenCalled();
+    expect(calls.inserts).toEqual([]);
+  });
+
+  it("allows undo of an action within the last 24 hours", async () => {
+    const fresh = { ...pauseAudit, created_at: hoursAgo(1) };
+    const { sb, calls } = fakeSb(fresh);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.resume).toHaveBeenCalledWith("c1");
+    expect(calls.inserts.some((i) => i.table === "action_audit")).toBe(true);
+  });
+});
+
 describe("undoAction · unhandled action kind guard", () => {
   function fakeUndoSb(orig: Record<string, unknown>) {
     const inserts: Array<Record<string, unknown>> = [];
