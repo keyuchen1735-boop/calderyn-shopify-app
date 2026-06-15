@@ -123,7 +123,7 @@ function AuditRowEx({
 
   return (
     <>
-      <IndexTable.Row id={a.id} position={index}>
+      <IndexTable.Row id={a.id} position={index * 2}>
         <IndexTable.Cell>
           <Button
             variant="tertiary"
@@ -182,7 +182,7 @@ function AuditRowEx({
           ) : (<Text as="span" tone="subdued">—</Text>)}
         </IndexTable.Cell>
       </IndexTable.Row>
-      <IndexTable.Row id={`${a.id}-d`} position={index + 0.5} disabled>
+      <IndexTable.Row id={`${a.id}-d`} position={index * 2 + 1} disabled>
         <IndexTable.Cell colSpan={8}>
           <Collapsible id={`detail-${a.id}`} open={open} transition={{ duration: "150ms" }}>
             <Box padding="300" background="bg-surface-secondary">
