@@ -71,6 +71,8 @@ export function auditLegibility(entry: AuditEntry): AuditLegibility;
 
    The COGS source is resolved with **one batched query** in `calderyn.server.ts › audit.list`: `select sku_id, source from sku_cost_history where sku_id = any(...)` for every `sku_id` on the page, attached to each `AuditEntry`. Because both surfaces fetch via `calderynClient(...).audit.list()`, the dashboard inherits lineage for free.
 
+   > **Implementation note (2026-06-15, diverges from the above):** during build we found `sku_cost_history` is **empty in production even when QuickBooks is connected** (`live`), so the per-SKU path alone would render every margin row as "source unavailable" — including the headline PO-draft. Per the user's call ("both this and existing sku fallback"), COGS source is resolved by a **hybrid precedence**: (1) per-SKU `sku_cost_history.source` when present (precise — distinguishes QuickBooks vs vendor invoice), else (2) the shop's **connected cost integration** from `shop_integrations` (QuickBooks `live`/`ready`/`ok`/`pending` → `quickbooks`), else (3) `shopify` (the `sku_dim.unit_cost_cents` origin); `unavailable` only on lookup error. Two extra wrinkles handled: `create_po_draft` stores the SKU as a **code** in `params.po.lines[0].sku` (no top-level `sku_id`), resolved to a `sku_id` **shop-scoped** via `sku_dim` (codes collide across shops); the view therefore also exposes `param_po_sku`. This auto-upgrades to the precise per-SKU source once `sku_cost_history` is backfilled.
+
 4. **Why it fired** —
    - autopilot **with** `trigger_reason` → that string (truncated for the inline caption; full in expansion)
    - autopilot **without** → "Autopilot — {detector label}, auto-{action} rule"
