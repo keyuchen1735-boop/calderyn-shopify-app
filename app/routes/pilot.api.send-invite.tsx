@@ -44,12 +44,16 @@ export async function action({ request }: ActionFunctionArgs): Promise<Response>
   const unsubscribeUrl = `${base}/pilot/unsubscribe?token=${encodeURIComponent(token)}`;
   const { subject, html, text } = renderPilotEmail({ firstName, storeName, baseUrl: base, unsubscribeUrl });
 
-  // No List-Unsubscribe header on purpose: Gmail reads it as a bulk-list signal and
-  // routes the message to the Promotions tab. These are low-volume, founder-sent
-  // invites to opted-in waitlist members, so the visible (tokened) footer unsubscribe
-  // link is sufficient and the invite lands in the primary inbox.
+  // One-click List-Unsubscribe (RFC 8058): Gmail's bulk-sender rules require it, and the
+  // tokened /pilot/unsubscribe route already accepts the one-click POST. (An earlier build
+  // dropped this header on the theory it forced Promotions placement — that proved wrong;
+  // tab placement is an auth/DMARC matter, not this header.)
   const delivery = await sendEmail({
     apiKey, from, to: email, subject, html, text,
+    headers: {
+      "List-Unsubscribe": `<${unsubscribeUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
   });
 
   const log = await logInvite({
