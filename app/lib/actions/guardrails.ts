@@ -81,7 +81,10 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
     if (increasePct > cfg.maxBudgetIncreasePct + 1e-9) {
       return { allowed: false, reason: "budget increase exceeds max" };
     }
-    if (cfg.maxDailyBudgetCents != null && facts.newBudgetCents >= cfg.maxDailyBudgetCents) {
+    // Strict `>`: the ceiling is the inclusive maximum. Autopilot clamps a
+    // target to exactly maxDailyBudgetCents, so a budget AT the ceiling must
+    // be allowed — only a budget that truly exceeds it is blocked.
+    if (cfg.maxDailyBudgetCents != null && facts.newBudgetCents > cfg.maxDailyBudgetCents) {
       return { allowed: false, reason: "budget exceeds daily ceiling" };
     }
   }
