@@ -19,7 +19,7 @@ export interface MatchResult {
 }
 
 /** Strip a leading '#', trim, lowercase — so "#1001", " 1001 ", "1001" all match. */
-function normOrder(ref: string): string {
+export function normOrder(ref: string): string {
   return ref.replace(/^#/, "").trim().toLowerCase();
 }
 

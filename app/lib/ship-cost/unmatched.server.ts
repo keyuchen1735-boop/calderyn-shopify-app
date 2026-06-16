@@ -10,6 +10,7 @@
 // stack (it does not import this file) — match the contract, not the code (§7).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { normOrder } from "./match";
 
 /** Why a landed charge didn't match an order — surfaced so nothing is a silent gap (rule 12). */
 export type UnmatchedReason = "no_ref" | "no_tracking_match" | "carrier_adjustment_no_link";
@@ -71,32 +72,34 @@ export async function getUnmatchedCharges(
   shopId: string,
   limit = 200,
 ): Promise<UnmatchedCharges> {
-  // All unmatched lines for the shop. matched_order_id IS NULL is the Phase-1 "surfaced,
-  // not dropped" invariant; we read exactly those.
+  // The CONNECTOR periods for this shop (source='connector', one per provider). We scope the
+  // unmatched surface to ONLY these: the CSV-upload path also lands matched_order_id=NULL
+  // rows under an 'upload' period, but those are not carrier-connector charges and must not
+  // appear in (or be mappable from) the "unmatched carrier charges" surface. carrier holds
+  // the provider for connector periods.
+  const periodsRes = await sb
+    .from("shipping_cost_period")
+    .select("id, carrier")
+    .eq("shop_id", shopId)
+    .eq("source", "connector");
+  if (periodsRes.error) throw periodsRes.error;
+  const connectorPeriods = (periodsRes.data ?? []) as { id: string; carrier: string | null }[];
+  const providerByPeriod = new Map<string, string | null>();
+  for (const p of connectorPeriods) providerByPeriod.set(String(p.id), p.carrier);
+  const connectorPeriodIds = connectorPeriods.map((p) => String(p.id));
+  if (connectorPeriodIds.length === 0) return { count: 0, items: [] };
+
+  // Unmatched lines UNDER the connector periods only. matched_order_id IS NULL is the
+  // Phase-1 "surfaced, not dropped" invariant; period_id IN (connector ids) is the
+  // source scope.
   const linesRes = await sb
     .from("shipping_invoice_line")
     .select("id, order_ref, tracking_no, cost_cents, external_charge_id, period_id")
     .eq("shop_id", shopId)
-    .is("matched_order_id", null);
+    .is("matched_order_id", null)
+    .in("period_id", connectorPeriodIds);
   if (linesRes.error) throw linesRes.error;
   const lines = (linesRes.data ?? []) as InvoiceLineRow[];
-
-  // Map period_id → carrier (provider) for the connector periods only. A small lookup;
-  // unmatched lines belong to the synthetic connector period, but we resolve generically.
-  const periodIds = [...new Set(lines.map((l) => l.period_id).filter((p): p is string => !!p))];
-  const providerByPeriod = new Map<string, string | null>();
-  if (periodIds.length > 0) {
-    const periodsRes = await sb
-      .from("shipping_cost_period")
-      .select("id, carrier, source")
-      .eq("shop_id", shopId)
-      .in("id", periodIds);
-    if (periodsRes.error) throw periodsRes.error;
-    for (const p of (periodsRes.data ?? []) as { id: string; carrier: string | null; source: string | null }[]) {
-      // Only connector periods carry a provider in `carrier`; upload/typed leave it null.
-      providerByPeriod.set(String(p.id), p.source === "connector" ? p.carrier : null);
-    }
-  }
 
   const items: UnmatchedChargeItem[] = lines.slice(0, limit).map((l) => ({
     id: String(l.id),
@@ -136,33 +139,56 @@ export async function mapChargeToOrder(
   lineId: string,
   orderNumber: string,
 ): Promise<MapChargeResult> {
-  const wanted = orderNumber.replace(/^#/, "").trim().toLowerCase();
+  const wanted = normOrder(orderNumber);
   if (!wanted) throw new Error("Enter an order number.");
 
+  // Restrict the attach to CONNECTOR-source lines (same scope as the reader): an unmatched
+  // 'upload'/'typed' line is not a carrier charge and must not be mappable from this surface.
+  const periodsRes = await sb
+    .from("shipping_cost_period")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("source", "connector");
+  if (periodsRes.error) throw periodsRes.error;
+  const connectorPeriodIds = ((periodsRes.data ?? []) as { id: string }[]).map((p) => String(p.id));
+  if (connectorPeriodIds.length === 0) {
+    throw new Error("That charge is no longer available to map.");
+  }
+
   // Resolve order_number → order_fact.id for THIS shop. order_number is stored with the
-  // shop's own formatting; normalize both sides the same way matchInvoiceLines does.
+  // shop's own formatting; normalize both sides the same way matchInvoiceLines does (normOrder).
   const ordersRes = await sb
     .from("order_fact")
     .select("id, order_number")
     .eq("shop_id", shopId);
   if (ordersRes.error) throw ordersRes.error;
   const match = ((ordersRes.data ?? []) as { id: string; order_number: string | null }[]).find(
-    (o) => String(o.order_number ?? "").replace(/^#/, "").trim().toLowerCase() === wanted,
+    (o) => normOrder(String(o.order_number ?? "")) === wanted,
   );
   if (!match) {
     // Visible failure — the merchant typed an order we don't have for this shop.
     throw new Error(`No order ${orderNumber} found for this shop.`);
   }
 
-  // Attach only if the line is currently unmatched and belongs to the shop — guards against
-  // mapping an already-resolved line or a cross-shop id.
+  // Attach only if the line is currently unmatched, belongs to the shop, AND is a connector
+  // line — guards against mapping an already-resolved line, a cross-shop id, or a CSV line.
+  // .select() returns the affected rows so we can detect a no-op (0 rows) and fail visibly
+  // (rule 12) instead of reporting a false success on a stale/already-mapped/wrong-source id.
   const upd = await sb
     .from("shipping_invoice_line")
     .update({ matched_order_id: match.id })
     .eq("id", lineId)
     .eq("shop_id", shopId)
-    .is("matched_order_id", null);
+    .is("matched_order_id", null)
+    .in("period_id", connectorPeriodIds)
+    .select("id");
   if (upd.error) throw upd.error;
+  const affected = (upd.data ?? []) as { id: string }[];
+  if (affected.length === 0) {
+    // Nothing changed: the line was already mapped, doesn't belong to this shop, or isn't a
+    // connector charge. Surface it rather than redirecting to a success the merchant can't see.
+    throw new Error("That charge couldn't be mapped — it may already be resolved.");
+  }
 
   return { ok: true, orderId: match.id };
 }

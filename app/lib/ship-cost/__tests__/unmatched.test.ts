@@ -35,8 +35,11 @@ function makeDb(seed: Record<string, Row[]>) {
     function runTerminal(): { data: any; error: null } {
       const rows = tables[table];
       if (mode === "update") {
-        for (const r of applyFilters(rows)) Object.assign(r, updatePayload);
-        return { data: null, error: null };
+        // Apply the payload to matched rows and RETURN those rows (so .select() after an
+        // update can detect a no-op / affected-row count, mirroring PostgREST).
+        const affected = applyFilters(rows);
+        for (const r of affected) Object.assign(r, updatePayload);
+        return { data: affected.map((r) => ({ ...r })), error: null };
       }
       return { data: applyFilters(rows), error: null };
     }
@@ -109,6 +112,37 @@ describe("getUnmatchedCharges — the Part C reader contract (C.1)", () => {
     });
   });
 
+  it("EXCLUDES an unmatched CSV-upload line (only connector charges are carrier charges)", async () => {
+    // An 'upload'-source line also lands matched_order_id=NULL, but it is NOT a carrier
+    // charge and must not appear on the unmatched-carrier-charges surface.
+    const { sb } = makeDb({
+      shipping_invoice_line: [
+        { id: "l_con", shop_id: SHOP, matched_order_id: null, order_ref: "#404", tracking_no: null, cost_cents: 333, external_charge_id: "shp_x", period_id: "p_con" },
+        { id: "l_csv", shop_id: SHOP, matched_order_id: null, order_ref: "#999", tracking_no: null, cost_cents: 500, external_charge_id: null, period_id: "p_up" },
+      ],
+      shipping_cost_period: [
+        { id: "p_con", shop_id: SHOP, carrier: "easypost", source: "connector" },
+        { id: "p_up", shop_id: SHOP, carrier: null, source: "upload" }, // CSV invoice period
+      ],
+      order_fact: [],
+    });
+    const res = await getUnmatchedCharges(sb, SHOP);
+    expect(res.count).toBe(1);
+    expect(res.items.map((i) => i.id)).toEqual(["l_con"]);
+  });
+
+  it("returns empty when the shop has no connector period at all (no false carrier banner)", async () => {
+    const { sb } = makeDb({
+      shipping_invoice_line: [
+        { id: "l_csv", shop_id: SHOP, matched_order_id: null, order_ref: "#999", tracking_no: null, cost_cents: 500, external_charge_id: null, period_id: "p_up" },
+      ],
+      shipping_cost_period: [{ id: "p_up", shop_id: SHOP, carrier: null, source: "upload" }],
+      order_fact: [],
+    });
+    const res = await getUnmatchedCharges(sb, SHOP);
+    expect(res).toEqual({ count: 0, items: [] });
+  });
+
   it("does not leak another shop's unmatched rows", async () => {
     const { sb } = makeDb({
       shipping_invoice_line: [
@@ -151,6 +185,35 @@ describe("mapChargeToOrder — attach + visible failure (rule 12)", () => {
     });
     await expect(mapChargeToOrder(sb, SHOP, "l1", "9999")).rejects.toThrow(/No order 9999 found/);
     // Untouched.
+    expect(table("shipping_invoice_line")[0].matched_order_id).toBeNull();
+  });
+
+  it("fails visibly (no false success) when the line is already mapped — 0 rows affected", async () => {
+    const { sb, table } = makeDb({
+      shipping_invoice_line: [
+        { id: "l1", shop_id: SHOP, matched_order_id: "o_other", order_ref: "#404", tracking_no: null, cost_cents: 500, external_charge_id: "shp_x", period_id: "p_con" },
+      ],
+      shipping_cost_period: [{ id: "p_con", shop_id: SHOP, carrier: "easypost", source: "connector" }],
+      order_fact: [{ id: "o_real", shop_id: SHOP, order_number: "#1001" }],
+    });
+    // The order resolves, but the line is already matched (matched_order_id NOT NULL) so the
+    // update matches 0 rows — must throw, not return ok:true (rule 12). Unchanged.
+    await expect(mapChargeToOrder(sb, SHOP, "l1", "1001")).rejects.toThrow(/couldn't be mapped/);
+    expect(table("shipping_invoice_line")[0].matched_order_id).toBe("o_other");
+  });
+
+  it("refuses to map a non-connector (CSV upload) line even if unmatched", async () => {
+    const { sb, table } = makeDb({
+      shipping_invoice_line: [
+        { id: "l_csv", shop_id: SHOP, matched_order_id: null, order_ref: "#404", tracking_no: null, cost_cents: 500, external_charge_id: null, period_id: "p_up" },
+      ],
+      shipping_cost_period: [
+        { id: "p_con", shop_id: SHOP, carrier: "easypost", source: "connector" },
+        { id: "p_up", shop_id: SHOP, carrier: null, source: "upload" },
+      ],
+      order_fact: [{ id: "o_real", shop_id: SHOP, order_number: "#1001" }],
+    });
+    await expect(mapChargeToOrder(sb, SHOP, "l_csv", "1001")).rejects.toThrow(/couldn't be mapped/);
     expect(table("shipping_invoice_line")[0].matched_order_id).toBeNull();
   });
 });
