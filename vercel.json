@@ -6,6 +6,12 @@
   "functions": {
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
+  "rewrites": [
+    {
+      "source": "/.well-known/oauth-authorization-server",
+      "destination": "/oauth/authorization-server-metadata"
+    }
+  ],
   "crons": [
     { "path": "/cron/ingest", "schedule": "*/30 * * * *" },
     { "path": "/cron/detect", "schedule": "15,45 * * * *" },
