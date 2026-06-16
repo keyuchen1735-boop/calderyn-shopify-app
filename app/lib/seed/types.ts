@@ -70,6 +70,19 @@ export interface FulfillmentRow {
   source_version: number;
 }
 
+export interface RefundRow {
+  id: string;
+  shop_id: string;
+  order_id: string;
+  sku_id: string;
+  external_id: string;
+  external_line_id: string;
+  quantity: number;
+  subtotal_cents: number;
+  processed_at: string;
+  source_version: number;
+}
+
 export interface InventoryLevelRow {
   shop_id: string;
   sku_id: string;

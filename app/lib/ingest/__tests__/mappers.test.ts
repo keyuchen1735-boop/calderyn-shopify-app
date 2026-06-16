@@ -8,7 +8,9 @@ import {
   mapOrderLines,
   parseInventoryWebhook,
   parseOrderWebhook,
+  parseRefundWebhook,
   minimizeOrderWebhook,
+  minimizeRefundWebhook,
 } from "../mappers.server";
 
 describe("gidToId", () => {
@@ -408,6 +410,122 @@ describe("parseOrderWebhook", () => {
         line_items: [{ quantity: 1, price: "5.00" } as never],
       }),
     ).toThrow();
+  });
+});
+
+describe("parseRefundWebhook", () => {
+  it("normalizes a refunds/create payload", () => {
+    const parsed = parseRefundWebhook({
+      admin_graphql_api_id: "gid://shopify/Refund/500",
+      id: 500,
+      order_id: 900,
+      created_at: "2026-05-10T10:00:00Z",
+      processed_at: "2026-05-10T12:00:00Z",
+      refund_line_items: [
+        {
+          id: 7001,
+          quantity: 2,
+          subtotal_set: { shop_money: { amount: "36.00" } },
+          line_item: { variant_id: 200 },
+        },
+      ],
+    });
+    expect(parsed).toEqual({
+      external_id: "gid://shopify/Refund/500",
+      order_external_id: "gid://shopify/Order/900",
+      processed_at: "2026-05-10T12:00:00Z",
+      source_version: Date.parse("2026-05-10T12:00:00Z"),
+      lines: [
+        {
+          sku_external_id: "gid://shopify/ProductVariant/200",
+          external_line_id: "gid://shopify/RefundLineItem/7001",
+          quantity: 2,
+          subtotal_cents: 3600,
+        },
+      ],
+    });
+  });
+
+  it("falls back to the bare `subtotal` when subtotal_set is absent", () => {
+    const parsed = parseRefundWebhook({
+      id: 501,
+      order_id: 901,
+      processed_at: "2026-05-11T00:00:00Z",
+      refund_line_items: [{ id: 7002, quantity: 1, subtotal: "12.50", line_item: { variant_id: 5 } }],
+    });
+    expect(parsed.lines[0].subtotal_cents).toBe(1250);
+    // No admin_graphql_api_id → external_id constructed from the numeric id.
+    expect(parsed.external_id).toBe("gid://shopify/Refund/501");
+  });
+
+  it("maps a refund line with no variant to a null sku reference", () => {
+    const parsed = parseRefundWebhook({
+      id: 502,
+      order_id: 902,
+      processed_at: "2026-05-12T00:00:00Z",
+      refund_line_items: [{ id: 7003, quantity: 1, subtotal: "5.00" }],
+    });
+    expect(parsed.lines[0].sku_external_id).toBeNull();
+  });
+
+  it("falls back to created_at when processed_at is missing", () => {
+    const parsed = parseRefundWebhook({
+      id: 503,
+      order_id: 903,
+      created_at: "2026-05-13T00:00:00Z",
+      refund_line_items: [],
+    });
+    expect(parsed.processed_at).toBe("2026-05-13T00:00:00Z");
+  });
+
+  it("nulls the order reference when order_id is absent", () => {
+    const parsed = parseRefundWebhook({
+      id: 504,
+      processed_at: "2026-05-14T00:00:00Z",
+      refund_line_items: [],
+    });
+    expect(parsed.order_external_id).toBeNull();
+  });
+
+  it("throws when the refund has no id (malformed payload must be retried)", () => {
+    expect(() =>
+      parseRefundWebhook({ order_id: 905, processed_at: "2026-05-15T00:00:00Z" } as never),
+    ).toThrow();
+  });
+
+  it("throws when a refund line item has no id", () => {
+    expect(() =>
+      parseRefundWebhook({
+        id: 506,
+        order_id: 906,
+        processed_at: "2026-05-16T00:00:00Z",
+        refund_line_items: [{ quantity: 1, subtotal: "5.00" } as never],
+      }),
+    ).toThrow();
+  });
+
+  it("minimizeRefundWebhook drops unused fields and parses identically", () => {
+    const full = {
+      admin_graphql_api_id: "gid://shopify/Refund/700",
+      id: 700,
+      order_id: 950,
+      created_at: "2026-05-20T00:00:00Z",
+      processed_at: "2026-05-20T01:00:00Z",
+      note: "internal note — not stored",
+      user_id: 42,
+      transactions: [{ id: 1, gateway: "shopify_payments", amount: "36.00" }],
+      refund_line_items: [
+        {
+          id: 7100,
+          quantity: 2,
+          line_item_id: 1,
+          subtotal: "36.00",
+          subtotal_set: { shop_money: { amount: "36.00", currency_code: "USD" } },
+          line_item: { id: 1, variant_id: 200, title: "X", sku: "X-1" },
+        },
+      ],
+    };
+    expect(parseRefundWebhook(minimizeRefundWebhook(full))).toEqual(parseRefundWebhook(full));
   });
 });
 

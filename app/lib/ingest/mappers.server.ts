@@ -245,6 +245,108 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
   return { order, lines, clickRef: { utm, clickIds, referringSite } };
 }
 
+// One refunded line. sku_external_id is the variant GID; the transform worker
+// resolves it to sku_dim.id. external_line_id is the refund-line GID — the
+// idempotent upsert key for refund_fact.
+export type ParsedRefundLine = {
+  sku_external_id: string | null;
+  external_line_id: string;
+  quantity: number;
+  subtotal_cents: number;
+};
+
+export type ParsedRefund = {
+  external_id: string;
+  // gid://shopify/Order/<id>; null when the payload omits order_id (the worker
+  // resolves it to order_fact.id, leaving order_id null if unresolved).
+  order_external_id: string | null;
+  processed_at: string;
+  source_version: number;
+  lines: ParsedRefundLine[];
+};
+
+type RawRefundLineItem = {
+  id?: string | number;
+  quantity?: number;
+  subtotal?: string | number | null;
+  subtotal_set?: { shop_money?: { amount?: string | number | null } | null } | null;
+  line_item?: { variant_id?: string | number | null } | null;
+};
+type RawRefundWebhook = {
+  admin_graphql_api_id?: string | number;
+  id?: string | number;
+  order_id?: string | number | null;
+  created_at?: string;
+  processed_at?: string;
+  refund_line_items?: RawRefundLineItem[];
+};
+
+// Normalize a REST `refunds/create` webhook body into refund-line rows the
+// transform worker resolves to refund_fact. Refund revenue uses the shop-money
+// subtotal; quantity is the refunded unit count. Like parseOrderWebhook, a
+// missing id fails loudly so a malformed payload is retried/DLQ'd rather than
+// collapsed onto a sentinel external id.
+export function parseRefundWebhook(p: RawRefundWebhook): ParsedRefund {
+  const externalId = p.admin_graphql_api_id
+    ? String(p.admin_graphql_api_id)
+    : p.id != null
+      ? `gid://shopify/Refund/${p.id}`
+      : null;
+  if (!externalId) throw new Error("refunds webhook missing refund id");
+  const processedAt = String(p.processed_at ?? p.created_at ?? new Date().toISOString());
+  const lines: ParsedRefundLine[] = (p.refund_line_items ?? []).map((rli) => {
+    if (rli.id == null) throw new Error("refund line item missing id");
+    const amount = rli.subtotal_set?.shop_money?.amount ?? rli.subtotal;
+    return {
+      sku_external_id: rli.line_item?.variant_id
+        ? `gid://shopify/ProductVariant/${rli.line_item.variant_id}`
+        : null,
+      external_line_id: `gid://shopify/RefundLineItem/${rli.id}`,
+      quantity: Number(rli.quantity ?? 0),
+      subtotal_cents: moneyToCents(amount),
+    };
+  });
+  return {
+    external_id: externalId,
+    order_external_id: p.order_id != null ? `gid://shopify/Order/${p.order_id}` : null,
+    processed_at: processedAt,
+    source_version: Date.parse(processedAt),
+    lines,
+  };
+}
+
+// Strip a `refunds/create` webhook body down to ONLY the fields parseRefundWebhook
+// reads. The raw refund payload carries `transactions` (payment gateway data,
+// receipts) and notes the app never uses; dropping them before anything is stored
+// keeps refund_fact ingestion to product/quantity/amount only.
+export function minimizeRefundWebhook(p: Record<string, unknown>): RawRefundWebhook {
+  const rawLines = Array.isArray(p.refund_line_items)
+    ? (p.refund_line_items as Array<Record<string, unknown>>)
+    : [];
+  return {
+    admin_graphql_api_id: p.admin_graphql_api_id as string | number | undefined,
+    id: p.id as string | number | undefined,
+    order_id: p.order_id as string | number | null | undefined,
+    created_at: p.created_at as string | undefined,
+    processed_at: p.processed_at as string | undefined,
+    refund_line_items: rawLines.map((rli) => {
+      const ss = rli.subtotal_set as
+        | { shop_money?: { amount?: string | number | null } | null }
+        | null
+        | undefined;
+      const li = rli.line_item as { variant_id?: string | number | null } | null | undefined;
+      const amount = ss?.shop_money?.amount;
+      return {
+        id: rli.id as string | number | undefined,
+        quantity: rli.quantity as number | undefined,
+        subtotal: rli.subtotal as string | number | null | undefined,
+        subtotal_set: amount != null ? { shop_money: { amount } } : null,
+        line_item: li?.variant_id != null ? { variant_id: li.variant_id } : null,
+      };
+    }),
+  };
+}
+
 // Strip an `orders/create` webhook body down to ONLY the fields the ingest
 // pipeline reads (the same set parseOrderWebhook consumes). Shopify always
 // includes customer PII on this webhook — name, email, phone, billing/shipping
