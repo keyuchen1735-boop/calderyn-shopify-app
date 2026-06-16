@@ -41,6 +41,57 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
     ? `You're in, ${firstRaw} — your free Calderyn pilot`
     : "You're in — your free Calderyn pilot";
 
+  // Product-hook alert card — the "here's what Calderyn catches" demo. Pure HTML/CSS
+  // (no images), so it sits inline in the single column on every client.
+  const alertCard = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF; border:1px solid #E6E7EB; border-radius:14px;">
+    <tr>
+      <td style="padding:18px 18px 18px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="vertical-align:top; font-family:${FONT};">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td style="vertical-align:middle; padding-right:6px;"><div style="width:8px; height:8px; background:#E0352B; border-radius:50%; font-size:0; line-height:0;">&nbsp;</div></td>
+                <td style="vertical-align:middle; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#E0352B;">Critical</td>
+              </tr></table>
+            </td>
+            <td align="right" style="vertical-align:top; font-family:${FONT};">
+              <div style="font-size:22px; font-weight:700; letter-spacing:-0.03em; color:#E0352B;">$3,150<span style="font-size:12px; font-weight:600; color:#AEAEB2;">/wk</span></div>
+            </td>
+          </tr>
+        </table>
+        <div style="font-family:${FONT}; font-size:17px; font-weight:650; color:#1D1D1F; letter-spacing:-0.014em; padding-top:12px;">Running ads for a sold-out product</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="padding-top:14px;">
+          <tr>
+            <td width="33.33%" style="vertical-align:top; padding-right:4px;">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
+                <div style="font-size:10.5px; color:#9A9AA0;">ROAS&middot;7d</div>
+                <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">0.1&times;</div>
+              </div>
+            </td>
+            <td width="33.33%" style="vertical-align:top; padding:0 2px;">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
+                <div style="font-size:10.5px; color:#9A9AA0;">Break-even</div>
+                <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">1.7&times;</div>
+              </div>
+            </td>
+            <td width="33.33%" style="vertical-align:top; padding-left:4px;">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
+                <div style="font-size:10.5px; color:#9A9AA0;">On hand</div>
+                <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">0 units</div>
+              </div>
+            </td>
+          </tr>
+        </table>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#24556E; border-radius:11px; margin-top:14px;">
+          <tr>
+            <td style="padding:12px 14px; vertical-align:middle; font-family:${FONT}; font-size:14px; font-weight:600; color:#FFFFFF; letter-spacing:-0.006em;">Pause campaign</td>
+            <td align="right" style="padding:12px 14px; vertical-align:middle; font-family:${FONT}; font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:#9FBCCB;">Recommended</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>`;
+
   const html = `<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -110,12 +161,21 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
             </td>
           </tr>
 
+          <!-- ===== PRODUCT HOOK CARD (white) ===== -->
+          <tr>
+            <td style="background:#FFFFFF;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td class="px" style="padding:34px 40px 0;">${alertCard}</td></tr>
+              </table>
+            </td>
+          </tr>
+
           <!-- ===== BODY: steps (white) ===== -->
           <tr>
             <td style="background:#FFFFFF;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td class="px" style="padding:34px 40px 0; font-family:${FONT}; font-size:13px; font-weight:600; letter-spacing:0.01em; color:#9A9AA0;">Three steps, about a minute:</td>
+                  <td class="px" style="padding:30px 40px 0; font-family:${FONT}; font-size:13px; font-weight:600; letter-spacing:0.01em; color:#9A9AA0;">Three steps, about a minute:</td>
                 </tr>
                 <tr>
                   <td class="px" style="padding:22px 40px 4px;">

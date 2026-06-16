@@ -53,11 +53,11 @@ describe("renderPilotEmail", () => {
     expect(out.html).toContain("there");
     expect(out.html).toContain("your store");
   });
-  it("drops the product/alert demo card — its 'feature promo' look pushed the mail to Promotions", () => {
+  it("includes the product-hook alert card (the 'Running ads for a sold-out product' demo)", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).not.toContain("Running ads for a sold-out product");
-    expect(html).not.toContain("Pause campaign");
-    expect(html).not.toContain("$3,150");
+    expect(html).toContain("Running ads for a sold-out product");
+    expect(html).toContain("Pause campaign");
+    expect(html).toContain("$3,150");
   });
   it("keeps a single primary CTA — no second pill button competing with Install", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
