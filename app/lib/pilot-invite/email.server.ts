@@ -2,16 +2,12 @@
 // Renders the delivered pilot onboarding email (table + inline styles, Outlook VML
 // kept) with fields filled server-side.
 //
-// The hero is two columns at the 600px email width — headline + Install CTA on the
-// left, the product-hook alert card on the right. The columns are inline-block divs
-// with max-width inside an MSO ghost table (the "fluid hybrid" pattern): on a phone
-// the right column WRAPS below the left instead of being squeezed side-by-side, so the
-// layout re-stacks by reflow, NOT via an @media query. That distinction is the whole
-// point — clients that strip <style>/media queries (Gmail on non-Google accounts,
-// several Android clients) were what crushed the earlier media-query two-column hero
-// into the phone (the "compacted on mobile" bug). A fluid-hybrid hero can't be
-// crushed: side-by-side where there's room, stacked where there isn't, query or no
-// query.
+// Single fluid column at the standard 600px email width — headline + subhead + Install
+// CTA, with the product-hook alert card stacked directly below on the teal hero. No
+// desktop/mobile pair toggled by a media query: an earlier two-column hero (card beside
+// the headline) crushed on clients that strip <style>/media queries (Gmail on non-Google
+// accounts, several Android clients) — the "compacted on mobile" bug. One column can't be
+// crushed, so it renders the same everywhere, query or no query.
 //
 // It is also deliberately text-first (no images, one primary CTA, founder voice). Auth
 // is correct (DKIM/SPF/DMARC all pass), so Promotions placement is a content signal:
@@ -67,19 +63,19 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="padding-top:14px;">
           <tr>
             <td width="33.33%" style="vertical-align:top; padding-right:4px;">
-              <div style="background:#F4F5F7; border-radius:10px; padding:8px 6px; font-family:${FONT};">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
                 <div style="font-size:10.5px; color:#9A9AA0;">ROAS&middot;7d</div>
                 <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">0.1&times;</div>
               </div>
             </td>
             <td width="33.33%" style="vertical-align:top; padding:0 2px;">
-              <div style="background:#F4F5F7; border-radius:10px; padding:8px 6px; font-family:${FONT};">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
                 <div style="font-size:10.5px; color:#9A9AA0;">Break-even</div>
                 <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">1.7&times;</div>
               </div>
             </td>
             <td width="33.33%" style="vertical-align:top; padding-left:4px;">
-              <div style="background:#F4F5F7; border-radius:10px; padding:8px 6px; font-family:${FONT};">
+              <div style="background:#F4F5F7; border-radius:10px; padding:8px 9px; font-family:${FONT};">
                 <div style="font-size:10.5px; color:#9A9AA0;">On hand</div>
                 <div style="font-size:15px; font-weight:650; color:#1D1D1F; letter-spacing:-0.01em; padding-top:2px;">0 units</div>
               </div>
@@ -135,48 +131,37 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
 
         <table role="presentation" class="container" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:0 auto;">
 
-          <!-- ===== HERO (teal, two-column fluid-hybrid → stacks on mobile, no media query) =====
-               Headline + Install CTA on the left, the product-hook alert card on the right.
-               Both columns are inline-block divs with max-width inside an MSO ghost table, so on
-               a phone the card wraps below the headline instead of being crushed beside it. -->
+          <!-- ===== HERO (teal, single column) — headline block, then the product-hook card =====
+               Headline + subhead + Install CTA, then the alert card sits directly below on the
+               teal, full width. One column can't be crushed, so it renders the same on every
+               client without a media query. -->
           <tr>
             <td style="background:#24556E; border-radius:18px 18px 0 0;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td class="px" align="center" style="padding:44px 24px; font-size:0;">
+                  <td class="px h1" style="padding:46px 40px 0; font-family:${FONT}; font-size:36px; line-height:40px; font-weight:700; letter-spacing:-0.032em; color:#FFFFFF;">You're in,<br />${first}.</td>
+                </tr>
+                <tr>
+                  <td class="px" style="padding:18px 40px 0; font-family:${FONT}; font-size:16px; line-height:25px; color:#C3D4DE; letter-spacing:-0.004em;">${store} has a free seat in the Calderyn beta — ad spend + inventory, watched together.</td>
+                </tr>
+                <tr>
+                  <td class="px" style="padding:28px 40px 0;">
                     <!--[if mso]>
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td width="278" valign="middle">
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${INSTALL_URL}" style="height:48px;v-text-anchor:middle;width:236px;" arcsize="52%" stroke="f" fillcolor="#FFFFFF">
+                    <w:anchorlock/>
+                    <center style="color:#24556E;font-family:sans-serif;font-size:15px;font-weight:bold;">Install free on Shopify  &rarr;</center>
+                    </v:roundrect>
                     <![endif]-->
-                    <div style="display:inline-block; vertical-align:middle; width:100%; max-width:278px; text-align:left;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                        <tr>
-                          <td class="h1" style="font-family:${FONT}; font-size:34px; line-height:38px; font-weight:700; letter-spacing:-0.032em; color:#FFFFFF;">You're in,<br />${first}.</td>
-                        </tr>
-                        <tr>
-                          <td style="padding-top:16px; font-family:${FONT}; font-size:15px; line-height:23px; color:#C3D4DE; letter-spacing:-0.004em;">${store} has a free seat in the Calderyn beta — ad spend + inventory, watched together.</td>
-                        </tr>
-                        <tr>
-                          <td style="padding-top:24px;">
-                            <!--[if mso]>
-                            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${INSTALL_URL}" style="height:48px;v-text-anchor:middle;width:236px;" arcsize="52%" stroke="f" fillcolor="#FFFFFF">
-                            <w:anchorlock/>
-                            <center style="color:#24556E;font-family:sans-serif;font-size:15px;font-weight:bold;">Install free on Shopify  &rarr;</center>
-                            </v:roundrect>
-                            <![endif]-->
-                            <!--[if !mso]><!-->
-                            <a class="hover-btn" href="${INSTALL_URL}" target="_blank" style="display:inline-block; background:#FFFFFF; color:#24556E; font-family:${FONT}; font-size:15px; font-weight:650; letter-spacing:-0.006em; text-decoration:none; text-align:center; padding:14px 24px; border-radius:999px;">Install free on Shopify &nbsp;&rarr;</a>
-                            <!--<![endif]-->
-                          </td>
-                        </tr>
-                        <tr>
-                          <td style="padding-top:13px; font-family:${FONT}; font-size:12.5px; color:#9FBACB;">One-click · uninstall anytime</td>
-                        </tr>
-                      </table>
-                    </div>
-                    <!--[if mso]></td><td width="14">&nbsp;</td><td width="254" valign="middle"><![endif]-->
-                    <div style="display:inline-block; vertical-align:middle; width:14px; font-size:0; line-height:0;">&nbsp;</div><div style="display:inline-block; vertical-align:middle; width:100%; max-width:254px; text-align:left;">${alertCard}</div>
-                    <!--[if mso]></td></tr></table><![endif]-->
+                    <!--[if !mso]><!-->
+                    <a class="hover-btn" href="${INSTALL_URL}" target="_blank" style="display:inline-block; background:#FFFFFF; color:#24556E; font-family:${FONT}; font-size:15px; font-weight:650; letter-spacing:-0.006em; text-decoration:none; text-align:center; padding:14px 24px; border-radius:999px;">Install free on Shopify &nbsp;&rarr;</a>
+                    <!--<![endif]-->
                   </td>
+                </tr>
+                <tr>
+                  <td class="px" style="padding:13px 40px 0; font-family:${FONT}; font-size:12.5px; color:#9FBACB;">One-click · uninstall anytime</td>
+                </tr>
+                <tr>
+                  <td class="px" style="padding:30px 40px 46px;">${alertCard}</td>
                 </tr>
               </table>
             </td>

@@ -37,23 +37,18 @@ describe("renderPilotEmail", () => {
     expect(out.subject).toBe("You're in, <b> — your free Calderyn pilot");
     expect(out.text).toContain("https://apps.shopify.com/calderynextension");
   });
-  it("renders a mobile-safe two-column hero — fluid-hybrid that re-stacks without a media query", () => {
+  it("is a single fluid column at email width — robust without media queries", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    // Headline + CTA on the left, the product-hook card on the right. The columns are
-    // inline-block divs with max-width inside an MSO ghost table, so on a narrow phone
-    // the card WRAPS below the headline (reflow), it is not toggled by @media. Clients
-    // that strip <style>/media queries therefore can't crush the hero — the old
-    // "compacted on mobile" bug stays fixed without losing the two-column desktop look.
+    // One layout, not a desktop/mobile pair toggled by a query: clients that strip
+    // <style>/media queries (e.g. Gmail on non-Google accounts) no longer crush a
+    // two-column hero into the phone width. The alert card stacks below the headline.
     expect(html).not.toContain('class="cd-desk"');
     expect(html).not.toContain('class="cd-mob"');
-    expect(html).toContain("max-width:600px"); // standard email container width
+    expect(html).toContain("max-width:600px"); // standard single-column email width
     expect(html).not.toContain("max-width:1100px");
-    // Two fluid-hybrid columns (not a rigid two-<td> split that crushes on phones).
-    const cols = html.match(/display:inline-block; vertical-align:middle; width:100%; max-width:\d+px/g) ?? [];
-    expect(cols.length).toBeGreaterThanOrEqual(2);
-    // Outlook (Word engine) ignores inline-block/max-width, so an MSO ghost table holds
-    // the two columns side-by-side there.
-    expect(html).toMatch(/\[if mso\][\s\S]*?<td width="\d+" valign="middle">/);
+    // No side-by-side hero columns: the card is a full-width row, not an inline-block
+    // column wrapped in an MSO ghost table.
+    expect(html).not.toMatch(/display:inline-block; vertical-align:middle; width:100%; max-width:\d+px/);
   });
   it("falls back to generic copy when fields are blank", () => {
     const out = renderPilotEmail({ firstName: "", storeName: "", baseUrl: base, unsubscribeUrl: unsub });
