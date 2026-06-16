@@ -142,4 +142,40 @@ describe("cron.ingest loader", () => {
     // transform result still present
     expect(body.transform).toMatchObject({ processed: 2, facts: 3 });
   });
+
+  // REGRESSION: a raw PostgREST error object (NOT an Error instance) was
+  // String()'d into "[object Object]" in prod. The catch must stringify a
+  // Supabase-style {message, code} usefully.
+  it("stringifies a raw Supabase error object (non-Error) instead of '[object Object]'", async () => {
+    reconcileAttributedRevenue.mockImplementation(async (shopId: string) => {
+      if (shopId === "s1") {
+        // intentionally a raw PostgREST object (NOT an Error) to reproduce the bug
+        throw { message: "URI too long", code: "PGRST301", details: "uri", hint: null };
+      }
+    });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.attributionErrors).toHaveLength(1);
+    expect(body.attributionErrors[0]).not.toContain("[object Object]");
+    expect(body.attributionErrors[0]).toContain("URI too long");
+    expect(body.attributionErrors[0]).toContain("PGRST301");
+  });
+
+  it("stringifies a raw Supabase error object in the ship-cost (Phase 4) catch too", async () => {
+    runShipCostResolution.mockImplementation(async (_sb: unknown, shopId: string) => {
+      if (shopId === "s1") {
+        // intentionally a raw PostgREST object (NOT an Error) to reproduce the bug
+        throw { message: "column does not exist", code: "42703" };
+      }
+    });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.shipCostErrors).toHaveLength(1);
+    expect(body.shipCostErrors[0]).not.toContain("[object Object]");
+    expect(body.shipCostErrors[0]).toContain("column does not exist");
+  });
 });

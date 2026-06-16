@@ -9,6 +9,26 @@ import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
 
+// Stringify an unknown thrown value usefully. A raw Supabase/PostgREST error is a
+// plain object `{ message, details, hint, code }` (NOT an Error), so `String(err)`
+// yields "[object Object]". Prefer Error.message, then a Supabase error's
+// message/details/code, then JSON.
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const e = err as { message?: unknown; details?: unknown; code?: unknown };
+    const parts = [e.message, e.details, e.code != null && `code=${e.code}`]
+      .filter((p) => typeof p === "string" && p.length > 0);
+    if (parts.length) return parts.join(" ");
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
@@ -67,8 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       await reconcileAttributedRevenue(shopId, sb);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.attributionErrors.push(`${shopId}: ${msg}`);
+      summary.attributionErrors.push(`${shopId}: ${stringifyError(err)}`);
       console.error("[cron.ingest] attribution reconcile failed for shop", shopId, err);
     }
   }
@@ -82,8 +101,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shopCountry: null, // TODO: source shop origin country (Plan 2)
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.shipCostErrors.push(`${shopId}: ${msg}`);
+      summary.shipCostErrors.push(`${shopId}: ${stringifyError(err)}`);
       console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
     }
   }
