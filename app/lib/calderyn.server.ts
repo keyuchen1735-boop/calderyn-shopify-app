@@ -119,9 +119,6 @@ function rowToAlert(r: Record<string, unknown>): Alert {
     title: String(r.title ?? ""),
     narrative: String(r.narrative ?? ""),
     campaign: (r.campaign as string | null) ?? null,
-    // v_alerts_view has no campaign_id column; callers that hold the campaign list
-    // derive this by name-match (mirroring dashboard adaptAlert). Default null.
-    campaign_id: null,
     sku: (r.sku as string | null) ?? null,
     evidence: (r.evidence as Record<string, unknown>) ?? {},
   };

@@ -41,11 +41,6 @@ export interface Alert {
   title: string;
   narrative: string;
   campaign: string | null;
-  /** ad_campaign_dim uuid — not a v_alerts_view column; derived client-side by
-   *  matching alert.campaign (name) against the campaigns list, mirroring the
-   *  dashboard's adaptAlert logic. Populated in callers that have the campaign
-   *  list; rowToAlert sets it to null. */
-  campaign_id: string | null;
   sku: string | null;
   evidence: Record<string, any>;
 }

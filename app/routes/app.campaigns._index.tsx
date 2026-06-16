@@ -56,7 +56,7 @@ import type { ActionKind, Campaign } from "~/lib/types";
 type ScalePrefill = {
   campaignId: string; // id as used by the campaigns list (Meta = external id)
   alertId: string;
-  projectedUpside: number; // dollars, from the alert
+  projectedUpside: number; // CENTS (alert.dollar_impact — rowToAlert already converts dollars→cents)
   newBudgetCents: number;
   pct: number;
 };
@@ -161,7 +161,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const pct = gr.autopilot_max_budget_increase_pct || 20;
       scaleSuggestions = openScaleAlerts
         .map((a) => {
-          // Name-match: a.campaign is the campaign name string from v_alerts_view.
+          // Name-match: a.campaign is the campaign name string from v_alerts_view
+          // (mirrors the dashboard's adaptAlert). TODO: match on the dim id once
+          // v_alerts_view exposes campaign_id — name-match can mis-attribute a
+          // suggestion if two campaigns share a name.
           const row = campaigns.find((c) => c.name === a.campaign);
           if (!row || row.status !== "active" || row.daily_budget_cents <= 0) return null;
           return {
@@ -1139,7 +1142,7 @@ function ScaleBudgetModal({
               {campaign.platform} · {campaign.name} is winning. Raise its daily budget {suggestion.pct}% (
               {fmtMoney(campaign.daily_budget_cents)} → {fmtMoney(suggestion.newBudgetCents)}/day) for about{" "}
               <Text as="span" fontWeight="bold">
-                {fmtMoney(Math.round(suggestion.projectedUpside * 100))}/mo
+                {fmtMoney(suggestion.projectedUpside)}/mo
               </Text>{" "}
               more projected margin.
             </Text>
