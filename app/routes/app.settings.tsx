@@ -9,7 +9,7 @@ import {
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
+import { json, redirect, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
 import {
   Badge,
   Banner,
@@ -42,9 +42,11 @@ import {
 import { useActionToast, useConnectionToast } from "~/lib/toast";
 import { fmtMoney } from "~/lib/format";
 import {
+  APIKEY_PROVIDERS,
   OAUTH_PROVIDERS,
   connectionNotice,
   integrationBadge,
+  isApiKeyConnect,
   isConnectable,
   isPaired,
   kindToProvider,
@@ -107,6 +109,31 @@ export function parseManualOverrideForm(
     return { ok: false, message: "Override must be $0 or more." };
   }
   return { ok: true, value: { orderId, cents: Math.round(amount * 100) } };
+}
+
+export interface ApiKeyConnectValue {
+  provider: IntegrationProvider;
+  apiKey: string;
+}
+
+/**
+ * Validate the API-key connect form (EasyPost, contract C8) at the action
+ * boundary — never trust the FormData shape. Rejects an unknown provider and an
+ * empty key BEFORE any live probe / credential write. The live key validation
+ * (a real EasyPost probe) happens server-side in connectApiKey.
+ */
+export function parseApiKeyConnectForm(
+  fd: FormData,
+): ParseOk<ApiKeyConnectValue> | ParseErr {
+  const provider = String(fd.get("provider") ?? "").trim();
+  const apiKey = String(fd.get("api_key") ?? "").trim();
+  if (!(APIKEY_PROVIDERS as readonly string[]).includes(provider)) {
+    return { ok: false, message: `Unknown provider: ${provider || "(none)"}` };
+  }
+  if (!apiKey) {
+    return { ok: false, message: "Paste your EasyPost API key." };
+  }
+  return { ok: true, value: { provider: provider as IntegrationProvider, apiKey } };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +357,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
+    }
+
+    if (intent === "connect_apikey_integration") {
+      // API-key connect (EasyPost, contract C8): validate the FormData shape at the
+      // boundary, then hand the key to the integrations client which live-probes and
+      // stores it encrypted. Redirect on success so a refresh can't re-POST the key
+      // (no double-submit); the one-shot ?<provider>=connected param drives the same
+      // success banner the OAuth callbacks use.
+      const parsed = parseApiKeyConnectForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      await client.integrations.connectApiKey(parsed.value.provider, parsed.value.apiKey);
+      return redirect(`/app/settings?${parsed.value.provider}=connected`);
     }
 
     if (intent === "disconnect_integration") {
@@ -869,49 +917,86 @@ function IntegrationCard({
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
   // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
-  // disconnect speak the OAuth provider short name (e.g. "meta").
+  // disconnect speak the provider short name (e.g. "meta", "easypost").
   const oauthProvider = kindToProvider(provider);
   const canConnect = isConnectable(provider);
+  // EasyPost (and future ship-cost connectors) connect by an API-key paste, not
+  // OAuth — render an inline key field + Save instead of the Connect button (C8).
+  const apiKeyConnect = isApiKeyConnect(provider);
   // A "pending" integration is paired (OAuth done) but still backfilling — show
   // it as Connected with a Disconnect button, not as a fresh Connect prompt.
   const paired = isPaired(integration.status);
   const badge = integrationBadge(integration.status);
+  const [apiKey, setApiKey] = useState("");
 
   return (
     <Card>
-      <InlineStack align="space-between" blockAlign="center">
-        <BlockStack gap="100">
-          <Text as="p" variant="bodyMd" fontWeight="semibold">
-            {integration.name}
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {integration.detail}
-          </Text>
-        </BlockStack>
-        <InlineStack gap="200" blockAlign="center">
-          <Badge tone={badge.tone}>{badge.label}</Badge>
-          {paired ? (
-            <Form method="post">
-              <input type="hidden" name="intent" value="disconnect_integration" />
-              <input type="hidden" name="provider" value={oauthProvider} />
-              <Button submit tone="critical" loading={submitting} disabled={submitting}>
-                Disconnect
-              </Button>
-            </Form>
-          ) : canConnect ? (
-            <connectFetcher.Form method="post">
-              <input type="hidden" name="intent" value="connect_integration" />
-              <input type="hidden" name="provider" value={oauthProvider} />
-              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
-              <Button submit variant="primary" loading={connecting} disabled={connecting}>
-                Connect
-              </Button>
-            </connectFetcher.Form>
-          ) : (
-            <Badge>Managed by Shopify</Badge>
-          )}
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <BlockStack gap="100">
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
+              {integration.name}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {integration.detail}
+            </Text>
+          </BlockStack>
+          <InlineStack gap="200" blockAlign="center">
+            <Badge tone={badge.tone}>{badge.label}</Badge>
+            {paired ? (
+              <Form method="post">
+                <input type="hidden" name="intent" value="disconnect_integration" />
+                <input type="hidden" name="provider" value={oauthProvider} />
+                <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                  Disconnect
+                </Button>
+              </Form>
+            ) : canConnect ? (
+              <connectFetcher.Form method="post">
+                <input type="hidden" name="intent" value="connect_integration" />
+                <input type="hidden" name="provider" value={oauthProvider} />
+                <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
+                <Button submit variant="primary" loading={connecting} disabled={connecting}>
+                  Connect
+                </Button>
+              </connectFetcher.Form>
+            ) : apiKeyConnect ? null : (
+              <Badge>Managed by Shopify</Badge>
+            )}
+          </InlineStack>
         </InlineStack>
-      </InlineStack>
+
+        {/* API-key connect form (EasyPost): inline so the merchant pastes the key
+            in place. The action live-probes + stores it encrypted, then redirects
+            back here (no double-submit). Only shown when not already paired. */}
+        {apiKeyConnect && !paired && (
+          <connectFetcher.Form method="post">
+            <input type="hidden" name="intent" value="connect_apikey_integration" />
+            <input type="hidden" name="provider" value={oauthProvider} />
+            <FormLayout>
+              <TextField
+                label={`${integration.name} API key`}
+                name="api_key"
+                value={apiKey}
+                onChange={setApiKey}
+                autoComplete="off"
+                type="password"
+                helpText="Paste your EasyPost production API key. We verify it, then store it encrypted."
+              />
+              <InlineStack align="end">
+                <Button
+                  submit
+                  variant="primary"
+                  loading={connecting}
+                  disabled={connecting || apiKey.trim() === ""}
+                >
+                  Save key
+                </Button>
+              </InlineStack>
+            </FormLayout>
+          </connectFetcher.Form>
+        )}
+      </BlockStack>
     </Card>
   );
 }

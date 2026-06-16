@@ -334,6 +334,7 @@ const INTEGRATION_ORDER = [
   "google_ads",
   "tiktok_ads",
   "quickbooks",
+  "easypost_ship",
 ] as const;
 
 export function adaptIntegrations(

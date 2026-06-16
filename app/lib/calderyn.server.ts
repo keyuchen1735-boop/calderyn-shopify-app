@@ -21,6 +21,7 @@ import {
   type SkuDemandViewRow,
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
+import { encrypt } from "./crypto.server";
 import { newIdempotencyKey } from "./ids";
 import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
@@ -62,7 +63,9 @@ export type ExecuteActionOpts = {
   postState?: unknown;
 };
 
-export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks";
+// OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
+// startOAuth handles the OAuth set; connectApiKey handles the API-key set.
+export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks" | "easypost";
 
 export type OnboardingState = { step: number; done: boolean };
 
@@ -226,6 +229,7 @@ const INTEGRATION_LOGO_CLS: Record<string, string> = {
   google_ads: "logo-google",
   tiktok_ads: "logo-tiktok",
   quickbooks: "logo-quickbooks",
+  easypost_ship: "logo-easypost",
 };
 
 const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
@@ -234,7 +238,49 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
   google_ads: "Google Ads",
   tiktok_ads: "TikTok Ads",
   quickbooks: "QuickBooks",
+  easypost_ship: "EasyPost",
 };
+
+/**
+ * Live-probe a pasted EasyPost API key BEFORE we persist it, so a bad key is
+ * rejected at the connect boundary with a visible error and NO credential is
+ * written (success criterion #1, rule 12). EasyPost auth is HTTP Basic with the
+ * key as username + empty password — base64("KEY:"), NOT Bearer (docs.easypost.com),
+ * matching adapters/easypost.server.ts. Reads EASYPOST_API_BASE for env parity with
+ * the cron. `fetchImpl` is injectable so the connect flow can be unit-tested without
+ * the network. Throws a CalderynError on any non-2xx (401 bad key, 429, …); the
+ * action surfaces it as a toast. We do NOT keep the base-64 helper in the server-core
+ * adapter file (left untouched) — this is a deliberate ~1-line duplication.
+ */
+async function probeEasyPostKey(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const raw = process.env.EASYPOST_API_BASE?.trim();
+  const base = (raw && raw.length > 0 ? raw : "https://api.easypost.com/v2").replace(/\/+$/, "");
+  const auth = `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/shipments?page_size=1`, {
+      method: "GET",
+      headers: { Authorization: auth, Accept: "application/json" },
+    });
+  } catch (err) {
+    throw new CalderynError({
+      code: "EASYPOST_UNREACHABLE",
+      status: 502,
+      message: `Couldn't reach EasyPost to verify the key: ${(err as Error).message}`,
+    });
+  }
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => "")).slice(0, 200);
+    const friendly =
+      res.status === 401
+        ? "That EasyPost API key was rejected (401). Paste your production API key from the EasyPost dashboard."
+        : `EasyPost rejected the key (${res.status}). ${snippet}`;
+    throw new CalderynError({ code: "EASYPOST_KEY_INVALID", status: 400, message: friendly });
+  }
+}
 
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
@@ -963,6 +1009,9 @@ export function calderynClient(shop: string) {
             google_ads: { name: "Google Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-google" },
             tiktok_ads: { name: "TikTok Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-tiktok" },
             quickbooks: { name: "QuickBooks", status: "disconnected", detail: "Not connected", logoCls: "logo-quickbooks" },
+            // Ship-cost connector (API-key paste, contract C8). Single source both
+            // surfaces read; the dashboard renders it read-only via adaptIntegrations.
+            easypost_ship: { name: "EasyPost", status: "disconnected", detail: "Not connected", logoCls: "logo-easypost" },
           };
 
           for (const r of data ?? []) {
@@ -1071,6 +1120,78 @@ export function calderynClient(shop: string) {
           message: `${provider} OAuth is not yet wired.`,
         });
       },
+      /**
+       * Connect an API-key provider (EasyPost ship-cost connector, contract C8).
+       * Unlike startOAuth there is NO redirect round-trip: the merchant pastes a key
+       * into the embedded settings form, this validates + live-probes it, then stores
+       * it ENCRYPTED in integration_credentials (kind 'easypost_ship',
+       * access_token_encrypted) — NOT the legacy shop_integrations.access_token_enc
+       * bytea — and upserts shop_integrations at sync_status='ready' so the cron
+       * (shipAdaptersForShops) picks the shop up on its next tick. Mirrors the
+       * credential-write half of auth.quickbooks.$.tsx:71-98. `fetchImpl` is injectable
+       * for tests (defaults to global fetch). Returns the kind the credential landed under.
+       */
+      async connectApiKey(
+        provider: IntegrationProvider,
+        apiKey: string,
+        fetchImpl: typeof fetch = fetch,
+      ): Promise<{ kind: string }> {
+        try {
+          // EasyPost is the only API-key provider in Phase 1. Reject anything else
+          // here rather than silently writing a credential under an unknown kind.
+          if (provider !== "easypost") {
+            throw new CalderynError({
+              code: "NOT_APIKEY_PROVIDER",
+              status: 400,
+              message: `${provider} does not use API-key connect.`,
+            });
+          }
+          const key = apiKey.trim();
+          if (!key) {
+            throw new CalderynError({
+              code: "EMPTY_API_KEY",
+              status: 400,
+              message: "Paste your EasyPost API key.",
+            });
+          }
+          // Fail visibly on a bad key BEFORE writing anything (rule 12).
+          await probeEasyPostKey(key, fetchImpl);
+
+          const shopId = await shopIdP;
+          const kind = "easypost_ship";
+          const now = new Date().toISOString();
+
+          const cred = await supabase.from("integration_credentials").upsert(
+            {
+              shop_id: shopId,
+              kind,
+              access_token_encrypted: encrypt(key),
+              updated_at: now,
+            },
+            { onConflict: "shop_id,kind" },
+          );
+          if (cred.error) throw cred.error;
+
+          const integ = await supabase.from("shop_integrations").upsert(
+            {
+              shop_id: shopId,
+              kind,
+              sync_status: "ready",
+              // Clear any stale failure from a prior errored sync so Settings doesn't
+              // keep showing it for this fresh pairing (mirrors the OAuth callbacks).
+              sync_error: null,
+              connected_at: now,
+              updated_at: now,
+            },
+            { onConflict: "shop_id,kind" },
+          );
+          if (integ.error) throw integ.error;
+
+          return { kind };
+        } catch (err) {
+          rethrow("integrations.connectApiKey", err);
+        }
+      },
       async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
         try {
           const shopId = await shopIdP;
@@ -1081,13 +1202,28 @@ export function calderynClient(shop: string) {
                 ? "google_ads"
                 : provider === "tiktok"
                   ? "tiktok_ads"
-                  : provider;
+                  : provider === "easypost"
+                    ? "easypost_ship"
+                    : provider;
           const { error } = await supabase
             .from("shop_integrations")
             .delete()
             .eq("shop_id", shopId)
             .eq("kind", kind);
           if (error) throw error;
+          // For an API-key provider (EasyPost), Disconnect means the merchant wants
+          // the pasted key gone too — so the cron's connect() finds no credential and
+          // marks the shop skipped, not errored. (OAuth providers keep their token
+          // row; re-connect overwrites it.) Surface a failure here rather than leaving
+          // an orphaned credential silently behind (rule 12).
+          if (kind === "easypost_ship") {
+            const { error: credErr } = await supabase
+              .from("integration_credentials")
+              .delete()
+              .eq("shop_id", shopId)
+              .eq("kind", kind);
+            if (credErr) throw credErr;
+          }
         } catch (err) {
           rethrow("integrations.disconnect", err);
         }

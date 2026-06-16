@@ -32,7 +32,7 @@ import {
 } from "~/lib/calderyn.server";
 import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
-import { providerPaired } from "~/lib/integrations";
+import { providerPaired, type OAuthProvider } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
 import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
@@ -508,7 +508,11 @@ function OAuthStep({
   prevStep,
   submitting,
 }: {
-  provider: IntegrationProvider;
+  // Only the OAuth providers reach this step (the call site narrows `key` to
+  // google|meta|tiktok|quickbooks). EasyPost connects by API-key paste in Settings,
+  // not via an onboarding OAuth step — so this is OAuthProvider, not the wider
+  // IntegrationProvider (which now also includes the non-OAuth 'easypost').
+  provider: OAuthProvider;
   connected: boolean;
   nextStep: number;
   prevStep: number;
@@ -527,7 +531,7 @@ function OAuthStep({
     const url = connectFetcher.data?.redirectUrl;
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
-  const labels: Record<IntegrationProvider, { title: string; blurb: string }> = {
+  const labels: Record<OAuthProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
       blurb:

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { parsePeriodTotalForm, parseManualOverrideForm } from "../app.settings";
+import {
+  parsePeriodTotalForm,
+  parseManualOverrideForm,
+  parseApiKeyConnectForm,
+} from "../app.settings";
 
 // Mock out server-side modules that fail in test environment (no env vars,
 // no Shopify SDK initialisation) so we can import the pure helpers.
@@ -72,5 +76,23 @@ describe("parseManualOverrideForm", () => {
   });
   it("rejects a missing order id", () => {
     expect(parseManualOverrideForm(fd({ amount: "1.00" })).ok).toBe(false);
+  });
+});
+
+describe("parseApiKeyConnectForm (EasyPost connect, contract C8)", () => {
+  it("accepts a known API-key provider with a non-empty, trimmed key", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost", api_key: "  EZAK_test_123  " }))).toEqual(
+      { ok: true, value: { provider: "easypost", apiKey: "EZAK_test_123" } },
+    );
+  });
+
+  it("rejects an empty/whitespace key — no credential write attempted", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost", api_key: "   " })).ok).toBe(false);
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost" })).ok).toBe(false);
+  });
+
+  it("rejects an unknown / OAuth provider (easypost is the only API-key provider)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "meta", api_key: "k" })).ok).toBe(false);
+    expect(parseApiKeyConnectForm(fd({ provider: "", api_key: "k" })).ok).toBe(false);
   });
 });
