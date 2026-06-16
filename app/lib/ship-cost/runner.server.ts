@@ -3,6 +3,7 @@ import { classifyZone, zoneMultiplier } from "./zone";
 import { allocatePeriodTotal, type AllocOrder } from "./allocate";
 import { splitOrderShipCost, type SplitLine } from "./split";
 import { resolveOrderShipCost } from "./resolve";
+import { modelOrderShipCost } from "./model";
 import type { OrderSignals } from "./types";
 
 interface RunnerOpts { shopCountry: string | null; }
@@ -90,7 +91,12 @@ export async function runShipCostResolution(
       invoiceLineCents: invoiceByOrder.get(o.id) ?? null,
       eventParsedCents: null,
       allocatedCents: allocated?.get(o.id) ?? null,
-      modeledCents: null,
+      // Weight-based estimate (low confidence) when no manual/invoice/period
+      // cost exists; null when the order has no weight, so we fall to fallback.
+      modeledCents: modelOrderShipCost(
+        o.grams_sum,
+        zoneMultiplier(classifyZone(opts.shopCountry, o.customer_country)),
+      ),
       fallbackCents: fallbackFlat,
       allocationCoverage: coverage,
     });

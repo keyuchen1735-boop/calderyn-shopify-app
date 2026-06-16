@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- in-memory supabase fake */
 import { describe, it, expect } from "vitest";
 import { runShipCostResolution, rollShipCostIntoSkuPnl } from "../runner.server";
+import { DEFAULT_SHIP_RATE_PER_KG_CENTS } from "../model";
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory Supabase stub
@@ -194,6 +195,39 @@ describe("runShipCostResolution — manual override", () => {
     expect(
       orderUpdates.find((u: UpdateRecord) => u.filters["id"] === "b")!.payload.ship_cost_source,
     ).toBe("reconciled");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2c: weight model — no manual/invoice/period cost → estimate from
+// weight × zone, source 'modeled'; an order with no weight falls to fallback.
+// ---------------------------------------------------------------------------
+describe("runShipCostResolution — weight model", () => {
+  it("estimates ship cost from weight × zone and stamps source 'modeled'", async () => {
+    const tables: Record<string, any[]> = {
+      v_order_ship_features: [
+        { id: "o1", shop_id: "shop1", customer_country: "US", grams_sum: 1000, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
+        { id: "o2", shop_id: "shop1", customer_country: "US", grams_sum: null, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
+      ],
+      shipping_cost_period: [], // no period total → no allocation
+      shipping_invoice_line: [], // no invoice
+      order_fact: [],
+      order_line_fact: [],
+      sku_pnl: [],
+    };
+
+    const sb = makeSupabaseFake(tables);
+    await runShipCostResolution(sb as any, "shop1", { shopCountry: "US" });
+
+    const u = sb._updates.filter((x: UpdateRecord) => x.table === "order_fact");
+    const o1 = u.find((x: UpdateRecord) => x.filters["id"] === "o1")!;
+    // 1 kg, domestic (×1) → default rate, low confidence.
+    expect(o1.payload.ship_cost_source).toBe("modeled");
+    expect(o1.payload.ship_cost_confidence).toBe("low");
+    expect(o1.payload.ship_cost_cents).toBe(DEFAULT_SHIP_RATE_PER_KG_CENTS);
+    // o2 has no weight → model returns null → falls through to fallback (no real cost).
+    const o2 = u.find((x: UpdateRecord) => x.filters["id"] === "o2")!;
+    expect(o2.payload.ship_cost_source).toBe("fallback");
   });
 });
 
