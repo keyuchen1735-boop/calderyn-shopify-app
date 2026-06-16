@@ -5,6 +5,7 @@
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
+import type { StateDiffRow } from "~/lib/audit-state-diff";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -74,6 +75,8 @@ export interface AuditVM {
   costLineage: CostSource[];
   why: string;
   whyDetail?: string;
+  /** Human before→after rows for the detail panel (shared with the extension). */
+  stateDiff: StateDiffRow[];
 }
 
 export interface SkuVM {

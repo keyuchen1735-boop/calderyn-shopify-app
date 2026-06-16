@@ -288,6 +288,26 @@
     padding: calc(14px * var(--density)) calc(22px * var(--density));
     display: flex; flex-direction: column; gap: 3px;
   }
+  /* Audit-row expanded detail: label→value rows (.cd-kv) + a before→after panel
+     built from the shared .cd-evidence grid, indented under the row content. */
+  .cd-audit-detail {
+    flex-basis: 100%;
+    display: flex; flex-direction: column; gap: calc(11px * var(--density));
+    padding: calc(6px * var(--density)) calc(22px * var(--density)) calc(15px * var(--density)) calc(46px * var(--density));
+  }
+  .cd-audit-diff-head {
+    font-size: calc(12px * var(--type-scale)); font-weight: 600;
+    color: var(--text-2); letter-spacing: -0.004em; margin-bottom: -2px;
+  }
+  .cd-audit-detail .cd-evidence {
+    background: rgba(120, 120, 128, 0.05);
+    border: 0.5px solid var(--hairline); border-radius: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    padding-bottom: 0; overflow: hidden;
+  }
+  .cd-audit-detail .cd-evidence-cell { padding: calc(11px * var(--density)) calc(16px * var(--density)); gap: 4px; }
+  .cd-audit-detail .cd-evidence-cell + .cd-evidence-cell { box-shadow: inset 0.5px 0 0 var(--hairline); }
+  .cd-diff-arrow { color: var(--text-3); padding: 0 4px; }
   .cd-action-btn {
     display: flex; align-items: center; gap: 10px; width: 100%;
     padding: calc(10px * var(--density)) 14px;

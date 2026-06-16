@@ -31,6 +31,7 @@ import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
 import { recovered as recoveredOf } from "~/lib/recovered";
 import { ACTION_LABELS, COST_SOURCE_LABELS } from "~/lib/labels";
 import { auditLegibility } from "~/lib/audit-legibility";
+import { stateDiff } from "~/lib/audit-state-diff";
 import { useActionToast } from "~/lib/toast";
 import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
@@ -112,6 +113,7 @@ function AuditRowEx({
 }: { a: AuditEntry; index: number; submitting: boolean }) {
   const [open, setOpen] = useState(false);
   const leg = auditLegibility(a);
+  const diff = stateDiff(a.action_kind, a.pre_state, a.post_state);
   const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
   const canUndo = a.undo_eligible && !a.undo_of;
   const hasPoPdf =
@@ -206,6 +208,21 @@ function AuditRowEx({
                       </Badge>
                     ))}
                   </InlineStack>
+                )}
+                {diff.length > 0 && (
+                  <BlockStack gap="150">
+                    <Text as="span" variant="bodySm" fontWeight="semibold">Before → after</Text>
+                    <InlineGrid columns={{ xs: 1, sm: Math.min(diff.length, 3) as 1 | 2 | 3 }} gap="200">
+                      {diff.map((r) => (
+                        <Box key={r.label} background="bg-surface" padding="200" borderRadius="200" borderColor="border" borderWidth="025">
+                          <Text as="p" variant="bodySm" tone="subdued">{r.label}</Text>
+                          <Text as="p" variant="bodySm" fontWeight="semibold">
+                            {r.before != null && r.after != null ? `${r.before} → ${r.after}` : r.after ?? r.before}
+                          </Text>
+                        </Box>
+                      ))}
+                    </InlineGrid>
+                  </BlockStack>
                 )}
               </BlockStack>
             </Box>

@@ -70,6 +70,7 @@ function auditEntry(id: string): AuditVM {
     marginBasisLabel: "No booked margin",
     costLineage: [],
     why: "Manual — dashboard",
+    stateDiff: [],
   };
 }
 

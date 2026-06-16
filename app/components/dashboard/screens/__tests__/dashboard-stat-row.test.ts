@@ -82,6 +82,7 @@ function auditEntry(
     marginBasisLabel: "No booked margin",
     costLineage: [],
     why: "Manual — dashboard",
+    stateDiff: [],
   };
 }
 
