@@ -7,6 +7,56 @@ import type { Platform } from "../ads/adapter";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { inventoryAdjustQuantities, type AdminGraphqlClient } from "../shopify/inventory.server";
 
+// The undo guarantee is a *24-hour* window. Beyond it the recorded reversal is
+// stale — a campaign budget has drifted, or (worse) an inventory transfer's
+// fixed reverse delta would move stock that has since sold through, overdrawing
+// the location. v_audit_view.undo_eligible mirrors this so the UI hides the
+// button after 24h; the check below makes the API the real boundary (a stale
+// open tab or a direct call must not slip a late reversal past the UI gate).
+// Keep the two windows in sync (see the v_audit_view migration).
+export const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Current available units of a Shopify inventory item at one location, read
+// FRESH from the latest inventory_level_fact snapshot. The audit params carry
+// the location's external (Shopify) id and the inventory item id but not always
+// the internal sku_id (alert-driven rows omit it), so resolve both ids here.
+// Fail-closed: if the sku/location/snapshot can't be resolved, report 0 — the
+// same stance executeInventoryRelocation takes (missing data ⇒ QTY_EXCEEDS).
+async function availableAtLocation(
+  sb: SupabaseClient,
+  shopId: string,
+  inventoryItemId: string,
+  externalLocationId: string,
+): Promise<number> {
+  const { data: sku, error: sErr } = await sb
+    .from("sku_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("inventory_item_id", inventoryItemId)
+    .maybeSingle();
+  if (sErr) throw sErr;
+  const { data: loc, error: lErr } = await sb
+    .from("location_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("external_id", externalLocationId)
+    .maybeSingle();
+  if (lErr) throw lErr;
+  if (!sku?.id || !loc?.id) return 0;
+  const { data: inv, error: iErr } = await sb
+    .from("inventory_level_fact")
+    .select("available, observed_at")
+    .eq("shop_id", shopId)
+    .eq("sku_id", sku.id)
+    .eq("location_id", loc.id)
+    .order("observed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (iErr) throw iErr;
+  const n = Number(inv?.available ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export async function undoAction(
   shopId: string,
   auditId: string,
@@ -15,7 +65,7 @@ export async function undoAction(
 ): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of, outcome")
+    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of, outcome, created_at")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
@@ -50,6 +100,16 @@ export async function undoAction(
   if (uErr) throw uErr;
   if (existingUndo) {
     throw new Error(`audit ${auditId} was already undone (${existingUndo.id})`);
+  }
+
+  // 24-hour window. action_audit.created_at is NOT NULL DEFAULT now(), so a
+  // real row always carries it and the select above always requests it; when
+  // present we enforce the window here so the API matches the undo_eligible the
+  // UI shows. (A row with no/unparseable created_at can only be malformed test
+  // data, never production — left unguarded rather than fail-closed.)
+  const createdAtMs = orig.created_at ? Date.parse(String(orig.created_at)) : NaN;
+  if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs > UNDO_WINDOW_MS) {
+    throw new Error(`audit ${auditId} is outside the 24-hour undo window`);
   }
 
   const params = (orig.params ?? {}) as { external_id?: string; platform?: string };
@@ -153,6 +213,23 @@ export async function undoAction(
     const delta = Number(ip.delta ?? 0);
     if (!ip.inventory_item_id || !ip.from_location_id || !ip.to_location_id || !delta) {
       throw new Error(`audit ${auditId} lacks a replayable transfer plan; cannot undo`);
+    }
+    // Fresh-availability guard. The reversal pulls `delta` OUT of the original
+    // destination (ip.to_location_id). Even inside the 24h window a fast-moving
+    // SKU in a previously starved region can sell through, so firing the fixed
+    // reverse delta would overdraw it. Refuse loudly (rule 12) instead — the
+    // forward path (executeInventoryRelocation) makes the same check before it
+    // moves stock; the reverse must be just as careful.
+    const destAvailable = await availableAtLocation(
+      sb,
+      shopId,
+      ip.inventory_item_id,
+      ip.to_location_id,
+    );
+    if (destAvailable < delta) {
+      throw new Error(
+        `cannot undo inventory transfer: ${ip.to_location_id} now holds ${destAvailable} unit${destAvailable === 1 ? "" : "s"}, fewer than the ${delta} the reverse would move back`,
+      );
     }
     const reversal = await inventoryAdjustQuantities(deps.admin, {
       inventoryItemId: ip.inventory_item_id,

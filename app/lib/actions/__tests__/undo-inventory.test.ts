@@ -34,26 +34,36 @@ function mockSb(
     data: { id: "audit-undo-1" },
     error: null,
   },
+  // Current available at the original DESTINATION (the reverse transfer's
+  // source). Defaults to plenty so existing tests exercise the happy path.
+  opts: { destAvailable?: number } = {},
 ) {
-  const single = vi.fn(async () => insertResult);
-  const builder: Record<string, unknown> = {};
-  for (const m of ["eq", "update", "insert", "order", "limit"]) {
-    builder[m] = vi.fn(() => builder);
-  }
-  // The builder is shared across from() calls, so key maybeSingle on the most
-  // recent select arg: the double-undo guard probes with select("id") and must
-  // see no prior undo, while the full-column orig lookup gets the orig row.
-  let lastSelect = "";
-  builder.select = vi.fn((cols: string) => {
-    lastSelect = cols;
+  const destAvailable = opts.destAvailable ?? 9999;
+  // Table-aware: the reverse-transfer freshness guard resolves the destination
+  // stock via sku_dim → location_dim → inventory_level_fact, so each table
+  // answers its own maybeSingle. action_audit still keys on the last select():
+  // the double-undo probe uses select("id"); the orig lookup uses the full list.
+  const from = vi.fn((table: string) => {
+    const builder: Record<string, unknown> = {};
+    for (const m of ["eq", "update", "insert", "order", "limit"]) {
+      builder[m] = vi.fn(() => builder);
+    }
+    let lastSelect = "";
+    builder.select = vi.fn((cols: string) => {
+      lastSelect = cols;
+      return builder;
+    });
+    builder.maybeSingle = vi.fn(async () => {
+      if (table === "sku_dim") return { data: { id: "sku-1" }, error: null };
+      if (table === "location_dim") return { data: { id: "loc-int-2" }, error: null };
+      if (table === "inventory_level_fact")
+        return { data: { available: destAvailable, observed_at: "2026-06-15T00:00:00Z" }, error: null };
+      return { data: lastSelect === "id" ? null : orig, error: null };
+    });
+    builder.single = vi.fn(async () => insertResult);
     return builder;
   });
-  builder.maybeSingle = vi.fn(async () => ({
-    data: lastSelect === "id" ? null : orig,
-    error: null,
-  }));
-  builder.single = single;
-  return { from: vi.fn(() => builder) } as never;
+  return { from } as never;
 }
 
 const ADMIN = { graphql: vi.fn() };
@@ -105,6 +115,25 @@ describe("undoAction for reallocate_inventory", () => {
     );
     // The reversal really fired — the error must say so instead of inviting a retry.
     expect(inventoryAdjustQuantities).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the reverse transfer when the destination sold through (would overdraw)", async () => {
+    // Within 24h the merchant transferred 40 into Location/2, but it has since
+    // sold down to 10 — firing the fixed reverse delta of 40 would drive it to
+    // -30. Refuse loudly (symmetric with the forward path's availability check)
+    // instead of overdrawing the location.
+    const sb = mockSb(ORIG, undefined, { destAvailable: 10 });
+    await expect(
+      undoAction("shop-1", "audit-1", sb, { admin: ADMIN }),
+    ).rejects.toThrow(/holds 10|fewer|available|overdraw/i);
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("fires the reverse transfer when the destination still holds enough", async () => {
+    const sb = mockSb(ORIG, undefined, { destAvailable: 40 }); // exactly the delta
+    const res = await undoAction("shop-1", "audit-1", sb, { admin: ADMIN });
+    expect(inventoryAdjustQuantities).toHaveBeenCalledTimes(1);
+    expect(res.id).toBe("audit-undo-1");
   });
 
   it("does not require an ads adapter for inventory undo", async () => {
