@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
+import { parsePeriodTotalForm, parseManualOverrideForm } from "../app.settings";
 
 // Mock out server-side modules that fail in test environment (no env vars,
 // no Shopify SDK initialisation) so we can import the pure helpers.
+// vi.mock is hoisted above imports by vitest, so the mocks still apply.
 vi.mock("../../shopify.server", () => ({
   authenticate: { admin: vi.fn() },
 }));
@@ -26,8 +28,6 @@ vi.mock("../../lib/ship-cost/inputs.server", () => ({
 vi.mock("../../lib/ship-cost/shop-country.server", () => ({
   getShopCountry: vi.fn().mockResolvedValue(null),
 }));
-
-import { parsePeriodTotalForm, parseManualOverrideForm } from "../app.settings";
 
 const fd = (o: Record<string, string>) => {
   const f = new FormData();

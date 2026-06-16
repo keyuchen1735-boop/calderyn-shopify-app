@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "../inputs.server";
 import { makeFakeSupabase } from "./helpers";
+import { runShipCostResolution } from "../runner.server";
 
 vi.mock("../runner.server", () => ({ runShipCostResolution: vi.fn().mockResolvedValue(undefined) }));
-import { runShipCostResolution } from "../runner.server";
 
 describe("saveTypedPeriodTotal", () => {
   it("inserts a typed period row and re-resolves", async () => {
