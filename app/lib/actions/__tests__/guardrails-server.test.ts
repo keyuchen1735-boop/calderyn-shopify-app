@@ -7,7 +7,8 @@ const CAMP = "11111111-1111-1111-1111-111111111111";
 
 const config = {
   autopilot_enabled: true, autopilot_daily_action_cap: 3, autopilot_min_spend_cents: 20000,
-  autopilot_max_budget_cut_pct: 50, dollar_impact_cap_without_2fa: 10000, cooldown_minutes_per_campaign: 30,
+  autopilot_max_budget_cut_pct: 50, autopilot_max_budget_increase_pct: 20, autopilot_max_daily_budget_cents: null,
+  dollar_impact_cap_without_2fa: 10000, cooldown_minutes_per_campaign: 30,
   business_hours_only: false, business_hours_start_utc: 14, business_hours_end_utc: 0,
 };
 
@@ -132,5 +133,15 @@ describe("checkGuardrails", () => {
       dollarImpactCents: 500, campaignSpendCents: 50000,
     }, sb);
     expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
+  });
+
+  it("loads the increase cap and blocks an over-cap increase", async () => {
+    const sb = fakeSb({ todayCount: 0, lastActionAtIso: null });
+    const r = await checkGuardrails(SHOP, {
+      kind: "increase_campaign_budget", campaignId: CAMP,
+      dollarImpactCents: 10000, campaignSpendCents: 50000,
+      currentBudgetCents: 10000, newBudgetCents: 13000,
+    }, sb);
+    expect(r).toEqual({ allowed: false, reason: "budget increase exceeds max" });
   });
 });
