@@ -67,6 +67,11 @@ _SKIP_REASONS: dict[str, str] = {
     "campaign_below_breakeven": (
         "needs full attribution_fact + order_line_fact COGS chain (Phase A)"
     ),
+    "campaign_scaling_opportunity": (
+        "needs a 'winning' campaign_grade_fact + budgeted ad_campaign_dim seed, "
+        "not the shared stockout seed; covered directly by "
+        "test_detector_campaign_scaling_opportunity.py (seed_scale_scenario)"
+    ),
 }
 
 
