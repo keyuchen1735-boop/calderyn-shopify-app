@@ -11,11 +11,13 @@ describe("renderPilotEmail", () => {
     expect(html).toContain("Jane");
     expect(html).toContain("Acme");
   });
-  it("uses an absolute https logo URL and the real install CTA", () => {
+  it("wires the real install CTA and ships no images (text-first, less promotional)", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).toContain(`${base}/pilot-mark-white.png`);
     expect(html).toContain("https://apps.shopify.com/calderynextension");
     expect(html).not.toContain("assets/calderyn-mark"); // no leftover local paths
+    // An image-free email reads as a personal note, not a marketing blast → Primary, not Promotions.
+    expect(html).not.toMatch(/<img\b/);
+    expect(html).not.toContain("pilot-mark-white.png");
   });
   it("omits the top bar — no header mark or Beta pilot tag", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
@@ -35,12 +37,18 @@ describe("renderPilotEmail", () => {
     expect(out.subject).toBe("You're in, <b> — your free Calderyn pilot");
     expect(out.text).toContain("https://apps.shopify.com/calderynextension");
   });
-  it("ships a desktop (File 1) + mobile (File 2) layout toggled by a width media query", () => {
+  it("is a single fluid column at email width — robust without media queries", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).toContain('class="cd-desk"');
-    expect(html).toContain('class="cd-mob"');
-    expect(html).toContain("@media only screen and (max-width:600px)");
-    expect(html).toContain("max-width:1100px"); // desktop is fluid, fills up to ~1100px (File 1)
+    // One layout, not a desktop/mobile pair toggled by a query: clients that strip
+    // <style>/media queries (e.g. Gmail on non-Google accounts) no longer crush a
+    // two-column hero into the phone width. The alert card stacks below the headline.
+    expect(html).not.toContain('class="cd-desk"');
+    expect(html).not.toContain('class="cd-mob"');
+    expect(html).toContain("max-width:600px"); // standard single-column email width
+    expect(html).not.toContain("max-width:1100px");
+    // No side-by-side hero columns: the card is a full-width row, not an inline-block
+    // column wrapped in an MSO ghost table.
+    expect(html).not.toMatch(/display:inline-block; vertical-align:middle; width:100%; max-width:\d+px/);
   });
   it("falls back to generic copy when fields are blank", () => {
     const out = renderPilotEmail({ firstName: "", storeName: "", baseUrl: base, unsubscribeUrl: unsub });
@@ -48,10 +56,17 @@ describe("renderPilotEmail", () => {
     expect(out.html).toContain("there");
     expect(out.html).toContain("your store");
   });
-  it("vertically centers the desktop hero alert card against the taller copy column", () => {
+  it("includes the product-hook alert card (the 'Running ads for a sold-out product' demo)", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    // right column (44%) holds the shorter alert card; middle-align so it sits centered
-    expect(html).toContain('width="44%" style="vertical-align:middle;"');
+    expect(html).toContain("Running ads for a sold-out product");
+    expect(html).toContain("Pause campaign");
+    expect(html).toContain("$3,150");
+  });
+  it("keeps a single primary CTA — no second pill button competing with Install", () => {
+    const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
+    // Feedback survives as a quiet inline text link, not a bordered button.
+    expect(html).not.toContain("border:1.5px solid #24556E; border-radius:999px");
+    expect(html).toContain("https://calderyncompany.com/pilot-feedback");
   });
   it("shows Install → Connect → Save as an arrow-linked step flow", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
