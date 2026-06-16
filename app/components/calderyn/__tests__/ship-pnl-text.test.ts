@@ -17,9 +17,9 @@ describe("embedded ShipPnlText", () => {
     expect(html).toMatch(/critical/i);
   });
 
-  it("renders $0 with a subdued tone when there is no P&L (null)", () => {
+  it("renders a subdued dash (no data) when ship P&L is null", () => {
     const html = renderToString(h(ShipPnlText, { cents: null }));
-    expect(html).toContain("$0");
+    expect(html).toContain("—");
     expect(html).toMatch(/subdued/i);
   });
 });

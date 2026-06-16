@@ -290,9 +290,10 @@ export default function SKUs() {
     return sortDir === "asc" ? arr : arr.reverse();
   }, [filtered, sortKey, sortDir]);
 
-  // IndexTable sort ↔ our SortKey. null marks an unsortable column.
+  // IndexTable sort ↔ our SortKey. null marks an unsortable column. Kept in
+  // lockstep with `headings`/`sortable` — the index-6 null is the Ship P&L column.
   const SORT_COLUMNS: (SortKey | null)[] = [
-    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null,
+    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {

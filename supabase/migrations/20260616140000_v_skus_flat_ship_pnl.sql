@@ -7,7 +7,10 @@
 -- quantity share of the order. Effective ship cost honors the merchant's manual
 -- override (ship_cost_manual_cents) when present, else the resolved
 -- ship_cost_cents. Positive = shipping pays for itself; negative = free shipping
--- is bleeding on this SKU. NULL when the SKU has no shipped orders in-window.
+-- is bleeding on this SKU. Only orders with a KNOWN ship cost contribute — an
+-- unresolved cost is never treated as $0 (that would fake a profit and hide
+-- leakage). NULL when the SKU has no in-window order with a resolved ship cost,
+-- so the column renders "no data" rather than a misleading $0.
 --
 -- Same anchor + 30-day window as velocity_30d; allocation basis (line quantity
 -- share) matches how velocity is derived. Appends ship_pnl_cents to the existing
@@ -48,7 +51,7 @@ velocity_30d as (
          ol.sku_id,
          sum(ol.quantity)::numeric / 30.0 as units_per_day
     from order_line_fact ol
-    join order_fact o on o.id = ol.order_id
+    join order_fact o on o.id = ol.order_id and o.shop_id = ol.shop_id
     join max_order_day m on m.shop_id = ol.shop_id
    where o.created_at_source > (m.anchor_ts - interval '30 days')
      and o.created_at_source <= m.anchor_ts
@@ -84,8 +87,11 @@ sku_worst_prov as (
 -- quantity share; summed per SKU. order_qty gives each order's total quantity so
 -- a line's share is line.quantity / order_qty.
 order_qty as (
+  -- denominator over the SAME line population the numerator sums (sku_id not
+  -- null), so per-SKU shares of an order's P&L total to 100%.
   select order_id, sum(quantity)::numeric as total_qty
     from order_line_fact
+   where sku_id is not null
    group by order_id
 ),
 ship_pnl_30d as (
@@ -93,7 +99,7 @@ ship_pnl_30d as (
          ol.sku_id,
          round(sum(
            ( coalesce(o.shipping_cents, 0)
-             - coalesce(o.ship_cost_manual_cents, o.ship_cost_cents, 0) )::numeric
+             - coalesce(o.ship_cost_manual_cents, o.ship_cost_cents) )::numeric
            * ol.quantity / nullif(oq.total_qty, 0)
          ))::bigint as ship_pnl_cents
     from order_line_fact ol
@@ -103,6 +109,9 @@ ship_pnl_30d as (
    where o.created_at_source > (m.anchor_ts - interval '30 days')
      and o.created_at_source <= m.anchor_ts
      and ol.sku_id is not null
+     -- only orders whose true ship cost is KNOWN contribute; never treat an
+     -- unresolved cost as $0 (would fake a profit). SKUs with no such order → NULL.
+     and coalesce(o.ship_cost_manual_cents, o.ship_cost_cents) is not null
    group by ol.shop_id, ol.sku_id
 )
 select

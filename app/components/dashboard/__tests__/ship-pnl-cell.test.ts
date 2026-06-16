@@ -17,9 +17,9 @@ describe("dashboard ShipPnlCell", () => {
     expect(html).toContain("var(--red)");
   });
 
-  it("renders a muted $0 when there is no shipping P&L (null)", () => {
+  it("renders a muted dash (no data) when ship P&L is null", () => {
     const html = renderToString(h(ShipPnlCell, { cents: null }));
-    expect(html).toContain("$0");
+    expect(html).toContain("—");
     expect(html).toContain("var(--text-2)");
   });
 });

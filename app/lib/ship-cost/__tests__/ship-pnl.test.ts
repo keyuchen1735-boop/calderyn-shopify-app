@@ -14,8 +14,13 @@ describe("formatShipPnl", () => {
     expect(formatShipPnl(0)).toEqual({ label: "$0", tone: "zero" });
   });
 
-  it("treats null (no shipped orders in-window) as $0 / 'zero'", () => {
-    expect(formatShipPnl(null)).toEqual({ label: "$0", tone: "zero" });
+  it("renders no-data (null = no in-window order with a resolved cost) as a dash", () => {
+    expect(formatShipPnl(null)).toEqual({ label: "—", tone: "zero" });
+  });
+
+  it("rounds magnitude symmetrically across sign (no loss-understatement bias)", () => {
+    expect(formatShipPnl(-150)).toEqual({ label: "-$2", tone: "neg" });
+    expect(formatShipPnl(150)).toEqual({ label: "+$2", tone: "pos" });
   });
 
   it("rounds a sub-dollar magnitude to whole dollars and collapses it to $0", () => {
