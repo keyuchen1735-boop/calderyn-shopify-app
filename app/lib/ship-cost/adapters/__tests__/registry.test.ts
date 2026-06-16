@@ -88,3 +88,16 @@ describe("SHIP_ADAPTERS registry", () => {
     expect(SHIP_ADAPTERS.some((a) => a.provider === "easypost" && a.integrationKind === "easypost_ship")).toBe(true);
   });
 });
+
+describe("SHIP_ADAPTERS registry — Shippo (Phase 2)", () => {
+  it("registers the Shippo adapter with the shippo_ship kind", () => {
+    expect(SHIP_ADAPTERS.some((a) => a.provider === "shippo" && a.integrationKind === "shippo_ship")).toBe(true);
+  });
+
+  it("routes a shippo_ship shop to the Shippo adapter via shipAdaptersForShops", async () => {
+    const { sb } = fakeSb([{ shop_id: "shopShippo", kind: "shippo_ship", sync_status: "ready" }]);
+    const work = await shipAdaptersForShops(sb);
+    expect(work).toHaveLength(1);
+    expect(work[0].adapter.provider).toBe("shippo");
+  });
+});

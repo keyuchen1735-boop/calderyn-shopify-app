@@ -10,7 +10,7 @@
 import type { Integration } from "./types";
 
 /** Providers that have a wired OAuth connect flow (startOAuth handles these). */
-export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks"] as const;
+export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 /**
@@ -54,6 +54,7 @@ const PROVIDER_TO_KIND: Record<string, string> = {
   tiktok: "tiktok_ads",
   // Ship-cost connectors use the `<provider>_ship` kind (contract C9).
   easypost: "easypost_ship",
+  shippo: "shippo_ship",
 };
 
 /**
@@ -82,6 +83,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   tiktok: "TikTok Ads",
   quickbooks: "QuickBooks",
   easypost: "EasyPost",
+  shippo: "Shippo",
 };
 
 /**
@@ -113,6 +115,7 @@ const KIND_TO_PROVIDER: Record<string, string> = {
   google_ads: "google",
   tiktok_ads: "tiktok",
   easypost_ship: "easypost",
+  shippo_ship: "shippo",
 };
 
 /** Map a persisted integration `kind` to its OAuth `provider` short name. */

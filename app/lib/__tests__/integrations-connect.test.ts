@@ -198,6 +198,58 @@ describe("integrations.disconnect (EasyPost)", () => {
   });
 });
 
+describe("integrations.disconnect (Shippo — Phase 2)", () => {
+  it("clears BOTH the shop_integrations row and the NON-EXPIRING OAuth token (Plan 02 §11 #6)", async () => {
+    // Shippo's OAuth token never expires, so disconnect MUST delete the credential —
+    // unlike the rotating ad/QBO tokens, leaving it would orphan a forever-valid token.
+    const { sb, captured } = makeFakeSupabase({
+      shop_integrations: [{ shop_id: "shop-1", kind: "shippo_ship", sync_status: "ready" }],
+      integration_credentials: [
+        { shop_id: "shop-1", kind: "shippo_ship", access_token_encrypted: "x:y:z" },
+      ],
+    });
+    currentSb = sb;
+    const client = calderynClient("x.myshopify.com");
+
+    await client.integrations.disconnect("shippo");
+
+    const tables = captured.deletes.map((d) => d.table).sort();
+    expect(tables).toEqual(["integration_credentials", "shop_integrations"]);
+    // Both deletes target the shippo_ship kind (not the bare "shippo" provider string).
+    for (const d of captured.deletes) {
+      expect(d.filters).toMatchObject({ shop_id: "shop-1", kind: "shippo_ship" });
+    }
+  });
+});
+
+describe("integrations.list includes Shippo (Phase 2 — dashboard parity)", () => {
+  it("defaults to a disconnected Shippo entry even with no rows", async () => {
+    const { sb } = makeFakeSupabase({ shop_integrations: [] });
+    currentSb = sb;
+    const out = await calderynClient("x.myshopify.com").integrations.list();
+    expect(out.shippo_ship).toMatchObject({ name: "Shippo", status: "disconnected" });
+  });
+
+  it("surfaces a 'ready' Shippo row as connected", async () => {
+    const { sb } = makeFakeSupabase({
+      shop_integrations: [
+        {
+          shop_id: "shop-1",
+          kind: "shippo_ship",
+          sync_status: "ready",
+          connected_at: "2026-06-16T00:00:00Z",
+          external_account_id: "acct-9",
+          sync_error: null,
+        },
+      ],
+    });
+    currentSb = sb;
+    const out = await calderynClient("x.myshopify.com").integrations.list();
+    expect(out.shippo_ship.status).toBe("connected");
+    expect(out.shippo_ship.name).toBe("Shippo");
+  });
+});
+
 describe("integrations.list includes EasyPost", () => {
   it("defaults to a disconnected EasyPost entry even with no rows", async () => {
     const { sb } = makeFakeSupabase({ shop_integrations: [] });

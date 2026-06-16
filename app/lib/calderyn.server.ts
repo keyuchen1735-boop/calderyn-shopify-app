@@ -28,6 +28,7 @@ import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
 import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.server";
+import { buildAuthUrl as buildShippoAuthUrl } from "./shippo/oauth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
@@ -65,7 +66,7 @@ export type ExecuteActionOpts = {
 
 // OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
 // startOAuth handles the OAuth set; connectApiKey handles the API-key set.
-export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks" | "easypost";
+export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks" | "easypost" | "shippo";
 
 export type OnboardingState = { step: number; done: boolean };
 
@@ -230,6 +231,7 @@ const INTEGRATION_LOGO_CLS: Record<string, string> = {
   tiktok_ads: "logo-tiktok",
   quickbooks: "logo-quickbooks",
   easypost_ship: "logo-easypost",
+  shippo_ship: "logo-shippo",
 };
 
 const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
@@ -239,6 +241,7 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
   tiktok_ads: "TikTok Ads",
   quickbooks: "QuickBooks",
   easypost_ship: "EasyPost",
+  shippo_ship: "Shippo",
 };
 
 /**
@@ -1012,6 +1015,9 @@ export function calderynClient(shop: string) {
             // Ship-cost connector (API-key paste, contract C8). Single source both
             // surfaces read; the dashboard renders it read-only via adaptIntegrations.
             easypost_ship: { name: "EasyPost", status: "disconnected", detail: "Not connected", logoCls: "logo-easypost" },
+            // Ship-cost connector #2 (Shippo, co-branded OAuth, contract C8). Same
+            // single source both surfaces read; dashboard renders it read-only.
+            shippo_ship: { name: "Shippo", status: "disconnected", detail: "Not connected", logoCls: "logo-shippo" },
           };
 
           for (const r of data ?? []) {
@@ -1114,6 +1120,27 @@ export function calderynClient(shop: string) {
           const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
+        if (provider === "shippo") {
+          // Ship-cost connector #2 (Plan 02 §5.1). Co-branded OAuth — the merchant
+          // owns the Shippo account + billing. client_id/secret + redirect_uri require
+          // Shippo partner-program approval (HARD GATE, Plan 02 §3.2/§11).
+          const clientId = process.env.SHIPPO_CLIENT_ID;
+          const clientSecret = process.env.SHIPPO_CLIENT_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!clientId || !clientSecret || !appUrl) {
+            throw new CalderynError({
+              code: "SHIPPO_NOT_CONFIGURED",
+              status: 500,
+              message:
+                "Shippo OAuth is not configured (SHIPPO_CLIENT_ID/SHIPPO_CLIENT_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/shippo`;
+          // Same single-use nonce pattern as Meta/Google; consumed once at /auth/shippo.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId, { host, shop });
+          return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
+        }
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
@@ -1204,19 +1231,24 @@ export function calderynClient(shop: string) {
                   ? "tiktok_ads"
                   : provider === "easypost"
                     ? "easypost_ship"
-                    : provider;
+                    : provider === "shippo"
+                      ? "shippo_ship"
+                      : provider;
           const { error } = await supabase
             .from("shop_integrations")
             .delete()
             .eq("shop_id", shopId)
             .eq("kind", kind);
           if (error) throw error;
-          // For an API-key provider (EasyPost), Disconnect means the merchant wants
-          // the pasted key gone too — so the cron's connect() finds no credential and
-          // marks the shop skipped, not errored. (OAuth providers keep their token
-          // row; re-connect overwrites it.) Surface a failure here rather than leaving
+          // For the ship-cost connectors, Disconnect means the merchant wants the
+          // stored credential gone too — so the cron's connect() finds no credential
+          // and marks the shop skipped, not errored. EasyPost: the pasted API key.
+          // Shippo: the co-branded OAuth token, which NEVER expires (Plan 02 §11 #6) —
+          // leaving it orphaned would keep a forever-valid token at rest, so the delete
+          // is mandatory here, not optional like the rotating ad/QBO tokens (those keep
+          // their row; re-connect overwrites it). Surface a failure rather than leaving
           // an orphaned credential silently behind (rule 12).
-          if (kind === "easypost_ship") {
+          if (kind === "easypost_ship" || kind === "shippo_ship") {
             const { error: credErr } = await supabase
               .from("integration_credentials")
               .delete()

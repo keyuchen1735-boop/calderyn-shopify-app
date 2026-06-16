@@ -5,8 +5,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ShipCostAdapter } from "./adapter";
 import { easyPostAdapter } from "./easypost.server";
+import { shippoAdapter } from "./shippo.server";
 
-export const SHIP_ADAPTERS: ShipCostAdapter[] = [easyPostAdapter]; // + shippoAdapter in Phase 2
+export const SHIP_ADAPTERS: ShipCostAdapter[] = [easyPostAdapter, shippoAdapter];
 
 export const BY_KIND = new Map<string, ShipCostAdapter>(
   SHIP_ADAPTERS.map((a) => [a.integrationKind, a]),
