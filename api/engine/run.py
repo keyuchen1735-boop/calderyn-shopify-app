@@ -2,6 +2,10 @@
 
 Body: {"shop_id": "<uuid>"}; requires `Authorization: Bearer $CRON_SECRET`.
 Delegates all logic to _core.handle so it stays unit-testable.
+
+Reserved URL: this function owns /api/engine/run. No Remix route may share it —
+a route at the same URL collides at the build-output function dir and 501s every
+route (2026-06-16 outage). New TS detectors go to /api/detectors/run instead.
 """
 from __future__ import annotations
 

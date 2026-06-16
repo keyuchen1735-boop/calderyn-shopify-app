@@ -1,9 +1,16 @@
-// POST { shop_id } → run all detectors for one shop, return { shop_id, alert_ids }.
+// POST /api/detectors/run  { shop_id } → run the TS server detectors for one
+// shop, return { shop_id, alert_ids }.
 //
-// Called exclusively by cron.detect (which does the shop-batching and per-shop
-// error isolation). Auth: same CRON_SECRET bearer check as every other cron
-// endpoint.  Only POST is accepted; GET returns 405 so misconfigured probes
-// don't trigger detection passes.
+// URL matters: this MUST NOT live at /api/engine/run. That path is owned by the
+// Python serverless function api/engine/run.py — a Remix route there compiles to
+// the same Vercel function directory (api/engine/run.func), which drops the Node
+// server bundle so every route 501s ("Unsupported method ('GET')"). That exact
+// collision was the 2026-06-16 production outage. Keep this off /api/engine/*.
+//
+// Called by cron.detect (alongside the Python pipeline at /api/engine/run), which
+// does the shop-batching and per-shop error isolation. Auth: same CRON_SECRET
+// bearer check as every other cron endpoint.  Only POST is accepted; GET returns
+// 405 so misconfigured probes don't trigger detection passes.
 //
 // Detector registry: add a new server detector here. Each entry must:
 //   - accept (SupabaseClient, shopId) and return Promise<number> (count upserted)
@@ -57,7 +64,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     totalUpserted += n;
   } catch (err) {
     detectorErrors.push("free_shipping_leakage");
-    console.error(`[engine/run] free_shipping_leakage failed for shop ${shopId}`, err);
+    console.error(`[detectors/run] free_shipping_leakage failed for shop ${shopId}`, err);
   }
 
   if (detectorErrors.length > 0) {

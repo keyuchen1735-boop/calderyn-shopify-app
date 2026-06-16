@@ -47,16 +47,23 @@ describe("cron.detect loader", () => {
     expect(res.status).toBe(401);
   });
 
-  it("calls the engine through the public app origin, not the request origin", async () => {
+  it("calls both detection engines through the public app origin", async () => {
     // Vercel cron invokes this route on the deployment URL, which deployment
-    // protection walls off from the self-fetch — the engine call must go
-    // through the public app origin instead.
+    // protection walls off from the self-fetch — engine calls must go through
+    // the public app origin instead. Detection spans the Python pipeline
+    // (/api/engine/run) and the TS detector registry (/api/detectors/run).
     vi.stubEnv("SHOPIFY_APP_URL", "https://app.example.com");
     getSupabase.mockReturnValue(fakeSb([SHOP_A]));
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ shop_id: SHOP_A, alert_ids: ["a1"] }), {
-        status: 200,
-      }),
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            shop_id: SHOP_A,
+            alert_ids: String(url).endsWith("/api/engine/run") ? ["a1"] : ["b1"],
+          }),
+          { status: 200 },
+        ),
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -67,8 +74,13 @@ describe("cron.detect loader", () => {
       "https://app.example.com/api/engine/run",
       expect.anything(),
     );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.example.com/api/detectors/run",
+      expect.anything(),
+    );
     expect(body.detected).toEqual([SHOP_A]);
-    expect(body.alertCount).toBe(1);
+    // alertCount sums across both engines (1 alert from each).
+    expect(body.alertCount).toBe(2);
   });
 
   it("falls back to the request origin when SHOPIFY_APP_URL is unset", async () => {
@@ -87,6 +99,10 @@ describe("cron.detect loader", () => {
       "https://deployment-url.vercel.app/api/engine/run",
       expect.anything(),
     );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://deployment-url.vercel.app/api/detectors/run",
+      expect.anything(),
+    );
   });
 
   it("records an engine HTTP failure without aborting the run", async () => {
@@ -95,6 +111,29 @@ describe("cron.detect loader", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(new Response("Authentication Required", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.errors).toEqual([SHOP_A]);
+    expect(body.detected).toEqual([]);
+  });
+
+  it("errors the shop when the second engine fails after the first succeeds", async () => {
+    // A failure in EITHER engine marks the shop errored — it is not silently
+    // counted as a success with only half of its detectors having run.
+    vi.stubEnv("SHOPIFY_APP_URL", "https://app.example.com");
+    getSupabase.mockReturnValue(fakeSb([SHOP_A]));
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(
+        String(url).endsWith("/api/detectors/run")
+          ? new Response("boom", { status: 500 })
+          : new Response(JSON.stringify({ shop_id: SHOP_A, alert_ids: ["a1"] }), {
+              status: 200,
+            }),
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const res = await loader({ request: req("Bearer s3cret") } as never);
