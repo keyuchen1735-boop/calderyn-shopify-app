@@ -293,7 +293,7 @@ export default function SKUs() {
   // IndexTable sort ↔ our SortKey. null marks an unsortable column. Kept in
   // lockstep with `headings`/`sortable` — the index-6 null is the Ship P&L column.
   const SORT_COLUMNS: (SortKey | null)[] = [
-    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null, null,
+    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {
@@ -366,12 +366,11 @@ export default function SKUs() {
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
             { title: "Ship P&L", alignment: "end" },
-            { title: "Locations" },
             { title: "Main demand" },
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, false, true, true, true, false, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -461,9 +460,6 @@ export default function SKUs() {
                   <Text as="p" alignment="end">
                     <ShipPnlText cents={s.ship_pnl_cents} />
                   </Text>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                  <LocationCell locations={s.locations ?? {}} />
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   <DemandCell demand={s.demand} />
@@ -603,55 +599,6 @@ function SkuId({ id }: { id: string }) {
     <code className="cdn-skuid" title={id}>
       {display}
     </code>
-  );
-}
-
-function LocationCell({ locations }: { locations: Record<string, number> }) {
-  const entries = Object.entries(locations);
-  if (entries.length === 0) {
-    return (
-      <Text as="span" tone="subdued" variant="bodySm">
-        No locations
-      </Text>
-    );
-  }
-  // A compact "N locations" summary with the full per-location breakdown on hover
-  // (a single location shows its name + count inline). A Polaris Tooltip keeps it
-  // consistent with the rest of the app; `anyOut` flags that some location is at 0.
-  const sorted = [...entries].sort(([, a], [, b]) => b - a);
-  const anyOut = sorted.some(([, qty]) => qty === 0);
-  const summary =
-    sorted.length === 1
-      ? `${shortLoc(sorted[0][0])} · ${sorted[0][1].toLocaleString()}`
-      : `${sorted.length} locations`;
-  return (
-    <Tooltip
-      content={
-        <Box minWidth="180px">
-          <BlockStack gap="050">
-            {sorted.map(([loc, qty]) => (
-              <InlineStack key={loc} align="space-between" gap="400" wrap={false}>
-                <Text as="span" variant="bodySm">
-                  {loc}
-                </Text>
-                <Text
-                  as="span"
-                  variant="bodySm"
-                  tone={qty === 0 ? "critical" : undefined}
-                  fontWeight={qty === 0 ? "semibold" : undefined}
-                >
-                  <span className="cdn-tnum">{qty.toLocaleString()}</span>
-                </Text>
-              </InlineStack>
-            ))}
-          </BlockStack>
-        </Box>
-      }
-    >
-      <Text as="span" variant="bodySm" tone={anyOut ? "caution" : "subdued"}>
-        {summary}
-      </Text>
-    </Tooltip>
   );
 }
 

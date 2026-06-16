@@ -338,7 +338,6 @@
   .cd-grade-track { position: relative; height: 4px; background: var(--gray-bg); border-radius: 99px; margin-top: 8px; overflow: visible; }
   .cd-grade-fill { height: 100%; border-radius: 99px; transition: width 0.9s cubic-bezier(0.22, 1, 0.36, 1); }
   .cd-grade-be { position: absolute; top: -3px; width: 2px; height: 10px; background: var(--text-3); border-radius: 1px; }
-  .cd-locbar { display: flex; height: 7px; border-radius: 99px; overflow: hidden; background: var(--gray-bg); gap: 1px; }
 
   /* ============ predictor ============ */
   .cd-dim { display: flex; flex-direction: column; gap: 2px; }

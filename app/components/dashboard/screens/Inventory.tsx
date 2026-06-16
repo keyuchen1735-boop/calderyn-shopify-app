@@ -2,7 +2,7 @@
 // Ported from the inventory section of the prototype's screen-ops.jsx, wired to
 // the live data layer. Self-fetches SKUs via fetchSkus() (there is no app.skus).
 // Renders the prototype's inventory table: title, sku code, on-hand, days of
-// cover, velocity, a location distribution bar, and a status pill. Rows that map
+// cover, velocity, ship P&L, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
@@ -57,35 +57,6 @@ const SKU_STATUS: Record<string, { label: string; tone: PillTone }> = {
   misplaced: { label: "Wrong location", tone: "accent" },
   healthy: { label: "Healthy", tone: "success" },
 };
-
-/* ---------- Location distribution bar ---------- */
-function LocationBar({ locations }: { locations: Record<string, number> }) {
-  const total = Object.values(locations).reduce((s, v) => s + v, 0) || 1;
-  const colors = [
-    "var(--accent)",
-    "color-mix(in oklch, var(--accent) 65%, white)",
-    "color-mix(in oklch, var(--accent) 40%, white)",
-    "color-mix(in oklch, var(--accent) 22%, white)",
-  ];
-  return (
-    <div
-      className="cd-locbar"
-      title={Object.entries(locations)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(" · ")}
-    >
-      {Object.entries(locations).map(
-        ([k, v], i) =>
-          v > 0 && (
-            <div
-              key={k}
-              style={{ width: `${(v / total) * 100}%`, background: colors[i % colors.length] }}
-            ></div>
-          ),
-      )}
-    </div>
-  );
-}
 
 /* ---------- Screen ---------- */
 type Filter = "All" | "Needs attention" | "Healthy";
@@ -233,7 +204,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 52, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
-              <span style={{ width: 104 }}>By location</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
               <span style={{ width: 56, textAlign: "center" }}>Alerts</span>
@@ -306,9 +276,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       title="Shipping collected − true ship cost, last 30d"
                     >
                       <ShipPnlCell cents={s.ship_pnl_cents} />
-                    </span>
-                    <span style={{ width: 104 }}>
-                      <LocationBar locations={s.locations} />
                     </span>
                     <span style={{ width: 120 }}>
                       {s.demand ? (
@@ -388,8 +355,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         )}
       </Card>
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <CDIcon name="box" size={13} /> Location shading runs from your largest fulfillment center
-        down. Rows with an open alert are clickable; the alert count opens inline actions.
+        <CDIcon name="box" size={13} /> Rows with an open alert are clickable; the alert count opens inline actions.
       </p>
       {alertsFor && (
         <AlertActionsDialog
