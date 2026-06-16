@@ -4,6 +4,8 @@ import {
   suggestedTransferFromRow,
   locationsDetailFromRow,
   formatDemandUnits,
+  projectedStockoutDate,
+  formatStockoutDate,
   type SkuDemandViewRow,
 } from "../inventory-demand";
 
@@ -121,6 +123,79 @@ describe("formatDemandUnits", () => {
 
   it("groups thousands so large run-rates stay readable", () => {
     expect(formatDemandUnits(1500)).toBe("1,500 units sold/30d");
+  });
+});
+
+describe("projectedStockoutDate", () => {
+  // A fixed clock so the UTC date math is deterministic across machines/TZ.
+  const NOW = new Date("2026-06-16T00:00:00Z");
+
+  it("returns null when velocity is zero (no sales → no meaningful date)", () => {
+    expect(projectedStockoutDate(999, 0, NOW)).toBeNull();
+  });
+
+  it("returns null when velocity is negative", () => {
+    expect(projectedStockoutDate(5, -1, NOW)).toBeNull();
+  });
+
+  it("returns null when velocity is NaN", () => {
+    expect(projectedStockoutDate(5, Number.NaN, NOW)).toBeNull();
+  });
+
+  it("returns null when days of cover is non-finite (never an Invalid Date)", () => {
+    expect(projectedStockoutDate(Number.POSITIVE_INFINITY, 10, NOW)).toBeNull();
+    expect(projectedStockoutDate(Number.NaN, 10, NOW)).toBeNull();
+  });
+
+  it("projects whole days of cover onto the calendar (now + N days)", () => {
+    expect(projectedStockoutDate(3, 10, NOW)).toBe("2026-06-19");
+  });
+
+  it("carries the fractional part of cover into the same calendar day", () => {
+    // 3.2d from midnight = Jun 19 04:48 UTC → still Jun 19.
+    expect(projectedStockoutDate(3.2, 10, NOW)).toBe("2026-06-19");
+  });
+
+  it("rolls the calendar date when the fraction crosses midnight UTC", () => {
+    // 0.5d (12h) from 18:00 UTC = next day 06:00 UTC.
+    expect(projectedStockoutDate(0.5, 10, new Date("2026-06-16T18:00:00Z"))).toBe(
+      "2026-06-17",
+    );
+  });
+
+  it("returns today's date for a selling SKU already at zero cover", () => {
+    expect(projectedStockoutDate(0, 10, NOW)).toBe("2026-06-16");
+  });
+
+  it("projects an earlier date as cover falls", () => {
+    const soon = projectedStockoutDate(2, 10, NOW);
+    const later = projectedStockoutDate(20, 10, NOW);
+    expect(soon).not.toBeNull();
+    expect(later).not.toBeNull();
+    expect(soon! < later!).toBe(true);
+  });
+});
+
+describe("formatStockoutDate", () => {
+  const NOW = new Date("2026-06-16T00:00:00Z");
+
+  it("formats a same-year date as a short month + day (no year)", () => {
+    expect(formatStockoutDate("2026-06-19", NOW)).toBe("Jun 19");
+  });
+
+  it("does not drop a leading-zero day", () => {
+    expect(formatStockoutDate("2026-01-01", NOW)).toBe("Jan 1");
+  });
+
+  it("includes the year when the projection lands in a different year", () => {
+    // A 999-day-cover SKU projects years out — the bare 'Mar 5' would mislead.
+    expect(formatStockoutDate("2029-03-05", NOW)).toBe("Mar 5, 2029");
+  });
+
+  it("reads the calendar day from the ISO string in UTC (no off-by-one TZ shift)", () => {
+    // Re-parsing '2026-06-01' through local time in a negative-offset TZ would
+    // roll back to May 31; forcing UTC keeps it on Jun 1.
+    expect(formatStockoutDate("2026-06-01", NOW)).toBe("Jun 1");
   });
 });
 

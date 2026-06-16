@@ -45,6 +45,51 @@ export function formatDemandUnits(units30d: number): string {
   return `${units30d.toLocaleString("en-US")} ${noun} sold/30d`;
 }
 
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Calendar date a SKU is projected to hit zero, as an ISO `YYYY-MM-DD` string,
+ * or null when no meaningful date exists.
+ *
+ * Returns null when `velocity <= 0` (no recent sales → days-of-cover isn't
+ * meaningful; mirrors the `hasSales` gate the surfaces already use) or when
+ * `daysOfCover` is non-finite (guards against an Invalid Date / RangeError).
+ *
+ * Presentation policy lives HERE, not in SQL, so both inventory surfaces and
+ * the unit tests share one definition. The date is computed in UTC, so it can
+ * read ±1 day off the merchant's local calendar — acceptable for a projection,
+ * which is why surfaces render it with a "~" prefix.
+ */
+export function projectedStockoutDate(
+  daysOfCover: number,
+  velocity: number,
+  now = new Date(),
+): string | null {
+  if (!(velocity > 0)) return null;
+  if (!Number.isFinite(daysOfCover)) return null;
+  const target = new Date(now.getTime() + daysOfCover * MS_PER_DAY);
+  return target.toISOString().slice(0, 10);
+}
+
+/**
+ * Render a `projectedStockoutDate` ISO string as a compact label, e.g.
+ * "Jun 19". The year is appended only when the projection lands outside the
+ * current year (a 999-day-cover SKU projects years out, where a bare "Mar 5"
+ * would mislead). Parsed and formatted in UTC so the displayed calendar day
+ * matches the ISO string regardless of the viewer's timezone. Surfaces add
+ * their own "~" approximation prefix.
+ */
+export function formatStockoutDate(iso: string, now = new Date()): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  const sameYear = iso.slice(0, 4) === String(now.getUTCFullYear());
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function demandFromRow(r: SkuDemandViewRow): SkuDemand {
   return {
     region: r.main_demand_region,

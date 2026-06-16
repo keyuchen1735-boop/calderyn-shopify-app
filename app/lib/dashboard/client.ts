@@ -32,6 +32,7 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
 import type { CreativeScreenRun } from "~/lib/screener/types";
@@ -307,6 +308,7 @@ export function adaptSku(s: SKU): SkuVM {
     on_hand: s.on_hand,
     days_of_cover: s.days_of_cover,
     velocity: s.velocity,
+    projected_stockout: projectedStockoutDate(s.days_of_cover, s.velocity),
     locations: s.locations,
     status,
     sources: s.sources ?? [],

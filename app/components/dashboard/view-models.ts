@@ -6,6 +6,10 @@
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
+import type {
+  ShipCostSource,
+  ShipCostConfidence,
+} from "~/lib/ship-cost/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -87,6 +91,9 @@ export interface SkuVM {
   on_hand: number;
   days_of_cover: number;
   velocity: number;
+  /** Projected sell-out date (ISO `YYYY-MM-DD`); null when the SKU has no
+   * recent sales (days-of-cover isn't meaningful). Mirrors the extension. */
+  projected_stockout: string | null;
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];
@@ -110,8 +117,8 @@ export interface SkuVM {
   }>;
   /** Worst/lowest-confidence ship-cost provenance among this SKU's orders; null
    * until the resolver has run. Mirrors the Shopify-side SKU badge. */
-  ship_cost_source: import("~/lib/ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("~/lib/ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
 }
 
 export interface GuardrailVM {
