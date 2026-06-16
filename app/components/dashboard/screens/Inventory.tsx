@@ -11,6 +11,7 @@ import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { formatDemandUnits } from "~/lib/inventory-demand";
 import { money } from "../format";
+import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
 
@@ -231,6 +232,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 64, textAlign: "right" }}>On hand</span>
               <span style={{ width: 52, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
+              <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
               <span style={{ width: 104 }}>By location</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
@@ -293,6 +295,17 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       style={{ width: 64, textAlign: "right" }}
                     >
                       {s.velocity.toFixed(1)}/day
+                    </span>
+                    <span
+                      style={{
+                        width: 88,
+                        textAlign: "right",
+                        display: "flex",
+                        justifyContent: "flex-end",
+                      }}
+                      title="Shipping collected − true ship cost, last 30d"
+                    >
+                      <ShipPnlCell cents={s.ship_pnl_cents} />
                     </span>
                     <span style={{ width: 104 }}>
                       <LocationBar locations={s.locations} />

@@ -112,6 +112,10 @@ export interface SkuVM {
    * until the resolver has run. Mirrors the Shopify-side SKU badge. */
   ship_cost_source: import("~/lib/ship-cost/types").ShipCostSource | null;
   ship_cost_confidence: import("~/lib/ship-cost/types").ShipCostConfidence | null;
+  /** Net shipping P&L for this SKU (shipping collected − true ship cost, last
+   * 30d), in cents. Negative = free shipping is bleeding. null = no shipped
+   * orders in-window. */
+  ship_pnl_cents: number | null;
 }
 
 export interface GuardrailVM {

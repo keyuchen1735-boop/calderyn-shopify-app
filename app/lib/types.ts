@@ -152,6 +152,10 @@ export interface SKU {
    * source among its orders; null until the resolver has run. */
   ship_cost_source: import("./ship-cost/types").ShipCostSource | null;
   ship_cost_confidence: import("./ship-cost/types").ShipCostConfidence | null;
+  /** Net shipping P&L (shipping collected − true ship cost, last 30d), in cents.
+   * Negative = free shipping is bleeding on this SKU; null = no shipped orders
+   * in-window. Derived in v_skus_flat. */
+  ship_pnl_cents: number | null;
 }
 
 export interface Integration {
