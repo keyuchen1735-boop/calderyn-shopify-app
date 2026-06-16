@@ -29,7 +29,15 @@ function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>>
     chain.eq = vi.fn(() => chain);
     chain.in = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({ data: { autopilot_enabled: opts.enabled }, error: null }));
+    chain.maybeSingle = vi.fn(async () => ({
+      data: {
+        autopilot_enabled: opts.enabled,
+        autopilot_max_budget_cut_pct: 50,
+        autopilot_max_budget_increase_pct: 20,
+        autopilot_max_daily_budget_cents: null,
+      },
+      error: null,
+    }));
     chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
       resolve({ data: table === "v_autopilot_candidates" ? opts.alerts : [], error: null });
     return chain;

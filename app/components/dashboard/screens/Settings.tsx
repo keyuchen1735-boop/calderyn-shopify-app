@@ -305,6 +305,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                   onChange={(v) => commit("autopilot_max_budget_increase_pct", Number(v))}
                   options={[
                     { value: "15", label: "15%" },
+                    // 20% is the guardrail_config default — must be selectable so a
+                    // fresh shop's value maps to an option.
+                    { value: "20", label: "20%" },
                     { value: "30", label: "30%" },
                     { value: "50", label: "50%" },
                   ]}
