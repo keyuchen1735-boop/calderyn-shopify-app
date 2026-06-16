@@ -26,8 +26,8 @@
 - `engine/calderyn_engine/detectors/campaign_scaling_opportunity.py` — detector: emit one alert per winning campaign.
 - `tests/engine/unit/test_estimator_scale_upside.py` — estimator unit tests (DB-free).
 - `tests/engine/unit/test_detector_campaign_scaling_opportunity.py` — detector tests (DB-gated).
-- `supabase/migrations/20260616130000_autopilot_scale_guardrails.sql` — add 2 guardrail_config columns.
-- `supabase/migrations/20260616130100_autopilot_candidates_add_scale.sql` — add detector to the candidates view.
+- `supabase/migrations/20260616132000_autopilot_scale_guardrails.sql` — add 2 guardrail_config columns. (Timestamp bumped from 130000 at build time: that slot was taken by `ship_cost_manual_override`.)
+- `supabase/migrations/20260616132100_autopilot_candidates_add_scale.sql` — add detector to the candidates view. (Must sort AFTER the columns migration above.)
 
 **Modify:**
 - `tests/engine/schema/` vendored copy — mirror both migrations so DB-gated tests see the new columns/view.
@@ -89,12 +89,12 @@ git commit -m "migrations: guardrail_config autopilot budget-increase caps"
 ## Task 2: Migration — add scale detector to v_autopilot_candidates
 
 **Files:**
-- Create: `supabase/migrations/20260616130100_autopilot_candidates_add_scale.sql`
-- Modify (mirror): `tests/engine/schema/migrations/20260616130100_autopilot_candidates_add_scale.sql`
+- Create: `supabase/migrations/20260616132100_autopilot_candidates_add_scale.sql`
+- Modify (mirror): `tests/engine/schema/migrations/20260616132100_autopilot_candidates_add_scale.sql`
 
 - [ ] **Step 1: Write the migration (re-create the view with the new detector id)**
 
-Create `supabase/migrations/20260616130100_autopilot_candidates_add_scale.sql`. This is the existing view body (from `20260606150000_autopilot_candidates_view.sql`) with `campaign_scaling_opportunity` added to the `IN (...)` list:
+Create `supabase/migrations/20260616132100_autopilot_candidates_add_scale.sql`. This is the existing view body (from `20260606150000_autopilot_candidates_view.sql`) with `campaign_scaling_opportunity` added to the `IN (...)` list:
 
 ```sql
 -- F1 scale-up: surface campaign_scaling_opportunity alerts to autopilot. Same
@@ -126,17 +126,17 @@ where a.status = 'open'
 
 - [ ] **Step 2: Mirror into the vendored test schema**
 
-Create `tests/engine/schema/migrations/20260616130100_autopilot_candidates_add_scale.sql` with the same SQL.
+Create `tests/engine/schema/migrations/20260616132100_autopilot_candidates_add_scale.sql` with the same SQL.
 
 - [ ] **Step 3: Verify SQL parses**
 
-Run (if local DB available): `psql "$TEST_DATABASE_URL" -f supabase/migrations/20260616130100_autopilot_candidates_add_scale.sql`
+Run (if local DB available): `psql "$TEST_DATABASE_URL" -f supabase/migrations/20260616132100_autopilot_candidates_add_scale.sql`
 Expected: `CREATE VIEW` with no error.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add supabase/migrations/20260616130100_autopilot_candidates_add_scale.sql tests/engine/schema/migrations/20260616130100_autopilot_candidates_add_scale.sql
+git add supabase/migrations/20260616132100_autopilot_candidates_add_scale.sql tests/engine/schema/migrations/20260616132100_autopilot_candidates_add_scale.sql
 git commit -m "migrations: v_autopilot_candidates includes campaign_scaling_opportunity"
 ```
 
