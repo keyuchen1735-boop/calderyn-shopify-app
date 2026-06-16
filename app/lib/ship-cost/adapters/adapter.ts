@@ -4,9 +4,13 @@
 // core (ship-cost/adapters/land.server.ts), the resolver, and everything above it
 // never branch on provider — exactly like the ad-ingestion core (ads/adapter.ts).
 
-export type ShipProvider = "easypost" | "shippo"; // grows: + "shipbob", …
+export type ShipProvider = "easypost" | "shippo" | "shipbob" | "shiphero";
 
-export type ShipIntegrationKind = "easypost_ship" | "shippo_ship"; // grows; one enum value per provider (C7/C9)
+export type ShipIntegrationKind =
+  | "easypost_ship"
+  | "shippo_ship"
+  | "shipbob_ship"
+  | "shiphero_ship"; // one enum value per provider (C7/C9)
 
 /** One purchased label / shipment charge, normalized across providers. */
 export interface NormalizedShipmentCost {

@@ -38,6 +38,12 @@ import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
+// The OAuth providers that are ONBOARDING STEPS — the literal subset the wizard renders
+// an OAuthStep for. Deliberately narrower than integrations.ts's OAuthProvider, which now
+// also includes 'shiphero' (a Settings-only connect, not an onboarding step). Keeping this
+// local prevents a new ship-cost OAuth provider from forcing an onboarding label entry.
+type OnboardingOAuthProvider = "google" | "meta" | "tiktok" | "quickbooks";
+
 // Only Shop + Guardrails are required; the stepper marks the rest so an
 // 8-step wall doesn't read as 8 mandatory commitments.
 const STEPS = [
@@ -508,12 +514,13 @@ function OAuthStep({
   prevStep,
   submitting,
 }: {
-  // Only the ad/COGS OAuth providers reach this step (the call site narrows `key` to
-  // exactly these four literals). EasyPost connects by API-key paste in Settings, and
-  // the ship-cost OAuth providers (Shippo, …) connect from Settings too — none of them
-  // is an onboarding step. So this is the explicit onboarding-step union, NOT the wider
-  // OAuthProvider (which now also includes Settings-only 'shippo') or IntegrationProvider.
-  provider: "google" | "meta" | "tiktok" | "quickbooks";
+  // Only the four ad/accounting OAuth providers are onboarding steps (the call site
+  // narrows `key` to exactly these four). EasyPost (API-key) and the Phase-3 3PL houses
+  // ShipBob (API-key) / ShipHero (OAuth) connect from Settings, plus the Phase-2 Shippo
+  // ship-cost OAuth — none of them is an onboarding step — so this is the literal
+  // onboarding subset, not the wider OAuthProvider (which now also includes 'shippo' and
+  // 'shiphero') nor IntegrationProvider.
+  provider: OnboardingOAuthProvider;
   connected: boolean;
   nextStep: number;
   prevStep: number;
@@ -532,7 +539,7 @@ function OAuthStep({
     const url = connectFetcher.data?.redirectUrl;
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
-  const labels: Record<"google" | "meta" | "tiktok" | "quickbooks", { title: string; blurb: string }> = {
+  const labels: Record<OnboardingOAuthProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
       blurb:

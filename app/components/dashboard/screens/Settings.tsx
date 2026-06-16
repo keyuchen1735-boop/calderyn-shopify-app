@@ -16,7 +16,9 @@ import {
   putGuardrails,
   fetchShipCost,
   setShipCostMode,
+  fetchUnmatchedShipCharges,
   DashboardApiError,
+  type UnmatchedShipCharges,
 } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
@@ -76,6 +78,13 @@ const CONNECTION_ICON: Record<string, string> = {
   connected: "check",
   pending: "clock",
   disconnected: "x",
+};
+
+// Human-readable reason a carrier charge stayed unmatched (Phase 3 Part C, rule 12).
+const UNMATCHED_REASON_LABEL: Record<string, string> = {
+  no_ref: "No order ref or tracking",
+  no_tracking_match: "Ref / tracking didn't match",
+  carrier_adjustment_no_link: "Carrier adjustment, no link",
 };
 
 export default function Settings({ app }: { app: DashboardCtx }) {
@@ -160,6 +169,23 @@ export default function Settings({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
+  // Unmatched carrier charges (Phase 3 Part C) — READ-ONLY on the dashboard. Loaded like
+  // ship-cost above (not in the shell context). When unreachable or zero, the block hides.
+  const [unmatchedShip, setUnmatchedShip] = useState<UnmatchedShipCharges | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetchUnmatchedShipCharges()
+      .then((d) => {
+        if (active) setUnmatchedShip(d);
+      })
+      .catch(() => {
+        /* leave null → the block renders nothing until reachable */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const commitShipMode = async (mode: string) => {
     if (savingMode || mode === shipMode) return;
     const prev = shipMode;
@@ -227,6 +253,27 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             >
               <Pill tone="warn">{`${missingWeight}% missing`}</Pill>
             </SettingRow>
+          )}
+          {unmatchedShip && unmatchedShip.count > 0 && (
+            <>
+              <SettingRow
+                label="Unmatched carrier charges"
+                sub="Carrier charges we couldn't tie to an order, so they aren't in margin yet. Map them to orders in the Shopify admin."
+              >
+                <Pill tone="warn">{`${unmatchedShip.count} unmatched`}</Pill>
+              </SettingRow>
+              {unmatchedShip.items.slice(0, 10).map((it) => (
+                <SettingRow
+                  key={it.id}
+                  label={`${money(it.costCents)}${it.provider ? ` · ${it.provider}` : ""}`}
+                  sub={`${it.orderRef ? `Ref ${it.orderRef}` : "No ref"}${
+                    it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""
+                  } — ${UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}`}
+                >
+                  <Pill tone="neutral">Resolve in admin</Pill>
+                </SettingRow>
+              ))}
+            </>
           )}
         </Card>
       </section>

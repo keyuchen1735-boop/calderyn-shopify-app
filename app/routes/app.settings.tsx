@@ -40,7 +40,7 @@ import {
   formatSyncToast,
 } from "~/lib/ads/manual-sync.server";
 import { useActionToast, useConnectionToast } from "~/lib/toast";
-import { fmtMoney } from "~/lib/format";
+import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import {
   APIKEY_PROVIDERS,
   OAUTH_PROVIDERS,
@@ -57,6 +57,12 @@ import type { GuardrailConfig, Integration } from "~/lib/types";
 import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
 import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "~/lib/ship-cost/inputs.server";
 import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
+import {
+  getUnmatchedCharges,
+  mapChargeToOrder,
+  type UnmatchedCharges,
+} from "~/lib/ship-cost/unmatched.server";
+import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 
 // ---------------------------------------------------------------------------
 // Pure FormData validation helpers (exported for unit tests)
@@ -131,9 +137,30 @@ export function parseApiKeyConnectForm(
     return { ok: false, message: `Unknown provider: ${provider || "(none)"}` };
   }
   if (!apiKey) {
-    return { ok: false, message: "Paste your EasyPost API key." };
+    // ShipBob pastes a Personal Access Token; EasyPost an API key (contract C8).
+    return { ok: false, message: provider === "shipbob" ? "Paste your ShipBob token." : "Paste your EasyPost API key." };
   }
   return { ok: true, value: { provider: provider as IntegrationProvider, apiKey } };
+}
+
+export interface MapShipChargeValue {
+  lineId: string;
+  orderNumber: string;
+}
+
+/**
+ * Validate the "map an unmatched carrier charge to an order" form (Phase 3 Part C) at the
+ * action boundary — never trust FormData shape. Both fields required; the order-existence
+ * check (and the real attach) happen server-side in mapChargeToOrder.
+ */
+export function parseMapShipChargeForm(
+  fd: FormData,
+): ParseOk<MapShipChargeValue> | ParseErr {
+  const lineId = String(fd.get("line_id") ?? "").trim();
+  const orderNumber = String(fd.get("order_number") ?? "").trim();
+  if (!lineId) return { ok: false, message: "Missing charge." };
+  if (!orderNumber) return { ok: false, message: "Enter an order number to map this charge to." };
+  return { ok: true, value: { lineId, orderNumber } };
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +172,7 @@ type LoaderPayload = {
   error: { code: string; message: string } | null;
   shipMode: string;
   missingWeightPct: number;
+  unmatchedCharges: UnmatchedCharges;
 };
 
 type ActionPayload = {
@@ -167,9 +195,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ]);
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const [{ data: settingsRow }, { data: orderRows }] = await Promise.all([
+    const [{ data: settingsRow }, { data: orderRows }, unmatchedCharges] = await Promise.all([
       sb.from("shop_settings").select("ship_cost_mode").eq("shop_id", shopId).maybeSingle(),
       sb.from("v_order_ship_features").select("grams_sum").eq("shop_id", shopId),
+      getUnmatchedCharges(sb, shopId),
     ]);
     const shipMode = (settingsRow?.ship_cost_mode as string | null) ?? "auto";
     const missingWeight = missingWeightPct(
@@ -182,6 +211,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null,
       shipMode,
       missingWeightPct: missingWeight,
+      unmatchedCharges,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -192,6 +222,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: { code: e.code ?? "ERROR", message: e.message },
       shipMode: "auto",
       missingWeightPct: 0,
+      unmatchedCharges: { count: 0, items: [] },
     });
   }
 };
@@ -489,6 +520,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (intent === "map_ship_charge") {
+      // Part C: attach an unmatched carrier charge to an order, then re-resolve so the
+      // order flips to actual_invoice and the unmatched count decrements.
+      const parsed = parseMapShipChargeForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      try {
+        await mapChargeToOrder(sb, shopId, parsed.value.lineId, parsed.value.orderNumber);
+      } catch (mapErr) {
+        // An unknown order number (or a stale line) is merchant-correctable input, not a
+        // 500 — surface it visibly (rule 12) and change nothing.
+        const message = mapErr instanceof Error ? mapErr.message : "Couldn't map that charge.";
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "MAP_FAILED", message },
+            toast: { message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      // Re-resolve so the newly-matched line is read as actual_invoice for its order.
+      await runShipCostResolution(sb, shopId, { shopCountry: await getShopCountry(sb, shopId) });
+      // Redirect (not json) so a refresh can't re-POST the mapping (no double-submit).
+      return redirect("/app/settings?ship_charge=mapped");
+    }
+
     return json<ActionPayload>(
       {
         ok: false,
@@ -513,7 +581,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight } =
+  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
@@ -616,7 +684,11 @@ export default function Settings() {
             title="Shipping cost"
             description="Tell Calderyn what you pay to ship, so margin reflects true cost."
           >
-            <ShippingCostSection shipMode={shipMode} missingWeightPct={missingWeight} />
+            <ShippingCostSection
+              shipMode={shipMode}
+              missingWeightPct={missingWeight}
+              unmatchedCharges={unmatchedCharges}
+            />
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
@@ -975,13 +1047,17 @@ function IntegrationCard({
             <input type="hidden" name="provider" value={oauthProvider} />
             <FormLayout>
               <TextField
-                label={`${integration.name} API key`}
+                label={oauthProvider === "shipbob" ? `${integration.name} access token` : `${integration.name} API key`}
                 name="api_key"
                 value={apiKey}
                 onChange={setApiKey}
                 autoComplete="off"
                 type="password"
-                helpText="Paste your EasyPost production API key. We verify it, then store it encrypted."
+                helpText={
+                  oauthProvider === "shipbob"
+                    ? "Paste a ShipBob Personal Access Token with the billing_read scope. We verify it, then store it encrypted."
+                    : "Paste your EasyPost production API key. We verify it, then store it encrypted."
+                }
               />
               <InlineStack align="end">
                 <Button
@@ -1004,9 +1080,11 @@ function IntegrationCard({
 function ShippingCostSection({
   shipMode,
   missingWeightPct,
+  unmatchedCharges,
 }: {
   shipMode: string;
   missingWeightPct: number;
+  unmatchedCharges: UnmatchedCharges;
 }) {
   const actionData = useActionData<typeof action>();
   const [mode, setMode] = useState(shipMode);
@@ -1128,6 +1206,8 @@ function ShippingCostSection({
         </BlockStack>
       </Card>
 
+      <UnmatchedChargesCard unmatchedCharges={unmatchedCharges} />
+
       <Card>
         <BlockStack gap="200">
           <Text as="h3" variant="headingSm">
@@ -1158,5 +1238,90 @@ function ShippingCostSection({
         </BlockStack>
       </Card>
     </BlockStack>
+  );
+}
+
+// Human-readable reason for why a carrier charge couldn't be matched (rule 12 visibility).
+const UNMATCHED_REASON_LABEL: Record<string, string> = {
+  no_ref: "No order reference or tracking on the charge",
+  no_tracking_match: "Order ref / tracking didn't match an order",
+  carrier_adjustment_no_link: "Carrier adjustment with no link back",
+};
+
+/**
+ * Part C (embedded, interactive): surface connector charges that matched NO order so they
+ * are visible and merchant-resolvable, never silently dropped (rule 12). When the count is
+ * 0 the whole block renders nothing (no empty-state noise). Each row offers a "Map to order"
+ * field that submits intent="map_ship_charge" → attaches the line + re-resolves.
+ */
+function UnmatchedChargesCard({ unmatchedCharges }: { unmatchedCharges: UnmatchedCharges }) {
+  const navigation = useNavigation();
+  const submitting = navigation.state !== "idle";
+  if (unmatchedCharges.count === 0) return null;
+  const { count, items } = unmatchedCharges;
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">
+          Unmatched carrier charges
+        </Text>
+        <Banner tone="warning">
+          <p>
+            {count} carrier {count === 1 ? "charge" : "charges"} couldn&rsquo;t be matched to an
+            order, so {count === 1 ? "it isn't" : "they aren't"} counted in margin yet. Map each to
+            an order below.
+          </p>
+        </Banner>
+        <BlockStack gap="300">
+          {items.map((it) => (
+            <Box
+              key={it.id}
+              padding="300"
+              borderColor="border"
+              borderWidth="025"
+              borderRadius="200"
+            >
+              <BlockStack gap="200">
+                <InlineStack align="space-between" blockAlign="center" gap="200">
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {fmtMoneyDec(it.costCents)}
+                      {it.provider ? ` · ${it.provider}` : ""}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {it.orderRef ? `Ref ${it.orderRef}` : "No ref"}
+                      {it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""}
+                    </Text>
+                  </BlockStack>
+                  <Badge tone="attention">
+                    {UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}
+                  </Badge>
+                </InlineStack>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="map_ship_charge" />
+                  <input type="hidden" name="line_id" value={it.id} />
+                  <FormLayout>
+                    <FormLayout.Group>
+                      <TextField
+                        label="Map to order number"
+                        labelHidden
+                        name="order_number"
+                        placeholder="Order number (e.g. 1001)"
+                        autoComplete="off"
+                      />
+                      <InlineStack align="start" blockAlign="end">
+                        <Button submit loading={submitting} disabled={submitting}>
+                          Map to order
+                        </Button>
+                      </InlineStack>
+                    </FormLayout.Group>
+                  </FormLayout>
+                </Form>
+              </BlockStack>
+            </Box>
+          ))}
+        </BlockStack>
+      </BlockStack>
+    </Card>
   );
 }

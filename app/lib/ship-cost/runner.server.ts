@@ -43,11 +43,44 @@ export async function runShipCostResolution(
   const periodTotal =
     periodRows.reduce((s, p) => s + (p.total_cents ?? 0), 0) || null;
 
+  // Source-priority reconciliation (Phase 3, priority 1): an order can carry BOTH a
+  // CSV-upload invoice line AND a connector line (e.g. EasyPost). The old code built
+  // invoiceByOrder with a plain last-write-wins Map over an UNORDERED select, so which
+  // cost won was nondeterministic (row order is not guaranteed). Join each line to its
+  // period's source and apply a deterministic precedence — connector > upload > typed —
+  // keeping last-write-wins only WITHIN the same source (unchanged behavior there).
+  // The connector line is the truest per-order cost (a real per-shipment carrier charge),
+  // so it must outrank a hand-built CSV line for the same order.
+  const { data: periodSources } = await sb
+    .from("shipping_cost_period").select("id, source").eq("shop_id", shopId);
+  const sourceByPeriod = new Map<string, string>();
+  for (const p of (periodSources ?? []) as { id: string; source: string | null }[]) {
+    sourceByPeriod.set(String(p.id), String(p.source ?? ""));
+  }
+  // Higher number = higher precedence. An unknown/absent source ranks lowest (0) so a
+  // line with a recognized source always wins over one with none.
+  const SOURCE_RANK: Record<string, number> = { connector: 3, upload: 2, typed: 1 };
+  const sourceRank = (src: string | undefined): number => (src ? SOURCE_RANK[src] ?? 0 : 0);
+
   const { data: invoices } = await sb
-    .from("shipping_invoice_line").select("matched_order_id, cost_cents").eq("shop_id", shopId);
+    .from("shipping_invoice_line").select("matched_order_id, cost_cents, period_id").eq("shop_id", shopId);
   const invoiceByOrder = new Map<string, number>();
-  for (const i of (invoices ?? []) as { matched_order_id: string | null; cost_cents: number }[]) {
-    if (i.matched_order_id) invoiceByOrder.set(i.matched_order_id, i.cost_cents);
+  const winningRankByOrder = new Map<string, number>();
+  for (const i of (invoices ?? []) as {
+    matched_order_id: string | null;
+    cost_cents: number;
+    period_id: string | null;
+  }[]) {
+    if (!i.matched_order_id) continue;
+    const rank = sourceRank(i.period_id ? sourceByPeriod.get(String(i.period_id)) : undefined);
+    const prevRank = winningRankByOrder.get(i.matched_order_id);
+    // Take this line when no line has been seen for the order yet, when it strictly
+    // outranks the incumbent, or when it ties the incumbent (same source → last-write-
+    // wins, matching the pre-Phase-3 behavior). A strictly LOWER rank never overwrites.
+    if (prevRank === undefined || rank >= prevRank) {
+      invoiceByOrder.set(i.matched_order_id, i.cost_cents);
+      winningRankByOrder.set(i.matched_order_id, rank);
+    }
   }
 
   const allocOrders: AllocOrder[] = orderRows.map((o) => ({

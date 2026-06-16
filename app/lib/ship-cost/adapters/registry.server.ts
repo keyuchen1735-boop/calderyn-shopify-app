@@ -6,8 +6,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ShipCostAdapter } from "./adapter";
 import { easyPostAdapter } from "./easypost.server";
 import { shippoAdapter } from "./shippo.server";
+import { shipBobAdapter } from "./shipbob.server";
+import { shipHeroAdapter } from "./shiphero.server";
 
-export const SHIP_ADAPTERS: ShipCostAdapter[] = [easyPostAdapter, shippoAdapter];
+// Phase 1: easyPostAdapter. Phase 2 appends shippoAdapter. Phase 3 (Part B) appends the two
+// 3PL houses below — both are pure drop-ins (contract C1): shipAdaptersForShops picks them
+// up via their kinds with NO code change to the generic selection logic.
+export const SHIP_ADAPTERS: ShipCostAdapter[] = [
+  easyPostAdapter,
+  shippoAdapter,
+  shipBobAdapter,
+  shipHeroAdapter,
+];
 
 export const BY_KIND = new Map<string, ShipCostAdapter>(
   SHIP_ADAPTERS.map((a) => [a.integrationKind, a]),

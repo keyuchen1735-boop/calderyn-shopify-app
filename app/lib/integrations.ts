@@ -10,7 +10,9 @@
 import type { Integration } from "./types";
 
 /** Providers that have a wired OAuth connect flow (startOAuth handles these). */
-export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo"] as const;
+// shippo (Phase 2) and shiphero (Phase 3 Part B) are both OAuth ship-cost connectors —
+// per-merchant token (+ refresh for shiphero), contract C8.
+export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo", "shiphero"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 /**
@@ -20,7 +22,9 @@ export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
  * NOT in OAUTH_PROVIDERS (isConnectable stays false for it). The settings card
  * branches on this set to render an inline key field instead of a Connect button.
  */
-export const APIKEY_PROVIDERS = ["easypost"] as const;
+// shipbob (Phase 3 Part B) is a pasted Personal Access Token (billing_read scope), the
+// same API-key model as EasyPost (C8) — deliberately NOT in OAUTH_PROVIDERS.
+export const APIKEY_PROVIDERS = ["easypost", "shipbob"] as const;
 export type ApiKeyProvider = (typeof APIKEY_PROVIDERS)[number];
 
 /**
@@ -55,6 +59,8 @@ const PROVIDER_TO_KIND: Record<string, string> = {
   // Ship-cost connectors use the `<provider>_ship` kind (contract C9).
   easypost: "easypost_ship",
   shippo: "shippo_ship",
+  shipbob: "shipbob_ship",
+  shiphero: "shiphero_ship",
 };
 
 /**
@@ -84,6 +90,8 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   quickbooks: "QuickBooks",
   easypost: "EasyPost",
   shippo: "Shippo",
+  shipbob: "ShipBob",
+  shiphero: "ShipHero",
 };
 
 /**
@@ -116,6 +124,8 @@ const KIND_TO_PROVIDER: Record<string, string> = {
   tiktok_ads: "tiktok",
   easypost_ship: "easypost",
   shippo_ship: "shippo",
+  shipbob_ship: "shipbob",
+  shiphero_ship: "shiphero",
 };
 
 /** Map a persisted integration `kind` to its OAuth `provider` short name. */
