@@ -457,6 +457,24 @@ export async function putConsent(consent: boolean): Promise<boolean> {
   return Boolean(data.consent);
 }
 
+export interface ShipCostSettings {
+  ship_mode: string;
+  missing_weight_pct: number;
+}
+
+export async function fetchShipCost(): Promise<ShipCostSettings> {
+  return apiGet<ShipCostSettings>("/dashboard/api/ship-cost");
+}
+
+/** Set the shop-level ship-cost resolution mode. Detailed inputs (period total,
+ * invoice CSV, per-order override) live in the embedded Shopify admin. */
+export async function setShipCostMode(mode: string): Promise<void> {
+  await apiSend<{ ship_mode: string }>("POST", "/dashboard/api/ship-cost", {
+    intent: "set_mode",
+    ship_cost_mode: mode,
+  });
+}
+
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
   const data = await apiGet<{ integrations: Record<string, Integration> }>(
     "/dashboard/api/integrations",
