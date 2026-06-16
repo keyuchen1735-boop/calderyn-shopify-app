@@ -778,7 +778,7 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes, demandRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes, salesRes] = await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -803,6 +803,13 @@ export function calderynClient(shop: string) {
               .select("*")
               .eq("shop_id", shopId)
               .limit(10000),
+            // Trailing-30-day units + revenue per SKU (same window as velocity);
+            // explicit cap per the PostgREST 1000-row default-truncation note.
+            supabase
+              .from("v_sku_sales_30d")
+              .select("sku_id, revenue_30d_cents")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
@@ -814,6 +821,14 @@ export function calderynClient(shop: string) {
             console.error(
               "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
               demandRes.error,
+            );
+          }
+          // Sales enrichment is optional too — a missing/unmigrated rollup must
+          // not take down the SKU surface (units/revenue stay undefined).
+          if (salesRes.error) {
+            console.error(
+              "[skus.list] v_sku_sales_30d unavailable — serving SKUs without 30-day sales",
+              salesRes.error,
             );
           }
 
@@ -837,6 +852,14 @@ export function calderynClient(shop: string) {
             }
           }
 
+          // sku_id → trailing-30-day revenue (cents).
+          const revenueBySku = new Map<string, number>();
+          if (!salesRes.error) {
+            for (const r of (salesRes.data ?? []) as Array<Record<string, unknown>>) {
+              revenueBySku.set(String(r.sku_id), Number(r.revenue_30d_cents ?? 0));
+            }
+          }
+
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
             const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
@@ -846,6 +869,10 @@ export function calderynClient(shop: string) {
               sku.demand = demandFromRow(demandRow);
               sku.suggested_transfer = suggestedTransferFromRow(demandRow);
               sku.locations_detail = locationsDetailFromRow(demandRow);
+            }
+            const revenue30d = revenueBySku.get(sku.id);
+            if (revenue30d != null) {
+              sku.revenue_30d_cents = revenue30d;
             }
             return sku;
           });

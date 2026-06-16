@@ -1,5 +1,7 @@
 // Type definitions for the Calderyn prototype.
 
+import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
+
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 export type ActionKind =
@@ -150,8 +152,16 @@ export interface SKU {
   locations_detail: SkuLocationDetail[];
   /** Resolved ship-cost provenance for this SKU's margin — worst/lowest-confidence
    * source among its orders; null until the resolver has run. */
-  ship_cost_source: import("./ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("./ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
+  /** Trailing-30-day gross revenue (cents) over the SAME window as `velocity`,
+   * for bestseller ranking. undefined when the sales rollup is unavailable —
+   * never fatal. Units sold aren't carried: the velocity column already ranks by
+   * volume (units == round(velocity × 30)); the v_sku_sales_30d view still
+   * exposes units_30d for future use (e.g. F5 return-rate). ROAS is intentionally
+   * omitted: ad spend is campaign-level and can't be reliably attributed to a
+   * SKU, so a SKU-level ROAS would be a fabricated number. */
+  revenue_30d_cents?: number;
 }
 
 export interface Integration {

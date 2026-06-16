@@ -67,7 +67,12 @@ function ShipCostBadge({
   );
 }
 
-type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
+type SortKey =
+  | "days_of_cover"
+  | "on_hand"
+  | "velocity"
+  | "revenue_30d_cents"
+  | "title";
 type SortDir = "asc" | "desc";
 
 type LoaderPayload = {
@@ -291,7 +296,8 @@ export default function SKUs() {
 
   // IndexTable sort ↔ our SortKey. null marks an unsortable column.
   const SORT_COLUMNS: (SortKey | null)[] = [
-    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null,
+    null, "title", null, "on_hand", "days_of_cover", "velocity", "revenue_30d_cents",
+    null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {
@@ -363,12 +369,13 @@ export default function SKUs() {
             { title: "On hand", alignment: "end" },
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
+            { title: "Revenue · 30d", alignment: "end" },
             { title: "Locations" },
             { title: "Main demand" },
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, false, true, true, true, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, true, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -451,6 +458,17 @@ export default function SKUs() {
                   ) : (
                     <Text as="p" alignment="end" tone="subdued" variant="bodySm">
                       No sales
+                    </Text>
+                  )}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  {s.revenue_30d_cents ? (
+                    <Text as="p" alignment="end">
+                      <span className="cdn-tnum">{fmtMoney(s.revenue_30d_cents)}</span>
+                    </Text>
+                  ) : (
+                    <Text as="p" alignment="end" tone="subdued">
+                      —
                     </Text>
                   )}
                 </IndexTable.Cell>
