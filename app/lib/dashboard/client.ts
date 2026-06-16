@@ -302,6 +302,8 @@ export function adaptSku(s: SKU): SkuVM {
     demand: s.demand ?? null,
     suggested_transfer: s.suggested_transfer ?? null,
     locations_detail: s.locations_detail ?? [],
+    ship_cost_source: s.ship_cost_source ?? null,
+    ship_cost_confidence: s.ship_cost_confidence ?? null,
   };
 }
 

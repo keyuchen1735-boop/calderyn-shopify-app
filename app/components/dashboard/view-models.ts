@@ -95,6 +95,10 @@ export interface SkuVM {
     available: number;
     active: boolean;
   }>;
+  /** Worst/lowest-confidence ship-cost provenance among this SKU's orders; null
+   * until the resolver has run. Mirrors the Shopify-side SKU badge. */
+  ship_cost_source: import("~/lib/ship-cost/types").ShipCostSource | null;
+  ship_cost_confidence: import("~/lib/ship-cost/types").ShipCostConfidence | null;
 }
 
 export interface GuardrailVM {

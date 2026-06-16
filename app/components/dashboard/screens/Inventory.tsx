@@ -16,6 +16,39 @@ import type { SkuVM, AlertVM } from "../view-models";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
+/** Ship-cost provenance pill — mirrors the Shopify-side SKU badge, using the
+ * dashboard's own Pill primitive (worst/lowest-confidence source per SKU). */
+function ShipCostPill({ source }: { source: SkuVM["ship_cost_source"] }) {
+  let label: string;
+  let tone: PillTone;
+  switch (source) {
+    case "actual_invoice":
+    case "actual_event":
+      label = "Actual";
+      tone = "success";
+      break;
+    case "reconciled":
+      label = "Reconciled";
+      tone = "accent";
+      break;
+    case "manual":
+      label = "Manual";
+      tone = "accent";
+      break;
+    case "modeled":
+      label = "Modeled";
+      tone = "warn";
+      break;
+    case "fallback":
+      label = "Estimate";
+      tone = "warn";
+      break;
+    default:
+      return null;
+  }
+  return <Pill tone={tone}>{label}</Pill>;
+}
+
 const SKU_STATUS: Record<string, { label: string; tone: PillTone }> = {
   stockout: { label: "Stocked out", tone: "critical" },
   risk: { label: "At risk", tone: "warn" },
@@ -327,6 +360,9 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                           <Pill tone="warn">{String(skuAlerts.length)}</Pill>
                         </button>
                       )}
+                    </span>
+                    <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
+                      <ShipCostPill source={s.ship_cost_source} />
                     </span>
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <Pill tone={st.tone}>{st.label}</Pill>
