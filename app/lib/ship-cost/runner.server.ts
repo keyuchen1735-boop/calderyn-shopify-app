@@ -33,7 +33,12 @@ export async function runShipCostResolution(
   }
 
   const { data: periods } = await sb
-    .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId);
+    .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId)
+    // Allocation fence (C6): synthetic source='connector' periods carry real
+    // per-order carrier money already landed as shipping_invoice_line rows; they
+    // must NOT inflate the period-allocation pool (which spreads over EVERY order),
+    // else carrier money leaks onto orders that never had a carrier shipment.
+    .in("source", ["upload", "typed"]);
   const periodRows = (periods ?? []) as { total_cents: number }[];
   const periodTotal =
     periodRows.reduce((s, p) => s + (p.total_cents ?? 0), 0) || null;
