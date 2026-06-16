@@ -207,6 +207,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
               <span style={{ width: 56, textAlign: "center" }}>Alerts</span>
+              <span style={{ width: 92, textAlign: "right" }}>Ship cost</span>
               <span style={{ width: 92, textAlign: "right" }}>Status</span>
             </div>
             <div className="cd-rows">
