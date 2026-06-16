@@ -13,7 +13,7 @@ describe("renderPilotEmail", () => {
   });
   it("uses absolute https logo URLs and the real install CTA", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).toContain(`${base}/pilot-mark-teal.png`);
+    expect(html).toContain(`${base}/favicon.png`); // top-bar logo = canonical hex-C mark
     expect(html).toContain(`${base}/pilot-mark-white.png`);
     expect(html).toContain("https://apps.shopify.com/calderynextension");
     expect(html).not.toContain("assets/calderyn-mark"); // no leftover local paths
