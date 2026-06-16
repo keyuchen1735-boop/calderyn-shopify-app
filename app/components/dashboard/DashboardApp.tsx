@@ -255,6 +255,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           marginBasisLabel: "No booked margin",
           costLineage: [],
           why: "Manual — dashboard",
+          stateDiff: [],
         };
         setAudit((au) => [entry, ...au]);
         pushFeed({
@@ -405,6 +406,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         marginBasisLabel: "No booked margin",
         costLineage: [],
         why: "Manual — dashboard",
+        stateDiff: [],
       };
       setAudit((au) => [entry, ...au]);
       pushFeed({

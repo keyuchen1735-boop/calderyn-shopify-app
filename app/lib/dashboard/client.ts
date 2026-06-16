@@ -33,6 +33,7 @@ import type {
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { auditLegibility } from "~/lib/audit-legibility";
+import { stateDiff } from "~/lib/audit-state-diff";
 import type { CreativeScreenRun } from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
@@ -278,6 +279,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     costLineage: leg.costLineage,
     why: leg.why,
     whyDetail: leg.whyDetail,
+    stateDiff: stateDiff(e.action_kind, e.pre_state, e.post_state),
   };
 }
 

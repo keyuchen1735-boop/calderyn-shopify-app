@@ -30,6 +30,7 @@ function entry(id: string, cents: number, over: Partial<AuditVM> = {}): AuditVM 
     marginBasisLabel: "No booked margin",
     costLineage: [],
     why: "Manual — dashboard",
+    stateDiff: [],
     ...over,
   };
 }

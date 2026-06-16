@@ -104,30 +104,61 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
         </Btn>
       )}
       {open && (
-        <div className="cd-audit-detail" style={{ flexBasis: "100%", paddingLeft: 32, paddingTop: 8 }}>
-          <DetailBlock label="Why this fired">{entry.whyDetail ?? entry.why}</DetailBlock>
-          {entry.failure && <DetailBlock label="Failure reason">{entry.failure}</DetailBlock>}
-          {showImpact && (
-            <DetailBlock label="Booked margin">
-              +{money(entry.dollar_impact_at_exec)} · {entry.marginBasisLabel}
-            </DetailBlock>
-          )}
-          {entry.costLineage.length > 0 && (
-            <DetailBlock label="Cost lineage">
-              <span className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
-                {entry.costLineage.map((s, i) => (
-                  <Pill key={i} tone={s.source === "unavailable" ? "warn" : "neutral"}>
-                    {s.kind === "ad_spend" ? "Ad spend" : s.kind === "cogs" ? "COGS" : "Price"}:{" "}
-                    {COST_SOURCE_LABELS[s.source] ?? s.source}
-                  </Pill>
+        <div className="cd-audit-detail">
+          <div className="cd-kv-col">
+            <div className="cd-kv">
+              <span>Why this fired</span>
+              <b>{entry.whyDetail ?? entry.why}</b>
+            </div>
+            {entry.failure && (
+              <div className="cd-kv">
+                <span>Failure reason</span>
+                <b style={{ color: "var(--red)" }}>{entry.failure}</b>
+              </div>
+            )}
+            {showImpact && (
+              <div className="cd-kv">
+                <span>Booked margin</span>
+                <b>
+                  +{money(entry.dollar_impact_at_exec)} · {entry.marginBasisLabel}
+                </b>
+              </div>
+            )}
+            {entry.costLineage.length > 0 && (
+              <div className="cd-kv">
+                <span>Cost lineage</span>
+                <span className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                  {entry.costLineage.map((s, i) => (
+                    <Pill key={i} tone={s.source === "unavailable" ? "warn" : "neutral"}>
+                      {costKindLabel(s.kind)}: {COST_SOURCE_LABELS[s.source] ?? s.source}
+                    </Pill>
+                  ))}
+                </span>
+              </div>
+            )}
+          </div>
+          {entry.stateDiff.length > 0 && (
+            <>
+              <div className="cd-audit-diff-head">Before → after</div>
+              <div className="cd-evidence">
+                {entry.stateDiff.map((r) => (
+                  <div key={r.label} className="cd-evidence-cell">
+                    <div className="cd-caption">{r.label}</div>
+                    <div className="cd-h3 tabular-nums">
+                      {r.before != null && r.after != null ? (
+                        <>
+                          {r.before}
+                          <span className="cd-diff-arrow">→</span>
+                          {r.after}
+                        </>
+                      ) : (
+                        r.after ?? r.before
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </span>
-            </DetailBlock>
-          )}
-          {entry.pre !== "—" && (
-            <DetailBlock label="Before → after">
-              {entry.pre} → {entry.post}
-            </DetailBlock>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -135,13 +166,8 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
   );
 }
 
-function DetailBlock({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div style={{ marginBottom: 6 }}>
-      <span className="cd-caption" style={{ fontWeight: 600 }}>{label}: </span>
-      <span className="cd-caption">{children}</span>
-    </div>
-  );
+function costKindLabel(kind: string): string {
+  return kind === "ad_spend" ? "Ad spend" : kind === "cogs" ? "COGS" : "Price";
 }
 
 export default function Audit({ app }: { app: DashboardCtx }) {
