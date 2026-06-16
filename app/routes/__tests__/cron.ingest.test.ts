@@ -18,10 +18,18 @@ vi.mock("~/lib/ingest/transform.server", () => ({ transformPendingWebhooks }));
 vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
 vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
 
-// Fake Supabase: serves both cron.ingest query shapes:
-//   Phase 1 (backfill):  .from("shop_integrations").select().eq("kind","shopify").eq("sync_status","pending").limit(5)
-//   Phase 3 (reconcile): .from("shop_integrations").select().eq("kind","shopify").eq("sync_status","live")  → thenable
-// We track which sync_status was last set so we can return the right data.
+// Fake Supabase modelling the two cron.ingest query shapes against a fixed set
+// of active shops. The active Shopify state after backfill is sync_status="ready"
+// (backfill.server.ts sets "ready"; nothing promotes a Shopify integration to
+// "live"), so Phases 3/4 MUST include "ready" shops — selecting "live" alone
+// matches zero real shops, which is the bug under test.
+//   Phase 1 (backfill):    ...{eq|in}("sync_status", ...).limit(5)   → empty here
+//   Phase 3/4 (liveShops): ...{eq|in}("sync_status", ...) (thenable) → status-matched shops
+const ACTIVE_SHOPS = [
+  { shop_id: "s1", sync_status: "ready" },
+  { shop_id: "s2", sync_status: "ready" },
+];
+
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => {
@@ -29,18 +37,24 @@ vi.mock("~/lib/supabase.server", () => ({
         // Not used in these tests — return a no-op chain
         return { select: () => ({ eq: () => ({ eq: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) }) };
       }
-      // Build a chain that captures the final eq value to decide what to return.
-      let lastStatus = "";
+      // Capture the sync_status filter from either .eq or .in so the thenable
+      // resolves the shops whose status actually matches the query.
+      let statusFilter: string[] = [];
       const chain = {
         select: () => chain,
-        eq: (_col: string, val: string) => {
-          if (val === "pending" || val === "live") lastStatus = val;
+        eq: (col: string, val: string) => {
+          if (col === "sync_status") statusFilter = [val];
+          return chain;
+        },
+        in: (col: string, vals: string[]) => {
+          if (col === "sync_status") statusFilter = vals;
           return chain;
         },
         limit: () => Promise.resolve({ data: [], error: null }), // backfill: always empty
         then: (cb: (r: { data: unknown; error: null }) => unknown) => {
-          // reconcile live query resolves via then()
-          const data = lastStatus === "live" ? [{ shop_id: "s1" }, { shop_id: "s2" }] : [];
+          const data = ACTIVE_SHOPS.filter((s) => statusFilter.includes(s.sync_status)).map(
+            (s) => ({ shop_id: s.shop_id }),
+          );
           return Promise.resolve(cb({ data, error: null }));
         },
       };
@@ -66,7 +80,7 @@ describe("cron.ingest loader", () => {
     expect(res.status).toBe(401);
   });
 
-  it("calls reconcileAttributedRevenue after transform for each live shop", async () => {
+  it("runs attribution + ship-cost for each ready (active) shop, not just 'live'", async () => {
     const res = await loader({ request: req("Bearer s3cret") } as never);
     const body = await res.json();
 

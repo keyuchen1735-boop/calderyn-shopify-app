@@ -50,15 +50,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("[cron.ingest] transform phase failed", err);
   }
 
-  // Phase 3: reconcile attributed revenue for all live shops (per-shop isolation
+  // Phase 3: reconcile attributed revenue for all active shops (per-shop isolation
   // — one shop's failure is recorded in summary.attributionErrors and does not
   // abort reconciliation for other shops).
-  const { data: liveShops } = await sb
+  // Active Shopify shops. A backfilled shop's status is "ready" (backfill.server
+  // sets it; nothing promotes a Shopify integration to "live"), so gating on
+  // "live" alone matched zero real shops and silently skipped BOTH attribution
+  // reconcile (Phase 3) and ship-cost resolution (Phase 4). Include "ready".
+  const { data: activeShops } = await sb
     .from("shop_integrations")
     .select("shop_id")
     .eq("kind", "shopify")
-    .eq("sync_status", "live");
-  for (const row of liveShops ?? []) {
+    .in("sync_status", ["ready", "live"]);
+  for (const row of activeShops ?? []) {
     const shopId = (row as { shop_id: string }).shop_id;
     try {
       await reconcileAttributedRevenue(shopId, sb);
@@ -69,9 +73,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  // Phase 4: resolve ship-cost and roll into sku_pnl for all live shops (same
+  // Phase 4: resolve ship-cost and roll into sku_pnl for all active shops (same
   // per-shop isolation as Phase 3 — one shop's failure does not abort others).
-  for (const row of liveShops ?? []) {
+  for (const row of activeShops ?? []) {
     const shopId = (row as { shop_id: string }).shop_id;
     try {
       await runShipCostResolution(sb, shopId, {
