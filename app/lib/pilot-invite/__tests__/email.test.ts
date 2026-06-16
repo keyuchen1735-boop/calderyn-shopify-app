@@ -11,12 +11,16 @@ describe("renderPilotEmail", () => {
     expect(html).toContain("Jane");
     expect(html).toContain("Acme");
   });
-  it("uses absolute https logo URLs and the real install CTA", () => {
+  it("uses an absolute https logo URL and the real install CTA", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).toContain(`${base}/favicon.png`); // top-bar logo = canonical hex-C mark
     expect(html).toContain(`${base}/pilot-mark-white.png`);
     expect(html).toContain("https://apps.shopify.com/calderynextension");
     expect(html).not.toContain("assets/calderyn-mark"); // no leftover local paths
+  });
+  it("omits the top bar — no header mark or Beta pilot tag", () => {
+    const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
+    expect(html).not.toContain(`${base}/favicon.png`); // hex-C top-bar logo lived only in the removed top bar
+    expect(html).not.toContain("Beta pilot");
   });
   it("wires view-in-browser + unsubscribe links", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });

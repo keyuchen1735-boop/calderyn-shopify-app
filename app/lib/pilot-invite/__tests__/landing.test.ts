@@ -11,6 +11,7 @@ describe("renderPilotLanding", () => {
     expect(html).toContain("Acme");
     expect(html).toContain(`${base}/pilot-mark-teal.png`);
     expect(html).toContain("https://apps.shopify.com/calderynextension");
+    expect(html).not.toContain("Beta pilot"); // top nav removed
   });
   it("escapes HTML and falls back when blank", () => {
     const html = renderPilotLanding({ firstName: "<x>", storeName: "", baseUrl: base });
