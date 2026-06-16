@@ -13,7 +13,7 @@ describe("renderPilotEmail", () => {
   });
   it("uses absolute https logo URLs and the real install CTA", () => {
     const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
-    expect(html).toContain(`${base}/pilot-mark-teal.png`);
+    expect(html).toContain(`${base}/favicon.png`); // top-bar logo = canonical hex-C mark
     expect(html).toContain(`${base}/pilot-mark-white.png`);
     expect(html).toContain("https://apps.shopify.com/calderynextension");
     expect(html).not.toContain("assets/calderyn-mark"); // no leftover local paths
@@ -36,6 +36,7 @@ describe("renderPilotEmail", () => {
     expect(html).toContain('class="cd-desk"');
     expect(html).toContain('class="cd-mob"');
     expect(html).toContain("@media only screen and (max-width:600px)");
+    expect(html).toContain("max-width:1100px"); // desktop is fluid, fills up to ~1100px (File 1)
   });
   it("falls back to generic copy when fields are blank", () => {
     const out = renderPilotEmail({ firstName: "", storeName: "", baseUrl: base, unsubscribeUrl: unsub });
