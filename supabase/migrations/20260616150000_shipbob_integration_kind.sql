@@ -1,0 +1,12 @@
+-- 3PL ship-cost connector, Phase 3 (Part B): register the ShipBob integration kind.
+-- integration_kind gates both shop_integrations.kind and integration_credentials.kind.
+-- ALTER TYPE ... ADD VALUE is idempotent-guarded with IF NOT EXISTS so re-runs are safe.
+-- A freshly-added enum value cannot be USED in the same transaction it is added in
+-- (tiktok precedent, 20260606120000_tiktok_platform.sql; easypost precedent,
+-- 20260616140000_easypost_integration_kind.sql) — so this migration adds the value ALONE.
+-- ShipBob connects via a merchant-pasted Personal Access Token (billing_read scope),
+-- stored encrypted in integration_credentials.access_token_encrypted (same API-key
+-- pattern as EasyPost, contract C8 / Plan 03 B.3). No source/index/column references this
+-- value, so nothing else needs to follow in a second migration. Name follows C9
+-- (<provider>_ship).
+alter type public.integration_kind add value if not exists 'shipbob_ship';

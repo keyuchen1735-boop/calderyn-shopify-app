@@ -87,4 +87,26 @@ describe("SHIP_ADAPTERS registry", () => {
   it("registers the EasyPost adapter with the easypost_ship kind", () => {
     expect(SHIP_ADAPTERS.some((a) => a.provider === "easypost" && a.integrationKind === "easypost_ship")).toBe(true);
   });
+
+  it("registers the Phase-3 3PL adapters (ShipBob, ShipHero) with their <provider>_ship kinds", () => {
+    expect(SHIP_ADAPTERS.some((a) => a.provider === "shipbob" && a.integrationKind === "shipbob_ship")).toBe(true);
+    expect(SHIP_ADAPTERS.some((a) => a.provider === "shiphero" && a.integrationKind === "shiphero_ship")).toBe(true);
+  });
+});
+
+// Part B "registry generality" (contract C1): a connected ShipBob/ShipHero shop is picked
+// up by the SAME shipAdaptersForShops selection with NO generic-core change — the kind set
+// it filters on simply grew because the registry grew. This drives selection purely from
+// the registry, proving the drop-in property.
+describe("shipAdaptersForShops — Phase-3 kinds are selected with no code change", () => {
+  it("returns ShipBob and ShipHero work items for connected shops of those kinds", async () => {
+    const { sb } = fakeSb([
+      { shop_id: "bobshop", kind: "shipbob_ship", sync_status: "ready" },
+      { shop_id: "heroshop", kind: "shiphero_ship", sync_status: "live" },
+    ]);
+    const work = await shipAdaptersForShops(sb);
+    const byShop = new Map(work.map((w) => [w.shopId, w.adapter.provider]));
+    expect(byShop.get("bobshop")).toBe("shipbob");
+    expect(byShop.get("heroshop")).toBe("shiphero");
+  });
 });

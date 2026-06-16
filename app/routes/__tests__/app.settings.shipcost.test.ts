@@ -3,6 +3,7 @@ import {
   parsePeriodTotalForm,
   parseManualOverrideForm,
   parseApiKeyConnectForm,
+  parseMapShipChargeForm,
 } from "../app.settings";
 
 // Mock out server-side modules that fail in test environment (no env vars,
@@ -31,6 +32,15 @@ vi.mock("../../lib/ship-cost/inputs.server", () => ({
 }));
 vi.mock("../../lib/ship-cost/shop-country.server", () => ({
   getShopCountry: vi.fn().mockResolvedValue(null),
+}));
+// Phase 3 Part C: the route now imports these server modules; mock them so the pure
+// FormData helpers can be imported without a live supabase/runner.
+vi.mock("../../lib/ship-cost/unmatched.server", () => ({
+  getUnmatchedCharges: vi.fn(),
+  mapChargeToOrder: vi.fn(),
+}));
+vi.mock("../../lib/ship-cost/runner.server", () => ({
+  runShipCostResolution: vi.fn(),
 }));
 
 const fd = (o: Record<string, string>) => {
@@ -91,8 +101,29 @@ describe("parseApiKeyConnectForm (EasyPost connect, contract C8)", () => {
     expect(parseApiKeyConnectForm(fd({ provider: "easypost" })).ok).toBe(false);
   });
 
-  it("rejects an unknown / OAuth provider (easypost is the only API-key provider)", () => {
+  it("accepts ShipBob (Phase 3 — the second API-key provider, PAT paste)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "shipbob", api_key: " PAT_x " }))).toEqual({
+      ok: true,
+      value: { provider: "shipbob", apiKey: "PAT_x" },
+    });
+  });
+
+  it("rejects an unknown / OAuth provider (only easypost + shipbob are API-key)", () => {
     expect(parseApiKeyConnectForm(fd({ provider: "meta", api_key: "k" })).ok).toBe(false);
+    expect(parseApiKeyConnectForm(fd({ provider: "shiphero", api_key: "k" })).ok).toBe(false); // OAuth, not API-key
     expect(parseApiKeyConnectForm(fd({ provider: "", api_key: "k" })).ok).toBe(false);
+  });
+});
+
+describe("parseMapShipChargeForm (Part C — map an unmatched charge to an order)", () => {
+  it("accepts a line id + order number, trimmed", () => {
+    expect(parseMapShipChargeForm(fd({ line_id: " l1 ", order_number: " 1001 " }))).toEqual({
+      ok: true,
+      value: { lineId: "l1", orderNumber: "1001" },
+    });
+  });
+  it("rejects a missing line id or a blank order number (validated at the boundary)", () => {
+    expect(parseMapShipChargeForm(fd({ order_number: "1001" })).ok).toBe(false);
+    expect(parseMapShipChargeForm(fd({ line_id: "l1", order_number: "  " })).ok).toBe(false);
   });
 });

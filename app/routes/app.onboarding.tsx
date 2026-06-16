@@ -32,11 +32,17 @@ import {
 } from "~/lib/calderyn.server";
 import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
-import { providerPaired, type OAuthProvider } from "~/lib/integrations";
+import { providerPaired } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
 import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
+
+// The OAuth providers that are ONBOARDING STEPS — the literal subset the wizard renders
+// an OAuthStep for. Deliberately narrower than integrations.ts's OAuthProvider, which now
+// also includes 'shiphero' (a Settings-only connect, not an onboarding step). Keeping this
+// local prevents a new ship-cost OAuth provider from forcing an onboarding label entry.
+type OnboardingOAuthProvider = "google" | "meta" | "tiktok" | "quickbooks";
 
 // Only Shop + Guardrails are required; the stepper marks the rest so an
 // 8-step wall doesn't read as 8 mandatory commitments.
@@ -508,11 +514,12 @@ function OAuthStep({
   prevStep,
   submitting,
 }: {
-  // Only the OAuth providers reach this step (the call site narrows `key` to
-  // google|meta|tiktok|quickbooks). EasyPost connects by API-key paste in Settings,
-  // not via an onboarding OAuth step — so this is OAuthProvider, not the wider
-  // IntegrationProvider (which now also includes the non-OAuth 'easypost').
-  provider: OAuthProvider;
+  // Only the four ad/accounting OAuth providers are onboarding steps (the call site
+  // narrows `key` to exactly these four). EasyPost (API-key) and the Phase-3 3PL houses
+  // ShipBob (API-key) / ShipHero (OAuth) connect from Settings, NOT via an onboarding
+  // step — so this is the literal onboarding subset, not the wider OAuthProvider (which
+  // now also includes 'shiphero') nor IntegrationProvider.
+  provider: OnboardingOAuthProvider;
   connected: boolean;
   nextStep: number;
   prevStep: number;
@@ -531,7 +538,7 @@ function OAuthStep({
     const url = connectFetcher.data?.redirectUrl;
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
-  const labels: Record<OAuthProvider, { title: string; blurb: string }> = {
+  const labels: Record<OnboardingOAuthProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
       blurb:
