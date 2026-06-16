@@ -7,6 +7,7 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
   ad_tax_overload: "Paying too much in ad fees",
   campaign_below_breakeven: "Campaign is losing money",
   cogs_drift: "Product costs creeping up",
+  free_shipping_leakage: "Free shipping costing more than it earns",
   margin_erosion: "Profit per sale shrinking",
   negative_unit_economics: "Losing money on every sale",
   regional_shortage_risk: "About to run out in some areas",
@@ -24,6 +25,7 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   ad_tax_overload: "Ad-tax overload",
   campaign_below_breakeven: "Campaign below breakeven",
   cogs_drift: "COGS drift",
+  free_shipping_leakage: "Free-shipping leakage",
   margin_erosion: "Margin erosion",
   negative_unit_economics: "Negative unit economics",
   regional_shortage_risk: "Regional shortage risk",
@@ -43,6 +45,8 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
   create_po_draft: "Create PO draft",
+  raise_free_ship_threshold: "Raise free-shipping threshold",
+  exclude_sku_free_ship: "Exclude SKU from free shipping",
   snooze_alert: "Snooze alert",
 };
 
@@ -54,6 +58,8 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   exclude_geo: "Excluded geo",
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",
+  raise_free_ship_threshold: "Raised free-ship threshold",
+  exclude_sku_free_ship: "Excluded SKU from free shipping",
   snooze_alert: "Snoozed alert",
 };
 
@@ -158,6 +164,13 @@ export const EVIDENCE_LABELS: Record<string, string> = {
   stock_units: "Stock",
   location_region: "Region",
   region: "Region",
+  shipping_collected_usd: "Shipping collected from customers",
+  ship_cost_usd: "What you paid carriers",
+  net_shipping_pnl_usd: "Net shipping P&L",
+  free_ship_orders: "Free-shipping orders",
+  ship_cost_confidence: "Ship-cost confidence",
+  current_free_ship_threshold_usd: "Free-shipping threshold",
+  zone: "Shipping zone",
   campaign_name: "Campaign",
   campaign_id: "Campaign",
   inventory_item_id: "Inventory item",
@@ -286,6 +299,7 @@ export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
 
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
+  free_shipping_leakage: ["raise_free_ship_threshold", "exclude_sku_free_ship", "snooze_alert"],
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],
   ad_tax_overload: ["reallocate_budget", "reduce_campaign_budget", "pause_campaign", "snooze_alert"],
   margin_erosion: ["snooze_alert"],
