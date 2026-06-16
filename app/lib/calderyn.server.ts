@@ -186,6 +186,7 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
     locations_detail: [],
     ship_cost_source: (r.ship_cost_source as SKU["ship_cost_source"]) ?? null,
     ship_cost_confidence: (r.ship_cost_confidence as SKU["ship_cost_confidence"]) ?? null,
+    ship_pnl_cents: r.ship_pnl_cents == null ? null : Number(r.ship_pnl_cents),
   };
 }
 

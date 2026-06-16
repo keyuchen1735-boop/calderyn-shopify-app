@@ -44,6 +44,7 @@ import {
 } from "~/lib/inventory-alerts";
 import { formatDemandUnits } from "~/lib/inventory-demand";
 import { shipCostBadge } from "~/lib/ship-cost/provenance";
+import { ShipPnlText } from "~/components/calderyn/ship-pnl-text";
 
 function ShipCostBadge({
   source,
@@ -363,12 +364,13 @@ export default function SKUs() {
             { title: "On hand", alignment: "end" },
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
+            { title: "Ship P&L", alignment: "end" },
             { title: "Locations" },
             { title: "Main demand" },
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, false, true, true, true, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, false, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -453,6 +455,11 @@ export default function SKUs() {
                       No sales
                     </Text>
                   )}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <Text as="p" alignment="end">
+                    <ShipPnlText cents={s.ship_pnl_cents} />
+                  </Text>
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   <LocationCell locations={s.locations ?? {}} />
