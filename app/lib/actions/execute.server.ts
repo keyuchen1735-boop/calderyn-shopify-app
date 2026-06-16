@@ -11,7 +11,11 @@ import { actionAdapterForShop } from "../ads/action-registry.server";
 import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
 import { acknowledgeAlert } from "../alerts.server";
 
-export type ExecutableKind = "pause_campaign" | "resume_campaign" | "reduce_campaign_budget";
+export type ExecutableKind =
+  | "pause_campaign"
+  | "resume_campaign"
+  | "reduce_campaign_budget"
+  | "increase_campaign_budget";
 
 export interface ExecuteInput {
   alertId: string | null;
@@ -178,9 +182,12 @@ export async function executeAction(
 ): Promise<ExecutedAudit> {
   // 0. Validate input: a missing/zero target budget must refuse loudly —
   // the old `?? 0` fallthrough would set the live campaign budget to $0.
-  if (input.kind === "reduce_campaign_budget" && !input.dailyBudgetCents) {
+  if (
+    (input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget") &&
+    !input.dailyBudgetCents
+  ) {
     throw new Error(
-      `reduce_campaign_budget for ${input.campaignId} has no positive dailyBudgetCents (alert evidence lacked the current budget)`,
+      `${input.kind} for ${input.campaignId} has no positive dailyBudgetCents (alert evidence lacked the current budget)`,
     );
   }
 
@@ -202,7 +209,7 @@ export async function executeAction(
   const platform = String(camp.platform) as Platform;
   const preState = { status: camp.status, daily_budget_cents: camp.daily_budget_cents };
   const postState =
-    input.kind === "reduce_campaign_budget"
+    input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget"
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
       : input.kind === "resume_campaign"
         ? { status: "active", daily_budget_cents: camp.daily_budget_cents }

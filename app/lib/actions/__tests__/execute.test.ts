@@ -279,6 +279,22 @@ describe("executeAction", () => {
     await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "km4" }, sb);
     expect(calls.updates.filter((u) => u.table === "ad_campaign_dim")).toEqual([]);
   });
+
+  it("increase_campaign_budget mirrors the new budget and records $0 recovered", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    await executeAction(SHOP, { alertId: null, kind: "increase_campaign_budget", campaignId: CAMP, idempotencyKey: "kib", dailyBudgetCents: 6000 }, sb);
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as Record<string, unknown>).action_kind).toBe("increase_campaign_budget");
+    expect((audit?.rows as Record<string, unknown>).post_state).toMatchObject({ daily_budget_cents: 6000, status: "active" });
+    expect((audit?.rows as Record<string, unknown>).dollar_impact_at_exec).toBe(0);
+  });
+
+  it("increase_campaign_budget refuses a missing target budget", async () => {
+    const { sb } = fakeSb({ campaign });
+    await expect(
+      executeAction(SHOP, { alertId: null, kind: "increase_campaign_budget", campaignId: CAMP, idempotencyKey: "kib2" }, sb),
+    ).rejects.toThrow(/no positive dailyBudgetCents/);
+  });
 });
 
 // Cross-tenant accounting guard: the alerts lookup that drives recovered-impact
