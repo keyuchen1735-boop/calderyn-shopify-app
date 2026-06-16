@@ -305,6 +305,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const n = Number(v);
         return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
       });
+      setIfPresent("autopilot_max_budget_increase_pct", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+      // Empty input clears the ceiling (null); a number is stored as cents.
+      {
+        const raw = formData.get("autopilot_max_daily_budget");
+        if (raw !== null) {
+          const s = String(raw).trim();
+          if (s === "") {
+            patch.autopilot_max_daily_budget_cents = null;
+          } else {
+            const n = Number(s);
+            if (Number.isFinite(n)) patch.autopilot_max_daily_budget_cents = Math.max(0, Math.round(n * 100));
+          }
+        }
+      }
 
       await client.guardrails.update(patch, request.signal);
       return json<ActionPayload>({
@@ -648,6 +665,14 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const [autopilotMaxBudgetCutPct, setAutopilotMaxBudgetCutPct] = useState(
     String(guardrails.autopilot_max_budget_cut_pct),
   );
+  const [autopilotMaxBudgetIncreasePct, setAutopilotMaxBudgetIncreasePct] = useState(
+    String(guardrails.autopilot_max_budget_increase_pct),
+  );
+  const [autopilotMaxDailyBudget, setAutopilotMaxDailyBudget] = useState(
+    guardrails.autopilot_max_daily_budget_cents == null
+      ? ""
+      : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
+  );
 
   useEffect(() => {
     setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
@@ -657,6 +682,12 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
     setAutopilotDailyActionCap(String(guardrails.autopilot_daily_action_cap));
     setAutopilotMinSpend(String(Math.round(guardrails.autopilot_min_spend_cents / 100)));
     setAutopilotMaxBudgetCutPct(String(guardrails.autopilot_max_budget_cut_pct));
+    setAutopilotMaxBudgetIncreasePct(String(guardrails.autopilot_max_budget_increase_pct));
+    setAutopilotMaxDailyBudget(
+      guardrails.autopilot_max_daily_budget_cents == null
+        ? ""
+        : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
+    );
   }, [guardrails]);
 
   return (
@@ -719,6 +750,17 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           type="hidden"
           name="autopilot_max_budget_cut_pct"
           value={String(Math.max(0, Number(autopilotMaxBudgetCutPct)))}
+        />
+        <input
+          type="hidden"
+          name="autopilot_max_budget_increase_pct"
+          value={String(Math.max(0, Number(autopilotMaxBudgetIncreasePct)))}
+        />
+        {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
+        <input
+          type="hidden"
+          name="autopilot_max_daily_budget"
+          value={autopilotMaxDailyBudget.trim()}
         />
         <BlockStack gap="400">
           <FormLayout>
@@ -809,6 +851,24 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
                           autoComplete="off"
                           onChange={setAutopilotMaxBudgetCutPct}
                           helpText="Budget-reduction actions will not cut more than this percentage in a single step."
+                        />
+                      </FormLayout.Group>
+                      <FormLayout.Group>
+                        <TextField
+                          label="Most Calderyn can raise a winning campaign's budget at once (%)"
+                          type="number"
+                          value={autopilotMaxBudgetIncreasePct}
+                          autoComplete="off"
+                          onChange={setAutopilotMaxBudgetIncreasePct}
+                          helpText="Budget scale-ups will not add more than this percentage in a single step."
+                        />
+                        <TextField
+                          label="Never let a campaign's daily budget exceed (USD, optional)"
+                          type="number"
+                          value={autopilotMaxDailyBudget}
+                          autoComplete="off"
+                          onChange={setAutopilotMaxDailyBudget}
+                          helpText="Leave blank for no ceiling. Autopilot will not scale a budget above this."
                         />
                       </FormLayout.Group>
                     </FormLayout>
