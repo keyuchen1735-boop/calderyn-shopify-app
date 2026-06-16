@@ -142,7 +142,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopId = await resolveShopId(session.shop);
     const [{ data: settingsRow }, { data: orderRows }] = await Promise.all([
       sb.from("shop_settings").select("ship_cost_mode").eq("shop_id", shopId).maybeSingle(),
-      sb.from("order_fact").select("grams_sum").eq("shop_id", shopId),
+      sb.from("v_order_ship_features").select("grams_sum").eq("shop_id", shopId),
     ]);
     const shipMode = (settingsRow?.ship_cost_mode as string | null) ?? "auto";
     const missingWeight = missingWeightPct(
