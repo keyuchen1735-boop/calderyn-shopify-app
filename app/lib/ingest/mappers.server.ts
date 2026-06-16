@@ -34,10 +34,36 @@ type OrderNode = {
   currentTotalDiscountsSet?: Money;
   lineItems?: { nodes?: OrderLineNode[] };
 };
+// Weight conversion factors to grams for each WeightUnit enum value.
+const GRAMS_PER_UNIT: Record<string, number> = {
+  GRAMS: 1,
+  KILOGRAMS: 1000,
+  POUNDS: 453.592,
+  OUNCES: 28.3495,
+};
+
+// Returns total line grams (unit_grams × quantity), or null when weight is
+// absent or zero (zero is treated as "not set" rather than "literally zero
+// mass"). Non-GRAMS units are converted using GRAMS_PER_UNIT constants.
+function weightToLineGrams(
+  weight: { value: number; unit: string } | null | undefined,
+  quantity: number,
+): number | null {
+  if (!weight || !weight.value) return null;
+  const factor = GRAMS_PER_UNIT[weight.unit];
+  if (factor === undefined) return null;
+  return Math.round(weight.value * factor * quantity);
+}
+
 type OrderLineNode = {
   id: string;
   quantity: number;
-  variant?: { id?: string | null } | null;
+  variant?: {
+    id?: string | null;
+    inventoryItem?: {
+      measurement?: { weight?: { value: number; unit: string } | null } | null;
+    } | null;
+  } | null;
   originalUnitPriceSet?: Money;
 };
 
@@ -93,6 +119,7 @@ export function mapOrder(shopId: string, o: OrderNode): OrderRow {
 export function mapOrderLines(o: OrderNode): OrderLineRow[] {
   return (o.lineItems?.nodes ?? []).map((ln) => {
     const priceCents = moneyToCents(amount(ln.originalUnitPriceSet));
+    const weight = ln.variant?.inventoryItem?.measurement?.weight ?? null;
     return {
       sku_external_id: ln.variant?.id ?? null,
       external_line_id: ln.id,
@@ -101,6 +128,9 @@ export function mapOrderLines(o: OrderNode): OrderLineRow[] {
       // Pre-discount extended price (unit price × qty); line-level discounts
       // are not modeled in Slice 1.
       total_cents: priceCents * ln.quantity,
+      // Total line grams = variant unit grams × quantity.
+      // Null when the variant, inventoryItem, or weight value is absent/zero.
+      grams: weightToLineGrams(weight, ln.quantity),
     };
   });
 }
@@ -207,6 +237,9 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
       // Pre-discount extended price (unit price × qty); line-level discounts
       // are not modeled in Slice 1.
       total_cents: priceCents * Number(ln.quantity ?? 0),
+      // REST webhook payload does not include variant weight — grams is always
+      // null here. The backfill (GraphQL) path populates it via mapOrderLines.
+      grams: null,
     };
   });
   return { order, lines, clickRef: { utm, clickIds, referringSite } };

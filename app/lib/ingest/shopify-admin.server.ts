@@ -84,6 +84,15 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
   } while (cursor);
 }
 
+// Weight on a line item is not a field on LineItem itself — it lives on the
+// variant's inventoryItem.measurement.weight (Admin GraphQL 2025-01+).
+// The Weight object carries { value: Float, unit: WeightUnit } where WeightUnit
+// is one of GRAMS | KILOGRAMS | POUNDS | OUNCES. The mapper converts to grams.
+export type AdminOrderLineItemWeight = {
+  value: number;
+  unit: "GRAMS" | "KILOGRAMS" | "POUNDS" | "OUNCES";
+} | null;
+
 export type AdminOrder = {
   id: string;
   name: string;
@@ -99,7 +108,12 @@ export type AdminOrder = {
     nodes: Array<{
       id: string;
       quantity: number;
-      variant: { id: string } | null;
+      variant: {
+        id: string;
+        inventoryItem: {
+          measurement: { weight: AdminOrderLineItemWeight };
+        } | null;
+      } | null;
       originalUnitPriceSet: { shopMoney: { amount: string } };
     }>;
   };
@@ -126,8 +140,21 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
             currentTotalTaxSet { shopMoney { amount } }
             currentTotalDiscountsSet { shopMoney { amount } }
             # Slice-1 cap: single-page (orders with >100 line items truncate).
+            # Weight is NOT a field on LineItem — it lives on the variant's
+            # inventoryItem.measurement.weight. We select unit alongside value
+            # because the API returns the variant's stored unit (GRAMS,
+            # KILOGRAMS, POUNDS, or OUNCES); the mapper converts to grams.
             lineItems(first: 100) {
-              nodes { id quantity variant { id } originalUnitPriceSet { shopMoney { amount } } }
+              nodes {
+                id quantity
+                variant {
+                  id
+                  inventoryItem {
+                    measurement { weight { value unit } }
+                  }
+                }
+                originalUnitPriceSet { shopMoney { amount } }
+              }
             }
           }
         }

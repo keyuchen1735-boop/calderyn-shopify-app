@@ -33,6 +33,7 @@ create table public.sku_pnl (
   cogs_cents                integer not null,
   ad_spend_attrib_cents     integer not null,
   return_cents              integer not null default 0,
+  ship_cost_cents           integer not null default 0,
   contribution_margin_cents integer not null,
   unique (sku_id, day)
 );

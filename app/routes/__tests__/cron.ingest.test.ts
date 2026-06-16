@@ -5,15 +5,18 @@ import { loader } from "../cron.ingest";
 // Hoisted mocks — declared before any imports so vi.mock factory can reference
 // them (mirrors the cron.ingest-ads.test.ts pattern).
 // ---------------------------------------------------------------------------
-const { reconcileAttributedRevenue, transformPendingWebhooks, backfillShop } = vi.hoisted(() => ({
-  reconcileAttributedRevenue: vi.fn(async (_shopId: string, _sb: unknown) => {}),
-  transformPendingWebhooks: vi.fn(async () => ({ processed: 2, facts: 3, dlq: 0 })),
-  backfillShop: vi.fn(async () => {}),
-}));
+const { reconcileAttributedRevenue, transformPendingWebhooks, backfillShop, runShipCostResolution } =
+  vi.hoisted(() => ({
+    reconcileAttributedRevenue: vi.fn(async (_shopId: string, _sb: unknown) => {}),
+    transformPendingWebhooks: vi.fn(async () => ({ processed: 2, facts: 3, dlq: 0 })),
+    backfillShop: vi.fn(async () => {}),
+    runShipCostResolution: vi.fn(async (_sb: unknown, _shopId: string, _opts: unknown) => {}),
+  }));
 
 vi.mock("~/lib/attribution/revenue.server", () => ({ reconcileAttributedRevenue }));
 vi.mock("~/lib/ingest/transform.server", () => ({ transformPendingWebhooks }));
 vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
+vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
 
 // Fake Supabase: serves both cron.ingest query shapes:
 //   Phase 1 (backfill):  .from("shop_integrations").select().eq("kind","shopify").eq("sync_status","pending").limit(5)
@@ -78,6 +81,33 @@ describe("cron.ingest loader", () => {
     // summary has attributionErrors array (empty on success)
     expect(body).toHaveProperty("attributionErrors");
     expect(body.attributionErrors).toEqual([]);
+
+    // Phase 4: ship-cost runner called once per live shop
+    expect(runShipCostResolution).toHaveBeenCalledTimes(2);
+    expect(runShipCostResolution).toHaveBeenCalledWith(expect.anything(), "s1", { shopCountry: null });
+    expect(runShipCostResolution).toHaveBeenCalledWith(expect.anything(), "s2", { shopCountry: null });
+    expect(body).toHaveProperty("shipCostErrors");
+    expect(body.shipCostErrors).toEqual([]);
+  });
+
+  it("records a ship-cost resolution failure in shipCostErrors and does not abort other shops", async () => {
+    runShipCostResolution.mockImplementation(async (_sb: unknown, shopId: string) => {
+      if (shopId === "s1") throw new Error("ship-cost boom");
+    });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    // s2 still ran despite s1 failing
+    expect(runShipCostResolution).toHaveBeenCalledWith(expect.anything(), "s2", expect.anything());
+
+    // failure recorded in summary
+    expect(body.shipCostErrors).toHaveLength(1);
+    expect(body.shipCostErrors[0]).toContain("s1");
+
+    // other phases unaffected
+    expect(body.attributionErrors).toEqual([]);
+    expect(body.transform).toMatchObject({ processed: 2, facts: 3 });
   });
 
   it("records one shop's reconcile failure in attributionErrors and does not abort others", async () => {

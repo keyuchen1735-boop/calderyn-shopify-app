@@ -445,6 +445,11 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
 
   const realized30 = new Map<string, Map<string, number>>(); // skuId -> region -> units
   const sold7 = new Map<string, number>();
+  // Ship cost: $4.25 base per order + $0.75 per additional unit beyond the first.
+  // Allocated to SKUs pro-rata by line quantity within each order.
+  // (Computed below, after linesByOrderId is built, so both share one map.)
+  const shipCostBySkuDay = new Map<string, number>();
+
   const pnlBySkuDay = new Map<string, { revenue: number; cogs: number }>();
   for (const l of orderLines) {
     const order = orderById.get(l.order_id)!;
@@ -595,6 +600,24 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     arr.push(l);
     linesByOrderId.set(l.order_id, arr);
   }
+
+  // Ship cost allocation — reuses linesByOrderId built just above.
+  for (const order of orders) {
+    const lines = linesByOrderId.get(order.id) ?? [];
+    const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
+    // defensive: generated orders always have ≥1 line
+    if (totalQty === 0) continue;
+    const orderShipCost = 425 + Math.max(0, totalQty - 1) * 75;
+    const day = order.created_at_source.slice(0, 10);
+    for (const l of lines) {
+      const skuShare = l.quantity / totalQty;
+      // seed-only: per-line rounding may not sum exactly to the order's ship cost; the live resolver (split.ts) uses largest-remainder to stay exact.
+      const skuShipCost = Math.round(orderShipCost * skuShare);
+      const key = `${l.sku_id}|${day}`;
+      shipCostBySkuDay.set(key, (shipCostBySkuDay.get(key) ?? 0) + skuShipCost);
+    }
+  }
+
   const specByKey = new Map(CAMPAIGNS.map((spec) => [spec.key, spec]));
   const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const UTM_SOURCE = { meta: "facebook", google: "google", tiktok: "tiktok" } as const;
@@ -673,6 +696,7 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     const slot = pnlBySkuDay.get(key) ?? { revenue: 0, cogs: 0 };
     const returns = returnsBySkuDay.get(key) ?? 0;
     const adSpendAttrib = adAllocBySkuDay.get(key) ?? 0;
+    const shipCost = shipCostBySkuDay.get(key) ?? 0;
     skuPnl.push({
       id: uuidFrom(rng),
       shop_id: config.shopId,
@@ -682,7 +706,8 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
       cogs_cents: slot.cogs,
       ad_spend_attrib_cents: adSpendAttrib,
       return_cents: returns,
-      contribution_margin_cents: slot.revenue - slot.cogs - adSpendAttrib - returns,
+      ship_cost_cents: shipCost,
+      contribution_margin_cents: slot.revenue - slot.cogs - adSpendAttrib - returns - shipCost,
     });
   }
 

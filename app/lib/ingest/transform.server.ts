@@ -162,6 +162,9 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
     quantity: l.quantity,
     price_cents: l.price_cents,
     total_cents: l.total_cents,
+    // REST webhook (orders/create) does not carry variant weight — null here.
+    // The backfill path (GraphQL) populates grams via mapOrderLines.
+    grams: l.grams,
   }));
 
   const { error: lErr } = await sb

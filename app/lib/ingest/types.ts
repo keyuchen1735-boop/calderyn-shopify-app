@@ -55,4 +55,10 @@ export type OrderLineRow = {
   quantity: number;
   price_cents: number;
   total_cents: number;
+  // Total line weight in grams (variant_unit_grams × quantity).
+  // Null when the variant or its inventoryItem measurement is absent or has a
+  // zero-value weight (treated as "unknown" rather than "weighs nothing").
+  // Source: variant.inventoryItem.measurement.weight on the Admin GraphQL API;
+  // non-GRAMS units (KILOGRAMS, POUNDS, OUNCES) are converted at mapper time.
+  grams: number | null;
 };
