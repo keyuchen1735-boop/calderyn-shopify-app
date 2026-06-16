@@ -43,6 +43,29 @@ import {
   openAlertsBySku,
 } from "~/lib/inventory-alerts";
 import { formatDemandUnits } from "~/lib/inventory-demand";
+import { shipCostBadge } from "~/lib/ship-cost/provenance";
+
+function ShipCostBadge({
+  source,
+  confidence,
+}: {
+  source: SKU["ship_cost_source"];
+  confidence: SKU["ship_cost_confidence"];
+}) {
+  const badge = shipCostBadge(source);
+  if (!badge) {
+    return (
+      <Text as="span" tone="subdued" variant="bodySm">
+        —
+      </Text>
+    );
+  }
+  return (
+    <Tooltip content={`Source: ${badge.label}${confidence ? ` · confidence ${confidence}` : ""}`}>
+      <Badge tone={badge.tone}>{badge.label}</Badge>
+    </Tooltip>
+  );
+}
 
 type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
 type SortDir = "asc" | "desc";
@@ -268,7 +291,7 @@ export default function SKUs() {
 
   // IndexTable sort ↔ our SortKey. null marks an unsortable column.
   const SORT_COLUMNS: (SortKey | null)[] = [
-    null, "title", "on_hand", "days_of_cover", "velocity", null, null, null, null,
+    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {
@@ -336,6 +359,7 @@ export default function SKUs() {
           headings={[
             { title: "SKU" },
             { title: "Title" },
+            { title: "Ship cost" },
             { title: "On hand", alignment: "end" },
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
@@ -344,7 +368,7 @@ export default function SKUs() {
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, true, true, true, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -384,6 +408,9 @@ export default function SKUs() {
                       {s.title}
                     </Text>
                   </Tooltip>
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <ShipCostBadge source={s.ship_cost_source} confidence={s.ship_cost_confidence} />
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   <Text as="p" alignment="end" fontWeight="semibold" tone={onHandTone}>

@@ -11,7 +11,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { money } from "../format";
-import { putConsent, putGuardrails, DashboardApiError } from "~/lib/dashboard/client";
+import {
+  putConsent,
+  putGuardrails,
+  fetchShipCost,
+  setShipCostMode,
+  DashboardApiError,
+} from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
@@ -131,6 +137,47 @@ export default function Settings({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Ship-cost mode + weight-coverage nudge. Loaded from /dashboard/api/ship-cost
+  // (not in the shell context). Mode is the dashboard control; detailed inputs
+  // (period total, invoice CSV, per-order override) live in the Shopify admin.
+  const [shipMode, setShipMode] = useState<string | null>(null);
+  const [missingWeight, setMissingWeight] = useState(0);
+  const [savingMode, setSavingMode] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetchShipCost()
+      .then((d) => {
+        if (!active) return;
+        setShipMode(d.ship_mode);
+        setMissingWeight(d.missing_weight_pct);
+      })
+      .catch(() => {
+        /* leave defaults; the section just shows 'auto' until reachable */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const commitShipMode = async (mode: string) => {
+    if (savingMode || mode === shipMode) return;
+    const prev = shipMode;
+    setShipMode(mode);
+    setSavingMode(true);
+    try {
+      await setShipCostMode(mode);
+      app.toast("Shipping cost mode saved", "check");
+    } catch (err) {
+      setShipMode(prev);
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't update shipping cost mode.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
   // Guardrails not loaded yet — show the placeholder per the spec.
   if (!g) {
     return (
@@ -154,6 +201,35 @@ export default function Settings({ app }: { app: DashboardCtx }) {
         title="Settings"
         sub="Guardrails keep every automated action small, slow, and reversible."
       />
+
+      <section>
+        <SectionTitle>Shipping cost</SectionTitle>
+        <Card pad={false}>
+          <SettingRow
+            label="Cost source"
+            sub="How Calderyn estimates each order's shipping cost. Automatic picks the most trustworthy source per order. Enter period totals, carrier invoices, and per-order overrides in the Shopify admin."
+          >
+            <Segmented
+              small
+              value={shipMode ?? "auto"}
+              onChange={(v) => commitShipMode(v)}
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "force_measured", label: "Measured" },
+                { value: "force_reconciled", label: "Allocated" },
+              ]}
+            />
+          </SettingRow>
+          {missingWeight > 0 && (
+            <SettingRow
+              label="Weight coverage"
+              sub="Orders missing product weight get degraded shipping estimates. Add weights in Shopify to improve per-order accuracy."
+            >
+              <Pill tone="warn">{`${missingWeight}% missing`}</Pill>
+            </SettingRow>
+          )}
+        </Card>
+      </section>
 
       <section>
         <SectionTitle>Autopilot</SectionTitle>

@@ -145,6 +145,10 @@ export interface SKU {
   suggested_transfer: SuggestedTransfer | null;
   /** Per-location availability with Shopify GIDs (relocate modal source options). */
   locations_detail: SkuLocationDetail[];
+  /** Resolved ship-cost provenance for this SKU's margin — worst/lowest-confidence
+   * source among its orders; null until the resolver has run. */
+  ship_cost_source: import("./ship-cost/types").ShipCostSource | null;
+  ship_cost_confidence: import("./ship-cost/types").ShipCostConfidence | null;
 }
 
 export interface Integration {

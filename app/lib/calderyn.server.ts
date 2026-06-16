@@ -184,6 +184,8 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
     demand: null,
     suggested_transfer: null,
     locations_detail: [],
+    ship_cost_source: (r.ship_cost_source as SKU["ship_cost_source"]) ?? null,
+    ship_cost_confidence: (r.ship_cost_confidence as SKU["ship_cost_confidence"]) ?? null,
   };
 }
 

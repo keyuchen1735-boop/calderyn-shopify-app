@@ -13,6 +13,7 @@ interface OrderFeatureRow {
   grams_sum: number | null;
   item_count: number | null;
   fulfillment_count: number | null;
+  ship_cost_manual_cents: number | null;
 }
 
 export async function runShipCostResolution(
@@ -22,7 +23,7 @@ export async function runShipCostResolution(
 ): Promise<void> {
   const { data: orders } = await sb
     .from("v_order_ship_features")
-    .select("id, customer_country, grams_sum, item_count, fulfillment_count")
+    .select("id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents")
     .eq("shop_id", shopId);
   const orderRows = (orders ?? []) as OrderFeatureRow[];
   if (orderRows.length === 0) return;
@@ -61,7 +62,7 @@ export async function runShipCostResolution(
   // Bounded per-shop serial updates; if order volume grows, batch via an RPC or add a LIMIT to v_order_ship_features.
   for (const o of orderRows) {
     const r = resolveOrderShipCost({
-      manualOverrideCents: null,
+      manualOverrideCents: o.ship_cost_manual_cents ?? null,
       invoiceLineCents: invoiceByOrder.get(o.id) ?? null,
       eventParsedCents: null,
       allocatedCents: allocated?.get(o.id) ?? null,
