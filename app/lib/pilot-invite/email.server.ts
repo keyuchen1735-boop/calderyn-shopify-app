@@ -202,25 +202,6 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
 
         <table role="presentation" class="container" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:1100px; margin:0 auto;">
 
-          <!-- Top bar (shared) -->
-          <tr>
-            <td class="px" style="padding:2px 8px 16px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td align="left" style="vertical-align:middle;">
-                    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-                      <td style="vertical-align:middle; padding-right:9px;">
-                        <img src="${opts.baseUrl}/favicon.png" width="24" height="24" alt="Calderyn" style="display:block; width:24px; height:24px;" />
-                      </td>
-                      <td style="vertical-align:middle; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.18em; color:#24556E;">CALDERYN</td>
-                    </tr></table>
-                  </td>
-                  <td align="right" style="vertical-align:middle; font-family:${FONT}; font-size:11.5px; font-weight:600; letter-spacing:0.04em; color:#9A9AA0; text-transform:uppercase;">Beta pilot</td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
           <!-- View in browser (shared) -->
           <tr>
             <td>
