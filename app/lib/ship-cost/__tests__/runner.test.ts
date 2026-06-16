@@ -12,12 +12,22 @@ interface UpdateRecord {
   filters: Record<string, unknown>;
 }
 
+// PostgREST silently truncates an uncapped select at this many rows. The fake
+// emulates that default so a query without an explicit cap or .range() loop
+// cannot read past it — proving the truncation bug the runner has to defeat.
+const POSTGREST_DEFAULT_MAX = 1000;
+
 function makeSupabaseFake(tables: Record<string, any[]>) {
   const updates: UpdateRecord[] = [];
 
   function makeChain(table: string, rows: any[]) {
     let filters: Record<string, unknown> = {};
     let selectedRows = rows;
+    // null until the caller sets an explicit cap (.limit) or page (.range);
+    // when null the read is truncated to POSTGREST_DEFAULT_MAX, like real PostgREST.
+    let rangeFrom: number | null = null;
+    let rangeTo: number | null = null;
+    let explicitLimit: number | null = null;
     const chain: any = {
       select(_cols?: string) {
         return chain;
@@ -30,6 +40,16 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
       not(col: string, _op: string, _val: unknown) {
         // .not("ship_cost_cents", "is", null) → filter out rows where col IS null
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
+        return chain;
+      },
+      limit(n: number) {
+        explicitLimit = n;
+        return chain;
+      },
+      range(from: number, to: number) {
+        // PostgREST .range is inclusive on both ends.
+        rangeFrom = from;
+        rangeTo = to;
         return chain;
       },
       update(payload: Record<string, unknown>) {
@@ -48,7 +68,18 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         return updateChain;
       },
       then(cb: (r: { data: any[]; error: null }) => unknown) {
-        return Promise.resolve(cb({ data: selectedRows, error: null }));
+        let out: any[];
+        if (rangeFrom != null && rangeTo != null) {
+          // Range page: inclusive slice; this is how a paginating reader walks
+          // past the default truncation ceiling.
+          out = selectedRows.slice(rangeFrom, rangeTo + 1);
+        } else if (explicitLimit != null) {
+          out = selectedRows.slice(0, explicitLimit);
+        } else {
+          // No explicit cap/page → PostgREST default truncation.
+          out = selectedRows.slice(0, POSTGREST_DEFAULT_MAX);
+        }
+        return Promise.resolve(cb({ data: out, error: null }));
       },
     };
     return chain;
@@ -203,5 +234,97 @@ describe("rollShipCostIntoSkuPnl", () => {
     expect(update.payload.ship_cost_cents).toBe(400);
     // contribution = 10000 - 3000 - 1500 - 200 - 400 = 4900
     expect(update.payload.contribution_margin_cents).toBe(4900);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 4: >1000 rows — runShipCostResolution must resolve EVERY order, not just
+// the first PostgREST-truncated 1000. Regression for prod: a cron tick resolved
+// exactly 1000 orders/shop and left the rest unreconciled.
+// ---------------------------------------------------------------------------
+describe("runShipCostResolution — processes all rows past the 1000-row truncation", () => {
+  it("resolves all 2500 orders in one tick (defeats PostgREST default truncation)", async () => {
+    const N = 2500;
+    const orders = Array.from({ length: N }, (_, i) => ({
+      id: `o${i}`,
+      shop_id: "shop1",
+      customer_country: "US",
+      grams_sum: 100,
+      item_count: 1,
+      fulfillment_count: 1,
+      ship_cost_manual_cents: null,
+    }));
+
+    const tables: Record<string, any[]> = {
+      v_order_ship_features: orders,
+      shipping_cost_period: [{ shop_id: "shop1", total_cents: 1_000_000 }],
+      shipping_invoice_line: [],
+      order_fact: [],
+      order_line_fact: [],
+      sku_pnl: [],
+    };
+
+    const sb = makeSupabaseFake(tables);
+    await runShipCostResolution(sb as any, "shop1", { shopCountry: "US" });
+
+    const orderUpdates = sb._updates.filter((u: UpdateRecord) => u.table === "order_fact");
+    // Every order must be reconciled — not just the first 1000.
+    expect(orderUpdates).toHaveLength(N);
+    const updatedIds = new Set(orderUpdates.map((u: UpdateRecord) => u.filters["id"]));
+    expect(updatedIds.size).toBe(N);
+    expect(updatedIds.has("o0")).toBe(true);
+    expect(updatedIds.has(`o${N - 1}`)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: >1000 rows — rollShipCostIntoSkuPnl must read every order_fact,
+// order_line_fact and sku_pnl row, not the first truncated 1000 of each.
+// ---------------------------------------------------------------------------
+describe("rollShipCostIntoSkuPnl — processes all rows past the 1000-row truncation", () => {
+  it("updates all 1500 sku_pnl rows (reads full order_fact + order_line_fact)", async () => {
+    const N = 1500;
+    const orderFacts = Array.from({ length: N }, (_, i) => ({
+      id: `o${i}`,
+      shop_id: "shop1",
+      created_at_source: "2026-01-15T10:00:00Z",
+      ship_cost_cents: 400,
+    }));
+    const orderLines = Array.from({ length: N }, (_, i) => ({
+      id: `l${i}`,
+      order_id: `o${i}`,
+      shop_id: "shop1",
+      sku_id: `sku-${i}`,
+      grams: 200,
+      quantity: 1,
+    }));
+    const pnlRows = Array.from({ length: N }, (_, i) => ({
+      id: `pnl${i}`,
+      shop_id: "shop1",
+      sku_id: `sku-${i}`,
+      day: "2026-01-15",
+      revenue_cents: 10000,
+      cogs_cents: 3000,
+      ad_spend_attrib_cents: 1500,
+      return_cents: 200,
+    }));
+
+    const tables: Record<string, any[]> = {
+      order_fact: orderFacts,
+      order_line_fact: orderLines,
+      sku_pnl: pnlRows,
+    };
+
+    const sb = makeSupabaseFake(tables);
+    await rollShipCostIntoSkuPnl(sb as any, "shop1");
+
+    const pnlUpdates = sb._updates.filter((u: UpdateRecord) => u.table === "sku_pnl");
+    // Every sku_pnl row gets its ship cost rolled in — only possible if the
+    // order_fact, order_line_fact AND sku_pnl reads all paged past 1000 rows.
+    expect(pnlUpdates).toHaveLength(N);
+    const updatedIds = new Set(pnlUpdates.map((u: UpdateRecord) => u.filters["id"]));
+    expect(updatedIds.size).toBe(N);
+    expect(updatedIds.has("pnl0")).toBe(true);
+    expect(updatedIds.has(`pnl${N - 1}`)).toBe(true);
   });
 });

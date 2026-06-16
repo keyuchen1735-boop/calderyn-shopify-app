@@ -7,6 +7,27 @@ import type { OrderSignals } from "./types";
 
 interface RunnerOpts { shopCountry: string | null; }
 
+// PostgREST silently truncates an uncapped select at 1000 rows by default, so a
+// shop with more orders than that would only be partially resolved per tick
+// (proven in prod: a cron tick stopped at exactly 1000 orders/shop). Page through
+// the full result set in range windows until a short page signals the end, rather
+// than betting on a fixed .limit() that a high-volume shop could still outgrow.
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const to = from + PAGE_SIZE - 1;
+    const { data } = await build(from, to);
+    const page = (data ?? []) as T[];
+    all.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 interface OrderFeatureRow {
   id: string;
   customer_country: string | null;
@@ -21,11 +42,13 @@ export async function runShipCostResolution(
   shopId: string,
   opts: RunnerOpts,
 ): Promise<void> {
-  const { data: orders } = await sb
-    .from("v_order_ship_features")
-    .select("id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents")
-    .eq("shop_id", shopId);
-  const orderRows = (orders ?? []) as OrderFeatureRow[];
+  const orderRows = await fetchAllRows<OrderFeatureRow>((from, to) =>
+    sb
+      .from("v_order_ship_features")
+      .select("id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents")
+      .eq("shop_id", shopId)
+      .range(from, to),
+  );
   if (orderRows.length === 0) return;
 
   if (opts.shopCountry == null) {
@@ -59,7 +82,8 @@ export async function runShipCostResolution(
   const fallbackFlat = periodTotal ? Math.round(periodTotal / orderRows.length) : 0;
   const nowIso = new Date().toISOString();
 
-  // Bounded per-shop serial updates; if order volume grows, batch via an RPC or add a LIMIT to v_order_ship_features.
+  // All of the shop's orders are processed per tick (fetchAllRows pages past the
+  // PostgREST 1000-row cap); if this serial-update loop grows hot, batch via an RPC.
   for (const o of orderRows) {
     const r = resolveOrderShipCost({
       manualOverrideCents: o.ship_cost_manual_cents ?? null,
@@ -110,20 +134,24 @@ export async function rollShipCostIntoSkuPnl(
   shopId: string,
 ): Promise<void> {
   // Load orders that have a resolved ship cost
-  const { data: orderData } = await sb
-    .from("order_fact")
-    .select("id, created_at_source, ship_cost_cents")
-    .eq("shop_id", shopId)
-    .not("ship_cost_cents", "is", null);
-  const orderFacts = (orderData ?? []) as OrderFactRow[];
+  const orderFacts = await fetchAllRows<OrderFactRow>((from, to) =>
+    sb
+      .from("order_fact")
+      .select("id, created_at_source, ship_cost_cents")
+      .eq("shop_id", shopId)
+      .not("ship_cost_cents", "is", null)
+      .range(from, to),
+  );
   if (orderFacts.length === 0) return;
 
   // Load all order lines for the shop
-  const { data: lineData } = await sb
-    .from("order_line_fact")
-    .select("id, order_id, sku_id, grams, quantity")
-    .eq("shop_id", shopId);
-  const orderLines = (lineData ?? []) as OrderLineRow[];
+  const orderLines = await fetchAllRows<OrderLineRow>((from, to) =>
+    sb
+      .from("order_line_fact")
+      .select("id, order_id, sku_id, grams, quantity")
+      .eq("shop_id", shopId)
+      .range(from, to),
+  );
 
   // Group lines by order_id
   const linesByOrder = new Map<string, OrderLineRow[]>();
@@ -155,11 +183,13 @@ export async function rollShipCostIntoSkuPnl(
   }
 
   // Load existing sku_pnl rows and update ship_cost_cents + contribution_margin_cents
-  const { data: pnlData } = await sb
-    .from("sku_pnl")
-    .select("id, sku_id, day, revenue_cents, cogs_cents, ad_spend_attrib_cents, return_cents")
-    .eq("shop_id", shopId);
-  const pnlRows = (pnlData ?? []) as SkuPnlRow[];
+  const pnlRows = await fetchAllRows<SkuPnlRow>((from, to) =>
+    sb
+      .from("sku_pnl")
+      .select("id, sku_id, day, revenue_cents, cogs_cents, ad_spend_attrib_cents, return_cents")
+      .eq("shop_id", shopId)
+      .range(from, to),
+  );
 
   for (const row of pnlRows) {
     const key = `${row.sku_id}|${row.day}`;
