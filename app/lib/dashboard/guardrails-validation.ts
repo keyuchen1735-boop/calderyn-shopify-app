@@ -37,6 +37,17 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     if (!isFiniteNum(v) || v < 0 || v > 100) return "invalid_autopilot_max_budget_cut_pct";
   }
 
+  if ("autopilot_max_budget_increase_pct" in patch) {
+    const v = patch.autopilot_max_budget_increase_pct;
+    if (!isFiniteNum(v) || v < 0 || v > 100) return "invalid_autopilot_max_budget_increase_pct";
+  }
+
+  if ("autopilot_max_daily_budget_cents" in patch) {
+    const v = patch.autopilot_max_daily_budget_cents;
+    // null = "no ceiling" is valid; otherwise a non-negative finite number.
+    if (v !== null && (!isFiniteNum(v) || v < 0)) return "invalid_autopilot_max_daily_budget_cents";
+  }
+
   if ("business_hours" in patch) {
     const bh = patch.business_hours as unknown;
     const field = (k: string) =>

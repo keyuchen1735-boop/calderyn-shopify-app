@@ -217,6 +217,9 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
     autopilot_max_budget_cut_pct: Number(r.autopilot_max_budget_cut_pct ?? 50),
+    autopilot_max_budget_increase_pct: Number(r.autopilot_max_budget_increase_pct ?? 20),
+    autopilot_max_daily_budget_cents:
+      r.autopilot_max_daily_budget_cents == null ? null : Number(r.autopilot_max_daily_budget_cents),
   };
 }
 
@@ -925,6 +928,9 @@ export function calderynClient(shop: string) {
           if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
           if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
           if (patch.autopilot_max_budget_cut_pct !== undefined) updates.autopilot_max_budget_cut_pct = patch.autopilot_max_budget_cut_pct;
+          if (patch.autopilot_max_budget_increase_pct !== undefined) updates.autopilot_max_budget_increase_pct = patch.autopilot_max_budget_increase_pct;
+          // null is meaningful (clear the ceiling), so test `!== undefined`.
+          if (patch.autopilot_max_daily_budget_cents !== undefined) updates.autopilot_max_daily_budget_cents = patch.autopilot_max_daily_budget_cents;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase

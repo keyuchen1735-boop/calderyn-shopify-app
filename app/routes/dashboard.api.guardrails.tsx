@@ -23,6 +23,8 @@ const PATCHABLE_KEYS: (keyof GuardrailConfig)[] = [
   "autopilot_daily_action_cap",
   "autopilot_min_spend_cents",
   "autopilot_max_budget_cut_pct",
+  "autopilot_max_budget_increase_pct",
+  "autopilot_max_daily_budget_cents",
 ];
 
 export async function action({ request }: ActionFunctionArgs) {

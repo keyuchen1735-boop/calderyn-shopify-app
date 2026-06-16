@@ -174,6 +174,9 @@ export interface GuardrailConfig {
   autopilot_daily_action_cap: number;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;
+  autopilot_max_budget_increase_pct: number;
+  /** Hard per-campaign daily-budget ceiling for autopilot scale-ups; null = none. */
+  autopilot_max_daily_budget_cents: number | null;
 }
 
 // --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---
