@@ -5,14 +5,21 @@
 // cover, velocity, a location distribution bar, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
 import { useEffect, useMemo, useState } from "react";
-import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
+import { Btn, Card, Pill, Segmented, Placeholder, Sparkline } from "../ui";
 import { CDIcon } from "../icons";
-import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
+import {
+  executeAlertAction,
+  fetchSkus,
+  fetchSkuHistory,
+  relocateSku,
+  DashboardApiError,
+} from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { formatDemandUnits } from "~/lib/inventory-demand";
 import { money } from "../format";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
+import type { SkuHistoryPoint } from "~/lib/types";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -511,6 +518,62 @@ function AlertActionsDialog({
 // No shared modal primitive exists in the dashboard kit yet, so this renders a
 // minimal fixed backdrop + centered Card, with cd-field/cd-input form controls
 // (the Predictor screen's form styling).
+/** Lazy-loaded 90-day on-hand trend for one SKU, shown in the relocate dialog.
+ * Reuses the dashboard Sparkline primitive. Auto-scaled, so the min–max range is
+ * labelled to keep the shape honest (a small wiggle shouldn't read as a crash). */
+function StockHistory({ skuId }: { skuId: string }) {
+  const [points, setPoints] = useState<SkuHistoryPoint[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setPoints(null);
+    setError(false);
+    fetchSkuHistory(skuId)
+      .then((rows) => alive && setPoints(rows))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [skuId]);
+
+  let body: React.ReactNode;
+  if (error) {
+    body = <span className="cd-caption">Couldn&apos;t load stock history.</span>;
+  } else if (points === null) {
+    body = <span className="cd-caption">Loading…</span>;
+  } else if (points.length < 2) {
+    body = (
+      <span className="cd-caption">
+        Not enough history yet — the trend builds as stock changes.
+      </span>
+    );
+  } else {
+    const values = points.map((p) => p.on_hand);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const stroke = last.on_hand < first.on_hand ? "var(--red)" : "var(--text-2)";
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Sparkline data={values} width={300} height={52} stroke={stroke} />
+        <span className="cd-caption tabular-nums">
+          Range {min.toLocaleString()}–{max.toLocaleString()} units · {points.length} updates
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="cd-row-title" style={{ marginBottom: 6 }}>
+        Stock history · 90 days
+      </div>
+      {body}
+    </div>
+  );
+}
+
 function RelocateDialog({
   sku,
   busy,
@@ -604,6 +667,7 @@ function RelocateDialog({
           <div className="cd-h2" style={{ marginBottom: 6 }}>
             Relocate {sku.title}
           </div>
+          <StockHistory skuId={sku.id} />
           {sku.demand && (
             <p className="cd-caption" style={{ marginBottom: 12 }}>
               {sku.demand.units_30d} units sold in {sku.demand.region} over 30 days ·{" "}

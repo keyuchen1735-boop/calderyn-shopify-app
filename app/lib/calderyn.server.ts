@@ -10,6 +10,7 @@ import type {
   Integration,
   ShopLocation,
   SKU,
+  SkuHistoryPoint,
   SkuSource,
   TopAdRow,
 } from "./types";
@@ -851,6 +852,30 @@ export function calderynClient(shop: string) {
           });
         } catch (err) {
           rethrow("skus.list", err);
+        }
+      },
+
+      // Daily on-hand trend for one SKU over the view's trailing 90-day window.
+      // Sparse, oldest-first; the newest point reconciles with v_skus_flat.on_hand.
+      // Service-role bypasses RLS, so .eq("shop_id") is the tenant guard.
+      async history(skuId: string, _signal?: AbortSignal): Promise<SkuHistoryPoint[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_sku_inventory_history")
+            .select("day, on_hand")
+            .eq("shop_id", shopId)
+            .eq("sku_id", skuId)
+            .order("day", { ascending: true })
+            // ≤90 sparse points/SKU; explicit cap per the PostgREST 1000-row default.
+            .limit(400);
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            date: String(r.day),
+            on_hand: Number(r.on_hand ?? 0),
+          }));
+        } catch (err) {
+          rethrow("skus.history", err);
         }
       },
     },
