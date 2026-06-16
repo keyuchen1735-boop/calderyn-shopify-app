@@ -56,8 +56,11 @@ describe("POST /pilot/api/send-invite", () => {
     expect(await res.json()).toEqual({ sent: true, id: "email_1" });
     expect(sendEmail).toHaveBeenCalledTimes(1);
     const arg = sendEmail.mock.calls[0][0];
-    // No List-Unsubscribe header — keeps the invite out of Gmail's Promotions tab.
-    expect(arg.headers).toBeUndefined();
+    // One-click List-Unsubscribe (RFC 8058) — Gmail's bulk-sender requirement; points at the tokened unsub URL.
+    expect(arg.headers).toEqual({
+      "List-Unsubscribe": "<https://app.test/pilot/unsubscribe?token=tok>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    });
     expect(logInvite).toHaveBeenCalledWith(expect.objectContaining({ status: "sent", resendId: "email_1" }));
   });
   it("short-circuits with alreadyInvited when skip_if_invited and a prior send exists", async () => {
