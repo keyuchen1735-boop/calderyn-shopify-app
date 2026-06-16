@@ -47,7 +47,15 @@ function ScreenHeader({
 }
 
 /* ---------- List row ---------- */
-function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
+function CampaignRow({
+  c,
+  onClick,
+  scaleSuggested,
+}: {
+  c: CampaignVM;
+  onClick: () => void;
+  scaleSuggested: boolean;
+}) {
   const losing = c.roas_7d < c.breakeven_roas;
   return (
     <button className="cd-row" onClick={onClick} data-dim={c.status === "paused" ? "1" : "0"}>
@@ -56,6 +64,7 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">{c.name}</span>
           {c.status === "paused" ? <Pill icon="pause">Paused</Pill> : <GradePill grade={c.grade} />}
+          {scaleSuggested && <Pill icon="arrowUpRight">Scale</Pill>}
         </div>
         <div className="cd-caption tabular-nums">
           {money(c.daily_budget_cents)}/day · {money(c.spend_7d)} spent (7d) · break-even{" "}
@@ -106,10 +115,17 @@ function CampaignDetail({
   const losing = c.roas_7d < c.breakeven_roas;
   const paused = status === "paused";
 
+  const scaleAlert = app.alerts.find(
+    (a) => a.campaign_id === c.id && a.status === "open" && a.detector_id === "campaign_scaling_opportunity",
+  );
+  const scalePct = app.guardrails?.autopilot_max_budget_increase_pct ?? 20;
+  const scaleTarget = Math.round(c.daily_budget_cents * (1 + scalePct / 100));
+
   const run = async (
-    type: "pause_campaign" | "resume_campaign" | "reduce_campaign_budget",
+    type: "pause_campaign" | "resume_campaign" | "reduce_campaign_budget" | "increase_campaign_budget",
     successText: string,
     nextStatus: string,
+    dailyBudgetCents?: number,
   ) => {
     if (busy) return;
     setBusy(true);
@@ -118,11 +134,22 @@ function CampaignDetail({
         type,
         ...(type === "reduce_campaign_budget"
           ? { dailyBudgetCents: Math.round(c.daily_budget_cents * 0.7) }
-          : {}),
+          : type === "increase_campaign_budget"
+            ? { dailyBudgetCents: dailyBudgetCents ?? Math.round(c.daily_budget_cents * 1.2) }
+            : {}),
       });
       setStatus(nextStatus);
       app.refresh();
-      app.toast(successText, type === "pause_campaign" ? "pause" : type === "resume_campaign" ? "play" : "reduce");
+      app.toast(
+        successText,
+        type === "pause_campaign"
+          ? "pause"
+          : type === "resume_campaign"
+            ? "play"
+            : type === "increase_campaign_budget"
+              ? "arrowUpRight"
+              : "reduce",
+      );
     } catch (err) {
       const message =
         err instanceof DashboardApiError ? err.message : "Action failed — please try again.";
@@ -184,6 +211,22 @@ function CampaignDetail({
           >
             Cut budget 30%
           </Btn>
+          {!paused && scaleAlert && (
+            <Btn
+              icon="arrowUpRight"
+              disabled={busy}
+              onClick={() =>
+                run(
+                  "increase_campaign_budget",
+                  `Budget scaled +${scalePct}% — logged to action history.`,
+                  status,
+                  scaleTarget,
+                )
+              }
+            >
+              Scale +{scalePct}%
+            </Btn>
+          )}
         </div>
       </header>
 
@@ -365,7 +408,17 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
         ) : (
           <div className="cd-rows">
             {shown.map((c) => (
-              <CampaignRow key={c.id} c={c} onClick={() => app.navigate("campaigns", c.id)} />
+              <CampaignRow
+                key={c.id}
+                c={c}
+                onClick={() => app.navigate("campaigns", c.id)}
+                scaleSuggested={app.alerts.some(
+                  (a) =>
+                    a.campaign_id === c.id &&
+                    a.status === "open" &&
+                    a.detector_id === "campaign_scaling_opportunity",
+                )}
+              />
             ))}
           </div>
         )}
