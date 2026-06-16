@@ -48,4 +48,15 @@ describe("renderPilotEmail", () => {
     expect(out.html).toContain("there");
     expect(out.html).toContain("your store");
   });
+  it("vertically centers the desktop hero alert card against the taller copy column", () => {
+    const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
+    // right column (44%) holds the shorter alert card; middle-align so it sits centered
+    expect(html).toContain('width="44%" style="vertical-align:middle;"');
+  });
+  it("shows Install → Connect → Save as an arrow-linked step flow", () => {
+    const { html } = renderPilotEmail({ firstName: "Jane", storeName: "Acme", baseUrl: base, unsubscribeUrl: unsub });
+    expect(html).not.toContain("Get the text");
+    // step labels in order, separated by arrows
+    expect(html).toMatch(/>Install<[\s\S]*?&rarr;[\s\S]*?>Connect<[\s\S]*?&rarr;[\s\S]*?>Save</);
+  });
 });
