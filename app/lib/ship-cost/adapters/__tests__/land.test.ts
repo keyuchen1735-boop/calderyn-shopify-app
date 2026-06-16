@@ -266,6 +266,41 @@ describe("landShipmentCharges — unmatched surfaced, never dropped (rule 12)", 
   });
 });
 
+// Part A (same-id adjustment) — the case RECONCILIATION.md §1 claims works with zero new
+// code. A carrier re-weighs a shipment; the provider re-emits the SAME externalId with the
+// settled (higher) cost on the next trailing-window re-pull. The delete-by-keyset replace
+// must OVERWRITE the existing line (settled cost), NOT add a second summed line — mandatory
+// because the resolver is last-write-wins / not summed. This pins the doc's "DONE" claim.
+describe("landShipmentCharges — same-id carrier adjustment overwrites (Part A §1)", () => {
+  it("re-pulling the same externalId with a settled cost overwrites the line (no double-count)", async () => {
+    const { sb, table } = makeDb({
+      shipping_cost_period: [],
+      shipping_invoice_line: [],
+      order_fact: [{ id: "o1", shop_id: SHOP, order_number: "#1001" }],
+      fulfillment_fact: [],
+    });
+    // Pull 1: original label cost 1000 for order o1.
+    await landShipmentCharges(sb, SHOP, "easypost", [
+      charge({ externalId: "shp_adj", orderRef: "#1001", costCents: 1000 }),
+    ]);
+    let lines = table("shipping_invoice_line");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ matched_order_id: "o1", cost_cents: 1000 });
+
+    // Pull 2: the SAME shipment id re-emitted at the settled cost 1250 (carrier APV re-weigh).
+    await landShipmentCharges(sb, SHOP, "easypost", [
+      charge({ externalId: "shp_adj", orderRef: "#1001", costCents: 1250 }),
+    ]);
+    lines = table("shipping_invoice_line");
+    // Exactly ONE line for o1, holding the SETTLED cost — not 1000, not 2250.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ matched_order_id: "o1", cost_cents: 1250, external_charge_id: "shp_adj" });
+    // Period total reflects the settled amount only.
+    const period = table("shipping_cost_period").find((p) => p.source === "connector");
+    expect(period?.total_cents).toBe(1250);
+  });
+});
+
 describe("landShipmentCharges — period total recompute (C4.5)", () => {
   it("sets total_cents = Σ of all the period's lines", async () => {
     const { sb, table } = makeDb({
