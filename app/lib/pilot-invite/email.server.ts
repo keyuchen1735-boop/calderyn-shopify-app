@@ -96,17 +96,23 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
           <td class="px" style="padding:28px 44px 4px;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
-                <td width="33.33%" align="center" style="vertical-align:top; font-family:${FONT};">
+                <td width="30%" align="center" style="vertical-align:top; font-family:${FONT};">
                   <div style="width:30px; height:30px; background:#24556E; border-radius:50%; text-align:center; font-size:14px; line-height:30px; color:#FFFFFF; font-weight:700; margin:0 auto;">1</div>
                   <div style="font-size:14.5px; font-weight:650; color:#1D1D1F; letter-spacing:-0.008em; padding-top:11px; text-align:center;">Install</div>
                 </td>
-                <td width="33.33%" align="center" style="vertical-align:top; font-family:${FONT};">
+                <td width="5%" align="center" style="vertical-align:top; font-family:${FONT};">
+                  <div style="line-height:30px; font-size:16px; color:#C2C7CF;">&rarr;</div>
+                </td>
+                <td width="30%" align="center" style="vertical-align:top; font-family:${FONT};">
                   <div style="width:30px; height:30px; background:#24556E; border-radius:50%; text-align:center; font-size:14px; line-height:30px; color:#FFFFFF; font-weight:700; margin:0 auto;">2</div>
                   <div style="font-size:14.5px; font-weight:650; color:#1D1D1F; letter-spacing:-0.008em; padding-top:11px; text-align:center;">Connect</div>
                 </td>
-                <td width="33.33%" align="center" style="vertical-align:top; font-family:${FONT};">
+                <td width="5%" align="center" style="vertical-align:top; font-family:${FONT};">
+                  <div style="line-height:30px; font-size:16px; color:#C2C7CF;">&rarr;</div>
+                </td>
+                <td width="30%" align="center" style="vertical-align:top; font-family:${FONT};">
                   <div style="width:30px; height:30px; background:#24556E; border-radius:50%; text-align:center; font-size:14px; line-height:30px; color:#FFFFFF; font-weight:700; margin:0 auto;">3</div>
-                  <div style="font-size:14.5px; font-weight:650; color:#1D1D1F; letter-spacing:-0.008em; padding-top:11px; text-align:center;">Get the text</div>
+                  <div style="font-size:14.5px; font-weight:650; color:#1D1D1F; letter-spacing:-0.008em; padding-top:11px; text-align:center;">Save</div>
                 </td>
               </tr>
             </table>
@@ -240,8 +246,8 @@ export function renderPilotEmail(opts: RenderEmailOpts): RenderedEmail {
                             </td></tr></table>
                             <div style="font-family:${FONT}; font-size:12px; color:#9FBACB; padding-top:12px;">One-click · uninstall anytime</div>
                           </td>
-                          <!-- right: alert card -->
-                          <td width="44%" style="vertical-align:top;">
+                          <!-- right: alert card (middle-aligned so the shorter card centers against the taller copy column) -->
+                          <td width="44%" style="vertical-align:middle;">
                             ${alertCard}
                           </td>
                         </tr>

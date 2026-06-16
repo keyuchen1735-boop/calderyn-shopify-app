@@ -18,4 +18,9 @@ describe("renderPilotLanding", () => {
     expect(html).toContain("&lt;x&gt;");
     expect(html).toContain("your store");
   });
+  it("names the third step Save (not Get the text), matching the email", () => {
+    const html = renderPilotLanding({ firstName: "Jane", storeName: "Acme", baseUrl: base });
+    expect(html).not.toContain("Get the text");
+    expect(html).toContain(">Save<");
+  });
 });
