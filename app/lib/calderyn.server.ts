@@ -779,7 +779,7 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes, demandRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes, returnsRes] = await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -804,6 +804,13 @@ export function calderynClient(shop: string) {
               .select("*")
               .eq("shop_id", shopId)
               .limit(10000),
+            // Trailing-30-day return rate per SKU; explicit cap per the
+            // PostgREST 1000-row default-truncation convention above.
+            supabase
+              .from("v_sku_returns_30d")
+              .select("sku_id, returned_units_30d, return_rate")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
@@ -815,6 +822,14 @@ export function calderynClient(shop: string) {
             console.error(
               "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
               demandRes.error,
+            );
+          }
+          // Return-rate enrichment is optional too — a missing/unmigrated view
+          // must not take down the SKU surface (returns stays undefined).
+          if (returnsRes.error) {
+            console.error(
+              "[skus.list] v_sku_returns_30d unavailable — serving SKUs without return rates",
+              returnsRes.error,
             );
           }
 
@@ -838,6 +853,19 @@ export function calderynClient(shop: string) {
             }
           }
 
+          // sku_id → return rate. Skip rows with a null rate (returns but no sales
+          // in the window) so the UI never shows a meaningless 0% / divide error.
+          const returnsBySku = new Map<string, { returned_units_30d: number; rate: number }>();
+          if (!returnsRes.error) {
+            for (const r of (returnsRes.data ?? []) as Array<Record<string, unknown>>) {
+              if (r.return_rate == null) continue;
+              returnsBySku.set(String(r.sku_id), {
+                returned_units_30d: Number(r.returned_units_30d ?? 0),
+                rate: Number(r.return_rate),
+              });
+            }
+          }
+
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
             const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
@@ -847,6 +875,10 @@ export function calderynClient(shop: string) {
               sku.demand = demandFromRow(demandRow);
               sku.suggested_transfer = suggestedTransferFromRow(demandRow);
               sku.locations_detail = locationsDetailFromRow(demandRow);
+            }
+            const returnsRow = returnsBySku.get(sku.id);
+            if (returnsRow) {
+              sku.returns = returnsRow;
             }
             return sku;
           });

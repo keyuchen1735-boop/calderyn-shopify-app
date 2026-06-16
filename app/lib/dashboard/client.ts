@@ -307,6 +307,7 @@ export function adaptSku(s: SKU): SkuVM {
     on_hand: s.on_hand,
     days_of_cover: s.days_of_cover,
     velocity: s.velocity,
+    returns: s.returns,
     locations: s.locations,
     status,
     sources: s.sources ?? [],

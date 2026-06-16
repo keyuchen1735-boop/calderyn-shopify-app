@@ -45,6 +45,18 @@ export function formatDemandUnits(units30d: number): string {
   return `${units30d.toLocaleString("en-US")} ${noun} sold/30d`;
 }
 
+/**
+ * Severity level for a SKU's trailing-30-day return rate (0..1), or null when
+ * it's healthy. Thresholds: > 25% critical, > 10% caution. Shared by both
+ * inventory surfaces so the flag can't drift; each surface maps the level to its
+ * own colour system (Polaris tone vs dashboard CSS var).
+ */
+export function returnRateLevel(rate: number): "critical" | "caution" | null {
+  if (rate > 0.25) return "critical";
+  if (rate > 0.1) return "caution";
+  return null;
+}
+
 export function demandFromRow(r: SkuDemandViewRow): SkuDemand {
   return {
     region: r.main_demand_region,
