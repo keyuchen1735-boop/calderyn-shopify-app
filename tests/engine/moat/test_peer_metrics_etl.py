@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
 import pytest
+import pytest_asyncio
 
 from calderyn_engine.moat.peer_metrics_etl import category_niche_for_shop
+from calderyn_engine.moat.peer_metrics_etl import run_peer_metrics
 
 pytestmark = pytest.mark.asyncio
 
+PEPPER = "test-pepper-v1"
 RUN_DATE = date(2026, 6, 17)
 
 
@@ -104,19 +108,12 @@ async def test_resolver_matches_niche_view_for_today(pg_pool):
     assert row is not None and row["segment"] == resolved
 
 
-from decimal import Decimal
-
-import pytest_asyncio
-
-from calderyn_engine.moat.peer_metrics_etl import run_peer_metrics
-
-PEPPER = "test-pepper-v1"
-
-
 @pytest_asyncio.fixture(autouse=False)
 async def clean_peer_tables(pg_pool):
-    """Truncate all tables touched by the run_peer_metrics tests before each
-    test that uses it, so prior-test shops/orders don't bleed into counts."""
+    """Truncate all tables touched by the run_peer_metrics tests both before
+    and after each test that uses it, so prior-test shops/orders don't bleed
+    into counts and these tests' data don't leak into other moat test files
+    that share the session DB."""
     async with pg_pool.acquire() as conn:
         await conn.execute(
             "TRUNCATE moat.peer_metric_baselines, "
@@ -124,6 +121,12 @@ async def clean_peer_tables(pg_pool):
             "public.shops RESTART IDENTITY CASCADE"
         )
     yield
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            "TRUNCATE moat.peer_metric_baselines, "
+            "public.order_fact, public.sku_pnl, public.sku_dim, "
+            "public.shops RESTART IDENTITY CASCADE"
+        )
 
 
 async def _seed_shop_in_niche(conn, shop_id, *, consent, category, aov_dollars):
@@ -214,3 +217,36 @@ async def test_delete_stale_when_drops_below_floor(pg_pool, clean_peer_tables):
             "WHERE metric_key='aov' AND segment=$1", seg)
     assert gone is None
     assert report.segments_deleted >= 1
+
+
+async def test_metric_with_too_few_values_is_suppressed(pg_pool, clean_peer_tables):
+    """A niche can have >=5 shops, but a metric only gets a baseline if >=5 of
+    them have a (non-null) value for THAT metric. Exercises the _shop_values
+    null/missing-value drop (k-anon safety)."""
+    async with pg_pool.acquire() as conn:
+        ids = [str(uuid.uuid4()) for _ in range(5)]
+        for sid in ids:
+            await _seed_shop(conn, sid, consent=True)
+            sku = await _seed_sku(conn, sid, "electronics")
+            await _seed_pnl(conn, sid, sku, day=date.today(), revenue_cents=10_000)
+        # Only 3 of the 5 have an order → only 3 have a v_peer_kpi_aov value.
+        for sid in ids[:3]:
+            await conn.execute(
+                """
+                INSERT INTO public.order_fact
+                  (id, shop_id, external_id, order_number, created_at_source,
+                   total_cents, subtotal_cents, source_version)
+                VALUES (gen_random_uuid(), $1::uuid, $2, $3, now(),
+                        30000, 30000, (extract(epoch from clock_timestamp())*1000)::bigint)
+                """,
+                sid, f"ord-{uuid.uuid4().hex[:8]}", f"#{uuid.uuid4().hex[:6]}",
+            )
+        await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        gm = await conn.fetchrow(
+            "SELECT n FROM moat.peer_metric_baselines "
+            "WHERE metric_key='gross_margin_pct' AND segment='cat:electronics'")
+        aov = await conn.fetchrow(
+            "SELECT n FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment='cat:electronics'")
+    assert gm is not None and gm["n"] == 5   # all 5 shops have a margin value
+    assert aov is None                        # only 3 have AOV < K_FLOOR

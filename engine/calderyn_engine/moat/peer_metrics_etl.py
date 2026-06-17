@@ -80,7 +80,7 @@ class PeerMetricsReport:
     segments_deleted: int
 
 
-async def _shop_values(conn: Any, view: str, shop_ids: list) -> dict[str, Any]:
+async def _shop_values(conn: Any, view: str, shop_ids: list[Any]) -> dict[str, Any]:
     rows = await conn.fetch(
         f"select shop_id, value from {view} where shop_id = any($1::uuid[])",
         shop_ids,
@@ -115,6 +115,9 @@ async def run_peer_metrics(conn: Any, *, run_date: date, pepper: str) -> PeerMet
 
     pseudonym = {str(sid): pseudonym_for(str(sid), pepper) for sid in shop_ids}
     niche: dict[str, str] = {}
+    # ponytail: N sequential niche queries (one per consenting shop), mirroring
+    # peer_incident_etl's per-shop pattern — fine for a nightly job. Collapse to a
+    # single CTE if the consenting pool exceeds ~1k shops.
     for sid in shop_ids:
         seg = await category_niche_for_shop(conn, sid, run_date)
         if seg != "cat:uncategorized":  # uncategorized never contributes (spec §2)
@@ -126,7 +129,7 @@ async def run_peer_metrics(conn: Any, *, run_date: date, pepper: str) -> PeerMet
         values = await _shop_values(conn, view, shop_ids)
         ps: list[str] = []
         segs: list[str] = []
-        vals: list = []
+        vals: list[Any] = []
         for sid_str, seg in niche.items():
             v = values.get(sid_str)
             if v is None:
@@ -155,8 +158,9 @@ async def run_peer_metrics(conn: Any, *, run_date: date, pepper: str) -> PeerMet
             )
             written += 1
 
-        # delete-stale: any persisted segment for this metric that did NOT
-        # re-qualify this run (dropped below K_FLOOR or vanished).
+        # delete-stale: any persisted segment for this metric that did NOT re-qualify
+        # this run (dropped below K_FLOOR or vanished). segments_deleted is best-effort
+        # (counts attempted deletes) — exact for the single-runner nightly job.
         existing = await conn.fetch(
             "select segment from moat.peer_metric_baselines where metric_key = $1",
             metric_key,
