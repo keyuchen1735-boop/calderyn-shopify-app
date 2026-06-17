@@ -49,7 +49,16 @@ import {
 } from "~/lib/screener/types";
 import type { ScoreActionPayload } from "./app.campaigns.$campaignId.score";
 import { fmtMoney } from "~/lib/format";
+import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
+
+type ScaleOpportunity = {
+  reason: string;
+  upsideCents: number; // projected incremental monthly margin (cents)
+  currentBudgetCents: number;
+  newBudgetCents: number;
+  pct: number;
+};
 
 type CampaignDetail = {
   /** id to use for actions: dim uuid if ingested, else the platform external id. */
@@ -82,6 +91,8 @@ type LoaderPayload = {
   assumedSpendCents: number;
   /** The id this page was loaded under (params.campaignId) — the score route path. */
   campaignIdParam: string;
+  /** Open scale opportunity for this campaign (why-to-scale), or null. */
+  scale: ScaleOpportunity | null;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -193,9 +204,10 @@ async function respondForDetail(
   detail: CampaignDetail,
   campaignIdParam: string,
 ) {
-  const [{ creatives, creativesError }, { adMetrics, adMetricsError }] = await Promise.all([
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale] = await Promise.all([
     loadCreatives(shop, detail),
     loadAdMetrics(shop, detail),
+    loadScaleOpportunity(shop, detail),
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
@@ -209,6 +221,7 @@ async function respondForDetail(
     scorecards,
     assumedSpendCents,
     campaignIdParam,
+    scale,
   });
 }
 
@@ -228,7 +241,43 @@ function emptyPayload(
     scorecards: [],
     assumedSpendCents: DEFAULT_SPEND_CENTS,
     campaignIdParam,
+    scale: null,
   };
+}
+
+/** Open "scale this winner" opportunity for the detail page (the why-to-scale).
+ * Advisory: any failure returns null so it never breaks the detail page. Matches
+ * the open campaign_scaling_opportunity alert to this campaign by dim id (or the
+ * platform external id for a live-only Meta detail). */
+async function loadScaleOpportunity(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<ScaleOpportunity | null> {
+  try {
+    const client = calderynClient(shop);
+    const [alerts, gr] = await Promise.all([
+      client.alerts.list({ status: "open", detector: "campaign_scaling_opportunity" }),
+      client.guardrails.get(),
+    ]);
+    const a = alerts.find(
+      (x) =>
+        (x.campaign_id != null && x.campaign_id === detail.id) ||
+        (x.campaign_external_id != null && x.campaign_external_id === detail.externalId),
+    );
+    if (!a) return null;
+    const pct = Number(a.evidence?.increase_pct) || gr.autopilot_max_budget_increase_pct || 20;
+    const roas = Number(a.evidence?.roas);
+    const currentBudgetCents = Math.round((Number(a.evidence?.daily_budget_usd) || 0) * 100);
+    return {
+      reason: scaleReason(Number.isFinite(roas) ? roas : null, pct, a.dollar_impact),
+      upsideCents: a.dollar_impact, // already cents (rowToAlert converts dollars→cents)
+      currentBudgetCents,
+      newBudgetCents: Math.round(currentBudgetCents * (1 + pct / 100)),
+      pct,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Clamp the 7-day spend (or DEFAULT) to [MIN, MAX] — the per-ad score basis. */
@@ -403,6 +452,7 @@ export default function CampaignDetailPage() {
     scorecards,
     assumedSpendCents,
     campaignIdParam,
+    scale,
   } = useLoaderData<typeof loader>();
 
   if (!detail) {
@@ -433,6 +483,29 @@ export default function CampaignDetailPage() {
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
     >
       <BlockStack gap="400">
+        {scale && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Scale opportunity
+                </Text>
+                <Badge tone="success">Suggested: scale</Badge>
+              </InlineStack>
+              <Text as="p">{scale.reason}</Text>
+              <InlineGrid columns={{ xs: 2, sm: 3 }} gap="400">
+                <Stat label="Today's budget" value={fmtMoney(scale.currentBudgetCents)} />
+                <Stat label={`Proposed (+${scale.pct}%)`} value={fmtMoney(scale.newBudgetCents)} />
+                <Stat label="Projected upside" value={`+${fmtMoney(scale.upsideCents)}/mo`} />
+              </InlineGrid>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Scale it from the Campaigns list (row actions → “Scale budget”). Every change is
+                guardrailed and reversible.
+              </Text>
+            </BlockStack>
+          </Card>
+        )}
+
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
