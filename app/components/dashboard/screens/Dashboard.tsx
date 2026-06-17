@@ -295,7 +295,8 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     fetch("/dashboard/api/benchmarks")
       .then((r) => r.json())
       .then((d) => { if (alive) setBenchmarks(d as BenchmarksData); })
-      .catch(() => {});
+      // Card just stays hidden on failure, but surface the error (rule 12).
+      .catch((e) => { console.error("peer benchmarks fetch failed", e); });
     return () => { alive = false; };
   }, []);
 

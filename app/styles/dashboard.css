@@ -679,3 +679,4 @@
 /* Peer Benchmarks card */
 .cd-row-between { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .cd-benchmark-row { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
+.cd-kpi-value { font-size: calc(14px * var(--type-scale)); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }

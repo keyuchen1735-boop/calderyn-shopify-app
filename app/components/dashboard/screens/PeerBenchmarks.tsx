@@ -15,7 +15,7 @@ function KpiRow({ kpi }: { kpi: PeerKpi }) {
     <div className="cd-benchmark-row">
       <div className="cd-row-between">
         <span className="cd-stat-label">{kpi.label}</span>
-        <span className="cd-stat-value tabular-nums">{fmtValue(kpi, kpi.your_value)}</span>
+        <span className="cd-kpi-value">{fmtValue(kpi, kpi.your_value)}</span>
       </div>
       {kpi.available ? (
         <>
