@@ -48,6 +48,7 @@ import {
   integrationBadge,
   isApiKeyConnect,
   isConnectable,
+  isOauthPending,
   isPaired,
   kindToProvider,
 } from "~/lib/integrations";
@@ -991,7 +992,11 @@ function IntegrationCard({
   // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
   // disconnect speak the provider short name (e.g. "meta", "easypost").
   const oauthProvider = kindToProvider(provider);
-  const canConnect = isConnectable(provider);
+  // ShipHero (and any OAUTH_PENDING provider) is in OAUTH_PROVIDERS so isConnectable is
+  // true, but its OAuth handshake isn't live — an active Connect would always 501. Show a
+  // disabled "Coming soon" badge instead. Check pending BEFORE rendering Connect.
+  const oauthPending = isOauthPending(provider);
+  const canConnect = isConnectable(provider) && !oauthPending;
   // EasyPost (and future ship-cost connectors) connect by an API-key paste, not
   // OAuth — render an inline key field + Save instead of the Connect button (C8).
   const apiKeyConnect = isApiKeyConnect(provider);
@@ -1032,6 +1037,9 @@ function IntegrationCard({
                   Connect
                 </Button>
               </connectFetcher.Form>
+            ) : oauthPending ? (
+              // OAuth handshake not live yet — disabled affordance, not a Connect that 501s.
+              <Button disabled>Coming soon</Button>
             ) : apiKeyConnect ? null : (
               <Badge>Managed by Shopify</Badge>
             )}

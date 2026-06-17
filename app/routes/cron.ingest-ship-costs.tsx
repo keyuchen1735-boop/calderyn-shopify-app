@@ -81,7 +81,7 @@ async function runOne(item: ShipWorkItem, summary: Summary): Promise<void> {
     await runShipCostResolution(sb, shopId, { shopCountry: null });
 
     summary.landed.push(
-      `${tag} matched=${result.matchedOrderCount} unmatched=${result.unmatchedCount} skipped=${result.skippedNoKeyCount} dupes=${result.duplicateExternalIdCount}`,
+      `${tag} matched=${result.matchedLineCount} unmatched=${result.unmatchedCount} skipped=${result.skippedNoKeyCount} dupes=${result.duplicateExternalIdCount}`,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

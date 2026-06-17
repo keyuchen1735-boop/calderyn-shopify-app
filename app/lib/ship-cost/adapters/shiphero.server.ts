@@ -93,8 +93,8 @@ export function parseLabelCostToCents(cost: number | string | null | undefined):
  * Pure mapper: one ShipHero (shipment, label) pair → NormalizedShipmentCost, or null to
  * SKIP. Skip when the label cost is missing/zero (guard) or there is no stable id for the
  * idempotency key. externalId = "<shipmentId>:<labelIndex>" so multiple labels on one
- * shipment stay distinct and the pre-aggregation (C4.3) sums them per order. Exported for
- * unit testing.
+ * shipment stay distinct and land as distinct lines (the resolver sums them per order).
+ * Exported for unit testing.
  */
 export function mapLabelToNormalized(
   shipment: ShipHeroShipmentNode,
@@ -105,8 +105,13 @@ export function mapLabelToNormalized(
   if (costCents == null) return null; // missing/zero cost → skip (zero-cost guard, surfaced).
   const shipmentId = shipment.id?.trim();
   if (!shipmentId) return null; // no stable id → can't key idempotency.
-  const orderRef =
-    shipment.order?.partner_order_id?.trim() || shipment.order?.order_number?.trim() || null;
+  // partner_order_id is the upstream Shopify order id; ShipHero may store it as a GraphQL
+  // GID ("gid://shopify/Order/1001"). order_fact.order_number is the numeric name ("#1001"),
+  // and matchInvoiceLines strips a leading '#' before comparing — so a raw GID would never
+  // ref-match. Extract the trailing numeric id from a GID; pass any other value through.
+  const pid = shipment.order?.partner_order_id?.trim();
+  const partnerRef = pid ? (pid.startsWith("gid://") ? (pid.split("/").pop() ?? pid) : pid) : null;
+  const orderRef = partnerRef || shipment.order?.order_number?.trim() || null;
   return {
     externalId: `${shipmentId}:${labelIndex}`,
     orderRef,

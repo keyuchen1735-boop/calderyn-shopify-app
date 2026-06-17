@@ -5,12 +5,15 @@
 // actual_invoice / high. Adapts ingestInvoiceCsv (inputs.server.ts:46-109) with three
 // connector-specific behaviors:
 //   - get-or-create ONE synthetic period (idempotent via the partial unique index),
-//   - PRE-AGGREGATE matched charges per order (sum cents) → one line per order, so the
-//     resolver's last-write-wins Map (runner.server.ts:43-45) doesn't drop siblings,
+//   - land ONE LINE PER CHARGE (matched lines carry matched_order_id; the per-order SUM
+//     happens in the resolver, runner.server.ts, which reads ALL lines with no window —
+//     so it is always correct even when an order's charges straddle re-pull windows),
 //   - idempotent delete-by-(period_id, external_charge_id set) then insert, so a
 //     trailing-window re-pull never duplicates rows.
-// Unmatched charges (no order) still land (matched_order_id NULL) and are surfaced,
-// never dropped (rule 12).
+// Every line — matched or unmatched — is keyed by its own stable external_charge_id, so
+// the window-scoped delete only ever touches charges whose date falls in that window;
+// there is no cross-window straddle to miss. Unmatched charges (no order) still land
+// (matched_order_id NULL) and are surfaced, never dropped (rule 12).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchOrder } from "../match";
@@ -52,8 +55,8 @@ const SENTINEL_PERIOD_START = "1970-01-01";
 const SENTINEL_PERIOD_END = "2999-12-31";
 
 export interface LandResult {
-  /** Distinct orders that received an aggregated, matched line. */
-  matchedOrderCount: number;
+  /** Matched charges that landed as their own line (one per charge, matched_order_id set). */
+  matchedLineCount: number;
   /** Charges that matched no order and landed with matched_order_id NULL. */
   unmatchedCount: number;
   /** Charges skipped because they carried no usable key (no tracking AND no order ref). */
@@ -164,10 +167,10 @@ export async function landShipmentCharges(
   const periodId = await ensureConnectorPeriod(sb, shopId, provider);
 
   // Keep one charge per externalId. A provider (or a paginated pull) could echo the
-  // same shipment twice; without dedup the aggregation below would add its cost twice
-  // and the delete-by-keyset couldn't undo it. externalId is the idempotency key, so a
-  // later occurrence simply replaces the earlier (same id, same charge). Surfaced via
-  // the tally (rule 12) rather than silently summed.
+  // same shipment twice; without dedup we would land its cost twice as two rows with the
+  // same external_charge_id and the delete-by-keyset couldn't tell them apart. externalId
+  // is the idempotency key, so a later occurrence simply replaces the earlier (same id,
+  // same charge). Surfaced via the tally (rule 12) rather than silently double-landed.
   const usable: NormalizedShipmentCost[] = [];
   const seenExternalIds = new Set<string>();
   let skippedNoKeyCount = 0;
@@ -198,63 +201,26 @@ export async function landShipmentCharges(
   // matchCharge to matchInvoiceLines so the two can never drift (§tests).
   const matchIndex = buildMatchIndex(matchOrders);
 
-  // Pre-aggregate matched charges by order (sum cents) → one line per order. Track the
-  // contributing external ids + a representative ref/tracking for the aggregated line.
-  interface Agg {
-    orderId: string;
-    costCents: number;
-    orderRef: string | null;
-    trackingNo: string | null;
-    externalIds: string[];
-  }
-  const byMatchedOrder = new Map<string, Agg>();
+  // Land ONE LINE PER CHARGE. A matched charge carries matched_order_id; an unmatched one
+  // carries null. Both are keyed by their OWN external_charge_id, so each charge appears
+  // only in re-pull windows covering its ship date — no cross-window straddle. The per-
+  // order SUM is deferred to the resolver (runner.server.ts), which reads ALL connector
+  // lines with no window and is therefore always correct (the idempotency fix).
+  const matchedLines: InvoiceLineInsert[] = [];
   const unmatchedLines: InvoiceLineInsert[] = [];
 
   for (const c of usable) {
     const orderId = matchCharge(c, matchIndex);
-    if (orderId) {
-      const agg = byMatchedOrder.get(orderId);
-      if (agg) {
-        agg.costCents += c.costCents;
-        agg.externalIds.push(c.externalId);
-        if (!agg.orderRef && c.orderRef) agg.orderRef = c.orderRef;
-        if (!agg.trackingNo && c.trackingNo) agg.trackingNo = c.trackingNo;
-      } else {
-        byMatchedOrder.set(orderId, {
-          orderId,
-          costCents: c.costCents,
-          orderRef: c.orderRef,
-          trackingNo: c.trackingNo,
-          externalIds: [c.externalId],
-        });
-      }
-    } else {
-      // Unmatched charges are NOT aggregated — each lands individually (C4.6), keyed
-      // by its own external id so a re-pull replaces it in place.
-      unmatchedLines.push({
-        shop_id: shopId,
-        period_id: periodId,
-        order_ref: c.orderRef,
-        tracking_no: c.trackingNo,
-        cost_cents: c.costCents,
-        matched_order_id: null,
-        external_charge_id: c.externalId,
-      });
-    }
+    (orderId ? matchedLines : unmatchedLines).push({
+      shop_id: shopId,
+      period_id: periodId,
+      order_ref: c.orderRef,
+      tracking_no: c.trackingNo,
+      cost_cents: c.costCents,
+      matched_order_id: orderId,
+      external_charge_id: c.externalId,
+    });
   }
-
-  // For an aggregated matched line, external_charge_id is the FIRST contributing id (a
-  // deterministic anchor); all contributing ids are in the window key-set below so the
-  // replace is complete.
-  const matchedLines: InvoiceLineInsert[] = [...byMatchedOrder.values()].map((agg) => ({
-    shop_id: shopId,
-    period_id: periodId,
-    order_ref: agg.orderRef,
-    tracking_no: agg.trackingNo,
-    cost_cents: agg.costCents,
-    matched_order_id: agg.orderId,
-    external_charge_id: agg.externalIds[0] ?? null,
-  }));
 
   // Idempotent replace: delete every existing line under THIS period whose
   // external_charge_id is in this sync's window, then insert the freshly computed
@@ -296,7 +262,7 @@ export async function landShipmentCharges(
   if (upd.error) throw upd.error;
 
   return {
-    matchedOrderCount: matchedLines.length,
+    matchedLineCount: matchedLines.length,
     unmatchedCount: unmatchedLines.length,
     skippedNoKeyCount,
     duplicateExternalIdCount,

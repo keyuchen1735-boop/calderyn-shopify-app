@@ -139,21 +139,29 @@ describe("landShipmentCharges — synthetic period", () => {
   });
 });
 
-describe("landShipmentCharges — pre-aggregation (C4.3)", () => {
-  it("sums multiple matched charges for ONE order into a single line", async () => {
+describe("landShipmentCharges — one line per charge (idempotency model)", () => {
+  it("lands multiple matched charges for ONE order as SEPARATE lines (the per-order SUM moves to the resolver)", async () => {
+    // Pre-fix this summed to a single line keyed by externalIds[0]; that single anchor key
+    // is exactly what a straddling re-pull window could miss → double-count. The fix lands
+    // each charge under its OWN external_charge_id. The 739+512 sum is asserted in the
+    // RESOLVER test (source-priority.test.ts), which reads all lines with no window.
     const { sb, table } = makeDb({
       shipping_cost_period: [],
       shipping_invoice_line: [],
       order_fact: [{ id: "o1", shop_id: SHOP, order_number: "#1001" }],
       fulfillment_fact: [],
     });
-    await landShipmentCharges(sb, SHOP, "easypost", [
+    const res = await landShipmentCharges(sb, SHOP, "easypost", [
       charge({ externalId: "shp_a", orderRef: "#1001", costCents: 739 }),
       charge({ externalId: "shp_b", orderRef: "#1001", costCents: 512 }),
     ]);
     const lines = table("shipping_invoice_line");
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ matched_order_id: "o1", cost_cents: 1251 });
+    expect(lines).toHaveLength(2);
+    expect(res.matchedLineCount).toBe(2);
+    // Both lines matched to o1, each carrying its OWN charge cost + stable external id.
+    expect(lines.every((l) => l.matched_order_id === "o1")).toBe(true);
+    expect(lines.map((l) => l.cost_cents).sort((a, b) => a - b)).toEqual([512, 739]);
+    expect(lines.map((l) => l.external_charge_id).sort()).toEqual(["shp_a", "shp_b"]);
   });
 
   it("matches via tracking number when orderRef is absent", async () => {
@@ -166,7 +174,7 @@ describe("landShipmentCharges — pre-aggregation (C4.3)", () => {
     const res = await landShipmentCharges(sb, SHOP, "easypost", [
       charge({ externalId: "shp_t", orderRef: null, trackingNo: "1Z-TRACK", costCents: 400 }),
     ]);
-    expect(res.matchedOrderCount).toBe(1);
+    expect(res.matchedLineCount).toBe(1);
     expect(table("shipping_invoice_line")[0]).toMatchObject({ matched_order_id: "o9", cost_cents: 400 });
   });
 });
@@ -189,9 +197,10 @@ describe("landShipmentCharges — idempotent re-pull (success criterion #3)", ()
     await landShipmentCharges(sb, SHOP, "easypost", charges);
 
     const lines = table("shipping_invoice_line");
-    // 1 aggregated matched line for o1 + 1 unmatched line — unchanged after re-pull.
-    expect(lines).toHaveLength(2);
-    expect(lines.filter((l) => l.matched_order_id === "o1")).toHaveLength(1);
+    // 2 matched lines for o1 (one per charge, no landing-time aggregation) + 1 unmatched
+    // line — unchanged after re-pull (each charge keyed by its own external_charge_id).
+    expect(lines).toHaveLength(3);
+    expect(lines.filter((l) => l.matched_order_id === "o1")).toHaveLength(2);
     expect(lines.filter((l) => l.matched_order_id === null)).toHaveLength(1);
   });
 
@@ -231,6 +240,44 @@ describe("landShipmentCharges — idempotent re-pull (success criterion #3)", ()
     expect(lines).toHaveLength(1);
     expect(lines[0].cost_cents).toBe(500); // 500, NOT 1000
   });
+
+  // ── THE STRADDLE BUG (the blocker this change fixes) ────────────────────────
+  // One order has TWO charges shipped >window apart: charge A (day-5) and charge B
+  // (day-31). A later re-pull (window = days 6–36) fetches ONLY B. Pre-fix, landing
+  // aggregated both into a SINGLE line keyed by externalIds[0] (= A's id); the re-pull's
+  // delete scoped to {B} MISSED that A-keyed line and INSERTED a second aggregated line →
+  // the day-5 cost was double-counted. Post-fix each charge is its own line keyed by its
+  // OWN id, so the windowed delete-and-replace only ever touches the charge in that window
+  // and there is no straddling anchor to miss. This pins it.
+  it("does NOT double-count an order whose charges straddle two re-pull windows (the blocker)", async () => {
+    const { sb, table } = makeDb({
+      shipping_cost_period: [],
+      shipping_invoice_line: [],
+      order_fact: [{ id: "o1", shop_id: SHOP, order_number: "#1001" }],
+      fulfillment_fact: [],
+    });
+    const chargeA = charge({ externalId: "shp_A", orderRef: "#1001", costCents: 739 }); // day-5
+    const chargeB = charge({ externalId: "shp_B", orderRef: "#1001", costCents: 512 }); // day-31
+
+    // Pull 1 (window days 0–30): sees BOTH charges.
+    await landShipmentCharges(sb, SHOP, "easypost", [chargeA, chargeB]);
+    // Pull 2 (window days 6–36): the trailing window now covers ONLY B (A's day-5 fell out).
+    await landShipmentCharges(sb, SHOP, "easypost", [chargeB]);
+    // Pull 3: idempotent re-run of the same later window — still no change.
+    await landShipmentCharges(sb, SHOP, "easypost", [chargeB]);
+
+    const lines = table("shipping_invoice_line");
+    // Exactly TWO lines remain (one per charge) — A survived (its id wasn't in pull 2/3's
+    // window) and B was replaced in place, NOT duplicated.
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => l.external_charge_id).sort()).toEqual(["shp_A", "shp_B"]);
+    expect(lines.every((l) => l.matched_order_id === "o1")).toBe(true);
+    // The order's true cost is the SUM of its surviving lines — 1251, NEVER 739+512+512.
+    expect(lines.reduce((s, l) => s + l.cost_cents, 0)).toBe(1251);
+    // Period total reflects exactly those two lines.
+    const period = table("shipping_cost_period").find((p) => p.source === "connector");
+    expect(period?.total_cents).toBe(1251);
+  });
 });
 
 describe("landShipmentCharges — unmatched surfaced, never dropped (rule 12)", () => {
@@ -245,7 +292,7 @@ describe("landShipmentCharges — unmatched surfaced, never dropped (rule 12)", 
       charge({ externalId: "shp_x", orderRef: "#NOPE", trackingNo: "GHOST", costCents: 333 }),
     ]);
     expect(res.unmatchedCount).toBe(1);
-    expect(res.matchedOrderCount).toBe(0);
+    expect(res.matchedLineCount).toBe(0);
     const lines = table("shipping_invoice_line");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ matched_order_id: null, cost_cents: 333, external_charge_id: "shp_x" });
@@ -269,8 +316,9 @@ describe("landShipmentCharges — unmatched surfaced, never dropped (rule 12)", 
 // Part A (same-id adjustment) — the case RECONCILIATION.md §1 claims works with zero new
 // code. A carrier re-weighs a shipment; the provider re-emits the SAME externalId with the
 // settled (higher) cost on the next trailing-window re-pull. The delete-by-keyset replace
-// must OVERWRITE the existing line (settled cost), NOT add a second summed line — mandatory
-// because the resolver is last-write-wins / not summed. This pins the doc's "DONE" claim.
+// must OVERWRITE that one line in place (settled cost), NOT add a second line under the same
+// id — otherwise the resolver (which SUMS an order's connector lines) would double-count the
+// shipment. This pins the doc's "DONE" claim at the landing layer.
 describe("landShipmentCharges — same-id carrier adjustment overwrites (Part A §1)", () => {
   it("re-pulling the same externalId with a settled cost overwrites the line (no double-count)", async () => {
     const { sb, table } = makeDb({
@@ -359,7 +407,9 @@ describe("landShipmentCharges — matching parity with matchInvoiceLines (C5)", 
     });
     const res = await landShipmentCharges(sb, SHOP, "easypost", charges);
 
-    expect(res.matchedOrderCount).toBe(expected.matched.length);
+    // Each matched charge in this fixture maps to a distinct order, so the matched-LINE
+    // count equals matchInvoiceLines' matched count (one line per matched charge).
+    expect(res.matchedLineCount).toBe(expected.matched.length);
     expect(res.unmatchedCount).toBe(expected.unmatched.length);
     const landedMatchedIds = new Set(
       table("shipping_invoice_line").filter((l) => l.matched_order_id).map((l) => l.matched_order_id),

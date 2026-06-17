@@ -40,7 +40,9 @@ describe("mapLabelToNormalized", () => {
     shipping_labels: [],
   };
 
-  it("maps a label, preferring partner_order_id for the order ref and a composite externalId", () => {
+  it("maps a label, preferring partner_order_id (GID → numeric id) and a composite externalId", () => {
+    // partner_order_id is a GraphQL GID; the mapper extracts the trailing numeric id so it
+    // ref-matches order_fact.order_number ("#1001") after the matcher strips the '#'.
     const r = mapLabelToNormalized(
       shipment,
       { cost: "7.39", tracking_number: "1Z999", carrier: "UPS" },
@@ -48,13 +50,22 @@ describe("mapLabelToNormalized", () => {
     );
     expect(r).toEqual({
       externalId: "ship_1:0",
-      orderRef: "gid://shopify/Order/1001",
+      orderRef: "1001",
       trackingNo: "1Z999",
       costCents: 739,
       currency: "USD",
       shippedAt: "2026-06-01T10:00:00Z",
       carrier: "UPS",
     });
+  });
+
+  it("passes a non-GID partner_order_id through unchanged (numeric ref already)", () => {
+    const r = mapLabelToNormalized(
+      { ...shipment, order: { partner_order_id: "1001", order_number: "#1001" } },
+      { cost: "4.00" },
+      0,
+    );
+    expect(r?.orderRef).toBe("1001");
   });
 
   it("SKIPS a zero-cost label (does not emit a bogus actual_invoice — the core caveat)", () => {

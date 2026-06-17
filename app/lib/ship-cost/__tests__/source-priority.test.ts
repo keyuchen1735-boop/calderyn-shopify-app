@@ -138,17 +138,57 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
     expect(orderUpdate(updates, "o1").payload.ship_cost_cents).toBe(900);
   });
 
-  it("SAME source keeps last-write-wins (unchanged pre-Phase-3 behavior)", async () => {
+  it("SUMS multiple connector lines for one order (one-line-per-charge model)", async () => {
+    // Landing now lands one line PER CHARGE (no landing-time aggregation), so an order's
+    // true per-shipment cost is the SUM of its connector lines. The resolver does that sum
+    // here — order-independently, reading ALL lines with no window (the idempotency fix).
+    // 739 + 512 → 1251 (NOT last-write-wins 512).
     const tables = {
       v_order_ship_features: [
         { id: "o1", shop_id: "s1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
       ],
       shipping_cost_period: [{ id: "p_con", shop_id: "s1", total_cents: 0, source: "connector" }],
-      // Two connector lines for the same order (degenerate; the connector pre-aggregates,
-      // but the runner must still be defined): last row wins, as before.
       shipping_invoice_line: [
-        { shop_id: "s1", matched_order_id: "o1", cost_cents: 111, period_id: "p_con" },
-        { shop_id: "s1", matched_order_id: "o1", cost_cents: 222, period_id: "p_con" },
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 739, period_id: "p_con" },
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 512, period_id: "p_con" },
+      ],
+      order_fact: [],
+      order_line_fact: [],
+      sku_pnl: [],
+    };
+    const { sb, updates } = makeSupabaseFake(tables);
+    await runShipCostResolution(sb, "s1", { shopCountry: "US" });
+    const u = orderUpdate(updates, "o1");
+    expect(u.payload.ship_cost_source).toBe("actual_invoice");
+    expect(u.payload.ship_cost_cents).toBe(1251);
+
+    // Order-independence: reversing the row order yields the same sum.
+    const reversed = {
+      ...tables,
+      shipping_invoice_line: [
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 512, period_id: "p_con" },
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 739, period_id: "p_con" },
+      ],
+      order_fact: [],
+      order_line_fact: [],
+      sku_pnl: [],
+    };
+    const r = makeSupabaseFake(reversed);
+    await runShipCostResolution(r.sb, "s1", { shopCountry: "US" });
+    expect(orderUpdate(r.updates, "o1").payload.ship_cost_cents).toBe(1251);
+  });
+
+  it("SAME upload source keeps last-write-wins (unchanged pre-Phase-3 behavior)", async () => {
+    // upload/typed land ONE already-summed line per order, so within that source the
+    // runner keeps last-write-wins — only connector lines accumulate.
+    const tables = {
+      v_order_ship_features: [
+        { id: "o1", shop_id: "s1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
+      ],
+      shipping_cost_period: [{ id: "p_up", shop_id: "s1", total_cents: 0, source: "upload" }],
+      shipping_invoice_line: [
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 111, period_id: "p_up" },
+        { shop_id: "s1", matched_order_id: "o1", cost_cents: 222, period_id: "p_up" },
       ],
       order_fact: [],
       order_line_fact: [],

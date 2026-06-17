@@ -61,6 +61,7 @@ export async function runShipCostResolution(
   // line with a recognized source always wins over one with none.
   const SOURCE_RANK: Record<string, number> = { connector: 3, upload: 2, typed: 1 };
   const sourceRank = (src: string | undefined): number => (src ? SOURCE_RANK[src] ?? 0 : 0);
+  const CONNECTOR_RANK = SOURCE_RANK.connector;
 
   const { data: invoices } = await sb
     .from("shipping_invoice_line").select("matched_order_id, cost_cents, period_id").eq("shop_id", shopId);
@@ -72,15 +73,28 @@ export async function runShipCostResolution(
     period_id: string | null;
   }[]) {
     if (!i.matched_order_id) continue;
+    const orderId = i.matched_order_id;
     const rank = sourceRank(i.period_id ? sourceByPeriod.get(String(i.period_id)) : undefined);
-    const prevRank = winningRankByOrder.get(i.matched_order_id);
-    // Take this line when no line has been seen for the order yet, when it strictly
-    // outranks the incumbent, or when it ties the incumbent (same source → last-write-
-    // wins, matching the pre-Phase-3 behavior). A strictly LOWER rank never overwrites.
-    if (prevRank === undefined || rank >= prevRank) {
-      invoiceByOrder.set(i.matched_order_id, i.cost_cents);
-      winningRankByOrder.set(i.matched_order_id, rank);
+    const prev = winningRankByOrder.get(orderId);
+    if (prev === undefined || rank > prev) {
+      // First line for this order, or one from a strictly higher source → it becomes the
+      // new basis (any lower-ranked contribution already accumulated is discarded).
+      invoiceByOrder.set(orderId, i.cost_cents);
+      winningRankByOrder.set(orderId, rank);
+    } else if (rank === prev) {
+      if (rank === CONNECTOR_RANK) {
+        // Connector lines are landed one-per-charge (land.server.ts), so an order's true
+        // per-shipment cost is the SUM of its connector lines — accumulate them. This is
+        // order-independent and reads ALL lines (no window), so straddling re-pull windows
+        // can't double-count or under-count (the idempotency fix).
+        invoiceByOrder.set(orderId, (invoiceByOrder.get(orderId) ?? 0) + i.cost_cents);
+      } else {
+        // upload / typed: last-write-wins within the same source (unchanged pre-Phase-3
+        // behavior — those sources land one already-summed line per order).
+        invoiceByOrder.set(orderId, i.cost_cents);
+      }
     }
+    // rank < prev → ignore (a lower source never overwrites a higher one).
   }
 
   const allocOrders: AllocOrder[] = orderRows.map((o) => ({

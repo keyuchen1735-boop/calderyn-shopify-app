@@ -16,6 +16,16 @@ export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shipp
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 /**
+ * OAuth providers whose connect handshake is NOT live yet — the app-side client
+ * isn't registered, so an actual Connect would throw (e.g. SHIPHERO_OAUTH_PENDING /
+ * 501). They are in OAUTH_PROVIDERS (the eventual mechanism is OAuth, not a key paste),
+ * but the settings card renders a disabled "Coming soon" affordance instead of an active
+ * Connect button — honest rather than a button that always errors.
+ */
+export const OAUTH_PENDING_PROVIDERS = ["shiphero"] as const;
+export type OAuthPendingProvider = (typeof OAUTH_PENDING_PROVIDERS)[number];
+
+/**
  * Providers whose connect mechanism is an API-KEY PASTE, not OAuth (contract C8).
  * EasyPost reads the merchant's existing account via a key they paste — there is
  * no app-level client id/secret and no redirect round-trip, so it is deliberately
@@ -136,6 +146,16 @@ export function kindToProvider(kind: string): string {
 /** True when the integration has a wired OAuth connect flow. */
 export function isConnectable(kind: string): boolean {
   return (OAUTH_PROVIDERS as readonly string[]).includes(kindToProvider(kind));
+}
+
+/**
+ * True when the integration is an OAuth provider whose handshake isn't live yet
+ * (OAUTH_PENDING_PROVIDERS) — the card shows a disabled "Coming soon" badge instead of
+ * an active Connect button. isConnectable still returns true for it, so callers that
+ * render Connect must check this first.
+ */
+export function isOauthPending(kind: string): boolean {
+  return (OAUTH_PENDING_PROVIDERS as readonly string[]).includes(kindToProvider(kind));
 }
 
 /**
