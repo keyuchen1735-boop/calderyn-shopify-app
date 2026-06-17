@@ -219,3 +219,29 @@ async def compute_peer_baselines_by_segment(
         detector_id=detector_id, segment=segment, n=n_value,
     )
     return n_value
+
+
+async def run_peer_baselines(conn: Any) -> tuple[int, int]:
+    """Recompute baselines for every (detector, segment) with projected data.
+
+    Returns (written, suppressed): how many (detector, segment) pairs got a
+    row vs. how many were k-floored.
+    """
+    pairs = await conn.fetch(
+        """
+        SELECT DISTINCT detector_id, payload->>'segment' AS segment
+          FROM moat.event_log
+         WHERE event_kind = 'detection_fired'
+           AND detector_id IS NOT NULL
+           AND payload ? 'segment'
+        """
+    )
+    written = 0
+    suppressed = 0
+    for p in pairs:
+        n = await compute_peer_baselines_by_segment(conn, p["detector_id"], p["segment"])
+        if n >= K_FLOOR:
+            written += 1
+        else:
+            suppressed += 1
+    return written, suppressed

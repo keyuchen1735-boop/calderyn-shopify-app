@@ -311,3 +311,35 @@ async def test_baseline_segment_isolation(pg_pool):
             "WHERE detector_id=$1 AND segment=$2", DETECTOR, "gmv:mid",
         )
         assert Decimal(row["p50"]) == Decimal("100")
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — baseline driver over distinct (detector, segment) pairs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_peer_baselines_counts_written_and_suppressed(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import run_peer_baselines
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        # gmv:mid -> 5 consenting => written
+        for _ in range(5):
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:mid", dollar_impact=Decimal("100"),
+            )
+        # gmv:small -> 3 consenting => suppressed (k floor)
+        for _ in range(3):
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:small", dollar_impact=Decimal("50"),
+            )
+        written, suppressed = await run_peer_baselines(conn)
+        assert written == 1       # gmv:mid
+        assert suppressed == 1    # gmv:small
+        rows = await conn.fetch(
+            "SELECT segment FROM moat.peer_baselines WHERE detector_id=$1", DETECTOR,
+        )
+        segs = {r["segment"] for r in rows}
+        assert segs == {"gmv:mid"}
