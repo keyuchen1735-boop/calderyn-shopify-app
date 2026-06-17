@@ -15,6 +15,7 @@ import type {
   CogsRow,
   CreativeSkuMapRow,
   FulfillmentRow,
+  RefundRow,
   InventoryLevelRow,
   LocationRow,
   OrderLineRow,
@@ -46,6 +47,7 @@ export interface SeedDataset {
   orders: OrderRow[];
   orderLines: OrderLineRow[];
   fulfillments: FulfillmentRow[];
+  refunds: RefundRow[];
   campaigns: CampaignRow[];
   adSpend: AdSpendRow[];
   attribution: AttributionRow[];
@@ -325,6 +327,10 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
   const orders: OrderRow[] = [];
   const orderLines: OrderLineRow[] = [];
   const fulfillments: FulfillmentRow[] = [];
+  const refunds: RefundRow[] = [];
+  // Separate PRNG for refund uuids so they don't perturb the main rng stream —
+  // the rest of the deterministic dataset stays byte-identical run-over-run.
+  const refundRng = mulberry32(seedFromString(`${config.shopId}:refunds`));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const locationByRegion = new Map(locations.map((l) => [l.region, l]));
   const duffelShiftDay = addDays(config.today, -DUFFEL_SHIFT_DAYS_AGO);
@@ -410,15 +416,32 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
             Math.floor((windbreakerOrderCount - 1) * WINDBREAKER_S_REFUND_RATE)
           : rng() < BASE_REFUND_RATE;
         const financialStatus = refunded ? (chosen.length > 1 ? "PARTIALLY_REFUNDED" : "REFUNDED") : "PAID";
-        if (refunded) {
-          const returnedLine =
-            orderLineRows.find((l) => l.sku_id === scenario.windbreakerSSkuId) ?? orderLineRows[0];
+        // A refunded order returns one whole line: the size-S windbreaker when
+        // present (its elevated-return arc), else the first line.
+        const returnedLine = refunded
+          ? orderLineRows.find((l) => l.sku_id === scenario.windbreakerSSkuId) ?? orderLineRows[0]
+          : null;
+        if (returnedLine) {
           const key = `${returnedLine.sku_id}|${day}`;
           returnsBySkuDay.set(key, (returnsBySkuDay.get(key) ?? 0) + returnedLine.total_cents);
         }
         const hour = 9 + Math.floor(rng() * 13);
         const createdAtSource = `${day}T${String(hour).padStart(2, "0")}:${String(Math.floor(rng() * 60)).padStart(2, "0")}:00.000Z`;
         orderSeq += 1;
+        if (returnedLine) {
+          refunds.push({
+            id: uuidFrom(refundRng),
+            shop_id: config.shopId,
+            order_id: orderId,
+            sku_id: returnedLine.sku_id,
+            external_id: `gid-refund-${orderSeq}`,
+            external_line_id: `refund-line-${seq}`,
+            quantity: returnedLine.quantity,
+            subtotal_cents: returnedLine.total_cents,
+            processed_at: createdAtSource,
+            source_version: 1,
+          });
+        }
 
         orders.push({
           id: orderId,
@@ -813,6 +836,7 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     orders,
     orderLines,
     fulfillments,
+    refunds,
     campaigns,
     adSpend,
     attribution,

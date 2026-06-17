@@ -17,7 +17,7 @@ import {
   DashboardApiError,
 } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
-import { formatDemandUnits, formatStockoutDate } from "~/lib/inventory-demand";
+import { formatDemandUnits, formatStockoutDate, returnRateLevel } from "~/lib/inventory-demand";
 import { money, moneyK } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
@@ -278,6 +278,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 60, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 76, textAlign: "right" }}>Rev · 30d</span>
+              <span style={{ width: 64, textAlign: "right" }}>Returns</span>
               <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
@@ -300,6 +301,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   s.projected_stockout && s.days_of_cover < 7
                     ? formatStockoutDate(s.projected_stockout)
                     : null;
+                const retLevel = s.returns ? returnRateLevel(s.returns.rate) : null;
                 return (
                   <div
                     key={s.id}
@@ -369,6 +371,26 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       style={{ width: 76, textAlign: "right" }}
                     >
                       {s.revenue_30d_cents ? moneyK(s.revenue_30d_cents) : "—"}
+                    </span>
+                    <span
+                      className="tabular-nums cd-caption"
+                      style={{
+                        width: 64,
+                        textAlign: "right",
+                        color:
+                          retLevel === "critical"
+                            ? "var(--red)"
+                            : retLevel === "caution"
+                              ? "var(--orange)"
+                              : "var(--text-2)",
+                      }}
+                      title={
+                        s.returns
+                          ? `${s.returns.returned_units_30d} returned over 30 days`
+                          : undefined
+                      }
+                    >
+                      {s.returns ? `${Math.round(s.returns.rate * 100)}%` : "—"}
                     </span>
                     <span
                       style={{

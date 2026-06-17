@@ -46,6 +46,7 @@ import {
   formatDemandUnits,
   formatStockoutDate,
   projectedStockoutDate,
+  returnRateLevel,
 } from "~/lib/inventory-demand";
 import { sparklinePath } from "~/lib/sparkline";
 import { shipCostBadge } from "~/lib/ship-cost/provenance";
@@ -330,10 +331,11 @@ export default function SKUs() {
   }, [filtered, sortKey, sortDir]);
 
   // IndexTable sort ↔ our SortKey. null marks an unsortable column. Kept in
-  // lockstep with `headings`/`sortable` — the index-6 null is the Ship P&L column.
+  // lockstep with `headings`/`sortable` — index 6 (Return rate) and 7 (Ship P&L)
+  // are unsortable.
   const SORT_COLUMNS: (SortKey | null)[] = [
     null, "title", null, "on_hand", "days_of_cover", "velocity", "revenue_30d_cents",
-    null, null, null, null,
+    null, null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {
@@ -436,12 +438,13 @@ export default function SKUs() {
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
             { title: "Revenue · 30d", alignment: "end" },
+            { title: "Return rate", alignment: "end" },
             { title: "Ship P&L", alignment: "end" },
             { title: "Main demand" },
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, false, true, true, true, true, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, true, false, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -462,6 +465,7 @@ export default function SKUs() {
             const skuAlerts = alertsBySku.get(s.sku) ?? [];
             const canRelocate = s.locations_detail.some((l) => l.available > 0);
             const selling = hasSales(s);
+            const retLevel = s.returns ? returnRateLevel(s.returns.rate) : null;
             const onHandTone =
               s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined;
             const cover = s.days_of_cover ?? 0;
@@ -551,6 +555,26 @@ export default function SKUs() {
                     <Text as="p" alignment="end">
                       <span className="cdn-tnum">{fmtMoney(s.revenue_30d_cents)}</span>
                     </Text>
+                  ) : (
+                    <Text as="p" alignment="end" tone="subdued">
+                      —
+                    </Text>
+                  )}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  {s.returns ? (
+                    <Tooltip
+                      content={`${s.returns.returned_units_30d.toLocaleString()} returned over 30 days`}
+                    >
+                      <Text
+                        as="p"
+                        alignment="end"
+                        tone={retLevel ?? undefined}
+                        fontWeight={retLevel ? "semibold" : undefined}
+                      >
+                        <span className="cdn-tnum">{Math.round(s.returns.rate * 100)}%</span>
+                      </Text>
+                    </Tooltip>
                   ) : (
                     <Text as="p" alignment="end" tone="subdued">
                       —

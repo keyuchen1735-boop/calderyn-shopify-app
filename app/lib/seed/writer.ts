@@ -36,6 +36,7 @@ export const WIPE_ORDER = [
   "stockout_forecast",
   "cogs_fact",
   "inventory_level_fact",
+  "refund_fact", // references order_fact + sku_dim
   "order_line_fact",
   "fulfillment_fact",
   "order_fact",
@@ -50,6 +51,7 @@ export const INSERT_ORDER = [
   "cogs_fact",
   "order_fact",
   "order_line_fact",
+  "refund_fact",
   "fulfillment_fact",
   "ad_campaign_dim",
   "ad_spend_fact",
@@ -70,6 +72,7 @@ function rowsFor(ds: SeedDataset, table: (typeof INSERT_ORDER)[number]): Record<
     case "cogs_fact": return ds.cogsFacts as unknown as Record<string, unknown>[];
     case "order_fact": return ds.orders as unknown as Record<string, unknown>[];
     case "order_line_fact": return ds.orderLines as unknown as Record<string, unknown>[];
+    case "refund_fact": return ds.refunds as unknown as Record<string, unknown>[];
     case "fulfillment_fact": return ds.fulfillments as unknown as Record<string, unknown>[];
     case "ad_campaign_dim": return ds.campaigns as unknown as Record<string, unknown>[];
     case "ad_spend_fact": return ds.adSpend as unknown as Record<string, unknown>[];

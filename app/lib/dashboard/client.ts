@@ -316,6 +316,7 @@ export function adaptSku(s: SKU): SkuVM {
     product_type: s.product_type,
     tags: s.tags,
     collections: s.collections,
+    returns: s.returns,
     locations: s.locations,
     status,
     sources: s.sources ?? [],

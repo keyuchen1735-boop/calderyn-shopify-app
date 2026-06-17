@@ -7,6 +7,7 @@ import {
   projectedStockoutDate,
   formatStockoutDate,
   affinityFromRow,
+  returnRateLevel,
   type SkuDemandViewRow,
 } from "../inventory-demand";
 
@@ -136,6 +137,24 @@ describe("affinityFromRow", () => {
       affinityFromRow({ co_sku_id: "sku-y", co_title: null, co_sku: null, co_count: 1, share: 0.05 })
         .title,
     ).toBe("sku-y");
+  });
+});
+
+describe("returnRateLevel", () => {
+  it("flags a rate above 25% as critical", () => {
+    expect(returnRateLevel(0.27)).toBe("critical");
+    expect(returnRateLevel(1)).toBe("critical");
+  });
+
+  it("flags a rate above 10% (but not above 25%) as caution", () => {
+    expect(returnRateLevel(0.11)).toBe("caution");
+    expect(returnRateLevel(0.25)).toBe("caution");
+  });
+
+  it("returns null for a healthy rate at or below 10%", () => {
+    expect(returnRateLevel(0.1)).toBeNull();
+    expect(returnRateLevel(0.05)).toBeNull();
+    expect(returnRateLevel(0)).toBeNull();
   });
 });
 

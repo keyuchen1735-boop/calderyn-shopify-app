@@ -103,6 +103,10 @@ export interface SkuVM {
   product_type?: string | null;
   tags?: string[];
   collections?: string[];
+  /** Trailing-30-day return rate (refunded units ÷ units sold); undefined when
+   * the SKU had no sales in the window or no returns. `rate` is 0..1. Mirrors
+   * the extension's SKU. */
+  returns?: { returned_units_30d: number; rate: number };
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];

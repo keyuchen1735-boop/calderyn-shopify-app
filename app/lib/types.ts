@@ -172,6 +172,11 @@ export interface SKU {
   product_type?: string | null;
   tags?: string[];
   collections?: string[];
+  /** Trailing-30-day return rate (refunded units ÷ units sold, same window as
+   * velocity). undefined when the SKU had no sales in the window (no
+   * divide-by-zero) or no returns. `rate` is 0..1; `returned_units_30d` is the
+   * absolute refunded-unit count. */
+  returns?: { returned_units_30d: number; rate: number };
 }
 
 /** One day's total on-hand for a SKU (sum across locations), for the stock-trend
