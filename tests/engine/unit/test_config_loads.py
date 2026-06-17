@@ -15,7 +15,7 @@ def test_load_config_reads_env(monkeypatch):
     assert cfg.database_url == "postgres://x"
     assert cfg.anthropic_api_key == "sk-ant-123"
     assert cfg.env == "test"
-    assert cfg.claude_model == "claude-opus-4-7"
+    assert cfg.claude_model == "claude-sonnet-4-6"
 
 
 def test_load_config_requires_database_url(monkeypatch):
