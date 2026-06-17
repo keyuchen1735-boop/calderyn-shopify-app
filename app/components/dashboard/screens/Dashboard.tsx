@@ -293,8 +293,14 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     let alive = true;
     fetch("/dashboard/api/benchmarks")
-      .then((r) => r.json())
-      .then((d) => { if (alive) setBenchmarks(d as BenchmarksData); })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        // Only accept a well-formed payload — a soft/error response (no kpis
+        // array) keeps the card hidden rather than crashing the render.
+        if (alive && d && Array.isArray((d as BenchmarksData).kpis)) {
+          setBenchmarks(d as BenchmarksData);
+        }
+      })
       // Card just stays hidden on failure, but surface the error (rule 12).
       .catch((e) => { console.error("peer benchmarks fetch failed", e); });
     return () => { alive = false; };

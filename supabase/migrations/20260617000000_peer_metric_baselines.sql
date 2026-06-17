@@ -86,6 +86,7 @@ create or replace view public.v_peer_shop_niche
       join public.sku_dim sd on sd.id = p.sku_id
      where sd.category is not null
        and p.day >= (current_date - interval '90 days')
+       and p.day <= current_date  -- exact mirror of category_niche_for_shop's window
      group by p.shop_id, sd.category
   ),
   ranked as (
