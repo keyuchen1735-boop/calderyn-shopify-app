@@ -13,7 +13,14 @@ export function moneyToCents(amount: string | number | null | undefined): number
 }
 
 type LocationNode = { id: string; name: string; isActive?: boolean };
-type ProductNode = { id: string; title: string };
+type ProductNode = {
+  id: string;
+  title: string;
+  vendor?: string | null;
+  productType?: string | null;
+  tags?: string[] | null;
+  collections?: { nodes: Array<{ title: string | null }> } | null;
+};
 type VariantNode = {
   id: string;
   sku?: string | null;
@@ -78,6 +85,14 @@ export function mapLocation(shopId: string, n: LocationNode): LocationRow {
 export function mapVariantToSku(shopId: string, product: ProductNode, variant: VariantNode): SkuRow {
   const variantTitle = variant.title && variant.title !== "Default Title" ? variant.title : null;
   const unitCost = variant.inventoryItem?.unitCost?.amount;
+  // Product facets for inventory slicing. `category` carries Shopify's
+  // productType (the inventory page's "type" facet); empty strings are nulled so
+  // a blank Shopify field doesn't render a dead facet.
+  const productType = product.productType?.trim() || null;
+  const vendor = product.vendor?.trim() || null;
+  const collections = (product.collections?.nodes ?? [])
+    .map((c) => c.title?.trim())
+    .filter((t): t is string => !!t);
   return {
     shop_id: shopId,
     external_id: variant.id,
@@ -87,7 +102,10 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
     title: variantTitle ? `${product.title} — ${variantTitle}` : product.title,
     unit_cost_cents: unitCost != null ? moneyToCents(unitCost) : null,
     currency: "USD",
-    tags: [],
+    category: productType,
+    vendor,
+    tags: (product.tags ?? []).map((t) => t.trim()).filter(Boolean),
+    collections,
   };
 }
 

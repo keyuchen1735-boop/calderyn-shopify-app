@@ -14,7 +14,11 @@ export type SkuRow = {
   title: string;
   unit_cost_cents: number | null;
   currency: string;
+  // Product facets (inventory slicing). `category` carries Shopify productType.
+  category: string | null;
+  vendor: string | null;
   tags: string[];
+  collections: string[];
 };
 
 export type InventoryRow = {

@@ -58,8 +58,28 @@ describe("mapVariantToSku", () => {
       title: "Widget — Small",
       unit_cost_cents: 450,
       currency: "USD",
+      category: null,
+      vendor: null,
       tags: [],
+      collections: [],
     });
+  });
+
+  it("maps product facets: productType→category, vendor, tags, collections (trimmed)", () => {
+    const product = {
+      id: "gid://shopify/Product/100",
+      title: "Widget",
+      vendor: "  Acme  ",
+      productType: " Gadgets ",
+      tags: [" new ", "sale", ""],
+      collections: { nodes: [{ title: "Best Sellers" }, { title: " " }, { title: null }] },
+    };
+    const variant = { id: "gid://shopify/ProductVariant/200", title: "Default Title", inventoryItem: { id: null } };
+    const row = mapVariantToSku(SHOP, product, variant);
+    expect(row.category).toBe("Gadgets");
+    expect(row.vendor).toBe("Acme");
+    expect(row.tags).toEqual(["new", "sale"]);
+    expect(row.collections).toEqual(["Best Sellers"]);
   });
   it("tolerates missing unit cost and sku", () => {
     const product = { id: "gid://shopify/Product/100", title: "Widget" };
