@@ -103,15 +103,22 @@ async def _clean_day_projection(conn, day: date) -> None:
 async def _seed_alert(conn, shop_id: str, *, day: date,
                       dollar_impact: Decimal, detector: str = DETECTOR) -> str:
     alert_id = str(uuid.uuid4())
+    # entity_ref must be unique per alert: public.alerts has a unique
+    # constraint on (shop_id, detector_id, entity_ref), so multiple alerts
+    # for one shop+detector (e.g. the dedup test, the ETL report fixture)
+    # would otherwise collide. The incident signature is derived from
+    # alert_context.evidence, not entity_ref, so a unique ref here does not
+    # change which incidents dedup.
+    entity_ref = json.dumps({"ref": alert_id})
     await conn.execute(
         """
         INSERT INTO public.alerts
           (id, shop_id, detector_id, entity_ref, status, severity,
            dollar_impact, day_bucket, first_seen_at, last_seen_at)
-        VALUES ($1::uuid, $2::uuid, $3, '{}'::jsonb, 'open', 'high',
+        VALUES ($1::uuid, $2::uuid, $3, $6::jsonb, 'open', 'high',
                 $4, $5, now(), now())
         """,
-        alert_id, shop_id, detector, dollar_impact, day,
+        alert_id, shop_id, detector, dollar_impact, day, entity_ref,
     )
     return alert_id
 
@@ -343,3 +350,94 @@ async def test_run_peer_baselines_counts_written_and_suppressed(pg_pool):
         )
         segs = {r["segment"] for r in rows}
         assert segs == {"gmv:mid"}
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — confirmed-loss incident driver (A2 + dedup).
+# ---------------------------------------------------------------------------
+
+
+async def _seed_confirmed_loss(conn, shop_id: str, alert_id: str, *,
+                               loss_usd: Decimal, when_day: date,
+                               evidence: dict | None = None) -> None:
+    """Attach alert_context evidence + a confirmed_loss feedback row dated to
+    when_day. Mirrors the shapes extract_incident + the incident driver read.
+
+    NOTE (schema adaptation): public.alert_context has a NOT-NULL shop_id with
+    no default (the plan's draft omitted it), so we thread shop_id through.
+    """
+    if evidence is not None:
+        await conn.execute(
+            "INSERT INTO public.alert_context (alert_id, shop_id, evidence) "
+            "VALUES ($1::uuid, $2::uuid, $3::jsonb) "
+            "ON CONFLICT (alert_id) DO UPDATE SET evidence = EXCLUDED.evidence",
+            alert_id, shop_id, json.dumps(evidence),
+        )
+    await conn.execute(
+        """
+        INSERT INTO public.alert_feedback
+          (id, alert_id, shop_id, kind, note, created_by, created_at)
+        VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'confirmed_loss',
+                $3, 'tester', ($4::date + interval '6 hours'))
+        """,
+        alert_id, shop_id, f"loss={loss_usd}", when_day,
+    )
+
+
+@pytest.mark.asyncio
+async def test_incident_extracted_for_confirmed_loss(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import run_incident_library
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM moat.incident_library WHERE detector_id=$1", DETECTOR)
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        shop_id = str(uuid.uuid4())
+        await _seed_shop(conn, shop_id, consent=True)
+        alert_id = await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("400"))
+        await _seed_confirmed_loss(conn, shop_id, alert_id,
+                                   loss_usd=Decimal("400"), when_day=day,
+                                   evidence={"ratio_bucket": "high"})
+        n = await run_incident_library(conn, run_date=day)
+        assert n == 1
+        rows = await conn.fetch(
+            "SELECT detector_id FROM moat.incident_library WHERE detector_id=$1", DETECTOR,
+        )
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_incident_dedup_skips_second(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import run_incident_library
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM moat.incident_library WHERE detector_id=$1", DETECTOR)
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        shop_id = str(uuid.uuid4())
+        await _seed_shop(conn, shop_id, consent=True)
+        a1 = await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("400"))
+        await _seed_confirmed_loss(conn, shop_id, a1, loss_usd=Decimal("400"),
+                                   when_day=day, evidence={"ratio_bucket": "high"})
+        first = await run_incident_library(conn, run_date=day)
+        # Second confirmed loss, same detector + same evidence signature.
+        a2 = await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("400"))
+        await _seed_confirmed_loss(conn, shop_id, a2, loss_usd=Decimal("400"),
+                                   when_day=day, evidence={"ratio_bucket": "high"})
+        second = await run_incident_library(conn, run_date=day)
+        assert first == 1
+        assert second == 0  # exact-signature dup skipped by extract_incident
+
+
+@pytest.mark.asyncio
+async def test_nonconsenting_confirmed_loss_skipped(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import run_incident_library
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DELETE FROM moat.incident_library WHERE detector_id=$1", DETECTOR)
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        shop_id = str(uuid.uuid4())
+        await _seed_shop(conn, shop_id, consent=False)  # NOT consenting
+        alert_id = await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("400"))
+        await _seed_confirmed_loss(conn, shop_id, alert_id, loss_usd=Decimal("400"),
+                                   when_day=day, evidence={"ratio_bucket": "high"})
+        n = await run_incident_library(conn, run_date=day)
+        assert n == 0  # A2: non-consenting losses never enter the library

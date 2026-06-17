@@ -8,12 +8,15 @@ projection -> per-(detector, GMV-band) baselines -> incident library.
 from __future__ import annotations
 
 import json
+import re as _re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal as _Decimal
 from typing import Any
 
 import structlog
 
+from .incident_extractor import extract_incident
 from .peer_baselines import K_FLOOR  # single source of truth for the floor
 from .pseudonym import pseudonym_for
 
@@ -245,3 +248,47 @@ async def run_peer_baselines(conn: Any) -> tuple[int, int]:
         else:
             suppressed += 1
     return written, suppressed
+
+
+def _loss_usd_from_note(note: str | None) -> _Decimal:
+    """Parse the confirmed-loss USD out of the feedback note ('loss=<n>').
+
+    ``public.alert_feedback`` has no dedicated loss column (verified), so the
+    amount rides on the note. Falls back to 0 when unparseable so a malformed
+    note never crashes the night (the extractor still records the pattern; the
+    dollar anchor is then 0).
+    """
+    if not note:
+        return _Decimal("0")
+    m = _re.search(r"loss=([0-9]+(?:\.[0-9]+)?)", note)
+    return _Decimal(m.group(1)) if m else _Decimal("0")
+
+
+async def run_incident_library(conn: Any, *, run_date: date) -> int:
+    """Harvest the day's consenting-shop confirmed losses into the library.
+
+    A2: only consenting shops' confirmed losses are considered. Dedup +
+    PII-stripping are handled inside extract_incident. Returns the number
+    of new library rows inserted.
+    """
+    losses = await conn.fetch(
+        """
+        SELECT f.alert_id::text AS alert_id, f.note
+          FROM public.alert_feedback f
+          JOIN public.shops s ON s.id = f.shop_id
+         WHERE s.peer_data_consent = true
+           AND f.kind = 'confirmed_loss'
+           AND f.created_at >= $1::date
+           AND f.created_at <  ($1::date + interval '1 day')
+        """,
+        run_date,
+    )
+    inserted = 0
+    for row in losses:
+        wrote = await extract_incident(
+            conn, row["alert_id"], _loss_usd_from_note(row["note"])
+        )
+        if wrote:
+            inserted += 1
+    logger.info("peer_etl_incidents", run_date=run_date.isoformat(), inserted=inserted)
+    return inserted
