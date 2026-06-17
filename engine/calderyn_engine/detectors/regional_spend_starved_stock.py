@@ -28,6 +28,7 @@ from typing import Any
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.estimators.reallocation_gain import estimate_reallocation_gain
 from calderyn_engine.schemas import DetectionResult
 
@@ -164,7 +165,10 @@ async def detect(
 ) -> list[DetectionResult]:
     """Run the detector and return zero-or-more DetectionResult rows."""
 
-    rows = await conn.fetch(_QUERY, shop_id, DEFAULT_SPEND_THRESHOLD)
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_SPEND_THRESHOLD
+    )
+    rows = await conn.fetch(_QUERY, shop_id, threshold)
     out: list[DetectionResult] = []
     for r in rows:
         spend = Decimal(r["spend_cents"]) / Decimal("100")
