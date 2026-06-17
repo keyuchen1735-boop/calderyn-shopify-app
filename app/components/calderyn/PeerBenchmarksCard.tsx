@@ -17,10 +17,8 @@ function PeerBand({ kpi }: { kpi: PeerKpi }) {
   if (!kpi.available || kpi.percentile === null) return null;
   return (
     <div className="cdn-meter-track" style={{ position: "relative" }}>
-      <div
-        className="cdn-meter-fill"
-        style={{ transform: "scaleX(0.5)", transformOrigin: "left", opacity: 0.25 }}
-      />
+      {/* ponytail: just the percentile marker on the track — no min/max known,
+          so an arbitrary fill bar would mislead. The marker is the honest signal. */}
       <span
         aria-label={`${kpi.percentile}th percentile`}
         style={{
@@ -54,7 +52,11 @@ function KpiRow({ kpi }: { kpi: PeerKpi }) {
             <Text as="span" variant="bodySm" tone="subdued">
               peers {fmtValue(kpi, kpi.p25)}–{fmtValue(kpi, kpi.p75)}
             </Text>
-            <Badge>{`${kpi.percentile}th pct · ${kpi.n} peers`}</Badge>
+            <Badge>
+              {kpi.percentile !== null
+                ? `${kpi.percentile}th pct · ${kpi.n} peers`
+                : `${kpi.n} peers`}
+            </Badge>
           </InlineStack>
         </>
       ) : null}

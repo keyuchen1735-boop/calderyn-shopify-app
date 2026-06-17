@@ -65,4 +65,42 @@ describe("PeerBenchmarksCard", () => {
     const out = html({ niche: "cat:uncategorized", consented: true, kpis: [] });
     expect(out).not.toContain("Peer Benchmarks");
   });
+
+  it("shows the locked message when consented but no KPI is available", () => {
+    const out = html({
+      niche: "cat:electronics",
+      consented: true,
+      kpis: [
+        {
+          ...AVAILABLE.kpis[0],
+          available: false,
+          p25: null,
+          p50: null,
+          p75: null,
+          n: null,
+          percentile: null,
+        },
+      ],
+    });
+    expect(out).toContain("Benchmarks unlock when 5+ electronics");
+    expect(out).toContain("$300.00"); // own value still shown
+  });
+
+  it("never renders 'nullth pct' when a baseline exists but the shop has no own value", () => {
+    const out = html({
+      niche: "cat:electronics",
+      consented: true,
+      kpis: [
+        {
+          ...AVAILABLE.kpis[0],
+          your_value: null, // no own value → percentile is null even though available
+          percentile: null,
+          n: 7,
+          available: true,
+        },
+      ],
+    });
+    expect(out).not.toContain("null");
+    expect(out).toContain("7 peers");
+  });
 });
