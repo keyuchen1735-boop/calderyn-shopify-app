@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -315,7 +316,7 @@ async def test_acceptance_6_consent_revocation_purge(pg_pool) -> None:
             "UPDATE public.shops SET peer_data_consent = false WHERE id = $1::uuid",
             shop_id,
         )
-        deleted = await purge_shop_contributions(conn, pseudonym)
+        deleted = await purge_shop_contributions(conn, pseudonym, pepper=PEPPER, run_date=date.today())
         assert deleted == 3
 
         remaining = await conn.fetchval(

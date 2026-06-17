@@ -50,8 +50,9 @@ class _FakePool:
 class _Ctx:
     def __init__(self) -> None:
         self.pool: _FakePool | None = None
-        self.calls: list[str] = []  # records call order: 'etl' then 'train'
+        self.calls: list[str] = []  # records call order: etl, peer_metrics, train
         self.etl_kwargs = None
+        self.peer_metrics_kwargs = None
         self.train_kwargs = None
 
 
@@ -83,6 +84,11 @@ def _run(body, auth, monkeypatch, *, secret="s3cret", pepper="pep"):
         ctx.etl_kwargs = {"run_date": run_date, "pepper": pepper}
         return _FakeEtlReport()
 
+    async def fake_peer_metrics(conn, *, run_date, pepper):
+        ctx.calls.append("peer_metrics")
+        ctx.peer_metrics_kwargs = {"run_date": run_date, "pepper": pepper}
+        return None
+
     async def fake_train(conn, *, pepper, run_date, **kwargs):
         ctx.calls.append("train")
         ctx.train_kwargs = {"pepper": pepper, "run_date": run_date}
@@ -95,6 +101,7 @@ def _run(body, auth, monkeypatch, *, secret="s3cret", pepper="pep"):
 
     monkeypatch.setattr(core, "make_pool", fake_make_pool)
     monkeypatch.setattr(core, "run_peer_incident_etl", fake_etl)
+    monkeypatch.setattr(core, "run_peer_metrics", fake_peer_metrics)
     monkeypatch.setattr(core, "train_thresholds", fake_train)
     status, payload = asyncio.run(core.handle(body, auth))
     return status, payload, ctx
@@ -132,8 +139,12 @@ def test_rejects_when_no_cron_secret_configured(monkeypatch):
 def test_success_runs_etl_then_train_and_returns_summary(monkeypatch):
     status, payload, ctx = _run({}, "Bearer s3cret", monkeypatch)
     assert status == 200
-    # Run order is ETL first, trainer second (the night's full job).
-    assert ctx.calls == ["etl", "train"]
+    # Run order: incident ETL, then peer-metric baselines, then the trainer
+    # (the night's full job — all under one cron/transaction).
+    assert ctx.calls == ["etl", "peer_metrics", "train"]
+    # Peer-metrics gets the same pepper + run_date as the rest of the night.
+    assert ctx.peer_metrics_kwargs["pepper"] == "pep"
+    assert ctx.peer_metrics_kwargs["run_date"] == ctx.train_kwargs["run_date"]
     # Response shape: nested etl report + flattened trainer summary.
     assert payload["etl"] == {
         "alerts_projected": 3,

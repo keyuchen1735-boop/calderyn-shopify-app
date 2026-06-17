@@ -18,6 +18,9 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
+import { getPeerBenchmarks } from "~/lib/benchmarks/peer-benchmarks.server";
+import { PeerBenchmarksCard } from "~/components/calderyn/PeerBenchmarksCard";
+import type { PeerBenchmarks } from "~/lib/benchmarks/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
@@ -41,6 +44,7 @@ type LoaderPayload = {
   // Recovered impact over the trailing 7 days — windowed server-side so the
   // "Recovered (7d)" tile matches its label (audit.list returns up to 90d).
   recovered7d: { cents: number; count: number };
+  benchmarks: PeerBenchmarks;
 };
 
 const RECOVERED_WINDOW_DAYS = 7;
@@ -79,11 +83,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Onboarded: load dashboard data, failing soft (error banner) on a transient
   // error instead of trapping the merchant.
   try {
-    const [alerts, audit, campaigns, guardrails] = await Promise.all([
+    const [alerts, audit, campaigns, guardrails, benchmarks] = await Promise.all([
       client.alerts.list({ status: "open" }, request.signal),
       client.audit.list(request.signal),
       client.campaigns.list(request.signal),
       client.guardrails.get(request.signal),
+      getPeerBenchmarks(session.shop),
     ]);
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -96,6 +101,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null,
       dashboardLoginUrl,
       recovered7d: recoveredWithin(audit, sinceIso),
+      benchmarks,
     });
   } catch (err) {
     // Any auth bounce thrown as a Response must propagate, not be misread as a
@@ -110,6 +116,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: { code: e.code ?? "ERROR", message: e.message },
       dashboardLoginUrl,
       recovered7d: { cents: 0, count: 0 },
+      benchmarks: { niche: "cat:uncategorized", consented: false, kpis: [] },
     });
   }
 };
@@ -124,6 +131,7 @@ export default function Dashboard() {
     error,
     dashboardLoginUrl,
     recovered7d,
+    benchmarks,
   } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -222,6 +230,9 @@ export default function Dashboard() {
             />
           </InlineGrid>
         </div>
+
+        {/* Peer Benchmarks */}
+        <PeerBenchmarksCard data={benchmarks} />
 
         {/* Today's focus */}
         {focus && focusActionKind && (
