@@ -119,6 +119,8 @@ function rowToAlert(r: Record<string, unknown>): Alert {
     title: String(r.title ?? ""),
     narrative: String(r.narrative ?? ""),
     campaign: (r.campaign as string | null) ?? null,
+    campaign_id: (r.campaign_id as string | null) ?? null,
+    campaign_external_id: (r.campaign_external_id as string | null) ?? null,
     sku: (r.sku as string | null) ?? null,
     evidence: (r.evidence as Record<string, unknown>) ?? {},
   };
