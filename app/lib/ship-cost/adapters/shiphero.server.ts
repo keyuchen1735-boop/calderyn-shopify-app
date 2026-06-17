@@ -1,9 +1,19 @@
 // ShipHero adapter (ship-cost connector — 3PL house, Phase 3 Part B). A drop-in
 // ShipCostAdapter on the Phase-1 framework: the generic landing core never branches on
-// provider (contract C1). Creds from integration_credentials (kind 'shiphero_ship', a
-// per-merchant OAuth 2.0 access token, via crypto.server.ts). Auth is a Bearer token
-// against the GraphQL endpoint (contract C8 / Plan 03 B.2/B.3, like Shippo — OAuth, NOT a
-// pasted API key).
+// provider (contract C1). ShipHero is CREDENTIAL/TOKEN-BASED, NOT OAuth: the merchant
+// creates a dedicated "3rd Party Developer" user in ShipHero and is issued an access token
+// (28-day) + a long-lived REFRESH token — there is no authorize-redirect and no app
+// client_id/secret. We store the merchant's REFRESH token encrypted in
+// integration_credentials (kind 'shiphero_ship', access_token_encrypted, via
+// crypto.server.ts — the QuickBooks refresh-token storage model). connect() mints a fresh
+// access token from it each run via /auth/refresh (auth.server.ts); GraphQL auth is then a
+// Bearer <access_token> (contract C8 / Plan 03 B.2/B.3, corrected — credential/refresh, not
+// OAuth, and not a directly-usable pasted key).
+//
+// ⚠️ LIVE-VERIFICATION TODO (d): we refresh EAGERLY each run (mint a fresh access token at
+// connect() time) rather than caching an access token and refreshing on a 401. With a daily
+// cron and 28-day access tokens this is the simplest correct choice; if call volume grows,
+// switch to cache-token + refresh-on-401.
 //
 // Reads the GraphQL `shipments` connection → `shipping_labels { cost }` per label (the
 // actual label cost) and normalizes each label → integer cents. Match-back is STRONG:
@@ -11,18 +21,21 @@
 // plus shipping_labels.tracking_number. matchInvoiceLines (C5) resolves ref-first,
 // tracking-fallback — same as every other adapter.
 //
-// ⚠️ ZERO-COST CAVEAT (contract §8.4 / Plan 03 B.2, risk #4): a community-reported ShipHero
-// config can report a label `cost` of 0 (or null). A 0-cost label is NOT a true per-order
-// cost — emitting it would land a bogus actual_invoice/high signal that wrongly zeroes the
-// order's ship cost. So a label whose cost parses to null OR 0 is SKIPPED here (and tallied
-// by the landing layer as skipped-no-key when nothing else carries it), never emitted as an
-// actual cost. Real cost confirmation per onboarded account gates the actual_invoice claim.
+// ⚠️ ZERO-COST CAVEAT / LIVE-VERIFICATION TODO (c) (contract §8.4 / Plan 03 B.2, risk #4): a
+// community-reported ShipHero config can report a label `cost` of 0 (or null). A 0-cost label
+// is NOT a true per-order cost — emitting it would land a bogus actual_invoice/high signal
+// that wrongly zeroes the order's ship cost. So a label whose cost parses to null OR 0 is
+// SKIPPED here (already guarded in parseLabelCostToCents — and tallied by the landing layer as
+// skipped-no-key when nothing else carries it), never emitted as an actual cost. Whether a
+// given onboarded account actually populates a non-zero `cost` is confirmed per account; the
+// guard makes the failure mode safe (skip), not silently wrong, until then.
 //
 // No new npm dependency (contract P6 / repo rule): built-in fetch + a Bearer header.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "../../supabase.server";
 import { decrypt } from "../../crypto.server";
+import { refreshShipHeroToken } from "../../shiphero/auth.server";
 import type { NormalizedShipmentCost, ShipCostAdapter, ShipSource } from "./adapter";
 
 const DEFAULT_BASE = "https://public-api.shiphero.com/graphql";
@@ -201,7 +214,21 @@ export const shipHeroAdapter: ShipCostAdapter = {
       .maybeSingle();
     if (error) throw error;
     if (!data || !data.access_token_encrypted) return null; // → cron marks "skipped".
-    const accessToken = decrypt(data.access_token_encrypted as string);
+    // The stored value is the merchant's long-lived REFRESH token (not a directly-usable
+    // access token). Mint a fresh access token from it each run; if the refresh fails (the
+    // refresh token was revoked/expired, or ShipHero is down), treat it like "no usable
+    // creds" — return null so the cron marks this shop skipped/errored rather than throwing
+    // out of the whole sweep (mirrors the no-credential contract above).
+    const refreshToken = decrypt(data.access_token_encrypted as string);
+    let accessToken: string;
+    try {
+      ({ accessToken } = await refreshShipHeroToken(refreshToken));
+    } catch {
+      // refreshShipHeroToken never logs the token; swallow to null (skipped), don't surface
+      // the refresh-token value. The 401-on-cost path inside fetchShipHeroCharges still
+      // throws → sync_error for a token that refreshes but lacks cost scope (rule 12).
+      return null;
+    }
     return {
       fetchCharges: (since) => fetchShipHeroCharges(accessToken, since),
     };

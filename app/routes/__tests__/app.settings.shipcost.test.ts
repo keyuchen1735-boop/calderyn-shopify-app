@@ -108,9 +108,16 @@ describe("parseApiKeyConnectForm (EasyPost connect, contract C8)", () => {
     });
   });
 
-  it("rejects an unknown / OAuth provider (only easypost + shipbob are API-key)", () => {
+  it("accepts ShipHero (Phase 3 — credential/refresh-token paste, reclassified from OAuth)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "shiphero", api_key: " ref_tok " }))).toEqual({
+      ok: true,
+      value: { provider: "shiphero", apiKey: "ref_tok" },
+    });
+  });
+
+  it("rejects an unknown / OAuth provider (only easypost + shipbob + shiphero are API-key)", () => {
     expect(parseApiKeyConnectForm(fd({ provider: "meta", api_key: "k" })).ok).toBe(false);
-    expect(parseApiKeyConnectForm(fd({ provider: "shiphero", api_key: "k" })).ok).toBe(false); // OAuth, not API-key
+    expect(parseApiKeyConnectForm(fd({ provider: "shippo", api_key: "k" })).ok).toBe(false); // OAuth, not API-key
     expect(parseApiKeyConnectForm(fd({ provider: "", api_key: "k" })).ok).toBe(false);
   });
 });

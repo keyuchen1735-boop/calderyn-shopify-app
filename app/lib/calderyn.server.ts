@@ -29,6 +29,7 @@ import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
 import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.server";
 import { buildAuthUrl as buildShippoAuthUrl } from "./shippo/oauth.server";
+import { refreshShipHeroToken } from "./shiphero/auth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
@@ -74,7 +75,7 @@ export type IntegrationProvider =
   | "easypost" // Phase 1 — ship-cost, API-key connect (connectApiKey).
   | "shippo" // Phase 2 — ship-cost, co-branded OAuth connect (startOAuth).
   | "shipbob" // Phase 3 Part B — 3PL house, API-key (PAT) connect (connectApiKey).
-  | "shiphero"; // Phase 3 Part B — 3PL house, OAuth connect (startOAuth).
+  | "shiphero"; // Phase 3 Part B — 3PL house, credential/refresh-token paste (connectApiKey).
 
 export type OnboardingState = { step: number; done: boolean };
 
@@ -339,6 +340,39 @@ async function probeShipBobKey(
           ? "That ShipBob token is missing the billing_read scope (403). Re-issue it with billing_read."
           : `ShipBob rejected the token (${res.status}). ${snippet}`;
     throw new CalderynError({ code: "SHIPBOB_KEY_INVALID", status: 400, message: friendly });
+  }
+}
+
+/**
+ * Live-probe a pasted ShipHero REFRESH token BEFORE we persist it (Phase 3 Part B), so a
+ * bad/expired refresh token is rejected at the connect boundary with NO credential written
+ * (rule 12). ShipHero is credential/token-based, NOT OAuth: the cheapest validation that the
+ * pasted token actually works is to perform the same /auth/refresh the cost adapter runs each
+ * sync — a valid refresh token mints an access token; a bad one throws (401 / no token).
+ * `fetchImpl` is injectable for tests. The underlying refresh error never echoes the token;
+ * we re-wrap it as a friendly CalderynError the action surfaces as a toast.
+ *
+ * ⚠️ LIVE-VERIFICATION TODO (b): a self-serve 3rd-Party-Developer refresh token mints an
+ * access token here, but whether that token carries the GraphQL scopes the adapter's
+ * `shipping_labels { cost }` query needs is NOT yet confirmed against a live account — this
+ * probe proves the token refreshes, not that it can read label cost. (Confirmed per onboarded
+ * account; the zero-cost guard in adapters/shiphero.server.ts further gates the cost claim.)
+ */
+async function probeShipHeroToken(
+  refreshToken: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    await refreshShipHeroToken(refreshToken, fetchImpl);
+  } catch (err) {
+    // refreshShipHeroToken already strips the token from its message; surface a friendly,
+    // actionable error without leaking the pasted secret.
+    const msg = (err as Error).message ?? "ShipHero rejected the refresh token.";
+    throw new CalderynError({
+      code: "SHIPHERO_TOKEN_INVALID",
+      status: 400,
+      message: `That ShipHero refresh token was rejected. Paste the Refresh Token from ShipHero → My Account → Developer Users. (${msg.slice(0, 160)})`,
+    });
   }
 }
 
@@ -1075,8 +1109,8 @@ export function calderynClient(shop: string) {
             // Ship-cost connector #2 (Shippo, co-branded OAuth, contract C8). Same
             // single source both surfaces read; dashboard renders it read-only.
             shippo_ship: { name: "Shippo", status: "disconnected", detail: "Not connected", logoCls: "logo-shippo" },
-            // 3PL houses (Phase 3 Part B): ShipBob (PAT paste) + ShipHero (OAuth). Same
-            // single-source/read-only-dashboard treatment as EasyPost.
+            // 3PL houses (Phase 3 Part B): ShipBob (PAT paste) + ShipHero (refresh-token
+            // paste). Same single-source/read-only-dashboard treatment as EasyPost.
             shipbob_ship: { name: "ShipBob", status: "disconnected", detail: "Not connected", logoCls: "logo-shipbob" },
             shiphero_ship: { name: "ShipHero", status: "disconnected", detail: "Not connected", logoCls: "logo-shiphero" },
           };
@@ -1202,23 +1236,10 @@ export function calderynClient(shop: string) {
           const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
         }
-        if (provider === "shiphero") {
-          // Phase 3 Part B — ShipHero is a per-merchant OAuth 2.0 provider (token +
-          // refresh) against the GraphQL endpoint (contract C8 / Plan 03 B.3). The cost
-          // ADAPTER (adapters/shiphero.server.ts) is complete and reads a stored
-          // shiphero_ship credential the moment one lands; only the OAuth ACQUISITION
-          // ladder (auth URL build + code→token exchange + refresh + the /auth/shiphero
-          // callback route) is DEFERRED — pending a live ShipHero OAuth app + the spike
-          // confirmation of the endpoint/scope contract. Surfaced as an explicit
-          // not-yet-wired error (rule 12), NOT a silent failure: connecting ShipHero
-          // tells the merchant it's pending rather than appearing to succeed.
-          throw new CalderynError({
-            code: "SHIPHERO_OAUTH_PENDING",
-            status: 501,
-            message:
-              "ShipHero connect is coming soon. The cost reader is ready; per-merchant OAuth is being finalized.",
-          });
-        }
+        // NOTE: ShipHero is intentionally NOT handled here. It is credential/token-based
+        // (the merchant pastes a REFRESH token), not OAuth — it connects via connectApiKey
+        // below, the same paste path as EasyPost/ShipBob. It is no longer in OAUTH_PROVIDERS,
+        // so the settings card never routes it to startOAuth.
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
@@ -1242,13 +1263,17 @@ export function calderynClient(shop: string) {
         fetchImpl: typeof fetch = fetch,
       ): Promise<{ kind: string }> {
         try {
-          // API-key providers (contract C8): EasyPost (Phase 1) + ShipBob (Phase 3 PAT).
-          // Reject anything else here rather than silently writing a credential under an
-          // unknown kind. The probe + kind are provider-driven so each lands under its own
-          // kind with its own live validation.
+          // API-key (paste) providers (contract C8): EasyPost (Phase 1) + ShipBob (Phase 3
+          // PAT) + ShipHero (Phase 3, credential/refresh-token paste). Reject anything else
+          // here rather than silently writing a credential under an unknown kind. The probe +
+          // kind are provider-driven so each lands under its own kind with its own live
+          // validation. NOTE on ShipHero: the pasted value is the merchant's long-lived
+          // REFRESH token (stored encrypted, like the QuickBooks refresh-token model); the
+          // cost adapter mints a short-lived access token from it each run.
           const APIKEY_KIND: Partial<Record<IntegrationProvider, string>> = {
             easypost: "easypost_ship",
             shipbob: "shipbob_ship",
+            shiphero: "shiphero_ship",
           };
           const kind = APIKEY_KIND[provider];
           if (!kind) {
@@ -1260,15 +1285,19 @@ export function calderynClient(shop: string) {
           }
           const key = apiKey.trim();
           if (!key) {
-            throw new CalderynError({
-              code: "EMPTY_API_KEY",
-              status: 400,
-              message: provider === "shipbob" ? "Paste your ShipBob token." : "Paste your EasyPost API key.",
-            });
+            const emptyMsg =
+              provider === "shipbob"
+                ? "Paste your ShipBob token."
+                : provider === "shiphero"
+                  ? "Paste your ShipHero refresh token."
+                  : "Paste your EasyPost API key.";
+            throw new CalderynError({ code: "EMPTY_API_KEY", status: 400, message: emptyMsg });
           }
-          // Fail visibly on a bad key BEFORE writing anything (rule 12).
+          // Fail visibly on a bad key/token BEFORE writing anything (rule 12).
           if (provider === "shipbob") {
             await probeShipBobKey(key, fetchImpl);
+          } else if (provider === "shiphero") {
+            await probeShipHeroToken(key, fetchImpl);
           } else {
             await probeEasyPostKey(key, fetchImpl);
           }
@@ -1333,7 +1362,8 @@ export function calderynClient(shop: string) {
             .eq("kind", kind);
           if (error) throw error;
           // Ship-cost connectors store their credential in integration_credentials
-          // (EasyPost/ShipBob = pasted key; Shippo/ShipHero = OAuth token). Disconnect
+          // (EasyPost/ShipBob = pasted key; ShipHero = pasted refresh token; Shippo = OAuth
+          // token). Disconnect
           // means the merchant wants that credential gone too — so the cron's connect()
           // finds no credential and marks the shop skipped, not errored. Shippo's
           // co-branded OAuth token NEVER expires (Plan 02 §11 #6), so leaving it orphaned

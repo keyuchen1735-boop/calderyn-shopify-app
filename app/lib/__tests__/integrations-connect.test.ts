@@ -165,6 +165,72 @@ describe("integrations.connectApiKey (EasyPost)", () => {
   });
 });
 
+// ShipHero connects by a credential/refresh-token PASTE (reclassified from OAuth): the
+// merchant pastes their long-lived REFRESH token; connectApiKey live-probes it (a real
+// /auth/refresh that mints an access token), then stores the REFRESH token encrypted under
+// kind 'shiphero_ship' (the QuickBooks refresh-token storage model). A 200 with an
+// access_token = valid; a 401 = bad/expired refresh token → reject before persisting.
+const shipHeroOkRefresh = (() =>
+  Promise.resolve(
+    new Response(JSON.stringify({ access_token: "acc_minted", expires_in: 2419200 }), {
+      status: 200,
+    }),
+  )) as unknown as typeof fetch;
+
+describe("integrations.connectApiKey (ShipHero — credential/refresh-token paste)", () => {
+  beforeEach(() => {
+    currentSb = null;
+  });
+
+  it("stores the ENCRYPTED refresh token under kind 'shiphero_ship' + sets 'ready' on a valid token", async () => {
+    const { sb, captured } = makeFakeSupabase({ shop_integrations: [], integration_credentials: [] });
+    currentSb = sb;
+    const client = calderynClient("x.myshopify.com");
+
+    const res = await client.integrations.connectApiKey("shiphero", "shiphero_refresh_tok", shipHeroOkRefresh);
+    expect(res).toEqual({ kind: "shiphero_ship" });
+
+    const credUpsert = captured.upserts.find((u) => u.table === "integration_credentials");
+    expect(credUpsert).toBeTruthy();
+    expect(credUpsert!.onConflict).toBe("shop_id,kind");
+    expect(credUpsert!.payload.kind).toBe("shiphero_ship");
+    const stored = credUpsert!.payload.access_token_encrypted as string;
+    expect(stored).not.toBe("shiphero_refresh_tok"); // encrypted at rest
+    expect(stored).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
+    expect(decrypt(stored)).toBe("shiphero_refresh_tok"); // we persist the REFRESH token
+
+    const integUpsert = captured.upserts.find((u) => u.table === "shop_integrations");
+    expect(integUpsert!.payload.kind).toBe("shiphero_ship");
+    expect(integUpsert!.payload.sync_status).toBe("ready");
+    expect(integUpsert!.payload.sync_error).toBeNull();
+  });
+
+  it("rejects a bad/expired refresh token on the live probe (401) and writes NOTHING (rule 12)", async () => {
+    const { sb, captured } = makeFakeSupabase({ shop_integrations: [], integration_credentials: [] });
+    currentSb = sb;
+    const client = calderynClient("x.myshopify.com");
+
+    await expect(
+      client.integrations.connectApiKey("shiphero", "bad-refresh", unauthorizedFetch),
+    ).rejects.toMatchObject({ code: "SHIPHERO_TOKEN_INVALID" });
+
+    expect(captured.upserts).toHaveLength(0); // no credential, no status row
+  });
+
+  it("rejects an empty refresh token before any probe or write", async () => {
+    const probe = vi.fn();
+    const { sb, captured } = makeFakeSupabase({ shop_integrations: [], integration_credentials: [] });
+    currentSb = sb;
+    const client = calderynClient("x.myshopify.com");
+
+    await expect(
+      client.integrations.connectApiKey("shiphero", "   ", probe as unknown as typeof fetch),
+    ).rejects.toMatchObject({ code: "EMPTY_API_KEY" });
+    expect(probe).not.toHaveBeenCalled();
+    expect(captured.upserts).toHaveLength(0);
+  });
+});
+
 describe("integrations.disconnect (EasyPost)", () => {
   it("clears BOTH the shop_integrations row and the stored credential", async () => {
     const { sb, captured } = makeFakeSupabase({

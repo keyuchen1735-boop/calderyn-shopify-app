@@ -992,13 +992,14 @@ function IntegrationCard({
   // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
   // disconnect speak the provider short name (e.g. "meta", "easypost").
   const oauthProvider = kindToProvider(provider);
-  // ShipHero (and any OAUTH_PENDING provider) is in OAUTH_PROVIDERS so isConnectable is
-  // true, but its OAuth handshake isn't live — an active Connect would always 501. Show a
-  // disabled "Coming soon" badge instead. Check pending BEFORE rendering Connect.
+  // An OAUTH_PENDING provider is in OAUTH_PROVIDERS so isConnectable is true, but its OAuth
+  // handshake isn't live — an active Connect would always 501, so show a disabled "Coming
+  // soon" badge instead. (The set is currently empty — ShipHero, the former member, is now an
+  // API-key/refresh-token paste, not OAuth.) Check pending BEFORE rendering Connect.
   const oauthPending = isOauthPending(provider);
   const canConnect = isConnectable(provider) && !oauthPending;
-  // EasyPost (and future ship-cost connectors) connect by an API-key paste, not
-  // OAuth — render an inline key field + Save instead of the Connect button (C8).
+  // EasyPost / ShipBob / ShipHero connect by a credential PASTE, not OAuth — render an inline
+  // key/token field + Save instead of the Connect button (C8).
   const apiKeyConnect = isApiKeyConnect(provider);
   // A "pending" integration is paired (OAuth done) but still backfilling — show
   // it as Connected with a Disconnect button, not as a fresh Connect prompt.
@@ -1055,7 +1056,13 @@ function IntegrationCard({
             <input type="hidden" name="provider" value={oauthProvider} />
             <FormLayout>
               <TextField
-                label={oauthProvider === "shipbob" ? `${integration.name} access token` : `${integration.name} API key`}
+                label={
+                  oauthProvider === "shipbob"
+                    ? `${integration.name} access token`
+                    : oauthProvider === "shiphero"
+                      ? `${integration.name} refresh token`
+                      : `${integration.name} API key`
+                }
                 name="api_key"
                 value={apiKey}
                 onChange={setApiKey}
@@ -1064,7 +1071,9 @@ function IntegrationCard({
                 helpText={
                   oauthProvider === "shipbob"
                     ? "Paste a ShipBob Personal Access Token with the billing_read scope. We verify it, then store it encrypted."
-                    : "Paste your EasyPost production API key. We verify it, then store it encrypted."
+                    : oauthProvider === "shiphero"
+                      ? "In ShipHero, go to My Account → Developer Users, create a 3rd Party Developer user, and paste its Refresh Token here. We verify it, then store it encrypted."
+                      : "Paste your EasyPost production API key. We verify it, then store it encrypted."
                 }
               />
               <InlineStack align="end">

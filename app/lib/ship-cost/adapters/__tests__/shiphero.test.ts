@@ -3,11 +3,36 @@ import {
   parseLabelCostToCents,
   mapLabelToNormalized,
   fetchShipHeroCharges,
+  shipHeroAdapter,
 } from "../shiphero.server";
+
+// connect() reads a stored credential, decrypts it (= the REFRESH token), mints an access
+// token from it via refreshShipHeroToken, then hands fetchShipHeroCharges that access token.
+// Mock the three module boundaries so the credential→refresh→Bearer wiring is testable
+// without supabase / real crypto / network. (The pure-function describes above don't touch
+// these mocks.)
+const maybeSingleMock = vi.fn();
+vi.mock("../../../supabase.server", () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: maybeSingleMock }) }) }),
+    }),
+  }),
+}));
+vi.mock("../../../crypto.server", () => ({
+  // The stored ciphertext decrypts to the merchant's refresh token.
+  decrypt: (cipher: string) => (cipher === "enc(refresh_tok)" ? "refresh_tok" : `dec(${cipher})`),
+}));
+const refreshMock = vi.fn();
+vi.mock("../../../shiphero/auth.server", () => ({
+  refreshShipHeroToken: (rt: string) => refreshMock(rt),
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  maybeSingleMock.mockReset();
+  refreshMock.mockReset();
 });
 
 // ── parseLabelCostToCents: the ZERO-COST GUARD is the headline behavior ────────
@@ -193,5 +218,47 @@ describe("fetchShipHeroCharges", () => {
     await expect(
       fetchShipHeroCharges("bad", null, mockFetch as unknown as typeof fetch),
     ).rejects.toThrow(/ShipHero 401 Unauthorized: bad token/);
+  });
+});
+
+// ── shipHeroAdapter.connect(): refresh-token → access-token derivation ──────────
+describe("shipHeroAdapter.connect", () => {
+  it("derives an access token from the stored refresh token, then uses it as the Bearer", async () => {
+    // Stored credential decrypts to the refresh token; refresh mints a fresh access token.
+    maybeSingleMock.mockResolvedValue({
+      data: { access_token_encrypted: "enc(refresh_tok)" },
+      error: null,
+    });
+    refreshMock.mockResolvedValue({ accessToken: "acc_minted", expiresIn: 2419200 });
+
+    // fetchCharges uses the DEFAULT global fetch; stub it to a single empty page and assert
+    // the Authorization header carries the MINTED access token (not the refresh token).
+    const globalFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
+      okResponse(page([], false, null)),
+    );
+    vi.stubGlobal("fetch", globalFetch);
+
+    const source = await shipHeroAdapter.connect("shop-1");
+    expect(source).not.toBeNull();
+    expect(refreshMock).toHaveBeenCalledWith("refresh_tok");
+
+    await source!.fetchCharges("2026-06-01T00:00:00Z");
+    const init = globalFetch.mock.calls[0][1]!;
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer acc_minted");
+  });
+
+  it("returns null when there is no stored credential (→ cron marks skipped)", async () => {
+    maybeSingleMock.mockResolvedValue({ data: null, error: null });
+    expect(await shipHeroAdapter.connect("shop-1")).toBeNull();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the refresh fails (revoked/expired token → skipped, not a thrown sweep)", async () => {
+    maybeSingleMock.mockResolvedValue({
+      data: { access_token_encrypted: "enc(refresh_tok)" },
+      error: null,
+    });
+    refreshMock.mockRejectedValue(new Error("ShipHero token refresh 401 Unauthorized: nope"));
+    expect(await shipHeroAdapter.connect("shop-1")).toBeNull();
   });
 });

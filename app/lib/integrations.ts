@@ -10,19 +10,21 @@
 import type { Integration } from "./types";
 
 /** Providers that have a wired OAuth connect flow (startOAuth handles these). */
-// shippo (Phase 2) and shiphero (Phase 3 Part B) are both OAuth ship-cost connectors —
-// per-merchant token (+ refresh for shiphero), contract C8.
-export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo", "shiphero"] as const;
+// shippo (Phase 2) is a co-branded OAuth ship-cost connector (per-merchant token, contract
+// C8). shiphero is NOT here: it is credential/token-based (refresh-token paste), so it lives
+// in APIKEY_PROVIDERS below — see that comment.
+export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 /**
- * OAuth providers whose connect handshake is NOT live yet — the app-side client
- * isn't registered, so an actual Connect would throw (e.g. SHIPHERO_OAUTH_PENDING /
- * 501). They are in OAUTH_PROVIDERS (the eventual mechanism is OAuth, not a key paste),
- * but the settings card renders a disabled "Coming soon" affordance instead of an active
- * Connect button — honest rather than a button that always errors.
+ * OAuth providers whose connect handshake is NOT live yet — the app-side client isn't
+ * registered, so an actual Connect would throw. Such a provider stays in OAUTH_PROVIDERS
+ * (the eventual mechanism IS OAuth), but the settings card renders a disabled "Coming soon"
+ * affordance instead of an active Connect button. Currently EMPTY: shiphero used to be here
+ * under the (wrong) assumption it was OAuth — it is actually credential/refresh-token based,
+ * so it moved to APIKEY_PROVIDERS and the "Coming soon" gate no longer applies to it.
  */
-export const OAUTH_PENDING_PROVIDERS = ["shiphero"] as const;
+export const OAUTH_PENDING_PROVIDERS = [] as const;
 export type OAuthPendingProvider = (typeof OAUTH_PENDING_PROVIDERS)[number];
 
 /**
@@ -34,7 +36,12 @@ export type OAuthPendingProvider = (typeof OAUTH_PENDING_PROVIDERS)[number];
  */
 // shipbob (Phase 3 Part B) is a pasted Personal Access Token (billing_read scope), the
 // same API-key model as EasyPost (C8) — deliberately NOT in OAUTH_PROVIDERS.
-export const APIKEY_PROVIDERS = ["easypost", "shipbob"] as const;
+// shiphero (Phase 3 Part B) is credential/token-based, NOT OAuth: the merchant creates a
+// dedicated "3rd Party Developer" user in ShipHero and pastes the issued REFRESH token —
+// there is no authorize-redirect and no app client_id/secret. So it is a paste connector
+// like EasyPost/ShipBob (the adapter mints a short-lived access token from the stored
+// refresh token each run via /auth/refresh — a net-new token-refresh wrinkle).
+export const APIKEY_PROVIDERS = ["easypost", "shipbob", "shiphero"] as const;
 export type ApiKeyProvider = (typeof APIKEY_PROVIDERS)[number];
 
 /**
