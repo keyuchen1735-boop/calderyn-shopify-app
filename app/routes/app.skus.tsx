@@ -35,7 +35,7 @@ import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { useActionToast, type ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
-import type { Alert, ShopLocation, SKU, SkuHistoryPoint } from "~/lib/types";
+import type { Alert, ShopLocation, SKU, SkuAffinityItem, SkuHistoryPoint } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 import { fmtMoney } from "~/lib/format";
 import {
@@ -843,6 +843,70 @@ function StockHistory({ skuId }: { skuId: string }) {
   );
 }
 
+/** Lazy-loaded "frequently bought with" panel for one SKU, shown in the relocate
+ * modal. Display-only (no navigation) — a compact list of co-purchased SKUs with
+ * order counts + share. */
+function BoughtWith({ skuId }: { skuId: string }) {
+  const fetcher = useFetcher<{
+    items: SkuAffinityItem[];
+    error: { code: string; message: string } | null;
+  }>();
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data === undefined) {
+      fetcher.load(`/app/skus/${encodeURIComponent(skuId)}/affinity`);
+    }
+  }, [skuId, fetcher]);
+
+  const data = fetcher.data;
+  const items = data?.items ?? [];
+
+  let body: React.ReactNode;
+  if (data === undefined) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Loading…
+      </Text>
+    );
+  } else if (data.error) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Couldn&apos;t load bundles.
+      </Text>
+    );
+  } else if (items.length === 0) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        No frequent pairings yet — this builds as orders come in.
+      </Text>
+    );
+  } else {
+    body = (
+      <BlockStack gap="100">
+        {items.map((it) => (
+          <InlineStack key={it.sku_id} align="space-between" gap="200" wrap={false}>
+            <Text as="span" variant="bodySm" truncate>
+              {it.title}
+            </Text>
+            <Text as="span" tone="subdued" variant="bodySm">
+              {it.co_count.toLocaleString()} order{it.co_count === 1 ? "" : "s"} ·{" "}
+              {Math.round(it.share * 100)}%
+            </Text>
+          </InlineStack>
+        ))}
+      </BlockStack>
+    );
+  }
+
+  return (
+    <BlockStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="medium">
+        Frequently bought with
+      </Text>
+      {body}
+    </BlockStack>
+  );
+}
+
 function RelocateModal({
   sku,
   locations,
@@ -934,7 +998,8 @@ function RelocateModal({
         <BlockStack gap="400">
           {/* key per SKU: remount → fresh fetcher → refetch if the modal is
               ever reused for a different SKU without unmounting. */}
-          <StockHistory key={sku.id} skuId={sku.id} />
+          <StockHistory key={`hist-${sku.id}`} skuId={sku.id} />
+          <BoughtWith key={`bw-${sku.id}`} skuId={sku.id} />
           {sku.demand && (
             <Text as="p" tone="subdued">
               Main demand is {sku.demand.region} ({sku.demand.units_30d.toLocaleString()}{" "}

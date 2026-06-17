@@ -10,15 +10,18 @@ import type {
   Integration,
   ShopLocation,
   SKU,
+  SkuAffinityItem,
   SkuHistoryPoint,
   SkuSource,
   TopAdRow,
 } from "./types";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
+  affinityFromRow,
   demandFromRow,
   locationsDetailFromRow,
   suggestedTransferFromRow,
+  type SkuAffinityViewRow,
   type SkuDemandViewRow,
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
@@ -942,6 +945,28 @@ export function calderynClient(shop: string) {
           }));
         } catch (err) {
           rethrow("skus.history", err);
+        }
+      },
+
+      // "Frequently bought with" — top co-purchased SKUs for one SKU over the
+      // trailing 90 days. Per-SKU detail fetch (not on the list). Service-role
+      // bypasses RLS, so .eq("shop_id") is the tenant guard.
+      async affinity(skuId: string, _signal?: AbortSignal): Promise<SkuAffinityItem[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_sku_affinity")
+            .select("co_sku_id, co_title, co_sku, co_count, share")
+            .eq("shop_id", shopId)
+            .eq("sku_id", skuId)
+            .order("co_count", { ascending: false })
+            // The view caps at 6 rows/SKU; an explicit cap per the PostgREST
+            // 1000-row default-truncation convention.
+            .limit(20);
+          if (error) throw error;
+          return (data ?? []).map((r) => affinityFromRow(r as unknown as SkuAffinityViewRow));
+        } catch (err) {
+          rethrow("skus.affinity", err);
         }
       },
     },

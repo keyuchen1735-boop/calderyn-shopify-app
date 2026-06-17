@@ -182,6 +182,17 @@ export interface SkuHistoryPoint {
   on_hand: number;
 }
 
+/** One "frequently bought with" entry for a SKU — a co-purchased SKU over the
+ * trailing 90 days. `share` (0..1) is the fraction of the base SKU's orders that
+ * also contained this one. Fetched per-SKU (not on the SKU list). */
+export interface SkuAffinityItem {
+  /** The co-purchased SKU's id (sku_dim.id). */
+  sku_id: string;
+  title: string;
+  co_count: number;
+  share: number;
+}
+
 export interface Integration {
   name: string;
   status: "connected" | "pending" | "disconnected";

@@ -16,6 +16,7 @@ import type {
   GuardrailConfig,
   Integration,
   SKU,
+  SkuAffinityItem,
   SkuHistoryPoint,
   TopAdRow,
 } from "~/lib/types";
@@ -454,6 +455,14 @@ export async function fetchSkuHistory(id: string): Promise<SkuHistoryPoint[]> {
     `/dashboard/api/skus/${encodeURIComponent(id)}/history`,
   );
   return data.history;
+}
+
+/** Top "frequently bought with" SKUs for one SKU (trailing 90 days). */
+export async function fetchSkuAffinity(id: string): Promise<SkuAffinityItem[]> {
+  const data = await apiGet<{ affinity: SkuAffinityItem[] }>(
+    `/dashboard/api/skus/${encodeURIComponent(id)}/affinity`,
+  );
+  return data.affinity;
 }
 
 export async function fetchAudit(): Promise<AuditVM[]> {

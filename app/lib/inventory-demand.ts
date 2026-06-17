@@ -4,7 +4,12 @@
 // the main demand region holds less than 7 days of its own demand and stock
 // exists elsewhere to cover (part of) the gap.
 
-import type { SkuDemand, SkuLocationDetail, SuggestedTransfer } from "./types";
+import type {
+  SkuAffinityItem,
+  SkuDemand,
+  SkuLocationDetail,
+  SuggestedTransfer,
+} from "./types";
 
 /**
  * Raw row shape from PostgREST. Uncast numerics arrive as strings; int-cast
@@ -88,6 +93,27 @@ export function formatStockoutDate(iso: string, now = new Date()): string {
     year: sameYear ? undefined : "numeric",
     timeZone: "UTC",
   });
+}
+
+/** Raw row shape from v_sku_affinity (the co-purchased SKU side). */
+export interface SkuAffinityViewRow {
+  co_sku_id: string;
+  co_title: string | null;
+  co_sku: string | null;
+  co_count: string | number;
+  share: string | number;
+}
+
+/** Map a v_sku_affinity row to the SkuAffinityItem DTO. Title falls back to the
+ * sku code, then the id, so a co-purchased SKU always labels itself. Shared by
+ * both inventory surfaces. */
+export function affinityFromRow(r: SkuAffinityViewRow): SkuAffinityItem {
+  return {
+    sku_id: r.co_sku_id,
+    title: r.co_title || r.co_sku || r.co_sku_id,
+    co_count: Number(r.co_count ?? 0),
+    share: Number(r.share ?? 0),
+  };
 }
 
 export function demandFromRow(r: SkuDemandViewRow): SkuDemand {
