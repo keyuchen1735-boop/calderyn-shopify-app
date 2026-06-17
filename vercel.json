@@ -22,6 +22,7 @@
     { "path": "/cron/autopilot", "schedule": "0,30 * * * *" },
     { "path": "/cron/ingest-quickbooks", "schedule": "0 5 * * *" },
     { "path": "/cron/mcp-oauth-cleanup", "schedule": "0 4 * * *" },
-    { "path": "/cron/github-digest", "schedule": "0 14 * * *" }
+    { "path": "/cron/github-digest", "schedule": "0 14 * * *" },
+    { "path": "/cron/moat-train", "schedule": "0 3 * * *" }
   ]
 }
