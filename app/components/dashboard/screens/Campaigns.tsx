@@ -16,6 +16,7 @@ import {
   Segmented,
   Placeholder,
   CountMoney,
+  Tooltip,
 } from "../ui";
 import { money } from "../format";
 import { CDIcon } from "../icons";
@@ -67,9 +68,9 @@ function CampaignRow({
           <span className="cd-row-title truncate">{c.name}</span>
           {c.status === "paused" ? <Pill icon="pause">Paused</Pill> : <GradePill grade={c.grade} />}
           {scaleReason && (
-            <Pill icon="arrowUpRight" title={scaleReason}>
-              Scale
-            </Pill>
+            <Tooltip content={scaleReason}>
+              <Pill icon="arrowUpRight">Scale</Pill>
+            </Tooltip>
           )}
         </div>
         <div className="cd-caption tabular-nums">
