@@ -93,3 +93,23 @@ async def test_does_not_fire_when_loss_below_threshold(
 @pytest.mark.asyncio
 async def test_threshold_constant_is_500_usd() -> None:
     assert DEFAULT_THRESHOLD_USD == Decimal("500")
+
+
+@pytest.mark.asyncio
+async def test_threshold_defaults_to_500_when_no_override(
+    pg_pool, seed_shop, seed_breakeven_scenario, monkeypatch
+) -> None:
+    """Offline cutover safety: no MOAT_PEPPER, no override → $500 gate.
+    Loss $200 (spend $300, gp $100) is below $500 ⇒ no fire."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_breakeven_scenario(
+        SHOP,
+        spend=Decimal("300"),
+        revenue=Decimal("200"),
+        cogs=Decimal("100"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []

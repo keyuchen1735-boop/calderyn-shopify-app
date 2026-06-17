@@ -22,6 +22,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.estimators.below_breakeven_loss import (
     estimate_below_breakeven_loss,
 )
@@ -79,6 +80,9 @@ async def detect(
 ) -> list[DetectionResult]:
     """Run the detector and return zero-or-more DetectionResult rows."""
 
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(_QUERY, shop_id)
     out: list[DetectionResult] = []
     for r in rows:
@@ -89,10 +93,10 @@ async def detect(
         impact = estimate_below_breakeven_loss(
             spend=spend, gross_profit=gross_profit
         )
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         severity = (
-            "critical" if impact >= DEFAULT_THRESHOLD_USD * 4 else "high"
+            "critical" if impact >= threshold * 4 else "high"
         )
         out.append(
             DetectionResult(
