@@ -7,13 +7,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
+import {
+  executeAlertAction,
+  fetchSkus,
+  fetchSkuAffinity,
+  relocateSku,
+  DashboardApiError,
+} from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { formatDemandUnits } from "~/lib/inventory-demand";
 import { money } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
+import type { SkuAffinityItem } from "~/lib/types";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -491,6 +498,61 @@ function AlertActionsDialog({
 // No shared modal primitive exists in the dashboard kit yet, so this renders a
 // minimal fixed backdrop + centered Card, with cd-field/cd-input form controls
 // (the Predictor screen's form styling).
+/** Lazy-loaded "frequently bought with" panel for one SKU, shown in the relocate
+ * dialog. Display-only list of co-purchased SKUs with order counts + share. */
+function BoughtWith({ skuId }: { skuId: string }) {
+  const [items, setItems] = useState<SkuAffinityItem[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setItems(null);
+    setError(false);
+    fetchSkuAffinity(skuId)
+      .then((rows) => alive && setItems(rows))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [skuId]);
+
+  let body: React.ReactNode;
+  if (error) {
+    body = <span className="cd-caption">Couldn&apos;t load bundles.</span>;
+  } else if (items === null) {
+    body = <span className="cd-caption">Loading…</span>;
+  } else if (items.length === 0) {
+    body = (
+      <span className="cd-caption">No frequent pairings yet — this builds as orders come in.</span>
+    );
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {items.map((it) => (
+          <div
+            key={it.sku_id}
+            style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
+          >
+            <span className="cd-row-title truncate">{it.title}</span>
+            <span className="cd-caption tabular-nums" style={{ whiteSpace: "nowrap" }}>
+              {it.co_count.toLocaleString()} order{it.co_count === 1 ? "" : "s"} ·{" "}
+              {Math.round(it.share * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="cd-row-title" style={{ marginBottom: 6 }}>
+        Frequently bought with
+      </div>
+      {body}
+    </div>
+  );
+}
+
 function RelocateDialog({
   sku,
   busy,
@@ -590,6 +652,7 @@ function RelocateDialog({
               {sku.demand.stock_in_region} in stock there.
             </p>
           )}
+          <BoughtWith skuId={sku.id} />
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label className="cd-field">
               <span>From</span>

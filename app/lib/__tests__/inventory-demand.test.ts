@@ -4,6 +4,7 @@ import {
   suggestedTransferFromRow,
   locationsDetailFromRow,
   formatDemandUnits,
+  affinityFromRow,
   type SkuDemandViewRow,
 } from "../inventory-demand";
 
@@ -103,6 +104,36 @@ describe("suggestedTransferFromRow", () => {
 
   it("returns null when src_available is negative", () => {
     expect(suggestedTransferFromRow({ ...ROW, src_available: -5 })).toBeNull();
+  });
+});
+
+describe("affinityFromRow", () => {
+  it("maps a co-purchase view row into the SkuAffinityItem shape", () => {
+    expect(
+      affinityFromRow({
+        co_sku_id: "sku-co",
+        co_title: "Summit Logo Tee — M",
+        co_sku: "TEE-M",
+        co_count: "65",
+        share: "0.108",
+      }),
+    ).toEqual({
+      sku_id: "sku-co",
+      title: "Summit Logo Tee — M",
+      co_count: 65,
+      share: 0.108,
+    });
+  });
+
+  it("falls back to the sku code, then the id, when the title is missing", () => {
+    expect(
+      affinityFromRow({ co_sku_id: "sku-x", co_title: null, co_sku: "X-1", co_count: 3, share: 0.1 })
+        .title,
+    ).toBe("X-1");
+    expect(
+      affinityFromRow({ co_sku_id: "sku-y", co_title: null, co_sku: null, co_count: 1, share: 0.05 })
+        .title,
+    ).toBe("sku-y");
   });
 });
 
