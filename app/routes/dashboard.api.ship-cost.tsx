@@ -10,7 +10,7 @@
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, requireSameOrigin, rateLimit } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { saveTypedPeriodTotal, setManualOverride } from "~/lib/ship-cost/inputs.server";
 import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
@@ -40,6 +40,12 @@ export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
+
+  // Defense-in-depth cap on this mutation surface, keyed per shop (the session
+  // is already the trust boundary; this bounds a runaway/abusive client).
+  if (!(await rateLimit(`ship-cost:${session.shopId}`, 60, 60_000))) {
+    return jsonError(429, "rate_limited");
+  }
 
   let body: Record<string, unknown>;
   try {

@@ -9,7 +9,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
-  if (!rateLimit(clientIpKey(request, "oauth_register"), 10, 60 * 60 * 1000)) {
+  if (!(await rateLimit(clientIpKey(request, "oauth_register"), 10, 60 * 60 * 1000))) {
     return json(
       { error: "too_many_requests", error_description: "rate limit exceeded; try again later" },
       { status: 429 },
