@@ -17,6 +17,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.schemas import DetectionResult
 
 DETECTOR_ID = "cogs_drift"
@@ -65,6 +66,9 @@ WHERE cur.rn = 1
 async def detect(
     shop_id: str, conn: asyncpg.Connection, now: datetime
 ) -> list[DetectionResult]:
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(_QUERY, shop_id, MIN_DRIFT_PCT)
     out: list[DetectionResult] = []
     for r in rows:
@@ -73,7 +77,7 @@ async def detect(
         units = Decimal(r["units_30d"] or 0)
         delta_cents = current_cents - prior_cents
         impact = (delta_cents * units / Decimal(100)).quantize(Decimal("0.01"))
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         drift_pct = delta_cents / prior_cents
         out.append(
