@@ -30,7 +30,6 @@ the pipeline iterates it.
 from __future__ import annotations
 
 import json
-import os
 from datetime import date, datetime, UTC
 from typing import Any
 
@@ -42,7 +41,6 @@ from calderyn_engine.claude_layer import rank_and_narrate
 from calderyn_engine.config import Config, load_config
 from calderyn_engine.db import get_pool, with_shop_context
 from calderyn_engine.detectors import DETECTOR_REGISTRY
-from calderyn_engine.moat.emitter import emit_moat_event
 from calderyn_engine.schemas import AlertRow, ClaudeOutput, DetectionResult
 from calderyn_engine.tracing import get_tracer
 
@@ -56,6 +54,7 @@ _tracer = get_tracer(__name__)
 from calderyn_engine.detectors import (  # noqa: E402, F401
     ad_tax_overload,
     campaign_below_breakeven,
+    campaign_scaling_opportunity,
     cogs_drift,
     margin_erosion,
     negative_unit_economics,
@@ -123,22 +122,6 @@ async def run_for_shop(
         pool = await get_pool(cfg.database_url)
     upserted: list[str] = []
 
-    # Plan 05 Task 7 — moat emit gate. We only emit detection_fired
-    # events when the operator has provisioned a pepper via the
-    # MOAT_PEPPER env var; otherwise the emit is a graceful no-op so
-    # the engine keeps working for shops not yet onboarded to the moat
-    # layer. detection_fired is in ALWAYS_EMIT_KINDS so the consent
-    # gate inside the emitter doesn't suppress it; we still read
-    # peer_data_consent off the shop row so future kinds added to this
-    # call site (action_executed et al.) Just Work.
-    moat_pepper = os.environ.get("MOAT_PEPPER")
-    if not moat_pepper:
-        logger.warning(
-            "moat_emit_disabled_no_pepper",
-            shop_id=shop_id,
-            reason="MOAT_PEPPER env var unset",
-        )
-
     # Plan 07 Task 12 — outer span for the entire shop run. The no-op
     # tracer makes this free when OTel is not initialised; production
     # exporters surface the span in the spec §10 dashboards. We use the
@@ -201,13 +184,6 @@ async def run_for_shop(
                 )
                 rank_map = _rank_map(ranked)
 
-                # Plan 05 Task 7 — read peer_data_consent once per
-                # pipeline run. detection_fired is in
-                # ALWAYS_EMIT_KINDS so the value only matters for
-                # future kinds emitted from this site, but we read it
-                # now so the emitter sees the right flag.
-                peer_consent = await _load_peer_consent(conn, shop_id)
-
                 for d in all_detections:
                     ranked_item = rank_map.get(
                         (d.detector_id, _entity_key(d.entity_ref))
@@ -234,48 +210,6 @@ async def run_for_shop(
                         alert_id=alert_id,
                         rank=row.claude_rank,
                     )
-
-                    # Plan 05 Task 7 — emit one moat detection_fired
-                    # event per upserted alert. Wrapped in a savepoint
-                    # so a moat write failure (e.g. moat_keys not yet
-                    # present in a partial migration state) does not
-                    # abort the whole transaction and lose the alert
-                    # rows.
-                    if moat_pepper:
-                        sp = conn.transaction()
-                        await sp.start()
-                        try:
-                            await emit_moat_event(
-                                conn,
-                                shop_id=shop_id,
-                                kind="detection_fired",
-                                detector_id=d.detector_id,
-                                payload={
-                                    "detector_id": d.detector_id,
-                                    "alert_id": alert_id,
-                                    "severity": d.severity,
-                                    "dollar_impact": float(d.dollar_impact),
-                                    "thresholds_used": (
-                                        d.evidence.get("thresholds_used", {})
-                                        if isinstance(d.evidence, dict)
-                                        else {}
-                                    ),
-                                },
-                                pepper=moat_pepper,
-                                peer_data_consent=peer_consent,
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            await sp.rollback()
-                            logger.error(
-                                "moat_emit_failed",
-                                shop_id=shop_id,
-                                detector_id=d.detector_id,
-                                alert_id=alert_id,
-                                error=str(exc),
-                                exc_type=type(exc).__name__,
-                            )
-                        else:
-                            await sp.commit()
 
         logger.info(
             "pipeline_complete",
@@ -333,30 +267,6 @@ async def _run_detectors_in_scope(
         )
         out.extend(results)
     return out
-
-
-async def _load_peer_consent(conn: Any, shop_id: str) -> bool:
-    """Read ``shops.peer_data_consent`` for ``shop_id``.
-
-    Plan 05 Task 7. Defaults to ``False`` when the column is missing
-    (older migration state) so the emitter conservatively suppresses
-    gated kinds when in doubt.
-    """
-
-    try:
-        value = await conn.fetchval(
-            "select peer_data_consent from public.shops "
-            "where id = $1::uuid",
-            shop_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "moat_peer_consent_lookup_failed",
-            shop_id=shop_id,
-            error=str(exc),
-        )
-        return False
-    return bool(value)
 
 
 def _rank_map(

@@ -66,6 +66,17 @@ describe("validateGuardrailPatch", () => {
     ).toBeNull();
   });
 
+  it("rejects an out-of-range increase pct", () => {
+    expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 999 })).not.toBeNull();
+    expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: -1 })).not.toBeNull();
+  });
+  it("accepts a valid increase pct and a null ceiling", () => {
+    expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 20, autopilot_max_daily_budget_cents: null })).toBeNull();
+  });
+  it("rejects a negative daily ceiling", () => {
+    expect(validateGuardrailPatch({ autopilot_max_daily_budget_cents: -100 })).not.toBeNull();
+  });
+
   it("ignores keys not present in the patch", () => {
     expect(validateGuardrailPatch({})).toBeNull();
   });

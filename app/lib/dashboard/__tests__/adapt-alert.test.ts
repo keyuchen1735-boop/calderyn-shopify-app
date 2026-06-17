@@ -46,6 +46,20 @@ describe("adaptAlert action list", () => {
     expect(vm.recommended).toBe("pause_campaign");
   });
 
+  it("disambiguates same-named campaigns by the alert's campaign_id, not name", () => {
+    // Two active campaigns share a name; only the id resolves the right one.
+    // A name match would wrongly pick the first ("c1").
+    const dupes = [
+      { id: "c1", name: "Summer Sale" } as CampaignVM,
+      { id: "c2", name: "Summer Sale" } as CampaignVM,
+    ];
+    const vm = adaptAlert(
+      makeAlert({ detector_id: "campaign_below_breakeven", campaign: "Summer Sale", campaign_id: "c2", sku: null }),
+      dupes,
+    );
+    expect(vm.campaign_id).toBe("c2");
+  });
+
   it("stays snooze-only with no recommendation for snooze-only detectors", () => {
     const vm = adaptAlert(makeAlert({ detector_id: "margin_erosion" }), CAMPAIGNS);
     expect(vm.actions).toEqual(["snooze_alert"]);

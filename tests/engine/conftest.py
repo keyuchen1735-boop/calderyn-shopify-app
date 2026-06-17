@@ -1745,6 +1745,93 @@ def seed_wrong_location_scenario(pg_pool):
 
 
 @pytest.fixture
+def seed_scale_scenario(pg_pool):
+    """F1 Task 4: winning campaign with a measurable scale upside.
+
+    Seeds an ad_campaign_dim row, a campaign_grade_fact row (the detector
+    queries the latest grade per campaign), and optionally a guardrail_config
+    row so ``autopilot_max_budget_increase_pct`` is readable.
+
+    The shop's guardrail row is normally created by the trigger on INSERT INTO
+    shops; in the test DB the trigger fires, so we just UPDATE the pct column
+    after the shop is already seeded. We use ON CONFLICT DO NOTHING so this
+    fixture is idempotent across repeated calls within a session.
+    """
+
+    campaign_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeaaaa"
+
+    async def _seed(
+        shop_id: str,
+        *,
+        grade: str,
+        roas: Decimal,
+        margin: Decimal,
+        daily_budget_cents: int,
+        increase_pct: int = 20,
+        horizon_days: int = 30,
+    ) -> None:
+        async with pg_pool.acquire() as conn:
+            # Clean up state from prior tests using the same fixed UUIDs.
+            await conn.execute(
+                "DELETE FROM public.campaign_grade_fact WHERE campaign_id = $1",
+                campaign_id,
+            )
+            await conn.execute(
+                "DELETE FROM public.ad_campaign_dim WHERE id = $1",
+                campaign_id,
+            )
+            # Campaign — status 'active' so the detector considers it.
+            await conn.execute(
+                """
+                INSERT INTO public.ad_campaign_dim
+                  (id, shop_id, platform, external_id, name, status,
+                   daily_budget_cents, currency)
+                VALUES ($1, $2, 'meta', 'cmp_scale_opp', 'Scale Opp Campaign',
+                        'active', $3, 'USD')
+                """,
+                campaign_id,
+                shop_id,
+                daily_budget_cents if daily_budget_cents > 0 else None,
+            )
+            # Grade fact: today's bucket so DISTINCT ON … ORDER BY day_bucket DESC
+            # picks this row as the latest.
+            break_even_roas = (
+                Decimal("1") / margin if margin > 0 else Decimal("999")
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.campaign_grade_fact
+                  (shop_id, campaign_id, day_bucket, window_days,
+                   grade, roas, break_even_roas, margin, confidence,
+                   spend_cents, revenue_cents, cogs_cents)
+                VALUES ($1, $2, current_date, 7,
+                        $3, $4, $5, $6, 'ok',
+                        0, 0, 0)
+                """,
+                shop_id,
+                campaign_id,
+                grade,
+                roas,
+                break_even_roas,
+                margin,
+            )
+            # Ensure guardrail_config exists for this shop (trigger fires on
+            # INSERT INTO shops, but we update pct to the requested value).
+            await conn.execute(
+                """
+                INSERT INTO public.guardrail_config (shop_id, autopilot_max_budget_increase_pct)
+                VALUES ($1, $2)
+                ON CONFLICT (shop_id) DO UPDATE
+                  SET autopilot_max_budget_increase_pct = EXCLUDED.autopilot_max_budget_increase_pct
+                """,
+                shop_id,
+                increase_pct,
+            )
+
+    return _seed
+
+
+@pytest.fixture
 def seed_regional_shortage_scenario(pg_pool):
     """Plan 03 Task 17c: a region whose 14-day projected demand exceeds
     its in-region stock.

@@ -17,6 +17,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.estimators.margin_erosion_loss import (
     estimate_margin_erosion_loss,
 )
@@ -76,6 +77,9 @@ WHERE b.units >= $2
 async def detect(
     shop_id: str, conn: asyncpg.Connection, now: datetime
 ) -> list[DetectionResult]:
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(_QUERY, shop_id, MIN_BASELINE_UNITS)
     out: list[DetectionResult] = []
     for r in rows:
@@ -98,7 +102,7 @@ async def detect(
             baseline_unit_margin=baseline_margin,
             current_unit_margin=current_margin,
         )
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         out.append(
             DetectionResult(

@@ -145,8 +145,12 @@ export function adaptDaily(rows: DailyRoasRow[]): DailyRow[] {
 }
 
 export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
+  // Prefer the campaign dim id resolved by v_alerts_view (robust against two
+  // campaigns sharing a name); fall back to a name match only for older rows
+  // that predate the campaign_id column.
   const campaign_id =
-    a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null;
+    a.campaign_id ??
+    (a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null);
 
   // Only live-executable kinds render as buttons: campaign kinds go through
   // /dashboard/api/campaigns/:id/action, reallocate_inventory through
@@ -355,6 +359,10 @@ const INTEGRATION_ORDER = [
   "google_ads",
   "tiktok_ads",
   "quickbooks",
+  "easypost_ship",
+  "shippo_ship",
+  "shipbob_ship",
+  "shiphero_ship",
 ] as const;
 
 export function adaptIntegrations(
@@ -522,6 +530,27 @@ export async function setShipCostMode(mode: string): Promise<void> {
     intent: "set_mode",
     ship_cost_mode: mode,
   });
+}
+
+export interface UnmatchedShipChargeVM {
+  id: string;
+  provider: string | null;
+  orderRef: string | null;
+  trackingNo: string | null;
+  costCents: number;
+  externalChargeId: string | null;
+  reason: string;
+}
+
+export interface UnmatchedShipCharges {
+  count: number;
+  items: UnmatchedShipChargeVM[];
+}
+
+/** Read the shop's unmatched carrier charges (Phase 3 Part C), READ-ONLY on the dashboard
+ * — mapping a charge to an order is embedded-admin-only (same split as integrations). */
+export async function fetchUnmatchedShipCharges(): Promise<UnmatchedShipCharges> {
+  return apiGet<UnmatchedShipCharges>("/dashboard/api/unmatched-ship");
 }
 
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {

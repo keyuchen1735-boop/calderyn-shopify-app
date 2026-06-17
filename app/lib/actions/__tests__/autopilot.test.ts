@@ -29,7 +29,15 @@ function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>>
     chain.eq = vi.fn(() => chain);
     chain.in = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({ data: { autopilot_enabled: opts.enabled }, error: null }));
+    chain.maybeSingle = vi.fn(async () => ({
+      data: {
+        autopilot_enabled: opts.enabled,
+        autopilot_max_budget_cut_pct: 50,
+        autopilot_max_budget_increase_pct: 20,
+        autopilot_max_daily_budget_cents: null,
+      },
+      error: null,
+    }));
     chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
       resolve({ data: table === "v_autopilot_candidates" ? opts.alerts : [], error: null });
     return chain;
@@ -200,5 +208,28 @@ describe("runAutopilotForShop", () => {
     );
     const [, secondArg] = executeAction.mock.calls[0] as unknown as [unknown, { triggerReason?: string }];
     expect(secondArg.triggerReason).toContain("Campaign is losing money");
+  });
+
+  it("scales a winning campaign within the increase cap", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    const scale = { ...candidate, detector_id: "campaign_scaling_opportunity", dollar_impact: 300 };
+    const sb = fakeSb({ enabled: true, alerts: [scale] });
+    await runAutopilotForShop(SHOP, sb);
+    // default +20% of 10000 -> 12000
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "increase_campaign_budget", dailyBudgetCents: 12000, actor: "autopilot" }),
+      sb,
+    );
+  });
+
+  it("processes defensive actions before scale actions", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    const scale = { ...candidate, alert_id: "al-scale", detector_id: "campaign_scaling_opportunity", dollar_impact: 999 };
+    const pause = { ...candidate, alert_id: "al-pause", detector_id: "campaign_below_breakeven", dollar_impact: 10 };
+    const sb = fakeSb({ enabled: true, alerts: [scale, pause] });
+    await runAutopilotForShop(SHOP, sb);
+    const kinds = executeAction.mock.calls.map((c) => ((c as unknown as [unknown, { kind: string }])[1]).kind);
+    expect(kinds).toEqual(["pause_campaign", "increase_campaign_budget"]);
   });
 });

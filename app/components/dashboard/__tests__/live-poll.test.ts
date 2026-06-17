@@ -46,6 +46,8 @@ const GUARDRAILS: GuardrailVM = {
   autopilot_actions_today: 0,
   autopilot_min_spend_cents: 1_000,
   autopilot_max_budget_cut_pct: 30,
+  autopilot_max_budget_increase_pct: 20,
+  autopilot_max_daily_budget_cents: null,
 };
 
 function auditEntry(id: string): AuditVM {

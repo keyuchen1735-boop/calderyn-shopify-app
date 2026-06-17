@@ -119,3 +119,25 @@ async def test_does_not_fire_when_no_stock_to_transfer(
 @pytest.mark.asyncio
 async def test_threshold_constant_is_500_usd() -> None:
     assert DEFAULT_SPEND_THRESHOLD == Decimal("500")
+
+
+@pytest.mark.asyncio
+async def test_threshold_defaults_to_500_when_no_override(
+    pg_pool, seed_shop, seed_regional_starved_scenario, monkeypatch
+) -> None:
+    """Offline cutover safety: with no MOAT_PEPPER and no override row, the
+    regional spend gate stays at the historical $500. Regional spend $400 is
+    below $500, so no alert fires."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_regional_starved_scenario(
+        SHOP,
+        region="CA",
+        spend=Decimal("400"),
+        ca_stock=0,
+        other_stock=200,
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []

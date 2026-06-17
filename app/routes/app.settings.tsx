@@ -9,7 +9,7 @@ import {
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
+import { json, redirect, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
 import {
   Badge,
   Banner,
@@ -40,12 +40,15 @@ import {
   formatSyncToast,
 } from "~/lib/ads/manual-sync.server";
 import { useActionToast, useConnectionToast } from "~/lib/toast";
-import { fmtMoney } from "~/lib/format";
+import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import {
+  APIKEY_PROVIDERS,
   OAUTH_PROVIDERS,
   connectionNotice,
   integrationBadge,
+  isApiKeyConnect,
   isConnectable,
+  isOauthPending,
   isPaired,
   kindToProvider,
 } from "~/lib/integrations";
@@ -55,6 +58,12 @@ import type { GuardrailConfig, Integration } from "~/lib/types";
 import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
 import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "~/lib/ship-cost/inputs.server";
 import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
+import {
+  getUnmatchedCharges,
+  mapChargeToOrder,
+  type UnmatchedCharges,
+} from "~/lib/ship-cost/unmatched.server";
+import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 
 // ---------------------------------------------------------------------------
 // Pure FormData validation helpers (exported for unit tests)
@@ -109,6 +118,52 @@ export function parseManualOverrideForm(
   return { ok: true, value: { orderId, cents: Math.round(amount * 100) } };
 }
 
+export interface ApiKeyConnectValue {
+  provider: IntegrationProvider;
+  apiKey: string;
+}
+
+/**
+ * Validate the API-key connect form (EasyPost, contract C8) at the action
+ * boundary — never trust the FormData shape. Rejects an unknown provider and an
+ * empty key BEFORE any live probe / credential write. The live key validation
+ * (a real EasyPost probe) happens server-side in connectApiKey.
+ */
+export function parseApiKeyConnectForm(
+  fd: FormData,
+): ParseOk<ApiKeyConnectValue> | ParseErr {
+  const provider = String(fd.get("provider") ?? "").trim();
+  const apiKey = String(fd.get("api_key") ?? "").trim();
+  if (!(APIKEY_PROVIDERS as readonly string[]).includes(provider)) {
+    return { ok: false, message: `Unknown provider: ${provider || "(none)"}` };
+  }
+  if (!apiKey) {
+    // ShipBob pastes a Personal Access Token; EasyPost an API key (contract C8).
+    return { ok: false, message: provider === "shipbob" ? "Paste your ShipBob token." : "Paste your EasyPost API key." };
+  }
+  return { ok: true, value: { provider: provider as IntegrationProvider, apiKey } };
+}
+
+export interface MapShipChargeValue {
+  lineId: string;
+  orderNumber: string;
+}
+
+/**
+ * Validate the "map an unmatched carrier charge to an order" form (Phase 3 Part C) at the
+ * action boundary — never trust FormData shape. Both fields required; the order-existence
+ * check (and the real attach) happen server-side in mapChargeToOrder.
+ */
+export function parseMapShipChargeForm(
+  fd: FormData,
+): ParseOk<MapShipChargeValue> | ParseErr {
+  const lineId = String(fd.get("line_id") ?? "").trim();
+  const orderNumber = String(fd.get("order_number") ?? "").trim();
+  if (!lineId) return { ok: false, message: "Missing charge." };
+  if (!orderNumber) return { ok: false, message: "Enter an order number to map this charge to." };
+  return { ok: true, value: { lineId, orderNumber } };
+}
+
 // ---------------------------------------------------------------------------
 
 type LoaderPayload = {
@@ -118,6 +173,7 @@ type LoaderPayload = {
   error: { code: string; message: string } | null;
   shipMode: string;
   missingWeightPct: number;
+  unmatchedCharges: UnmatchedCharges;
 };
 
 type ActionPayload = {
@@ -140,9 +196,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ]);
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const [{ data: settingsRow }, { data: orderRows }] = await Promise.all([
+    const [{ data: settingsRow }, { data: orderRows }, unmatchedCharges] = await Promise.all([
       sb.from("shop_settings").select("ship_cost_mode").eq("shop_id", shopId).maybeSingle(),
       sb.from("v_order_ship_features").select("grams_sum").eq("shop_id", shopId),
+      getUnmatchedCharges(sb, shopId),
     ]);
     const shipMode = (settingsRow?.ship_cost_mode as string | null) ?? "auto";
     const missingWeight = missingWeightPct(
@@ -155,6 +212,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null,
       shipMode,
       missingWeightPct: missingWeight,
+      unmatchedCharges,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -165,6 +223,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: { code: e.code ?? "ERROR", message: e.message },
       shipMode: "auto",
       missingWeightPct: 0,
+      unmatchedCharges: { count: 0, items: [] },
     });
   }
 };
@@ -305,6 +364,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const n = Number(v);
         return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
       });
+      setIfPresent("autopilot_max_budget_increase_pct", (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
+      });
+      // Empty input clears the ceiling (null); a number is stored as cents.
+      {
+        const raw = formData.get("autopilot_max_daily_budget");
+        if (raw !== null) {
+          const s = String(raw).trim();
+          if (s === "") {
+            patch.autopilot_max_daily_budget_cents = null;
+          } else {
+            const n = Number(s);
+            if (Number.isFinite(n)) patch.autopilot_max_daily_budget_cents = Math.max(0, Math.round(n * 100));
+          }
+        }
+      }
 
       await client.guardrails.update(patch, request.signal);
       return json<ActionPayload>({
@@ -330,6 +406,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
       return json<ActionPayload>({ ok: true, redirectUrl });
+    }
+
+    if (intent === "connect_apikey_integration") {
+      // API-key connect (EasyPost, contract C8): validate the FormData shape at the
+      // boundary, then hand the key to the integrations client which live-probes and
+      // stores it encrypted. Redirect on success so a refresh can't re-POST the key
+      // (no double-submit); the one-shot ?<provider>=connected param drives the same
+      // success banner the OAuth callbacks use.
+      const parsed = parseApiKeyConnectForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      await client.integrations.connectApiKey(parsed.value.provider, parsed.value.apiKey);
+      return redirect(`/app/settings?${parsed.value.provider}=connected`);
     }
 
     if (intent === "disconnect_integration") {
@@ -441,6 +538,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (intent === "map_ship_charge") {
+      // Part C: attach an unmatched carrier charge to an order, then re-resolve so the
+      // order flips to actual_invoice and the unmatched count decrements.
+      const parsed = parseMapShipChargeForm(formData);
+      if (!parsed.ok) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: parsed.message },
+            toast: { message: parsed.message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      const sb = getSupabase();
+      const shopId = await resolveShopId(session.shop);
+      try {
+        await mapChargeToOrder(sb, shopId, parsed.value.lineId, parsed.value.orderNumber);
+      } catch (mapErr) {
+        // An unknown order number (or a stale line) is merchant-correctable input, not a
+        // 500 — surface it visibly (rule 12) and change nothing.
+        const message = mapErr instanceof Error ? mapErr.message : "Couldn't map that charge.";
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "MAP_FAILED", message },
+            toast: { message, isError: true },
+          },
+          { status: 422 },
+        );
+      }
+      // Re-resolve so the newly-matched line is read as actual_invoice for its order.
+      await runShipCostResolution(sb, shopId, { shopCountry: await getShopCountry(sb, shopId) });
+      // Redirect (not json) so a refresh can't re-POST the mapping (no double-submit).
+      return redirect("/app/settings?ship_charge=mapped");
+    }
+
     return json<ActionPayload>(
       {
         ok: false,
@@ -465,7 +599,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight } =
+  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
@@ -568,7 +702,11 @@ export default function Settings() {
             title="Shipping cost"
             description="Tell Calderyn what you pay to ship, so margin reflects true cost."
           >
-            <ShippingCostSection shipMode={shipMode} missingWeightPct={missingWeight} />
+            <ShippingCostSection
+              shipMode={shipMode}
+              missingWeightPct={missingWeight}
+              unmatchedCharges={unmatchedCharges}
+            />
           </Layout.AnnotatedSection>
 
           <Layout.AnnotatedSection
@@ -648,6 +786,14 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const [autopilotMaxBudgetCutPct, setAutopilotMaxBudgetCutPct] = useState(
     String(guardrails.autopilot_max_budget_cut_pct),
   );
+  const [autopilotMaxBudgetIncreasePct, setAutopilotMaxBudgetIncreasePct] = useState(
+    String(guardrails.autopilot_max_budget_increase_pct),
+  );
+  const [autopilotMaxDailyBudget, setAutopilotMaxDailyBudget] = useState(
+    guardrails.autopilot_max_daily_budget_cents == null
+      ? ""
+      : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
+  );
 
   useEffect(() => {
     setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
@@ -657,6 +803,12 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
     setAutopilotDailyActionCap(String(guardrails.autopilot_daily_action_cap));
     setAutopilotMinSpend(String(Math.round(guardrails.autopilot_min_spend_cents / 100)));
     setAutopilotMaxBudgetCutPct(String(guardrails.autopilot_max_budget_cut_pct));
+    setAutopilotMaxBudgetIncreasePct(String(guardrails.autopilot_max_budget_increase_pct));
+    setAutopilotMaxDailyBudget(
+      guardrails.autopilot_max_daily_budget_cents == null
+        ? ""
+        : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
+    );
   }, [guardrails]);
 
   return (
@@ -719,6 +871,17 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           type="hidden"
           name="autopilot_max_budget_cut_pct"
           value={String(Math.max(0, Number(autopilotMaxBudgetCutPct)))}
+        />
+        <input
+          type="hidden"
+          name="autopilot_max_budget_increase_pct"
+          value={String(Math.max(0, Number(autopilotMaxBudgetIncreasePct)))}
+        />
+        {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
+        <input
+          type="hidden"
+          name="autopilot_max_daily_budget"
+          value={autopilotMaxDailyBudget.trim()}
         />
         <BlockStack gap="400">
           <FormLayout>
@@ -811,6 +974,24 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
                           helpText="Budget-reduction actions will not cut more than this percentage in a single step."
                         />
                       </FormLayout.Group>
+                      <FormLayout.Group>
+                        <TextField
+                          label="Most Calderyn can raise a winning campaign's budget at once (%)"
+                          type="number"
+                          value={autopilotMaxBudgetIncreasePct}
+                          autoComplete="off"
+                          onChange={setAutopilotMaxBudgetIncreasePct}
+                          helpText="Budget scale-ups will not add more than this percentage in a single step."
+                        />
+                        <TextField
+                          label="Never let a campaign's daily budget exceed (USD, optional)"
+                          type="number"
+                          value={autopilotMaxDailyBudget}
+                          autoComplete="off"
+                          onChange={setAutopilotMaxDailyBudget}
+                          helpText="Leave blank for no ceiling. Autopilot will not scale a budget above this."
+                        />
+                      </FormLayout.Group>
                     </FormLayout>
                   </BlockStack>
                 </Box>
@@ -869,49 +1050,106 @@ function IntegrationCard({
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
   // `provider` is the persisted integration kind (e.g. "meta_ads"); connect and
-  // disconnect speak the OAuth provider short name (e.g. "meta").
+  // disconnect speak the provider short name (e.g. "meta", "easypost").
   const oauthProvider = kindToProvider(provider);
-  const canConnect = isConnectable(provider);
+  // An OAUTH_PENDING provider is in OAUTH_PROVIDERS so isConnectable is true, but its OAuth
+  // handshake isn't live — an active Connect would always 501, so show a disabled "Coming
+  // soon" badge instead. (The set is currently empty — ShipHero, the former member, is now an
+  // API-key/refresh-token paste, not OAuth.) Check pending BEFORE rendering Connect.
+  const oauthPending = isOauthPending(provider);
+  const canConnect = isConnectable(provider) && !oauthPending;
+  // EasyPost / ShipBob / ShipHero connect by a credential PASTE, not OAuth — render an inline
+  // key/token field + Save instead of the Connect button (C8).
+  const apiKeyConnect = isApiKeyConnect(provider);
   // A "pending" integration is paired (OAuth done) but still backfilling — show
   // it as Connected with a Disconnect button, not as a fresh Connect prompt.
   const paired = isPaired(integration.status);
   const badge = integrationBadge(integration.status);
+  const [apiKey, setApiKey] = useState("");
 
   return (
     <Card>
-      <InlineStack align="space-between" blockAlign="center">
-        <BlockStack gap="100">
-          <Text as="p" variant="bodyMd" fontWeight="semibold">
-            {integration.name}
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {integration.detail}
-          </Text>
-        </BlockStack>
-        <InlineStack gap="200" blockAlign="center">
-          <Badge tone={badge.tone}>{badge.label}</Badge>
-          {paired ? (
-            <Form method="post">
-              <input type="hidden" name="intent" value="disconnect_integration" />
-              <input type="hidden" name="provider" value={oauthProvider} />
-              <Button submit tone="critical" loading={submitting} disabled={submitting}>
-                Disconnect
-              </Button>
-            </Form>
-          ) : canConnect ? (
-            <connectFetcher.Form method="post">
-              <input type="hidden" name="intent" value="connect_integration" />
-              <input type="hidden" name="provider" value={oauthProvider} />
-              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
-              <Button submit variant="primary" loading={connecting} disabled={connecting}>
-                Connect
-              </Button>
-            </connectFetcher.Form>
-          ) : (
-            <Badge>Managed by Shopify</Badge>
-          )}
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <BlockStack gap="100">
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
+              {integration.name}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {integration.detail}
+            </Text>
+          </BlockStack>
+          <InlineStack gap="200" blockAlign="center">
+            <Badge tone={badge.tone}>{badge.label}</Badge>
+            {paired ? (
+              <Form method="post">
+                <input type="hidden" name="intent" value="disconnect_integration" />
+                <input type="hidden" name="provider" value={oauthProvider} />
+                <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                  Disconnect
+                </Button>
+              </Form>
+            ) : canConnect ? (
+              <connectFetcher.Form method="post">
+                <input type="hidden" name="intent" value="connect_integration" />
+                <input type="hidden" name="provider" value={oauthProvider} />
+                <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
+                <Button submit variant="primary" loading={connecting} disabled={connecting}>
+                  Connect
+                </Button>
+              </connectFetcher.Form>
+            ) : oauthPending ? (
+              // OAuth handshake not live yet — disabled affordance, not a Connect that 501s.
+              <Button disabled>Coming soon</Button>
+            ) : apiKeyConnect ? null : (
+              <Badge>Managed by Shopify</Badge>
+            )}
+          </InlineStack>
         </InlineStack>
-      </InlineStack>
+
+        {/* API-key connect form (EasyPost): inline so the merchant pastes the key
+            in place. The action live-probes + stores it encrypted, then redirects
+            back here (no double-submit). Only shown when not already paired. */}
+        {apiKeyConnect && !paired && (
+          <connectFetcher.Form method="post">
+            <input type="hidden" name="intent" value="connect_apikey_integration" />
+            <input type="hidden" name="provider" value={oauthProvider} />
+            <FormLayout>
+              <TextField
+                label={
+                  oauthProvider === "shipbob"
+                    ? `${integration.name} access token`
+                    : oauthProvider === "shiphero"
+                      ? `${integration.name} refresh token`
+                      : `${integration.name} API key`
+                }
+                name="api_key"
+                value={apiKey}
+                onChange={setApiKey}
+                autoComplete="off"
+                type="password"
+                helpText={
+                  oauthProvider === "shipbob"
+                    ? "Paste a ShipBob Personal Access Token with the billing_read scope. We verify it, then store it encrypted."
+                    : oauthProvider === "shiphero"
+                      ? "In ShipHero, go to My Account → Developer Users, create a 3rd Party Developer user, and paste its Refresh Token here. We verify it, then store it encrypted."
+                      : "Paste your EasyPost production API key. We verify it, then store it encrypted."
+                }
+              />
+              <InlineStack align="end">
+                <Button
+                  submit
+                  variant="primary"
+                  loading={connecting}
+                  disabled={connecting || apiKey.trim() === ""}
+                >
+                  Save key
+                </Button>
+              </InlineStack>
+            </FormLayout>
+          </connectFetcher.Form>
+        )}
+      </BlockStack>
     </Card>
   );
 }
@@ -919,9 +1157,11 @@ function IntegrationCard({
 function ShippingCostSection({
   shipMode,
   missingWeightPct,
+  unmatchedCharges,
 }: {
   shipMode: string;
   missingWeightPct: number;
+  unmatchedCharges: UnmatchedCharges;
 }) {
   const actionData = useActionData<typeof action>();
   const [mode, setMode] = useState(shipMode);
@@ -1043,6 +1283,8 @@ function ShippingCostSection({
         </BlockStack>
       </Card>
 
+      <UnmatchedChargesCard unmatchedCharges={unmatchedCharges} />
+
       <Card>
         <BlockStack gap="200">
           <Text as="h3" variant="headingSm">
@@ -1073,5 +1315,90 @@ function ShippingCostSection({
         </BlockStack>
       </Card>
     </BlockStack>
+  );
+}
+
+// Human-readable reason for why a carrier charge couldn't be matched (rule 12 visibility).
+const UNMATCHED_REASON_LABEL: Record<string, string> = {
+  no_ref: "No order reference or tracking on the charge",
+  no_tracking_match: "Order ref / tracking didn't match an order",
+  carrier_adjustment_no_link: "Carrier adjustment with no link back",
+};
+
+/**
+ * Part C (embedded, interactive): surface connector charges that matched NO order so they
+ * are visible and merchant-resolvable, never silently dropped (rule 12). When the count is
+ * 0 the whole block renders nothing (no empty-state noise). Each row offers a "Map to order"
+ * field that submits intent="map_ship_charge" → attaches the line + re-resolves.
+ */
+function UnmatchedChargesCard({ unmatchedCharges }: { unmatchedCharges: UnmatchedCharges }) {
+  const navigation = useNavigation();
+  const submitting = navigation.state !== "idle";
+  if (unmatchedCharges.count === 0) return null;
+  const { count, items } = unmatchedCharges;
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">
+          Unmatched carrier charges
+        </Text>
+        <Banner tone="warning">
+          <p>
+            {count} carrier {count === 1 ? "charge" : "charges"} couldn&rsquo;t be matched to an
+            order, so {count === 1 ? "it isn't" : "they aren't"} counted in margin yet. Map each to
+            an order below.
+          </p>
+        </Banner>
+        <BlockStack gap="300">
+          {items.map((it) => (
+            <Box
+              key={it.id}
+              padding="300"
+              borderColor="border"
+              borderWidth="025"
+              borderRadius="200"
+            >
+              <BlockStack gap="200">
+                <InlineStack align="space-between" blockAlign="center" gap="200">
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {fmtMoneyDec(it.costCents)}
+                      {it.provider ? ` · ${it.provider}` : ""}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {it.orderRef ? `Ref ${it.orderRef}` : "No ref"}
+                      {it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""}
+                    </Text>
+                  </BlockStack>
+                  <Badge tone="attention">
+                    {UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}
+                  </Badge>
+                </InlineStack>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="map_ship_charge" />
+                  <input type="hidden" name="line_id" value={it.id} />
+                  <FormLayout>
+                    <FormLayout.Group>
+                      <TextField
+                        label="Map to order number"
+                        labelHidden
+                        name="order_number"
+                        placeholder="Order number (e.g. 1001)"
+                        autoComplete="off"
+                      />
+                      <InlineStack align="start" blockAlign="end">
+                        <Button submit loading={submitting} disabled={submitting}>
+                          Map to order
+                        </Button>
+                      </InlineStack>
+                    </FormLayout.Group>
+                  </FormLayout>
+                </Form>
+              </BlockStack>
+            </Box>
+          ))}
+        </BlockStack>
+      </BlockStack>
+    </Card>
   );
 }

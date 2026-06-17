@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { parsePeriodTotalForm, parseManualOverrideForm } from "../app.settings";
+import {
+  parsePeriodTotalForm,
+  parseManualOverrideForm,
+  parseApiKeyConnectForm,
+  parseMapShipChargeForm,
+} from "../app.settings";
 
 // Mock out server-side modules that fail in test environment (no env vars,
 // no Shopify SDK initialisation) so we can import the pure helpers.
@@ -27,6 +32,15 @@ vi.mock("../../lib/ship-cost/inputs.server", () => ({
 }));
 vi.mock("../../lib/ship-cost/shop-country.server", () => ({
   getShopCountry: vi.fn().mockResolvedValue(null),
+}));
+// Phase 3 Part C: the route now imports these server modules; mock them so the pure
+// FormData helpers can be imported without a live supabase/runner.
+vi.mock("../../lib/ship-cost/unmatched.server", () => ({
+  getUnmatchedCharges: vi.fn(),
+  mapChargeToOrder: vi.fn(),
+}));
+vi.mock("../../lib/ship-cost/runner.server", () => ({
+  runShipCostResolution: vi.fn(),
 }));
 
 const fd = (o: Record<string, string>) => {
@@ -72,5 +86,51 @@ describe("parseManualOverrideForm", () => {
   });
   it("rejects a missing order id", () => {
     expect(parseManualOverrideForm(fd({ amount: "1.00" })).ok).toBe(false);
+  });
+});
+
+describe("parseApiKeyConnectForm (EasyPost connect, contract C8)", () => {
+  it("accepts a known API-key provider with a non-empty, trimmed key", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost", api_key: "  EZAK_test_123  " }))).toEqual(
+      { ok: true, value: { provider: "easypost", apiKey: "EZAK_test_123" } },
+    );
+  });
+
+  it("rejects an empty/whitespace key — no credential write attempted", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost", api_key: "   " })).ok).toBe(false);
+    expect(parseApiKeyConnectForm(fd({ provider: "easypost" })).ok).toBe(false);
+  });
+
+  it("accepts ShipBob (Phase 3 — the second API-key provider, PAT paste)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "shipbob", api_key: " PAT_x " }))).toEqual({
+      ok: true,
+      value: { provider: "shipbob", apiKey: "PAT_x" },
+    });
+  });
+
+  it("accepts ShipHero (Phase 3 — credential/refresh-token paste, reclassified from OAuth)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "shiphero", api_key: " ref_tok " }))).toEqual({
+      ok: true,
+      value: { provider: "shiphero", apiKey: "ref_tok" },
+    });
+  });
+
+  it("rejects an unknown / OAuth provider (only easypost + shipbob + shiphero are API-key)", () => {
+    expect(parseApiKeyConnectForm(fd({ provider: "meta", api_key: "k" })).ok).toBe(false);
+    expect(parseApiKeyConnectForm(fd({ provider: "shippo", api_key: "k" })).ok).toBe(false); // OAuth, not API-key
+    expect(parseApiKeyConnectForm(fd({ provider: "", api_key: "k" })).ok).toBe(false);
+  });
+});
+
+describe("parseMapShipChargeForm (Part C — map an unmatched charge to an order)", () => {
+  it("accepts a line id + order number, trimmed", () => {
+    expect(parseMapShipChargeForm(fd({ line_id: " l1 ", order_number: " 1001 " }))).toEqual({
+      ok: true,
+      value: { lineId: "l1", orderNumber: "1001" },
+    });
+  });
+  it("rejects a missing line id or a blank order number (validated at the boundary)", () => {
+    expect(parseMapShipChargeForm(fd({ order_number: "1001" })).ok).toBe(false);
+    expect(parseMapShipChargeForm(fd({ line_id: "l1", order_number: "  " })).ok).toBe(false);
   });
 });

@@ -16,7 +16,9 @@ import {
   putGuardrails,
   fetchShipCost,
   setShipCostMode,
+  fetchUnmatchedShipCharges,
   DashboardApiError,
+  type UnmatchedShipCharges,
 } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
@@ -78,6 +80,13 @@ const CONNECTION_ICON: Record<string, string> = {
   disconnected: "x",
 };
 
+// Human-readable reason a carrier charge stayed unmatched (Phase 3 Part C, rule 12).
+const UNMATCHED_REASON_LABEL: Record<string, string> = {
+  no_ref: "No order ref or tracking",
+  no_tracking_match: "Ref / tracking didn't match",
+  carrier_adjustment_no_link: "Carrier adjustment, no link",
+};
+
 export default function Settings({ app }: { app: DashboardCtx }) {
   // Local editable copy of guardrails, seeded from app.guardrails and re-synced
   // whenever the shell refreshes it. Optimistic edits write here first; a failed
@@ -85,6 +94,24 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   const [g, setG] = useState<GuardrailVM | null>(app.guardrails);
   const [saving, setSaving] = useState(false);
   const [savingConsent, setSavingConsent] = useState(false);
+
+  // Draft string for the optional daily-budget ceiling. Kept in sync with the
+  // server value (dollars); blank string represents null (no ceiling). A separate
+  // draft avoids clobbering the user's in-progress typing before blur.
+  const [dailyBudgetDraft, setDailyBudgetDraft] = useState<string>(
+    app.guardrails?.autopilot_max_daily_budget_cents != null
+      ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
+      : "",
+  );
+
+  // Keep the draft in sync when the shell refreshes guardrails from the server.
+  useEffect(() => {
+    setDailyBudgetDraft(
+      app.guardrails?.autopilot_max_daily_budget_cents != null
+        ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
+        : "",
+    );
+  }, [app.guardrails?.autopilot_max_daily_budget_cents]);
 
   useEffect(() => {
     setG(app.guardrails);
@@ -160,6 +187,23 @@ export default function Settings({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
+  // Unmatched carrier charges (Phase 3 Part C) — READ-ONLY on the dashboard. Loaded like
+  // ship-cost above (not in the shell context). When unreachable or zero, the block hides.
+  const [unmatchedShip, setUnmatchedShip] = useState<UnmatchedShipCharges | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetchUnmatchedShipCharges()
+      .then((d) => {
+        if (active) setUnmatchedShip(d);
+      })
+      .catch(() => {
+        /* leave null → the block renders nothing until reachable */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const commitShipMode = async (mode: string) => {
     if (savingMode || mode === shipMode) return;
     const prev = shipMode;
@@ -228,6 +272,27 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               <Pill tone="warn">{`${missingWeight}% missing`}</Pill>
             </SettingRow>
           )}
+          {unmatchedShip && unmatchedShip.count > 0 && (
+            <>
+              <SettingRow
+                label="Unmatched carrier charges"
+                sub="Carrier charges we couldn't tie to an order, so they aren't in margin yet. Map them to orders in the Shopify admin."
+              >
+                <Pill tone="warn">{`${unmatchedShip.count} unmatched`}</Pill>
+              </SettingRow>
+              {unmatchedShip.items.slice(0, 10).map((it) => (
+                <SettingRow
+                  key={it.id}
+                  label={`${money(it.costCents)}${it.provider ? ` · ${it.provider}` : ""}`}
+                  sub={`${it.orderRef ? `Ref ${it.orderRef}` : "No ref"}${
+                    it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""
+                  } — ${UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}`}
+                >
+                  <Pill tone="neutral">Resolve in admin</Pill>
+                </SettingRow>
+              ))}
+            </>
+          )}
         </Card>
       </section>
 
@@ -276,6 +341,63 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                     { value: "50", label: "50%" },
                   ]}
                 />
+              </SettingRow>
+              <SettingRow
+                label="Max budget increase"
+                sub="Most Calderyn can raise a winning campaign's budget at once."
+              >
+                <Segmented
+                  small
+                  value={String(g.autopilot_max_budget_increase_pct)}
+                  onChange={(v) => commit("autopilot_max_budget_increase_pct", Number(v))}
+                  options={[
+                    { value: "15", label: "15%" },
+                    // 20% is the guardrail_config default — must be selectable so a
+                    // fresh shop's value maps to an option.
+                    { value: "20", label: "20%" },
+                    { value: "30", label: "30%" },
+                    { value: "50", label: "50%" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Daily budget ceiling"
+                sub="Never let a campaign's daily budget exceed this amount. Leave blank for no ceiling."
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="cd-caption" style={{ color: "var(--text-2)" }}>$</span>
+                  <input
+                    className="cd-input tabular-nums"
+                    inputMode="decimal"
+                    placeholder="none"
+                    style={{ width: 80, textAlign: "right" }}
+                    value={dailyBudgetDraft}
+                    onChange={(e) => setDailyBudgetDraft(e.target.value)}
+                    onBlur={() => {
+                      const raw = dailyBudgetDraft.trim();
+                      if (raw === "") {
+                        // Blank → clear the ceiling (null).
+                        void commit("autopilot_max_daily_budget_cents", null);
+                      } else {
+                        const dollars = parseFloat(raw);
+                        if (!isNaN(dollars) && dollars >= 0) {
+                          void commit(
+                            "autopilot_max_daily_budget_cents",
+                            Math.round(dollars * 100),
+                          );
+                        } else {
+                          // Invalid — revert draft to current server value.
+                          setDailyBudgetDraft(
+                            g.autopilot_max_daily_budget_cents != null
+                              ? String(g.autopilot_max_daily_budget_cents / 100)
+                              : "",
+                          );
+                        }
+                      }
+                    }}
+                    disabled={saving}
+                  />
+                </div>
               </SettingRow>
               <SettingRow
                 label="Minimum spend to act"

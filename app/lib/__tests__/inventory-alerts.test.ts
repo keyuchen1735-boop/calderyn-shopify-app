@@ -14,6 +14,8 @@ function makeAlert(overrides: Partial<Alert> = {}): Alert {
     title: "Spend landing on a starved region",
     narrative: "",
     campaign: null,
+    campaign_id: null,
+    campaign_external_id: null,
     sku: "PP-SUMMIT-LOGO-TEE-M",
     evidence: {},
     ...overrides,

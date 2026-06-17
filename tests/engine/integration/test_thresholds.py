@@ -122,3 +122,28 @@ async def test_moat_detection_models_overrides_alert_thresholds(
                 conn, SHOP, "sku_stockout_vs_spend", pepper=pepper
             )
     assert value == Decimal("2500")
+
+
+@pytest.mark.asyncio
+async def test_registry_defaults_for_200_detectors(pg_pool, seed_shop) -> None:
+    """Registry fix: four detectors historically gate at $200, not $500.
+    With no MOAT_PEPPER and no override row, get_threshold must return $200
+    for each of them — not the old misregistered $500."""
+    import os
+
+    await seed_shop(SHOP)
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            pepper_was = os.environ.pop("MOAT_PEPPER", None)
+            try:
+                rr = await get_threshold(conn, SHOP, "return_rate_hidden_loss")
+                rt = await get_threshold(conn, SHOP, "reorder_timing")
+                wl = await get_threshold(conn, SHOP, "wrong_location_concentration")
+                rs = await get_threshold(conn, SHOP, "regional_shortage_risk")
+            finally:
+                if pepper_was is not None:
+                    os.environ["MOAT_PEPPER"] = pepper_was
+    assert rr == Decimal("200"), f"return_rate_hidden_loss: expected $200, got {rr}"
+    assert rt == Decimal("200"), f"reorder_timing: expected $200, got {rt}"
+    assert wl == Decimal("200"), f"wrong_location_concentration: expected $200, got {wl}"
+    assert rs == Decimal("200"), f"regional_shortage_risk: expected $200, got {rs}"

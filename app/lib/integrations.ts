@@ -10,8 +10,39 @@
 import type { Integration } from "./types";
 
 /** Providers that have a wired OAuth connect flow (startOAuth handles these). */
-export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks"] as const;
+// shippo (Phase 2) is a co-branded OAuth ship-cost connector (per-merchant token, contract
+// C8). shiphero is NOT here: it is credential/token-based (refresh-token paste), so it lives
+// in APIKEY_PROVIDERS below — see that comment.
+export const OAUTH_PROVIDERS = ["meta", "google", "tiktok", "quickbooks", "shippo"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+
+/**
+ * OAuth providers whose connect handshake is NOT live yet — the app-side client isn't
+ * registered, so an actual Connect would throw. Such a provider stays in OAUTH_PROVIDERS
+ * (the eventual mechanism IS OAuth), but the settings card renders a disabled "Coming soon"
+ * affordance instead of an active Connect button. Currently EMPTY: shiphero used to be here
+ * under the (wrong) assumption it was OAuth — it is actually credential/refresh-token based,
+ * so it moved to APIKEY_PROVIDERS and the "Coming soon" gate no longer applies to it.
+ */
+export const OAUTH_PENDING_PROVIDERS = [] as const;
+export type OAuthPendingProvider = (typeof OAUTH_PENDING_PROVIDERS)[number];
+
+/**
+ * Providers whose connect mechanism is an API-KEY PASTE, not OAuth (contract C8).
+ * EasyPost reads the merchant's existing account via a key they paste — there is
+ * no app-level client id/secret and no redirect round-trip, so it is deliberately
+ * NOT in OAUTH_PROVIDERS (isConnectable stays false for it). The settings card
+ * branches on this set to render an inline key field instead of a Connect button.
+ */
+// shipbob (Phase 3 Part B) is a pasted Personal Access Token (billing_read scope), the
+// same API-key model as EasyPost (C8) — deliberately NOT in OAUTH_PROVIDERS.
+// shiphero (Phase 3 Part B) is credential/token-based, NOT OAuth: the merchant creates a
+// dedicated "3rd Party Developer" user in ShipHero and pastes the issued REFRESH token —
+// there is no authorize-redirect and no app client_id/secret. So it is a paste connector
+// like EasyPost/ShipBob (the adapter mints a short-lived access token from the stored
+// refresh token each run via /auth/refresh — a net-new token-refresh wrinkle).
+export const APIKEY_PROVIDERS = ["easypost", "shipbob", "shiphero"] as const;
+export type ApiKeyProvider = (typeof APIKEY_PROVIDERS)[number];
 
 /**
  * True when an integration has a stored credential — i.e. the merchant has
@@ -37,11 +68,16 @@ export function integrationBadge(status: Integration["status"]): {
   return { label: "Not connected", tone: "attention" };
 }
 
-/** OAuth provider short-name -> persisted integration kind (inverse of KIND_TO_PROVIDER). */
+/** Provider short-name -> persisted integration kind (inverse of KIND_TO_PROVIDER). */
 const PROVIDER_TO_KIND: Record<string, string> = {
   meta: "meta_ads",
   google: "google_ads",
   tiktok: "tiktok_ads",
+  // Ship-cost connectors use the `<provider>_ship` kind (contract C9).
+  easypost: "easypost_ship",
+  shippo: "shippo_ship",
+  shipbob: "shipbob_ship",
+  shiphero: "shiphero_ship",
 };
 
 /**
@@ -59,12 +95,20 @@ export function providerPaired(
   return status ? isPaired(status) : false;
 }
 
-/** OAuth provider short-name -> display label, for post-OAuth redirect params. */
+/**
+ * Provider short-name -> display label, for the one-shot post-connect redirect
+ * param. OAuth callbacks append `?<provider>=connected|error`; the API-key connect
+ * action (EasyPost) reuses the same channel, so easypost is listed here too.
+ */
 const PROVIDER_DISPLAY: Record<string, string> = {
   google: "Google Ads",
   meta: "Meta Ads",
   tiktok: "TikTok Ads",
   quickbooks: "QuickBooks",
+  easypost: "EasyPost",
+  shippo: "Shippo",
+  shipbob: "ShipBob",
+  shiphero: "ShipHero",
 };
 
 /**
@@ -95,6 +139,10 @@ const KIND_TO_PROVIDER: Record<string, string> = {
   meta_ads: "meta",
   google_ads: "google",
   tiktok_ads: "tiktok",
+  easypost_ship: "easypost",
+  shippo_ship: "shippo",
+  shipbob_ship: "shipbob",
+  shiphero_ship: "shiphero",
 };
 
 /** Map a persisted integration `kind` to its OAuth `provider` short name. */
@@ -105,4 +153,23 @@ export function kindToProvider(kind: string): string {
 /** True when the integration has a wired OAuth connect flow. */
 export function isConnectable(kind: string): boolean {
   return (OAUTH_PROVIDERS as readonly string[]).includes(kindToProvider(kind));
+}
+
+/**
+ * True when the integration is an OAuth provider whose handshake isn't live yet
+ * (OAUTH_PENDING_PROVIDERS) — the card shows a disabled "Coming soon" badge instead of
+ * an active Connect button. isConnectable still returns true for it, so callers that
+ * render Connect must check this first.
+ */
+export function isOauthPending(kind: string): boolean {
+  return (OAUTH_PENDING_PROVIDERS as readonly string[]).includes(kindToProvider(kind));
+}
+
+/**
+ * True when the integration connects by an API-KEY PASTE (contract C8) rather
+ * than OAuth — the settings card renders an inline key field + Save for these
+ * instead of the OAuth Connect button. Mutually exclusive with isConnectable.
+ */
+export function isApiKeyConnect(kind: string): boolean {
+  return (APIKEY_PROVIDERS as readonly string[]).includes(kindToProvider(kind));
 }

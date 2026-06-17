@@ -150,6 +150,8 @@ export interface GuardrailVM {
   autopilot_actions_today: number;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;
+  autopilot_max_budget_increase_pct: number;
+  autopilot_max_daily_budget_cents: number | null;
 }
 
 export interface DailyRow {

@@ -25,12 +25,15 @@ import {
   type SkuDemandViewRow,
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
+import { encrypt } from "./crypto.server";
 import { newIdempotencyKey } from "./ids";
 import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
 import { buildAuthUrl as buildGoogleAuthUrl } from "./google/oauth.server";
 import { buildAuthUrl as buildTikTokAuthUrl } from "./tiktok/oauth.server";
 import { buildAuthUrl as buildQuickbooksAuthUrl } from "./quickbooks/oauth.server";
+import { buildAuthUrl as buildShippoAuthUrl } from "./shippo/oauth.server";
+import { refreshShipHeroToken } from "./shiphero/auth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
@@ -66,7 +69,17 @@ export type ExecuteActionOpts = {
   postState?: unknown;
 };
 
-export type IntegrationProvider = "google" | "meta" | "tiktok" | "quickbooks";
+// OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
+// startOAuth handles the OAuth set; connectApiKey handles the API-key set.
+export type IntegrationProvider =
+  | "google"
+  | "meta"
+  | "tiktok"
+  | "quickbooks"
+  | "easypost" // Phase 1 — ship-cost, API-key connect (connectApiKey).
+  | "shippo" // Phase 2 — ship-cost, co-branded OAuth connect (startOAuth).
+  | "shipbob" // Phase 3 Part B — 3PL house, API-key (PAT) connect (connectApiKey).
+  | "shiphero"; // Phase 3 Part B — 3PL house, credential/refresh-token paste (connectApiKey).
 
 export type OnboardingState = { step: number; done: boolean };
 
@@ -123,6 +136,8 @@ function rowToAlert(r: Record<string, unknown>): Alert {
     title: String(r.title ?? ""),
     narrative: String(r.narrative ?? ""),
     campaign: (r.campaign as string | null) ?? null,
+    campaign_id: (r.campaign_id as string | null) ?? null,
+    campaign_external_id: (r.campaign_external_id as string | null) ?? null,
     sku: (r.sku as string | null) ?? null,
     evidence: (r.evidence as Record<string, unknown>) ?? {},
   };
@@ -222,6 +237,9 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
     autopilot_max_budget_cut_pct: Number(r.autopilot_max_budget_cut_pct ?? 50),
+    autopilot_max_budget_increase_pct: Number(r.autopilot_max_budget_increase_pct ?? 20),
+    autopilot_max_daily_budget_cents:
+      r.autopilot_max_daily_budget_cents == null ? null : Number(r.autopilot_max_daily_budget_cents),
   };
 }
 
@@ -231,6 +249,10 @@ const INTEGRATION_LOGO_CLS: Record<string, string> = {
   google_ads: "logo-google",
   tiktok_ads: "logo-tiktok",
   quickbooks: "logo-quickbooks",
+  easypost_ship: "logo-easypost",
+  shippo_ship: "logo-shippo",
+  shipbob_ship: "logo-shipbob",
+  shiphero_ship: "logo-shiphero",
 };
 
 const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
@@ -239,7 +261,130 @@ const INTEGRATION_DISPLAY_NAME: Record<string, string> = {
   google_ads: "Google Ads",
   tiktok_ads: "TikTok Ads",
   quickbooks: "QuickBooks",
+  easypost_ship: "EasyPost",
+  shippo_ship: "Shippo",
+  shipbob_ship: "ShipBob",
+  shiphero_ship: "ShipHero",
 };
+
+/**
+ * Live-probe a pasted EasyPost API key BEFORE we persist it, so a bad key is
+ * rejected at the connect boundary with a visible error and NO credential is
+ * written (success criterion #1, rule 12). EasyPost auth is HTTP Basic with the
+ * key as username + empty password — base64("KEY:"), NOT Bearer (docs.easypost.com),
+ * matching adapters/easypost.server.ts. Reads EASYPOST_API_BASE for env parity with
+ * the cron. `fetchImpl` is injectable so the connect flow can be unit-tested without
+ * the network. Throws a CalderynError on any non-2xx (401 bad key, 429, …); the
+ * action surfaces it as a toast. We do NOT keep the base-64 helper in the server-core
+ * adapter file (left untouched) — this is a deliberate ~1-line duplication.
+ */
+async function probeEasyPostKey(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const raw = process.env.EASYPOST_API_BASE?.trim();
+  const base = (raw && raw.length > 0 ? raw : "https://api.easypost.com/v2").replace(/\/+$/, "");
+  const auth = `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/shipments?page_size=1`, {
+      method: "GET",
+      headers: { Authorization: auth, Accept: "application/json" },
+    });
+  } catch (err) {
+    throw new CalderynError({
+      code: "EASYPOST_UNREACHABLE",
+      status: 502,
+      message: `Couldn't reach EasyPost to verify the key: ${(err as Error).message}`,
+    });
+  }
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => "")).slice(0, 200);
+    const friendly =
+      res.status === 401
+        ? "That EasyPost API key was rejected (401). Paste your production API key from the EasyPost dashboard."
+        : `EasyPost rejected the key (${res.status}). ${snippet}`;
+    throw new CalderynError({ code: "EASYPOST_KEY_INVALID", status: 400, message: friendly });
+  }
+}
+
+/**
+ * Live-probe a pasted ShipBob Personal Access Token BEFORE we persist it (Phase 3 Part B),
+ * so a bad/under-scoped PAT is rejected at the connect boundary with NO credential written
+ * (rule 12). ShipBob auth is a Bearer PAT; the cheapest authenticated read that confirms
+ * both validity AND the billing_read scope is a 1-row Billing transactions query (the same
+ * endpoint the adapter polls — adapters/shipbob.server.ts). Reads SHIPBOB_API_BASE for env
+ * parity with the cron. `fetchImpl` is injectable for tests. Throws a CalderynError on any
+ * non-2xx (401 bad PAT, 403 missing scope, 429); the action surfaces it as a toast.
+ */
+async function probeShipBobKey(
+  pat: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const raw = process.env.SHIPBOB_API_BASE?.trim();
+  const base = (raw && raw.length > 0 ? raw : "https://api.shipbob.com/2026-01").replace(/\/+$/, "");
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/transactions:query`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ Page: 1, PageSize: 1 }),
+    });
+  } catch (err) {
+    throw new CalderynError({
+      code: "SHIPBOB_UNREACHABLE",
+      status: 502,
+      message: `Couldn't reach ShipBob to verify the token: ${(err as Error).message}`,
+    });
+  }
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => "")).slice(0, 200);
+    const friendly =
+      res.status === 401
+        ? "That ShipBob token was rejected (401). Paste a Personal Access Token with the billing_read scope."
+        : res.status === 403
+          ? "That ShipBob token is missing the billing_read scope (403). Re-issue it with billing_read."
+          : `ShipBob rejected the token (${res.status}). ${snippet}`;
+    throw new CalderynError({ code: "SHIPBOB_KEY_INVALID", status: 400, message: friendly });
+  }
+}
+
+/**
+ * Live-probe a pasted ShipHero REFRESH token BEFORE we persist it (Phase 3 Part B), so a
+ * bad/expired refresh token is rejected at the connect boundary with NO credential written
+ * (rule 12). ShipHero is credential/token-based, NOT OAuth: the cheapest validation that the
+ * pasted token actually works is to perform the same /auth/refresh the cost adapter runs each
+ * sync — a valid refresh token mints an access token; a bad one throws (401 / no token).
+ * `fetchImpl` is injectable for tests. The underlying refresh error never echoes the token;
+ * we re-wrap it as a friendly CalderynError the action surfaces as a toast.
+ *
+ * ⚠️ LIVE-VERIFICATION TODO (b): a self-serve 3rd-Party-Developer refresh token mints an
+ * access token here, but whether that token carries the GraphQL scopes the adapter's
+ * `shipping_labels { cost }` query needs is NOT yet confirmed against a live account — this
+ * probe proves the token refreshes, not that it can read label cost. (Confirmed per onboarded
+ * account; the zero-cost guard in adapters/shiphero.server.ts further gates the cost claim.)
+ */
+async function probeShipHeroToken(
+  refreshToken: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    await refreshShipHeroToken(refreshToken, fetchImpl);
+  } catch (err) {
+    // refreshShipHeroToken already strips the token from its message; surface a friendly,
+    // actionable error without leaking the pasted secret.
+    const msg = (err as Error).message ?? "ShipHero rejected the refresh token.";
+    throw new CalderynError({
+      code: "SHIPHERO_TOKEN_INVALID",
+      status: 400,
+      message: `That ShipHero refresh token was rejected. Paste the Refresh Token from ShipHero → My Account → Developer Users. (${msg.slice(0, 160)})`,
+    });
+  }
+}
 
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
@@ -1072,6 +1217,9 @@ export function calderynClient(shop: string) {
           if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
           if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
           if (patch.autopilot_max_budget_cut_pct !== undefined) updates.autopilot_max_budget_cut_pct = patch.autopilot_max_budget_cut_pct;
+          if (patch.autopilot_max_budget_increase_pct !== undefined) updates.autopilot_max_budget_increase_pct = patch.autopilot_max_budget_increase_pct;
+          // null is meaningful (clear the ceiling), so test `!== undefined`.
+          if (patch.autopilot_max_daily_budget_cents !== undefined) updates.autopilot_max_daily_budget_cents = patch.autopilot_max_daily_budget_cents;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase
@@ -1110,6 +1258,16 @@ export function calderynClient(shop: string) {
             google_ads: { name: "Google Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-google" },
             tiktok_ads: { name: "TikTok Ads", status: "disconnected", detail: "Not connected", logoCls: "logo-tiktok" },
             quickbooks: { name: "QuickBooks", status: "disconnected", detail: "Not connected", logoCls: "logo-quickbooks" },
+            // Ship-cost connector (API-key paste, contract C8). Single source both
+            // surfaces read; the dashboard renders it read-only via adaptIntegrations.
+            easypost_ship: { name: "EasyPost", status: "disconnected", detail: "Not connected", logoCls: "logo-easypost" },
+            // Ship-cost connector #2 (Shippo, co-branded OAuth, contract C8). Same
+            // single source both surfaces read; dashboard renders it read-only.
+            shippo_ship: { name: "Shippo", status: "disconnected", detail: "Not connected", logoCls: "logo-shippo" },
+            // 3PL houses (Phase 3 Part B): ShipBob (PAT paste) + ShipHero (refresh-token
+            // paste). Same single-source/read-only-dashboard treatment as EasyPost.
+            shipbob_ship: { name: "ShipBob", status: "disconnected", detail: "Not connected", logoCls: "logo-shipbob" },
+            shiphero_ship: { name: "ShipHero", status: "disconnected", detail: "Not connected", logoCls: "logo-shiphero" },
           };
 
           for (const r of data ?? []) {
@@ -1212,11 +1370,126 @@ export function calderynClient(shop: string) {
           const state = await createOAuthState(supabase, shopId, { host, shop });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
+        if (provider === "shippo") {
+          // Ship-cost connector #2 (Plan 02 §5.1). Co-branded OAuth — the merchant
+          // owns the Shippo account + billing. client_id/secret + redirect_uri require
+          // Shippo partner-program approval (HARD GATE, Plan 02 §3.2/§11).
+          const clientId = process.env.SHIPPO_CLIENT_ID;
+          const clientSecret = process.env.SHIPPO_CLIENT_SECRET;
+          const appUrl = process.env.SHOPIFY_APP_URL;
+          if (!clientId || !clientSecret || !appUrl) {
+            throw new CalderynError({
+              code: "SHIPPO_NOT_CONFIGURED",
+              status: 500,
+              message:
+                "Shippo OAuth is not configured (SHIPPO_CLIENT_ID/SHIPPO_CLIENT_SECRET/SHOPIFY_APP_URL).",
+            });
+          }
+          const redirectUri = `${appUrl}/auth/shippo`;
+          // Same single-use nonce pattern as Meta/Google; consumed once at /auth/shippo.
+          const shopId = await shopIdP;
+          const state = await createOAuthState(supabase, shopId, { host, shop });
+          return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
+        }
+        // NOTE: ShipHero is intentionally NOT handled here. It is credential/token-based
+        // (the merchant pastes a REFRESH token), not OAuth — it connects via connectApiKey
+        // below, the same paste path as EasyPost/ShipBob. It is no longer in OAUTH_PROVIDERS,
+        // so the settings card never routes it to startOAuth.
         throw new CalderynError({
           code: "OAUTH_NOT_WIRED",
           status: 501,
           message: `${provider} OAuth is not yet wired.`,
         });
+      },
+      /**
+       * Connect an API-key provider (EasyPost ship-cost connector, contract C8).
+       * Unlike startOAuth there is NO redirect round-trip: the merchant pastes a key
+       * into the embedded settings form, this validates + live-probes it, then stores
+       * it ENCRYPTED in integration_credentials (kind 'easypost_ship',
+       * access_token_encrypted) — NOT the legacy shop_integrations.access_token_enc
+       * bytea — and upserts shop_integrations at sync_status='ready' so the cron
+       * (shipAdaptersForShops) picks the shop up on its next tick. Mirrors the
+       * credential-write half of auth.quickbooks.$.tsx:71-98. `fetchImpl` is injectable
+       * for tests (defaults to global fetch). Returns the kind the credential landed under.
+       */
+      async connectApiKey(
+        provider: IntegrationProvider,
+        apiKey: string,
+        fetchImpl: typeof fetch = fetch,
+      ): Promise<{ kind: string }> {
+        try {
+          // API-key (paste) providers (contract C8): EasyPost (Phase 1) + ShipBob (Phase 3
+          // PAT) + ShipHero (Phase 3, credential/refresh-token paste). Reject anything else
+          // here rather than silently writing a credential under an unknown kind. The probe +
+          // kind are provider-driven so each lands under its own kind with its own live
+          // validation. NOTE on ShipHero: the pasted value is the merchant's long-lived
+          // REFRESH token (stored encrypted, like the QuickBooks refresh-token model); the
+          // cost adapter mints a short-lived access token from it each run.
+          const APIKEY_KIND: Partial<Record<IntegrationProvider, string>> = {
+            easypost: "easypost_ship",
+            shipbob: "shipbob_ship",
+            shiphero: "shiphero_ship",
+          };
+          const kind = APIKEY_KIND[provider];
+          if (!kind) {
+            throw new CalderynError({
+              code: "NOT_APIKEY_PROVIDER",
+              status: 400,
+              message: `${provider} does not use API-key connect.`,
+            });
+          }
+          const key = apiKey.trim();
+          if (!key) {
+            const emptyMsg =
+              provider === "shipbob"
+                ? "Paste your ShipBob token."
+                : provider === "shiphero"
+                  ? "Paste your ShipHero refresh token."
+                  : "Paste your EasyPost API key.";
+            throw new CalderynError({ code: "EMPTY_API_KEY", status: 400, message: emptyMsg });
+          }
+          // Fail visibly on a bad key/token BEFORE writing anything (rule 12).
+          if (provider === "shipbob") {
+            await probeShipBobKey(key, fetchImpl);
+          } else if (provider === "shiphero") {
+            await probeShipHeroToken(key, fetchImpl);
+          } else {
+            await probeEasyPostKey(key, fetchImpl);
+          }
+
+          const shopId = await shopIdP;
+          const now = new Date().toISOString();
+
+          const cred = await supabase.from("integration_credentials").upsert(
+            {
+              shop_id: shopId,
+              kind,
+              access_token_encrypted: encrypt(key),
+              updated_at: now,
+            },
+            { onConflict: "shop_id,kind" },
+          );
+          if (cred.error) throw cred.error;
+
+          const integ = await supabase.from("shop_integrations").upsert(
+            {
+              shop_id: shopId,
+              kind,
+              sync_status: "ready",
+              // Clear any stale failure from a prior errored sync so Settings doesn't
+              // keep showing it for this fresh pairing (mirrors the OAuth callbacks).
+              sync_error: null,
+              connected_at: now,
+              updated_at: now,
+            },
+            { onConflict: "shop_id,kind" },
+          );
+          if (integ.error) throw integ.error;
+
+          return { kind };
+        } catch (err) {
+          rethrow("integrations.connectApiKey", err);
+        }
       },
       async disconnect(provider: string, _signal?: AbortSignal): Promise<void> {
         try {
@@ -1228,13 +1501,45 @@ export function calderynClient(shop: string) {
                 ? "google_ads"
                 : provider === "tiktok"
                   ? "tiktok_ads"
-                  : provider;
+                  : provider === "easypost"
+                    ? "easypost_ship"
+                    : provider === "shippo"
+                      ? "shippo_ship"
+                      : provider === "shipbob"
+                        ? "shipbob_ship"
+                        : provider === "shiphero"
+                          ? "shiphero_ship"
+                          : provider;
           const { error } = await supabase
             .from("shop_integrations")
             .delete()
             .eq("shop_id", shopId)
             .eq("kind", kind);
           if (error) throw error;
+          // Ship-cost connectors store their credential in integration_credentials
+          // (EasyPost/ShipBob = pasted key; ShipHero = pasted refresh token; Shippo = OAuth
+          // token). Disconnect
+          // means the merchant wants that credential gone too — so the cron's connect()
+          // finds no credential and marks the shop skipped, not errored. Shippo's
+          // co-branded OAuth token NEVER expires (Plan 02 §11 #6), so leaving it orphaned
+          // would keep a forever-valid token at rest — the delete is mandatory here, not
+          // optional like the rotating ad/QBO tokens (those keep their bytea token row on
+          // shop_integrations; re-connect overwrites it). Surface a failure here rather
+          // than leaving an orphaned credential silently behind (rule 12).
+          const SHIP_COST_CRED_KINDS = new Set([
+            "easypost_ship",
+            "shippo_ship",
+            "shipbob_ship",
+            "shiphero_ship",
+          ]);
+          if (SHIP_COST_CRED_KINDS.has(kind)) {
+            const { error: credErr } = await supabase
+              .from("integration_credentials")
+              .delete()
+              .eq("shop_id", shopId)
+              .eq("kind", kind);
+            if (credErr) throw credErr;
+          }
         } catch (err) {
           rethrow("integrations.disconnect", err);
         }

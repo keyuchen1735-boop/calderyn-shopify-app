@@ -38,6 +38,12 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         selectedRows = selectedRows.filter((r) => r[col] === val);
         return chain;
       },
+      in(col: string, vals: unknown[]) {
+        // Added for the allocation fence (C6): runner now filters the period query by
+        // .in("source", ["upload","typed"]). Apply it as a real filter.
+        selectedRows = selectedRows.filter((r) => vals.includes(r[col]));
+        return chain;
+      },
       not(col: string, _op: string, _val: unknown) {
         // .not("ship_cost_cents", "is", null) → filter out rows where col IS null
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
@@ -107,7 +113,7 @@ describe("runShipCostResolution — period total allocation", () => {
         { id: "o1", shop_id: "shop1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1 },
         { id: "o2", shop_id: "shop1", customer_country: "CA", grams_sum: 300, item_count: 1, fulfillment_count: 1 },
       ],
-      shipping_cost_period: [{ shop_id: "shop1", total_cents: 1000 }],
+      shipping_cost_period: [{ shop_id: "shop1", total_cents: 1000, source: "upload" }],
       shipping_invoice_line: [],
       // rollShipCostIntoSkuPnl needs these — empty so it's a no-op
       order_fact: [],
@@ -146,7 +152,7 @@ describe("runShipCostResolution — invoice line takes priority", () => {
       v_order_ship_features: [
         { id: "o1", shop_id: "shop1", customer_country: "US", grams_sum: 200, item_count: 2, fulfillment_count: 1 },
       ],
-      shipping_cost_period: [{ shop_id: "shop1", total_cents: 5000 }],
+      shipping_cost_period: [{ shop_id: "shop1", total_cents: 5000, source: "upload" }],
       shipping_invoice_line: [
         { shop_id: "shop1", matched_order_id: "o1", cost_cents: 750 },
       ],
@@ -176,7 +182,7 @@ describe("runShipCostResolution — manual override", () => {
         { id: "a", shop_id: "shop1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: 999 },
         { id: "b", shop_id: "shop1", customer_country: "US", grams_sum: 100, item_count: 1, fulfillment_count: 1, ship_cost_manual_cents: null },
       ],
-      shipping_cost_period: [{ shop_id: "shop1", total_cents: 8000 }],
+      shipping_cost_period: [{ shop_id: "shop1", total_cents: 8000, source: "upload" }],
       shipping_invoice_line: [],
       order_fact: [],
       order_line_fact: [],
