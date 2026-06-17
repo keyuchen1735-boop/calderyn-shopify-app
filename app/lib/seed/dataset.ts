@@ -132,6 +132,24 @@ const PRODUCTS: ProductSpec[] = [
   { handle: "switchback-cap", title: "Switchback Cap", category: "accessories", priceCents: 2800, costCents: 900, variants: ["one-size"], velocityPerDay: 3 },
 ];
 
+/** Demo vendor per category — gives the inventory vendor facet a few values. */
+const VENDOR_BY_CATEGORY: Record<string, string> = {
+  apparel: "Summit Apparel Co",
+  outerwear: "Alpine Outfitters",
+  gear: "Trailhead Gear",
+  accessories: "Basecamp Supply",
+};
+
+/** Curated demo collections from a product's velocity + category, so the
+ * inventory collection facet has meaningful (and overlapping) groups to slice by. */
+function seedCollections(p: ProductSpec): string[] {
+  const out: string[] = [];
+  if (p.velocityPerDay >= 5) out.push("Best Sellers");
+  if (p.category === "outerwear") out.push("Weather Ready");
+  if (p.category === "gear" || p.category === "accessories") out.push("Trail Essentials");
+  return out;
+}
+
 /**
  * Real campaign objects the actions layer can mutate: the Meta ones live in
  * act_507175904037277 (created PAUSED with no ad sets, so they can never
@@ -264,7 +282,9 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
         price_tier: priceTier(p.priceCents),
         unit_cost_cents: p.costCents,
         currency: "USD",
+        vendor: VENDOR_BY_CATEGORY[p.category] ?? null,
         tags: [p.category, priceTier(p.priceCents)],
+        collections: seedCollections(p),
         created_at: createdAt,
         updated_at: createdAt,
       });

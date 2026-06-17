@@ -780,7 +780,8 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes, demandRes, salesRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes, salesRes, facetsRes] =
+            await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -812,6 +813,13 @@ export function calderynClient(shop: string) {
               .select("sku_id, revenue_30d_cents")
               .eq("shop_id", shopId)
               .limit(10000),
+            // Product facets for inventory slicing (category=productType, vendor,
+            // tags, collections); explicit cap per the PostgREST 1000-row default.
+            supabase
+              .from("sku_dim")
+              .select("id, category, vendor, tags, collections")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
@@ -831,6 +839,14 @@ export function calderynClient(shop: string) {
             console.error(
               "[skus.list] v_sku_sales_30d unavailable — serving SKUs without 30-day sales",
               salesRes.error,
+            );
+          }
+          // Facet enrichment is optional too — a read failure must not take down
+          // the SKU surface (facets stay undefined, filters just don't render).
+          if (facetsRes.error) {
+            console.error(
+              "[skus.list] sku_dim facets unavailable — serving SKUs without slicing facets",
+              facetsRes.error,
             );
           }
 
@@ -861,6 +877,21 @@ export function calderynClient(shop: string) {
               revenueBySku.set(String(r.sku_id), Number(r.revenue_30d_cents ?? 0));
             }
           }
+          // sku_dim.id → product facets (category surfaces as product_type).
+          const facetsBySku = new Map<
+            string,
+            { product_type: string | null; vendor: string | null; tags: string[]; collections: string[] }
+          >();
+          if (!facetsRes.error) {
+            for (const r of (facetsRes.data ?? []) as Array<Record<string, unknown>>) {
+              facetsBySku.set(String(r.id), {
+                product_type: (r.category as string | null) ?? null,
+                vendor: (r.vendor as string | null) ?? null,
+                tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
+                collections: Array.isArray(r.collections) ? (r.collections as string[]) : [],
+              });
+            }
+          }
 
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
@@ -875,6 +906,13 @@ export function calderynClient(shop: string) {
             const revenue30d = revenueBySku.get(sku.id);
             if (revenue30d != null) {
               sku.revenue_30d_cents = revenue30d;
+            }
+            const facetRow = facetsBySku.get(sku.id);
+            if (facetRow) {
+              sku.product_type = facetRow.product_type;
+              sku.vendor = facetRow.vendor;
+              sku.tags = facetRow.tags;
+              sku.collections = facetRow.collections;
             }
             return sku;
           });

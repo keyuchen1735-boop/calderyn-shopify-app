@@ -73,6 +73,10 @@ type SortBy = "Stock" | "Revenue";
 export default function Inventory({ app }: { app: DashboardCtx }) {
   const [filter, setFilter] = useState<Filter>("All");
   const [sortBy, setSortBy] = useState<SortBy>("Stock");
+  const [fVendor, setFVendor] = useState("");
+  const [fType, setFType] = useState("");
+  const [fCollection, setFCollection] = useState("");
+  const [fTag, setFTag] = useState("");
   const [skus, setSkus] = useState<SkuVM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -177,14 +181,36 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     }
   }
 
-  // SKUs arrive on-hand-desc from fetchSkus, so "Stock" is the as-loaded order;
-  // "Revenue" re-ranks by trailing-30-day revenue (nulls sink to the bottom).
-  const filtered = skus.filter((s) =>
-    filter === "All"
-      ? true
-      : filter === "Healthy"
-        ? s.status === "healthy"
-        : s.status !== "healthy",
+  // Distinct facet values for the slicing dropdowns — a facet with no values
+  // renders no filter (no dead filters).
+  const facets = useMemo(() => {
+    const vendors = new Set<string>();
+    const types = new Set<string>();
+    const collections = new Set<string>();
+    const tags = new Set<string>();
+    for (const s of skus) {
+      if (s.vendor) vendors.add(s.vendor);
+      if (s.product_type) types.add(s.product_type);
+      for (const c of s.collections ?? []) collections.add(c);
+      for (const t of s.tags ?? []) tags.add(t);
+    }
+    const sv = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b));
+    return { vendors: sv(vendors), types: sv(types), collections: sv(collections), tags: sv(tags) };
+  }, [skus]);
+
+  // Filter by status + facets, then "Revenue" sort re-ranks (SKUs arrive
+  // on-hand-desc from fetchSkus, so "Stock" is the as-loaded order).
+  const filtered = skus.filter(
+    (s) =>
+      (filter === "All"
+        ? true
+        : filter === "Healthy"
+          ? s.status === "healthy"
+          : s.status !== "healthy") &&
+      (!fVendor || s.vendor === fVendor) &&
+      (!fType || s.product_type === fType) &&
+      (!fCollection || (s.collections ?? []).includes(fCollection)) &&
+      (!fTag || (s.tags ?? []).includes(fTag)),
   );
   const shown =
     sortBy === "Revenue" ? sortSkus(filtered, "revenue_30d_cents") : filtered;
@@ -205,6 +231,37 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         sortBy={sortBy}
         onSort={setSortBy}
       />
+      {(facets.vendors.length ||
+        facets.types.length ||
+        facets.collections.length ||
+        facets.tags.length) > 0 && (
+        <div
+          style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}
+        >
+          <DashFacet label="Vendor" value={fVendor} options={facets.vendors} onChange={setFVendor} />
+          <DashFacet label="Type" value={fType} options={facets.types} onChange={setFType} />
+          <DashFacet
+            label="Collection"
+            value={fCollection}
+            options={facets.collections}
+            onChange={setFCollection}
+          />
+          <DashFacet label="Tag" value={fTag} options={facets.tags} onChange={setFTag} />
+          {(fVendor || fType || fCollection || fTag) && (
+            <Btn
+              small
+              onClick={() => {
+                setFVendor("");
+                setFType("");
+                setFCollection("");
+                setFTag("");
+              }}
+            >
+              Clear filters
+            </Btn>
+          )}
+        </div>
+      )}
       <Card pad={false}>
         {loading ? (
           <Placeholder icon="box" title="Loading inventory" sub="Reading on-hand and velocity across your locations." />
@@ -396,6 +453,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   </div>
                 );
               })}
+              {shown.length === 0 && (
+                <div className="cd-caption" style={{ padding: "16px 4px" }}>
+                  No SKUs match these filters.
+                </div>
+              )}
             </div>
           </>
         )}
@@ -753,6 +815,38 @@ function RelocateDialog({
 }
 
 /* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/** A single inventory facet filter (dashboard native select). Renders nothing
+ * when the facet has no values, so empty facets don't show dead filters. */
+function DashFacet({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <select
+      className="cd-input"
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ width: "auto", minWidth: 132 }}
+    >
+      <option value="">All {label.toLowerCase()}s</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function ScreenHeaderInline({
   loading,
   total,

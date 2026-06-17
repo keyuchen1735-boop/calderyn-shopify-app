@@ -216,7 +216,9 @@ export interface SkuRow {
   price_tier: string;
   unit_cost_cents: number;
   currency: string;
+  vendor: string | null;
   tags: string[];
+  collections: string[];
   created_at: string;
   updated_at: string;
 }

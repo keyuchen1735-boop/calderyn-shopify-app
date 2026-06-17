@@ -265,6 +265,10 @@ export default function SKUs() {
   const [sortKey, setSortKey] = useState<SortKey>("on_hand");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [query, setQuery] = useState("");
+  const [fVendor, setFVendor] = useState("");
+  const [fType, setFType] = useState("");
+  const [fCollection, setFCollection] = useState("");
+  const [fTag, setFTag] = useState("");
   const [relocating, setRelocating] = useState<SKU | null>(null);
   const { smDown } = useBreakpoints();
   const fetcher = useFetcher<RelocatePayload>();
@@ -282,14 +286,39 @@ export default function SKUs() {
     [skus],
   );
 
+  // Distinct facet values across the loaded SKUs — drives the slicing dropdowns.
+  // A facet with no values renders no filter (acceptance: no dead filters).
+  const facets = useMemo(() => {
+    const vendors = new Set<string>();
+    const types = new Set<string>();
+    const collections = new Set<string>();
+    const tags = new Set<string>();
+    for (const s of skus) {
+      if (s.vendor) vendors.add(s.vendor);
+      if (s.product_type) types.add(s.product_type);
+      for (const c of s.collections ?? []) collections.add(c);
+      for (const t of s.tags ?? []) tags.add(t);
+    }
+    const sortVals = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b));
+    return {
+      vendors: sortVals(vendors),
+      types: sortVals(types),
+      collections: sortVals(collections),
+      tags: sortVals(tags),
+    };
+  }, [skus]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return skus;
     return skus.filter(
       (s) =>
-        s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q),
+        (!q || s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) &&
+        (!fVendor || s.vendor === fVendor) &&
+        (!fType || s.product_type === fType) &&
+        (!fCollection || (s.collections ?? []).includes(fCollection)) &&
+        (!fTag || (s.tags ?? []).includes(fTag)),
     );
-  }, [skus, query]);
+  }, [skus, query, fVendor, fType, fCollection, fTag]);
 
   const sorted = useMemo(() => {
     const compare = (a: SKU, b: SKU) => {
@@ -314,7 +343,14 @@ export default function SKUs() {
     setSortDir(direction === "ascending" ? "asc" : "desc");
   };
 
-  const countLabel = query.trim()
+  const anyFilter = Boolean(query.trim() || fVendor || fType || fCollection || fTag);
+  const clearFilters = () => {
+    setFVendor("");
+    setFType("");
+    setFCollection("");
+    setFTag("");
+  };
+  const countLabel = anyFilter
     ? `${sorted.length} of ${skus.length} SKUs`
     : `${skus.length} SKUs`;
 
@@ -340,29 +376,52 @@ export default function SKUs() {
           borderBlockEndWidth="025"
           borderColor="border"
         >
-          <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
-            <InlineStack gap="100" blockAlign="baseline" wrap={false}>
-              <Text as="span" fontWeight="semibold">
-                {countLabel}
-              </Text>
-              <Text as="span" tone="subdued">
-                · {totalUnits.toLocaleString()} units on hand
-              </Text>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+              <InlineStack gap="100" blockAlign="baseline" wrap={false}>
+                <Text as="span" fontWeight="semibold">
+                  {countLabel}
+                </Text>
+                <Text as="span" tone="subdued">
+                  · {totalUnits.toLocaleString()} units on hand
+                </Text>
+              </InlineStack>
+              <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
+                <TextField
+                  label="Search SKUs"
+                  labelHidden
+                  autoComplete="off"
+                  placeholder="Search by product or SKU"
+                  value={query}
+                  onChange={setQuery}
+                  clearButton
+                  onClearButtonClick={() => setQuery("")}
+                  prefix={<Icon name="search" size={14} strokeWidth={2} />}
+                />
+              </div>
             </InlineStack>
-            <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
-              <TextField
-                label="Search SKUs"
-                labelHidden
-                autoComplete="off"
-                placeholder="Search by product or SKU"
-                value={query}
-                onChange={setQuery}
-                clearButton
-                onClearButtonClick={() => setQuery("")}
-                prefix={<Icon name="search" size={14} strokeWidth={2} />}
-              />
-            </div>
-          </InlineStack>
+            {(facets.vendors.length ||
+              facets.types.length ||
+              facets.collections.length ||
+              facets.tags.length) > 0 && (
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <FacetSelect label="Vendor" value={fVendor} options={facets.vendors} onChange={setFVendor} />
+                <FacetSelect label="Type" value={fType} options={facets.types} onChange={setFType} />
+                <FacetSelect
+                  label="Collection"
+                  value={fCollection}
+                  options={facets.collections}
+                  onChange={setFCollection}
+                />
+                <FacetSelect label="Tag" value={fTag} options={facets.tags} onChange={setFTag} />
+                {(fVendor || fType || fCollection || fTag) && (
+                  <Button variant="plain" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                )}
+              </InlineStack>
+            )}
+          </BlockStack>
         </Box>
         <IndexTable
           condensed={smDown}
@@ -392,7 +451,9 @@ export default function SKUs() {
               <Text as="p" tone="subdued" alignment="center">
                 {query.trim()
                   ? `No SKUs match "${query.trim()}".`
-                  : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
+                  : anyFilter
+                    ? "No SKUs match these filters."
+                    : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
               </Text>
             </Box>
           }
@@ -621,6 +682,36 @@ function AlertsCell({ alerts }: { alerts: Alert[] }) {
         </BlockStack>
       </Box>
     </Popover>
+  );
+}
+
+/** A single inventory facet filter. Renders nothing when the facet has no values
+ * (so empty facets don't show dead filters). */
+function FacetSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div style={{ minWidth: 150 }}>
+      <Select
+        label={label}
+        labelHidden
+        options={[
+          { label: `All ${label.toLowerCase()}s`, value: "" },
+          ...options.map((o) => ({ label: o, value: o })),
+        ]}
+        value={value}
+        onChange={onChange}
+      />
+    </div>
   );
 }
 

@@ -166,6 +166,12 @@ export interface SKU {
    * omitted: ad spend is campaign-level and can't be reliably attributed to a
    * SKU, so a SKU-level ROAS would be a fabricated number. */
   revenue_30d_cents?: number;
+  /** Product facets for inventory slicing (from sku_dim). product_type carries
+   * Shopify productType. All optional — undefined/empty when not ingested. */
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string[];
+  collections?: string[];
 }
 
 /** One day's total on-hand for a SKU (sum across locations), for the stock-trend

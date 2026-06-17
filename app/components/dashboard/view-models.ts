@@ -97,6 +97,12 @@ export interface SkuVM {
   /** Trailing-30-day gross revenue (cents) for bestseller ranking; undefined when
    * the sales rollup is unavailable. Mirrors the extension's SKU. */
   revenue_30d_cents?: number;
+  /** Product facets for inventory slicing (product_type = Shopify productType).
+   * Mirrors the extension's SKU; undefined/empty when not ingested. */
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string[];
+  collections?: string[];
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];

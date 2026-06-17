@@ -41,7 +41,15 @@ export type AdminVariant = {
     };
   } | null;
 };
-export type AdminProduct = { id: string; title: string; variants: { nodes: AdminVariant[] } };
+export type AdminProduct = {
+  id: string;
+  title: string;
+  vendor: string | null;
+  productType: string | null;
+  tags: string[];
+  collections: { nodes: Array<{ title: string }> };
+  variants: { nodes: AdminVariant[] };
+};
 
 type ProductsPage = { products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: AdminProduct[] } };
 
@@ -56,7 +64,11 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
         products(first: 25, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           nodes {
-            id title
+            id title vendor productType tags
+            # Collection membership for the inventory facet filters; first page
+            # only (a product in >20 collections is truncated — acceptable for
+            # facet slicing).
+            collections(first: 20) { nodes { title } }
             # Slice-1 caps: page sizes kept small so the nested
             # products×variants×inventoryLevels query stays under Shopify's
             # 1000 single-query cost limit. variants/inventoryLevels are
