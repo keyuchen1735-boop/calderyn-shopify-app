@@ -4,7 +4,8 @@
   "installCommand": "npm install && npx prisma generate",
   "regions": ["pdx1"],
   "functions": {
-    "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" }
+    "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" },
+    "api/engine/moat_train.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
   "rewrites": [
     {
