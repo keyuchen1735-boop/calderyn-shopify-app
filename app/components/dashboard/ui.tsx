@@ -139,10 +139,13 @@ export function Pill({
   children,
   tone = "neutral",
   icon,
+  title,
 }: {
   children: ReactNode;
   tone?: PillTone;
   icon?: string;
+  /** Native hover tooltip (e.g. the "why scale" reason on the Scale pill). */
+  title?: string;
 }) {
   const map: Record<PillTone, { bg: string; fg: string }> = {
     neutral: { bg: "var(--gray-bg)", fg: "var(--text-2)" },
@@ -153,7 +156,7 @@ export function Pill({
   };
   const s = map[tone] || map.neutral;
   return (
-    <span className="cd-badge" style={{ background: s.bg, color: s.fg }}>
+    <span className="cd-badge" style={{ background: s.bg, color: s.fg }} title={title}>
       {icon && <CDIcon name={icon} size={12} strokeWidth={2} />}
       {children}
     </span>

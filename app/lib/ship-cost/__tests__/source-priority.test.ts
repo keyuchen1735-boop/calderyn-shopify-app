@@ -37,6 +37,13 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
         return chain;
       },
+      // PostgREST-style pagination added to runner.server (fetchAllRows): slice to
+      // the [from, to] inclusive window. Test data is < PAGE_SIZE so the runner
+      // reads one short page and stops.
+      range(from: number, to: number) {
+        selectedRows = selectedRows.slice(from, to + 1);
+        return chain;
+      },
       update(payload: Record<string, unknown>) {
         const updateFilters: Record<string, unknown> = {};
         const updateChain: any = {
