@@ -170,6 +170,34 @@
     background: var(--gray-bg);
   }
 
+  /* ============ tooltip ============ */
+  /* Styled hover/focus tooltip in the dashboard's own design system (replaces
+     native title= text). Reveal is CSS-only; rows/cards don't clip overflow
+     (only .cd-main scrolls), so the absolute bubble shows above the trigger. */
+  .cd-tip { position: relative; display: inline-flex; }
+  .cd-tip-pop {
+    position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 60;
+    width: max-content; max-width: 260px; padding: 8px 11px;
+    border-radius: 10px; background: var(--card-solid); color: var(--text-1);
+    box-shadow: var(--shadow-pop);
+    font-size: calc(12.5px * var(--type-scale)); font-weight: 460; line-height: 1.42;
+    letter-spacing: -0.004em; text-align: left; white-space: normal;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transform: translateY(4px); transition: opacity 0.14s ease, transform 0.14s ease;
+  }
+  .cd-tip:hover .cd-tip-pop,
+  .cd-tip:focus-within .cd-tip-pop {
+    opacity: 1; visibility: visible; transform: translateY(0);
+  }
+  .cd-tip-pop::after {
+    content: ""; position: absolute; top: 100%; left: 14px;
+    border: 5px solid transparent; border-top-color: var(--card-solid);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cd-tip-pop { transition: opacity 0.14s ease; transform: none; }
+    .cd-tip:hover .cd-tip-pop, .cd-tip:focus-within .cd-tip-pop { transform: none; }
+  }
+
   /* ============ controls ============ */
   .cd-toggle {
     width: 42px; height: 26px; border-radius: 13px; border: none; cursor: pointer;
