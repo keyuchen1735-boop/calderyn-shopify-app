@@ -187,3 +187,127 @@ async def test_projection_idempotent_on_rerun(pg_pool):
             "AND (payload->>'day_bucket')::date = $1", day,
         )
         assert count == 1  # second run replaced, did not double
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — segment-aware baseline aggregate (A3 + A2 + per-band isolation).
+# ---------------------------------------------------------------------------
+
+
+async def _seed_projected_event(conn, shop_id: str, *, consent: bool,
+                                segment: str, dollar_impact: Decimal,
+                                detector: str = DETECTOR) -> str:
+    """Seed a shop + pseudonym + one projected detection_fired row carrying
+    a segment label, the way Task 3's projection would."""
+    await _seed_shop(conn, shop_id, consent=consent)
+    pseud = pseudonym_for(shop_id, PEPPER)
+    await conn.execute(
+        "INSERT INTO moat_keys.shop_pseudonym (shop_id, pseudonym_id) "
+        "VALUES ($1::uuid, $2) ON CONFLICT (shop_id) DO NOTHING",
+        shop_id, pseud,
+    )
+    await conn.execute(
+        "INSERT INTO moat.event_log "
+        "(pseudonym_id, event_kind, detector_id, payload) "
+        "VALUES ($1, 'detection_fired', $2, $3::jsonb)",
+        pseud, detector,
+        json.dumps({"dollar_impact": float(dollar_impact), "segment": segment}),
+    )
+    return pseud
+
+
+async def _cleanup_baselines(conn, detector: str = DETECTOR) -> None:
+    await conn.execute("DELETE FROM moat.peer_baselines WHERE detector_id=$1", detector)
+    await conn.execute("DELETE FROM moat.event_log WHERE detector_id=$1", detector)
+
+
+@pytest.mark.asyncio
+async def test_baseline_4_contributors_suppressed(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import compute_peer_baselines_by_segment
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        for _ in range(4):  # one short of the k=5 floor
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:mid", dollar_impact=Decimal("100"),
+            )
+        n = await compute_peer_baselines_by_segment(conn, DETECTOR, "gmv:mid")
+        assert n == 0  # A3: floor not met
+        rows = await conn.fetch(
+            "SELECT * FROM moat.peer_baselines "
+            "WHERE detector_id=$1 AND segment=$2", DETECTOR, "gmv:mid",
+        )
+        assert rows == []  # no row written, not even n<5
+
+
+@pytest.mark.asyncio
+async def test_baseline_5_contributors_written(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import compute_peer_baselines_by_segment
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        for impact in (Decimal("100"), Decimal("200"), Decimal("300"),
+                       Decimal("400"), Decimal("500")):
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:mid", dollar_impact=impact,
+            )
+        n = await compute_peer_baselines_by_segment(conn, DETECTOR, "gmv:mid")
+        assert n == 5
+        row = await conn.fetchrow(
+            "SELECT p25, p50, p75, n FROM moat.peer_baselines "
+            "WHERE detector_id=$1 AND segment=$2", DETECTOR, "gmv:mid",
+        )
+        assert int(row["n"]) == 5
+        assert Decimal(row["p25"]) == Decimal("200")
+        assert Decimal(row["p50"]) == Decimal("300")
+        assert Decimal(row["p75"]) == Decimal("400")
+
+
+@pytest.mark.asyncio
+async def test_nonconsenting_shop_absent_from_baseline(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import compute_peer_baselines_by_segment
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        for _ in range(5):
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:mid", dollar_impact=Decimal("100"),
+            )
+        for _ in range(2):  # non-consenting outliers must not count
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=False,
+                segment="gmv:mid", dollar_impact=Decimal("9999"),
+            )
+        n = await compute_peer_baselines_by_segment(conn, DETECTOR, "gmv:mid")
+        assert n == 5  # A2: only the 5 consenting shops
+        row = await conn.fetchrow(
+            "SELECT n, p50 FROM moat.peer_baselines "
+            "WHERE detector_id=$1 AND segment=$2", DETECTOR, "gmv:mid",
+        )
+        assert int(row["n"]) == 5
+        assert Decimal(row["p50"]) == Decimal("100")  # not the $9999 outliers
+
+
+@pytest.mark.asyncio
+async def test_baseline_segment_isolation(pg_pool):
+    """Rows in another band must not bleed into this band's quartiles."""
+    from calderyn_engine.moat.peer_incident_etl import compute_peer_baselines_by_segment
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        for _ in range(5):
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:mid", dollar_impact=Decimal("100"),
+            )
+        for _ in range(5):  # different band, should be ignored for gmv:mid
+            await _seed_projected_event(
+                conn, str(uuid.uuid4()), consent=True,
+                segment="gmv:xl", dollar_impact=Decimal("8000"),
+            )
+        n = await compute_peer_baselines_by_segment(conn, DETECTOR, "gmv:mid")
+        assert n == 5
+        row = await conn.fetchrow(
+            "SELECT p50 FROM moat.peer_baselines "
+            "WHERE detector_id=$1 AND segment=$2", DETECTOR, "gmv:mid",
+        )
+        assert Decimal(row["p50"]) == Decimal("100")

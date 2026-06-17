@@ -147,3 +147,75 @@ async def project_alerts_for_day(
         emitted += 1
     logger.info("peer_etl_projected", run_date=run_date.isoformat(), emitted=emitted)
     return emitted
+
+
+async def compute_peer_baselines_by_segment(
+    conn: Any, detector_id: str, segment: str
+) -> int:
+    """Per-(detector, segment) peer-quartile baseline.
+
+    Mirrors ``moat.peer_baselines.compute_peer_baselines`` SQL shape,
+    K_FLOOR, and upsert verbatim, but restricts the observation set to
+    rows whose ``payload->>'segment'`` equals ``segment``. Additive — the
+    fixed kernel is left untouched (it is still used by consent_purge).
+
+    A2: the ``consenting`` CTE filters to ``peer_data_consent = true``.
+    A3: a row is written only when ``count(distinct pseudonym_id) >= K_FLOOR``.
+    Returns the contributor count, or 0 when the floor was not met.
+    """
+    row = await conn.fetchrow(
+        """
+        with consenting as (
+          select sp.pseudonym_id
+            from moat_keys.shop_pseudonym sp
+            join public.shops s on s.id = sp.shop_id
+           where s.peer_data_consent = true
+        ),
+        observations as (
+          select e.pseudonym_id,
+                 (e.payload->>'dollar_impact')::numeric as dollar_impact
+            from moat.event_log e
+            join consenting c on c.pseudonym_id = e.pseudonym_id
+           where e.detector_id = $1
+             and e.event_kind = 'detection_fired'
+             and e.payload ? 'dollar_impact'
+             and e.payload->>'segment' = $2
+        ),
+        agg as (
+          select
+            count(distinct pseudonym_id) as n,
+            percentile_cont(0.25) within group (order by dollar_impact) as p25,
+            percentile_cont(0.50) within group (order by dollar_impact) as p50,
+            percentile_cont(0.75) within group (order by dollar_impact) as p75
+          from observations
+        )
+        select n, p25, p50, p75 from agg
+        """,
+        detector_id, segment,
+    )
+    if row is None:
+        return 0
+    n_value = int(row["n"] or 0)
+    if n_value < K_FLOOR:
+        logger.info(
+            "peer_baselines_skipped_k_floor",
+            detector_id=detector_id, segment=segment,
+            n=n_value, k_floor=K_FLOOR,
+        )
+        return 0
+    await conn.execute(
+        """
+        INSERT INTO moat.peer_baselines
+          (detector_id, segment, p25, p50, p75, n, computed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, now())
+        ON CONFLICT (detector_id, segment) DO UPDATE SET
+          p25 = EXCLUDED.p25, p50 = EXCLUDED.p50, p75 = EXCLUDED.p75,
+          n = EXCLUDED.n, computed_at = EXCLUDED.computed_at
+        """,
+        detector_id, segment, row["p25"], row["p50"], row["p75"], n_value,
+    )
+    logger.info(
+        "peer_baselines_upserted",
+        detector_id=detector_id, segment=segment, n=n_value,
+    )
+    return n_value
