@@ -34,6 +34,7 @@ if _engine_dir not in sys.path:
 from calderyn_engine.config import load_config  # noqa: E402
 from calderyn_engine.db import make_pool  # noqa: E402
 from calderyn_engine.moat.peer_incident_etl import run_peer_incident_etl  # noqa: E402
+from calderyn_engine.moat.peer_metrics_etl import run_peer_metrics  # noqa: E402
 from calderyn_engine.moat.threshold_trainer import train_thresholds  # noqa: E402
 
 
@@ -82,6 +83,7 @@ async def handle(
                 etl_report = await run_peer_incident_etl(
                     conn, run_date=run_date, pepper=pepper
                 )
+                await run_peer_metrics(conn, run_date=run_date, pepper=pepper)
             # The trainer is pgbouncer transaction-pooler safe: it opens its
             # OWN short transaction per (shop, detector). It must therefore run
             # OUTSIDE any wrapping transaction — never inside one big txn.

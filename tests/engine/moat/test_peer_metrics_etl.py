@@ -250,3 +250,36 @@ async def test_metric_with_too_few_values_is_suppressed(pg_pool, clean_peer_tabl
             "WHERE metric_key='aov' AND segment='cat:electronics'")
     assert gm is not None and gm["n"] == 5   # all 5 shops have a margin value
     assert aov is None                        # only 3 have AOV < K_FLOOR
+
+
+async def test_consent_purge_recomputes_metrics(pg_pool, clean_peer_tables):
+    """After a shop withdraws, purge_shop_contributions must re-run metrics so
+    the surviving cohort drops below K_FLOOR and the row is deleted (GDPR)."""
+    from calderyn_engine.moat.consent_purge import purge_shop_contributions
+    from calderyn_engine.moat.pseudonym import pseudonym_for
+
+    seg = "cat:electronics"
+    ids = [str(uuid.uuid4()) for _ in range(5)]
+    async with pg_pool.acquire() as conn:
+        for sid, d in zip(ids, (100, 200, 300, 400, 500)):
+            await _seed_shop_in_niche(conn, sid, consent=True,
+                                      category="electronics", aov_dollars=d)
+        await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        assert await conn.fetchrow(
+            "SELECT 1 FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment=$1", seg) is not None
+
+        # Withdraw 2 → set consent false, then purge by pseudonym.
+        await conn.execute(
+            "UPDATE public.shops SET peer_data_consent=false WHERE id=ANY($1::uuid[])",
+            ids[:2],
+        )
+        for sid in ids[:2]:
+            await purge_shop_contributions(
+                conn, pseudonym_for(sid, PEPPER),
+                pepper=PEPPER, run_date=date.today(),
+            )
+        gone = await conn.fetchrow(
+            "SELECT 1 FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment=$1", seg)
+    assert gone is None

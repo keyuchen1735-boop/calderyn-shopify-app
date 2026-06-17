@@ -43,17 +43,19 @@ re-run).
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import structlog
 
 from .peer_baselines import K_FLOOR, compute_peer_baselines
 from .peer_incident_etl import recompute_or_purge_segment_baseline
+from .peer_metrics_etl import run_peer_metrics
 
 logger = structlog.get_logger()
 
 
-async def purge_shop_contributions(conn: Any, shop_pseudonym: str) -> int:
+async def purge_shop_contributions(conn: Any, shop_pseudonym: str, *, pepper: str, run_date: date) -> int:
     """Purge a shop's contributions from moat and re-run baselines.
 
     Parameters
@@ -186,6 +188,12 @@ async def purge_shop_contributions(conn: Any, shop_pseudonym: str) -> int:
                 segment=segment,
                 error=str(exc),
             )
+
+    # GDPR: the withdrawn shop already has peer_data_consent=false, so a full
+    # metric recompute (delete-stale) removes it from peer_metric_baselines too.
+    # ponytail: full recompute on purge is fine — purge is rare; target only
+    # affected niches if it ever gets hot.
+    await run_peer_metrics(conn, run_date=run_date, pepper=pepper)
 
     logger.info(
         "consent_purge_complete",

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -72,7 +73,7 @@ async def test_purge_removes_only_target_shop(pg_pool) -> None:
             conn, keep_id, consent=True, impacts=[Decimal("200")] * 5
         )
 
-        deleted = await purge_shop_contributions(conn, target_pseudonym)
+        deleted = await purge_shop_contributions(conn, target_pseudonym, pepper=PEPPER, run_date=date.today())
         assert deleted == 5
 
         target_remaining = await conn.fetchval(
@@ -104,7 +105,7 @@ async def test_purge_reruns_etl(pg_pool) -> None:
         assert n_initial == 6
 
         # Purge one shop → ETL must re-fire and the new n is 5.
-        await purge_shop_contributions(conn, pseudonyms[0])
+        await purge_shop_contributions(conn, pseudonyms[0], pepper=PEPPER, run_date=date.today())
 
         row = await conn.fetchrow(
             "SELECT n FROM moat.peer_baselines "
@@ -213,7 +214,7 @@ async def test_purge_deletes_sub_k_segment_baseline(pg_pool) -> None:
             assert pre is not None and int(pre["n"]) == 5
 
             # Revoke + purge ONE shop -> band falls to 4 contributors.
-            deleted = await purge_shop_contributions(conn, pseudonyms[0])
+            deleted = await purge_shop_contributions(conn, pseudonyms[0], pepper=PEPPER, run_date=date.today())
             assert deleted == 1
 
             # The band now has 4 distinct consenting contributors.
@@ -285,7 +286,7 @@ async def test_purge_recomputes_segment_baseline_above_floor(pg_pool) -> None:
             assert Decimal(pre["p75"]) > Decimal("400")
 
             # Purge the extreme shop -> band stays at 5 contributors.
-            await purge_shop_contributions(conn, pseudonyms[0])
+            await purge_shop_contributions(conn, pseudonyms[0], pepper=PEPPER, run_date=date.today())
 
             row = await conn.fetchrow(
                 "SELECT n, p25, p50, p75 FROM moat.peer_baselines "
