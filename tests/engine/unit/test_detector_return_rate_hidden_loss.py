@@ -37,6 +37,25 @@ async def test_fires_when_return_rate_above_baseline(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_200_when_no_override(
+    pg_pool, seed_shop, seed_return_rate_scenario, monkeypatch
+) -> None:
+    """Cutover safety for a $200-default detector: with no override, the gate
+    is the historical $200 — NOT the $500 registry default. A 30% return rate
+    produces impact ≈ $270 (between $200 and $500) and MUST still fire offline."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_return_rate_scenario(
+        SHOP,
+        return_rate=Decimal("0.30"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_return_rate_normal(
     pg_pool, seed_shop, seed_return_rate_scenario
 ) -> None:

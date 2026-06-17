@@ -66,6 +66,28 @@ async def test_does_not_fire_when_margin_stable(
     assert results == []
 
 
+@pytest.mark.asyncio
+async def test_threshold_defaults_to_500_when_no_override(
+    pg_pool, seed_shop, seed_margin_erosion_scenario, monkeypatch
+) -> None:
+    """Offline cutover safety: no MOAT_PEPPER, no override → $500 gate.
+    Baseline $20, current $10 (50% drop), 30 units ⇒ impact $300 < $500,
+    so the detector must not fire."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_margin_erosion_scenario(
+        SHOP,
+        baseline_unit_margin_usd=Decimal("20"),
+        current_unit_margin_usd=Decimal("10"),
+        baseline_units=30,
+        current_units=30,
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []
+
+
 @pytest.mark.skip(
     reason=(
         "TODO Plan 04 — same fixture-cleanup problem as "

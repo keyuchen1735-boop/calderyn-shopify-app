@@ -40,6 +40,29 @@ async def test_fires_when_regional_demand_exceeds_stock(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_200_when_no_override(
+    pg_pool, seed_shop, seed_regional_shortage_scenario, monkeypatch
+) -> None:
+    """$200-default detector: offline gate is $200, not the $500 registry
+    default. 150 units/30d = 5/day, stock 25, projected need 70, shortfall
+    45 units / 9 days, impact = 5 * 9 * $10 = $450 (between $200 and $500).
+    MUST fire offline proving the gate is $200."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_regional_shortage_scenario(
+        SHOP,
+        region="CA",
+        regional_stock=25,
+        units_30d=150,
+        unit_margin_usd=Decimal("10"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_stock_covers_lead_time(
     pg_pool, seed_shop, seed_regional_shortage_scenario
 ) -> None:

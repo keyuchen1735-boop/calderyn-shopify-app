@@ -43,6 +43,31 @@ async def test_fires_when_stock_concentrated_off_demand(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_200_when_no_override(
+    pg_pool, seed_shop, seed_wrong_location_scenario, monkeypatch
+) -> None:
+    """$200-default detector: offline gate is $200, not the $500 registry
+    default. 300 units in NY (85.7% concentration) × $10 margin × 0.1 = $300
+    (between $200 and $500). MUST fire offline proving the gate is $200."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_wrong_location_scenario(
+        SHOP,
+        high_region="NY",
+        low_region="CA",
+        high_qty=300,
+        low_qty=50,
+        demand_units_at_low=100,
+        demand_units_at_high=0,
+        unit_margin_usd=Decimal("10"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_stock_aligned_with_demand(
     pg_pool, seed_shop, seed_wrong_location_scenario
 ) -> None:

@@ -19,6 +19,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.estimators.return_loss import estimate_return_loss
 from calderyn_engine.schemas import DetectionResult
 
@@ -69,6 +70,9 @@ WHERE wp.revenue_cents >= $2
 async def detect(
     shop_id: str, conn: asyncpg.Connection, now: datetime
 ) -> list[DetectionResult]:
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(_QUERY, shop_id, MIN_REVENUE_CENTS)
     out: list[DetectionResult] = []
     for r in rows:
@@ -90,7 +94,7 @@ async def detect(
             returned_units=returned_units,
             unit_cost=unit_cost_dollars,
         )
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         out.append(
             DetectionResult(

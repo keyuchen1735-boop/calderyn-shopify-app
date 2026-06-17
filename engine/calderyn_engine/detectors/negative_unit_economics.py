@@ -23,6 +23,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.schemas import DetectionResult
 
 DETECTOR_ID = "negative_unit_economics"
@@ -97,6 +98,9 @@ WHERE coalesce(s.spend_cents, 0) > 0
 async def detect(
     shop_id: str, conn: asyncpg.Connection, now: datetime
 ) -> list[DetectionResult]:
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(_QUERY, shop_id)
     out: list[DetectionResult] = []
     for r in rows:
@@ -114,7 +118,7 @@ async def detect(
         impact = (abs(net_per_unit_dollars) * units_14d).quantize(
             Decimal("0.01")
         )
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         out.append(
             DetectionResult(

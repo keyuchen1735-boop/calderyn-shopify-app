@@ -56,6 +56,27 @@ async def test_does_not_fire_when_drift_below_threshold(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_500_when_no_override(
+    pg_pool, seed_shop, seed_cogs_drift_scenario, monkeypatch
+) -> None:
+    """Offline cutover safety: no MOAT_PEPPER, no override → $500 gate.
+    Prior $10, current $15 (50% drift), 60 units ⇒ impact $300 < $500,
+    so the detector must not fire."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_cogs_drift_scenario(
+        SHOP,
+        prior_unit_cost_usd=Decimal("10"),
+        current_unit_cost_usd=Decimal("15"),
+        units_30d=60,
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_cogs_decreased(
     pg_pool, seed_shop, seed_cogs_drift_scenario
 ) -> None:

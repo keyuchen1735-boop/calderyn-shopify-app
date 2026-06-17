@@ -14,7 +14,25 @@ Steps:
      consent without breaking the determinism of HMAC.
   2. Find every ``(detector_id, segment)`` pair that previously had
      a row in ``moat.peer_baselines`` whose computation included
-     this shop and re-run :func:`compute_peer_baselines` for each.
+     this shop and re-aggregate each so the withdrawn shop no longer
+     influences any row.
+
+     Slice #5 introduced PER-SEGMENT baselines keyed
+     ``(detector_id, segment)`` off the in-payload ``segment`` label
+     (``compute_peer_baselines_by_segment``). Those rows are
+     re-aggregated through #5's machinery — NOT the detector-only
+     kernel, which ignores the segment label. Legacy/opaque-segment
+     rows (no ``segment`` in payload, written by the original kernel)
+     are still re-aggregated by ``compute_peer_baselines`` for
+     backward compatibility.
+
+     CRITICAL (GDPR / invariants A2+A3): a ``(detector, segment)``
+     baseline whose distinct consenting contributors drop BELOW the
+     k>=5 floor after the purge has its ``moat.peer_baselines`` row
+     DELETED — not merely left un-updated. A recompute that only
+     "writes when >=5" would leave a stale row still carrying the
+     withdrawn shop's influence; that is the exact privacy gap this
+     purge closes.
   3. Return the count of event_log rows removed for caller logging.
 
 Called from a pg-boss consumer (``moat:consent-revoked``) — see the
@@ -29,7 +47,8 @@ from typing import Any
 
 import structlog
 
-from .peer_baselines import compute_peer_baselines
+from .peer_baselines import K_FLOOR, compute_peer_baselines
+from .peer_incident_etl import recompute_or_purge_segment_baseline
 
 logger = structlog.get_logger()
 
@@ -88,22 +107,83 @@ async def purge_shop_contributions(conn: Any, shop_pseudonym: str) -> int:
     except (ValueError, IndexError):
         deleted = 0
 
-    # Step 3 — re-run ETL for each affected (detector, segment).
-    # compute_peer_baselines re-counts distinct contributors so the
-    # post-purge baseline reflects the now-smaller cohort (or
-    # disappears entirely if k-floor is breached).
+    # Step 3 — re-aggregate each affected (detector, segment) so the
+    # post-purge baseline reflects the now-smaller cohort, and DELETE any
+    # row that has fallen below the k>=5 floor (the GDPR delete-stale
+    # requirement — A2/A3). Each pair is classified from the surviving
+    # ledger rows (the withdrawn shop's rows are already gone):
+    #
+    #   * a row still backed by segment-labelled events
+    #     (payload->>'segment' = segment) is a slice-#5 per-segment
+    #     baseline -> re-aggregate via recompute_or_purge_segment_baseline
+    #     (rewrites when >=5, deletes when sub-floor);
+    #   * a row backed only by un-segmented events is a legacy/opaque
+    #     baseline -> re-aggregate via the original detector-only kernel,
+    #     then delete-stale if its contributors fell below the floor;
+    #   * a row with no surviving events of either kind -> delete it.
+    #
+    # Re-aggregation errors are surfaced per-pair (rule 12: fail visibly)
+    # but do not abort the remaining pairs; the deletion of the withdrawn
+    # shop's own rows in Step 2 has already committed within the caller's
+    # transaction.
     for row in affected:
+        detector_id = row["detector_id"]
+        segment = row["segment"]
         try:
-            await compute_peer_baselines(
-                conn,
-                detector_id=row["detector_id"],
-                segment=row["segment"],
+            shape = await conn.fetchrow(
+                """
+                SELECT
+                  bool_or(payload->>'segment' = $2)        AS has_segment_rows,
+                  bool_or(NOT (payload ? 'segment'))        AS has_unsegmented_rows
+                  FROM moat.event_log
+                 WHERE detector_id = $1
+                   AND event_kind = 'detection_fired'
+                """,
+                detector_id, segment,
             )
+            has_segment_rows = bool(shape and shape["has_segment_rows"])
+            has_unsegmented_rows = bool(shape and shape["has_unsegmented_rows"])
+
+            if has_segment_rows:
+                # Per-segment baseline — #5's machinery, with delete-stale.
+                await recompute_or_purge_segment_baseline(
+                    conn, detector_id, segment
+                )
+            elif has_unsegmented_rows:
+                # Legacy/opaque-segment baseline — original detector-only
+                # kernel re-aggregates; delete the row if it is now sub-floor
+                # so the withdrawn shop cannot linger in it either.
+                n = await compute_peer_baselines(
+                    conn, detector_id=detector_id, segment=segment
+                )
+                if n < K_FLOOR:
+                    await conn.execute(
+                        "DELETE FROM moat.peer_baselines "
+                        "WHERE detector_id = $1 AND segment = $2",
+                        detector_id, segment,
+                    )
+                    logger.info(
+                        "consent_purge_baseline_deleted_sub_k_floor",
+                        detector_id=detector_id, segment=segment,
+                        n=n, k_floor=K_FLOOR,
+                    )
+            else:
+                # No surviving events for this detector at all — the baseline
+                # cannot stand; remove it.
+                await conn.execute(
+                    "DELETE FROM moat.peer_baselines "
+                    "WHERE detector_id = $1 AND segment = $2",
+                    detector_id, segment,
+                )
+                logger.info(
+                    "consent_purge_baseline_deleted_no_events",
+                    detector_id=detector_id, segment=segment,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "consent_purge_etl_rerun_failed",
-                detector_id=row["detector_id"],
-                segment=row["segment"],
+                detector_id=detector_id,
+                segment=segment,
                 error=str(exc),
             )
 

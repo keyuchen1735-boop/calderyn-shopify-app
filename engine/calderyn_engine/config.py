@@ -29,5 +29,5 @@ def load_config() -> Config:
         database_url=db,
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         env=os.environ.get("ENGINE_ENV", "dev"),
-        claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-7"),
+        claude_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6"),
     )

@@ -38,6 +38,27 @@ async def test_fires_when_days_of_cover_below_lead_time(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_200_when_no_override(
+    pg_pool, seed_shop, seed_reorder_timing_scenario, monkeypatch
+) -> None:
+    """$200-default detector: offline gate is $200, not the $500 registry
+    default. velocity 2/day, gap 10 days, margin $20 ⇒ impact $400 (between
+    $200 and $500). MUST fire offline proving the gate is $200."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_reorder_timing_scenario(
+        SHOP,
+        days_of_cover=Decimal("4"),
+        velocity_per_day=Decimal("2"),
+        unit_margin_usd=Decimal("20"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_when_above_lead_time(
     pg_pool, seed_shop, seed_reorder_timing_scenario
 ) -> None:
