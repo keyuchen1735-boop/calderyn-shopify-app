@@ -39,9 +39,12 @@ export interface ShipSource {
   fetchCharges(since: string | null): Promise<NormalizedShipmentCost[]>;
 }
 
-/** A provider plug. `connect` returns null when the shop has no usable creds. */
+/** A provider plug. `connect` returns null when the shop has NO credential stored. */
 export interface ShipCostAdapter {
   readonly provider: ShipProvider;
   readonly integrationKind: ShipIntegrationKind;
-  connect(shopId: string): Promise<ShipSource | null>; // null = no usable creds → cron marks "skipped"
+  // null = no credential stored (shop not connected) → cron marks "skipped".
+  // THROW = a credential is stored but the connection is broken (e.g. ShipHero refresh
+  // failed) → cron records sync_status:'error' (failure-visibility, rule 12).
+  connect(shopId: string): Promise<ShipSource | null>;
 }

@@ -2,7 +2,9 @@
 // of cron.ingest-ads.tsx: bearer-auth, bounded fan-out across (shop × adapter), per-slot
 // error isolation. Per shop: connect → fetch a TRAILING re-pull window of charges →
 // land them under the synthetic connector period → flip sync bookkeeping → re-resolve
-// ship cost so matched orders read actual_invoice/high.
+// ship cost so matched orders read actual_invoice/high. connect() returning null = no
+// credential (benign skip); connect() THROWING = a stored-but-broken credential → recorded
+// as sync_status:'error' (rule 12), same as any fetch failure.
 //
 // Plain Remix loader route (like the other 9 crons) — it is NOT a function path, so it
 // does not collide with the api/* Python or .well-known function paths behind the recent
@@ -55,15 +57,19 @@ async function runOne(item: ShipWorkItem, summary: Summary): Promise<void> {
   const tag = `${shopId}:${adapter.provider}`;
   const sb = getSupabase();
 
-  const source = await adapter.connect(shopId);
-  if (!source) {
-    // No usable credential → not an error, just nothing to do for this shop.
-    summary.skipped.push(tag);
-    return;
-  }
-
   const now = new Date().toISOString();
   try {
+    // connect() is INSIDE the try so a thrown connect (a stored-but-BROKEN credential —
+    // e.g. ShipHero's refresh-token failure) lands in the same sync_status:'error' path as a
+    // fetchCharges throw, instead of escaping unrecorded (failure-visibility, rule 12). A
+    // null return still means genuinely-no-credential → benign skip (no sync_error written).
+    const source = await adapter.connect(shopId);
+    if (!source) {
+      // No credential stored (shop never connected / disconnected) → nothing to do, not an error.
+      summary.skipped.push(tag);
+      return;
+    }
+
     const since = trailingWindowSince(REPULL_WINDOW_DAYS);
     const charges = await source.fetchCharges(since);
     const result = await landShipmentCharges(sb, shopId, adapter.provider, charges);

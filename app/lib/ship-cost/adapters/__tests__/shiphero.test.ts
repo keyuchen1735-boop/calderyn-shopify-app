@@ -253,12 +253,18 @@ describe("shipHeroAdapter.connect", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
-  it("returns null when the refresh fails (revoked/expired token → skipped, not a thrown sweep)", async () => {
+  it("THROWS when a credential is stored but the refresh fails (broken connection → cron records sync_error, not a silent skip)", async () => {
+    // A credential IS stored, so the shop is connected; a failed refresh means the
+    // connection is BROKEN, not absent. connect() must propagate (not swallow to null) so
+    // the cron writes sync_status:'error' — mirrors a fetchCharges 401 for the other
+    // adapters (failure-visibility, rule 12). null stays reserved for genuinely-no-creds.
     maybeSingleMock.mockResolvedValue({
       data: { access_token_encrypted: "enc(refresh_tok)" },
       error: null,
     });
     refreshMock.mockRejectedValue(new Error("ShipHero token refresh 401 Unauthorized: nope"));
-    expect(await shipHeroAdapter.connect("shop-1")).toBeNull();
+    await expect(shipHeroAdapter.connect("shop-1")).rejects.toThrow(
+      /ShipHero token refresh 401 Unauthorized/,
+    );
   });
 });

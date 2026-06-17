@@ -213,22 +213,17 @@ export const shipHeroAdapter: ShipCostAdapter = {
       .eq("kind", "shiphero_ship")
       .maybeSingle();
     if (error) throw error;
-    if (!data || !data.access_token_encrypted) return null; // → cron marks "skipped".
+    if (!data || !data.access_token_encrypted) return null; // → cron marks "skipped" (genuinely no creds).
     // The stored value is the merchant's long-lived REFRESH token (not a directly-usable
-    // access token). Mint a fresh access token from it each run; if the refresh fails (the
-    // refresh token was revoked/expired, or ShipHero is down), treat it like "no usable
-    // creds" — return null so the cron marks this shop skipped/errored rather than throwing
-    // out of the whole sweep (mirrors the no-credential contract above).
+    // access token). A credential IS stored, so this shop is connected — mint a fresh access
+    // token from it each run. If the refresh FAILS (the refresh token was revoked/expired, or
+    // ShipHero is down), the connection is BROKEN, not absent: let the error PROPAGATE so the
+    // cron records sync_status:'error' (failure-visibility, rule 12) — same as a fetchCharges
+    // 401 for the other adapters — rather than masquerading as a benign "not connected" skip.
+    // (null is reserved for genuinely-absent creds, above.) refreshShipHeroToken never logs
+    // the token, so the propagated error does not surface the refresh-token value.
     const refreshToken = decrypt(data.access_token_encrypted as string);
-    let accessToken: string;
-    try {
-      ({ accessToken } = await refreshShipHeroToken(refreshToken));
-    } catch {
-      // refreshShipHeroToken never logs the token; swallow to null (skipped), don't surface
-      // the refresh-token value. The 401-on-cost path inside fetchShipHeroCharges still
-      // throws → sync_error for a token that refreshes but lacks cost scope (rule 12).
-      return null;
-    }
+    const { accessToken } = await refreshShipHeroToken(refreshToken);
     return {
       fetchCharges: (since) => fetchShipHeroCharges(accessToken, since),
     };
