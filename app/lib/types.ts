@@ -1,5 +1,7 @@
 // Type definitions for the Calderyn prototype.
 
+import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
+
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 export type ActionKind =
@@ -150,12 +152,20 @@ export interface SKU {
   locations_detail: SkuLocationDetail[];
   /** Resolved ship-cost provenance for this SKU's margin — worst/lowest-confidence
    * source among its orders; null until the resolver has run. */
-  ship_cost_source: import("./ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("./ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
   /** Net shipping P&L (shipping collected − true ship cost, last 30d), in cents.
    * Negative = free shipping is bleeding on this SKU; null = no shipped orders
    * in-window. Derived in v_skus_flat. */
   ship_pnl_cents: number | null;
+}
+
+/** One day's total on-hand for a SKU (sum across locations), for the stock-trend
+ * sparkline. `date` is a UTC `YYYY-MM-DD`; points are sparse (only days the SKU
+ * had an inventory change), oldest-first. */
+export interface SkuHistoryPoint {
+  date: string;
+  on_hand: number;
 }
 
 export interface Integration {

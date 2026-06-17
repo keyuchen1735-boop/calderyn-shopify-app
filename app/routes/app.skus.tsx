@@ -35,7 +35,7 @@ import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { useActionToast, type ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
-import type { Alert, ShopLocation, SKU } from "~/lib/types";
+import type { Alert, ShopLocation, SKU, SkuHistoryPoint } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 import { fmtMoney } from "~/lib/format";
 import {
@@ -47,6 +47,7 @@ import {
   formatStockoutDate,
   projectedStockoutDate,
 } from "~/lib/inventory-demand";
+import { sparklinePath } from "~/lib/sparkline";
 import { shipCostBadge } from "~/lib/ship-cost/provenance";
 import { ShipPnlText } from "~/components/calderyn/ship-pnl-text";
 
@@ -651,6 +652,88 @@ function DemandCell({ demand }: { demand: SKU["demand"] }) {
   );
 }
 
+/** Lazy-loaded 90-day on-hand trend for one SKU, shown in the relocate modal.
+ * Sparkline is auto-scaled, so the min–max range is labelled to keep the shape
+ * honest (a small wiggle on a tall stock shouldn't read as a crash). */
+function StockHistory({ skuId }: { skuId: string }) {
+  const fetcher = useFetcher<{
+    points: SkuHistoryPoint[];
+    error: { code: string; message: string } | null;
+  }>();
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data === undefined) {
+      fetcher.load(`/app/skus/${encodeURIComponent(skuId)}/history`);
+    }
+  }, [skuId, fetcher]);
+
+  const data = fetcher.data;
+  const points = data?.points ?? [];
+  const width = 300;
+  const height = 52;
+
+  let body: React.ReactNode;
+  if (data === undefined) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Loading…
+      </Text>
+    );
+  } else if (data.error) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Couldn&apos;t load stock history.
+      </Text>
+    );
+  } else if (points.length < 2) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Not enough history yet — the trend builds as stock changes.
+      </Text>
+    );
+  } else {
+    const values = points.map((p) => p.on_hand);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const stroke =
+      last.on_hand < first.on_hand
+        ? "var(--p-color-text-critical, #c4321a)"
+        : "var(--p-color-text-secondary, #5c5f62)";
+    body = (
+      <BlockStack gap="100">
+        <svg
+          width={width}
+          height={height}
+          role="img"
+          aria-label={`On-hand from ${first.on_hand} on ${first.date} to ${last.on_hand} on ${last.date}`}
+        >
+          <path
+            d={sparklinePath(values, width, height)}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <Text as="span" tone="subdued" variant="bodySm">
+          Range {min.toLocaleString()}–{max.toLocaleString()} units · {points.length} updates
+        </Text>
+      </BlockStack>
+    );
+  }
+
+  return (
+    <BlockStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="medium">
+        Stock history · 90 days
+      </Text>
+      {body}
+    </BlockStack>
+  );
+}
+
 function RelocateModal({
   sku,
   locations,
@@ -740,6 +823,9 @@ function RelocateModal({
     >
       <Modal.Section>
         <BlockStack gap="400">
+          {/* key per SKU: remount → fresh fetcher → refetch if the modal is
+              ever reused for a different SKU without unmounting. */}
+          <StockHistory key={sku.id} skuId={sku.id} />
           {sku.demand && (
             <Text as="p" tone="subdued">
               Main demand is {sku.demand.region} ({sku.demand.units_30d.toLocaleString()}{" "}
