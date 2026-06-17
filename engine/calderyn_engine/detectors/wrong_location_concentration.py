@@ -21,6 +21,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.schemas import DetectionResult
 
 DETECTOR_ID = "wrong_location_concentration"
@@ -95,6 +96,9 @@ WHERE st.total > 0
 async def detect(
     shop_id: str, conn: asyncpg.Connection, now: datetime
 ) -> list[DetectionResult]:
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
     rows = await conn.fetch(
         _QUERY, shop_id, STOCK_CONCENTRATION, DEMAND_SHARE_THRESHOLD
     )
@@ -107,7 +111,7 @@ async def detect(
         impact = (qty * unit_margin_dollars * Decimal("0.1")).quantize(
             Decimal("0.01")
         )
-        if impact < DEFAULT_THRESHOLD_USD:
+        if impact < threshold:
             continue
         concentration = Decimal(r["concentration"] or 0)
         demand_share = Decimal(r["demand_share"] or 0)
