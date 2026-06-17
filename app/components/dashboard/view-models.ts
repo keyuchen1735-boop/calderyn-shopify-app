@@ -6,6 +6,10 @@
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
+import type {
+  ShipCostSource,
+  ShipCostConfidence,
+} from "~/lib/ship-cost/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -87,6 +91,22 @@ export interface SkuVM {
   on_hand: number;
   days_of_cover: number;
   velocity: number;
+  /** Projected sell-out date (ISO `YYYY-MM-DD`); null when the SKU has no
+   * recent sales (days-of-cover isn't meaningful). Mirrors the extension. */
+  projected_stockout: string | null;
+  /** Trailing-30-day gross revenue (cents) for bestseller ranking; undefined when
+   * the sales rollup is unavailable. Mirrors the extension's SKU. */
+  revenue_30d_cents?: number;
+  /** Product facets for inventory slicing (product_type = Shopify productType).
+   * Mirrors the extension's SKU; undefined/empty when not ingested. */
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string[];
+  collections?: string[];
+  /** Trailing-30-day return rate (refunded units ÷ units sold); undefined when
+   * the SKU had no sales in the window or no returns. `rate` is 0..1. Mirrors
+   * the extension's SKU. */
+  returns?: { returned_units_30d: number; rate: number };
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];
@@ -110,8 +130,8 @@ export interface SkuVM {
   }>;
   /** Worst/lowest-confidence ship-cost provenance among this SKU's orders; null
    * until the resolver has run. Mirrors the Shopify-side SKU badge. */
-  ship_cost_source: import("~/lib/ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("~/lib/ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
   /** Net shipping P&L for this SKU (shipping collected − true ship cost, last
    * 30d), in cents. Negative = free shipping is bleeding. null = no shipped
    * orders in-window. */

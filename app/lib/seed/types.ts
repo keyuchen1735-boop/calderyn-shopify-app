@@ -70,6 +70,19 @@ export interface FulfillmentRow {
   source_version: number;
 }
 
+export interface RefundRow {
+  id: string;
+  shop_id: string;
+  order_id: string;
+  sku_id: string;
+  external_id: string;
+  external_line_id: string;
+  quantity: number;
+  subtotal_cents: number;
+  processed_at: string;
+  source_version: number;
+}
+
 export interface InventoryLevelRow {
   shop_id: string;
   sku_id: string;
@@ -216,7 +229,9 @@ export interface SkuRow {
   price_tier: string;
   unit_cost_cents: number;
   currency: string;
+  vendor: string | null;
   tags: string[];
+  collections: string[];
   created_at: string;
   updated_at: string;
 }

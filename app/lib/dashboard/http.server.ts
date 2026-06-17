@@ -1,10 +1,15 @@
 // app/lib/dashboard/http.server.ts
 //
 // Shared HTTP plumbing for /dashboard/api/*: JSON envelopes, a CSRF origin
-// check for state-changing requests, and a fixed-window in-memory rate
-// limiter (per serverless instance — coarse abuse damping, not a guarantee).
+// check for state-changing requests, and (re-exported from rate-limit.server)
+// a shared Postgres-backed fixed-window rate limiter.
 
 import { CalderynError } from "../calderyn.server";
+
+// The limiter moved to a shared Postgres-backed store so it enforces across
+// serverless instances (the old in-memory version only damped abuse per
+// instance). Re-exported so existing dashboard imports keep their path.
+export { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -46,31 +51,6 @@ export function requireSameOrigin(request: Request): void {
   if (!origin || !allowedOrigins().includes(origin)) {
     throw jsonError(403, "bad_origin");
   }
-}
-
-type Window = { count: number; resetAt: number };
-const windows = new Map<string, Window>();
-
-export function rateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const w = windows.get(key);
-  if (!w || w.resetAt <= now) {
-    windows.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  w.count += 1;
-  return w.count <= limit;
-}
-
-export function __resetRateLimiterForTests(): void {
-  windows.clear();
-}
-
-/** Stable per-client key for rate limiting (Vercel sets x-forwarded-for). */
-export function clientIpKey(request: Request, scope: string): string {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  return `${scope}:${ip}`;
 }
 
 /** Wrap a loader/action body: CalderynError → its status/code; rethrow Responses. */

@@ -15,6 +15,7 @@ import type {
   CogsRow,
   CreativeSkuMapRow,
   FulfillmentRow,
+  RefundRow,
   InventoryLevelRow,
   LocationRow,
   OrderLineRow,
@@ -46,6 +47,7 @@ export interface SeedDataset {
   orders: OrderRow[];
   orderLines: OrderLineRow[];
   fulfillments: FulfillmentRow[];
+  refunds: RefundRow[];
   campaigns: CampaignRow[];
   adSpend: AdSpendRow[];
   attribution: AttributionRow[];
@@ -131,6 +133,24 @@ const PRODUCTS: ProductSpec[] = [
   { handle: "trail-socks-3pack", title: "Trail Running Socks 3-Pack", category: "accessories", priceCents: 2200, costCents: 650, variants: ["M", "L"], velocityPerDay: 4.5, variantWeights: [0.6, 0.4] },
   { handle: "switchback-cap", title: "Switchback Cap", category: "accessories", priceCents: 2800, costCents: 900, variants: ["one-size"], velocityPerDay: 3 },
 ];
+
+/** Demo vendor per category — gives the inventory vendor facet a few values. */
+const VENDOR_BY_CATEGORY: Record<string, string> = {
+  apparel: "Summit Apparel Co",
+  outerwear: "Alpine Outfitters",
+  gear: "Trailhead Gear",
+  accessories: "Basecamp Supply",
+};
+
+/** Curated demo collections from a product's velocity + category, so the
+ * inventory collection facet has meaningful (and overlapping) groups to slice by. */
+function seedCollections(p: ProductSpec): string[] {
+  const out: string[] = [];
+  if (p.velocityPerDay >= 5) out.push("Best Sellers");
+  if (p.category === "outerwear") out.push("Weather Ready");
+  if (p.category === "gear" || p.category === "accessories") out.push("Trail Essentials");
+  return out;
+}
 
 /**
  * Real campaign objects the actions layer can mutate: the Meta ones live in
@@ -264,7 +284,9 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
         price_tier: priceTier(p.priceCents),
         unit_cost_cents: p.costCents,
         currency: "USD",
+        vendor: VENDOR_BY_CATEGORY[p.category] ?? null,
         tags: [p.category, priceTier(p.priceCents)],
+        collections: seedCollections(p),
         created_at: createdAt,
         updated_at: createdAt,
       });
@@ -305,6 +327,10 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
   const orders: OrderRow[] = [];
   const orderLines: OrderLineRow[] = [];
   const fulfillments: FulfillmentRow[] = [];
+  const refunds: RefundRow[] = [];
+  // Separate PRNG for refund uuids so they don't perturb the main rng stream —
+  // the rest of the deterministic dataset stays byte-identical run-over-run.
+  const refundRng = mulberry32(seedFromString(`${config.shopId}:refunds`));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const locationByRegion = new Map(locations.map((l) => [l.region, l]));
   const duffelShiftDay = addDays(config.today, -DUFFEL_SHIFT_DAYS_AGO);
@@ -390,15 +416,32 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
             Math.floor((windbreakerOrderCount - 1) * WINDBREAKER_S_REFUND_RATE)
           : rng() < BASE_REFUND_RATE;
         const financialStatus = refunded ? (chosen.length > 1 ? "PARTIALLY_REFUNDED" : "REFUNDED") : "PAID";
-        if (refunded) {
-          const returnedLine =
-            orderLineRows.find((l) => l.sku_id === scenario.windbreakerSSkuId) ?? orderLineRows[0];
+        // A refunded order returns one whole line: the size-S windbreaker when
+        // present (its elevated-return arc), else the first line.
+        const returnedLine = refunded
+          ? orderLineRows.find((l) => l.sku_id === scenario.windbreakerSSkuId) ?? orderLineRows[0]
+          : null;
+        if (returnedLine) {
           const key = `${returnedLine.sku_id}|${day}`;
           returnsBySkuDay.set(key, (returnsBySkuDay.get(key) ?? 0) + returnedLine.total_cents);
         }
         const hour = 9 + Math.floor(rng() * 13);
         const createdAtSource = `${day}T${String(hour).padStart(2, "0")}:${String(Math.floor(rng() * 60)).padStart(2, "0")}:00.000Z`;
         orderSeq += 1;
+        if (returnedLine) {
+          refunds.push({
+            id: uuidFrom(refundRng),
+            shop_id: config.shopId,
+            order_id: orderId,
+            sku_id: returnedLine.sku_id,
+            external_id: `gid-refund-${orderSeq}`,
+            external_line_id: `refund-line-${seq}`,
+            quantity: returnedLine.quantity,
+            subtotal_cents: returnedLine.total_cents,
+            processed_at: createdAtSource,
+            source_version: 1,
+          });
+        }
 
         orders.push({
           id: orderId,
@@ -793,6 +836,7 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     orders,
     orderLines,
     fulfillments,
+    refunds,
     campaigns,
     adSpend,
     attribution,

@@ -16,11 +16,13 @@ import {
   Segmented,
   Placeholder,
   CountMoney,
+  Tooltip,
 } from "../ui";
 import { money } from "../format";
 import { CDIcon } from "../icons";
 import { fetchAnalytics, executeCampaignAction, DashboardApiError } from "~/lib/dashboard/client";
 import { sortActiveFirst } from "~/lib/campaign-sort";
+import { scaleReason as buildScaleReason } from "~/lib/scale-reason";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM, Platform } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
@@ -50,11 +52,12 @@ function ScreenHeader({
 function CampaignRow({
   c,
   onClick,
-  scaleSuggested,
+  scaleReason,
 }: {
   c: CampaignVM;
   onClick: () => void;
-  scaleSuggested: boolean;
+  /** Plain-language "why scale" reason; null = no suggestion (no pill). */
+  scaleReason: string | null;
 }) {
   const losing = c.roas_7d < c.breakeven_roas;
   return (
@@ -64,7 +67,11 @@ function CampaignRow({
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">{c.name}</span>
           {c.status === "paused" ? <Pill icon="pause">Paused</Pill> : <GradePill grade={c.grade} />}
-          {scaleSuggested && <Pill icon="arrowUpRight">Scale</Pill>}
+          {scaleReason && (
+            <Tooltip content={scaleReason}>
+              <Pill icon="arrowUpRight">Scale</Pill>
+            </Tooltip>
+          )}
         </div>
         <div className="cd-caption tabular-nums">
           {money(c.daily_budget_cents)}/day · {money(c.spend_7d)} spent (7d) · break-even{" "}
@@ -407,19 +414,29 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
           />
         ) : (
           <div className="cd-rows">
-            {shown.map((c) => (
-              <CampaignRow
-                key={c.id}
-                c={c}
-                onClick={() => app.navigate("campaigns", c.id)}
-                scaleSuggested={app.alerts.some(
-                  (a) =>
-                    a.campaign_id === c.id &&
-                    a.status === "open" &&
-                    a.detector_id === "campaign_scaling_opportunity",
-                )}
-              />
-            ))}
+            {shown.map((c) => {
+              const scaleAlert = app.alerts.find(
+                (a) =>
+                  a.campaign_id === c.id &&
+                  a.status === "open" &&
+                  a.detector_id === "campaign_scaling_opportunity",
+              );
+              const hint = scaleAlert
+                ? buildScaleReason(
+                    c.roas_7d > 0 ? c.roas_7d : null,
+                    app.guardrails?.autopilot_max_budget_increase_pct ?? 20,
+                    scaleAlert.dollar_impact,
+                  )
+                : null;
+              return (
+                <CampaignRow
+                  key={c.id}
+                  c={c}
+                  onClick={() => app.navigate("campaigns", c.id)}
+                  scaleReason={hint}
+                />
+              );
+            })}
           </div>
         )}
       </Card>

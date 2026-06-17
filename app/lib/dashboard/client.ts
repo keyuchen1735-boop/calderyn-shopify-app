@@ -16,6 +16,8 @@ import type {
   GuardrailConfig,
   Integration,
   SKU,
+  SkuAffinityItem,
+  SkuHistoryPoint,
   TopAdRow,
 } from "~/lib/types";
 import type {
@@ -32,6 +34,7 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
 import type { CreativeScreenRun } from "~/lib/screener/types";
@@ -311,6 +314,13 @@ export function adaptSku(s: SKU): SkuVM {
     on_hand: s.on_hand,
     days_of_cover: s.days_of_cover,
     velocity: s.velocity,
+    projected_stockout: projectedStockoutDate(s.days_of_cover, s.velocity),
+    revenue_30d_cents: s.revenue_30d_cents,
+    vendor: s.vendor,
+    product_type: s.product_type,
+    tags: s.tags,
+    collections: s.collections,
+    returns: s.returns,
     locations: s.locations,
     status,
     sources: s.sources ?? [],
@@ -323,14 +333,24 @@ export function adaptSku(s: SKU): SkuVM {
   };
 }
 
+/** Numeric SkuVM metrics the inventory screen can rank by. */
+export type SkuSortKey = "on_hand" | "revenue_30d_cents";
+
 /**
- * Default inventory ordering: most-stocked SKUs first. The dashboard Inventory
- * screen has no column-sort UI, so this is the load order merchants see. Stable
- * (equal on-hand keeps the API's order) and non-mutating; a missing on_hand
- * coerces to 0 so unsynced rows sink to the bottom.
+ * Sort SKUs by a numeric metric, highest first. Stable (equal values keep the
+ * input order) and non-mutating; a missing metric coerces to 0 so unsynced rows
+ * sink to the bottom.
+ */
+export function sortSkus(skus: SkuVM[], key: SkuSortKey): SkuVM[] {
+  return [...skus].sort((a, b) => Number(b[key] ?? 0) - Number(a[key] ?? 0));
+}
+
+/**
+ * Default inventory ordering: most-stocked SKUs first — the load order merchants
+ * see before choosing a sort.
  */
 export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
-  return [...skus].sort((a, b) => (b.on_hand ?? 0) - (a.on_hand ?? 0));
+  return sortSkus(skus, "on_hand");
 }
 
 const INTEGRATION_ORDER = [
@@ -435,6 +455,23 @@ export async function fetchCampaign(
 export async function fetchSkus(): Promise<SkuVM[]> {
   const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
   return sortSkusByOnHandDesc(data.skus.map(adaptSku));
+}
+
+/** Per-SKU daily on-hand trend (90-day window) for the stock-trend sparkline.
+ * Sparse, oldest-first; empty when the SKU has no in-window changes. */
+export async function fetchSkuHistory(id: string): Promise<SkuHistoryPoint[]> {
+  const data = await apiGet<{ history: SkuHistoryPoint[] }>(
+    `/dashboard/api/skus/${encodeURIComponent(id)}/history`,
+  );
+  return data.history;
+}
+
+/** Top "frequently bought with" SKUs for one SKU (trailing 90 days). */
+export async function fetchSkuAffinity(id: string): Promise<SkuAffinityItem[]> {
+  const data = await apiGet<{ affinity: SkuAffinityItem[] }>(
+    `/dashboard/api/skus/${encodeURIComponent(id)}/affinity`,
+  );
+  return data.affinity;
 }
 
 export async function fetchAudit(): Promise<AuditVM[]> {

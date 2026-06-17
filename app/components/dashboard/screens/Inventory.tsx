@@ -5,15 +5,24 @@
 // cover, velocity, ship P&L, and a status pill. Rows that map
 // to an open alert are clickable through to that alert.
 import { useEffect, useMemo, useState } from "react";
-import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
+import { Btn, Card, Pill, Segmented, Placeholder, Sparkline } from "../ui";
 import { CDIcon } from "../icons";
-import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
+import {
+  executeAlertAction,
+  fetchSkus,
+  fetchSkuHistory,
+  fetchSkuAffinity,
+  relocateSku,
+  sortSkus,
+  DashboardApiError,
+} from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
-import { formatDemandUnits } from "~/lib/inventory-demand";
-import { money } from "../format";
+import { formatDemandUnits, formatStockoutDate, returnRateLevel } from "~/lib/inventory-demand";
+import { money, moneyK } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
+import type { SkuAffinityItem, SkuHistoryPoint } from "~/lib/types";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -60,9 +69,15 @@ const SKU_STATUS: Record<string, { label: string; tone: PillTone }> = {
 
 /* ---------- Screen ---------- */
 type Filter = "All" | "Needs attention" | "Healthy";
+type SortBy = "Stock" | "Revenue";
 
 export default function Inventory({ app }: { app: DashboardCtx }) {
   const [filter, setFilter] = useState<Filter>("All");
+  const [sortBy, setSortBy] = useState<SortBy>("Stock");
+  const [fVendor, setFVendor] = useState("");
+  const [fType, setFType] = useState("");
+  const [fCollection, setFCollection] = useState("");
+  const [fTag, setFTag] = useState("");
   const [skus, setSkus] = useState<SkuVM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -167,13 +182,39 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     }
   }
 
-  const shown = skus.filter((s) =>
-    filter === "All"
-      ? true
-      : filter === "Healthy"
-        ? s.status === "healthy"
-        : s.status !== "healthy",
+  // Distinct facet values for the slicing dropdowns — a facet with no values
+  // renders no filter (no dead filters).
+  const facets = useMemo(() => {
+    const vendors = new Set<string>();
+    const types = new Set<string>();
+    const collections = new Set<string>();
+    const tags = new Set<string>();
+    for (const s of skus) {
+      if (s.vendor) vendors.add(s.vendor);
+      if (s.product_type) types.add(s.product_type);
+      for (const c of s.collections ?? []) collections.add(c);
+      for (const t of s.tags ?? []) tags.add(t);
+    }
+    const sv = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b));
+    return { vendors: sv(vendors), types: sv(types), collections: sv(collections), tags: sv(tags) };
+  }, [skus]);
+
+  // Filter by status + facets, then "Revenue" sort re-ranks (SKUs arrive
+  // on-hand-desc from fetchSkus, so "Stock" is the as-loaded order).
+  const filtered = skus.filter(
+    (s) =>
+      (filter === "All"
+        ? true
+        : filter === "Healthy"
+          ? s.status === "healthy"
+          : s.status !== "healthy") &&
+      (!fVendor || s.vendor === fVendor) &&
+      (!fType || s.product_type === fType) &&
+      (!fCollection || (s.collections ?? []).includes(fCollection)) &&
+      (!fTag || (s.tags ?? []).includes(fTag)),
   );
+  const shown =
+    sortBy === "Revenue" ? sortSkus(filtered, "revenue_30d_cents") : filtered;
 
   // Alerts reference SKUs by their sku code — exact match (the prototype's
   // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
@@ -188,7 +229,40 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         total={skus.length}
         filter={filter}
         onFilter={setFilter}
+        sortBy={sortBy}
+        onSort={setSortBy}
       />
+      {(facets.vendors.length ||
+        facets.types.length ||
+        facets.collections.length ||
+        facets.tags.length) > 0 && (
+        <div
+          style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}
+        >
+          <DashFacet label="Vendor" value={fVendor} options={facets.vendors} onChange={setFVendor} />
+          <DashFacet label="Type" value={fType} options={facets.types} onChange={setFType} />
+          <DashFacet
+            label="Collection"
+            value={fCollection}
+            options={facets.collections}
+            onChange={setFCollection}
+          />
+          <DashFacet label="Tag" value={fTag} options={facets.tags} onChange={setFTag} />
+          {(fVendor || fType || fCollection || fTag) && (
+            <Btn
+              small
+              onClick={() => {
+                setFVendor("");
+                setFType("");
+                setFCollection("");
+                setFTag("");
+              }}
+            >
+              Clear filters
+            </Btn>
+          )}
+        </div>
+      )}
       <Card pad={false}>
         {loading ? (
           <Placeholder icon="box" title="Loading inventory" sub="Reading on-hand and velocity across your locations." />
@@ -201,8 +275,10 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
             <div className="cd-table-head">
               <span style={{ flex: "1 1 0", minWidth: 140 }}>SKU</span>
               <span style={{ width: 64, textAlign: "right" }}>On hand</span>
-              <span style={{ width: 52, textAlign: "right" }}>Cover</span>
+              <span style={{ width: 60, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
+              <span style={{ width: 76, textAlign: "right" }}>Rev · 30d</span>
+              <span style={{ width: 64, textAlign: "right" }}>Returns</span>
               <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
@@ -216,6 +292,16 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                 const skuAlerts = openAlertsFor(s);
                 const alert = skuAlerts[0];
                 const canRelocate = s.locations_detail.some((l) => l.available > 0);
+                // Sell-out date label, only for low-cover rows — a date on
+                // healthy long-tail stock is just noise. Mirrors the extension's
+                // caution band (cover < 7d) so the date shows under the same
+                // condition on both surfaces (projected_stockout is null for
+                // no-sales SKUs, matching the extension's `selling` gate).
+                const stockoutLabel =
+                  s.projected_stockout && s.days_of_cover < 7
+                    ? formatStockoutDate(s.projected_stockout)
+                    : null;
+                const retLevel = s.returns ? returnRateLevel(s.returns.rate) : null;
                 return (
                   <div
                     key={s.id}
@@ -252,20 +338,59 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       {s.on_hand}
                     </span>
                     <span
-                      className="tabular-nums"
                       style={{
-                        width: 52,
-                        textAlign: "right",
-                        color: s.days_of_cover <= 9 ? "var(--red)" : "var(--text-2)",
+                        width: 60,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-end",
                       }}
                     >
-                      {s.days_of_cover}d
+                      <span
+                        className="tabular-nums"
+                        style={{ color: s.days_of_cover <= 9 ? "var(--red)" : "var(--text-2)" }}
+                      >
+                        {s.days_of_cover}d
+                      </span>
+                      {stockoutLabel && (
+                        <span
+                          className="cd-caption tabular-nums"
+                          title={`Projected to sell out around ${stockoutLabel} at the current pace`}
+                        >
+                          ~{stockoutLabel}
+                        </span>
+                      )}
                     </span>
                     <span
                       className="tabular-nums cd-caption"
                       style={{ width: 64, textAlign: "right" }}
                     >
                       {s.velocity.toFixed(1)}/day
+                    </span>
+                    <span
+                      className="tabular-nums cd-caption"
+                      style={{ width: 76, textAlign: "right" }}
+                    >
+                      {s.revenue_30d_cents ? moneyK(s.revenue_30d_cents) : "—"}
+                    </span>
+                    <span
+                      className="tabular-nums cd-caption"
+                      style={{
+                        width: 64,
+                        textAlign: "right",
+                        color:
+                          retLevel === "critical"
+                            ? "var(--red)"
+                            : retLevel === "caution"
+                              ? "var(--orange)"
+                              : "var(--text-2)",
+                      }}
+                      title={
+                        s.returns
+                          ? `${s.returns.returned_units_30d} returned over 30 days`
+                          : undefined
+                      }
+                    >
+                      {s.returns ? `${Math.round(s.returns.rate * 100)}%` : "—"}
                     </span>
                     <span
                       style={{
@@ -351,6 +476,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   </div>
                 );
               })}
+              {shown.length === 0 && (
+                <div className="cd-caption" style={{ padding: "16px 4px" }}>
+                  No SKUs match these filters.
+                </div>
+              )}
             </div>
           </>
         )}
@@ -491,6 +621,117 @@ function AlertActionsDialog({
 // No shared modal primitive exists in the dashboard kit yet, so this renders a
 // minimal fixed backdrop + centered Card, with cd-field/cd-input form controls
 // (the Predictor screen's form styling).
+/** Lazy-loaded 90-day on-hand trend for one SKU, shown in the relocate dialog.
+ * Reuses the dashboard Sparkline primitive. Auto-scaled, so the min–max range is
+ * labelled to keep the shape honest (a small wiggle shouldn't read as a crash). */
+function StockHistory({ skuId }: { skuId: string }) {
+  const [points, setPoints] = useState<SkuHistoryPoint[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setPoints(null);
+    setError(false);
+    fetchSkuHistory(skuId)
+      .then((rows) => alive && setPoints(rows))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [skuId]);
+
+  let body: React.ReactNode;
+  if (error) {
+    body = <span className="cd-caption">Couldn&apos;t load stock history.</span>;
+  } else if (points === null) {
+    body = <span className="cd-caption">Loading…</span>;
+  } else if (points.length < 2) {
+    body = (
+      <span className="cd-caption">
+        Not enough history yet — the trend builds as stock changes.
+      </span>
+    );
+  } else {
+    const values = points.map((p) => p.on_hand);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const stroke = last.on_hand < first.on_hand ? "var(--red)" : "var(--text-2)";
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Sparkline data={values} width={300} height={52} stroke={stroke} />
+        <span className="cd-caption tabular-nums">
+          Range {min.toLocaleString()}–{max.toLocaleString()} units · {points.length} updates
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="cd-row-title" style={{ marginBottom: 6 }}>
+        Stock history · 90 days
+      </div>
+      {body}
+    </div>
+  );
+}
+
+/** Lazy-loaded "frequently bought with" panel for one SKU, shown in the relocate
+ * dialog. Display-only list of co-purchased SKUs with order counts + share. */
+function BoughtWith({ skuId }: { skuId: string }) {
+  const [items, setItems] = useState<SkuAffinityItem[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setItems(null);
+    setError(false);
+    fetchSkuAffinity(skuId)
+      .then((rows) => alive && setItems(rows))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [skuId]);
+
+  let body: React.ReactNode;
+  if (error) {
+    body = <span className="cd-caption">Couldn&apos;t load bundles.</span>;
+  } else if (items === null) {
+    body = <span className="cd-caption">Loading…</span>;
+  } else if (items.length === 0) {
+    body = (
+      <span className="cd-caption">No frequent pairings yet — this builds as orders come in.</span>
+    );
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {items.map((it) => (
+          <div
+            key={it.sku_id}
+            style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
+          >
+            <span className="cd-row-title truncate">{it.title}</span>
+            <span className="cd-caption tabular-nums" style={{ whiteSpace: "nowrap" }}>
+              {it.co_count.toLocaleString()} order{it.co_count === 1 ? "" : "s"} ·{" "}
+              {Math.round(it.share * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="cd-row-title" style={{ marginBottom: 6 }}>
+        Frequently bought with
+      </div>
+      {body}
+    </div>
+  );
+}
+
 function RelocateDialog({
   sku,
   busy,
@@ -584,12 +825,14 @@ function RelocateDialog({
           <div className="cd-h2" style={{ marginBottom: 6 }}>
             Relocate {sku.title}
           </div>
+          <StockHistory skuId={sku.id} />
           {sku.demand && (
             <p className="cd-caption" style={{ marginBottom: 12 }}>
               {sku.demand.units_30d} units sold in {sku.demand.region} over 30 days ·{" "}
               {sku.demand.stock_in_region} in stock there.
             </p>
           )}
+          <BoughtWith skuId={sku.id} />
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label className="cd-field">
               <span>From</span>
@@ -651,16 +894,52 @@ function RelocateDialog({
 }
 
 /* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/** A single inventory facet filter (dashboard native select). Renders nothing
+ * when the facet has no values, so empty facets don't show dead filters. */
+function DashFacet({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <select
+      className="cd-input"
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ width: "auto", minWidth: 132 }}
+    >
+      <option value="">All {label.toLowerCase()}s</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function ScreenHeaderInline({
   loading,
   total,
   filter,
   onFilter,
+  sortBy,
+  onSort,
 }: {
   loading: boolean;
   total: number;
   filter: Filter;
   onFilter: (next: Filter) => void;
+  sortBy: SortBy;
+  onSort: (next: SortBy) => void;
 }) {
   return (
     <header className="cd-screen-head" data-screen-label="Inventory">
@@ -673,6 +952,13 @@ function ScreenHeaderInline({
         </p>
       </div>
       <div className="flex items-center gap-2.5">
+        <span className="cd-caption">Sort</span>
+        <Segmented
+          small
+          value={sortBy}
+          onChange={(v) => onSort(v as SortBy)}
+          options={["Stock", "Revenue"]}
+        />
         <Segmented
           small
           value={filter}

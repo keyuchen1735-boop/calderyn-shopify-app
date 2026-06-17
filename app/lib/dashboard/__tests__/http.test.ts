@@ -1,16 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  jsonError,
-  jsonOk,
-  requireSameOrigin,
-  rateLimit,
-  __resetRateLimiterForTests,
-} from "../http.server";
+import { jsonError, jsonOk, requireSameOrigin } from "../http.server";
 
 beforeEach(() => {
   process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
   process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
-  __resetRateLimiterForTests();
 });
 
 describe("jsonOk / jsonError", () => {
@@ -49,13 +42,5 @@ describe("requireSameOrigin", () => {
         expect((e as Response).status).toBe(403);
       }
     }
-  });
-});
-
-describe("rateLimit", () => {
-  it("allows up to the limit within the window, then refuses", () => {
-    for (let i = 0; i < 10; i++) expect(rateLimit("k", 10, 60_000)).toBe(true);
-    expect(rateLimit("k", 10, 60_000)).toBe(false);
-    expect(rateLimit("other", 10, 60_000)).toBe(true); // independent keys
   });
 });

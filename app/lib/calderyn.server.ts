@@ -10,14 +10,18 @@ import type {
   Integration,
   ShopLocation,
   SKU,
+  SkuAffinityItem,
+  SkuHistoryPoint,
   SkuSource,
   TopAdRow,
 } from "./types";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
+  affinityFromRow,
   demandFromRow,
   locationsDetailFromRow,
   suggestedTransferFromRow,
+  type SkuAffinityViewRow,
   type SkuDemandViewRow,
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
@@ -924,7 +928,8 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes, demandRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes, salesRes, facetsRes, returnsRes] =
+            await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -949,6 +954,27 @@ export function calderynClient(shop: string) {
               .select("*")
               .eq("shop_id", shopId)
               .limit(10000),
+            // Trailing-30-day units + revenue per SKU (same window as velocity);
+            // explicit cap per the PostgREST 1000-row default-truncation note.
+            supabase
+              .from("v_sku_sales_30d")
+              .select("sku_id, revenue_30d_cents")
+              .eq("shop_id", shopId)
+              .limit(10000),
+            // Product facets for inventory slicing (category=productType, vendor,
+            // tags, collections); explicit cap per the PostgREST 1000-row default.
+            supabase
+              .from("sku_dim")
+              .select("id, category, vendor, tags, collections")
+              .eq("shop_id", shopId)
+              .limit(10000),
+            // Trailing-30-day return rate per SKU; explicit cap per the
+            // PostgREST 1000-row default-truncation convention above.
+            supabase
+              .from("v_sku_returns_30d")
+              .select("sku_id, returned_units_30d, return_rate")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
@@ -960,6 +986,30 @@ export function calderynClient(shop: string) {
             console.error(
               "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
               demandRes.error,
+            );
+          }
+          // Sales enrichment is optional too — a missing/unmigrated rollup must
+          // not take down the SKU surface (units/revenue stay undefined).
+          if (salesRes.error) {
+            console.error(
+              "[skus.list] v_sku_sales_30d unavailable — serving SKUs without 30-day sales",
+              salesRes.error,
+            );
+          }
+          // Facet enrichment is optional too — a read failure must not take down
+          // the SKU surface (facets stay undefined, filters just don't render).
+          if (facetsRes.error) {
+            console.error(
+              "[skus.list] sku_dim facets unavailable — serving SKUs without slicing facets",
+              facetsRes.error,
+            );
+          }
+          // Return-rate enrichment is optional too — a missing/unmigrated view
+          // must not take down the SKU surface (returns stays undefined).
+          if (returnsRes.error) {
+            console.error(
+              "[skus.list] v_sku_returns_30d unavailable — serving SKUs without return rates",
+              returnsRes.error,
             );
           }
 
@@ -983,6 +1033,41 @@ export function calderynClient(shop: string) {
             }
           }
 
+          // sku_id → trailing-30-day revenue (cents).
+          const revenueBySku = new Map<string, number>();
+          if (!salesRes.error) {
+            for (const r of (salesRes.data ?? []) as Array<Record<string, unknown>>) {
+              revenueBySku.set(String(r.sku_id), Number(r.revenue_30d_cents ?? 0));
+            }
+          }
+          // sku_dim.id → product facets (category surfaces as product_type).
+          const facetsBySku = new Map<
+            string,
+            { product_type: string | null; vendor: string | null; tags: string[]; collections: string[] }
+          >();
+          if (!facetsRes.error) {
+            for (const r of (facetsRes.data ?? []) as Array<Record<string, unknown>>) {
+              facetsBySku.set(String(r.id), {
+                product_type: (r.category as string | null) ?? null,
+                vendor: (r.vendor as string | null) ?? null,
+                tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
+                collections: Array.isArray(r.collections) ? (r.collections as string[]) : [],
+              });
+            }
+          }
+          // sku_id → return rate. Skip rows with a null rate (returns but no sales
+          // in the window) so the UI never shows a meaningless 0% / divide error.
+          const returnsBySku = new Map<string, { returned_units_30d: number; rate: number }>();
+          if (!returnsRes.error) {
+            for (const r of (returnsRes.data ?? []) as Array<Record<string, unknown>>) {
+              if (r.return_rate == null) continue;
+              returnsBySku.set(String(r.sku_id), {
+                returned_units_30d: Number(r.returned_units_30d ?? 0),
+                rate: Number(r.return_rate),
+              });
+            }
+          }
+
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
             const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
@@ -993,10 +1078,71 @@ export function calderynClient(shop: string) {
               sku.suggested_transfer = suggestedTransferFromRow(demandRow);
               sku.locations_detail = locationsDetailFromRow(demandRow);
             }
+            const revenue30d = revenueBySku.get(sku.id);
+            if (revenue30d != null) {
+              sku.revenue_30d_cents = revenue30d;
+            }
+            const facetRow = facetsBySku.get(sku.id);
+            if (facetRow) {
+              sku.product_type = facetRow.product_type;
+              sku.vendor = facetRow.vendor;
+              sku.tags = facetRow.tags;
+              sku.collections = facetRow.collections;
+            }
+            const returnsRow = returnsBySku.get(sku.id);
+            if (returnsRow) {
+              sku.returns = returnsRow;
+            }
             return sku;
           });
         } catch (err) {
           rethrow("skus.list", err);
+        }
+      },
+
+      // Daily on-hand trend for one SKU over the view's trailing 90-day window.
+      // Sparse, oldest-first; the newest point reconciles with v_skus_flat.on_hand.
+      // Service-role bypasses RLS, so .eq("shop_id") is the tenant guard.
+      async history(skuId: string, _signal?: AbortSignal): Promise<SkuHistoryPoint[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_sku_inventory_history")
+            .select("day, on_hand")
+            .eq("shop_id", shopId)
+            .eq("sku_id", skuId)
+            .order("day", { ascending: true })
+            // ≤90 sparse points/SKU; explicit cap per the PostgREST 1000-row default.
+            .limit(400);
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            date: String(r.day),
+            on_hand: Number(r.on_hand ?? 0),
+          }));
+        } catch (err) {
+          rethrow("skus.history", err);
+        }
+      },
+
+      // "Frequently bought with" — top co-purchased SKUs for one SKU over the
+      // trailing 90 days. Per-SKU detail fetch (not on the list). Service-role
+      // bypasses RLS, so .eq("shop_id") is the tenant guard.
+      async affinity(skuId: string, _signal?: AbortSignal): Promise<SkuAffinityItem[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("v_sku_affinity")
+            .select("co_sku_id, co_title, co_sku, co_count, share")
+            .eq("shop_id", shopId)
+            .eq("sku_id", skuId)
+            .order("co_count", { ascending: false })
+            // The view caps at 6 rows/SKU; an explicit cap per the PostgREST
+            // 1000-row default-truncation convention.
+            .limit(20);
+          if (error) throw error;
+          return (data ?? []).map((r) => affinityFromRow(r as unknown as SkuAffinityViewRow));
+        } catch (err) {
+          rethrow("skus.affinity", err);
         }
       },
     },

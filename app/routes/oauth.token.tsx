@@ -6,6 +6,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { consumeAuthCode, getClient } from "~/lib/mcp_oauth.server";
 import { mintAccessToken, rotateRefreshToken } from "~/lib/mcp_tokens.server";
+import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
@@ -13,6 +14,15 @@ const TOKEN_HEADERS = { "cache-control": "no-store", pragma: "no-cache" };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+
+  // Per-IP cap on the token endpoint: damps code/refresh-token guessing and
+  // grant abuse. Generous enough for legitimate refresh traffic.
+  if (!(await rateLimit(clientIpKey(request, "oauth_token"), 30, 60_000))) {
+    return json(
+      { error: "too_many_requests", error_description: "rate limit exceeded; try again later" },
+      { status: 429, headers: TOKEN_HEADERS },
+    );
+  }
 
   const form = await request.formData();
   const grant_type = String(form.get("grant_type") ?? "");

@@ -1,6 +1,6 @@
 import { getSupabase } from "../supabase.server";
 import { writeDlq } from "./dlq.server";
-import { parseInventoryWebhook, parseOrderWebhook } from "./mappers.server";
+import { parseInventoryWebhook, parseOrderWebhook, parseRefundWebhook } from "./mappers.server";
 import { applyAttribution } from "../attribution/apply.server";
 
 const BATCH = 200;
@@ -11,6 +11,7 @@ const BATCH = 200;
 // Canonicalize before dispatch so we match regardless of the stored casing.
 const TOPIC_INVENTORY_UPDATE = "INVENTORY_LEVELS_UPDATE";
 const TOPIC_ORDERS_CREATE = "ORDERS_CREATE";
+const TOPIC_REFUNDS_CREATE = "REFUNDS_CREATE";
 const TOPIC_PRODUCTS_UPDATE = "PRODUCTS_UPDATE";
 
 export function canonicalTopic(topic: string): string {
@@ -38,6 +39,8 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
         res.facts += await applyInventory(row.shop_id, row.payload as Record<string, unknown>);
       } else if (topic === TOPIC_ORDERS_CREATE) {
         res.facts += await applyOrder(row.shop_id, row.payload as Record<string, unknown>);
+      } else if (topic === TOPIC_REFUNDS_CREATE) {
+        res.facts += await applyRefund(row.shop_id, row.payload as Record<string, unknown>);
       } else if (topic !== TOPIC_PRODUCTS_UPDATE) {
         // products/update is intentionally handled by backfill upserts in Slice 1.
         // Any other topic is unexpected — stamp it so it doesn't loop, but stay
@@ -173,4 +176,61 @@ async function applyOrder(shopId: string, payload: Record<string, unknown>): Pro
   if (lErr) throw lErr;
 
   return 1 + lineRows.length;
+}
+
+async function applyRefund(shopId: string, payload: Record<string, unknown>): Promise<number> {
+  const sb = getSupabase();
+  const refund = parseRefundWebhook(payload as Parameters<typeof parseRefundWebhook>[0]);
+  if (!refund.lines.length) return 0;
+
+  // Reads before writes (Supabase has no client transaction): resolve the order
+  // and the variant→sku map first so a transient read failure aborts before any
+  // refund_fact row is written.
+  let orderId: string | null = null;
+  if (refund.order_external_id) {
+    const { data: order, error: oErr } = await sb
+      .from("order_fact")
+      .select("id")
+      .eq("shop_id", shopId)
+      .eq("external_id", refund.order_external_id)
+      .maybeSingle();
+    if (oErr) throw oErr;
+    orderId = (order as { id: string } | null)?.id ?? null;
+  }
+
+  // Same variant-GID → sku_dim.id resolution the orders path uses. Only scan
+  // sku_dim when a line actually carries a variant (mirrors applyOrder). Check
+  // the error: an ignored failure yields an empty map, writing every refund line
+  // with sku_id=null and silently dropping it from return-rate analytics.
+  const variantToSku = new Map<string, string>();
+  if (refund.lines.some((l) => l.sku_external_id)) {
+    const { data: skus, error: skuErr } = await sb
+      .from("sku_dim")
+      .select("id, external_id")
+      .eq("shop_id", shopId);
+    if (skuErr) throw skuErr;
+    for (const r of skus ?? []) {
+      const row = r as { external_id: string; id: string };
+      variantToSku.set(row.external_id, row.id);
+    }
+  }
+
+  const rows = refund.lines.map((l) => ({
+    shop_id: shopId,
+    order_id: orderId,
+    sku_id: l.sku_external_id ? (variantToSku.get(l.sku_external_id) ?? null) : null,
+    external_id: refund.external_id,
+    external_line_id: l.external_line_id,
+    quantity: l.quantity,
+    subtotal_cents: l.subtotal_cents,
+    processed_at: refund.processed_at,
+    source_version: refund.source_version,
+  }));
+
+  const { error } = await sb
+    .from("refund_fact")
+    .upsert(rows, { onConflict: "shop_id,external_line_id" });
+  if (error) throw error;
+
+  return rows.length;
 }

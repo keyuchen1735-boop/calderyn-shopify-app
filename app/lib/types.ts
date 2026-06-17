@@ -1,5 +1,7 @@
 // Type definitions for the Calderyn prototype.
 
+import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
+
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 export type ActionKind =
@@ -158,12 +160,50 @@ export interface SKU {
   locations_detail: SkuLocationDetail[];
   /** Resolved ship-cost provenance for this SKU's margin — worst/lowest-confidence
    * source among its orders; null until the resolver has run. */
-  ship_cost_source: import("./ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("./ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
   /** Net shipping P&L (shipping collected − true ship cost, last 30d), in cents.
    * Negative = free shipping is bleeding on this SKU; null = no shipped orders
    * in-window. Derived in v_skus_flat. */
   ship_pnl_cents: number | null;
+  /** Trailing-30-day gross revenue (cents) over the SAME window as `velocity`,
+   * for bestseller ranking. undefined when the sales rollup is unavailable —
+   * never fatal. Units sold aren't carried: the velocity column already ranks by
+   * volume (units == round(velocity × 30)); the v_sku_sales_30d view still
+   * exposes units_30d for future use (e.g. F5 return-rate). ROAS is intentionally
+   * omitted: ad spend is campaign-level and can't be reliably attributed to a
+   * SKU, so a SKU-level ROAS would be a fabricated number. */
+  revenue_30d_cents?: number;
+  /** Product facets for inventory slicing (from sku_dim). product_type carries
+   * Shopify productType. All optional — undefined/empty when not ingested. */
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string[];
+  collections?: string[];
+  /** Trailing-30-day return rate (refunded units ÷ units sold, same window as
+   * velocity). undefined when the SKU had no sales in the window (no
+   * divide-by-zero) or no returns. `rate` is 0..1; `returned_units_30d` is the
+   * absolute refunded-unit count. */
+  returns?: { returned_units_30d: number; rate: number };
+}
+
+/** One day's total on-hand for a SKU (sum across locations), for the stock-trend
+ * sparkline. `date` is a UTC `YYYY-MM-DD`; points are sparse (only days the SKU
+ * had an inventory change), oldest-first. */
+export interface SkuHistoryPoint {
+  date: string;
+  on_hand: number;
+}
+
+/** One "frequently bought with" entry for a SKU — a co-purchased SKU over the
+ * trailing 90 days. `share` (0..1) is the fraction of the base SKU's orders that
+ * also contained this one. Fetched per-SKU (not on the SKU list). */
+export interface SkuAffinityItem {
+  /** The co-purchased SKU's id (sku_dim.id). */
+  sku_id: string;
+  title: string;
+  co_count: number;
+  share: number;
 }
 
 export interface Integration {

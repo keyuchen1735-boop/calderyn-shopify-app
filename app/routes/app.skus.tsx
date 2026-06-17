@@ -35,14 +35,20 @@ import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { useActionToast, type ActionToast } from "~/lib/toast";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
-import type { Alert, ShopLocation, SKU } from "~/lib/types";
+import type { Alert, ShopLocation, SKU, SkuAffinityItem, SkuHistoryPoint } from "~/lib/types";
 import { isUuid } from "~/lib/ids";
 import { fmtMoney } from "~/lib/format";
 import {
   inventoryAlertActions,
   openAlertsBySku,
 } from "~/lib/inventory-alerts";
-import { formatDemandUnits } from "~/lib/inventory-demand";
+import {
+  formatDemandUnits,
+  formatStockoutDate,
+  projectedStockoutDate,
+  returnRateLevel,
+} from "~/lib/inventory-demand";
+import { sparklinePath } from "~/lib/sparkline";
 import { shipCostBadge } from "~/lib/ship-cost/provenance";
 import { ShipPnlText } from "~/components/calderyn/ship-pnl-text";
 
@@ -68,7 +74,12 @@ function ShipCostBadge({
   );
 }
 
-type SortKey = "days_of_cover" | "on_hand" | "velocity" | "title";
+type SortKey =
+  | "days_of_cover"
+  | "on_hand"
+  | "velocity"
+  | "revenue_30d_cents"
+  | "title";
 type SortDir = "asc" | "desc";
 
 type LoaderPayload = {
@@ -255,6 +266,10 @@ export default function SKUs() {
   const [sortKey, setSortKey] = useState<SortKey>("on_hand");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [query, setQuery] = useState("");
+  const [fVendor, setFVendor] = useState("");
+  const [fType, setFType] = useState("");
+  const [fCollection, setFCollection] = useState("");
+  const [fTag, setFTag] = useState("");
   const [relocating, setRelocating] = useState<SKU | null>(null);
   const { smDown } = useBreakpoints();
   const fetcher = useFetcher<RelocatePayload>();
@@ -272,14 +287,39 @@ export default function SKUs() {
     [skus],
   );
 
+  // Distinct facet values across the loaded SKUs — drives the slicing dropdowns.
+  // A facet with no values renders no filter (acceptance: no dead filters).
+  const facets = useMemo(() => {
+    const vendors = new Set<string>();
+    const types = new Set<string>();
+    const collections = new Set<string>();
+    const tags = new Set<string>();
+    for (const s of skus) {
+      if (s.vendor) vendors.add(s.vendor);
+      if (s.product_type) types.add(s.product_type);
+      for (const c of s.collections ?? []) collections.add(c);
+      for (const t of s.tags ?? []) tags.add(t);
+    }
+    const sortVals = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b));
+    return {
+      vendors: sortVals(vendors),
+      types: sortVals(types),
+      collections: sortVals(collections),
+      tags: sortVals(tags),
+    };
+  }, [skus]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return skus;
     return skus.filter(
       (s) =>
-        s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q),
+        (!q || s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) &&
+        (!fVendor || s.vendor === fVendor) &&
+        (!fType || s.product_type === fType) &&
+        (!fCollection || (s.collections ?? []).includes(fCollection)) &&
+        (!fTag || (s.tags ?? []).includes(fTag)),
     );
-  }, [skus, query]);
+  }, [skus, query, fVendor, fType, fCollection, fTag]);
 
   const sorted = useMemo(() => {
     const compare = (a: SKU, b: SKU) => {
@@ -291,9 +331,11 @@ export default function SKUs() {
   }, [filtered, sortKey, sortDir]);
 
   // IndexTable sort ↔ our SortKey. null marks an unsortable column. Kept in
-  // lockstep with `headings`/`sortable` — the index-6 null is the Ship P&L column.
+  // lockstep with `headings`/`sortable` — index 6 (Return rate) and 7 (Ship P&L)
+  // are unsortable.
   const SORT_COLUMNS: (SortKey | null)[] = [
-    null, "title", null, "on_hand", "days_of_cover", "velocity", null, null, null, null,
+    null, "title", null, "on_hand", "days_of_cover", "velocity", "revenue_30d_cents",
+    null, null, null, null, null,
   ];
   const sortColumnIndex = SORT_COLUMNS.indexOf(sortKey);
   const handleSort = (index: number, direction: "ascending" | "descending") => {
@@ -303,7 +345,14 @@ export default function SKUs() {
     setSortDir(direction === "ascending" ? "asc" : "desc");
   };
 
-  const countLabel = query.trim()
+  const anyFilter = Boolean(query.trim() || fVendor || fType || fCollection || fTag);
+  const clearFilters = () => {
+    setFVendor("");
+    setFType("");
+    setFCollection("");
+    setFTag("");
+  };
+  const countLabel = anyFilter
     ? `${sorted.length} of ${skus.length} SKUs`
     : `${skus.length} SKUs`;
 
@@ -329,29 +378,52 @@ export default function SKUs() {
           borderBlockEndWidth="025"
           borderColor="border"
         >
-          <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
-            <InlineStack gap="100" blockAlign="baseline" wrap={false}>
-              <Text as="span" fontWeight="semibold">
-                {countLabel}
-              </Text>
-              <Text as="span" tone="subdued">
-                · {totalUnits.toLocaleString()} units on hand
-              </Text>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+              <InlineStack gap="100" blockAlign="baseline" wrap={false}>
+                <Text as="span" fontWeight="semibold">
+                  {countLabel}
+                </Text>
+                <Text as="span" tone="subdued">
+                  · {totalUnits.toLocaleString()} units on hand
+                </Text>
+              </InlineStack>
+              <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
+                <TextField
+                  label="Search SKUs"
+                  labelHidden
+                  autoComplete="off"
+                  placeholder="Search by product or SKU"
+                  value={query}
+                  onChange={setQuery}
+                  clearButton
+                  onClearButtonClick={() => setQuery("")}
+                  prefix={<Icon name="search" size={14} strokeWidth={2} />}
+                />
+              </div>
             </InlineStack>
-            <div style={{ minWidth: 220, maxWidth: 280, flexGrow: 1 }}>
-              <TextField
-                label="Search SKUs"
-                labelHidden
-                autoComplete="off"
-                placeholder="Search by product or SKU"
-                value={query}
-                onChange={setQuery}
-                clearButton
-                onClearButtonClick={() => setQuery("")}
-                prefix={<Icon name="search" size={14} strokeWidth={2} />}
-              />
-            </div>
-          </InlineStack>
+            {(facets.vendors.length ||
+              facets.types.length ||
+              facets.collections.length ||
+              facets.tags.length) > 0 && (
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <FacetSelect label="Vendor" value={fVendor} options={facets.vendors} onChange={setFVendor} />
+                <FacetSelect label="Type" value={fType} options={facets.types} onChange={setFType} />
+                <FacetSelect
+                  label="Collection"
+                  value={fCollection}
+                  options={facets.collections}
+                  onChange={setFCollection}
+                />
+                <FacetSelect label="Tag" value={fTag} options={facets.tags} onChange={setFTag} />
+                {(fVendor || fType || fCollection || fTag) && (
+                  <Button variant="plain" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                )}
+              </InlineStack>
+            )}
+          </BlockStack>
         </Box>
         <IndexTable
           condensed={smDown}
@@ -365,12 +437,14 @@ export default function SKUs() {
             { title: "On hand", alignment: "end" },
             { title: "Days of cover", alignment: "end" },
             { title: "Velocity", alignment: "end" },
+            { title: "Revenue · 30d", alignment: "end" },
+            { title: "Return rate", alignment: "end" },
             { title: "Ship P&L", alignment: "end" },
             { title: "Main demand" },
             { title: "Actions" },
             { title: "Alerts", alignment: "center" },
           ]}
-          sortable={[false, true, false, true, true, true, false, false, false, false]}
+          sortable={[false, true, false, true, true, true, true, false, false, false, false, false]}
           sortColumnIndex={sortColumnIndex === -1 ? undefined : sortColumnIndex}
           sortDirection={sortDir === "asc" ? "ascending" : "descending"}
           defaultSortDirection="ascending"
@@ -380,7 +454,9 @@ export default function SKUs() {
               <Text as="p" tone="subdued" alignment="center">
                 {query.trim()
                   ? `No SKUs match "${query.trim()}".`
-                  : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
+                  : anyFilter
+                    ? "No SKUs match these filters."
+                    : "No SKUs yet. They appear here as soon as Shopify syncs your catalog."}
               </Text>
             </Box>
           }
@@ -389,6 +465,7 @@ export default function SKUs() {
             const skuAlerts = alertsBySku.get(s.sku) ?? [];
             const canRelocate = s.locations_detail.some((l) => l.available > 0);
             const selling = hasSales(s);
+            const retLevel = s.returns ? returnRateLevel(s.returns.rate) : null;
             const onHandTone =
               s.on_hand === 0 ? "critical" : s.on_hand < 10 ? "caution" : undefined;
             const cover = s.days_of_cover ?? 0;
@@ -399,6 +476,12 @@ export default function SKUs() {
                   ? "caution"
                   : undefined
               : undefined;
+            // Sell-out date label, only for low-cover (toned) rows — a date on
+            // healthy stock is noise. coverTone is set only when selling.
+            const stockoutIso = coverTone
+              ? projectedStockoutDate(cover, s.velocity ?? 0)
+              : null;
+            const stockoutLabel = stockoutIso ? formatStockoutDate(stockoutIso) : null;
             return (
               <IndexTable.Row id={s.id} key={s.id} position={index}>
                 <IndexTable.Cell>
@@ -421,18 +504,29 @@ export default function SKUs() {
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   {selling ? (
-                    <Text
-                      as="p"
-                      alignment="end"
-                      fontWeight={coverTone ? "semibold" : undefined}
-                      tone={coverTone}
-                    >
-                      <span className="cdn-tnum">{cover.toFixed(1)}</span>
-                      <Text as="span" tone="subdued">
-                        {" "}
-                        d
+                    <BlockStack gap="050" inlineAlign="end">
+                      <Text
+                        as="p"
+                        alignment="end"
+                        fontWeight={coverTone ? "semibold" : undefined}
+                        tone={coverTone}
+                      >
+                        <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                        <Text as="span" tone="subdued">
+                          {" "}
+                          d
+                        </Text>
                       </Text>
-                    </Text>
+                      {stockoutLabel && (
+                        <Tooltip
+                          content={`Projected to sell out around ${stockoutLabel} at the current pace`}
+                        >
+                          <Text as="span" tone="subdued" variant="bodySm">
+                            ~{stockoutLabel}
+                          </Text>
+                        </Tooltip>
+                      )}
+                    </BlockStack>
                   ) : (
                     <Tooltip content="No recent sales, so days of cover isn't meaningful">
                       <Text as="p" alignment="end" tone="subdued">
@@ -453,6 +547,37 @@ export default function SKUs() {
                   ) : (
                     <Text as="p" alignment="end" tone="subdued" variant="bodySm">
                       No sales
+                    </Text>
+                  )}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  {s.revenue_30d_cents ? (
+                    <Text as="p" alignment="end">
+                      <span className="cdn-tnum">{fmtMoney(s.revenue_30d_cents)}</span>
+                    </Text>
+                  ) : (
+                    <Text as="p" alignment="end" tone="subdued">
+                      —
+                    </Text>
+                  )}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  {s.returns ? (
+                    <Tooltip
+                      content={`${s.returns.returned_units_30d.toLocaleString()} returned over 30 days`}
+                    >
+                      <Text
+                        as="p"
+                        alignment="end"
+                        tone={retLevel ?? undefined}
+                        fontWeight={retLevel ? "semibold" : undefined}
+                      >
+                        <span className="cdn-tnum">{Math.round(s.returns.rate * 100)}%</span>
+                      </Text>
+                    </Tooltip>
+                  ) : (
+                    <Text as="p" alignment="end" tone="subdued">
+                      —
                     </Text>
                   )}
                 </IndexTable.Cell>
@@ -584,6 +709,36 @@ function AlertsCell({ alerts }: { alerts: Alert[] }) {
   );
 }
 
+/** A single inventory facet filter. Renders nothing when the facet has no values
+ * (so empty facets don't show dead filters). */
+function FacetSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div style={{ minWidth: 150 }}>
+      <Select
+        label={label}
+        labelHidden
+        options={[
+          { label: `All ${label.toLowerCase()}s`, value: "" },
+          ...options.map((o) => ({ label: o, value: o })),
+        ]}
+        value={value}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
 function ShopifySourcePill() {
   return (
     <span className="cdn-source-pill">
@@ -627,6 +782,152 @@ function DemandCell({ demand }: { demand: SKU["demand"] }) {
         <span className="cdn-tnum">{formatDemandUnits(demand.units_30d)}</span>
       </Text>
     </span>
+  );
+}
+
+/** Lazy-loaded 90-day on-hand trend for one SKU, shown in the relocate modal.
+ * Sparkline is auto-scaled, so the min–max range is labelled to keep the shape
+ * honest (a small wiggle on a tall stock shouldn't read as a crash). */
+function StockHistory({ skuId }: { skuId: string }) {
+  const fetcher = useFetcher<{
+    points: SkuHistoryPoint[];
+    error: { code: string; message: string } | null;
+  }>();
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data === undefined) {
+      fetcher.load(`/app/skus/${encodeURIComponent(skuId)}/history`);
+    }
+  }, [skuId, fetcher]);
+
+  const data = fetcher.data;
+  const points = data?.points ?? [];
+  const width = 300;
+  const height = 52;
+
+  let body: React.ReactNode;
+  if (data === undefined) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Loading…
+      </Text>
+    );
+  } else if (data.error) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Couldn&apos;t load stock history.
+      </Text>
+    );
+  } else if (points.length < 2) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Not enough history yet — the trend builds as stock changes.
+      </Text>
+    );
+  } else {
+    const values = points.map((p) => p.on_hand);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const stroke =
+      last.on_hand < first.on_hand
+        ? "var(--p-color-text-critical, #c4321a)"
+        : "var(--p-color-text-secondary, #5c5f62)";
+    body = (
+      <BlockStack gap="100">
+        <svg
+          width={width}
+          height={height}
+          role="img"
+          aria-label={`On-hand from ${first.on_hand} on ${first.date} to ${last.on_hand} on ${last.date}`}
+        >
+          <path
+            d={sparklinePath(values, width, height)}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <Text as="span" tone="subdued" variant="bodySm">
+          Range {min.toLocaleString()}–{max.toLocaleString()} units · {points.length} updates
+        </Text>
+      </BlockStack>
+    );
+  }
+
+  return (
+    <BlockStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="medium">
+        Stock history · 90 days
+      </Text>
+      {body}
+    </BlockStack>
+  );
+}
+
+/** Lazy-loaded "frequently bought with" panel for one SKU, shown in the relocate
+ * modal. Display-only (no navigation) — a compact list of co-purchased SKUs with
+ * order counts + share. */
+function BoughtWith({ skuId }: { skuId: string }) {
+  const fetcher = useFetcher<{
+    items: SkuAffinityItem[];
+    error: { code: string; message: string } | null;
+  }>();
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data === undefined) {
+      fetcher.load(`/app/skus/${encodeURIComponent(skuId)}/affinity`);
+    }
+  }, [skuId, fetcher]);
+
+  const data = fetcher.data;
+  const items = data?.items ?? [];
+
+  let body: React.ReactNode;
+  if (data === undefined) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Loading…
+      </Text>
+    );
+  } else if (data.error) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        Couldn&apos;t load bundles.
+      </Text>
+    );
+  } else if (items.length === 0) {
+    body = (
+      <Text as="span" tone="subdued" variant="bodySm">
+        No frequent pairings yet — this builds as orders come in.
+      </Text>
+    );
+  } else {
+    body = (
+      <BlockStack gap="100">
+        {items.map((it) => (
+          <InlineStack key={it.sku_id} align="space-between" gap="200" wrap={false}>
+            <Text as="span" variant="bodySm" truncate>
+              {it.title}
+            </Text>
+            <Text as="span" tone="subdued" variant="bodySm">
+              {it.co_count.toLocaleString()} order{it.co_count === 1 ? "" : "s"} ·{" "}
+              {Math.round(it.share * 100)}%
+            </Text>
+          </InlineStack>
+        ))}
+      </BlockStack>
+    );
+  }
+
+  return (
+    <BlockStack gap="150">
+      <Text as="span" variant="bodySm" fontWeight="medium">
+        Frequently bought with
+      </Text>
+      {body}
+    </BlockStack>
   );
 }
 
@@ -719,6 +1020,10 @@ function RelocateModal({
     >
       <Modal.Section>
         <BlockStack gap="400">
+          {/* key per SKU: remount → fresh fetcher → refetch if the modal is
+              ever reused for a different SKU without unmounting. */}
+          <StockHistory key={`hist-${sku.id}`} skuId={sku.id} />
+          <BoughtWith key={`bw-${sku.id}`} skuId={sku.id} />
           {sku.demand && (
             <Text as="p" tone="subdued">
               Main demand is {sku.demand.region} ({sku.demand.units_30d.toLocaleString()}{" "}
