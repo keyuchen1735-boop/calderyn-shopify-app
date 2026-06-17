@@ -7,6 +7,8 @@ const cfg: AutopilotGuardrails = {
   dailyActionCap: 3,
   minSpendCents: 20000,
   maxBudgetCutPct: 50,
+  maxBudgetIncreasePct: 20,
+  maxDailyBudgetCents: null,
   dollarCapCents: 1000000,
   cooldownMinutes: 30,
   businessHoursOnly: false,
@@ -67,11 +69,35 @@ describe("evaluateGuardrails", () => {
     const r = evaluateGuardrails({ ...cfg, businessHoursOnly: true }, { ...facts, nowUtcHour: 5 });
     expect(r.allowed).toBe(false);
   });
+
+  it("allows an increase within the max increase %", () => {
+    // 10000 -> 12000 is +20%, cap is 20%.
+    const r = evaluateGuardrails(cfg, { ...facts, kind: "increase_campaign_budget", currentBudgetCents: 10000, newBudgetCents: 12000 });
+    expect(r).toEqual({ allowed: true });
+  });
+  it("blocks an increase beyond the max increase %", () => {
+    const r = evaluateGuardrails(cfg, { ...facts, kind: "increase_campaign_budget", currentBudgetCents: 10000, newBudgetCents: 13000 });
+    expect(r).toEqual({ allowed: false, reason: "budget increase exceeds max" });
+  });
+  it("allows an increase that lands exactly on the daily ceiling", () => {
+    // Ceiling is the inclusive max; autopilot clamps to exactly this value.
+    // 10000 -> 11000 is +10% (within the 20% cap) and == the ceiling.
+    const ceil: AutopilotGuardrails = { ...cfg, maxDailyBudgetCents: 11000 };
+    const r = evaluateGuardrails(ceil, { ...facts, kind: "increase_campaign_budget", currentBudgetCents: 10000, newBudgetCents: 11000 });
+    expect(r).toEqual({ allowed: true });
+  });
+  it("blocks an increase above the daily ceiling when one is set", () => {
+    // 10000 -> 11500 is +15% (within the 20% cap) but exceeds the 11000 ceiling.
+    const ceil: AutopilotGuardrails = { ...cfg, maxDailyBudgetCents: 11000 };
+    const r = evaluateGuardrails(ceil, { ...facts, kind: "increase_campaign_budget", currentBudgetCents: 10000, newBudgetCents: 11500 });
+    expect(r).toEqual({ allowed: false, reason: "budget exceeds daily ceiling" });
+  });
 });
 
 describe("evaluateGuardrails · reallocate_budget", () => {
   const cfg: AutopilotGuardrails = {
     enabled: true, dailyActionCap: 10, minSpendCents: 0, maxBudgetCutPct: 50,
+    maxBudgetIncreasePct: 20, maxDailyBudgetCents: null,
     dollarCapCents: 100000, cooldownMinutes: 30, businessHoursOnly: false,
     businessHoursStartUtc: 0, businessHoursEndUtc: 0,
   };

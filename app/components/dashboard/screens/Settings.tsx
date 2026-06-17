@@ -86,6 +86,24 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   const [saving, setSaving] = useState(false);
   const [savingConsent, setSavingConsent] = useState(false);
 
+  // Draft string for the optional daily-budget ceiling. Kept in sync with the
+  // server value (dollars); blank string represents null (no ceiling). A separate
+  // draft avoids clobbering the user's in-progress typing before blur.
+  const [dailyBudgetDraft, setDailyBudgetDraft] = useState<string>(
+    app.guardrails?.autopilot_max_daily_budget_cents != null
+      ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
+      : "",
+  );
+
+  // Keep the draft in sync when the shell refreshes guardrails from the server.
+  useEffect(() => {
+    setDailyBudgetDraft(
+      app.guardrails?.autopilot_max_daily_budget_cents != null
+        ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
+        : "",
+    );
+  }, [app.guardrails?.autopilot_max_daily_budget_cents]);
+
   useEffect(() => {
     setG(app.guardrails);
   }, [app.guardrails]);
@@ -276,6 +294,63 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                     { value: "50", label: "50%" },
                   ]}
                 />
+              </SettingRow>
+              <SettingRow
+                label="Max budget increase"
+                sub="Most Calderyn can raise a winning campaign's budget at once."
+              >
+                <Segmented
+                  small
+                  value={String(g.autopilot_max_budget_increase_pct)}
+                  onChange={(v) => commit("autopilot_max_budget_increase_pct", Number(v))}
+                  options={[
+                    { value: "15", label: "15%" },
+                    // 20% is the guardrail_config default — must be selectable so a
+                    // fresh shop's value maps to an option.
+                    { value: "20", label: "20%" },
+                    { value: "30", label: "30%" },
+                    { value: "50", label: "50%" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Daily budget ceiling"
+                sub="Never let a campaign's daily budget exceed this amount. Leave blank for no ceiling."
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="cd-caption" style={{ color: "var(--text-2)" }}>$</span>
+                  <input
+                    className="cd-input tabular-nums"
+                    inputMode="decimal"
+                    placeholder="none"
+                    style={{ width: 80, textAlign: "right" }}
+                    value={dailyBudgetDraft}
+                    onChange={(e) => setDailyBudgetDraft(e.target.value)}
+                    onBlur={() => {
+                      const raw = dailyBudgetDraft.trim();
+                      if (raw === "") {
+                        // Blank → clear the ceiling (null).
+                        void commit("autopilot_max_daily_budget_cents", null);
+                      } else {
+                        const dollars = parseFloat(raw);
+                        if (!isNaN(dollars) && dollars >= 0) {
+                          void commit(
+                            "autopilot_max_daily_budget_cents",
+                            Math.round(dollars * 100),
+                          );
+                        } else {
+                          // Invalid — revert draft to current server value.
+                          setDailyBudgetDraft(
+                            g.autopilot_max_daily_budget_cents != null
+                              ? String(g.autopilot_max_daily_budget_cents / 100)
+                              : "",
+                          );
+                        }
+                      }
+                    }}
+                    disabled={saving}
+                  />
+                </div>
               </SettingRow>
               <SettingRow
                 label="Minimum spend to act"

@@ -11,7 +11,9 @@ import { DETECTOR_LABELS } from "../labels";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
+const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
+const DEFAULT_MAX_INCREASE_PCT = 20;
 
 export interface AutopilotSummary {
   skipped: boolean;
@@ -37,13 +39,16 @@ function autopilotReason(verb: string, detectorId: string, dollarImpact: number)
 export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): Promise<AutopilotSummary> {
   const { data: cfg, error: cErr } = await sb
     .from("guardrail_config")
-    .select("autopilot_enabled, autopilot_max_budget_cut_pct")
+    .select("autopilot_enabled, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled) return { skipped: true, acted: 0, blocked: 0 };
 
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
+  const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
+  const maxDailyBudgetCents =
+    cfg.autopilot_max_daily_budget_cents == null ? null : Number(cfg.autopilot_max_daily_budget_cents);
 
   const { data: rows, error: aErr } = await sb
     .from("v_autopilot_candidates")
@@ -53,6 +58,14 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (aErr) throw aErr;
   const candidates = (rows ?? []) as Candidate[];
 
+  // Defensive actions (pause/reduce/reallocate) take priority over offensive
+  // scale-ups so loss-prevention is never starved of the daily action cap by a
+  // bigger-dollar scale opportunity. Each subgroup keeps its dollar_impact order.
+  const ordered = [
+    ...candidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
+    ...candidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
+  ];
+
   // Hoisted: ONE candidate-pool read serves every reallocation decision this
   // run, instead of re-reading campaign + grade facts per candidate.
   const gradedPool = candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id))
@@ -61,13 +74,64 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
 
   let acted = 0;
   let blocked = 0;
-  for (const c of candidates) {
+  for (const c of ordered) {
     let kind: ExecutableKind | null = null;
     if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
     else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
+    else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
     if (!kind) continue;
 
     const currentBudgetCents = c.daily_budget_cents ?? null;
+
+    if (kind === "increase_campaign_budget") {
+      if (!currentBudgetCents) {
+        console.info(
+          `[autopilot] blocked scale on ${c.campaign_id}: current daily budget is ${
+            currentBudgetCents == null ? "missing from sync" : "$0"
+          }`,
+        );
+        blocked += 1;
+        continue;
+      }
+      let target = Math.round(currentBudgetCents * (1 + maxIncreasePct / 100));
+      if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
+      if (target <= currentBudgetCents) {
+        console.info(`[autopilot] skipped scale on ${c.campaign_id}: already at/above the daily ceiling`);
+        blocked += 1;
+        continue;
+      }
+      const verdict = await checkGuardrails(
+        shopId,
+        {
+          kind: "increase_campaign_budget",
+          campaignId: c.campaign_id,
+          dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+          campaignSpendCents: c.campaign_spend_cents,
+          currentBudgetCents,
+          newBudgetCents: target,
+        },
+        sb,
+      );
+      if (!verdict.allowed) {
+        blocked += 1;
+        continue;
+      }
+      await executeAction(
+        shopId,
+        {
+          alertId: c.alert_id,
+          kind: "increase_campaign_budget",
+          campaignId: c.campaign_id,
+          idempotencyKey: `autopilot:${c.alert_id}:increase_campaign_budget`,
+          dailyBudgetCents: target,
+          actor: "autopilot",
+          triggerReason: autopilotReason("Auto scale budget", c.detector_id, c.dollar_impact),
+        },
+        sb,
+      );
+      acted += 1;
+      continue;
+    }
 
     // A budget cut needs a known current budget to cut from. executeAction
     // refuses a missing/zero target budget (it would otherwise zero the live

@@ -6,6 +6,7 @@ export type ActionKind =
   | "pause_campaign"
   | "resume_campaign"
   | "reduce_campaign_budget"
+  | "increase_campaign_budget"
   | "reallocate_budget"
   | "exclude_geo"
   | "reallocate_inventory"
@@ -16,6 +17,7 @@ export type ActionKind =
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"
+  | "campaign_scaling_opportunity"
   | "cogs_drift"
   | "free_shipping_leakage"
   | "margin_erosion"
@@ -176,6 +178,9 @@ export interface GuardrailConfig {
   autopilot_daily_action_cap: number;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;
+  autopilot_max_budget_increase_pct: number;
+  /** Hard per-campaign daily-budget ceiling for autopilot scale-ups; null = none. */
+  autopilot_max_daily_budget_cents: number | null;
 }
 
 // --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---

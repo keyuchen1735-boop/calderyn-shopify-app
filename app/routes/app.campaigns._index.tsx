@@ -53,11 +53,20 @@ import { useActionToast } from "~/lib/toast";
 import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import type { ActionKind, Campaign } from "~/lib/types";
 
+type ScalePrefill = {
+  campaignId: string; // id as used by the campaigns list (Meta = external id)
+  alertId: string;
+  projectedUpside: number; // CENTS (alert.dollar_impact — rowToAlert already converts dollars→cents)
+  newBudgetCents: number;
+  pct: number;
+};
+
 type PendingAction =
   | { kind: "pause"; campaign: Campaign }
   | { kind: "resume"; campaign: Campaign }
   | { kind: "edit_budget"; campaign: Campaign }
-  | { kind: "reallocate"; sourceId?: string };
+  | { kind: "reallocate"; sourceId?: string }
+  | { kind: "scale"; campaign: Campaign; suggestion: ScalePrefill };
 
 type ReallocationPrefill = {
   sourceId: string | null; // id as used by the campaigns list (Meta = external id)
@@ -69,6 +78,7 @@ type ReallocationPrefill = {
 type LoaderPayload = {
   campaigns: Campaign[];
   reallocation: ReallocationPrefill | null;
+  scaleSuggestions: ScalePrefill[];
   error: { code: string; message: string } | null;
 };
 
@@ -138,12 +148,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } catch {
       reallocation = null;
     }
-    return json<LoaderPayload>({ campaigns, reallocation, error: null });
+    // Best-effort scale suggestions from open campaign_scaling_opportunity alerts.
+    // Matches alerts to campaign rows by name (v_alerts_view has no campaign_id
+    // column; name-match mirrors the dashboard's adaptAlert logic). Failure
+    // degrades visibly to [] — badge + row action simply won't show.
+    let scaleSuggestions: ScalePrefill[] = [];
+    try {
+      const [openScaleAlerts, gr] = await Promise.all([
+        client.alerts.list({ status: "open", detector: "campaign_scaling_opportunity" }, request.signal),
+        client.guardrails.get(request.signal),
+      ]);
+      const pct = gr.autopilot_max_budget_increase_pct || 20;
+      scaleSuggestions = openScaleAlerts
+        .map((a) => {
+          // Name-match: a.campaign is the campaign name string from v_alerts_view
+          // (mirrors the dashboard's adaptAlert). TODO: match on the dim id once
+          // v_alerts_view exposes campaign_id — name-match can mis-attribute a
+          // suggestion if two campaigns share a name.
+          const row = campaigns.find((c) => c.name === a.campaign);
+          if (!row || row.status !== "active" || row.daily_budget_cents <= 0) return null;
+          return {
+            campaignId: row.id,
+            alertId: a.id,
+            projectedUpside: a.dollar_impact,
+            newBudgetCents: Math.round(row.daily_budget_cents * (1 + pct / 100)),
+            pct,
+          } satisfies ScalePrefill;
+        })
+        .filter((s): s is ScalePrefill => s !== null);
+    } catch {
+      scaleSuggestions = [];
+    }
+
+    return json<LoaderPayload>({ campaigns, reallocation, scaleSuggestions, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       campaigns: [],
       reallocation: null,
+      scaleSuggestions: [],
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -226,6 +269,76 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json<ActionPayload>({
         ok: true,
         toast: { message: `Moved ${fmtMoneyDec(amountCents)}/day from ${campaignName} to ${destName}` },
+      });
+    } catch (err) {
+      const e = err as CalderynError;
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: e.code ?? "ACTION_FAILED", message: e.message },
+          toast: { message: e.message, isError: true },
+        },
+        { status: e.status >= 400 && e.status < 600 ? e.status : 500 },
+      );
+    }
+  }
+
+  if (intent === "scale") {
+    const newCents = Math.round(Number(formData.get("dailyBudgetCents") || 0));
+    const alertId = String(formData.get("alertId") || "") || null;
+    if (!campaignId || !Number.isFinite(newCents) || newCents <= 0) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "INVALID_REQUEST", message: "campaign and a positive new budget are required" },
+          toast: { message: "Invalid scale request", isError: true },
+        },
+        { status: 400 },
+      );
+    }
+    const sb = getSupabase();
+    const shopId = await resolveShopId(session.shop);
+    const dimId =
+      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
+    if (!dimId) {
+      return json<ActionPayload>(
+        {
+          ok: false,
+          error: { code: "NOT_INGESTED", message: "This campaign is still syncing — try again shortly" },
+          toast: { message: "Campaign still syncing", isError: true },
+        },
+        { status: 409 },
+      );
+    }
+    try {
+      const { outcome } = await executeAction(
+        shopId,
+        { alertId, kind: "increase_campaign_budget", campaignId: dimId, idempotencyKey, dailyBudgetCents: newCents },
+        sb,
+      );
+      if (outcome === "failed") {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_FAILED", message: `Could not scale ${campaignName}` },
+            toast: { message: `Could not scale ${campaignName}`, isError: true },
+          },
+          { status: 502 },
+        );
+      }
+      if (outcome === "retrying") {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "ACTION_RETRYING", message: `Couldn't reach the ad platform — scaling ${campaignName} is queued and will retry` },
+            toast: { message: `${campaignName}: queued, will retry automatically` },
+          },
+          { status: 202 },
+        );
+      }
+      return json<ActionPayload>({
+        ok: true,
+        toast: { message: `Scaled ${campaignName} to ${fmtMoneyDec(newCents)}/day` },
       });
     } catch (err) {
       const e = err as CalderynError;
@@ -474,11 +587,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 function RowActions({
   campaign: c,
   reallocEligible,
+  scaleSuggestion,
   setPending,
   setBudgetInput,
 }: {
   campaign: Campaign;
   reallocEligible: boolean;
+  scaleSuggestion: ScalePrefill | null;
   setPending: (p: PendingAction) => void;
   setBudgetInput: (v: string) => void;
 }) {
@@ -533,6 +648,14 @@ function RowActions({
               setPending({ kind: "reallocate", sourceId: c.id });
             },
           },
+          {
+            content: "Scale budget",
+            disabled: !scaleSuggestion || c.status !== "active" || c.daily_budget_cents <= 0,
+            onAction: () => {
+              close();
+              if (scaleSuggestion) setPending({ kind: "scale", campaign: c, suggestion: scaleSuggestion });
+            },
+          },
         ]}
       />
     </Popover>
@@ -541,7 +664,7 @@ function RowActions({
 
 export default function Campaigns() {
   const navigate = useEmbeddedNavigate();
-  const { campaigns, reallocation, error } = useLoaderData<typeof loader>();
+  const { campaigns, reallocation, scaleSuggestions, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
@@ -578,6 +701,7 @@ export default function Campaigns() {
   });
 
   const rows = sorted.map((c) => {
+    const scaleSuggestion = scaleSuggestions.find((s) => s.campaignId === c.id) ?? null;
     return [
       <Link
         key={`n-${c.id}`}
@@ -591,9 +715,12 @@ export default function Campaigns() {
         </Text>
       </Link>,
       <PlatformTag key={`p-${c.id}`} platform={c.platform} />,
-      <Badge key={`s-${c.id}`} tone={c.status === "active" ? "success" : "attention"}>
-        {c.status === "active" ? "Active" : "Paused"}
-      </Badge>,
+      <InlineStack key={`s-${c.id}`} gap="200" blockAlign="center">
+        <Badge tone={c.status === "active" ? "success" : "attention"}>
+          {c.status === "active" ? "Active" : "Paused"}
+        </Badge>
+        {scaleSuggestion ? <Badge tone="success">Suggested: scale</Badge> : null}
+      </InlineStack>,
       c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
       fmtMoney(c.spend_7d),
       c.roas_7d > 0 ? `${c.roas_7d.toFixed(1)}×` : "—",
@@ -601,6 +728,7 @@ export default function Campaigns() {
         key={`act-${c.id}`}
         campaign={c}
         reallocEligible={reallocEligibleCount >= 2}
+        scaleSuggestion={scaleSuggestion}
         setPending={setPending}
         setBudgetInput={setBudgetInput}
       />,
@@ -779,6 +907,15 @@ export default function Campaigns() {
           campaigns={campaigns}
           prefill={reallocation}
           initialSourceId={pending.sourceId}
+          submitting={submitting}
+          onClose={() => setPending(null)}
+        />
+      )}
+
+      {pending?.kind === "scale" && (
+        <ScaleBudgetModal
+          campaign={pending.campaign}
+          suggestion={pending.suggestion}
           submitting={submitting}
           onClose={() => setPending(null)}
         />
@@ -967,6 +1104,55 @@ function ReallocateBudgetModal({
                 </Button>
                 <Button submit variant="primary" loading={submitting} disabled={submitting || !valid}>
                   Move {fmtMoneyDec(amountInvalid ? 0 : amountCents)}/day
+                </Button>
+              </ButtonGroup>
+            </Box>
+          </BlockStack>
+        </Form>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
+function ScaleBudgetModal({
+  campaign,
+  suggestion,
+  submitting,
+  onClose,
+}: {
+  campaign: Campaign;
+  suggestion: ScalePrefill;
+  submitting: boolean;
+  onClose: () => void;
+}) {
+  const [idempotencyKey] = useState(() => `scale:${newIdempotencyKey()}`);
+  return (
+    <Modal open title="Scale this winning campaign" onClose={onClose}>
+      <Modal.Section>
+        <Form method="post" preventScrollReset>
+          <input type="hidden" name="intent" value="scale" />
+          <input type="hidden" name="campaignId" value={campaign.id} />
+          <input type="hidden" name="campaignName" value={campaign.name} />
+          <input type="hidden" name="platform" value={campaign.platform} />
+          <input type="hidden" name="dailyBudgetCents" value={String(suggestion.newBudgetCents)} />
+          <input type="hidden" name="alertId" value={suggestion.alertId} />
+          <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+          <BlockStack gap="300">
+            <Text as="p">
+              {campaign.platform} · {campaign.name} is winning. Raise its daily budget {suggestion.pct}% (
+              {fmtMoney(campaign.daily_budget_cents)} → {fmtMoney(suggestion.newBudgetCents)}/day) for about{" "}
+              <Text as="span" fontWeight="bold">
+                {fmtMoney(suggestion.projectedUpside)}/mo
+              </Text>{" "}
+              more projected margin.
+            </Text>
+            <Box>
+              <ButtonGroup>
+                <Button onClick={onClose} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button submit variant="primary" loading={submitting} disabled={submitting}>
+                  Scale budget
                 </Button>
               </ButtonGroup>
             </Box>

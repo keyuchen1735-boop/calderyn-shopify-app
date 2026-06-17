@@ -12,6 +12,9 @@ export interface AutopilotGuardrails {
   dailyActionCap: number;
   minSpendCents: number;
   maxBudgetCutPct: number;
+  maxBudgetIncreasePct: number;
+  /** Hard per-campaign daily-budget ceiling; null = no ceiling. */
+  maxDailyBudgetCents: number | null;
   dollarCapCents: number;
   cooldownMinutes: number;
   businessHoursOnly: boolean;
@@ -67,6 +70,23 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
   ) {
     const cutPct = (1 - facts.newBudgetCents / facts.currentBudgetCents) * 100;
     if (cutPct > cfg.maxBudgetCutPct + 1e-9) return { allowed: false, reason: "budget cut exceeds max" };
+  }
+  if (
+    facts.kind === "increase_campaign_budget" &&
+    facts.currentBudgetCents != null &&
+    facts.currentBudgetCents > 0 &&
+    facts.newBudgetCents != null
+  ) {
+    const increasePct = (facts.newBudgetCents / facts.currentBudgetCents - 1) * 100;
+    if (increasePct > cfg.maxBudgetIncreasePct + 1e-9) {
+      return { allowed: false, reason: "budget increase exceeds max" };
+    }
+    // Strict `>`: the ceiling is the inclusive maximum. Autopilot clamps a
+    // target to exactly maxDailyBudgetCents, so a budget AT the ceiling must
+    // be allowed — only a budget that truly exceeds it is blocked.
+    if (cfg.maxDailyBudgetCents != null && facts.newBudgetCents > cfg.maxDailyBudgetCents) {
+      return { allowed: false, reason: "budget exceeds daily ceiling" };
+    }
   }
   if (cfg.businessHoursOnly && !withinBusinessHours(cfg.businessHoursStartUtc, cfg.businessHoursEndUtc, facts.nowUtcHour)) {
     return { allowed: false, reason: "outside business hours" };

@@ -6,7 +6,12 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { getSupabase } from "~/lib/supabase.server";
 
-const KINDS: ExecutableKind[] = ["pause_campaign", "resume_campaign", "reduce_campaign_budget"];
+const KINDS: ExecutableKind[] = [
+  "pause_campaign",
+  "resume_campaign",
+  "reduce_campaign_budget",
+  "increase_campaign_budget",
+];
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -28,7 +33,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
   if (
-    kind === "reduce_campaign_budget" &&
+    (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&
     (!Number.isFinite(dailyBudgetCents) || (dailyBudgetCents as number) <= 0)
   ) {
     return jsonError(422, "invalid_daily_budget_cents");

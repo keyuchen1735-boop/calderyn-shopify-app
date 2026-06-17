@@ -56,6 +56,7 @@ _tracer = get_tracer(__name__)
 from calderyn_engine.detectors import (  # noqa: E402, F401
     ad_tax_overload,
     campaign_below_breakeven,
+    campaign_scaling_opportunity,
     cogs_drift,
     margin_erosion,
     negative_unit_economics,
