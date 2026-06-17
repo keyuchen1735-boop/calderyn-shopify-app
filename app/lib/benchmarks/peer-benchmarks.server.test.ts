@@ -73,7 +73,22 @@ describe("getPeerBenchmarks", () => {
     expect(aov.percentile).toBeNull();
   });
 
-  it("gates peer fields when consented but niche has no baseline (n<5)", async () => {
+  it("gates peer fields when a baseline row exists but n < K_FLOOR", async () => {
+    consentedElectronics();
+    // A real row exists (so `base` is truthy) but n=4 < 5 — exercises the
+    // read-side k-floor guard, not just the missing-row path.
+    TABLES["v_peer_metric_baselines"] = [
+      { metric_key: "aov", segment: "cat:electronics", p25: 200, p50: 300, p75: 400, n: 4 },
+    ];
+    const out = await getPeerBenchmarks("test.myshopify.com");
+    const aov = out.kpis.find((k) => k.metric_key === "aov")!;
+    expect(aov.available).toBe(false);
+    expect(aov.p50).toBeNull();
+    expect(aov.percentile).toBeNull();
+    expect(aov.your_value).toBe(300);
+  });
+
+  it("gates peer fields when consented but the niche has no baseline row", async () => {
     consentedElectronics();
     TABLES["v_peer_metric_baselines"] = []; // niche < 5 peers → no row
     const out = await getPeerBenchmarks("test.myshopify.com");
@@ -82,10 +97,12 @@ describe("getPeerBenchmarks", () => {
     expect(aov.your_value).toBe(300);
   });
 
-  it("reports uncategorized niche (UI hides the card)", async () => {
+  it("reports uncategorized niche and gates all peer fields (UI hides the card)", async () => {
     consentedElectronics();
     TABLES["v_peer_shop_niche"] = []; // no dominant category
     const out = await getPeerBenchmarks("test.myshopify.com");
     expect(out.niche).toBe("cat:uncategorized");
+    expect(out.kpis.every((k) => !k.available)).toBe(true);
+    expect(out.kpis.every((k) => k.p50 === null && k.percentile === null)).toBe(true);
   });
 });
