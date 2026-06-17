@@ -34,3 +34,23 @@ def segment_for_shop(gmv_90d_cents: int) -> str:
         if gmv_90d_cents >= lower_cents:
             return label
     return "gmv:micro"
+
+
+async def gmv_band_for_shop(conn: Any, shop_id: str, run_date: date) -> str:
+    """Return the ``gmv:<band>`` segment for ``shop_id`` at ``run_date``.
+
+    Bands off trailing-90d gross merchandise value
+    (sum of ``order_fact.total_cents`` in ``[run_date-90d, run_date]``).
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT COALESCE(SUM(total_cents), 0)::bigint AS gmv_cents
+          FROM public.order_fact
+         WHERE shop_id = $1::uuid
+           AND created_at_source >= ($2::date - INTERVAL '90 days')
+           AND created_at_source <  ($2::date + INTERVAL '1 day')
+        """,
+        shop_id, run_date,
+    )
+    gmv_cents = int(row["gmv_cents"]) if row and row["gmv_cents"] is not None else 0
+    return segment_for_shop(gmv_cents)
