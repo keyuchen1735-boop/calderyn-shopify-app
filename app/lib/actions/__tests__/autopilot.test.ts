@@ -164,7 +164,7 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).not.toHaveBeenCalled();
     expect(executeReallocation).not.toHaveBeenCalled();
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1 });
+    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1, failed: 0 });
   });
 
   it("keeps draining the remaining candidates after a null-budget block", async () => {
@@ -182,7 +182,7 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1 });
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1, failed: 0 });
   });
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
@@ -231,5 +231,68 @@ describe("runAutopilotForShop", () => {
     await runAutopilotForShop(SHOP, sb);
     const kinds = executeAction.mock.calls.map((c) => ((c as unknown as [unknown, { kind: string }])[1]).kind);
     expect(kinds).toEqual(["pause_campaign", "increase_campaign_budget"]);
+  });
+
+  // A platform error is CAUGHT inside executeAction and returned as
+  // outcome:"failed" (e.g. "meta not connected") — the budget never changed,
+  // so the run summary must NOT report it as an action taken.
+  it("does not count a failed executeAction outcome as acted", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    executeAction.mockResolvedValue({ id: "aud1", outcome: "failed" });
+    const sb = fakeSb({ enabled: true, alerts: [candidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+  });
+
+  // A transient platform failure is parked as outcome:"retrying" for the retry
+  // cron — nothing landed this run, so it is not an action taken either.
+  it("does not count a retrying executeAction outcome as acted", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    executeAction.mockResolvedValue({ id: "aud1", outcome: "retrying" });
+    const sb = fakeSb({ enabled: true, alerts: [candidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+  });
+
+  // executeAction THROWS on ownership/validation/DB errors. One bad candidate
+  // must not abort loss-prevention for the shop's other money-losing campaigns.
+  it("isolates an executeAction throw and keeps draining candidates", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    executeAction
+      .mockRejectedValueOnce(new Error("campaign not found (ownership check failed)"))
+      .mockResolvedValue({ id: "aud2", outcome: "succeeded" });
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [
+        { ...candidate, alert_id: "al-bad", campaign_id: "camp-bad" },
+        { ...candidate, alert_id: "al-good", campaign_id: "camp-good" },
+      ],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+  });
+
+  // executeReallocation THROWS when the live source budget dropped below the
+  // view snapshot (amount >= source budget). The throw must be isolated, not
+  // abort the run, and the pause candidate behind it must still be acted on.
+  it("isolates an executeReallocation throw and keeps draining candidates", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+    executeReallocation.mockRejectedValue(new Error("amount must leave the source budget above zero"));
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [
+        { ...candidate, alert_id: "al-realloc", detector_id: "ad_tax_overload", campaign_id: "camp-realloc" },
+        { ...candidate, alert_id: "al-pause", campaign_id: "camp-pause" },
+      ],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "pause_campaign", alertId: "al-pause" }),
+      sb,
+    );
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
   });
 });

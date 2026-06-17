@@ -4,7 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkGuardrails } from "./guardrails.server";
-import { executeAction, type ExecutableKind } from "./execute.server";
+import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
 import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
 import { DETECTOR_LABELS } from "../labels";
@@ -17,8 +17,12 @@ const DEFAULT_MAX_INCREASE_PCT = 20;
 
 export interface AutopilotSummary {
   skipped: boolean;
+  /** Actions that actually LANDED on the platform (executor outcome "succeeded"). */
   acted: number;
+  /** Candidates a guardrail or pre-flight check refused (no budget written). */
   blocked: number;
+  /** Attempted but did not land: executor returned "failed"/"retrying", or threw. */
+  failed: number;
 }
 
 interface Candidate {
@@ -43,7 +47,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     .eq("shop_id", shopId)
     .maybeSingle();
   if (cErr) throw cErr;
-  if (!cfg || !cfg.autopilot_enabled) return { skipped: true, acted: 0, blocked: 0 };
+  if (!cfg || !cfg.autopilot_enabled) return { skipped: true, acted: 0, blocked: 0, failed: 0 };
 
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
   const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
@@ -74,41 +78,166 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
 
   let acted = 0;
   let blocked = 0;
+  let failed = 0;
+  // Bucket an executor's REAL outcome: only a landed "succeeded" is an action
+  // taken. "failed"/"retrying" (platform error, or parked for the retry cron)
+  // did NOT change a budget this run, so they must not inflate `acted`.
+  const record = (outcome: ExecutedAudit["outcome"]) => {
+    if (outcome === "succeeded") acted += 1;
+    else failed += 1;
+  };
   for (const c of ordered) {
-    let kind: ExecutableKind | null = null;
-    if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
-    else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
-    else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
-    if (!kind) continue;
+    // Isolate each candidate. The guardrail read and both executors THROW on
+    // per-campaign faults — an ownership mismatch, a DB hiccup, or a
+    // stale-budget reallocation (live source budget dropped below the view
+    // snapshot, so amount >= source budget). An uncaught throw here would
+    // abort loss-prevention for the shop's OTHER money-losing campaigns, so
+    // count it failed and keep draining.
+    try {
+      let kind: ExecutableKind | null = null;
+      if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
+      else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
+      else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
+      if (!kind) continue;
 
-    const currentBudgetCents = c.daily_budget_cents ?? null;
+      const currentBudgetCents = c.daily_budget_cents ?? null;
 
-    if (kind === "increase_campaign_budget") {
-      if (!currentBudgetCents) {
+      if (kind === "increase_campaign_budget") {
+        if (!currentBudgetCents) {
+          console.info(
+            `[autopilot] blocked scale on ${c.campaign_id}: current daily budget is ${
+              currentBudgetCents == null ? "missing from sync" : "$0"
+            }`,
+          );
+          blocked += 1;
+          continue;
+        }
+        let target = Math.round(currentBudgetCents * (1 + maxIncreasePct / 100));
+        if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
+        if (target <= currentBudgetCents) {
+          console.info(`[autopilot] skipped scale on ${c.campaign_id}: already at/above the daily ceiling`);
+          blocked += 1;
+          continue;
+        }
+        const verdict = await checkGuardrails(
+          shopId,
+          {
+            kind: "increase_campaign_budget",
+            campaignId: c.campaign_id,
+            dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+            campaignSpendCents: c.campaign_spend_cents,
+            currentBudgetCents,
+            newBudgetCents: target,
+          },
+          sb,
+        );
+        if (!verdict.allowed) {
+          blocked += 1;
+          continue;
+        }
+        const res = await executeAction(
+          shopId,
+          {
+            alertId: c.alert_id,
+            kind: "increase_campaign_budget",
+            campaignId: c.campaign_id,
+            idempotencyKey: `autopilot:${c.alert_id}:increase_campaign_budget`,
+            dailyBudgetCents: target,
+            actor: "autopilot",
+            triggerReason: autopilotReason("Auto scale budget", c.detector_id, c.dollar_impact),
+          },
+          sb,
+        );
+        record(res.outcome);
+        continue;
+      }
+
+      // A budget cut needs a known current budget to cut from. executeAction
+      // refuses a missing/zero target budget (it would otherwise zero the live
+      // campaign) — so count it blocked and keep draining the remaining candidates.
+      if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
+        // Distinguish "no budget synced" from "budget is $0 on the platform" in
+        // the logs — both block, but they have different operator fixes.
         console.info(
-          `[autopilot] blocked scale on ${c.campaign_id}: current daily budget is ${
-            currentBudgetCents == null ? "missing from sync" : "$0"
+          `[autopilot] blocked budget cut on ${c.campaign_id}: current daily budget is ${
+            currentBudgetCents == null ? "missing from sync" : "$0 on the platform"
           }`,
         );
         blocked += 1;
         continue;
       }
-      let target = Math.round(currentBudgetCents * (1 + maxIncreasePct / 100));
-      if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
-      if (target <= currentBudgetCents) {
-        console.info(`[autopilot] skipped scale on ${c.campaign_id}: already at/above the daily ceiling`);
+
+      const newBudgetCents =
+        kind === "reduce_campaign_budget" && currentBudgetCents != null
+          ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
+          : undefined;
+
+      // Same refusal in executeAction: a cut that lands on $0 would zero the
+      // live campaign budget (that's a pause, not a reduction) — blocked. Only
+      // reachable with maxCutPct near 100, so flag the config loudly.
+      if (kind === "reduce_campaign_budget" && !newBudgetCents) {
+        console.warn(
+          `[autopilot] blocked budget cut on ${c.campaign_id}: max_budget_cut_pct=${maxCutPct} computes a $0 target budget`,
+        );
         blocked += 1;
         continue;
       }
+
+      // Budget detectors: prefer REDIRECTING the cut to a winning campaign on
+      // another platform over shrinking total spend. Falls back to the plain
+      // reduction below when no destination exists. A guardrail-blocked
+      // reallocation does NOT fall through to reduce — same alert, same day,
+      // one decision (counted as blocked).
+      if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
+        const amountCents = currentBudgetCents - newBudgetCents;
+        if (amountCents > 0) {
+          const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
+          if (dest) {
+            const verdict = await checkGuardrails(
+              shopId,
+              {
+                kind: "reallocate_budget",
+                campaignId: c.campaign_id,
+                destCampaignId: dest.campaignId,
+                dollarImpactCents: amountCents,
+                campaignSpendCents: c.campaign_spend_cents,
+                currentBudgetCents,
+                newBudgetCents,
+              },
+              sb,
+            );
+            if (!verdict.allowed) {
+              blocked += 1;
+              continue;
+            }
+            const res = await executeReallocation(
+              shopId,
+              {
+                alertId: c.alert_id,
+                sourceCampaignId: c.campaign_id,
+                destCampaignId: dest.campaignId,
+                amountCents,
+                idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
+                actor: "autopilot",
+                triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
+              },
+              sb,
+            );
+            record(res.outcome);
+            continue;
+          }
+        }
+      }
+
       const verdict = await checkGuardrails(
         shopId,
         {
-          kind: "increase_campaign_budget",
+          kind,
           campaignId: c.campaign_id,
           dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
           campaignSpendCents: c.campaign_spend_cents,
-          currentBudgetCents,
-          newBudgetCents: target,
+          currentBudgetCents: currentBudgetCents ?? undefined,
+          newBudgetCents,
         },
         sb,
       );
@@ -116,137 +245,31 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         blocked += 1;
         continue;
       }
-      await executeAction(
+
+      const res = await executeAction(
         shopId,
         {
           alertId: c.alert_id,
-          kind: "increase_campaign_budget",
+          kind,
           campaignId: c.campaign_id,
-          idempotencyKey: `autopilot:${c.alert_id}:increase_campaign_budget`,
-          dailyBudgetCents: target,
+          idempotencyKey: `autopilot:${c.alert_id}:${kind}`,
+          dailyBudgetCents: newBudgetCents,
           actor: "autopilot",
-          triggerReason: autopilotReason("Auto scale budget", c.detector_id, c.dollar_impact),
+          triggerReason: autopilotReason(
+            kind === "pause_campaign" ? "Auto-pause" : "Auto budget cut",
+            c.detector_id,
+            c.dollar_impact,
+          ),
         },
         sb,
       );
-      acted += 1;
-      continue;
+      record(res.outcome);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
+      failed += 1;
     }
-
-    // A budget cut needs a known current budget to cut from. executeAction
-    // refuses a missing/zero target budget (it would otherwise zero the live
-    // campaign), and an uncaught throw here would abort the whole run — so
-    // count it blocked and keep draining the remaining candidates.
-    if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
-      // Distinguish "no budget synced" from "budget is $0 on the platform" in
-      // the logs — both block, but they have different operator fixes.
-      console.info(
-        `[autopilot] blocked budget cut on ${c.campaign_id}: current daily budget is ${
-          currentBudgetCents == null ? "missing from sync" : "$0 on the platform"
-        }`,
-      );
-      blocked += 1;
-      continue;
-    }
-
-    const newBudgetCents =
-      kind === "reduce_campaign_budget" && currentBudgetCents != null
-        ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
-        : undefined;
-
-    // Same refusal in executeAction: a cut that lands on $0 would zero the
-    // live campaign budget (that's a pause, not a reduction) — blocked. Only
-    // reachable with maxCutPct near 100, so flag the config loudly.
-    if (kind === "reduce_campaign_budget" && !newBudgetCents) {
-      console.warn(
-        `[autopilot] blocked budget cut on ${c.campaign_id}: max_budget_cut_pct=${maxCutPct} computes a $0 target budget`,
-      );
-      blocked += 1;
-      continue;
-    }
-
-    // Budget detectors: prefer REDIRECTING the cut to a winning campaign on
-    // another platform over shrinking total spend. Falls back to the plain
-    // reduction below when no destination exists. A guardrail-blocked
-    // reallocation does NOT fall through to reduce — same alert, same day,
-    // one decision (counted as blocked).
-    if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
-      const amountCents = currentBudgetCents - newBudgetCents;
-      if (amountCents > 0) {
-        const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
-        if (dest) {
-          const verdict = await checkGuardrails(
-            shopId,
-            {
-              kind: "reallocate_budget",
-              campaignId: c.campaign_id,
-              destCampaignId: dest.campaignId,
-              dollarImpactCents: amountCents,
-              campaignSpendCents: c.campaign_spend_cents,
-              currentBudgetCents,
-              newBudgetCents,
-            },
-            sb,
-          );
-          if (!verdict.allowed) {
-            blocked += 1;
-            continue;
-          }
-          await executeReallocation(
-            shopId,
-            {
-              alertId: c.alert_id,
-              sourceCampaignId: c.campaign_id,
-              destCampaignId: dest.campaignId,
-              amountCents,
-              idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
-              actor: "autopilot",
-              triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
-            },
-            sb,
-          );
-          acted += 1;
-          continue;
-        }
-      }
-    }
-
-    const verdict = await checkGuardrails(
-      shopId,
-      {
-        kind,
-        campaignId: c.campaign_id,
-        dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
-        campaignSpendCents: c.campaign_spend_cents,
-        currentBudgetCents: currentBudgetCents ?? undefined,
-        newBudgetCents,
-      },
-      sb,
-    );
-    if (!verdict.allowed) {
-      blocked += 1;
-      continue;
-    }
-
-    await executeAction(
-      shopId,
-      {
-        alertId: c.alert_id,
-        kind,
-        campaignId: c.campaign_id,
-        idempotencyKey: `autopilot:${c.alert_id}:${kind}`,
-        dailyBudgetCents: newBudgetCents,
-        actor: "autopilot",
-        triggerReason: autopilotReason(
-          kind === "pause_campaign" ? "Auto-pause" : "Auto budget cut",
-          c.detector_id,
-          c.dollar_impact,
-        ),
-      },
-      sb,
-    );
-    acted += 1;
   }
 
-  return { skipped: false, acted, blocked };
+  return { skipped: false, acted, blocked, failed };
 }

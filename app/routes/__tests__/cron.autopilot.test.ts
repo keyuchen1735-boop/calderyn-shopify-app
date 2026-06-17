@@ -28,6 +28,17 @@ function fakeSb(shopIds: string[]) {
   };
 }
 
+// The shop-list query fails (DB outage). data is null, error is set.
+function fakeSbError(message: string) {
+  return {
+    from: () => ({
+      select: () => ({
+        eq: () => Promise.resolve({ data: null, error: { message } }),
+      }),
+    }),
+  };
+}
+
 function req(auth?: string): Request {
   const headers = new Headers();
   if (auth) headers.set("authorization", auth);
@@ -48,7 +59,7 @@ describe("cron.autopilot loader", () => {
 
   it("calls runAutopilotForShop once per enabled shop", async () => {
     getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
-    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 0 });
+    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 0, failed: 0 });
 
     const res = await loader({ request: req("Bearer s3cret") } as never);
     const body = await res.json();
@@ -64,7 +75,7 @@ describe("cron.autopilot loader", () => {
     getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
     runAutopilotForShop
       .mockRejectedValueOnce(new Error("shop A exploded"))
-      .mockResolvedValueOnce({ skipped: false, acted: 1, blocked: 0 });
+      .mockResolvedValueOnce({ skipped: false, acted: 1, blocked: 0, failed: 0 });
 
     const res = await loader({ request: req("Bearer s3cret") } as never);
     const body = await res.json();
@@ -76,5 +87,28 @@ describe("cron.autopilot loader", () => {
     // Shop B still ran and counted
     expect(body.shops).toBe(1);
     expect(body.acted).toBe(1);
+  });
+
+  it("sums acted, blocked and failed across shops", async () => {
+    getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
+    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 2, failed: 3 });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.acted).toBe(2);
+    expect(body.blocked).toBe(4);
+    expect(body.failed).toBe(6);
+  });
+
+  it("surfaces a shop-list query error instead of silently reporting zero shops", async () => {
+    getSupabase.mockReturnValue(fakeSbError("connection terminated"));
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+
+    expect(res.status).toBe(500);
+    expect(runAutopilotForShop).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.error).toContain("connection terminated");
   });
 });
