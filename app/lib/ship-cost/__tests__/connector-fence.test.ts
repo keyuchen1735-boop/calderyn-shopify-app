@@ -34,6 +34,14 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
         return chain;
       },
+      range(from: number, to: number) {
+        // runner.server.ts paginates via fetchAllRows → PostgREST .range (inclusive
+        // both ends), stopping on a short page. Fixtures seed < 1 page, so a single
+        // window returns every (already .eq/.in-filtered) row. Without this the chain
+        // throws "range is not a function" before any assertion runs.
+        selectedRows = selectedRows.slice(from, to + 1);
+        return chain;
+      },
       update(payload: Record<string, unknown>) {
         const updateFilters: Record<string, unknown> = {};
         const updateChain: any = {
