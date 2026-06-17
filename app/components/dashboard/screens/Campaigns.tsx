@@ -286,6 +286,39 @@ function CampaignDetail({
         </Card>
       </div>
 
+      {!paused && scaleAlert && (
+        <Card>
+          <SectionTitle>Scale opportunity</SectionTitle>
+          <p className="cd-body" style={{ margin: "8px 0 12px" }}>
+            This campaign is winning — earning{" "}
+            <b className="tabular-nums">{c.roas_7d.toFixed(1)}×</b> on ad spend. Raising its daily
+            budget {scalePct}% (
+            <span className="tabular-nums">
+              {money(c.daily_budget_cents)} → {money(scaleTarget)}
+            </span>
+            ) projects about{" "}
+            <b className="tabular-nums" style={{ color: "var(--green)" }}>
+              +{money(scaleAlert.dollar_impact)}/mo
+            </b>{" "}
+            more profit if it keeps performing.
+          </p>
+          <Btn
+            icon="arrowUpRight"
+            disabled={busy}
+            onClick={() =>
+              run(
+                "increase_campaign_budget",
+                `Budget scaled +${scalePct}% — logged to action history.`,
+                status,
+                scaleTarget,
+              )
+            }
+          >
+            Scale +{scalePct}%
+          </Btn>
+        </Card>
+      )}
+
       {(() => {
         // Open alerts attributed to this campaign (live source: app.alerts).
         const open = app.alerts.filter(

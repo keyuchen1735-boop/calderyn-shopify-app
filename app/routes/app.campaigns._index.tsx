@@ -730,7 +730,16 @@ export default function Campaigns() {
         </Badge>
         {scaleSuggestion ? (
           <Tooltip content={scaleSuggestion.reason}>
-            <Badge tone="success">Suggested: scale</Badge>
+            <Link
+              removeUnderline
+              onClick={() =>
+                navigate(
+                  `/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}&scale=1`,
+                )
+              }
+            >
+              <Badge tone="success">Suggested: scale</Badge>
+            </Link>
           </Tooltip>
         ) : null}
       </InlineStack>,
