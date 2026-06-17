@@ -60,6 +60,28 @@ async def test_does_not_fire_when_unit_econ_positive(
 
 
 @pytest.mark.asyncio
+async def test_threshold_defaults_to_500_when_no_override(
+    pg_pool, seed_shop, seed_negative_unit_econ_scenario, monkeypatch
+) -> None:
+    """Offline cutover safety: no MOAT_PEPPER, no override → $500 gate.
+    Unit margin $5, CAC $10/unit, net -$5 across 50 units ⇒ impact $250 < $500,
+    so the detector must not fire."""
+    monkeypatch.delenv("MOAT_PEPPER", raising=False)
+    await seed_shop(SHOP)
+    await seed_negative_unit_econ_scenario(
+        SHOP,
+        unit_price_usd=Decimal("20"),
+        unit_cost_usd=Decimal("15"),
+        units=50,
+        spend_usd=Decimal("500"),
+    )
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP):
+            results = await detect(SHOP, conn, NOW)
+    assert results == []
+
+
+@pytest.mark.asyncio
 async def test_does_not_fire_below_threshold(
     pg_pool, seed_shop, seed_negative_unit_econ_scenario
 ) -> None:
