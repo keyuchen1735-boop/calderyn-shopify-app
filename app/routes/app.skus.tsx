@@ -42,7 +42,11 @@ import {
   inventoryAlertActions,
   openAlertsBySku,
 } from "~/lib/inventory-alerts";
-import { formatDemandUnits } from "~/lib/inventory-demand";
+import {
+  formatDemandUnits,
+  formatStockoutDate,
+  projectedStockoutDate,
+} from "~/lib/inventory-demand";
 import { shipCostBadge } from "~/lib/ship-cost/provenance";
 import { ShipPnlText } from "~/components/calderyn/ship-pnl-text";
 
@@ -399,6 +403,12 @@ export default function SKUs() {
                   ? "caution"
                   : undefined
               : undefined;
+            // Sell-out date label, only for low-cover (toned) rows — a date on
+            // healthy stock is noise. coverTone is set only when selling.
+            const stockoutIso = coverTone
+              ? projectedStockoutDate(cover, s.velocity ?? 0)
+              : null;
+            const stockoutLabel = stockoutIso ? formatStockoutDate(stockoutIso) : null;
             return (
               <IndexTable.Row id={s.id} key={s.id} position={index}>
                 <IndexTable.Cell>
@@ -421,18 +431,29 @@ export default function SKUs() {
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   {selling ? (
-                    <Text
-                      as="p"
-                      alignment="end"
-                      fontWeight={coverTone ? "semibold" : undefined}
-                      tone={coverTone}
-                    >
-                      <span className="cdn-tnum">{cover.toFixed(1)}</span>
-                      <Text as="span" tone="subdued">
-                        {" "}
-                        d
+                    <BlockStack gap="050" inlineAlign="end">
+                      <Text
+                        as="p"
+                        alignment="end"
+                        fontWeight={coverTone ? "semibold" : undefined}
+                        tone={coverTone}
+                      >
+                        <span className="cdn-tnum">{cover.toFixed(1)}</span>
+                        <Text as="span" tone="subdued">
+                          {" "}
+                          d
+                        </Text>
                       </Text>
-                    </Text>
+                      {stockoutLabel && (
+                        <Tooltip
+                          content={`Projected to sell out around ${stockoutLabel} at the current pace`}
+                        >
+                          <Text as="span" tone="subdued" variant="bodySm">
+                            ~{stockoutLabel}
+                          </Text>
+                        </Tooltip>
+                      )}
+                    </BlockStack>
                   ) : (
                     <Tooltip content="No recent sales, so days of cover isn't meaningful">
                       <Text as="p" alignment="end" tone="subdued">

@@ -9,7 +9,7 @@ import { Btn, Card, Pill, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { executeAlertAction, fetchSkus, relocateSku, DashboardApiError } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
-import { formatDemandUnits } from "~/lib/inventory-demand";
+import { formatDemandUnits, formatStockoutDate } from "~/lib/inventory-demand";
 import { money } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
@@ -201,7 +201,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
             <div className="cd-table-head">
               <span style={{ flex: "1 1 0", minWidth: 140 }}>SKU</span>
               <span style={{ width: 64, textAlign: "right" }}>On hand</span>
-              <span style={{ width: 52, textAlign: "right" }}>Cover</span>
+              <span style={{ width: 60, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
               <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
               <span style={{ width: 120 }}>Main demand</span>
@@ -216,6 +216,15 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                 const skuAlerts = openAlertsFor(s);
                 const alert = skuAlerts[0];
                 const canRelocate = s.locations_detail.some((l) => l.available > 0);
+                // Sell-out date label, only for low-cover rows — a date on
+                // healthy long-tail stock is just noise. Mirrors the extension's
+                // caution band (cover < 7d) so the date shows under the same
+                // condition on both surfaces (projected_stockout is null for
+                // no-sales SKUs, matching the extension's `selling` gate).
+                const stockoutLabel =
+                  s.projected_stockout && s.days_of_cover < 7
+                    ? formatStockoutDate(s.projected_stockout)
+                    : null;
                 return (
                   <div
                     key={s.id}
@@ -252,14 +261,27 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       {s.on_hand}
                     </span>
                     <span
-                      className="tabular-nums"
                       style={{
-                        width: 52,
-                        textAlign: "right",
-                        color: s.days_of_cover <= 9 ? "var(--red)" : "var(--text-2)",
+                        width: 60,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-end",
                       }}
                     >
-                      {s.days_of_cover}d
+                      <span
+                        className="tabular-nums"
+                        style={{ color: s.days_of_cover <= 9 ? "var(--red)" : "var(--text-2)" }}
+                      >
+                        {s.days_of_cover}d
+                      </span>
+                      {stockoutLabel && (
+                        <span
+                          className="cd-caption tabular-nums"
+                          title={`Projected to sell out around ${stockoutLabel} at the current pace`}
+                        >
+                          ~{stockoutLabel}
+                        </span>
+                      )}
                     </span>
                     <span
                       className="tabular-nums cd-caption"
