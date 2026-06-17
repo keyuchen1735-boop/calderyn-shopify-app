@@ -233,6 +233,38 @@ async def compute_peer_baselines_by_segment(
     return n_value
 
 
+async def recompute_or_purge_segment_baseline(
+    conn: Any, detector_id: str, segment: str
+) -> int:
+    """Recompute one ``(detector, segment)`` baseline, DELETING it if sub-floor.
+
+    ``compute_peer_baselines_by_segment`` only *upserts* a row when the segment
+    still has ``>= K_FLOOR`` distinct consenting contributors; it never removes
+    an existing row that has fallen below the floor. After a consent purge that
+    leaves the stale row in place — the withdrawn shop's influence lingers in a
+    published baseline (the GDPR gap, invariant A2/A3). This wrapper closes it:
+    recompute, and when the floor is no longer met, explicitly delete the
+    ``moat.peer_baselines`` row so the sub-``k`` baseline disappears entirely.
+
+    Returns the post-recompute contributor count (``0`` when the row was
+    deleted / suppressed).
+    """
+    n = await compute_peer_baselines_by_segment(conn, detector_id, segment)
+    if n < K_FLOOR:
+        # Floor breached after the purge — remove the now-stale published row
+        # rather than leave it carrying the withdrawn contributor's influence.
+        await conn.execute(
+            "DELETE FROM moat.peer_baselines "
+            "WHERE detector_id = $1 AND segment = $2",
+            detector_id, segment,
+        )
+        logger.info(
+            "peer_baselines_deleted_sub_k_floor",
+            detector_id=detector_id, segment=segment, n=n, k_floor=K_FLOOR,
+        )
+    return n
+
+
 async def run_peer_baselines(conn: Any) -> tuple[int, int]:
     """Recompute baselines for every (detector, segment) with projected data.
 
@@ -339,6 +371,7 @@ __all__ = [
     "gmv_band_for_shop",
     "project_alerts_for_day",
     "compute_peer_baselines_by_segment",
+    "recompute_or_purge_segment_baseline",
     "run_peer_baselines",
     "run_incident_library",
     "run_peer_incident_etl",
