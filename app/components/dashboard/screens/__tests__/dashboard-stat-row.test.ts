@@ -46,6 +46,7 @@ const GUARDRAILS: GuardrailVM = {
   cooldown_minutes: 30,
   business_hours: { start: "09:00", end: "17:00", tz: "America/New_York" },
   in_business_hours: true,
+  business_hours_only: false,
   autopilot_enabled: true,
   autopilot_daily_action_cap: 5,
   autopilot_actions_today: 1,

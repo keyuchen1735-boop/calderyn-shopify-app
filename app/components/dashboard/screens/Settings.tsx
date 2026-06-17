@@ -24,6 +24,8 @@ import type { DashboardCtx } from "../context";
 import type { GuardrailVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
 import { McpGuide } from "../McpGuide";
+import { GuardrailField } from "../GuardrailField";
+import { BusinessHoursEditor } from "../BusinessHoursEditor";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -94,24 +96,6 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   const [g, setG] = useState<GuardrailVM | null>(app.guardrails);
   const [saving, setSaving] = useState(false);
   const [savingConsent, setSavingConsent] = useState(false);
-
-  // Draft string for the optional daily-budget ceiling. Kept in sync with the
-  // server value (dollars); blank string represents null (no ceiling). A separate
-  // draft avoids clobbering the user's in-progress typing before blur.
-  const [dailyBudgetDraft, setDailyBudgetDraft] = useState<string>(
-    app.guardrails?.autopilot_max_daily_budget_cents != null
-      ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
-      : "",
-  );
-
-  // Keep the draft in sync when the shell refreshes guardrails from the server.
-  useEffect(() => {
-    setDailyBudgetDraft(
-      app.guardrails?.autopilot_max_daily_budget_cents != null
-        ? String(app.guardrails.autopilot_max_daily_budget_cents / 100)
-        : "",
-    );
-  }, [app.guardrails?.autopilot_max_daily_budget_cents]);
 
   useEffect(() => {
     setG(app.guardrails);
@@ -344,59 +328,54 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               </SettingRow>
               <SettingRow
                 label="Max budget increase"
-                sub="Most Calderyn can raise a winning campaign's budget at once."
+                sub="Autopilot never raises a campaign budget by more than this in one step."
               >
-                <Segmented
-                  small
-                  value={String(g.autopilot_max_budget_increase_pct)}
-                  onChange={(v) => commit("autopilot_max_budget_increase_pct", Number(v))}
-                  options={[
-                    { value: "15", label: "15%" },
-                    // 20% is the guardrail_config default — must be selectable so a
-                    // fresh shop's value maps to an option.
-                    { value: "20", label: "20%" },
-                    { value: "30", label: "30%" },
-                    { value: "50", label: "50%" },
+                <GuardrailField
+                  value={g.autopilot_max_budget_increase_pct}
+                  presets={[
+                    { value: 10, label: "10%" },
+                    { value: 20, label: "20%" },
+                    { value: 50, label: "50%" },
                   ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+                  }}
+                  suffix="%"
+                  disabled={saving}
+                  onCommit={(v) => commit("autopilot_max_budget_increase_pct", v)}
                 />
               </SettingRow>
               <SettingRow
                 label="Daily budget ceiling"
-                sub="Never let a campaign's daily budget exceed this amount. Leave blank for no ceiling."
+                sub="A hard cap on how high autopilot can push any one campaign's daily budget."
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="cd-caption" style={{ color: "var(--text-2)" }}>$</span>
-                  <input
-                    className="cd-input tabular-nums"
-                    inputMode="decimal"
-                    placeholder="none"
-                    style={{ width: 80, textAlign: "right" }}
-                    value={dailyBudgetDraft}
-                    onChange={(e) => setDailyBudgetDraft(e.target.value)}
-                    onBlur={() => {
-                      const raw = dailyBudgetDraft.trim();
-                      if (raw === "") {
-                        // Blank → clear the ceiling (null).
-                        void commit("autopilot_max_daily_budget_cents", null);
-                      } else {
-                        const dollars = parseFloat(raw);
-                        if (!isNaN(dollars) && dollars >= 0) {
-                          void commit(
-                            "autopilot_max_daily_budget_cents",
-                            Math.round(dollars * 100),
-                          );
-                        } else {
-                          // Invalid — revert draft to current server value.
-                          setDailyBudgetDraft(
-                            g.autopilot_max_daily_budget_cents != null
-                              ? String(g.autopilot_max_daily_budget_cents / 100)
-                              : "",
-                          );
-                        }
-                      }
-                    }}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Toggle
+                    value={g.autopilot_max_daily_budget_cents !== null}
                     disabled={saving}
+                    onChange={(on) =>
+                      commit("autopilot_max_daily_budget_cents", on ? 50000 : null)
+                    }
                   />
+                  {g.autopilot_max_daily_budget_cents !== null && (
+                    <GuardrailField
+                      value={g.autopilot_max_daily_budget_cents}
+                      presets={[
+                        { value: 25000, label: "$250" },
+                        { value: 50000, label: "$500" },
+                        { value: 100000, label: "$1,000" },
+                      ]}
+                      toInput={(c) => String(Math.round(c / 100))}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+                      }}
+                      suffix="USD/day"
+                      disabled={saving}
+                      onCommit={(v) => commit("autopilot_max_daily_budget_cents", v)}
+                    />
+                  )}
                 </div>
               </SettingRow>
               <SettingRow
@@ -428,58 +407,75 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               g.daily_action_budget_used_cents,
             )} used today.`}
           >
-            <Segmented
-              small
-              value={String(g.daily_action_budget_cents)}
-              onChange={(v) => commit("daily_action_budget_cents", Number(v))}
-              options={[
-                { value: "25000", label: "$250" },
-                { value: "50000", label: "$500" },
-                { value: "100000", label: "$1,000" },
+            <GuardrailField
+              value={g.daily_action_budget_cents}
+              presets={[
+                { value: 25000, label: "$250" },
+                { value: 50000, label: "$500" },
+                { value: 100000, label: "$1,000" },
               ]}
+              toInput={(c) => String(Math.round(c / 100))}
+              fromInput={(raw) => {
+                const n = Number(raw);
+                return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+              }}
+              suffix="USD/day"
+              disabled={saving}
+              onCommit={(v) => commit("daily_action_budget_cents", v)}
             />
           </SettingRow>
           <SettingRow
             label="Per-action dollar cap"
             sub="The most a single action is allowed to move."
           >
-            <Segmented
-              small
-              value={String(g.dollar_cap_cents)}
-              onChange={(v) => commit("dollar_cap_cents", Number(v))}
-              options={[
-                { value: "10000", label: "$100" },
-                { value: "25000", label: "$250" },
-                { value: "50000", label: "$500" },
+            <GuardrailField
+              value={g.dollar_cap_cents}
+              presets={[
+                { value: 10000, label: "$100" },
+                { value: 25000, label: "$250" },
+                { value: 50000, label: "$500" },
               ]}
+              toInput={(c) => String(Math.round(c / 100))}
+              fromInput={(raw) => {
+                const n = Number(raw);
+                return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+              }}
+              suffix="USD"
+              disabled={saving}
+              onCommit={(v) => commit("dollar_cap_cents", v)}
             />
           </SettingRow>
           <SettingRow
             label="Cooldown between actions"
             sub="Minimum gap before another action can touch the same campaign or SKU."
           >
-            <Segmented
-              small
-              value={String(g.cooldown_minutes)}
-              onChange={(v) => commit("cooldown_minutes", Number(v))}
-              options={[
-                { value: "15", label: "15m" },
-                { value: "30", label: "30m" },
-                { value: "60", label: "1h" },
+            <GuardrailField
+              value={g.cooldown_minutes}
+              presets={[
+                { value: 15, label: "15m" },
+                { value: 30, label: "30m" },
+                { value: 60, label: "1h" },
               ]}
+              fromInput={(raw) => {
+                const n = Number(raw);
+                return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+              }}
+              suffix="minutes"
+              disabled={saving}
+              onCommit={(v) => commit("cooldown_minutes", v)}
             />
           </SettingRow>
-          <SettingRow
-            label="Business hours only"
-            sub={`Actions execute ${g.business_hours.start}–${g.business_hours.end} ${g.business_hours.tz}. Outside that window they queue for review.`}
-          >
-            {/* business_hours editing is supported by the PUT but not surfaced
-                here yet; we display the configured window. TODO: business-hours
-                editor (start/end/tz). */}
-            <Pill tone={g.in_business_hours ? "success" : "neutral"} icon="clock">
-              {g.in_business_hours ? "In window now" : "Outside window"}
-            </Pill>
-          </SettingRow>
+          <BusinessHoursEditor
+            enabled={g.business_hours_only}
+            start={g.business_hours.start}
+            end={g.business_hours.end}
+            tz={g.business_hours.tz}
+            disabled={saving}
+            onToggle={(on) =>
+              commit("business_hours_only", on, on ? "Business-hours window on." : "Business-hours window off.")
+            }
+            onChangeWindow={(next) => commit("business_hours", next, "Business hours updated")}
+          />
         </Card>
       </section>
 

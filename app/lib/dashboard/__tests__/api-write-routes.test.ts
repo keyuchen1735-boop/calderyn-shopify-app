@@ -363,6 +363,38 @@ describe("PUT /dashboard/api/guardrails", () => {
     expect(guardrailsUpdate).not.toHaveBeenCalled();
   });
 
+  it("passes the new patchable keys through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({});
+    const patch = {
+      business_hours_only: true,
+      business_hours: { start: "09:00", end: "17:00", tz: "America/New_York" },
+      autopilot_max_budget_increase_pct: 25,
+      autopilot_max_daily_budget_cents: 50_000,
+    };
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
+  });
+
+  it("422s on an out-of-range value above the sanity ceiling", async () => {
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { daily_action_budget_cents: 100_000_001 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
+
   it("accepts a zero cooldown and an autopilot-only patch (no budget/cap to validate)", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 0 });
     const res = (await guardrailsAction({

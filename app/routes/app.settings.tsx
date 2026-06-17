@@ -33,6 +33,7 @@ import {
   calderynClient,
   type IntegrationProvider,
 } from "~/lib/calderyn.server";
+import { validateGuardrailPatch } from "~/lib/dashboard/guardrails-validation";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import {
   manualSyncCooldown,
@@ -162,6 +163,45 @@ export function parseMapShipChargeForm(
   if (!lineId) return { ok: false, message: "Missing charge." };
   if (!orderNumber) return { ok: false, message: "Enter an order number to map this charge to." };
   return { ok: true, value: { lineId, orderNumber } };
+}
+
+export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
+  const patch: Partial<GuardrailConfig> = {};
+  const num = (key: keyof GuardrailConfig, raw: FormDataEntryValue | null, xform = (n: number) => n) => {
+    if (raw === null) return;
+    const n = Number(String(raw));
+    if (Number.isFinite(n)) (patch as Record<string, unknown>)[key] = xform(n);
+  };
+  num("daily_action_budget_cents", fd.get("daily_action_budget_cents"), (n) => Math.max(0, Math.round(n)));
+  num("dollar_cap_cents", fd.get("dollar_cap_cents"), (n) => Math.max(0, Math.round(n)));
+  num("cooldown_minutes", fd.get("cooldown_minutes"), (n) => Math.max(0, Math.round(n)));
+  if (fd.get("autopilot_enabled") !== null) {
+    patch.autopilot_enabled = String(fd.get("autopilot_enabled")) === "true";
+  }
+  num("autopilot_daily_action_cap", fd.get("autopilot_daily_action_cap"), (n) => Math.max(0, Math.round(n)));
+  num("autopilot_min_spend_cents", fd.get("autopilot_min_spend_cents"), (n) => Math.max(0, Math.round(n * 100)));
+  num("autopilot_max_budget_cut_pct", fd.get("autopilot_max_budget_cut_pct"), (n) => Math.max(0, Math.round(n)));
+  num("autopilot_max_budget_increase_pct", fd.get("autopilot_max_budget_increase_pct"), (n) => Math.max(0, Math.round(n)));
+  // Daily ceiling: empty string clears it (null = no cap); otherwise dollars -> cents.
+  const ceilRaw = fd.get("autopilot_max_daily_budget_cents");
+  if (ceilRaw !== null) {
+    const s = String(ceilRaw).trim();
+    if (s === "") patch.autopilot_max_daily_budget_cents = null;
+    else {
+      const n = Number(s);
+      if (Number.isFinite(n)) patch.autopilot_max_daily_budget_cents = Math.max(0, Math.round(n * 100));
+    }
+  }
+  if (fd.get("business_hours_only") !== null) {
+    patch.business_hours_only = String(fd.get("business_hours_only")) === "true";
+  }
+  const bhStart = fd.get("bh_start");
+  const bhEnd = fd.get("bh_end");
+  const bhTz = fd.get("bh_tz");
+  if (bhStart !== null && bhEnd !== null && bhTz !== null) {
+    patch.business_hours = { start: String(bhStart), end: String(bhEnd), tz: String(bhTz) };
+  }
+  return patch;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,69 +364,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
     if (intent === "update_guardrails") {
-      const patch: Partial<GuardrailConfig> = {};
-      const setIfPresent = <K extends keyof GuardrailConfig>(
-        key: K,
-        parser: (raw: string) => GuardrailConfig[K] | undefined,
-      ) => {
-        const raw = formData.get(key as string);
-        if (raw === null) return;
-        const value = parser(String(raw));
-        if (value !== undefined) patch[key] = value;
-      };
-      setIfPresent("daily_action_budget_cents", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      setIfPresent("dollar_cap_cents", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      setIfPresent("cooldown_minutes", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      // Autopilot fields
-      const rawAutopilot = formData.get("autopilot_enabled");
-      if (rawAutopilot !== null) {
-        patch.autopilot_enabled = String(rawAutopilot) === "true";
+      const patch = parseGuardrailForm(formData);
+      if (validateGuardrailPatch(patch) !== null) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "INVALID_GUARDRAILS", message: "Those guardrail values are out of range." },
+            toast: { message: "Those guardrail values are out of range.", isError: true },
+          },
+          { status: 422 },
+        );
       }
-      setIfPresent("autopilot_daily_action_cap", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      setIfPresent("autopilot_min_spend_cents", (v) => {
-        // form submits dollars; store as cents
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : undefined;
-      });
-      setIfPresent("autopilot_max_budget_cut_pct", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      setIfPresent("autopilot_max_budget_increase_pct", (v) => {
-        const n = Number(v);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined;
-      });
-      // Empty input clears the ceiling (null); a number is stored as cents.
-      {
-        const raw = formData.get("autopilot_max_daily_budget");
-        if (raw !== null) {
-          const s = String(raw).trim();
-          if (s === "") {
-            patch.autopilot_max_daily_budget_cents = null;
-          } else {
-            const n = Number(s);
-            if (Number.isFinite(n)) patch.autopilot_max_daily_budget_cents = Math.max(0, Math.round(n * 100));
-          }
-        }
-      }
-
       await client.guardrails.update(patch, request.signal);
-      return json<ActionPayload>({
-        ok: true,
-        toast: { message: "Guardrails updated" },
-      });
+      return json<ActionPayload>({ ok: true, toast: { message: "Guardrails updated" } });
     }
 
     if (intent === "connect_integration") {
@@ -770,12 +760,21 @@ export default function Settings() {
   );
 }
 
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
+  label: `${String(h).padStart(2, "0")}:00`,
+  value: `${String(h).padStart(2, "0")}:00`,
+}));
+
 function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const fetcher = useFetcher<typeof action>();
   const submitting = fetcher.state !== "idle";
   const [budget, setBudget] = useState(String(Math.round(guardrails.daily_action_budget_cents / 100)));
   const [cap, setCap] = useState(String(Math.round(guardrails.dollar_cap_cents / 100)));
   const [cooldown, setCooldown] = useState(String(guardrails.cooldown_minutes));
+  const [businessHoursOnly, setBusinessHoursOnly] = useState(guardrails.business_hours_only);
+  const [bhStart, setBhStart] = useState(guardrails.business_hours.start);
+  const [bhEnd, setBhEnd] = useState(guardrails.business_hours.end);
+  const [bhTz] = useState(guardrails.business_hours.tz);
   const [autopilotEnabled, setAutopilotEnabled] = useState(guardrails.autopilot_enabled);
   const [autopilotDailyActionCap, setAutopilotDailyActionCap] = useState(
     String(guardrails.autopilot_daily_action_cap),
@@ -799,6 +798,9 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
     setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
     setCap(String(Math.round(guardrails.dollar_cap_cents / 100)));
     setCooldown(String(guardrails.cooldown_minutes));
+    setBusinessHoursOnly(guardrails.business_hours_only);
+    setBhStart(guardrails.business_hours.start);
+    setBhEnd(guardrails.business_hours.end);
     setAutopilotEnabled(guardrails.autopilot_enabled);
     setAutopilotDailyActionCap(String(guardrails.autopilot_daily_action_cap));
     setAutopilotMinSpend(String(Math.round(guardrails.autopilot_min_spend_cents / 100)));
@@ -880,9 +882,17 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
         {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
         <input
           type="hidden"
-          name="autopilot_max_daily_budget"
+          name="autopilot_max_daily_budget_cents"
           value={autopilotMaxDailyBudget.trim()}
         />
+        <input
+          type="hidden"
+          name="business_hours_only"
+          value={businessHoursOnly ? "true" : "false"}
+        />
+        <input type="hidden" name="bh_start" value={bhStart} />
+        <input type="hidden" name="bh_end" value={bhEnd} />
+        <input type="hidden" name="bh_tz" value={bhTz} />
         <BlockStack gap="400">
           <FormLayout>
             <FormLayout.Group>
@@ -912,14 +922,29 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
                 onChange={setCooldown}
                 helpText="Prevents thrash on the same campaign / SKU."
               />
-              <TextField
-                label="Business hours"
-                value={`${guardrails.business_hours.start}–${guardrails.business_hours.end}`}
-                autoComplete="off"
-                disabled
-                helpText={`Timezone: ${guardrails.business_hours.tz}`}
-              />
             </FormLayout.Group>
+            <Checkbox
+              label="Only act during business hours"
+              checked={businessHoursOnly}
+              onChange={setBusinessHoursOnly}
+              helpText={`When on, Calderyn will only take actions between the hours below (${bhTz}).`}
+            />
+            {businessHoursOnly && (
+              <FormLayout.Group>
+                <Select
+                  label="Business hours start"
+                  options={HOUR_OPTIONS}
+                  value={bhStart}
+                  onChange={setBhStart}
+                />
+                <Select
+                  label="Business hours end"
+                  options={HOUR_OPTIONS}
+                  value={bhEnd}
+                  onChange={setBhEnd}
+                />
+              </FormLayout.Group>
+            )}
           </FormLayout>
 
           {/* Autopilot lives in its own tinted sub-card so its limits never read
