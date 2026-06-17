@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
@@ -185,6 +186,11 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       toast(msg, "warn", "critical");
     });
   }, [load, toast]);
+
+  // Returning to the tab does an immediate refresh instead of waiting up to one
+  // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
+  // it respects the "Live sync" toggle — off means the screen stays put.
+  useRefreshOnFocus(refresh, { enabled: liveOn });
 
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
