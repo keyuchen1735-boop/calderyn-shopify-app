@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import date
 from decimal import Decimal
 from typing import Any, TypedDict
 
@@ -189,3 +190,206 @@ async def _upsert_model(
         json.dumps(threshold_json),
         json.dumps(posterior_json),
     )
+
+
+# --- cohort trainer (umbrella section 9.3 — authoritative entrypoint) -----
+#
+# ``gmv_band_for_shop`` (peer_incident_etl) and ``_DETECTOR_THRESHOLDS``
+# (thresholds) have no import cycle with this module, so they are imported
+# directly. ``derive_reward_inputs`` (the #2 producer) is the exception: that
+# module imports ``RewardInput`` FROM this one, so importing it at module load
+# here — in either order — is a hard circular import. It is therefore bound
+# lazily (see ``_derive_reward_inputs``) on first call. The module-level
+# ``derive_reward_inputs = None`` sentinel doubles as the monkeypatch seam:
+# a test can ``setattr(threshold_trainer, "derive_reward_inputs", fake)`` and
+# the lazy loader will honour the override instead of importing.
+from collections.abc import Sequence  # noqa: E402
+
+import structlog  # noqa: E402
+
+from calderyn_engine.moat.peer_incident_etl import gmv_band_for_shop  # noqa: E402
+from calderyn_engine.thresholds import _DETECTOR_THRESHOLDS  # noqa: E402
+
+logger = structlog.get_logger()
+
+# Lazily-bound seam to the #2 producer (broken out of the import cycle). Tests
+# may override this attribute directly to inject a per-shop reward failure.
+derive_reward_inputs = None
+
+
+async def _derive_reward_inputs(conn: Any, shop_id: str) -> list[RewardInput]:
+    """Resolve and call the #2 reward producer, honouring a test override.
+
+    If ``derive_reward_inputs`` was monkeypatched on this module, use it as
+    is. Otherwise import the real producer lazily (avoiding the module-load
+    cycle) and cache it on the module so subsequent calls skip the import.
+    """
+    fn = derive_reward_inputs
+    if fn is None:
+        from calderyn_engine.moat.reward_inputs import (
+            derive_reward_inputs as _real,
+        )
+
+        globals()["derive_reward_inputs"] = _real
+        fn = _real
+    return list(await fn(conn, shop_id))
+
+
+class TrainSummary(TypedDict):
+    """Per-night cohort trainer outcome (slice #4 surfaces non-empty errors)."""
+
+    shops_trained: int
+    models_written: int
+    skipped: int
+    errors: list[str]
+
+
+async def _cohort_shop_ids(conn: Any) -> Sequence[str]:
+    """Enumerate the training cohort from ``public.shops``.
+
+    Cohort = every shop that EITHER granted ``peer_data_consent`` OR has at
+    least one ``alert_feedback`` row (umbrella section 4.2 + task). A
+    consenting shop with no feedback is still in-cohort so the cold-start
+    pass can seed it from the peer baseline; a non-consenting shop with no
+    feedback is excluded entirely (it contributes no signal and gets no
+    model). ``DISTINCT`` collapses the fan-out from the feedback join.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT s.id::text AS shop_id
+          FROM public.shops s
+          LEFT JOIN public.alert_feedback af ON af.shop_id = s.id
+         WHERE s.peer_data_consent = true
+            OR af.shop_id IS NOT NULL
+        """
+    )
+    return [r["shop_id"] for r in rows]
+
+
+async def train_thresholds(
+    conn: Any,
+    *,
+    pepper: str,
+    run_date: date,
+    learning_rate: float = LEARNING_RATE,
+) -> TrainSummary:
+    """Nightly cohort trainer entrypoint (umbrella section 9.3).
+
+    Enumerates the cohort itself, then for each (shop, detector in
+    ``_DETECTOR_THRESHOLDS``):
+
+      1. ``segment = gmv_band_for_shop(conn, shop, run_date)`` — the shared
+         resolver slice #5 also writes baselines under, so the prior matches.
+      2. ``baseline = _read_peer_baseline(conn, detector, segment)``.
+      3. ``rewards`` = this shop's ``derive_reward_inputs`` rows for THAT
+         detector (own raw data, invariant A5).
+      4. ``_fold_group`` seeds the prior from the baseline and folds the
+         rewards; ``_upsert_model`` writes the pseudonym-keyed row (A4).
+
+    COLD START (section 4.2): a consenting shop with NO feedback for a
+    detector still gets a row — empty rewards make ``_fold_group`` return the
+    seeded prior (mean 0.5 -> exactly the peer median), strictly better than
+    the static default. The only (shop, detector) pair that writes nothing is
+    one with NO baseline AND NO rewards (nothing to learn from).
+
+    Pooler-safe (transaction pooler, port 6543): each (shop, detector)
+    read+upsert runs in its OWN short ``conn.transaction()`` so the
+    read-then-write invariant never splits across pgbouncer backends; there
+    is no mega-transaction. Fail-visible (rule 12): a per-(shop, detector)
+    exception is caught, recorded in ``errors`` and counted in ``skipped``,
+    and NEVER aborts the rest of the run.
+
+    A shop's reward rows are read ONCE (one query for all its detectors) and
+    bucketed by ``detector_id`` in memory, so the per-detector loop issues no
+    extra reward queries. A whole-shop failure (e.g. the reward read itself
+    raising) is attributed to every detector for that shop so the night's
+    error tally never silently under-counts.
+    """
+    summary: TrainSummary = {
+        "shops_trained": 0,
+        "models_written": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+
+    shop_ids = await _cohort_shop_ids(conn)
+
+    for shop_id in shop_ids:
+        # Read this shop's own reward signal once, then bucket by detector.
+        # A failure here is not silently dropped: it is charged against every
+        # detector this shop would have trained (rule 12).
+        try:
+            rows = await _derive_reward_inputs(conn, shop_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "train_shop_reward_read_failed",
+                shop_id=shop_id,
+                error=str(exc),
+                exc_type=type(exc).__name__,
+            )
+            summary["skipped"] += len(_DETECTOR_THRESHOLDS)
+            summary["errors"].append(
+                f"{shop_id}/*: reward read failed: {exc}"
+            )
+            continue
+
+        rewards_by_detector: dict[str, list[RewardInput]] = {}
+        for r in rows:
+            rewards_by_detector.setdefault(r["detector_id"], []).append(r)
+
+        trained_any = False
+        for detector_id, (canonical_key, default_usd) in _DETECTOR_THRESHOLDS.items():
+            group_rows = rewards_by_detector.get(detector_id, [])
+            try:
+                # One short transaction per (shop, detector) — pooler-safe.
+                async with conn.transaction():
+                    segment = await gmv_band_for_shop(conn, shop_id, run_date)
+                    baseline = await _read_peer_baseline(
+                        conn, detector_id, segment
+                    )
+                    # Nothing to learn from: no peer prior AND no own feedback.
+                    # Skip silently (not an error) so we never write a row that
+                    # would just echo the static default.
+                    if baseline is None and not group_rows:
+                        continue
+                    posterior_json, threshold_json = _fold_group(
+                        group_rows,
+                        baseline,
+                        canonical_key,
+                        default_usd,
+                        learning_rate,
+                    )
+                    await _upsert_model(
+                        conn,
+                        detector_id,
+                        shop_id,
+                        posterior_json,
+                        threshold_json,
+                        pepper,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "train_group_failed",
+                    shop_id=shop_id,
+                    detector_id=detector_id,
+                    error=str(exc),
+                    exc_type=type(exc).__name__,
+                )
+                summary["skipped"] += 1
+                summary["errors"].append(f"{shop_id}/{detector_id}: {exc}")
+                continue
+            summary["models_written"] += 1
+            trained_any = True
+
+        if trained_any:
+            summary["shops_trained"] += 1
+
+    logger.info(
+        "train_thresholds_complete",
+        run_date=run_date.isoformat(),
+        shops_trained=summary["shops_trained"],
+        models_written=summary["models_written"],
+        skipped=summary["skipped"],
+        error_count=len(summary["errors"]),
+    )
+    return summary
