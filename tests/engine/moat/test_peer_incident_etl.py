@@ -81,3 +81,109 @@ async def test_gmv_band_zero_orders_is_micro(pg_pool):
         await _seed_shop(conn, shop_id, consent=True)
         band = await gmv_band_for_shop(conn, shop_id, date.today())
         assert band == "gmv:micro"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — pseudonymized projection (A1/A2 + idempotency).
+# ---------------------------------------------------------------------------
+
+
+async def _clean_day_projection(conn, day: date) -> None:
+    """Remove the day's projected events + any alerts dated to ``day`` so a
+    projection test is hermetic regardless of what earlier same-session tests
+    seeded (alerts all share ``day_bucket = today``; the session truncate runs
+    once, not per test)."""
+    await conn.execute(
+        "DELETE FROM moat.event_log WHERE event_kind='detection_fired' "
+        "AND (payload->>'day_bucket')::date = $1", day,
+    )
+    await conn.execute("DELETE FROM public.alerts WHERE day_bucket = $1", day)
+
+
+async def _seed_alert(conn, shop_id: str, *, day: date,
+                      dollar_impact: Decimal, detector: str = DETECTOR) -> str:
+    alert_id = str(uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO public.alerts
+          (id, shop_id, detector_id, entity_ref, status, severity,
+           dollar_impact, day_bucket, first_seen_at, last_seen_at)
+        VALUES ($1::uuid, $2::uuid, $3, '{}'::jsonb, 'open', 'high',
+                $4, $5, now(), now())
+        """,
+        alert_id, shop_id, detector, dollar_impact, day,
+    )
+    return alert_id
+
+
+@pytest.mark.asyncio
+async def test_nonconsenting_alerts_not_projected(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import project_alerts_for_day
+    async with pg_pool.acquire() as conn:
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        consenting = str(uuid.uuid4())
+        non = str(uuid.uuid4())
+        await _seed_shop(conn, consenting, consent=True)
+        await _seed_shop(conn, non, consent=False)
+        await _seed_alert(conn, consenting, day=day, dollar_impact=Decimal("300"))
+        await _seed_alert(conn, non, day=day, dollar_impact=Decimal("9999"))
+
+        n = await project_alerts_for_day(conn, run_date=day, pepper=PEPPER)
+        assert n == 1  # only the consenting shop's alert
+
+        non_pseud = pseudonym_for(non, PEPPER)
+        rows = await conn.fetch(
+            "SELECT pseudonym_id FROM moat.event_log "
+            "WHERE event_kind='detection_fired' "
+            "AND (payload->>'day_bucket')::date = $1", day,
+        )
+        assert all(r["pseudonym_id"] != non_pseud for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_projection_writes_only_pseudonyms(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import project_alerts_for_day
+    async with pg_pool.acquire() as conn:
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        shop_id = str(uuid.uuid4())
+        await _seed_shop(conn, shop_id, consent=True)
+        await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("500"))
+
+        await project_alerts_for_day(conn, run_date=day, pepper=PEPPER)
+
+        rows = await conn.fetch(
+            "SELECT pseudonym_id, payload FROM moat.event_log "
+            "WHERE event_kind='detection_fired' "
+            "AND (payload->>'day_bucket')::date = $1", day,
+        )
+        assert len(rows) == 1
+        # A1: no raw shop_id anywhere; pseudonym matches HMAC.
+        assert rows[0]["pseudonym_id"] == pseudonym_for(shop_id, PEPPER)
+        assert rows[0]["pseudonym_id"] != shop_id
+        payload = json.loads(rows[0]["payload"])
+        assert "shop_id" not in payload
+        assert payload["dollar_impact"] == 500
+        assert payload["segment"].startswith("gmv:")
+
+
+@pytest.mark.asyncio
+async def test_projection_idempotent_on_rerun(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import project_alerts_for_day
+    async with pg_pool.acquire() as conn:
+        day = date.today()
+        await _clean_day_projection(conn, day)
+        shop_id = str(uuid.uuid4())
+        await _seed_shop(conn, shop_id, consent=True)
+        await _seed_alert(conn, shop_id, day=day, dollar_impact=Decimal("250"))
+
+        await project_alerts_for_day(conn, run_date=day, pepper=PEPPER)
+        await project_alerts_for_day(conn, run_date=day, pepper=PEPPER)
+
+        count = await conn.fetchval(
+            "SELECT count(*) FROM moat.event_log "
+            "WHERE event_kind='detection_fired' "
+            "AND (payload->>'day_bucket')::date = $1", day,
+        )
+        assert count == 1  # second run replaced, did not double
