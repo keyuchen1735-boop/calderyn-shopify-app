@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// vi.mock below is hoisted above this import by vitest, so the stub is active
+// before peer-benchmarks.server (and its supabase.server import) is evaluated.
+import { getPeerBenchmarks } from "./peer-benchmarks.server";
 
 // Programmable Supabase stub: maps table/view name -> rows.
 let TABLES: Record<string, any[]> = {};
@@ -29,8 +32,6 @@ vi.mock("../supabase.server", () => ({
     },
   }),
 }));
-
-import { getPeerBenchmarks } from "./peer-benchmarks.server";
 
 beforeEach(() => {
   TABLES = {};
