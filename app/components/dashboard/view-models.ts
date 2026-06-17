@@ -94,6 +94,9 @@ export interface SkuVM {
   /** Projected sell-out date (ISO `YYYY-MM-DD`); null when the SKU has no
    * recent sales (days-of-cover isn't meaningful). Mirrors the extension. */
   projected_stockout: string | null;
+  /** Trailing-30-day gross revenue (cents) for bestseller ranking; undefined when
+   * the sales rollup is unavailable. Mirrors the extension's SKU. */
+  revenue_30d_cents?: number;
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];

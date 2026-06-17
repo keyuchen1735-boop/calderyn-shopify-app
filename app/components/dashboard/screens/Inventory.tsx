@@ -12,11 +12,12 @@ import {
   fetchSkus,
   fetchSkuHistory,
   relocateSku,
+  sortSkus,
   DashboardApiError,
 } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { formatDemandUnits, formatStockoutDate } from "~/lib/inventory-demand";
-import { money } from "../format";
+import { money, moneyK } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
 import type { SkuVM, AlertVM } from "../view-models";
@@ -67,9 +68,11 @@ const SKU_STATUS: Record<string, { label: string; tone: PillTone }> = {
 
 /* ---------- Screen ---------- */
 type Filter = "All" | "Needs attention" | "Healthy";
+type SortBy = "Stock" | "Revenue";
 
 export default function Inventory({ app }: { app: DashboardCtx }) {
   const [filter, setFilter] = useState<Filter>("All");
+  const [sortBy, setSortBy] = useState<SortBy>("Stock");
   const [skus, setSkus] = useState<SkuVM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,13 +177,17 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     }
   }
 
-  const shown = skus.filter((s) =>
+  // SKUs arrive on-hand-desc from fetchSkus, so "Stock" is the as-loaded order;
+  // "Revenue" re-ranks by trailing-30-day revenue (nulls sink to the bottom).
+  const filtered = skus.filter((s) =>
     filter === "All"
       ? true
       : filter === "Healthy"
         ? s.status === "healthy"
         : s.status !== "healthy",
   );
+  const shown =
+    sortBy === "Revenue" ? sortSkus(filtered, "revenue_30d_cents") : filtered;
 
   // Alerts reference SKUs by their sku code — exact match (the prototype's
   // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
@@ -195,6 +202,8 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         total={skus.length}
         filter={filter}
         onFilter={setFilter}
+        sortBy={sortBy}
+        onSort={setSortBy}
       />
       <Card pad={false}>
         {loading ? (
@@ -210,6 +219,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               <span style={{ width: 64, textAlign: "right" }}>On hand</span>
               <span style={{ width: 60, textAlign: "right" }}>Cover</span>
               <span style={{ width: 64, textAlign: "right" }}>Velocity</span>
+              <span style={{ width: 76, textAlign: "right" }}>Rev · 30d</span>
               <span style={{ width: 88, textAlign: "right" }}>Ship P&amp;L</span>
               <span style={{ width: 120 }}>Main demand</span>
               <span style={{ width: 84 }}></span>
@@ -295,6 +305,12 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       style={{ width: 64, textAlign: "right" }}
                     >
                       {s.velocity.toFixed(1)}/day
+                    </span>
+                    <span
+                      className="tabular-nums cd-caption"
+                      style={{ width: 76, textAlign: "right" }}
+                    >
+                      {s.revenue_30d_cents ? moneyK(s.revenue_30d_cents) : "—"}
                     </span>
                     <span
                       style={{
@@ -742,11 +758,15 @@ function ScreenHeaderInline({
   total,
   filter,
   onFilter,
+  sortBy,
+  onSort,
 }: {
   loading: boolean;
   total: number;
   filter: Filter;
   onFilter: (next: Filter) => void;
+  sortBy: SortBy;
+  onSort: (next: SortBy) => void;
 }) {
   return (
     <header className="cd-screen-head" data-screen-label="Inventory">
@@ -759,6 +779,13 @@ function ScreenHeaderInline({
         </p>
       </div>
       <div className="flex items-center gap-2.5">
+        <span className="cd-caption">Sort</span>
+        <Segmented
+          small
+          value={sortBy}
+          onChange={(v) => onSort(v as SortBy)}
+          options={["Stock", "Revenue"]}
+        />
         <Segmented
           small
           value={filter}

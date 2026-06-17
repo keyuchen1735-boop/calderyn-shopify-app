@@ -310,6 +310,7 @@ export function adaptSku(s: SKU): SkuVM {
     days_of_cover: s.days_of_cover,
     velocity: s.velocity,
     projected_stockout: projectedStockoutDate(s.days_of_cover, s.velocity),
+    revenue_30d_cents: s.revenue_30d_cents,
     locations: s.locations,
     status,
     sources: s.sources ?? [],
@@ -322,14 +323,24 @@ export function adaptSku(s: SKU): SkuVM {
   };
 }
 
+/** Numeric SkuVM metrics the inventory screen can rank by. */
+export type SkuSortKey = "on_hand" | "revenue_30d_cents";
+
 /**
- * Default inventory ordering: most-stocked SKUs first. The dashboard Inventory
- * screen has no column-sort UI, so this is the load order merchants see. Stable
- * (equal on-hand keeps the API's order) and non-mutating; a missing on_hand
- * coerces to 0 so unsynced rows sink to the bottom.
+ * Sort SKUs by a numeric metric, highest first. Stable (equal values keep the
+ * input order) and non-mutating; a missing metric coerces to 0 so unsynced rows
+ * sink to the bottom.
+ */
+export function sortSkus(skus: SkuVM[], key: SkuSortKey): SkuVM[] {
+  return [...skus].sort((a, b) => Number(b[key] ?? 0) - Number(a[key] ?? 0));
+}
+
+/**
+ * Default inventory ordering: most-stocked SKUs first — the load order merchants
+ * see before choosing a sort.
  */
 export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
-  return [...skus].sort((a, b) => (b.on_hand ?? 0) - (a.on_hand ?? 0));
+  return sortSkus(skus, "on_hand");
 }
 
 const INTEGRATION_ORDER = [

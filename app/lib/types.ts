@@ -158,6 +158,14 @@ export interface SKU {
    * Negative = free shipping is bleeding on this SKU; null = no shipped orders
    * in-window. Derived in v_skus_flat. */
   ship_pnl_cents: number | null;
+  /** Trailing-30-day gross revenue (cents) over the SAME window as `velocity`,
+   * for bestseller ranking. undefined when the sales rollup is unavailable —
+   * never fatal. Units sold aren't carried: the velocity column already ranks by
+   * volume (units == round(velocity × 30)); the v_sku_sales_30d view still
+   * exposes units_30d for future use (e.g. F5 return-rate). ROAS is intentionally
+   * omitted: ad spend is campaign-level and can't be reliably attributed to a
+   * SKU, so a SKU-level ROAS would be a fabricated number. */
+  revenue_30d_cents?: number;
 }
 
 /** One day's total on-hand for a SKU (sum across locations), for the stock-trend
