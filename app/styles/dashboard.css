@@ -170,12 +170,15 @@
     background: var(--gray-bg);
   }
 
-  /* ============ tooltip ============ */
+  /* ============ hover tooltip ============ */
   /* Styled hover/focus tooltip in the dashboard's own design system (replaces
-     native title= text). Reveal is CSS-only; rows/cards don't clip overflow
-     (only .cd-main scrolls), so the absolute bubble shows above the trigger. */
-  .cd-tip { position: relative; display: inline-flex; }
-  .cd-tip-pop {
+     native title= text). NOTE: class is `cd-htip`, NOT `cd-tip` — `.cd-tip` is
+     already taken by the chart hover-label below (position:absolute, fixed
+     width), and reusing it floated this wrapper out of flow over the row.
+     Reveal is CSS-only; rows/cards don't clip overflow (only .cd-main scrolls),
+     so the absolute bubble shows above the trigger. */
+  .cd-htip { position: relative; display: inline-flex; }
+  .cd-htip-pop {
     position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 60;
     width: max-content; max-width: 260px; padding: 8px 11px;
     border-radius: 10px; background: var(--card-solid); color: var(--text-1);
@@ -185,17 +188,17 @@
     opacity: 0; visibility: hidden; pointer-events: none;
     transform: translateY(4px); transition: opacity 0.14s ease, transform 0.14s ease;
   }
-  .cd-tip:hover .cd-tip-pop,
-  .cd-tip:focus-within .cd-tip-pop {
+  .cd-htip:hover .cd-htip-pop,
+  .cd-htip:focus-within .cd-htip-pop {
     opacity: 1; visibility: visible; transform: translateY(0);
   }
-  .cd-tip-pop::after {
+  .cd-htip-pop::after {
     content: ""; position: absolute; top: 100%; left: 14px;
     border: 5px solid transparent; border-top-color: var(--card-solid);
   }
   @media (prefers-reduced-motion: reduce) {
-    .cd-tip-pop { transition: opacity 0.14s ease; transform: none; }
-    .cd-tip:hover .cd-tip-pop, .cd-tip:focus-within .cd-tip-pop { transform: none; }
+    .cd-htip-pop { transition: opacity 0.14s ease; transform: none; }
+    .cd-htip:hover .cd-htip-pop, .cd-htip:focus-within .cd-htip-pop { transform: none; }
   }
 
   /* ============ controls ============ */
