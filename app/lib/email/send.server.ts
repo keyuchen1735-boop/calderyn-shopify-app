@@ -10,6 +10,8 @@ export interface EmailAttachment {
   /** base64-encoded file content */
   content: string;
   contentType?: string;
+  /** Content-ID for inline images referenced from the HTML as `cid:<id>`. */
+  contentId?: string;
 }
 
 export interface DeliveryResult {
@@ -49,6 +51,7 @@ export async function sendEmail(opts: {
         filename: a.filename,
         content: a.content,
         ...(a.contentType ? { content_type: a.contentType } : {}),
+        ...(a.contentId ? { content_id: a.contentId } : {}),
       }));
     }
     if (opts.headers && Object.keys(opts.headers).length) payload.headers = opts.headers;
