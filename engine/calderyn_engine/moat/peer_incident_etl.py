@@ -33,6 +33,15 @@ GMV_BANDS: tuple[tuple[str, int], ...] = (
 )
 
 
+@dataclass
+class EtlReport:
+    """Per-night ETL outcome counts (for #4's observability / fail-visibly)."""
+    alerts_projected: int
+    baselines_written: int
+    baselines_suppressed: int
+    incidents_extracted: int
+
+
 def segment_for_shop(gmv_90d_cents: int) -> str:
     """Map trailing-90d GMV (integer cents) to a ``gmv:<band>`` segment."""
     for label, lower_cents in GMV_BANDS:
@@ -292,3 +301,32 @@ async def run_incident_library(conn: Any, *, run_date: date) -> int:
             inserted += 1
     logger.info("peer_etl_incidents", run_date=run_date.isoformat(), inserted=inserted)
     return inserted
+
+
+async def run_peer_incident_etl(
+    conn: Any, *, run_date: date, pepper: str
+) -> EtlReport:
+    """Run the nightly cross-tenant ETL: project -> baselines -> incidents.
+
+    Caller owns the transaction (this function does not BEGIN/COMMIT) and
+    supplies ``pepper`` (this function never reads env). Any sub-step error
+    propagates to the caller so a failed night rolls back as a unit.
+    """
+    projected = await project_alerts_for_day(conn, run_date=run_date, pepper=pepper)
+    written, suppressed = await run_peer_baselines(conn)
+    incidents = await run_incident_library(conn, run_date=run_date)
+    report = EtlReport(
+        alerts_projected=projected,
+        baselines_written=written,
+        baselines_suppressed=suppressed,
+        incidents_extracted=incidents,
+    )
+    logger.info(
+        "peer_etl_complete",
+        run_date=run_date.isoformat(),
+        alerts_projected=projected,
+        baselines_written=written,
+        baselines_suppressed=suppressed,
+        incidents_extracted=incidents,
+    )
+    return report

@@ -441,3 +441,40 @@ async def test_nonconsenting_confirmed_loss_skipped(pg_pool):
                                    when_day=day, evidence={"ratio_bucket": "high"})
         n = await run_incident_library(conn, run_date=day)
         assert n == 0  # A2: non-consenting losses never enter the library
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — orchestrator + EtlReport (the seam #4 invokes).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_etl_report_counts(pg_pool):
+    from calderyn_engine.moat.peer_incident_etl import run_peer_incident_etl, EtlReport
+    async with pg_pool.acquire() as conn:
+        await _cleanup_baselines(conn)
+        await conn.execute("DELETE FROM moat.incident_library WHERE detector_id=$1", DETECTOR)
+        day = date.today()
+        await _clean_day_projection(conn, day)
+
+        # 5 consenting shops in gmv:micro (no orders) each with one alert at
+        # $100..$500 -> projection emits 5; baseline writes 1; suppresses 0.
+        shop_ids = []
+        for impact in (Decimal("100"), Decimal("200"), Decimal("300"),
+                       Decimal("400"), Decimal("500")):
+            sid = str(uuid.uuid4())
+            shop_ids.append(sid)
+            await _seed_shop(conn, sid, consent=True)
+            await _seed_alert(conn, sid, day=day, dollar_impact=impact)
+        # One of them confirms a loss -> 1 incident.
+        a_conf = await _seed_alert(conn, shop_ids[0], day=day, dollar_impact=Decimal("100"))
+        await _seed_confirmed_loss(conn, shop_ids[0], a_conf,
+                                   loss_usd=Decimal("100"), when_day=day,
+                                   evidence={"ratio_bucket": "low"})
+
+        report = await run_peer_incident_etl(conn, run_date=day, pepper=PEPPER)
+        assert isinstance(report, EtlReport)
+        assert report.alerts_projected == 6   # 5 + the extra confirmed-loss alert
+        assert report.baselines_written == 1  # gmv:micro met k=5
+        assert report.baselines_suppressed == 0
+        assert report.incidents_extracted == 1
