@@ -33,7 +33,7 @@ import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
-import { newIdempotencyKey } from "~/lib/ids";
+import { newIdempotencyKey, isUuid } from "~/lib/ids";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 // Campaigns load from the live Meta API, where c.id is the Meta external id (e.g.
 // "1234567890"), but executeAction keys off the ad_campaign_dim UUID. The route
@@ -94,39 +94,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    // Ingested campaigns from v_campaigns_flat cover EVERY connected platform
-    // (Meta, Google, TikTok). When Meta is live-connected, its rows are replaced
-    // by the live API list (works pre-ingest, fresher status); other platforms
-    // always come from the ingested view.
-    //
-    // TODO(merchant-review item 3): this live-Meta REPLACEMENT makes Campaigns
-    // and Analytics disagree. Analytics reads the ingested/graded Meta campaigns
-    // (campaign_grade_fact → ad_campaign_dim), but here those ingested rows are
-    // dropped and swapped for whatever the live ad account returns — a different
-    // set whenever the connected account doesn't match the ingested data (e.g.
-    // seeded/demo campaigns vs a real live account). The two surfaces then show
-    // different Meta campaigns. Reconciling them (back both from the same source,
-    // or overlay live status onto ingested rows instead of replacing) is a
-    // deferred maintainer decision — flagged, not yet fixed.
-    const ingested = await client.campaigns.list(request.signal);
-    const meta = await metaClientForShop(session.shop);
-    let campaigns: Campaign[];
-    if (meta) {
-      const live = await listCampaigns(meta.client, meta.adAccountId);
-      const liveMeta = live.map((c) => ({
-        id: c.id,
-        name: c.name,
-        platform: "Meta" as const,
-        status: c.status === "PAUSED" ? ("paused" as const) : ("active" as const),
-        daily_budget_cents: c.dailyBudgetCents ?? 0,
-        roas_7d: 0,
-        contribution_margin: 0,
-        spend_7d: 0,
-      }));
-      campaigns = [...liveMeta, ...ingested.filter((c) => c.platform !== "Meta")];
-    } else {
-      campaigns = ingested;
-    }
+    // Campaigns come from the ingested/graded view (v_campaigns_flat) for EVERY
+    // platform — the SAME source Analytics and the scale detector use — so the two
+    // surfaces agree and scale suggestions show for Meta too. (Previously Meta rows
+    // were replaced wholesale by the live Meta API list; that made Campaigns and
+    // Analytics disagree and hid Meta scale badges whenever the live account didn't
+    // match the graded data, e.g. seeded/demo campaigns. Status now comes from
+    // ingestion plus the optimistic mirror executeAction writes after each action;
+    // every campaign row is keyed by its ad_campaign_dim uuid, so actions resolve
+    // uniformly through the orchestrator — no per-platform external-id bridging.)
+    const campaigns: Campaign[] = await client.campaigns.list(request.signal);
 
     // Best-effort grade-driven prefill for the reallocate modal. Failure
     // degrades VISIBLY to "no suggestion" (no Suggested badges, defaults
@@ -233,10 +210,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Meta rows post the live external id; resolve to the dim uuid. The
     // composite action has NO legacy direct-Meta fallback: both campaigns
     // must be ingested before budget can be moved between them.
-    const sourceDim =
-      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
-    const destDim =
-      destPlatform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId) : destCampaignId;
+    // Rows are keyed by the ad_campaign_dim uuid (ingested source). Use it
+    // directly; the external-id resolve remains only as a fallback for any
+    // non-uuid id (legacy/stale form posts).
+    const sourceDim = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
+    const destDim = isUuid(destCampaignId)
+      ? destCampaignId
+      : destPlatform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId)
+        : destCampaignId;
     if (!sourceDim || !destDim) {
       return json<ActionPayload>(
         {
@@ -307,8 +293,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId =
-      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
+    const dimId = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
     if (!dimId) {
       return json<ActionPayload>(
         {
@@ -429,8 +418,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   {
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId =
-      platform === "Meta"
+    const dimId = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
         ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
         : campaignId;
     if (dimId) {
@@ -730,7 +720,16 @@ export default function Campaigns() {
         </Badge>
         {scaleSuggestion ? (
           <Tooltip content={scaleSuggestion.reason}>
-            <Badge tone="success">Suggested: scale</Badge>
+            <Link
+              removeUnderline
+              onClick={() =>
+                navigate(
+                  `/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}&scale=1`,
+                )
+              }
+            >
+              <Badge tone="success">Suggested: scale</Badge>
+            </Link>
           </Tooltip>
         ) : null}
       </InlineStack>,

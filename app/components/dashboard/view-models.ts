@@ -145,6 +145,7 @@ export interface GuardrailVM {
   cooldown_minutes: number;
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
+  business_hours_only: boolean;
   autopilot_enabled: boolean;
   autopilot_daily_action_cap: number;
   autopilot_actions_today: number;

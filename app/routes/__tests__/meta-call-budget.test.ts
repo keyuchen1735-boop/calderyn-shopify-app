@@ -195,7 +195,7 @@ describe("Meta call budget per surface", () => {
     expect(counts).toEqual({ get: 2, post: 1 });
   });
 
-  it("extension campaigns loader costs 1 Meta call per load (live list revalidates after every action)", async () => {
+  it("extension campaigns loader costs 0 Meta calls per load (sources ingested data, not the live list)", async () => {
     const { loader } = await import("../app.campaigns._index");
     const res = await loader({
       request: new Request("https://app.call-budget.invalid/app/campaigns"),
@@ -203,6 +203,9 @@ describe("Meta call budget per surface", () => {
       context: {},
     } as never);
     expect(res.status).toBe(200);
-    expect(counts).toEqual({ get: 1, post: 0 });
+    // Campaigns now come from the ingested view for EVERY platform (Meta included),
+    // so the loader no longer hits the live Meta API — Campaigns matches Analytics
+    // and Meta scale suggestions surface like Google/TikTok.
+    expect(counts).toEqual({ get: 0, post: 0 });
   });
 });
