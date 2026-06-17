@@ -6,6 +6,10 @@
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
+import type {
+  ShipCostSource,
+  ShipCostConfidence,
+} from "~/lib/ship-cost/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -87,6 +91,12 @@ export interface SkuVM {
   on_hand: number;
   days_of_cover: number;
   velocity: number;
+  /** Product facets for inventory slicing (product_type = Shopify productType).
+   * Mirrors the extension's SKU; undefined/empty when not ingested. */
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string[];
+  collections?: string[];
   status: string;
   locations: Record<string, number>;
   sources: SkuSource[];
@@ -110,8 +120,8 @@ export interface SkuVM {
   }>;
   /** Worst/lowest-confidence ship-cost provenance among this SKU's orders; null
    * until the resolver has run. Mirrors the Shopify-side SKU badge. */
-  ship_cost_source: import("~/lib/ship-cost/types").ShipCostSource | null;
-  ship_cost_confidence: import("~/lib/ship-cost/types").ShipCostConfidence | null;
+  ship_cost_source: ShipCostSource | null;
+  ship_cost_confidence: ShipCostConfidence | null;
   /** Net shipping P&L for this SKU (shipping collected − true ship cost, last
    * 30d), in cents. Negative = free shipping is bleeding. null = no shipped
    * orders in-window. */

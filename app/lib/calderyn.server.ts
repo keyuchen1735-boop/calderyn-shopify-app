@@ -779,7 +779,7 @@ export function calderynClient(shop: string) {
       async list(_signal?: AbortSignal): Promise<SKU[]> {
         try {
           const shopId = await shopIdP;
-          const [skuRes, cogsRes, adMapRes, demandRes] = await Promise.all([
+          const [skuRes, cogsRes, adMapRes, demandRes, facetsRes] = await Promise.all([
             supabase
               .from("v_skus_flat")
               .select("*")
@@ -804,6 +804,13 @@ export function calderynClient(shop: string) {
               .select("*")
               .eq("shop_id", shopId)
               .limit(10000),
+            // Product facets for inventory slicing (category=productType, vendor,
+            // tags, collections); explicit cap per the PostgREST 1000-row default.
+            supabase
+              .from("sku_dim")
+              .select("id, category, vendor, tags, collections")
+              .eq("shop_id", shopId)
+              .limit(10000),
           ]);
           if (skuRes.error) throw skuRes.error;
           if (cogsRes.error) throw cogsRes.error;
@@ -815,6 +822,14 @@ export function calderynClient(shop: string) {
             console.error(
               "[skus.list] v_sku_regional_demand unavailable — serving SKUs without demand data",
               demandRes.error,
+            );
+          }
+          // Facet enrichment is optional too — a read failure must not take down
+          // the SKU surface (facets stay undefined, filters just don't render).
+          if (facetsRes.error) {
+            console.error(
+              "[skus.list] sku_dim facets unavailable — serving SKUs without slicing facets",
+              facetsRes.error,
             );
           }
 
@@ -838,6 +853,22 @@ export function calderynClient(shop: string) {
             }
           }
 
+          // sku_dim.id → product facets (category surfaces as product_type).
+          const facetsBySku = new Map<
+            string,
+            { product_type: string | null; vendor: string | null; tags: string[]; collections: string[] }
+          >();
+          if (!facetsRes.error) {
+            for (const r of (facetsRes.data ?? []) as Array<Record<string, unknown>>) {
+              facetsBySku.set(String(r.id), {
+                product_type: (r.category as string | null) ?? null,
+                vendor: (r.vendor as string | null) ?? null,
+                tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
+                collections: Array.isArray(r.collections) ? (r.collections as string[]) : [],
+              });
+            }
+          }
+
           return (skuRes.data ?? []).map((r) => {
             const set = sourcesBySku.get(String(r.id));
             const sources = set ? SKU_SOURCE_ORDER.filter((s) => set.has(s)) : [];
@@ -847,6 +878,13 @@ export function calderynClient(shop: string) {
               sku.demand = demandFromRow(demandRow);
               sku.suggested_transfer = suggestedTransferFromRow(demandRow);
               sku.locations_detail = locationsDetailFromRow(demandRow);
+            }
+            const facetRow = facetsBySku.get(sku.id);
+            if (facetRow) {
+              sku.product_type = facetRow.product_type;
+              sku.vendor = facetRow.vendor;
+              sku.tags = facetRow.tags;
+              sku.collections = facetRow.collections;
             }
             return sku;
           });
