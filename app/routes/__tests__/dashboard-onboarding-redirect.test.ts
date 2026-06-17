@@ -66,6 +66,16 @@ vi.mock("~/lib/calderyn.server", () => ({
   }),
 }));
 
+// app._index's loader now also fetches peer benchmarks; stub it so this
+// loader-only test doesn't hit the real Supabase client.
+vi.mock("~/lib/benchmarks/peer-benchmarks.server", () => ({
+  getPeerBenchmarks: async () => ({
+    niche: "cat:uncategorized",
+    consented: false,
+    kpis: [],
+  }),
+}));
+
 function callLoader(url = "http://localhost/app?shop=acme.myshopify.com&host=abc&embedded=1") {
   return loader({ request: new Request(url) } as unknown as LoaderFunctionArgs);
 }
