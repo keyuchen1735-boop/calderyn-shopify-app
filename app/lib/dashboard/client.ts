@@ -142,8 +142,12 @@ export function adaptDaily(rows: DailyRoasRow[]): DailyRow[] {
 }
 
 export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
+  // Prefer the campaign dim id resolved by v_alerts_view (robust against two
+  // campaigns sharing a name); fall back to a name match only for older rows
+  // that predate the campaign_id column.
   const campaign_id =
-    a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null;
+    a.campaign_id ??
+    (a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null);
 
   // Only live-executable kinds render as buttons: campaign kinds go through
   // /dashboard/api/campaigns/:id/action, reallocate_inventory through

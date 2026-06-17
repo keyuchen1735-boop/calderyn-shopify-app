@@ -41,6 +41,12 @@ export interface Alert {
   title: string;
   narrative: string;
   campaign: string | null;
+  /** ad_campaign_dim uuid for this alert's campaign (resolved by v_alerts_view);
+   *  null for non-campaign alerts. Match alerts to campaign rows by this, not name. */
+  campaign_id: string | null;
+  /** Platform external id of the campaign (Meta/Google/TikTok); used to match
+   *  live-Meta campaign rows, which are keyed by external id rather than dim id. */
+  campaign_external_id: string | null;
   sku: string | null;
   evidence: Record<string, any>;
 }

@@ -149,8 +149,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       reallocation = null;
     }
     // Best-effort scale suggestions from open campaign_scaling_opportunity alerts.
-    // Matches alerts to campaign rows by name (v_alerts_view has no campaign_id
-    // column; name-match mirrors the dashboard's adaptAlert logic). Failure
+    // Matches alerts to campaign rows by ID (v_alerts_view exposes the dim id and
+    // platform external id) — robust against two campaigns sharing a name. Failure
     // degrades visibly to [] — badge + row action simply won't show.
     let scaleSuggestions: ScalePrefill[] = [];
     try {
@@ -161,11 +161,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const pct = gr.autopilot_max_budget_increase_pct || 20;
       scaleSuggestions = openScaleAlerts
         .map((a) => {
-          // Name-match: a.campaign is the campaign name string from v_alerts_view
-          // (mirrors the dashboard's adaptAlert). TODO: match on the dim id once
-          // v_alerts_view exposes campaign_id — name-match can mis-attribute a
-          // suggestion if two campaigns share a name.
-          const row = campaigns.find((c) => c.name === a.campaign);
+          // Ingested rows (Google/TikTok) key on the dim id; live-Meta rows key on
+          // the platform external id — match either, never by name.
+          const row = campaigns.find(
+            (c) =>
+              (a.campaign_id != null && c.id === a.campaign_id) ||
+              (a.campaign_external_id != null && c.id === a.campaign_external_id),
+          );
           if (!row || row.status !== "active" || row.daily_budget_cents <= 0) return null;
           return {
             campaignId: row.id,
