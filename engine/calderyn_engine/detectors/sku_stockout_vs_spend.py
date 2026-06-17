@@ -27,6 +27,7 @@ from decimal import Decimal
 import asyncpg
 
 from calderyn_engine.detectors import register
+from calderyn_engine.detectors._threshold import resolve_threshold
 from calderyn_engine.estimators.stockout_loss import estimate_stockout_loss
 from calderyn_engine.schemas import DetectionResult
 
@@ -123,7 +124,10 @@ async def detect(
 ) -> list[DetectionResult]:
     """Run the detector and return zero-or-more DetectionResult rows."""
 
-    rows = await conn.fetch(_QUERY, shop_id, DEFAULT_THRESHOLD_USD)
+    threshold = await resolve_threshold(
+        conn, shop_id, DETECTOR_ID, DEFAULT_THRESHOLD_USD
+    )
+    rows = await conn.fetch(_QUERY, shop_id, threshold)
     out: list[DetectionResult] = []
     for r in rows:
         spend_dollars = Decimal(r["spend_cents"]) / Decimal("100")
@@ -137,7 +141,7 @@ async def detect(
         if impact <= 0:
             # Fall back to wasted spend as a strict lower bound on the loss.
             impact = spend_dollars
-        severity = "critical" if spend_dollars >= DEFAULT_THRESHOLD_USD * 5 else "high"
+        severity = "critical" if spend_dollars >= threshold * 5 else "high"
         out.append(
             DetectionResult(
                 detector_id=DETECTOR_ID,
