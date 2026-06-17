@@ -38,6 +38,13 @@ import { fmtMoney } from "~/lib/format";
 import { GuardrailMeter } from "~/components/calderyn";
 import type { GuardrailConfig, Integration } from "~/lib/types";
 
+// The OAuth providers that are ONBOARDING STEPS — the literal subset the wizard renders
+// an OAuthStep for. Deliberately narrower than integrations.ts's OAuthProvider, which also
+// includes the Phase-2 ship-cost OAuth 'shippo' (a Settings-only connect, not an onboarding
+// step). Keeping this local prevents a new ship-cost connector from forcing an onboarding
+// label entry.
+type OnboardingOAuthProvider = "google" | "meta" | "tiktok" | "quickbooks";
+
 // Only Shop + Guardrails are required; the stepper marks the rest so an
 // 8-step wall doesn't read as 8 mandatory commitments.
 const STEPS = [
@@ -508,7 +515,13 @@ function OAuthStep({
   prevStep,
   submitting,
 }: {
-  provider: IntegrationProvider;
+  // Only the four ad/accounting OAuth providers are onboarding steps (the call site
+  // narrows `key` to exactly these four). EasyPost (API-key) and the Phase-3 3PL houses
+  // ShipBob (API-key PAT) / ShipHero (credential/refresh-token paste) connect from Settings,
+  // plus the Phase-2 Shippo ship-cost OAuth — none of them is an onboarding step — so this is
+  // the literal onboarding subset, not the wider OAuthProvider (which also includes 'shippo')
+  // nor IntegrationProvider.
+  provider: OnboardingOAuthProvider;
   connected: boolean;
   nextStep: number;
   prevStep: number;
@@ -527,7 +540,7 @@ function OAuthStep({
     const url = connectFetcher.data?.redirectUrl;
     if (url) window.open(url, "_top");
   }, [connectFetcher.data]);
-  const labels: Record<IntegrationProvider, { title: string; blurb: string }> = {
+  const labels: Record<OnboardingOAuthProvider, { title: string; blurb: string }> = {
     google: {
       title: "Connect Google Ads",
       blurb:

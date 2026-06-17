@@ -339,6 +339,10 @@ const INTEGRATION_ORDER = [
   "google_ads",
   "tiktok_ads",
   "quickbooks",
+  "easypost_ship",
+  "shippo_ship",
+  "shipbob_ship",
+  "shiphero_ship",
 ] as const;
 
 export function adaptIntegrations(
@@ -489,6 +493,27 @@ export async function setShipCostMode(mode: string): Promise<void> {
     intent: "set_mode",
     ship_cost_mode: mode,
   });
+}
+
+export interface UnmatchedShipChargeVM {
+  id: string;
+  provider: string | null;
+  orderRef: string | null;
+  trackingNo: string | null;
+  costCents: number;
+  externalChargeId: string | null;
+  reason: string;
+}
+
+export interface UnmatchedShipCharges {
+  count: number;
+  items: UnmatchedShipChargeVM[];
+}
+
+/** Read the shop's unmatched carrier charges (Phase 3 Part C), READ-ONLY on the dashboard
+ * — mapping a charge to an order is embedded-admin-only (same split as integrations). */
+export async function fetchUnmatchedShipCharges(): Promise<UnmatchedShipCharges> {
+  return apiGet<UnmatchedShipCharges>("/dashboard/api/unmatched-ship");
 }
 
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {

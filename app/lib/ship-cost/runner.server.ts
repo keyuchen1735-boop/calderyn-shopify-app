@@ -57,16 +57,68 @@ export async function runShipCostResolution(
   }
 
   const { data: periods } = await sb
-    .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId);
+    .from("shipping_cost_period").select("total_cents").eq("shop_id", shopId)
+    // Allocation fence (C6): synthetic source='connector' periods carry real
+    // per-order carrier money already landed as shipping_invoice_line rows; they
+    // must NOT inflate the period-allocation pool (which spreads over EVERY order),
+    // else carrier money leaks onto orders that never had a carrier shipment.
+    .in("source", ["upload", "typed"]);
   const periodRows = (periods ?? []) as { total_cents: number }[];
   const periodTotal =
     periodRows.reduce((s, p) => s + (p.total_cents ?? 0), 0) || null;
 
+  // Source-priority reconciliation (Phase 3, priority 1): an order can carry BOTH a
+  // CSV-upload invoice line AND a connector line (e.g. EasyPost). The old code built
+  // invoiceByOrder with a plain last-write-wins Map over an UNORDERED select, so which
+  // cost won was nondeterministic (row order is not guaranteed). Join each line to its
+  // period's source and apply a deterministic precedence — connector > upload > typed —
+  // keeping last-write-wins only WITHIN the same source (unchanged behavior there).
+  // The connector line is the truest per-order cost (a real per-shipment carrier charge),
+  // so it must outrank a hand-built CSV line for the same order.
+  const { data: periodSources } = await sb
+    .from("shipping_cost_period").select("id, source").eq("shop_id", shopId);
+  const sourceByPeriod = new Map<string, string>();
+  for (const p of (periodSources ?? []) as { id: string; source: string | null }[]) {
+    sourceByPeriod.set(String(p.id), String(p.source ?? ""));
+  }
+  // Higher number = higher precedence. An unknown/absent source ranks lowest (0) so a
+  // line with a recognized source always wins over one with none.
+  const SOURCE_RANK: Record<string, number> = { connector: 3, upload: 2, typed: 1 };
+  const sourceRank = (src: string | undefined): number => (src ? SOURCE_RANK[src] ?? 0 : 0);
+  const CONNECTOR_RANK = SOURCE_RANK.connector;
+
   const { data: invoices } = await sb
-    .from("shipping_invoice_line").select("matched_order_id, cost_cents").eq("shop_id", shopId);
+    .from("shipping_invoice_line").select("matched_order_id, cost_cents, period_id").eq("shop_id", shopId);
   const invoiceByOrder = new Map<string, number>();
-  for (const i of (invoices ?? []) as { matched_order_id: string | null; cost_cents: number }[]) {
-    if (i.matched_order_id) invoiceByOrder.set(i.matched_order_id, i.cost_cents);
+  const winningRankByOrder = new Map<string, number>();
+  for (const i of (invoices ?? []) as {
+    matched_order_id: string | null;
+    cost_cents: number;
+    period_id: string | null;
+  }[]) {
+    if (!i.matched_order_id) continue;
+    const orderId = i.matched_order_id;
+    const rank = sourceRank(i.period_id ? sourceByPeriod.get(String(i.period_id)) : undefined);
+    const prev = winningRankByOrder.get(orderId);
+    if (prev === undefined || rank > prev) {
+      // First line for this order, or one from a strictly higher source → it becomes the
+      // new basis (any lower-ranked contribution already accumulated is discarded).
+      invoiceByOrder.set(orderId, i.cost_cents);
+      winningRankByOrder.set(orderId, rank);
+    } else if (rank === prev) {
+      if (rank === CONNECTOR_RANK) {
+        // Connector lines are landed one-per-charge (land.server.ts), so an order's true
+        // per-shipment cost is the SUM of its connector lines — accumulate them. This is
+        // order-independent and reads ALL lines (no window), so straddling re-pull windows
+        // can't double-count or under-count (the idempotency fix).
+        invoiceByOrder.set(orderId, (invoiceByOrder.get(orderId) ?? 0) + i.cost_cents);
+      } else {
+        // upload / typed: last-write-wins within the same source (unchanged pre-Phase-3
+        // behavior — those sources land one already-summed line per order).
+        invoiceByOrder.set(orderId, i.cost_cents);
+      }
+    }
+    // rank < prev → ignore (a lower source never overwrites a higher one).
   }
 
   const allocOrders: AllocOrder[] = orderRows.map((o) => ({
