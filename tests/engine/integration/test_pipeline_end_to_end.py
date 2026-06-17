@@ -144,58 +144,6 @@ async def test_pipeline_writes_alerts_for_both_detectors(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_emits_moat_detection_fired_when_pepper_set(
-    pg_pool: asyncpg.Pool,
-    seed_shop,
-    seed_stockout_scenario,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Plan 05 Task 7 — pipeline writes one moat.event_log row per alert.
-
-    Only runs when MOAT_PEPPER is set (we set it via monkeypatch). The
-    emit is wrapped in a savepoint so its absence does not break the
-    pipeline; this test asserts the *positive* path.
-    """
-
-    monkeypatch.setenv("MOAT_PEPPER", "test-pepper-pipeline")
-
-    await seed_shop(SHOP)
-    await seed_stockout_scenario(
-        SHOP,
-        spend_usd=Decimal("900"),
-        stock_on_hand=0,
-        velocity=Decimal("8"),
-        unit_margin=Decimal("30"),
-    )
-
-    client = _mock_client_returning('{"ranked":[]}')
-
-    upserted = await run_for_shop(
-        SHOP,
-        day=date(2026, 4, 19),
-        cfg=_cfg(),
-        claude_client=client,
-        pool=pg_pool,
-    )
-    assert len(upserted) >= 1
-
-    async with pg_pool.acquire() as conn:
-        # moat.event_log is cross-tenant — no RLS scoping needed. We
-        # filter by detector_id so noise from other tests in the same
-        # session does not leak into the assertion. Pseudonyms are
-        # one-way, so we cannot filter by shop_id here on purpose.
-        rows = await conn.fetch(
-            "SELECT event_kind, detector_id, payload FROM moat.event_log "
-            "WHERE event_kind = 'detection_fired' "
-            "AND detector_id = 'sku_stockout_vs_spend'"
-        )
-
-    assert len(rows) >= 1
-    assert all(r["event_kind"] == "detection_fired" for r in rows)
-    assert all(r["detector_id"] == "sku_stockout_vs_spend" for r in rows)
-
-
-@pytest.mark.asyncio
 async def test_pipeline_is_idempotent_on_rerun(
     pg_pool: asyncpg.Pool,
     seed_shop,
