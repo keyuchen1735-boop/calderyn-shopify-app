@@ -3,6 +3,7 @@
 // CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
 // CDIcon/CD_ACTION_ICON (icons), RingGauge/GradePill/etc. (ui). Charts/cards reuse ui.tsx.
 import type { ReactNode } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   SectionTitle,
@@ -22,6 +23,8 @@ import { recoveredWithin } from "~/lib/recovered";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
+import { PeerBenchmarks } from "./PeerBenchmarks";
+import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 
 /* ---------- Header pieces ---------- */
 function ScreenHeader({
@@ -284,6 +287,18 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
 
   const series = app.overview?.roas_series ?? [];
 
+  // Peer Benchmarks: self-fetched so no DashboardCtx threading needed.
+  // Promote into the context loader if another screen needs the same data.
+  const [benchmarks, setBenchmarks] = useState<BenchmarksData | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/dashboard/api/benchmarks")
+      .then((r) => r.json())
+      .then((d) => { if (alive) setBenchmarks(d as BenchmarksData); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
@@ -402,6 +417,9 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         <PredictorCard app={app} />
         <GuardrailCard app={app} />
       </div>
+
+      {/* Peer Benchmarks — self-fetched; renders nothing until data arrives or for uncategorized niche */}
+      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
     </div>
   );
 }
