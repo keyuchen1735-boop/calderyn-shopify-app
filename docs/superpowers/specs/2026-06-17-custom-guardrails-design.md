@@ -106,26 +106,33 @@ and the other autopilot keys are already listed.)
 
 ## Validation (single source of truth)
 
-Move **all** field validation into `app/lib/dashboard/guardrails-validation.ts`
-(`validateGuardrailPatch`), including the budget/cap/cooldown checks currently
-inlined in the route. Call it from **both** the dashboard route **and** the
-embedded-admin `update_guardrails` action (which today does no autopilot-bound
-validation — a real gap). On failure return `422` with the **specific** field
-error code (today the dashboard collapses all to `invalid_guardrails`).
+Move the budget/cap/cooldown checks currently inlined in the dashboard route
+**into** `app/lib/dashboard/guardrails-validation.ts` (`validateGuardrailPatch`)
+so it is the single validator, and add the missing upper bounds + business-hours
+format + `business_hours_only` checks. The autopilot-bound checks
+(`*_budget_cut_pct`, `*_budget_increase_pct`, `*_daily_budget_cents`, etc.)
+**already exist** in this validator. Call the validator from **both** the
+dashboard route **and** the embedded-admin `update_guardrails` action (which
+today does no autopilot-bound validation — a real gap).
+
+On failure the dashboard route keeps returning `422 { error: "invalid_guardrails" }`
+(unchanged response contract — existing route tests depend on it); the validator's
+specific code is used internally only. The embedded-admin action surfaces the
+failure as its existing error toast.
 
 | Field | Rule |
 |---|---|
-| `daily_action_budget_cents` | finite int, `> 0`, `<= 100_000_000` ($1,000,000) |
-| `dollar_cap_cents` | finite int, `> 0`, `<= 100_000_000` |
-| `cooldown_minutes` | finite int, `0 … 10_080` (≤ 1 week) |
-| `autopilot_daily_action_cap` | finite int, `0 … 100` *(existing)* |
-| `autopilot_min_spend_cents` | finite int, `>= 0`, `<= 100_000_000` |
-| `autopilot_max_budget_cut_pct` | `0 … 100` *(existing)* |
-| `autopilot_max_budget_increase_pct` | `0 … 1000` (allows up to 10×) |
-| `autopilot_max_daily_budget_cents` | `null` **or** finite int `> 0` and `<= 100_000_000` |
-| `business_hours.start` / `.end` | string matching `^([01]\d\|2[0-3]):00$` (whole hour) |
-| `business_hours.tz` | valid IANA zone (`Intl.DateTimeFormat` with `timeZone` does not throw) |
-| `business_hours_only` | boolean |
+| `daily_action_budget_cents` | finite, `> 0` *(moves from route)*, **add** `<= 100_000_000` ($1,000,000) |
+| `dollar_cap_cents` | finite, `> 0` *(moves from route)*, **add** `<= 100_000_000` |
+| `cooldown_minutes` | finite, `>= 0` *(moves from route)*, **add** `<= 10_080` (≤ 1 week) |
+| `autopilot_daily_action_cap` | finite int, `0 … 100` *(existing, unchanged)* |
+| `autopilot_min_spend_cents` | finite, `>= 0` *(existing)*, **add** `<= 100_000_000` |
+| `autopilot_max_budget_cut_pct` | `0 … 100` *(existing, unchanged)* |
+| `autopilot_max_budget_increase_pct` | `0 … 100` *(existing, unchanged — at most doubles in one step)* |
+| `autopilot_max_daily_budget_cents` | `null` **or** finite `>= 0` *(existing)*, **add** `<= 100_000_000` |
+| `business_hours.start` / `.end` | **tighten** from "is a string" to string matching `^([01]\d\|2[0-3]):00$` (whole hour) |
+| `business_hours.tz` | **tighten** to a valid IANA zone (`Intl.DateTimeFormat` with `timeZone` does not throw) |
+| `business_hours_only` | **new** — boolean |
 
 ## Business-hours mapping helpers
 
