@@ -86,7 +86,7 @@ function loginFormPage(returnTo: string | null): Response {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  if (!rateLimit(clientIpKey(request, "dash-login"), 10, 60_000)) {
+  if (!(await rateLimit(clientIpKey(request, "dash-login"), 10, 60_000))) {
     return jsonError(429, "rate_limited");
   }
 
