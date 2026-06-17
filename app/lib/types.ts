@@ -220,6 +220,8 @@ export interface GuardrailConfig {
   cooldown_minutes: number;
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
+  /** When true, actions only execute inside business_hours; else the window is informational. */
+  business_hours_only: boolean;
   autopilot_enabled: boolean;
   autopilot_daily_action_cap: number;
   autopilot_min_spend_cents: number;

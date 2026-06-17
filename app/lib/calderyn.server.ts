@@ -37,6 +37,7 @@ import { refreshShipHeroToken } from "./shiphero/auth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
+import { localHourToUtc, utcHourToLocal } from "./dashboard/business-hours";
 import { DEFAULT_GUARDRAILS } from "./guardrail-defaults";
 import { recoveredDollarsForAlertAction } from "./actions/execute.server";
 import { dailyActionBudgetUsedCents } from "./recovered";
@@ -216,23 +217,23 @@ function startOfUtcDayIso(now = new Date()): string {
 }
 
 function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailConfig {
+  const tz = String(r.timezone ?? "America/New_York");
+  const startUtc = Number(r.business_hours_start_utc ?? 14);
+  const endUtc = Number(r.business_hours_end_utc ?? 0);
   return {
     daily_action_budget_cents: Number(r.daily_action_budget ?? 0) * 100,
     daily_action_budget_used_cents: usedCents,
     dollar_cap_cents: Math.round(Number(r.dollar_impact_cap_without_2fa ?? 0) * 100),
     cooldown_minutes: Number(r.cooldown_minutes_per_campaign ?? 30),
     business_hours: {
-      start: `${String(r.business_hours_start_utc ?? 14).padStart(2, "0")}:00`,
-      end: `${String(r.business_hours_end_utc ?? 0).padStart(2, "0")}:00`,
-      tz: String(r.timezone ?? "America/New_York"),
+      start: utcHourToLocal(startUtc, tz),
+      end: utcHourToLocal(endUtc, tz),
+      tz,
     },
+    business_hours_only: Boolean(r.business_hours_only),
     // Same window math the autopilot gateway enforces (actions/guardrails.ts),
     // so the merchant-facing check can't show green while the gateway blocks.
-    in_business_hours: withinBusinessHours(
-      Number(r.business_hours_start_utc ?? 14),
-      Number(r.business_hours_end_utc ?? 0),
-      new Date().getUTCHours(),
-    ),
+    in_business_hours: withinBusinessHours(startUtc, endUtc, new Date().getUTCHours()),
     autopilot_enabled: Boolean(r.autopilot_enabled),
     autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
@@ -1212,7 +1213,16 @@ export function calderynClient(shop: string) {
           if (patch.cooldown_minutes !== undefined) {
             updates.cooldown_minutes_per_campaign = patch.cooldown_minutes;
           }
-          if (patch.business_hours?.tz) updates.timezone = patch.business_hours.tz;
+          if (patch.business_hours) {
+            const tz = patch.business_hours.tz;
+            if (tz) updates.timezone = tz;
+            const zone = tz ?? "America/New_York";
+            updates.business_hours_start_utc = localHourToUtc(patch.business_hours.start, zone);
+            updates.business_hours_end_utc = localHourToUtc(patch.business_hours.end, zone);
+          }
+          if (patch.business_hours_only !== undefined) {
+            updates.business_hours_only = patch.business_hours_only;
+          }
           if (patch.autopilot_enabled !== undefined) updates.autopilot_enabled = patch.autopilot_enabled;
           if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
           if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
