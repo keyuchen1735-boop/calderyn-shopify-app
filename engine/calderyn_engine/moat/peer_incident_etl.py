@@ -330,3 +330,16 @@ async def run_peer_incident_etl(
         incidents_extracted=incidents,
     )
     return report
+
+
+__all__ = [
+    "GMV_BANDS",
+    "EtlReport",
+    "segment_for_shop",
+    "gmv_band_for_shop",
+    "project_alerts_for_day",
+    "compute_peer_baselines_by_segment",
+    "run_peer_baselines",
+    "run_incident_library",
+    "run_peer_incident_etl",
+]
