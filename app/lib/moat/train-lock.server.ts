@@ -13,8 +13,10 @@
 // single-row lock (locked_at/expires_at) once OQ-2 (lock ownership) is decided.
 
 // Minimal structural type so this helper does not couple to the concrete
-// Supabase client shape; the route passes its real client, tests pass {}.
-type SupabaseLike = Record<string, unknown>;
+// Supabase client shape; the route passes its real client (SupabaseClient),
+// tests pass {}. `object` accepts any non-primitive without demanding an index
+// signature (which SupabaseClient does not have), keeping the seam decoupled.
+type SupabaseLike = object;
 
 export async function acquireTrainLock(_sb: SupabaseLike): Promise<boolean> {
   // No-op: always grant. (Real impl: rows-affected === 1 on the conditional
