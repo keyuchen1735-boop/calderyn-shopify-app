@@ -102,3 +102,115 @@ async def test_resolver_matches_niche_view_for_today(pg_pool):
         )
     assert resolved == "cat:electronics"
     assert row is not None and row["segment"] == resolved
+
+
+from decimal import Decimal
+
+import pytest_asyncio
+
+from calderyn_engine.moat.peer_metrics_etl import run_peer_metrics
+
+PEPPER = "test-pepper-v1"
+
+
+@pytest_asyncio.fixture(autouse=False)
+async def clean_peer_tables(pg_pool):
+    """Truncate all tables touched by the run_peer_metrics tests before each
+    test that uses it, so prior-test shops/orders don't bleed into counts."""
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            "TRUNCATE moat.peer_metric_baselines, "
+            "public.order_fact, public.sku_pnl, public.sku_dim, "
+            "public.shops RESTART IDENTITY CASCADE"
+        )
+    yield
+
+
+async def _seed_shop_in_niche(conn, shop_id, *, consent, category, aov_dollars):
+    """Seed a consenting/non-consenting shop with one category and one order so
+    its v_peer_kpi_aov value == aov_dollars and its niche == cat:<category>."""
+    await _seed_shop(conn, shop_id, consent=consent)
+    sku = await _seed_sku(conn, shop_id, category)
+    await _seed_pnl(conn, shop_id, sku, day=date.today(), revenue_cents=10_000)
+    await conn.execute(
+        """
+        INSERT INTO public.order_fact
+          (id, shop_id, external_id, order_number, created_at_source,
+           total_cents, subtotal_cents, source_version)
+        VALUES (gen_random_uuid(), $1::uuid, $2, $3, now(),
+                $4, $4, (extract(epoch from clock_timestamp())*1000)::bigint)
+        """,
+        shop_id, f"ord-{uuid.uuid4().hex[:8]}", f"#{uuid.uuid4().hex[:6]}",
+        int(aov_dollars * 100),
+    )
+
+
+async def test_below_k_floor_writes_no_row(pg_pool, clean_peer_tables):
+    async with pg_pool.acquire() as conn:
+        for d in (100, 200):  # only 2 consenting shops < K_FLOOR
+            await _seed_shop_in_niche(conn, str(uuid.uuid4()),
+                                      consent=True, category="electronics", aov_dollars=d)
+        report = await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        row = await conn.fetchrow(
+            "SELECT * FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment='cat:electronics'"
+        )
+    assert row is None
+    assert report.metrics_written == 0
+
+
+async def test_five_consenting_shops_write_quartiles(pg_pool, clean_peer_tables):
+    async with pg_pool.acquire() as conn:
+        for d in (100, 200, 300, 400, 500):
+            await _seed_shop_in_niche(conn, str(uuid.uuid4()),
+                                      consent=True, category="electronics", aov_dollars=d)
+        await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        row = await conn.fetchrow(
+            "SELECT n, p25, p50, p75 FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment='cat:electronics'"
+        )
+    assert row["n"] == 5
+    # percentile_cont over [100,200,300,400,500]
+    assert row["p25"] == Decimal("200.000000")
+    assert row["p50"] == Decimal("300.000000")
+    assert row["p75"] == Decimal("400.000000")
+
+
+async def test_non_consenting_excluded_from_count(pg_pool, clean_peer_tables):
+    async with pg_pool.acquire() as conn:
+        for d in (100, 200, 300, 400):  # 4 consenting
+            await _seed_shop_in_niche(conn, str(uuid.uuid4()),
+                                      consent=True, category="books", aov_dollars=d)
+        for d in (500, 600):  # 2 NON-consenting — must not lift count to 6
+            await _seed_shop_in_niche(conn, str(uuid.uuid4()),
+                                      consent=False, category="books", aov_dollars=d)
+        await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        row = await conn.fetchrow(
+            "SELECT * FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment='cat:books'"
+        )
+    assert row is None  # only 4 consenting < K_FLOOR
+
+
+async def test_delete_stale_when_drops_below_floor(pg_pool, clean_peer_tables):
+    seg = "cat:electronics"
+    async with pg_pool.acquire() as conn:
+        ids = [str(uuid.uuid4()) for _ in range(5)]
+        for sid, d in zip(ids, (100, 200, 300, 400, 500)):
+            await _seed_shop_in_niche(conn, sid, consent=True,
+                                      category="electronics", aov_dollars=d)
+        await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        assert await conn.fetchrow(
+            "SELECT 1 FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment=$1", seg) is not None
+        # Two shops withdraw → 3 left < K_FLOOR → row must be deleted.
+        await conn.execute(
+            "UPDATE public.shops SET peer_data_consent=false WHERE id = ANY($1::uuid[])",
+            ids[:2],
+        )
+        report = await run_peer_metrics(conn, run_date=date.today(), pepper=PEPPER)
+        gone = await conn.fetchrow(
+            "SELECT 1 FROM moat.peer_metric_baselines "
+            "WHERE metric_key='aov' AND segment=$1", seg)
+    assert gone is None
+    assert report.segments_deleted >= 1
