@@ -51,6 +51,7 @@ import { metaClientForShop } from "~/lib/meta/client.server";
 import { listCampaigns, setCampaignStatus, getCampaignStatus } from "~/lib/meta/campaigns.server";
 import { useActionToast } from "~/lib/toast";
 import { fmtMoney, fmtMoneyDec } from "~/lib/format";
+import { scaleReason } from "~/lib/scale-reason";
 import type { ActionKind, Campaign } from "~/lib/types";
 
 type ScalePrefill = {
@@ -59,6 +60,7 @@ type ScalePrefill = {
   projectedUpside: number; // CENTS (alert.dollar_impact — rowToAlert already converts dollars→cents)
   newBudgetCents: number;
   pct: number;
+  reason: string; // plain-language "why scale" shown on hover of the Suggested: scale badge
 };
 
 type PendingAction =
@@ -169,12 +171,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               (a.campaign_external_id != null && c.id === a.campaign_external_id),
           );
           if (!row || row.status !== "active" || row.daily_budget_cents <= 0) return null;
+          // ROAS from the alert's raw evidence (the campaign row's roas_7d is 0
+          // for live-Meta rows); null when absent so the reason omits the clause.
+          const roasRaw = Number(a.evidence?.roas);
+          const roas = Number.isFinite(roasRaw) ? roasRaw : null;
           return {
             campaignId: row.id,
             alertId: a.id,
             projectedUpside: a.dollar_impact,
             newBudgetCents: Math.round(row.daily_budget_cents * (1 + pct / 100)),
             pct,
+            reason: scaleReason(roas, pct, a.dollar_impact),
           } satisfies ScalePrefill;
         })
         .filter((s): s is ScalePrefill => s !== null);
@@ -721,7 +728,11 @@ export default function Campaigns() {
         <Badge tone={c.status === "active" ? "success" : "attention"}>
           {c.status === "active" ? "Active" : "Paused"}
         </Badge>
-        {scaleSuggestion ? <Badge tone="success">Suggested: scale</Badge> : null}
+        {scaleSuggestion ? (
+          <Tooltip content={scaleSuggestion.reason}>
+            <Badge tone="success">Suggested: scale</Badge>
+          </Tooltip>
+        ) : null}
       </InlineStack>,
       c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
       fmtMoney(c.spend_7d),
