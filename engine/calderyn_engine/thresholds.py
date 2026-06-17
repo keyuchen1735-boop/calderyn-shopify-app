@@ -54,14 +54,14 @@ _DETECTOR_THRESHOLDS: dict[str, tuple[str, Decimal]] = {
     "campaign_below_breakeven": ("min_loss_usd", Decimal("500")),
     "regional_spend_starved_stock": ("min_spend_usd", Decimal("500")),
     "scaling_sku_fulfillment_risk": ("min_impact_usd", Decimal("500")),
-    "return_rate_hidden_loss": ("min_impact_usd", Decimal("500")),
+    "return_rate_hidden_loss": ("min_impact_usd", Decimal("200")),
     "margin_erosion": ("min_impact_usd", Decimal("500")),
     "cogs_drift": ("min_impact_usd", Decimal("500")),
     "ad_tax_overload": ("min_impact_usd", Decimal("500")),
     "negative_unit_economics": ("min_impact_usd", Decimal("500")),
-    "reorder_timing": ("min_impact_usd", Decimal("500")),
-    "wrong_location_concentration": ("min_impact_usd", Decimal("500")),
-    "regional_shortage_risk": ("min_impact_usd", Decimal("500")),
+    "reorder_timing": ("min_impact_usd", Decimal("200")),
+    "wrong_location_concentration": ("min_impact_usd", Decimal("200")),
+    "regional_shortage_risk": ("min_impact_usd", Decimal("200")),
 }
 
 
