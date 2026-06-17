@@ -12,12 +12,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return new Response("Unauthorized", { status: 401 });
   }
   const sb = getSupabase();
-  const summary = { acted: 0, blocked: 0, shops: 0, errors: [] as string[] };
+  const summary = { acted: 0, blocked: 0, failed: 0, shops: 0, errors: [] as string[] };
 
-  const { data: rows } = await sb
+  // Surface a shop-list read failure as a 500 instead of swallowing it: a DB
+  // outage must not look identical to "no shops opted in" (an empty 200), which
+  // a cron monitor would read as a healthy run.
+  const { data: rows, error: listErr } = await sb
     .from("guardrail_config")
     .select("shop_id")
     .eq("autopilot_enabled", true);
+  if (listErr) {
+    console.error("[cron.autopilot] failed to list autopilot shops", listErr);
+    return json({ error: `failed to list autopilot shops: ${listErr.message}` }, { status: 500 });
+  }
   const shopIds = (rows ?? []).map((r) => String(r.shop_id));
 
   const settled = await mapWithConcurrency(shopIds, CONCURRENCY, (shopId) => runAutopilotForShop(shopId, sb));
@@ -26,6 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.shops += 1;
       summary.acted += r.value.acted;
       summary.blocked += r.value.blocked;
+      summary.failed += r.value.failed;
     } else {
       const message = r.error instanceof Error ? r.error.message : String(r.error);
       summary.errors.push(`${shopIds[i]}: ${message}`);
