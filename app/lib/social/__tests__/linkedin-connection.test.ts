@@ -403,21 +403,15 @@ describe("signState / verifyState", () => {
     expect(verifyState("")).toBe(false);
   });
 
-  it("verifyState returns false when state has expired (simulated via fake nonce:exp format)", () => {
-    // Create a state with exp in the past — we can't use signState for this
-    // so we build the payload manually and sign it, bypassing the module's clock
-    // The implementation uses ~10min expiry. We verify that an old exp is rejected.
-    // We test this by calling verifyState with a hand-crafted expired state.
-    // Since we can't easily forge the HMAC, we instead confirm that a state
-    // created now passes, and trust the implementation guards exp via Date.now().
-    // A separate property test: two states created at different times differ.
-    const s1 = signState();
-    const s2 = signState();
-    // Both should be valid (same test run, not expired)
-    expect(verifyState(s1)).toBe(true);
-    expect(verifyState(s2)).toBe(true);
-    // They should not be identical (nonce differs)
-    expect(s1).not.toBe(s2);
+  it("verifyState returns false for an expired state", () => {
+    vi.useFakeTimers();
+    try {
+      const state = signState();
+      vi.advanceTimersByTime(11 * 60 * 1000); // past the 10-min expiry
+      expect(verifyState(state)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("verifyState falls back to CRON_SECRET when SOCIAL_ACTION_SECRET is absent", () => {

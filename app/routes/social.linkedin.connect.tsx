@@ -60,9 +60,10 @@ function infoPage(heading: string, body: string): Response {
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
-  // Gate: key must match CRON_SECRET
+  // Gate: key must match CRON_SECRET; fail explicitly when CRON_SECRET is unset
+  const secret = process.env.CRON_SECRET;
   const key = url.searchParams.get("key");
-  if (!key || key !== process.env.CRON_SECRET) {
+  if (!secret || !key || key !== secret) {
     return json({ error: "unauthorized" }, { status: 401 });
   }
 

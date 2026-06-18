@@ -96,11 +96,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       `LinkedIn connected as ${memberUrn} — approvals will now auto-post.`,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    console.error("[linkedin.callback]", err);
     return htmlPage(
       "Connection failed",
       BRAND.red,
-      `Something went wrong while connecting your LinkedIn account: ${message}`,
+      "Couldn't connect LinkedIn — please retry, or check server logs.",
     );
   }
 }

@@ -136,8 +136,10 @@ describe("social.linkedin.callback — loader", () => {
       context: {},
     });
     const text = await res.text();
+    // Generic message shown on page; real detail goes to server logs only
     expect(text).toMatch(/error|fail/i);
-    expect(text).toMatch(/HTTP 401/i);
+    expect(text).not.toMatch(/HTTP 401/i);
+    expect(text).toMatch(/retry/i);
   });
 
   it("renders an error page when saveConnection throws (does not throw past the loader)", async () => {
@@ -156,7 +158,9 @@ describe("social.linkedin.callback — loader", () => {
       context: {},
     });
     const text = await res.text();
+    // Generic message shown on page; real detail goes to server logs only
     expect(text).toMatch(/error|fail/i);
-    expect(text).toMatch(/DB write failed/i);
+    expect(text).not.toMatch(/DB write failed/i);
+    expect(text).toMatch(/retry/i);
   });
 });
