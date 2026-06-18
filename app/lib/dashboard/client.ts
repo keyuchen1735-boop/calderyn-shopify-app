@@ -34,6 +34,7 @@ import type {
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { gradeFromRow } from "~/lib/campaign-grade";
+import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
@@ -251,7 +252,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     id: e.id,
     action_kind: e.action_kind,
     verb: AUDIT_VERBS[e.action_kind] ?? e.action_kind,
-    target: e.target,
+    target: displayAuditTarget(e.target),
     detail: e.failure_reason ?? "",
     dollar_impact_at_exec: e.dollar_impact_at_exec,
     outcome: e.outcome,
@@ -264,6 +265,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     pre: summarizeState(e.pre_state),
     post: summarizeState(e.post_state),
     failure: e.failure_reason,
+    failureFriendly: friendlyActionError(e.failure_reason) ?? undefined,
     mode: leg.mode,
     actorDisplay: leg.actorDisplay,
     marginBasis: leg.marginBasis,

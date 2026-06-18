@@ -71,7 +71,7 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
           </Pill>
           <span className="cd-row-title truncate">
             {entry.undo_of ? "Reversed — " : ""}
-            {entry.verb} — {entry.target}
+            {entry.verb}{entry.target ? ` — ${entry.target}` : ""}
           </span>
           {failed && <Pill tone="critical" icon="x">Blocked</Pill>}
           {retrying && <Pill tone="warn" icon="clock">Retrying</Pill>}
@@ -83,7 +83,7 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
             the failure, so show the machine failure message too. */}
         {failed && entry.failure && (
           <div className="cd-caption truncate" style={{ color: "var(--red)" }}>
-            {entry.failure}
+            {entry.failureFriendly ?? entry.failure}
           </div>
         )}
       </div>

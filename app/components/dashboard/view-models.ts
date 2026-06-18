@@ -70,6 +70,9 @@ export interface AuditVM {
   pre: string;
   post: string;
   failure?: string;
+  /** Merchant-safe version of `failure`; the raw `failure` stays for the
+   *  details expansion (P2-12). */
+  failureFriendly?: string;
   /** Legibility signals derived once in audit-legibility.ts (parity with the
    *  extension). Rendered in the dashboard's own primitives. */
   mode: "auto" | "manual";
