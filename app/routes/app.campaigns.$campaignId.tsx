@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Badge,
   Banner,
   BlockStack,
+  Button,
   Card,
   InlineGrid,
   InlineStack,
@@ -39,6 +40,7 @@ import {
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
 import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
+import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import {
   loadCachedAdScorecards,
   type AdScorecard,
@@ -52,6 +54,13 @@ import type { ScoreActionPayload } from "./app.campaigns.$campaignId.score";
 import { fmtMoney } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
+
+const DIRECTION_BADGE: Record<string, { label: string; tone: "success" | "attention" | "critical" | undefined }> = {
+  scale_up: { label: "Scale up", tone: "success" },
+  keep: { label: "Keep", tone: undefined },
+  scale_down: { label: "Scale down", tone: "attention" },
+  pause: { label: "Pause", tone: "critical" },
+};
 
 type ScaleOpportunity = {
   reason: string;
@@ -195,6 +204,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       emptyPayload(idFromUrl, { code: e.code ?? "ERROR", message: e.message }),
     );
   }
+};
+
+export const action = async ({ request, params }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  if (String(form.get("intent")) !== "apply_direction") {
+    return json({ ok: false, error: "unknown_intent" }, { status: 400 });
+  }
+  const kind = String(form.get("action_kind")) as ExecutableKind;
+  const allowed: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget", "increase_campaign_budget"];
+  if (!allowed.includes(kind)) return json({ ok: false, error: "invalid_action_kind" }, { status: 400 });
+  const dailyRaw = form.get("daily_budget_cents");
+  const dailyBudgetCents = dailyRaw != null && dailyRaw !== "" ? Number(dailyRaw) : undefined;
+  const shopId = await resolveShopId(session.shop);
+  const res = await executeAction(
+    shopId,
+    {
+      alertId: null,
+      kind,
+      campaignId: String(params.campaignId),
+      idempotencyKey: `direction:${params.campaignId}:${kind}:${new Date().toISOString().slice(0, 10)}`,
+      dailyBudgetCents,
+      actor: "merchant:admin-detail",
+    },
+    getSupabase(),
+  );
+  return json({ ok: res.outcome !== "failed", outcome: res.outcome });
 };
 
 /** Best-effort recommended direction for the detail view. calderynClient + alerts +
@@ -485,7 +521,9 @@ export default function CampaignDetailPage() {
     assumedSpendCents,
     campaignIdParam,
     scale,
+    direction,
   } = useLoaderData<typeof loader>();
+  const directionFetcher = useFetcher();
 
   if (!detail) {
     return (
@@ -515,6 +553,31 @@ export default function CampaignDetailPage() {
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
     >
       <BlockStack gap="400">
+        {direction && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="h2" variant="headingMd">Recommended direction</Text>
+                <Badge tone={DIRECTION_BADGE[direction.direction].tone}>
+                  {DIRECTION_BADGE[direction.direction].label}
+                </Badge>
+              </InlineStack>
+              <Text as="p">{direction.reason}</Text>
+              {direction.actionKind && (
+                <directionFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="apply_direction" />
+                  <input type="hidden" name="action_kind" value={direction.actionKind} />
+                  {direction.suggestedBudgetCents != null && (
+                    <input type="hidden" name="daily_budget_cents" value={String(direction.suggestedBudgetCents)} />
+                  )}
+                  <Button variant="primary" submit loading={directionFetcher.state !== "idle"}>
+                    {DIRECTION_BADGE[direction.direction].label}
+                  </Button>
+                </directionFetcher.Form>
+              )}
+            </BlockStack>
+          </Card>
+        )}
         {scale && (
           <Card>
             <BlockStack gap="300">
@@ -544,7 +607,7 @@ export default function CampaignDetailPage() {
               Real performance
             </Text>
             {perf.available ? (
-              <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+              <InlineGrid columns={{ xs: 2, sm: 5 }} gap="400">
                 <Stat label="Daily budget" value={moneyOrDash(detail.status === "paused" ? null : perf.dailyBudgetCents)} />
                 <Stat label="7-day spend" value={moneyOrDash(perf.spend7dCents)} />
                 <Stat
@@ -553,9 +616,14 @@ export default function CampaignDetailPage() {
                   help="Reported ROAS — revenue ÷ ad spend, before product costs"
                 />
                 <Stat
-                  label="Real return"
+                  label="Break-even ROAS"
+                  value={perf.breakEvenRoas != null ? `${perf.breakEvenRoas.toFixed(1)}×` : "—"}
+                  help="The ROAS this campaign must clear to break even (1 ÷ margin)"
+                />
+                <Stat
+                  label="Profit ROAS (POAS)"
                   value={perf.realRoas != null ? `${perf.realRoas.toFixed(1)}×` : "—"}
-                  help="Margin-adjusted ROAS — return after product costs are taken out"
+                  help="Profit on ad spend — margin-adjusted ROAS (return after product costs)"
                   critical={perf.realRoas != null && perf.realRoas < 1}
                 />
               </InlineGrid>
