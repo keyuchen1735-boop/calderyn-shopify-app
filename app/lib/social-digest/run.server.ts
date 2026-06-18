@@ -14,6 +14,7 @@ import { collectWaitlistSignups } from "../github-digest/waitlist.server";
 import { sendEmail, type DeliveryResult } from "../email/send.server";
 import { buildSocialPack } from "./pack.server";
 import { buildCarousels } from "./slides.server";
+import { type SocialPack } from "./slides.server";
 import { renderSlideSets } from "./render.server";
 import { storeSlides, signedUrls } from "./store.server";
 import { signActionToken } from "./token.server";
@@ -23,6 +24,7 @@ const DEFAULT_REPO = "keyuchen1735-boop/calderyn-shopify-app";
 const DEFAULT_TO = ["keyuchen@calderyncompany.com", "john@calderyncompany.com", "kennethlee@calderyncompany.com"];
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_MS = 7 * ONE_DAY_MS;
+const MAX_REGENS = 5;
 
 export interface SocialRunSummary {
   digestId: string | null;
@@ -53,9 +55,41 @@ function rangeLabel(startMs: number, endMs: number): string {
     : `${sMonth} ${sDay} – ${eMonth} ${eDay}, ${year}`;
 }
 
-function recipients(): string[] {
+export function recipients(): string[] {
   const raw = (process.env.SOCIAL_DIGEST_TO || "").split(",").map((s) => s.trim()).filter(Boolean);
   return raw.length ? raw : DEFAULT_TO;
+}
+
+// ---------------------------------------------------------------------------
+// extractPriorCopy — pure helper to collect all human-readable copy strings
+// from a SocialPack so regeneration can tell the model what to avoid.
+// ---------------------------------------------------------------------------
+
+export function extractPriorCopy(pack: SocialPack): string[] {
+  const candidates: string[] = [
+    pack.linkedin.coverA,
+    pack.linkedin.coverB,
+    pack.linkedin.features[0].title,
+    pack.linkedin.features[1].title,
+    pack.linkedin.ctaHeadline,
+    pack.instagram.coverA,
+    pack.instagram.coverHi,
+    pack.instagram.coverB,
+    pack.instagram.bigLabel,
+    pack.instagram.feature.title,
+    pack.linkedinCaption,
+    pack.instagramCaption,
+  ];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const s of candidates) {
+    const trimmed = s.trim();
+    if (trimmed && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  }
+  return result;
 }
 
 function escapeHtml(s: string): string {
@@ -126,6 +160,60 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   ].join("\n");
 
   return { subject, text, html };
+}
+
+// ---------------------------------------------------------------------------
+// sendDecisionEmail — shared by first-send (version 0) and regeneration.
+// Mints signed preview URLs, approve/reject tokens, builds and sends the
+// action email. Returns a DeliveryResult; never throws (returns not-configured
+// or the sendEmail result directly).
+// ---------------------------------------------------------------------------
+
+interface SendDecisionEmailArgs {
+  id: string;
+  version: number;
+  range: string;
+  shippedCount: number;
+  waitlistDelta: number;
+  liPaths: string[];
+  igPaths: string[];
+  to: string[];
+}
+
+async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryResult> {
+  const { id, version, range, shippedCount, waitlistDelta, liPaths, igPaths, to } = args;
+
+  let liUrls: string[];
+  let igUrls: string[];
+  try {
+    [liUrls, igUrls] = await Promise.all([signedUrls(liPaths), signedUrls(igPaths)]);
+  } catch (err) {
+    return { sent: false, error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const approveToken = signActionToken(id, "approve", version);
+  const rejectToken = signActionToken(id, "reject", version);
+  const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
+  const approveUrl = `${baseUrl}/social/review/${id}?t=${approveToken}`;
+  const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
+
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.DIGEST_FROM;
+  if (!apiKey || !from) {
+    const missing = [!apiKey && "RESEND_API_KEY", !from && "DIGEST_FROM"].filter(Boolean).join(", ");
+    return { sent: false, error: `email not configured (${missing})` };
+  }
+
+  const { subject, text, html } = buildActionEmail({
+    range,
+    shippedCount,
+    waitlistDelta,
+    liUrls,
+    igUrls,
+    approveUrl,
+    rejectUrl,
+  });
+  return sendEmail({ apiKey, from, to, subject, text, html });
 }
 
 // ---------------------------------------------------------------------------
@@ -243,53 +331,19 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     };
   }
 
-  // Mint signed preview URLs and action tokens.
-  let liUrls: string[];
-  let igUrls: string[];
-  try {
-    [liUrls, igUrls] = await Promise.all([signedUrls(liPaths), signedUrls(igPaths)]);
-  } catch (err) {
-    await markDigestFailed(id);
-    return {
-      ...base,
-      digestId: id,
-      status: "error",
-      shippedCount,
-      waitlistDelta,
-      copyMode: mode,
-      slides: { linkedin: liShots.length, instagram: igShots.length },
-      delivery: { sent: false, error: "not attempted" },
-      error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
+  // Mint signed preview URLs, build and send the decision email.
   // version 0 = the row's regen_count at first send; a regeneration re-mints
   // tokens at the new version, invalidating this round's links.
-  const approveToken = signActionToken(id, "approve", 0);
-  const rejectToken = signActionToken(id, "reject", 0);
-  const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
-  const approveUrl = `${baseUrl}/social/review/${id}?t=${approveToken}`;
-  const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
-
-  // Send the decision email.
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.DIGEST_FROM;
-  let delivery: DeliveryResult;
-  if (!apiKey || !from) {
-    const missing = [!apiKey && "RESEND_API_KEY", !from && "DIGEST_FROM"].filter(Boolean).join(", ");
-    delivery = { sent: false, error: `email not configured (${missing})` };
-  } else {
-    const { subject, text, html } = buildActionEmail({
-      range,
-      shippedCount,
-      waitlistDelta,
-      liUrls,
-      igUrls,
-      approveUrl,
-      rejectUrl,
-    });
-    delivery = await sendEmail({ apiKey, from, to, subject, text, html });
-  }
+  const delivery = await sendDecisionEmail({
+    id,
+    version: 0,
+    range,
+    shippedCount,
+    waitlistDelta,
+    liPaths,
+    igPaths,
+    to,
+  });
 
   // The email is the only way to act on this drop; if it didn't send, the row
   // must not linger as 'pending' (it would look like it's awaiting a decision).
@@ -309,4 +363,164 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     notes,
     error: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// regenerateDigest — reusable engine called by the reject POST handler.
+// Loads the existing row, enforces the regen cap, re-collects activity for
+// the same week, rebuilds copy+slides with variation context, updates the row,
+// and re-emails the decision email at the new version. Never throws — every
+// failure mode returns {ok:false, error}.
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of a social_digest row as returned by Supabase. */
+interface SocialDigestRow {
+  id: string;
+  week_range: string;
+  since_iso: string;
+  regen_count: number;
+  pack_json: SocialPack;
+  prior_copy_json: string[];
+  li_image_paths: string[];
+  ig_image_paths: string[];
+}
+
+export interface RegenerateResult {
+  ok: boolean;
+  capped?: boolean;
+  newVersion?: number;
+  delivery?: DeliveryResult;
+  error?: string;
+}
+
+export async function regenerateDigest(
+  id: string,
+  variation: { reasons: string[]; note?: string },
+): Promise<RegenerateResult> {
+  // 1. Load the row.
+  let row: SocialDigestRow;
+  try {
+    const { data, error } = await getSupabase()
+      .from("social_digest")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (error || !data) {
+      return { ok: false, error: `Row not found: ${error?.message ?? "no data"}` };
+    }
+    // Narrow from unknown — validate the fields we depend on.
+    const r = data as Record<string, unknown>;
+    if (
+      typeof r.id !== "string" ||
+      typeof r.week_range !== "string" ||
+      typeof r.since_iso !== "string" ||
+      typeof r.regen_count !== "number" ||
+      typeof r.pack_json !== "object" || r.pack_json === null ||
+      !Array.isArray(r.prior_copy_json) ||
+      !Array.isArray(r.li_image_paths) ||
+      !Array.isArray(r.ig_image_paths)
+    ) {
+      return { ok: false, error: "Row shape unexpected — cannot regenerate" };
+    }
+    row = r as unknown as SocialDigestRow;
+  } catch (err) {
+    return { ok: false, error: `DB load failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 2. Cap check.
+  if (row.regen_count >= MAX_REGENS) {
+    return { ok: false, capped: true };
+  }
+
+  // 3. Re-collect activity for the same week.
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    return { ok: false, error: "GITHUB_TOKEN is not set" };
+  }
+  const repo = process.env.DIGEST_REPO ?? DEFAULT_REPO;
+  const sinceMs = Date.parse(row.since_iso);
+
+  let activity;
+  try {
+    activity = await collectActivity({ repo, token, sinceMs });
+  } catch (err) {
+    return { ok: false, error: `collect failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const waitlist = await collectWaitlistSignups({ sinceMs });
+  const shippedCount = activity.mergedPRs.length;
+  const waitlistDelta = waitlist.signups.length;
+
+  // 4. Build priorCopy = stored prior_copy_json + extractPriorCopy(current pack), deduped.
+  const seen = new Set<string>(row.prior_copy_json);
+  const priorCopy: string[] = [...row.prior_copy_json];
+  for (const s of extractPriorCopy(row.pack_json)) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      priorCopy.push(s);
+    }
+  }
+
+  // 5. Build new pack with variation context.
+  let pack: SocialPack;
+  try {
+    ({ pack } = await buildSocialPack({
+      activity,
+      range: row.week_range,
+      shippedCount,
+      waitlistDelta,
+      variation: { reasons: variation.reasons, note: variation.note, priorCopy },
+    }));
+  } catch (err) {
+    return { ok: false, error: `buildSocialPack failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 6. Render + store slides (upsert overwrites the same paths).
+  let liPaths: string[];
+  let igPaths: string[];
+  try {
+    const { linkedinHtml, instagramHtml } = buildCarousels(pack);
+    const [liShots, igShots] = await renderSlideSets([linkedinHtml, instagramHtml]);
+    ({ liPaths, igPaths } = await storeSlides(id, liShots, igShots));
+  } catch (err) {
+    return { ok: false, error: `render/store failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 7. New version = regen_count + 1.
+  const newVersion = row.regen_count + 1;
+
+  // 8. Update the row.
+  const { error: updateError } = await getSupabase()
+    .from("social_digest")
+    .update({
+      regen_count: newVersion,
+      pack_json: pack,
+      li_caption: pack.linkedinCaption,
+      ig_caption: pack.instagramCaption,
+      li_image_paths: liPaths,
+      ig_image_paths: igPaths,
+      prior_copy_json: priorCopy,
+      consumed_at: null,
+      status: "pending",
+      acted_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (updateError) {
+    return { ok: false, error: `DB update failed: ${updateError.message}` };
+  }
+
+  // 9. Send decision email at the new version (invalidates the previous round's links).
+  const delivery = await sendDecisionEmail({
+    id,
+    version: newVersion,
+    range: row.week_range,
+    shippedCount,
+    waitlistDelta,
+    liPaths,
+    igPaths,
+    to: recipients(),
+  });
+
+  // 10. Return result.
+  return { ok: true, newVersion, delivery };
 }
