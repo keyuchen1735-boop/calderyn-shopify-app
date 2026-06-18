@@ -38,6 +38,7 @@ import {
   buildCampaignPerformance,
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
+import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
 import {
   loadCachedAdScorecards,
   type AdScorecard,
@@ -93,6 +94,7 @@ type LoaderPayload = {
   campaignIdParam: string;
   /** Open scale opportunity for this campaign (why-to-scale), or null. */
   scale: ScaleOpportunity | null;
+  direction: CampaignDirection | null;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -195,6 +197,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 };
 
+/** Best-effort recommended direction for the detail view. calderynClient + alerts +
+ *  guardrails feed the shared recommender; any failure yields null (page still renders). */
+async function resolveDirectionForDetail(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<CampaignDirection | null> {
+  const perf = detail.performance;
+  const client = calderynClient(shop);
+  const [shopId, openAlerts, guardrails] = await Promise.all([
+    resolveShopId(shop),
+    client.alerts.list({ status: "open" }).catch(() => []),
+    client.guardrails.get().catch(() => null),
+  ]);
+  return resolveCampaignDirection({
+    shopId,
+    campaignId: detail.id,
+    roas: perf.reportedRoas,
+    breakEvenRoas: perf.breakEvenRoas,
+    contributionMargin: perf.contributionMargin,
+    status: detail.status,
+    currentBudgetCents: perf.dailyBudgetCents,
+    alerts: openAlerts.map((a) => ({ detector_id: a.detector_id, status: a.status, campaign_id: a.campaign_id })),
+    guardrails: guardrails ?? {},
+    sb: getSupabase(),
+  });
+}
+
 /** Resolve a detail's creatives + live ad metrics (independent Meta fetches, run
  * in parallel) plus cached scorecards, into the LoaderPayload. Shared by the
  * ingested and live-identity success branches so the post-resolution pipeline
@@ -211,6 +240,7 @@ async function respondForDetail(
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
+  const direction = await resolveDirectionForDetail(shop, detail).catch(() => null);
   return json<LoaderPayload>({
     detail,
     error: null,
@@ -222,6 +252,7 @@ async function respondForDetail(
     assumedSpendCents,
     campaignIdParam,
     scale,
+    direction,
   });
 }
 
@@ -242,6 +273,7 @@ function emptyPayload(
     assumedSpendCents: DEFAULT_SPEND_CENTS,
     campaignIdParam,
     scale: null,
+    direction: null,
   };
 }
 
