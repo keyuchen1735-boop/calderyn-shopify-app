@@ -290,7 +290,9 @@ export function adaptSku(s: SKU): SkuVM {
   if (s.on_hand === 0) status = "stockout";
   else if (s.days_of_cover < 10) status = "risk";
   else if (s.days_of_cover < 21) status = "reorder";
-  else if (total > 0 && maxShare > 0.6) status = "misplaced";
+  // "Wrong location concentration" only matters when the SKU is actually selling
+  // — concentrated stock at ~0 velocity is not at risk, it's just sitting (P2-13).
+  else if (total > 0 && maxShare > 0.6 && s.velocity > 0) status = "misplaced";
   else status = "healthy";
 
   return {
@@ -338,6 +340,20 @@ export function sortSkus(skus: SkuVM[], key: SkuSortKey): SkuVM[] {
  */
 export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
   return sortSkus(skus, "on_hand");
+}
+
+/**
+ * "Needs attention" ranking by urgency (P2-13): soonest to run out first
+ * (days_of_cover ASC), then higher 30-day revenue first as a tiebreaker so a
+ * real best-seller outranks a zero-revenue sample at the same days-of-cover —
+ * instead of the stock-DESC load order that buried the real at-risk SKUs.
+ */
+export function sortSkusByUrgency(skus: SkuVM[]): SkuVM[] {
+  return [...skus].sort(
+    (a, b) =>
+      a.days_of_cover - b.days_of_cover ||
+      Number(b.revenue_30d_cents ?? 0) - Number(a.revenue_30d_cents ?? 0),
+  );
 }
 
 const INTEGRATION_ORDER = [

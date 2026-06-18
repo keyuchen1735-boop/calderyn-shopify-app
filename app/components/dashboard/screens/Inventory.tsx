@@ -14,6 +14,7 @@ import {
   fetchSkuAffinity,
   relocateSku,
   sortSkus,
+  sortSkusByUrgency,
   DashboardApiError,
 } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
@@ -213,8 +214,17 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
       (!fCollection || (s.collections ?? []).includes(fCollection)) &&
       (!fTag || (s.tags ?? []).includes(fTag)),
   );
+  // "Needs attention" ranks by urgency by default (most at-risk first) rather
+  // than the as-loaded stock-DESC order, which buried the real 0-stock
+  // best-seller under sample/zero-velocity rows (P2-13). An explicit Revenue
+  // sort still wins.
+  const needsAttention = filter !== "All" && filter !== "Healthy";
   const shown =
-    sortBy === "Revenue" ? sortSkus(filtered, "revenue_30d_cents") : filtered;
+    sortBy === "Revenue"
+      ? sortSkus(filtered, "revenue_30d_cents")
+      : needsAttention
+        ? sortSkusByUrgency(filtered)
+        : filtered;
 
   // Alerts reference SKUs by their sku code — exact match (the prototype's
   // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
