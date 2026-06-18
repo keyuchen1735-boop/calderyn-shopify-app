@@ -408,7 +408,7 @@ describe("postMemberMultiImage", () => {
     )!;
     const headers = initUploadInit.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${ACCESS_TOKEN}`);
-    expect(headers["LinkedIn-Version"]).toBe("202506");
+    expect(headers["LinkedIn-Version"]).toBe("202605");
     expect(headers["X-Restli-Protocol-Version"]).toBe("2.0.0");
   });
 

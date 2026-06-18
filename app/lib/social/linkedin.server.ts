@@ -6,7 +6,9 @@
 // Network errors surface as thrown Errors that include the HTTP status and a
 // snippet of the response body — never swallowed (rule 12: fail visibly).
 
-const LINKEDIN_VERSION = "202506";
+// LinkedIn versions follow YYYYMM and are supported ~12 months. Tunable knob:
+// if a call returns a "version" error, bump this to a current published month.
+const LINKEDIN_VERSION = "202605";
 
 const AUTH_ENDPOINT = "https://www.linkedin.com/oauth/v2/authorization";
 const TOKEN_ENDPOINT = "https://www.linkedin.com/oauth/v2/accessToken";
