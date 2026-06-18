@@ -37,7 +37,7 @@ describe("social.linkedin.connect — loader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: CRON_SECRET set, LINKEDIN_CLIENT_ID set
-    process.env.CRON_SECRET = "test-cron-secret-abc";
+    process.env.LINKEDIN_SETUP_KEY = "test-setup-key-abc";
     process.env.LINKEDIN_CLIENT_ID = "test-client-id";
     process.env.SOCIAL_DIGEST_BASE_URL = "https://app.test";
     // Default stubs
@@ -46,7 +46,7 @@ describe("social.linkedin.connect — loader", () => {
   });
 
   afterEach(() => {
-    delete process.env.CRON_SECRET;
+    delete process.env.LINKEDIN_SETUP_KEY;
     delete process.env.LINKEDIN_CLIENT_ID;
     delete process.env.SOCIAL_DIGEST_BASE_URL;
   });
@@ -83,8 +83,8 @@ describe("social.linkedin.connect — loader", () => {
     expect(signState).not.toHaveBeenCalled();
   });
 
-  it("returns 401 JSON when CRON_SECRET is unset (even with a ?key present)", async () => {
-    delete process.env.CRON_SECRET;
+  it("returns 401 JSON when LINKEDIN_SETUP_KEY is unset (even with a ?key present)", async () => {
+    delete process.env.LINKEDIN_SETUP_KEY;
     const { loader } = await import("../social.linkedin.connect");
     const res = await loader({
       request: connectRequest({ key: "any-value" }),
@@ -105,7 +105,7 @@ describe("social.linkedin.connect — loader", () => {
   it("redirects to the LinkedIn authorize URL when key is valid and LINKEDIN_CLIENT_ID is set", async () => {
     const { loader } = await import("../social.linkedin.connect");
     const res = await loader({
-      request: connectRequest({ key: "test-cron-secret-abc" }),
+      request: connectRequest({ key: "test-setup-key-abc" }),
       params: {},
       context: {},
     });
@@ -134,7 +134,7 @@ describe("social.linkedin.connect — loader", () => {
     delete process.env.LINKEDIN_CLIENT_ID;
     const { loader } = await import("../social.linkedin.connect");
     const res = await loader({
-      request: connectRequest({ key: "test-cron-secret-abc" }),
+      request: connectRequest({ key: "test-setup-key-abc" }),
       params: {},
       context: {},
     });

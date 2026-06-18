@@ -1,12 +1,22 @@
 // app/routes/social.linkedin.connect.tsx
 //
-// GET — initiates LinkedIn OAuth. Public route (no authenticate.admin).
-// Protected by a one-time setup key (?key=<CRON_SECRET>).
+// GET — initiates LinkedIn OAuth. Public route (no authenticate.admin); a
+// browser navigation, so the one-time setup key rides in ?key= (can't use a
+// header from a link). It is a DEDICATED, rotatable secret (LINKEDIN_SETUP_KEY)
+// — never CRON_SECRET — so a key landing in access logs can't compromise the
+// cron auth. Remove/rotate LINKEDIN_SETUP_KEY after the one-time connect.
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import { timingSafeEqual } from "node:crypto";
 import { json, redirect } from "@remix-run/node";
 import { getAuthorizeUrl } from "~/lib/social/linkedin.server";
 import { signState } from "~/lib/social/linkedin-connection.server";
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
 
 // ---------------------------------------------------------------------------
 // Brand palette (shared across social.linkedin.* routes)
@@ -60,10 +70,10 @@ function infoPage(heading: string, body: string): Response {
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
-  // Gate: key must match CRON_SECRET; fail explicitly when CRON_SECRET is unset
-  const secret = process.env.CRON_SECRET;
+  // Gate: dedicated, rotatable setup key (NOT CRON_SECRET); fail closed when unset.
+  const secret = process.env.LINKEDIN_SETUP_KEY;
   const key = url.searchParams.get("key");
-  if (!secret || !key || key !== secret) {
+  if (!secret || !key || !safeEqual(key, secret)) {
     return json({ error: "unauthorized" }, { status: 401 });
   }
 
