@@ -24,7 +24,7 @@ import type { PeerBenchmarks } from "~/lib/benchmarks/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
-import { ACTION_LABELS, ACTION_VERBS, DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { ACTION_LABELS, ACTION_VERBS, recommendedAction } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
 import {
   AlertCard,
@@ -143,8 +143,10 @@ export default function Dashboard() {
   const recentAudit = audit.slice(0, 4);
 
   const focus = top[0];
+  // Campaign-aware so a no-campaign SKU alert never recommends "Pause campaign";
+  // null means no direct fix — the card offers Review instead (P2-14).
   const focusActionKind = focus
-    ? (DETECTOR_TO_ACTIONS[focus.detector_id]?.[0] ?? "snooze_alert")
+    ? recommendedAction(focus.detector_id, { hasCampaign: Boolean(focus.campaign) })
     : null;
 
   const reviewAlert = (a: Alert) => navigate(`/app/alerts/${a.id}`);
@@ -235,7 +237,7 @@ export default function Dashboard() {
         <PeerBenchmarksCard data={benchmarks} />
 
         {/* Today's focus */}
-        {focus && focusActionKind && (
+        {focus && (
           <div className="cdn-card cdn-accent-left cdn-accent-left--primary">
             <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
               <BlockStack gap="150">
@@ -251,7 +253,9 @@ export default function Dashboard() {
                   {focus.title}
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Recommended: {ACTION_LABELS[focusActionKind]} · protects{" "}
+                  {focusActionKind
+                    ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
+                    : "Protects "}
                   <Text as="span" tone="success" fontWeight="semibold">
                     {fmtMoney(focus.dollar_impact)}
                   </Text>{" "}
@@ -259,13 +263,20 @@ export default function Dashboard() {
                 </Text>
               </BlockStack>
               <InlineStack gap="200" wrap={false}>
-                <Button onClick={() => navigate(`/app/alerts/${focus.id}`)}>Review</Button>
                 <Button
-                  variant="primary"
-                  onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
+                  variant={focusActionKind ? undefined : "primary"}
+                  onClick={() => navigate(`/app/alerts/${focus.id}`)}
                 >
-                  {ACTION_LABELS[focusActionKind]}
+                  Review
                 </Button>
+                {focusActionKind && (
+                  <Button
+                    variant="primary"
+                    onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
+                  >
+                    {ACTION_LABELS[focusActionKind]}
+                  </Button>
+                )}
               </InlineStack>
             </InlineStack>
           </div>

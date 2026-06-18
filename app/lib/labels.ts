@@ -359,3 +359,29 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   scaling_sku_fulfillment_risk: ["create_po_draft", "reallocate_inventory", "snooze_alert"],
   wrong_location_concentration: ["reallocate_inventory", "snooze_alert"],
 };
+
+// Campaign-scoped actions are meaningless on an alert with no campaign attached
+// (e.g. a SKU-level negative_unit_economics) — never recommend one there (P2-14).
+const CAMPAIGN_ACTIONS: ReadonlySet<ActionKind> = new Set([
+  "pause_campaign",
+  "reduce_campaign_budget",
+  "increase_campaign_budget",
+  "reallocate_budget",
+]);
+
+/**
+ * The recommended (default) action for an alert: the first allowed action that
+ * is a real fix (not snooze) AND applicable to this alert — a campaign action
+ * requires a campaign. Returns null when the only thing left is to snooze/review,
+ * so the UI can offer "Review" instead of a meaningless "Pause campaign".
+ */
+export function recommendedAction(
+  detectorId: string,
+  opts: { hasCampaign: boolean },
+): ActionKind | null {
+  const actions = DETECTOR_TO_ACTIONS[detectorId as DetectorId] ?? ["snooze_alert"];
+  const firstReal = actions.find(
+    (a) => a !== "snooze_alert" && (opts.hasCampaign || !CAMPAIGN_ACTIONS.has(a)),
+  );
+  return firstReal ?? null;
+}
