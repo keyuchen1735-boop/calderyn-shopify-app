@@ -9,8 +9,10 @@ import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { verifyActionToken } from "~/lib/social-digest/token.server";
 import { regenerateDigest } from "~/lib/social-digest/run.server";
-import { signedUrls } from "~/lib/social-digest/store.server";
+import { signedUrls, downloadSlide } from "~/lib/social-digest/store.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { getValidConnection } from "~/lib/social/linkedin-connection.server";
+import { postMemberMultiImage } from "~/lib/social/linkedin.server";
 
 // ---------------------------------------------------------------------------
 // DB row shape — only the fields we actually read. Do not leak the full row.
@@ -53,9 +55,21 @@ type LoaderData =
 // Action return shapes
 // ---------------------------------------------------------------------------
 
+type LinkedInResult =
+  | { posted: true; postUrn: string }
+  | { posted: false; staged: true; reason: string }
+  | { posted: false; staged?: never; error: string };
+
 type ActionData =
   | { state: "invalid" }
-  | { state: "approved"; liUrls: string[]; igUrls: string[]; liCaption: string; igCaption: string }
+  | {
+      state: "approved";
+      linkedin: LinkedInResult;
+      liUrls: string[];
+      igUrls: string[];
+      liCaption: string;
+      igCaption: string;
+    }
   | { state: "regenerated" }
   | { state: "capped" }
   | { state: "error"; message: string };
@@ -188,17 +202,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (payload.action === "approve") {
     const now = new Date().toISOString();
-    const postResults = {
-      linkedin: "staged (no LinkedIn connection yet)",
-      instagram: "manual",
-    };
 
-    const { error: updateError, data: updated } = await getSupabase()
+    // Step 1: Atomic claim — only the winner proceeds.
+    const { error: claimError, data: claimed } = await getSupabase()
       .from("social_digest")
       .update({
         consumed_at: now,
         status: "posted",
-        post_results_json: postResults,
         acted_at: now,
       })
       .eq("id", id)
@@ -207,24 +217,67 @@ export async function action({ request, params }: ActionFunctionArgs) {
       .eq("regen_count", payload.version)
       .select("id");
 
-    if (updateError) {
-      return json<ActionData>({ state: "error", message: updateError.message });
+    if (claimError) {
+      return json<ActionData>({ state: "error", message: claimError.message });
     }
-    if (!updated?.length) {
+    if (!claimed?.length) {
+      // Lost the race — someone else already consumed this drop.
       return json<ActionData>({ state: "invalid" });
     }
 
+    // Step 2: Attempt LinkedIn auto-post.
+    let linkedin: LinkedInResult;
+    const conn = await getValidConnection();
+    if (conn === null) {
+      linkedin = { posted: false, staged: true, reason: "not connected" };
+    } else {
+      try {
+        const slideBuffers = await Promise.all(row.li_image_paths.map(downloadSlide));
+        const images = slideBuffers.map((bytes, i) => ({
+          bytes,
+          altText: `Calderyn — slide ${i + 1}`,
+        }));
+        const { postUrn } = await postMemberMultiImage({
+          accessToken: conn.accessToken,
+          authorUrn: conn.memberUrn,
+          commentary: row.li_caption,
+          images,
+        });
+        linkedin = { posted: true, postUrn };
+      } catch (err) {
+        // Rule 12: record failure, never claim success.
+        linkedin = {
+          posted: false,
+          error: err instanceof Error ? err.message : "Unknown LinkedIn error",
+        };
+      }
+    }
+
+    // Step 3: Persist the LinkedIn outcome.
+    await getSupabase()
+      .from("social_digest")
+      .update({
+        post_results_json: { linkedin, instagram: "manual" },
+      })
+      .eq("id", id)
+      .select("id");
+
+    // Step 4: Mint signed URLs for the response.
     let liUrls: string[];
     let igUrls: string[];
     try {
       liUrls = await signedUrls(row.li_image_paths);
       igUrls = await signedUrls(row.ig_image_paths);
     } catch (err) {
-      return json<ActionData>({ state: "error", message: err instanceof Error ? err.message : "Storage error" });
+      return json<ActionData>({
+        state: "error",
+        message: err instanceof Error ? err.message : "Storage error",
+      });
     }
 
     return json<ActionData>({
       state: "approved",
+      linkedin,
       liUrls,
       igUrls,
       liCaption: row.li_caption,
@@ -373,30 +426,47 @@ export default function SocialReview() {
   // After a successful action, show the action result.
   if (actionData) {
     switch (actionData.state) {
-      case "approved":
-        return (
-          <div style={pageStyle}>
-            <div style={cardStyle}>
-              <h1 style={{ margin: "0 0 4px", fontSize: 22, color: BRAND.teal }}>
-                Approved — post is staged
-              </h1>
-              <p style={{ color: BRAND.muted, marginBottom: 20 }}>
-                LinkedIn auto-post will go live once a LinkedIn connection is set up. Instagram
-                must be posted manually — download the slides below.
-              </p>
+      case "approved": {
+        const { linkedin, liUrls, igUrls, liCaption, igCaption } = actionData;
 
-              <span style={labelStyle}>LinkedIn slides</span>
-              <ImageRow urls={actionData.liUrls} />
-              <CaptionBlock label="LinkedIn caption" caption={actionData.liCaption} />
+        let liHeading: React.ReactNode;
+        let liBody: React.ReactNode;
 
-              <span style={{ ...labelStyle, marginTop: 24 }}>Instagram slides</span>
-              <ImageRow urls={actionData.igUrls} />
-              <CaptionBlock label="Instagram caption" caption={actionData.igCaption} />
-
-              <div style={{ marginTop: 24 }}>
-                {actionData.liUrls.map((u, i) => (
+        if (linkedin.posted) {
+          // Successfully posted — confirm with URN-derived link where possible.
+          const postId = linkedin.postUrn.split(":").pop();
+          const liLink = postId
+            ? `https://www.linkedin.com/feed/update/${linkedin.postUrn}/`
+            : null;
+          liHeading = (
+            <p style={{ color: BRAND.teal, fontWeight: 700, marginBottom: 8 }}>
+              ✅ Posted to LinkedIn
+              {liLink && (
+                <>
+                  {" — "}
+                  <a href={liLink} target="_blank" rel="noreferrer" style={{ color: BRAND.teal }}>
+                    view post
+                  </a>
+                </>
+              )}
+            </p>
+          );
+          liBody = null;
+        } else if ("staged" in linkedin && linkedin.staged) {
+          // Not connected — manual posting required.
+          liHeading = (
+            <p style={{ color: BRAND.muted, fontWeight: 600, marginBottom: 8 }}>
+              LinkedIn isn&apos;t connected yet — post these manually:
+            </p>
+          );
+          liBody = (
+            <>
+              <ImageRow urls={liUrls} />
+              <CaptionBlock label="LinkedIn caption" caption={liCaption} />
+              <div style={{ marginTop: 12 }}>
+                {liUrls.map((u, i) => (
                   <a
-                    key={`li-${i}`}
+                    key={`li-dl-${i}`}
                     href={u}
                     download={`linkedin-slide-${i + 1}.png`}
                     style={{ ...btnStyle(BRAND.teal), fontSize: 13, padding: "9px 18px" }}
@@ -404,9 +474,58 @@ export default function SocialReview() {
                     LI {i + 1}
                   </a>
                 ))}
-                {actionData.igUrls.map((u, i) => (
+              </div>
+            </>
+          );
+        } else {
+          // Auto-post failed — show error + manual download.
+          const errMsg = "error" in linkedin ? linkedin.error : "Unknown error";
+          liHeading = (
+            <p style={{ color: BRAND.red, fontWeight: 600, marginBottom: 8 }}>
+              ⚠️ LinkedIn auto-post failed: {errMsg}. Post these 4 slides + caption manually:
+            </p>
+          );
+          liBody = (
+            <>
+              <ImageRow urls={liUrls} />
+              <CaptionBlock label="LinkedIn caption" caption={liCaption} />
+              <div style={{ marginTop: 12 }}>
+                {liUrls.map((u, i) => (
                   <a
-                    key={`ig-${i}`}
+                    key={`li-dl-${i}`}
+                    href={u}
+                    download={`linkedin-slide-${i + 1}.png`}
+                    style={{ ...btnStyle(BRAND.teal), fontSize: 13, padding: "9px 18px" }}
+                  >
+                    LI {i + 1}
+                  </a>
+                ))}
+              </div>
+            </>
+          );
+        }
+
+        return (
+          <div style={pageStyle}>
+            <div style={cardStyle}>
+              <h1 style={{ margin: "0 0 16px", fontSize: 22, color: BRAND.teal }}>
+                Approved
+              </h1>
+
+              <span style={labelStyle}>LinkedIn</span>
+              {liHeading}
+              {liBody}
+
+              <span style={{ ...labelStyle, marginTop: 24 }}>Instagram</span>
+              <p style={{ color: BRAND.muted, fontSize: 14, marginBottom: 8 }}>
+                Post these 4 manually on Instagram:
+              </p>
+              <ImageRow urls={igUrls} />
+              <CaptionBlock label="Instagram caption" caption={igCaption} />
+              <div style={{ marginTop: 12 }}>
+                {igUrls.map((u, i) => (
+                  <a
+                    key={`ig-dl-${i}`}
                     href={u}
                     download={`instagram-slide-${i + 1}.png`}
                     style={{ ...btnStyle(BRAND.navy), fontSize: 13, padding: "9px 18px" }}
@@ -418,6 +537,7 @@ export default function SocialReview() {
             </div>
           </div>
         );
+      }
 
       case "regenerated":
         return (
