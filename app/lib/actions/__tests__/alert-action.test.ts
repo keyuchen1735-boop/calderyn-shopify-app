@@ -69,7 +69,9 @@ function run(kind: "reallocate_inventory" | "snooze_alert", over: Record<string,
 beforeEach(() => {
   vi.clearAllMocks();
   alertsGet.mockResolvedValue(makeAlert());
-  guardrailsGet.mockResolvedValue({ dollar_cap_cents: 50000 });
+  // Default cap $20,000 (cents) comfortably clears the default $12,000 alert
+  // impact so the proceed-path tests proceed under matching units.
+  guardrailsGet.mockResolvedValue({ dollar_cap_cents: 2_000_000 });
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
   actionsExecute.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
   acknowledgeAlert.mockResolvedValue(true);
@@ -120,6 +122,25 @@ describe("executeInventoryAlertAction — reallocate_inventory", () => {
       status: 403,
     });
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("compares impact to the cap in matching units (dollars vs cents)", async () => {
+    // $600 impact vs a $500 cap → exceeds. The old check compared dollars to
+    // cents (600 <= 50000), so a $600 action slipped past a $500 cap — the cap
+    // was effectively 100x too lenient (P1-8).
+    alertsGet.mockResolvedValue(makeAlert({ dollar_impact: 600 }));
+    guardrailsGet.mockResolvedValue({ dollar_cap_cents: 50000 }); // $500
+    await expect(run("reallocate_inventory")).rejects.toMatchObject({
+      code: "guardrail_dollar_cap",
+      status: 403,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("allows an action whose impact is within the cap", async () => {
+    alertsGet.mockResolvedValue(makeAlert({ dollar_impact: 400 })); // $400 < $500 cap
+    guardrailsGet.mockResolvedValue({ dollar_cap_cents: 50000 });
+    await expect(run("reallocate_inventory")).resolves.toMatchObject({ outcome: "succeeded" });
   });
 
   it("422s when the evidence lacks a transfer plan", async () => {

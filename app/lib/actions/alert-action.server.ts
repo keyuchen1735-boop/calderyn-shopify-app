@@ -70,11 +70,14 @@ export async function executeInventoryAlertAction(opts: {
   // deferral and exempt (same rule as the alert detail page).
   if (kind !== "snooze_alert") {
     const guardrails = await client.guardrails.get(signal);
-    if (alert.dollar_impact > guardrails.dollar_cap_cents) {
+    // alert.dollar_impact is dollars; dollar_cap_cents is cents — compare in
+    // cents so a $500 cap actually caps at $500 (was 100x too lenient, P1-8).
+    const impactCents = Math.round(alert.dollar_impact * 100);
+    if (impactCents > guardrails.dollar_cap_cents) {
       throw new CalderynError({
         code: "guardrail_dollar_cap",
         status: 403,
-        message: `This action's impact (${fmtMoney(alert.dollar_impact)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
+        message: `This action's impact (${fmtMoney(impactCents)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
       });
     }
   }

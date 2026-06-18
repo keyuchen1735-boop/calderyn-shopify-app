@@ -195,11 +195,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Guardrail: enforce the per-action dollar-impact cap server-side using the
     // alert's real impact (not a form value). Snooze is harmless and exempt.
     const guardrails = await client.guardrails.get(request.signal);
-    if (kind !== "snooze_alert" && alert.dollar_impact > guardrails.dollar_cap_cents) {
+    // alert.dollar_impact is dollars; dollar_cap_cents is cents — compare in cents
+    // so the per-action cap actually enforces its dollar amount (P1-8).
+    const impactCents = Math.round(alert.dollar_impact * 100);
+    if (kind !== "snooze_alert" && impactCents > guardrails.dollar_cap_cents) {
       throw new CalderynError({
         code: "GUARDRAIL_DOLLAR_CAP",
         status: 403,
-        message: `This action's impact (${fmtMoney(alert.dollar_impact)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
+        message: `This action's impact (${fmtMoney(impactCents)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
       });
     }
 
@@ -602,7 +605,7 @@ export default function AlertDetail() {
                       },
                       {
                         label: `Per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)} max risk per action`,
-                        ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
+                        ok: Math.round(alert.dollar_impact * 100) <= guardrails.dollar_cap_cents,
                       },
                       {
                         label: `Business hours · ${formatHour(
