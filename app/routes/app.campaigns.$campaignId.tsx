@@ -40,7 +40,8 @@ import {
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
 import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
-import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { executeAction } from "~/lib/actions/execute.server";
+import type { Direction, DirectionActionKind } from "~/lib/actions/direction.server";
 import {
   loadCachedAdScorecards,
   type AdScorecard,
@@ -55,7 +56,7 @@ import { fmtMoney } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
 
-const DIRECTION_BADGE: Record<string, { label: string; tone: "success" | "attention" | "critical" | undefined }> = {
+const DIRECTION_BADGE: Record<Direction, { label: string; tone: "success" | "attention" | "critical" | undefined }> = {
   scale_up: { label: "Scale up", tone: "success" },
   keep: { label: "Keep", tone: undefined },
   scale_down: { label: "Scale down", tone: "attention" },
@@ -212,11 +213,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (String(form.get("intent")) !== "apply_direction") {
     return json({ ok: false, error: "unknown_intent" }, { status: 400 });
   }
-  const kind = String(form.get("action_kind")) as ExecutableKind;
-  const allowed: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget", "increase_campaign_budget"];
+  const kind = String(form.get("action_kind")) as DirectionActionKind;
+  const allowed: DirectionActionKind[] = ["pause_campaign", "reduce_campaign_budget", "increase_campaign_budget"];
   if (!allowed.includes(kind)) return json({ ok: false, error: "invalid_action_kind" }, { status: 400 });
   const dailyRaw = form.get("daily_budget_cents");
   const dailyBudgetCents = dailyRaw != null && dailyRaw !== "" ? Number(dailyRaw) : undefined;
+  if (
+    (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&
+    (!dailyBudgetCents || !Number.isFinite(dailyBudgetCents) || dailyBudgetCents <= 0)
+  ) {
+    return json({ ok: false, error: "missing_daily_budget_cents" }, { status: 400 });
+  }
   const shopId = await resolveShopId(session.shop);
   const res = await executeAction(
     shopId,
@@ -269,14 +276,14 @@ async function respondForDetail(
   detail: CampaignDetail,
   campaignIdParam: string,
 ) {
-  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale] = await Promise.all([
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction] = await Promise.all([
     loadCreatives(shop, detail),
     loadAdMetrics(shop, detail),
     loadScaleOpportunity(shop, detail),
+    resolveDirectionForDetail(shop, detail).catch(() => null),
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
-  const direction = await resolveDirectionForDetail(shop, detail).catch(() => null);
   return json<LoaderPayload>({
     detail,
     error: null,
@@ -523,7 +530,7 @@ export default function CampaignDetailPage() {
     scale,
     direction,
   } = useLoaderData<typeof loader>();
-  const directionFetcher = useFetcher();
+  const directionFetcher = useFetcher<typeof action>();
 
   if (!detail) {
     return (
@@ -553,31 +560,42 @@ export default function CampaignDetailPage() {
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
     >
       <BlockStack gap="400">
-        {direction && (
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="h2" variant="headingMd">Recommended direction</Text>
-                <Badge tone={DIRECTION_BADGE[direction.direction].tone}>
-                  {DIRECTION_BADGE[direction.direction].label}
-                </Badge>
-              </InlineStack>
-              <Text as="p">{direction.reason}</Text>
-              {direction.actionKind && (
-                <directionFetcher.Form method="post">
-                  <input type="hidden" name="intent" value="apply_direction" />
-                  <input type="hidden" name="action_kind" value={direction.actionKind} />
-                  {direction.suggestedBudgetCents != null && (
-                    <input type="hidden" name="daily_budget_cents" value={String(direction.suggestedBudgetCents)} />
-                  )}
-                  <Button variant="primary" submit loading={directionFetcher.state !== "idle"}>
-                    {DIRECTION_BADGE[direction.direction].label}
-                  </Button>
-                </directionFetcher.Form>
-              )}
-            </BlockStack>
-          </Card>
-        )}
+        {direction && (() => {
+          const badge = DIRECTION_BADGE[direction.direction];
+          const directionActable =
+            direction.actionKind != null &&
+            (direction.actionKind === "pause_campaign" || direction.suggestedBudgetCents != null);
+          return (
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Recommended direction</Text>
+                  <Badge tone={badge.tone}>{badge.label}</Badge>
+                </InlineStack>
+                <Text as="p">{direction.reason}</Text>
+                {directionActable && (
+                  <directionFetcher.Form method="post">
+                    <input type="hidden" name="intent" value="apply_direction" />
+                    <input type="hidden" name="action_kind" value={direction.actionKind!} />
+                    {direction.suggestedBudgetCents != null && (
+                      <input type="hidden" name="daily_budget_cents" value={String(direction.suggestedBudgetCents)} />
+                    )}
+                    <Button variant="primary" submit loading={directionFetcher.state !== "idle"}>
+                      {badge.label}
+                    </Button>
+                  </directionFetcher.Form>
+                )}
+                {directionFetcher.data && (
+                  <Banner tone={directionFetcher.data.ok ? "success" : "critical"}>
+                    {directionFetcher.data.ok
+                      ? "Applied — the change is live and reversible from the Campaigns list."
+                      : "Couldn't apply that change. Please try again."}
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          );
+        })()}
         {scale && (
           <Card>
             <BlockStack gap="300">

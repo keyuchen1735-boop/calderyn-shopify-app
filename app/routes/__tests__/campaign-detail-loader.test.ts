@@ -56,12 +56,8 @@ vi.mock("~/lib/calderyn.server", () => ({
   }),
 }));
 
-vi.mock("~/lib/actions/direction-reason.server", () => ({
-  resolveCampaignDirection: vi.fn().mockResolvedValue({
-    direction: "scale_up", actionKind: "increase_campaign_budget",
-    suggestedBudgetCents: 12000, reason: "Winner with room.", reasonSource: "claude", dataSufficient: true,
-  }),
-}));
+const { resolveDirectionMock } = vi.hoisted(() => ({ resolveDirectionMock: vi.fn() }));
+vi.mock("~/lib/actions/direction-reason.server", () => ({ resolveCampaignDirection: resolveDirectionMock }));
 
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ __fake: "sb" }),
@@ -142,6 +138,11 @@ beforeEach(() => {
   listAdInsightsSpy.mockResolvedValue([]);
   loadCachedSpy.mockReset();
   loadCachedSpy.mockResolvedValue([]);
+  resolveDirectionMock.mockReset();
+  resolveDirectionMock.mockResolvedValue({
+    direction: "scale_up", actionKind: "increase_campaign_budget",
+    suggestedBudgetCents: 12000, reason: "Winner with room.", reasonSource: "claude", dataSufficient: true,
+  });
 });
 
 describe("campaign detail loader — non-uuid (Meta external) id", () => {

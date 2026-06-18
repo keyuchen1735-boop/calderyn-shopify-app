@@ -129,4 +129,21 @@ describe("campaign detail action — apply_direction", () => {
     expect(res.status).toBe(400);
     expect(executeActionSpy).not.toHaveBeenCalled();
   });
+
+  it("rejects a budget action without daily_budget_cents with 400 and never calls executeAction", async () => {
+    const fd = new FormData();
+    fd.set("intent", "apply_direction");
+    fd.set("action_kind", "increase_campaign_budget");
+    // deliberately omit daily_budget_cents
+    const req = new Request("http://localhost/app/campaigns/cmp-1", { method: "POST", body: fd });
+
+    const res = await action({
+      request: req,
+      params: { campaignId: "cmp-1" },
+      context: {},
+    } as unknown as ActionFunctionArgs);
+
+    expect(res.status).toBe(400);
+    expect(executeActionSpy).not.toHaveBeenCalled();
+  });
 });
