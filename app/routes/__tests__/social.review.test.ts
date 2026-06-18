@@ -2,9 +2,15 @@
 //
 // Unit tests for the social.review.$id loader and action.
 // Mocks: verifyActionToken, getSupabase, signedUrls, regenerateDigest,
-//        getValidConnection, postMemberMultiImage, downloadSlide.
+//        getValidConnectionFor, postMemberMultiImage, downloadSlide.
+//
+// LinkedIn posting is now per-founder and double-post-safe via the
+// `social_link_post` table (UNIQUE(digest_id, owner_email, platform)). The
+// supabase mock therefore branches on the table name passed to .from().
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { LinkedInPostError } from "~/lib/social/linkedin.server";
+import type * as LinkedInServer from "~/lib/social/linkedin.server";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — must be declared before any imports that resolve the mocked
@@ -17,7 +23,7 @@ const {
   signedUrls,
   downloadSlide,
   regenerateDigest,
-  getValidConnection,
+  getValidConnectionFor,
   postMemberMultiImage,
 } = vi.hoisted(() => ({
   verifyActionToken: vi.fn(),
@@ -25,7 +31,7 @@ const {
   signedUrls: vi.fn(),
   downloadSlide: vi.fn(),
   regenerateDigest: vi.fn(),
-  getValidConnection: vi.fn(),
+  getValidConnectionFor: vi.fn(),
   postMemberMultiImage: vi.fn(),
 }));
 
@@ -33,16 +39,21 @@ vi.mock("~/lib/social-digest/token.server", () => ({ verifyActionToken }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
 vi.mock("~/lib/social-digest/store.server", () => ({ signedUrls, downloadSlide }));
 vi.mock("~/lib/social-digest/run.server", () => ({ regenerateDigest }));
-vi.mock("~/lib/social/linkedin-connection.server", () => ({ getValidConnection }));
-vi.mock("~/lib/social/linkedin.server", () => ({ postMemberMultiImage }));
+vi.mock("~/lib/social/linkedin-connection.server", () => ({ getValidConnectionFor }));
+// Keep the real LinkedInPostError class; only stub the network call.
+vi.mock("~/lib/social/linkedin.server", async () => {
+  const actual = await vi.importActual<typeof LinkedInServer>("~/lib/social/linkedin.server");
+  return { ...actual, postMemberMultiImage };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const TEST_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const OWNER = "alice@example.com";
 
-/** Minimal valid row — override fields as needed per test. */
+/** Minimal valid digest row — override fields as needed per test. */
 function makeRow(overrides: Partial<{
   id: string;
   week_range: string;
@@ -74,93 +85,97 @@ function makeRow(overrides: Partial<{
   };
 }
 
-type UpdateChain = {
-  eq: () => UpdateChain;
-  is: () => UpdateChain;
-  select: () => Promise<{ error: null | { message: string }; data: { id: string }[] | null }>;
-};
+type LinkPostRow = { status: string; post_urn: string | null; error: string | null };
+
+interface SupabaseMockConfig {
+  /** The social_digest row returned by .select().eq().single(); or null. */
+  digestRow: ReturnType<typeof makeRow> | null;
+  /** DB error for the digest .single() call. */
+  digestError?: { message: string };
+  /** Error returned by the social_link_post INSERT (e.g. { code: "23505" }). */
+  linkInsertError?: { code?: string; message?: string } | null;
+  /** Row returned by the social_link_post SELECT (already-claimed read). */
+  linkExistingRow?: LinkPostRow | null;
+  /** Error returned by social_link_post UPDATE. */
+  linkUpdateError?: { message: string } | null;
+  /** Error returned by social_link_post DELETE. */
+  linkDeleteError?: { message: string } | null;
+}
+
+interface SupabaseMockSpies {
+  linkInsert: ReturnType<typeof vi.fn>;
+  linkUpdate: ReturnType<typeof vi.fn>;
+  linkDelete: ReturnType<typeof vi.fn>;
+  digestUpdate: ReturnType<typeof vi.fn>;
+}
 
 /**
- * Wire getSupabase for the standard happy-path shape:
- * - .select().eq().single() returns the given row
- * - both .update() calls (claim + result persist) succeed
+ * Build a getSupabase mock that branches on table name.
+ * Returns spies so tests can assert insert/update/delete payloads.
+ *
+ * Chain semantics:
+ * - social_digest: .select().eq().single() -> { data, error }; .update().eq()... awaited
+ * - social_link_post:
+ *     .insert(payload)                          -> Promise<{ error }>
+ *     .select(cols).eq().eq().eq().single()     -> Promise<{ data, error }>
+ *     .update(payload).eq().eq().eq()           -> Promise<{ error }>  (awaited)
+ *     .delete().eq().eq().eq()                  -> Promise<{ error }>  (awaited)
  */
-function mockRow(row: ReturnType<typeof makeRow> | null, dbError?: { message: string }) {
-  const updateChain: UpdateChain = {
-    eq: () => updateChain,
-    is: () => updateChain,
-    select: async () => ({ error: null, data: [{ id: TEST_ID }] }),
+function mockSupabase(cfg: SupabaseMockConfig): SupabaseMockSpies {
+  const linkInsert = vi.fn().mockResolvedValue({ error: cfg.linkInsertError ?? null });
+  const linkUpdate = vi.fn();
+  const linkDelete = vi.fn();
+  const digestUpdate = vi.fn();
+
+  // A thenable .eq() chain that resolves to the supplied terminal result.
+  // Exposes .select() too so the (unchanged) instagram .update().eq().is().eq()
+  // .select("id") path on social_digest keeps working against this mock.
+  const eqChain = (terminal: { error: unknown } | { data: unknown; error: unknown }) => {
+    const chain: Record<string, unknown> = {};
+    chain.eq = () => chain;
+    chain.is = () => chain;
+    chain.select = async () => ("data" in terminal ? terminal : { error: terminal.error, data: [{ id: TEST_ID }] });
+    chain.then = (resolve: (v: unknown) => unknown) => resolve(terminal);
+    chain.single = async () => terminal;
+    return chain;
   };
+
   getSupabase.mockReturnValue({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({
-            data: row,
-            error: dbError ?? null,
+    from: (table: string) => {
+      if (table === "social_link_post") {
+        return {
+          insert: linkInsert,
+          select: () =>
+            eqChain({ data: cfg.linkExistingRow ?? null, error: null }),
+          update: (payload: unknown) => {
+            linkUpdate(payload);
+            return eqChain({ error: cfg.linkUpdateError ?? null });
+          },
+          delete: () => {
+            linkDelete();
+            return eqChain({ error: cfg.linkDeleteError ?? null });
+          },
+        };
+      }
+      // social_digest (and any other table)
+      return {
+        select: () => ({
+          eq: () => ({
+            single: async () => ({
+              data: cfg.digestRow,
+              error: cfg.digestError ?? null,
+            }),
           }),
         }),
-      }),
-      update: () => updateChain,
-    }),
+        update: (payload: unknown) => {
+          digestUpdate(payload);
+          return eqChain({ error: null });
+        },
+      };
+    },
   });
-}
 
-/**
- * Wire getSupabase with a spy on update so tests can assert what was passed
- * to the first (claim) update.  Both updates succeed.
- */
-function mockRowWithUpdateSpy(row: ReturnType<typeof makeRow>) {
-  const updateChain: UpdateChain = {
-    eq: () => updateChain,
-    is: () => updateChain,
-    select: async () => ({ error: null, data: [{ id: TEST_ID }] }),
-  };
-  const updateFn = vi.fn().mockReturnValue(updateChain);
-  getSupabase.mockReturnValue({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({ data: row, error: null }),
-        }),
-      }),
-      update: updateFn,
-    }),
-  });
-  return { updateFn };
-}
-
-/**
- * Wire getSupabase where the FIRST update (atomic claim) returns 0 rows,
- * and subsequent updates succeed. Used for "already claimed" tests.
- */
-function mockRowClaimReturnsZero(row: ReturnType<typeof makeRow>) {
-  let updateCallCount = 0;
-  const zeroRowsChain: UpdateChain = {
-    eq: () => zeroRowsChain,
-    is: () => zeroRowsChain,
-    select: async () => ({ error: null, data: [] }),
-  };
-  const successChain: UpdateChain = {
-    eq: () => successChain,
-    is: () => successChain,
-    select: async () => ({ error: null, data: [{ id: TEST_ID }] }),
-  };
-  const updateFn = vi.fn().mockImplementation(() => {
-    updateCallCount++;
-    return updateCallCount === 1 ? zeroRowsChain : successChain;
-  });
-  getSupabase.mockReturnValue({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({ data: row, error: null }),
-        }),
-      }),
-      update: updateFn,
-    }),
-  });
-  return { updateFn };
+  return { linkInsert, linkUpdate, linkDelete, digestUpdate };
 }
 
 function loaderRequest(id: string, token: string): Request {
@@ -186,6 +201,8 @@ function actionRequest(
   });
 }
 
+const liToken = () => ({ id: TEST_ID, action: "approve-linkedin", version: 0, owner: OWNER });
+
 // ---------------------------------------------------------------------------
 // Loader tests
 // ---------------------------------------------------------------------------
@@ -195,13 +212,13 @@ describe("social.review.$id — loader", () => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
     downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
-    getValidConnection.mockResolvedValue(null);
+    getValidConnectionFor.mockResolvedValue(null);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
   it("returns state=invalid when verifyActionToken returns null", async () => {
     verifyActionToken.mockReturnValue(null);
-    mockRow(makeRow());
+    mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -215,8 +232,8 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when token id does not match params.id", async () => {
-    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve-linkedin", version: 0 });
-    mockRow(makeRow());
+    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve-linkedin", version: 0, owner: OWNER });
+    mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -230,12 +247,31 @@ describe("social.review.$id — loader", () => {
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: li_posted_at null → confirm
+  // approve-linkedin loader: token missing owner → stale_link
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin + li_posted_at null → state=confirm with action=approve-linkedin", async () => {
+  it("approve-linkedin loader: token missing owner → state=stale_link", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    mockRow(makeRow({ li_posted_at: null }));
+    mockSupabase({ digestRow: makeRow() });
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "no-owner-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("stale_link");
+  });
+
+  // -------------------------------------------------------------------------
+  // approve-linkedin loader: no social_link_post row → confirm (owner heading)
+  // -------------------------------------------------------------------------
+
+  it("approve-linkedin + no link_post row → state=confirm with action=approve-linkedin + owner", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({ digestRow: makeRow(), linkExistingRow: null });
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
@@ -252,18 +288,19 @@ describe("social.review.$id — loader", () => {
     expect(body.token).toBe("valid-token");
     expect(body.range).toBe("June 13–19, 2026");
     expect(body.liCaption).toBe("LinkedIn caption here.");
+    expect(body.owner).toBe(OWNER);
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: li_posted_at set → result page
+  // approve-linkedin loader: link_post row status='posted' → li_result
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin + li_posted_at set + linkedin posted → state=li_result with postUrn link", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    mockRow(makeRow({
-      li_posted_at: "2026-06-18T12:00:00.000Z",
-      post_results_json: { linkedin: { posted: true, postUrn: "urn:li:share:777" }, instagram: "approved (manual)" },
-    }));
+  it("approve-linkedin + link_post posted → state=li_result with postUrn", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({
+      digestRow: makeRow(),
+      linkExistingRow: { status: "posted", post_urn: "urn:li:share:777", error: null },
+    });
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
@@ -279,12 +316,37 @@ describe("social.review.$id — loader", () => {
   });
 
   // -------------------------------------------------------------------------
+  // approve-linkedin loader: link_post row status='failed' → li_result (staged)
+  // -------------------------------------------------------------------------
+
+  it("approve-linkedin + link_post failed → state=li_result with staged warning", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({
+      digestRow: makeRow(),
+      linkExistingRow: { status: "failed", post_urn: null, error: "boom" },
+    });
+    signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "valid-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("li_result");
+    expect(body.linkedin.posted).toBe(false);
+    expect(body.linkedin.reason).toContain("may have been created");
+  });
+
+  // -------------------------------------------------------------------------
   // approve-instagram loader: ig_approved_at null → confirm
   // -------------------------------------------------------------------------
 
   it("approve-instagram + ig_approved_at null → state=confirm with action=approve-instagram", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
-    mockRow(makeRow({ ig_approved_at: null }));
+    mockSupabase({ digestRow: makeRow({ ig_approved_at: null }) });
     signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png"]);
 
     const { loader } = await import("../social.review.$id");
@@ -306,10 +368,12 @@ describe("social.review.$id — loader", () => {
 
   it("approve-instagram + ig_approved_at set → state=ig_assets with IG URLs + caption", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
-    mockRow(makeRow({
-      ig_approved_at: "2026-06-18T12:00:00.000Z",
-      post_results_json: { instagram: "approved (manual)" },
-    }));
+    mockSupabase({
+      digestRow: makeRow({
+        ig_approved_at: "2026-06-18T12:00:00.000Z",
+        post_results_json: { instagram: "approved (manual)" },
+      }),
+    });
     signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png"]);
 
     const { loader } = await import("../social.review.$id");
@@ -326,8 +390,8 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=stale when token version does not match regen_count", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    mockRow(makeRow({ regen_count: 2 }));
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({ digestRow: makeRow({ regen_count: 2 }) });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -341,8 +405,8 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when DB returns an error", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    mockRow(null, { message: "relation does not exist" });
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({ digestRow: null, digestError: { message: "relation does not exist" } });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -356,8 +420,8 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when row shape is malformed (li_image_paths is null)", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    mockRow(makeRow({ li_image_paths: null as unknown as string[] }));
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({ digestRow: makeRow({ li_image_paths: null as unknown as string[] }) });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -372,7 +436,7 @@ describe("social.review.$id — loader", () => {
 
   it("returns state=confirm for reject token + pending row", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
-    mockRow(makeRow());
+    mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -388,7 +452,7 @@ describe("social.review.$id — loader", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Action — approve-linkedin
+// Action — approve-linkedin (per-founder, social_link_post claim)
 // ---------------------------------------------------------------------------
 
 describe("social.review.$id — action (approve-linkedin)", () => {
@@ -396,25 +460,19 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
     downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
-    getValidConnection.mockResolvedValue(null);
+    getValidConnectionFor.mockResolvedValue(null);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
-  // -------------------------------------------------------------------------
-  // Connected → posts successfully
-  // -------------------------------------------------------------------------
-
-  it("connected: claims li_posted_at, calls postMemberMultiImage with commentary===li_caption + 4 images, returns li_posted state", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    getValidConnection.mockResolvedValue({
-      accessToken: "tok_abc",
-      memberUrn: "urn:li:person:XXXX",
-    });
+  // 1. connected + claim succeeds + post succeeds
+  it("connected + claim wins + post succeeds: inserts posting claim, updates posted, posts 4 images, state=li_posted", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
     const fakeBuffer = Buffer.from("png-bytes");
     downloadSlide.mockResolvedValue(fakeBuffer);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:999" });
 
-    const { updateFn } = mockRowWithUpdateSpy(makeRow());
+    const { linkInsert, linkUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
@@ -425,7 +483,19 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
-    // postMemberMultiImage called exactly once with the right args
+    // Claim inserted with posting status for this owner
+    expect(linkInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        digest_id: TEST_ID,
+        owner_email: OWNER,
+        platform: "linkedin",
+        status: "posting",
+      }),
+    );
+    // getValidConnectionFor called with the owner
+    expect(getValidConnectionFor).toHaveBeenCalledWith(OWNER);
+
+    // post called once with li_caption + 4 images
     expect(postMemberMultiImage).toHaveBeenCalledTimes(1);
     expect(postMemberMultiImage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -434,43 +504,31 @@ describe("social.review.$id — action (approve-linkedin)", () => {
         commentary: "LinkedIn caption here.",
         images: expect.arrayContaining([
           expect.objectContaining({ bytes: fakeBuffer, altText: "Calderyn — slide 1" }),
-          expect.objectContaining({ bytes: fakeBuffer, altText: "Calderyn — slide 2" }),
-          expect.objectContaining({ bytes: fakeBuffer, altText: "Calderyn — slide 3" }),
           expect.objectContaining({ bytes: fakeBuffer, altText: "Calderyn — slide 4" }),
         ]),
       }),
     );
     expect(postMemberMultiImage.mock.calls[0][0].images).toHaveLength(4);
 
-    // Result state: posted
+    // Row updated to posted with the urn
+    expect(linkUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "posted", post_urn: "urn:li:share:999" }),
+    );
+
     expect(body.state).toBe("li_posted");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:999" });
-
-    // First update: atomic claim sets li_posted_at
-    expect(updateFn).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ li_posted_at: expect.any(String) }),
-    );
-    // Second update: persists post_results_json.linkedin = posted:true
-    expect(updateFn).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        post_results_json: expect.objectContaining({
-          linkedin: expect.objectContaining({ posted: true, postUrn: "urn:li:share:999" }),
-        }),
-      }),
-    );
   });
 
-  // -------------------------------------------------------------------------
-  // NOT connected → li_posted_at reset to null, not-connected state, retryable
-  // -------------------------------------------------------------------------
+  // 2. claim returns 23505, existing row posted
+  it("claim 23505 + existing posted: no post, returns li_posted with existing post_urn", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
 
-  it("NOT connected: li_posted_at reset to null, postMemberMultiImage NOT called, state=li_not_connected, retryable", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    getValidConnection.mockResolvedValue(null);
-
-    const { updateFn } = mockRowWithUpdateSpy(makeRow());
+    mockSupabase({
+      digestRow: makeRow(),
+      linkInsertError: { code: "23505" },
+      linkExistingRow: { status: "posted", post_urn: "urn:li:share:existing", error: null },
+    });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
@@ -482,32 +540,20 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     const body = await res.json() as any;
 
     expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(body.state).toBe("li_not_connected");
-
-    // li_posted_at must have been reset to null (second update resets the claim)
-    const resetCall = updateFn.mock.calls.find(
-      (args: unknown[]) => {
-        const arg = args[0] as Record<string, unknown>;
-        return arg.li_posted_at === null;
-      }
-    );
-    expect(resetCall).toBeDefined();
+    expect(body.state).toBe("li_posted");
+    expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:existing" });
   });
 
-  // -------------------------------------------------------------------------
-  // post throws → li_posted_at reset to null, state=li_failed, no success
-  // -------------------------------------------------------------------------
+  // 3. claim returns 23505, existing row failed
+  it("claim 23505 + existing failed: no post, returns li_failed with may-have-been-created", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
 
-  it("post throws: li_posted_at reset to null, state=li_failed with error, no success", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    getValidConnection.mockResolvedValue({
-      accessToken: "tok_abc",
-      memberUrn: "urn:li:person:XXXX",
+    mockSupabase({
+      digestRow: makeRow(),
+      linkInsertError: { code: "23505" },
+      linkExistingRow: { status: "failed", post_urn: null, error: "earlier failure" },
     });
-    downloadSlide.mockResolvedValue(Buffer.from("png-bytes"));
-    postMemberMultiImage.mockRejectedValue(new Error("LinkedIn HTTP 429 — rate limited"));
-
-    const { updateFn } = mockRowWithUpdateSpy(makeRow());
 
     const { action } = await import("../social.review.$id");
     const res = await action({
@@ -518,40 +564,18 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
-    // postMemberMultiImage was attempted
-    expect(postMemberMultiImage).toHaveBeenCalledTimes(1);
-
-    // Must not claim success (Rule 12)
+    expect(postMemberMultiImage).not.toHaveBeenCalled();
     expect(body.state).toBe("li_failed");
     expect(body.linkedin.posted).toBe(false);
-    expect(body.linkedin.error).toContain("LinkedIn HTTP 429");
-
-    // li_posted_at reset to null so the link still works after retry
-    const resetCall = updateFn.mock.calls.find(
-      (args: unknown[]) => {
-        const arg = args[0] as Record<string, unknown>;
-        return arg.li_posted_at === null;
-      }
-    );
-    expect(resetCall).toBeDefined();
+    expect(body.linkedin.error).toContain("may have been created");
   });
 
-  // -------------------------------------------------------------------------
-  // Atomic claim returns 0 rows → stored result returned, postMemberMultiImage NOT called
-  // -------------------------------------------------------------------------
+  // 4. claim wins but not connected
+  it("claim wins + not connected: deletes claim row, calls getValidConnectionFor(owner), no post, state=li_not_connected", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue(null);
 
-  it("claim returns 0 rows (already claimed): returns stored li result, postMemberMultiImage NOT called", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
-    getValidConnection.mockResolvedValue({
-      accessToken: "tok_abc",
-      memberUrn: "urn:li:person:XXXX",
-    });
-
-    const storedResult = { posted: true, postUrn: "urn:li:share:existing" };
-    mockRowClaimReturnsZero(makeRow({
-      li_posted_at: "2026-06-18T11:00:00.000Z",
-      post_results_json: { linkedin: storedResult },
-    }));
+    const { linkDelete } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
@@ -562,8 +586,131 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
+    expect(getValidConnectionFor).toHaveBeenCalledWith(OWNER);
     expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(body.linkedin).toEqual(storedResult);
+    expect(linkDelete).toHaveBeenCalledTimes(1);
+    expect(body.state).toBe("li_not_connected");
+  });
+
+  // 5. post throws LinkedInPostError phase="pre-post" → row DELETED (retryable)
+  it("post throws pre-post error: claim row DELETED (retryable), state=li_failed", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
+    downloadSlide.mockResolvedValue(Buffer.from("png-bytes"));
+    postMemberMultiImage.mockRejectedValue(new LinkedInPostError("upload init failed", "pre-post"));
+
+    const { linkDelete, linkUpdate } = mockSupabase({ digestRow: makeRow() });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+
+    expect(postMemberMultiImage).toHaveBeenCalledTimes(1);
+    expect(body.state).toBe("li_failed");
+    expect(body.linkedin.posted).toBe(false);
+    expect(body.linkedin.error).toContain("upload init failed");
+    // pre-post is retryable → row deleted, never marked failed
+    expect(linkDelete).toHaveBeenCalledTimes(1);
+    expect(linkUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  // 6. post throws LinkedInPostError phase="post" → row kept as 'failed'
+  it("post throws post-phase error: row updated to failed (NOT deleted), state=li_failed with may-have-been-created", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
+    downloadSlide.mockResolvedValue(Buffer.from("png-bytes"));
+    postMemberMultiImage.mockRejectedValue(new LinkedInPostError("post create 500", "post"));
+
+    const { linkDelete, linkUpdate } = mockSupabase({ digestRow: makeRow() });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+
+    expect(postMemberMultiImage).toHaveBeenCalledTimes(1);
+    expect(body.state).toBe("li_failed");
+    expect(body.linkedin.posted).toBe(false);
+    expect(body.linkedin.error).toContain("may have been created");
+    // post-phase: keep the row, mark failed, do NOT delete
+    expect(linkUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(linkDelete).not.toHaveBeenCalled();
+  });
+
+  // 7. two different owners — independent claims (owner A doesn't block owner B)
+  it("two owners: owner B can claim+post even when owner A already has a claim", async () => {
+    // Owner A already posted (a 23505 for A would block A only). Here owner B
+    // gets a clean insert and posts independently.
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0, owner: "bob@example.com" });
+    getValidConnectionFor.mockResolvedValue({ accessToken: "tok_bob", memberUrn: "urn:li:person:BOB" });
+    postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:bob" });
+
+    const { linkInsert } = mockSupabase({ digestRow: makeRow(), linkInsertError: null });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-li-token-bob" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+
+    expect(linkInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ owner_email: "bob@example.com", status: "posting" }),
+    );
+    expect(getValidConnectionFor).toHaveBeenCalledWith("bob@example.com");
+    expect(body.state).toBe("li_posted");
+    expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:bob" });
+  });
+
+  // 8. claim insert returns non-23505 error → state=error
+  it("claim insert non-unique error → state=error with the message", async () => {
+    verifyActionToken.mockReturnValue(liToken());
+    mockSupabase({
+      digestRow: makeRow(),
+      linkInsertError: { code: "42501", message: "permission denied" },
+    });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("error");
+    expect(body.message).toContain("permission denied");
+  });
+
+  it("token missing owner on POST → state=stale_link", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    mockSupabase({ digestRow: makeRow() });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "no-owner" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("stale_link");
+    expect(postMemberMultiImage).not.toHaveBeenCalled();
   });
 
   it("returns state=invalid when token is bad on POST", async () => {
@@ -582,7 +729,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Action — approve-instagram
+// Action — approve-instagram (unchanged behavior)
 // ---------------------------------------------------------------------------
 
 describe("social.review.$id — action (approve-instagram)", () => {
@@ -590,14 +737,14 @@ describe("social.review.$id — action (approve-instagram)", () => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png", "https://cdn.test/ig-2.png", "https://cdn.test/ig-3.png"]);
     downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
-    getValidConnection.mockResolvedValue(null);
+    getValidConnectionFor.mockResolvedValue(null);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
   it("claims ig_approved_at, records instagram=approved (manual), returns ig_assets state with IG URLs + caption, NO LinkedIn calls", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
 
-    const { updateFn } = mockRowWithUpdateSpy(makeRow());
+    const { digestUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
@@ -619,14 +766,13 @@ describe("social.review.$id — action (approve-instagram)", () => {
 
     // LinkedIn must not be touched
     expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(getValidConnection).not.toHaveBeenCalled();
+    expect(getValidConnectionFor).not.toHaveBeenCalled();
 
-    // ig_approved_at claimed
-    expect(updateFn).toHaveBeenCalledWith(
+    // ig_approved_at claimed on social_digest
+    expect(digestUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ ig_approved_at: expect.any(String) }),
     );
-    // post_results_json.instagram recorded
-    expect(updateFn).toHaveBeenCalledWith(
+    expect(digestUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         post_results_json: expect.objectContaining({ instagram: "approved (manual)" }),
       }),
@@ -635,7 +781,7 @@ describe("social.review.$id — action (approve-instagram)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Action — reject
+// Action — reject (unchanged behavior)
 // ---------------------------------------------------------------------------
 
 describe("social.review.$id — action (reject)", () => {
@@ -643,13 +789,13 @@ describe("social.review.$id — action (reject)", () => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
     downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
-    getValidConnection.mockResolvedValue(null);
+    getValidConnectionFor.mockResolvedValue(null);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
   it("calls regenerateDigest with reasons+note and returns state=regenerated on ok", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
-    mockRow(makeRow());
+    mockSupabase({ digestRow: makeRow() });
     regenerateDigest.mockResolvedValue({ ok: true, newVersion: 1 });
 
     const { action } = await import("../social.review.$id");
@@ -677,7 +823,7 @@ describe("social.review.$id — action (reject)", () => {
 
   it("returns state=capped when regenerateDigest returns capped:true", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
-    mockRow(makeRow());
+    mockSupabase({ digestRow: makeRow() });
     regenerateDigest.mockResolvedValue({ ok: false, capped: true });
 
     const { action } = await import("../social.review.$id");
@@ -696,7 +842,7 @@ describe("social.review.$id — action (reject)", () => {
 
   it("returns state=error when regenerateDigest returns ok:false without capped", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
-    mockRow(makeRow());
+    mockSupabase({ digestRow: makeRow() });
     regenerateDigest.mockResolvedValue({ ok: false, error: "render failed: chromium crash" });
 
     const { action } = await import("../social.review.$id");

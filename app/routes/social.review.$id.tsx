@@ -5,7 +5,11 @@
 // mutation only on POST.
 //
 // Three token actions:
-//   approve-linkedin  — GET shows LI confirm or LI result; POST claims li_posted_at + auto-posts
+//   approve-linkedin  — per-founder: token carries `owner` (the founder's email).
+//                       GET shows LI confirm/result for that founder; POST claims a
+//                       per-(drop,owner) row in social_link_post and posts to THAT
+//                       founder's own LinkedIn. The UNIQUE(digest_id,owner_email,
+//                       platform) constraint is the atomic single-post guard.
 //   approve-instagram — GET shows IG confirm or IG assets; POST claims ig_approved_at
 //   reject            — GET shows reject form; POST calls regenerateDigest
 
@@ -16,8 +20,16 @@ import { verifyActionToken } from "~/lib/social-digest/token.server";
 import { regenerateDigest } from "~/lib/social-digest/run.server";
 import { signedUrls, downloadSlide } from "~/lib/social-digest/store.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { getValidConnection } from "~/lib/social/linkedin-connection.server";
-import { postMemberMultiImage } from "~/lib/social/linkedin.server";
+import { getValidConnectionFor } from "~/lib/social/linkedin-connection.server";
+import { postMemberMultiImage, LinkedInPostError } from "~/lib/social/linkedin.server";
+
+// Warning shown whenever a LinkedIn post may have left a partial post behind
+// (post-phase failure or an already-failed claim) — must check before retrying.
+const MAYBE_POSTED_WARNING = "⚠️ a post may have been created — check LinkedIn before retrying";
+const NOT_CONNECTED_MESSAGE = "You haven't connected YOUR LinkedIn yet — connect first, then click the link again";
+
+// social_link_post column subset we read back on the already-claimed path.
+const LINK_POST_COLS = "status, post_urn, error";
 
 // ---------------------------------------------------------------------------
 // DB row shape
@@ -66,6 +78,7 @@ function mergePostResults(
 type LoaderData =
   | { state: "invalid" }
   | { state: "stale" }
+  | { state: "stale_link" }
   | {
       // approve-linkedin: not yet posted → show confirm
       state: "confirm";
@@ -78,6 +91,8 @@ type LoaderData =
       liCaption: string;
       igCaption: string;
       regenCount: number;
+      /** For approve-linkedin: the founder whose profile this posts to. */
+      owner?: string;
     }
   | {
       // approve-linkedin: already posted → show LI result
@@ -99,6 +114,7 @@ type LoaderData =
 
 type ActionData =
   | { state: "invalid" }
+  | { state: "stale_link" }
   | { state: "li_posted"; linkedin: { posted: true; postUrn: string } }
   | { state: "li_not_connected"; liUrls: string[]; liCaption: string }
   | { state: "li_failed"; linkedin: { posted: false; error: string }; liUrls: string[]; liCaption: string }
@@ -168,16 +184,39 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const { action } = payload;
 
   // Per-platform: if already actioned for this platform, show the result page.
-  if (action === "approve-linkedin" && row.li_posted_at !== null) {
-    const prJson = row.post_results_json ?? {};
-    const liResult = (prJson.linkedin as LinkedInResult | undefined) ?? { posted: false, error: "No result recorded" };
-    let liUrls: string[];
-    try {
-      liUrls = await signedUrls(row.li_image_paths);
-    } catch {
-      liUrls = [];
+  if (action === "approve-linkedin") {
+    // The token must name a founder (their email) — links from the pre-per-founder
+    // era (or any tampered token) lack `owner` and can't be acted on.
+    const owner = payload.owner;
+    if (!owner) {
+      return json<LoaderData>({ state: "stale_link" });
     }
-    return json<LoaderData>({ state: "li_result", linkedin: liResult, liUrls, liCaption: row.li_caption });
+
+    // Per-(drop, founder) claim/result lives in social_link_post.
+    const { data: linkRow } = await getSupabase()
+      .from("social_link_post")
+      .select(LINK_POST_COLS)
+      .eq("digest_id", id)
+      .eq("owner_email", owner)
+      .eq("platform", "linkedin")
+      .single();
+
+    const status = (linkRow as { status?: string } | null)?.status;
+    if (status === "posted" || status === "failed") {
+      let liUrls: string[];
+      try {
+        liUrls = await signedUrls(row.li_image_paths);
+      } catch {
+        liUrls = [];
+      }
+      const lr = linkRow as { status: string; post_urn: string | null };
+      const linkedin: LinkedInResult =
+        status === "posted"
+          ? { posted: true, postUrn: lr.post_urn ?? "" }
+          : { posted: false, staged: true, reason: MAYBE_POSTED_WARNING };
+      return json<LoaderData>({ state: "li_result", linkedin, liUrls, liCaption: row.li_caption });
+    }
+    // No row (or status 'posting') → fall through to the confirm page below.
   }
 
   if (action === "approve-instagram" && row.ig_approved_at !== null) {
@@ -213,6 +252,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     liCaption: row.li_caption,
     igCaption: row.ig_caption,
     regenCount: row.regen_count,
+    owner: action === "approve-linkedin" ? payload.owner : undefined,
   });
 }
 
@@ -255,69 +295,73 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   // ---------------------------------------------------------------------------
-  // approve-linkedin
+  // approve-linkedin — per-founder, double-post-safe via social_link_post.
   // ---------------------------------------------------------------------------
   if (payload.action === "approve-linkedin") {
-    const now = new Date().toISOString();
+    // Re-verify the token names a founder; a missing owner means an outdated link.
+    const owner = payload.owner;
+    if (!owner) {
+      return json<ActionData>({ state: "stale_link" });
+    }
 
-    // ATOMIC CLAIM: set li_posted_at only if currently null + version matches.
-    const { error: claimError, data: claimed } = await getSupabase()
-      .from("social_digest")
-      .update({ li_posted_at: now })
-      .eq("id", id)
-      .is("li_posted_at", null)
-      .eq("regen_count", payload.version)
-      .select("id");
+    const liUrls = async () => {
+      try {
+        return await signedUrls(row.li_image_paths);
+      } catch {
+        return [];
+      }
+    };
+
+    // 1. ATOMIC CLAIM — insert the (drop, owner, linkedin) row. The UNIQUE
+    //    constraint makes a second insert fail with 23505 = "someone already
+    //    claimed this post", so we never double-post for the same founder.
+    const { error: claimError } = await getSupabase()
+      .from("social_link_post")
+      .insert({ digest_id: id, owner_email: owner, platform: "linkedin", status: "posting" });
+
+    if (claimError?.code === "23505") {
+      // Already claimed — return the existing result without re-posting.
+      const { data: existingRow } = await getSupabase()
+        .from("social_link_post")
+        .select(LINK_POST_COLS)
+        .eq("digest_id", id)
+        .eq("owner_email", owner)
+        .eq("platform", "linkedin")
+        .single();
+      const existing = existingRow as { status?: string; post_urn?: string | null } | null;
+      if (existing?.status === "posted") {
+        return json<ActionData>({
+          state: "li_posted",
+          linkedin: { posted: true, postUrn: existing.post_urn ?? "" },
+        });
+      }
+      return json<ActionData>({
+        state: "li_failed",
+        linkedin: { posted: false, error: MAYBE_POSTED_WARNING },
+        liUrls: await liUrls(),
+        liCaption: row.li_caption,
+      });
+    }
 
     if (claimError) {
       return json<ActionData>({ state: "error", message: claimError.message });
     }
 
-    if (!claimed?.length) {
-      // Already claimed — return stored result without re-posting.
-      const prJson = row.post_results_json ?? {};
-      const stored = (prJson.linkedin as LinkedInResult | undefined) ?? { posted: false, error: "Already actioned" };
-      // Return the right state based on stored result.
-      if ("posted" in stored && stored.posted === true) {
-        return json<ActionData>({ state: "li_posted", linkedin: stored as { posted: true; postUrn: string } });
-      }
-      let liUrls: string[];
-      try {
-        liUrls = await signedUrls(row.li_image_paths);
-      } catch {
-        liUrls = [];
-      }
-      return json<ActionData>({ state: "li_failed", linkedin: stored as { posted: false; error: string }, liUrls, liCaption: row.li_caption });
-    }
-
-    // We won the claim — attempt auto-post.
-    const conn = await getValidConnection();
+    // 2. Claim won — resolve THIS founder's own LinkedIn connection.
+    const conn = await getValidConnectionFor(owner);
 
     if (conn === null) {
-      // Not connected: reset the claim so the link still works after reconnect.
-      const { error: resetErr } = await getSupabase()
-        .from("social_digest")
-        .update({
-          li_posted_at: null,
-          post_results_json: mergePostResults(row.post_results_json, {
-            linkedin: { posted: false, staged: true, reason: "not connected" },
-          }),
-        })
-        .eq("id", id);
-      if (resetErr) {
-        console.error("[social.review] li_posted_at reset failed (not connected)", id, resetErr.message);
-      }
-      let liUrls: string[];
-      try {
-        liUrls = await signedUrls(row.li_image_paths);
-      } catch {
-        liUrls = [];
-      }
-      return json<ActionData>({ state: "li_not_connected", liUrls, liCaption: row.li_caption });
+      // Not connected: drop the claim so the link works once they connect.
+      await getSupabase()
+        .from("social_link_post")
+        .delete()
+        .eq("digest_id", id)
+        .eq("owner_email", owner)
+        .eq("platform", "linkedin");
+      return json<ActionData>({ state: "li_not_connected", liUrls: await liUrls(), liCaption: row.li_caption });
     }
 
-    // Connected — download slides and post.
-    let linkedin: LinkedInResult;
+    // 3. Download slides and post to the founder's profile.
     try {
       const slideBuffers = await Promise.all(row.li_image_paths.map(downloadSlide));
       const images = slideBuffers.map((bytes, i) => ({
@@ -330,44 +374,47 @@ export async function action({ request, params }: ActionFunctionArgs) {
         commentary: row.li_caption,
         images,
       });
-      linkedin = { posted: true, postUrn };
+      await getSupabase()
+        .from("social_link_post")
+        .update({ status: "posted", post_urn: postUrn })
+        .eq("digest_id", id)
+        .eq("owner_email", owner)
+        .eq("platform", "linkedin");
+      return json<ActionData>({ state: "li_posted", linkedin: { posted: true, postUrn } });
     } catch (err) {
-      // Rule 12: post failed — reset li_posted_at so the link is retryable.
       const errMsg = err instanceof Error ? err.message : "Unknown LinkedIn error";
-      linkedin = { posted: false, error: errMsg };
 
-      const { error: resetErr } = await getSupabase()
-        .from("social_digest")
-        .update({
-          li_posted_at: null,
-          post_results_json: mergePostResults(row.post_results_json, { linkedin }),
-        })
-        .eq("id", id);
-      if (resetErr) {
-        console.error("[social.review] li_posted_at reset failed (post threw)", id, resetErr.message);
+      // Phase decides retryability (rule 12 — never silently claim success):
+      //   pre-post → nothing was created → DELETE the claim so it's retryable.
+      //   post/other → a post MAY exist → KEEP the row as 'failed'; warn the user.
+      if (err instanceof LinkedInPostError && err.phase === "pre-post") {
+        await getSupabase()
+          .from("social_link_post")
+          .delete()
+          .eq("digest_id", id)
+          .eq("owner_email", owner)
+          .eq("platform", "linkedin");
+        return json<ActionData>({
+          state: "li_failed",
+          linkedin: { posted: false, error: errMsg },
+          liUrls: await liUrls(),
+          liCaption: row.li_caption,
+        });
       }
 
-      let liUrls: string[];
-      try {
-        liUrls = await signedUrls(row.li_image_paths);
-      } catch {
-        liUrls = [];
-      }
-      return json<ActionData>({ state: "li_failed", linkedin, liUrls, liCaption: row.li_caption });
+      await getSupabase()
+        .from("social_link_post")
+        .update({ status: "failed", error: errMsg })
+        .eq("digest_id", id)
+        .eq("owner_email", owner)
+        .eq("platform", "linkedin");
+      return json<ActionData>({
+        state: "li_failed",
+        linkedin: { posted: false, error: MAYBE_POSTED_WARNING },
+        liUrls: await liUrls(),
+        liCaption: row.li_caption,
+      });
     }
-
-    // Post succeeded — persist result (li_posted_at already set by claim).
-    const { error: persistErr } = await getSupabase()
-      .from("social_digest")
-      .update({
-        post_results_json: mergePostResults(row.post_results_json, { linkedin }),
-      })
-      .eq("id", id);
-    if (persistErr) {
-      console.error("[social.review] post_results_json persist failed (linkedin posted)", id, persistErr.message);
-    }
-
-    return json<ActionData>({ state: "li_posted", linkedin: linkedin as { posted: true; postUrn: string } });
   }
 
   // ---------------------------------------------------------------------------
@@ -591,8 +638,7 @@ export default function SocialReview() {
                 LinkedIn not connected
               </h1>
               <p style={{ color: BRAND.muted, marginBottom: 16 }}>
-                LinkedIn isn&apos;t connected — reconnect, then retry the link in your email.
-                In the meantime, post these slides manually:
+                {NOT_CONNECTED_MESSAGE}. In the meantime, post these slides manually:
               </p>
               <ImageRow urls={liUrls} />
               <CaptionBlock label="LinkedIn caption" caption={liCaption} />
@@ -666,6 +712,14 @@ export default function SocialReview() {
           />
         );
 
+      case "stale_link":
+        return (
+          <MessageCard
+            heading="Link outdated"
+            body="This link is from an old email — use your latest email to approve."
+          />
+        );
+
       case "invalid":
         return (
           <MessageCard
@@ -691,6 +745,14 @@ export default function SocialReview() {
         <MessageCard
           heading="Link no longer current"
           body="This link is no longer current — check your inbox for the latest email."
+        />
+      );
+
+    case "stale_link":
+      return (
+        <MessageCard
+          heading="Link outdated"
+          body="This link is from an old email — use your latest email to approve."
         />
       );
 
@@ -750,14 +812,14 @@ export default function SocialReview() {
     }
 
     case "confirm": {
-      const { action: digestAction, token, range, liUrls, igUrls, liCaption, igCaption } = loaderData;
+      const { action: digestAction, token, range, liUrls, igUrls, liCaption, igCaption, owner } = loaderData;
 
       if (digestAction === "approve-linkedin") {
         return (
           <div style={pageStyle}>
             <div style={cardStyle}>
               <h1 style={{ margin: "0 0 4px", fontSize: 22, color: BRAND.navy }}>
-                Approve &amp; post to LinkedIn
+                Approve &amp; post to LinkedIn{owner ? ` as ${owner}` : ""}
               </h1>
               <p style={{ color: BRAND.muted, marginBottom: 20 }}>Week of {range}</p>
               <span style={labelStyle}>LinkedIn slides</span>

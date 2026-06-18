@@ -63,8 +63,8 @@ describe("social.linkedin.callback — loader", () => {
     expect(exchangeCode).not.toHaveBeenCalled();
   });
 
-  it("renders an invalid/expired page when verifyState returns false", async () => {
-    verifyState.mockReturnValue(false);
+  it("renders an invalid/expired page when verifyState returns null", async () => {
+    verifyState.mockReturnValue(null);
 
     const { loader } = await import("../social.linkedin.callback");
     const res = await loader({
@@ -77,8 +77,8 @@ describe("social.linkedin.callback — loader", () => {
     expect(exchangeCode).not.toHaveBeenCalled();
   });
 
-  it("happy path: calls exchangeCode, fetchMemberUrn, saveConnection and renders success with memberUrn", async () => {
-    verifyState.mockReturnValue(true);
+  it("happy path: calls exchangeCode, fetchMemberUrn, saveConnection and renders success with memberUrn and owner", async () => {
+    verifyState.mockReturnValue({ owner: "founder@example.com" });
     exchangeCode.mockResolvedValue({
       accessToken: "new-access-token",
       expiresInSec: 7200,
@@ -110,21 +110,23 @@ describe("social.linkedin.callback — loader", () => {
     // fetchMemberUrn called with the access token
     expect(fetchMemberUrn).toHaveBeenCalledWith("new-access-token");
 
-    // saveConnection called with tokens + memberUrn
+    // saveConnection called with tokens + memberUrn + ownerEmail
     expect(saveConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         memberUrn: "urn:li:person:FOUNDER1",
+        ownerEmail: "founder@example.com",
         tokens: expect.objectContaining({ accessToken: "new-access-token" }),
       }),
     );
 
-    // Success page renders the memberUrn
+    // Success page renders the memberUrn and owner email
     expect(text).toMatch(/urn:li:person:FOUNDER1/);
+    expect(text).toMatch(/founder@example\.com/);
     expect(text).toMatch(/connect/i);
   });
 
   it("renders an error page when exchangeCode throws (does not throw past the loader)", async () => {
-    verifyState.mockReturnValue(true);
+    verifyState.mockReturnValue({ owner: "founder@example.com" });
     exchangeCode.mockRejectedValue(new Error("HTTP 401 — invalid_client"));
 
     const { loader } = await import("../social.linkedin.callback");
@@ -143,7 +145,7 @@ describe("social.linkedin.callback — loader", () => {
   });
 
   it("renders an error page when saveConnection throws (does not throw past the loader)", async () => {
-    verifyState.mockReturnValue(true);
+    verifyState.mockReturnValue({ owner: "founder@example.com" });
     exchangeCode.mockResolvedValue({
       accessToken: "tok",
       expiresInSec: 3600,

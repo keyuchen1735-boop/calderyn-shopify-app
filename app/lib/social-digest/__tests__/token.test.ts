@@ -10,6 +10,21 @@ describe("social-digest action tokens", () => {
     expect(verifyActionToken(t, { secret: SECRET })).toEqual({ id: ID, action: "approve-linkedin", version: 0 });
   });
 
+  it("round-trips an owner (per-founder approve-linkedin)", () => {
+    const t = signActionToken(ID, "approve-linkedin", 0, { secret: SECRET, owner: "john@calderyncompany.com" });
+    expect(verifyActionToken(t, { secret: SECRET })).toEqual({
+      id: ID,
+      action: "approve-linkedin",
+      version: 0,
+      owner: "john@calderyncompany.com",
+    });
+  });
+
+  it("omits owner when not provided", () => {
+    const t = signActionToken(ID, "reject", 0, { secret: SECRET });
+    expect(verifyActionToken(t, { secret: SECRET })).toEqual({ id: ID, action: "reject", version: 0 });
+  });
+
   it("carries the version so regenerated rounds differ", () => {
     const v0 = signActionToken(ID, "reject", 0, { secret: SECRET });
     const v1 = signActionToken(ID, "reject", 1, { secret: SECRET });

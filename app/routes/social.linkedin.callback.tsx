@@ -71,13 +71,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   // Validate the HMAC state to confirm we issued this flow
-  if (!verifyState(state)) {
+  const stateResult = verifyState(state);
+  if (!stateResult) {
     return htmlPage(
       "Link invalid or expired",
       BRAND.red,
       "This OAuth callback link is invalid or has expired (links are valid for 10 minutes). Please restart the connection flow.",
     );
   }
+  const { owner } = stateResult;
 
   const clientId = process.env.LINKEDIN_CLIENT_ID ?? "";
   const clientSecret = process.env.LINKEDIN_CLIENT_SECRET ?? "";
@@ -88,12 +90,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const tokens = await exchangeCode({ code, redirectUri, clientId, clientSecret });
     const memberUrn = await fetchMemberUrn(tokens.accessToken);
-    await saveConnection({ tokens, memberUrn });
+    await saveConnection({ tokens, memberUrn, ownerEmail: owner });
 
     return htmlPage(
       "LinkedIn connected",
       BRAND.teal,
-      `LinkedIn connected as ${memberUrn} — approvals will now auto-post.`,
+      `LinkedIn connected for ${owner} (${memberUrn}) — approvals will now auto-post.`,
     );
   } catch (err) {
     console.error("[linkedin.callback]", err);

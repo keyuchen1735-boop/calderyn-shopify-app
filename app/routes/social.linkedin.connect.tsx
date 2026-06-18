@@ -77,6 +77,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const as = url.searchParams.get("as");
+  if (!as) {
+    return infoPage(
+      "Missing ?as= parameter",
+      "Missing ?as= query parameter. Use ?as=founder@example.com&key=... to connect a specific founder's LinkedIn.",
+    );
+  }
+
   const clientId = process.env.LINKEDIN_CLIENT_ID;
   if (!clientId) {
     return infoPage(
@@ -89,7 +97,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
   const redirectUri = `${baseUrl}/social/linkedin/callback`;
 
-  const state = signState();
+  const state = signState(as);
   const authorizeUrl = getAuthorizeUrl({ clientId, redirectUri, state });
 
   return redirect(authorizeUrl);
