@@ -51,3 +51,20 @@ describe("buildCampaignPerformance", () => {
     expect(perf.contributionMargin).toBeNull();
   });
 });
+
+const campaign = (over: Partial<Campaign>): Campaign => ({
+  id: "c", name: "C", platform: "Meta", status: "active",
+  daily_budget_cents: 5000, roas_7d: 2, contribution_margin: 0.4, spend_7d: 10000, ...over,
+});
+
+describe("buildCampaignPerformance breakEvenRoas", () => {
+  it("derives break-even ROAS as 1/margin when margin is positive", () => {
+    expect(buildCampaignPerformance(campaign({ contribution_margin: 0.4 })).breakEvenRoas).toBeCloseTo(2.5, 5);
+  });
+  it("is null when margin is missing", () => {
+    expect(buildCampaignPerformance(campaign({ roas_7d: 2, contribution_margin: 0 })).breakEvenRoas).toBeNull();
+  });
+  it("is null when there is no campaign", () => {
+    expect(buildCampaignPerformance(null).breakEvenRoas).toBeNull();
+  });
+});
