@@ -45,12 +45,22 @@ describe("recovered — succeeded actions excluding undo rows", () => {
     expect(result).toEqual({ cents: 0, count: 0 });
   });
 
-  test("treats a missing dollar impact as zero", () => {
+  test("treats a missing dollar impact as zero and does not count it as a recovering action", () => {
     const result = recovered([
       entry("succeeded", Number.NaN),
       entry("succeeded", 5_000),
     ]);
-    expect(result).toEqual({ cents: 5_000, count: 2 });
+    expect(result).toEqual({ cents: 5_000, count: 1 });
+  });
+
+  test("counts only actions that actually recovered money (a $0 snooze/resume is not 'an action that recovered')", () => {
+    // "Recovered $X across N actions" must not read "$0 across 2 actions" when
+    // the two succeeded actions recovered nothing (P1-4).
+    const result = recovered([
+      entry("succeeded", 0), // e.g. a snooze — succeeded but recovers nothing
+      entry("succeeded", 0), // e.g. a neutral resume
+    ]);
+    expect(result).toEqual({ cents: 0, count: 0 });
   });
 
   test("returns zeros for an empty log", () => {
