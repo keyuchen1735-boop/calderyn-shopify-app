@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { directionTemplate, type ReasonFacts } from "../direction-reason.server";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+vi.mock("~/lib/assistant/anthropic.server", () => ({
+  getAnthropic: vi.fn(),
+  assistantModel: () => "claude-test",
+}));
+
+import { getAnthropic } from "~/lib/assistant/anthropic.server";
+import { directionTemplate, resolveCampaignDirection, type ReasonFacts } from "../direction-reason.server";
 
 const facts: ReasonFacts = { roas: 1.5, breakEvenRoas: 1, dataSufficient: true, status: "active" };
 
@@ -24,5 +32,113 @@ describe("directionTemplate", () => {
   });
   it("says not enough data when dataSufficient is false", () => {
     expect(directionTemplate("keep", { ...facts, dataSufficient: false })).toMatch(/not enough|yet/i);
+  });
+});
+
+// Minimal chainable Supabase double: supports .from().select().eq()*.maybeSingle()
+// and .from().upsert(); records upserts and counts reads.
+function fakeSb(cachedRow: Record<string, unknown> | null) {
+  const calls = { upserts: [] as Record<string, unknown>[], reads: 0 };
+  const sb = {
+    from() {
+      const chain: any = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => {
+          calls.reads += 1;
+          return { data: cachedRow, error: null };
+        },
+        upsert: (row: Record<string, unknown>) => {
+          calls.upserts.push(row);
+          return { error: null };
+        },
+      };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+  return { sb, calls };
+}
+
+const baseArgs = {
+  shopId: "shop-1",
+  campaignId: "cmp-1",
+  roas: 1.5,
+  breakEvenRoas: 1,
+  contributionMargin: 0.4,
+  status: "active" as const,
+  currentBudgetCents: 10000,
+  alerts: [],
+  guardrails: { autopilot_max_budget_increase_pct: 20, autopilot_max_budget_cut_pct: 50, autopilot_max_daily_budget_cents: null },
+  now: new Date("2026-06-18T12:00:00Z"),
+};
+
+function mockClaude(text: string) {
+  (getAnthropic as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    messages: { create: vi.fn().mockResolvedValue({ content: [{ type: "text", text }] }) },
+  });
+}
+function mockClaudeThrows() {
+  (getAnthropic as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    messages: { create: vi.fn().mockRejectedValue(new Error("boom")) },
+  });
+}
+
+describe("resolveCampaignDirection", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the Claude sentence and caches it on a cache miss", async () => {
+    mockClaude("This winner has room to grow.");
+    const { sb, calls } = fakeSb(null);
+    // winning + scaling alert -> scale_up
+    const r = await resolveCampaignDirection({
+      ...baseArgs,
+      alerts: [{ detector_id: "campaign_scaling_opportunity", status: "open", campaign_id: "cmp-1" }],
+      sb,
+    });
+    expect(r.direction).toBe("scale_up");
+    expect(r.reason).toBe("This winner has room to grow.");
+    expect(r.reasonSource).toBe("claude");
+    expect(r.suggestedBudgetCents).toBe(12000);
+    expect(calls.upserts).toHaveLength(1);
+    expect(calls.upserts[0]).toMatchObject({ direction: "scale_up", source: "claude", as_of_date: "2026-06-18" });
+  });
+
+  it("falls back to the template (source=template) when Claude throws", async () => {
+    mockClaudeThrows();
+    const { sb } = fakeSb(null);
+    const r = await resolveCampaignDirection({ ...baseArgs, sb });
+    expect(r.reasonSource).toBe("template");
+    expect(r.reason).toMatch(/break even|steady|winning/i);
+  });
+
+  it("reuses the cached reason and does NOT call Claude on a hit", async () => {
+    mockClaude("SHOULD NOT BE USED");
+    const { sb } = fakeSb({ reason: "Cached sentence.", source: "claude" });
+    const create = (getAnthropic as any)().messages.create;
+    const r = await resolveCampaignDirection({ ...baseArgs, sb });
+    expect(r.reason).toBe("Cached sentence.");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("NEVER lets Claude change the decided direction (even if the sentence says otherwise)", async () => {
+    mockClaude("You should pause this immediately.");
+    const { sb } = fakeSb(null);
+    // roas 1.5 vs BE 1, scaling alert -> deterministic scale_up
+    const r = await resolveCampaignDirection({
+      ...baseArgs,
+      alerts: [{ detector_id: "campaign_scaling_opportunity", status: "open", campaign_id: "cmp-1" }],
+      sb,
+    });
+    expect(r.direction).toBe("scale_up");
+    expect(r.actionKind).toBe("increase_campaign_budget");
+  });
+
+  it("returns keep + dataSufficient false + no action when metrics are missing", async () => {
+    mockClaude("n/a");
+    const { sb } = fakeSb(null);
+    const r = await resolveCampaignDirection({ ...baseArgs, roas: null, sb });
+    expect(r.direction).toBe("keep");
+    expect(r.actionKind).toBeNull();
+    expect(r.dataSufficient).toBe(false);
   });
 });
