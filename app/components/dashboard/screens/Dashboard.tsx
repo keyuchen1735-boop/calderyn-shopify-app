@@ -71,6 +71,20 @@ function FocusCard({ app }: { app: DashboardCtx }) {
     .sort((a, b) => a.claude_rank - b.claude_rank);
   const focus = open[0];
   if (!focus) {
+    // Cold load: before the first alerts fetch resolves, app.alerts is empty —
+    // show a loading state, NOT "All clear", which would look like a healthy
+    // store when we simply haven't fetched yet (P2-9).
+    if (app.loading && app.alerts.length === 0) {
+      return (
+        <Card className="cd-focus">
+          <Placeholder
+            icon="clock"
+            title="Checking your store…"
+            sub="Loading open alerts across ad spend and inventory."
+          />
+        </Card>
+      );
+    }
     return (
       <Card className="cd-focus">
         <Placeholder
@@ -374,7 +388,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               ) : (
                 <Placeholder
                   icon="chart"
-                  title={app.overview === null ? "Loading chart" : "No history yet"}
+                  title={app.overview === null ? "Loading chart…" : "No history yet"}
                   sub="Revenue and ad spend for the last 30 days will plot here once data is in."
                 />
               )}
