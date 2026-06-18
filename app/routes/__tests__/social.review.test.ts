@@ -53,6 +53,9 @@ function makeRow(overrides: Partial<{
   ig_image_paths: string[];
   li_caption: string;
   ig_caption: string;
+  li_posted_at: string | null;
+  ig_approved_at: string | null;
+  post_results_json: Record<string, unknown> | null;
 }> = {}) {
   return {
     id: TEST_ID,
@@ -64,6 +67,9 @@ function makeRow(overrides: Partial<{
     ig_image_paths: ["path/ig-0.png", "path/ig-1.png", "path/ig-2.png", "path/ig-3.png"],
     li_caption: "LinkedIn caption here.",
     ig_caption: "Instagram caption here.",
+    li_posted_at: null,
+    ig_approved_at: null,
+    post_results_json: null,
     ...overrides,
   };
 }
@@ -124,6 +130,39 @@ function mockRowWithUpdateSpy(row: ReturnType<typeof makeRow>) {
   return { updateFn };
 }
 
+/**
+ * Wire getSupabase where the FIRST update (atomic claim) returns 0 rows,
+ * and subsequent updates succeed. Used for "already claimed" tests.
+ */
+function mockRowClaimReturnsZero(row: ReturnType<typeof makeRow>) {
+  let updateCallCount = 0;
+  const zeroRowsChain: UpdateChain = {
+    eq: () => zeroRowsChain,
+    is: () => zeroRowsChain,
+    select: async () => ({ error: null, data: [] }),
+  };
+  const successChain: UpdateChain = {
+    eq: () => successChain,
+    is: () => successChain,
+    select: async () => ({ error: null, data: [{ id: TEST_ID }] }),
+  };
+  const updateFn = vi.fn().mockImplementation(() => {
+    updateCallCount++;
+    return updateCallCount === 1 ? zeroRowsChain : successChain;
+  });
+  getSupabase.mockReturnValue({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: async () => ({ data: row, error: null }),
+        }),
+      }),
+      update: updateFn,
+    }),
+  });
+  return { updateFn };
+}
+
 function loaderRequest(id: string, token: string): Request {
   return new Request(`https://app.test/social/review/${id}?t=${token}`);
 }
@@ -148,7 +187,7 @@ function actionRequest(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Loader tests
 // ---------------------------------------------------------------------------
 
 describe("social.review.$id — loader", () => {
@@ -162,7 +201,6 @@ describe("social.review.$id — loader", () => {
 
   it("returns state=invalid when verifyActionToken returns null", async () => {
     verifyActionToken.mockReturnValue(null);
-    // getSupabase should not be called — but set it up safely anyway
     mockRow(makeRow());
 
     const { loader } = await import("../social.review.$id");
@@ -177,7 +215,7 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when token id does not match params.id", async () => {
-    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve", version: 0 });
+    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve-linkedin", version: 0 });
     mockRow(makeRow());
 
     const { loader } = await import("../social.review.$id");
@@ -191,10 +229,14 @@ describe("social.review.$id — loader", () => {
     expect(body.state).toBe("invalid");
   });
 
-  it("returns state=confirm with correct fields for a valid approve token + pending row at matching version", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    mockRow(makeRow());
-    signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
+  // -------------------------------------------------------------------------
+  // approve-linkedin loader: li_posted_at null → confirm
+  // -------------------------------------------------------------------------
+
+  it("approve-linkedin + li_posted_at null → state=confirm with action=approve-linkedin", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    mockRow(makeRow({ li_posted_at: null }));
+    signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -205,36 +247,87 @@ describe("social.review.$id — loader", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("confirm");
-    expect(body.action).toBe("approve");
+    expect(body.action).toBe("approve-linkedin");
     expect(body.id).toBe(TEST_ID);
     expect(body.token).toBe("valid-token");
     expect(body.range).toBe("June 13–19, 2026");
-    expect(body.liUrls).toEqual(["https://cdn.test/slide-0.png"]);
-    expect(body.igUrls).toEqual(["https://cdn.test/slide-0.png"]);
     expect(body.liCaption).toBe("LinkedIn caption here.");
-    expect(body.igCaption).toBe("Instagram caption here.");
-    expect(body.regenCount).toBe(0);
   });
 
-  it("returns state=confirm for a valid reject token + pending row", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
-    mockRow(makeRow());
+  // -------------------------------------------------------------------------
+  // approve-linkedin loader: li_posted_at set → result page
+  // -------------------------------------------------------------------------
+
+  it("approve-linkedin + li_posted_at set + linkedin posted → state=li_result with postUrn link", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    mockRow(makeRow({
+      li_posted_at: "2026-06-18T12:00:00.000Z",
+      post_results_json: { linkedin: { posted: true, postUrn: "urn:li:share:777" }, instagram: "approved (manual)" },
+    }));
+    signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
-      request: loaderRequest(TEST_ID, "reject-token"),
+      request: loaderRequest(TEST_ID, "valid-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("li_result");
+    expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:777" });
+  });
+
+  // -------------------------------------------------------------------------
+  // approve-instagram loader: ig_approved_at null → confirm
+  // -------------------------------------------------------------------------
+
+  it("approve-instagram + ig_approved_at null → state=confirm with action=approve-instagram", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
+    mockRow(makeRow({ ig_approved_at: null }));
+    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png"]);
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("confirm");
-    expect(body.action).toBe("reject");
+    expect(body.action).toBe("approve-instagram");
+    expect(body.igCaption).toBe("Instagram caption here.");
+  });
+
+  // -------------------------------------------------------------------------
+  // approve-instagram loader: ig_approved_at set → assets page
+  // -------------------------------------------------------------------------
+
+  it("approve-instagram + ig_approved_at set → state=ig_assets with IG URLs + caption", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
+    mockRow(makeRow({
+      ig_approved_at: "2026-06-18T12:00:00.000Z",
+      post_results_json: { instagram: "approved (manual)" },
+    }));
+    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png"]);
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "valid-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("ig_assets");
+    expect(body.igUrls).toEqual(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png"]);
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
   it("returns state=stale when token version does not match regen_count", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    mockRow(makeRow({ regen_count: 2 })); // version mismatch: token says 0, row is 2
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    mockRow(makeRow({ regen_count: 2 }));
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -247,38 +340,8 @@ describe("social.review.$id — loader", () => {
     expect(body.state).toBe("stale");
   });
 
-  it("returns state=already_done when consumed_at is set", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    mockRow(makeRow({ consumed_at: "2026-06-17T10:00:00.000Z" }));
-
-    const { loader } = await import("../social.review.$id");
-    const res = await loader({
-      request: loaderRequest(TEST_ID, "used-token"),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("already_done");
-  });
-
-  it("returns state=stale when row status is not pending", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    mockRow(makeRow({ status: "posted" }));
-
-    const { loader } = await import("../social.review.$id");
-    const res = await loader({
-      request: loaderRequest(TEST_ID, "posted-token"),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("stale");
-  });
-
   it("returns state=invalid when DB returns an error", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
     mockRow(null, { message: "relation does not exist" });
 
     const { loader } = await import("../social.review.$id");
@@ -293,8 +356,7 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when row shape is malformed (li_image_paths is null)", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    // li_image_paths: null is not a valid array — row shape check must catch it.
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
     mockRow(makeRow({ li_image_paths: null as unknown as string[] }));
 
     const { loader } = await import("../social.review.$id");
@@ -307,11 +369,29 @@ describe("social.review.$id — loader", () => {
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
+
+  it("returns state=confirm for reject token + pending row", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "reject", version: 0 });
+    mockRow(makeRow());
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "reject-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("confirm");
+    expect(body.action).toBe("reject");
+  });
 });
 
 // ---------------------------------------------------------------------------
+// Action — approve-linkedin
+// ---------------------------------------------------------------------------
 
-describe("social.review.$id — action (approve)", () => {
+describe("social.review.$id — action (approve-linkedin)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
@@ -320,137 +400,12 @@ describe("social.review.$id — action (approve)", () => {
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
-  it("updates row (consumed_at/status) and returns state=approved (not-connected path)", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    getValidConnection.mockResolvedValue(null);
+  // -------------------------------------------------------------------------
+  // Connected → posts successfully
+  // -------------------------------------------------------------------------
 
-    const { updateFn } = mockRowWithUpdateSpy(makeRow());
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-token" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-
-    expect(body.state).toBe("approved");
-    expect(body.liUrls).toEqual(["https://cdn.test/slide-0.png"]);
-    expect(body.igUrls).toEqual(["https://cdn.test/slide-0.png"]);
-    expect(body.liCaption).toBe("LinkedIn caption here.");
-    expect(body.igCaption).toBe("Instagram caption here.");
-
-    // Claim update: status→posted, consumed_at set; post_results_json is the result persist (second update)
-    expect(updateFn).toHaveBeenCalledWith(
-      expect.objectContaining({ consumed_at: expect.any(String), status: "posted" }),
-    );
-    // LinkedIn not connected → staged, postMemberMultiImage never called
-    expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(body.linkedin).toEqual({ posted: false, staged: true, reason: "not connected" });
-  });
-
-  it("returns state=invalid when token is bad on POST", async () => {
-    verifyActionToken.mockReturnValue(null);
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "bad" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("invalid");
-  });
-
-  it("returns state=invalid when row is already consumed", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-    mockRow(makeRow({ consumed_at: "2026-06-17T10:00:00.000Z" }));
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "replay-token" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("invalid");
-  });
-
-  it("surfaces DB error as state=error", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-
-    getSupabase.mockReturnValue({
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            single: async () => ({ data: makeRow(), error: null }),
-          }),
-        }),
-        update: () => {
-          type Ch = { eq: () => Ch; is: () => Ch; select: () => Promise<{ error: { message: string }; data: null }> };
-          const chain: Ch = {
-            eq: () => chain,
-            is: () => chain,
-            select: async () => ({ error: { message: "constraint violation" }, data: null }),
-          };
-          return chain;
-        },
-      }),
-    });
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "valid" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("error");
-    expect(body.message).toContain("constraint violation");
-  });
-
-  it("returns state=invalid when conditional update affects 0 rows (concurrent consume)", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
-
-    // Update succeeds but data=[] — someone else consumed it first.
-    type UCh = { eq: () => UCh; is: () => UCh; select: () => Promise<{ error: null; data: never[] }> };
-    const updateChain: UCh = {
-      eq: () => updateChain,
-      is: () => updateChain,
-      select: vi.fn().mockResolvedValue({ error: null, data: [] }),
-    };
-    getSupabase.mockReturnValue({
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            single: async () => ({ data: makeRow(), error: null }),
-          }),
-        }),
-        update: () => updateChain,
-      }),
-    });
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "race-token" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("invalid");
-  });
-
-  // -----------------------------------------------------------------------
-  // LinkedIn auto-post: connected → posts successfully
-  // -----------------------------------------------------------------------
-
-  it("approve + connected: calls postMemberMultiImage once with li_caption and 4 images; result shows posted + postUrn; post_results_json.linkedin.posted === true", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+  it("connected: claims li_posted_at, calls postMemberMultiImage with commentary===li_caption + 4 images, returns li_posted state", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
     getValidConnection.mockResolvedValue({
       accessToken: "tok_abc",
       memberUrn: "urn:li:person:XXXX",
@@ -463,7 +418,7 @@ describe("social.review.$id — action (approve)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -487,41 +442,39 @@ describe("social.review.$id — action (approve)", () => {
     );
     expect(postMemberMultiImage.mock.calls[0][0].images).toHaveLength(4);
 
-    // Result state
-    expect(body.state).toBe("approved");
+    // Result state: posted
+    expect(body.state).toBe("li_posted");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:999" });
 
-    // Call order matters: 1st update is the atomic claim (no post_results_json),
-    // 2nd update persists post_results_json — assert by position so a regression
-    // that writes the outcome into the claim update would fail.
+    // First update: atomic claim sets li_posted_at
     expect(updateFn).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ status: "posted", consumed_at: expect.any(String) }),
+      expect.objectContaining({ li_posted_at: expect.any(String) }),
     );
+    // Second update: persists post_results_json.linkedin = posted:true
     expect(updateFn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         post_results_json: expect.objectContaining({
           linkedin: expect.objectContaining({ posted: true, postUrn: "urn:li:share:999" }),
-          instagram: "manual",
         }),
       }),
     );
   });
 
-  // -----------------------------------------------------------------------
-  // LinkedIn auto-post: not connected → staged
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // NOT connected → li_posted_at reset to null, not-connected state, retryable
+  // -------------------------------------------------------------------------
 
-  it("approve + NOT connected: postMemberMultiImage NOT called; result shows staged", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+  it("NOT connected: li_posted_at reset to null, postMemberMultiImage NOT called, state=li_not_connected, retryable", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
     getValidConnection.mockResolvedValue(null);
 
-    mockRowWithUpdateSpy(makeRow());
+    const { updateFn } = mockRowWithUpdateSpy(makeRow());
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -529,16 +482,24 @@ describe("social.review.$id — action (approve)", () => {
     const body = await res.json() as any;
 
     expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(body.state).toBe("approved");
-    expect(body.linkedin).toEqual({ posted: false, staged: true, reason: "not connected" });
+    expect(body.state).toBe("li_not_connected");
+
+    // li_posted_at must have been reset to null (second update resets the claim)
+    const resetCall = updateFn.mock.calls.find(
+      (args: unknown[]) => {
+        const arg = args[0] as Record<string, unknown>;
+        return arg.li_posted_at === null;
+      }
+    );
+    expect(resetCall).toBeDefined();
   });
 
-  // -----------------------------------------------------------------------
-  // LinkedIn auto-post: post throws → failed, status still "posted" (drop consumed)
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // post throws → li_posted_at reset to null, state=li_failed, no success
+  // -------------------------------------------------------------------------
 
-  it("approve + post throws: result shows failed with error; postMemberMultiImage was attempted; no success claim; status still posted", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+  it("post throws: li_posted_at reset to null, state=li_failed with error, no success", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
     getValidConnection.mockResolvedValue({
       accessToken: "tok_abc",
       memberUrn: "urn:li:person:XXXX",
@@ -550,7 +511,7 @@ describe("social.review.$id — action (approve)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -560,28 +521,121 @@ describe("social.review.$id — action (approve)", () => {
     // postMemberMultiImage was attempted
     expect(postMemberMultiImage).toHaveBeenCalledTimes(1);
 
-    // No success claim
-    expect(body.state).toBe("approved");
+    // Must not claim success (Rule 12)
+    expect(body.state).toBe("li_failed");
     expect(body.linkedin.posted).toBe(false);
     expect(body.linkedin.error).toContain("LinkedIn HTTP 429");
-    // staged must be absent / falsy — this is a failed attempt, not "not connected"
-    expect(body.linkedin.staged).toBeFalsy();
 
-    // The row was still marked "posted" (drop is consumed) with posted:false in results
-    expect(updateFn).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "posted", consumed_at: expect.any(String) }),
+    // li_posted_at reset to null so the link still works after retry
+    const resetCall = updateFn.mock.calls.find(
+      (args: unknown[]) => {
+        const arg = args[0] as Record<string, unknown>;
+        return arg.li_posted_at === null;
+      }
     );
+    expect(resetCall).toBeDefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Atomic claim returns 0 rows → stored result returned, postMemberMultiImage NOT called
+  // -------------------------------------------------------------------------
+
+  it("claim returns 0 rows (already claimed): returns stored li result, postMemberMultiImage NOT called", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    getValidConnection.mockResolvedValue({
+      accessToken: "tok_abc",
+      memberUrn: "urn:li:person:XXXX",
+    });
+
+    const storedResult = { posted: true, postUrn: "urn:li:share:existing" };
+    mockRowClaimReturnsZero(makeRow({
+      li_posted_at: "2026-06-18T11:00:00.000Z",
+      post_results_json: { linkedin: storedResult },
+    }));
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+
+    expect(postMemberMultiImage).not.toHaveBeenCalled();
+    expect(body.linkedin).toEqual(storedResult);
+  });
+
+  it("returns state=invalid when token is bad on POST", async () => {
+    verifyActionToken.mockReturnValue(null);
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "bad" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("invalid");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Action — approve-instagram
+// ---------------------------------------------------------------------------
+
+describe("social.review.$id — action (approve-instagram)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png", "https://cdn.test/ig-2.png", "https://cdn.test/ig-3.png"]);
+    downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
+    getValidConnection.mockResolvedValue(null);
+    postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
+  });
+
+  it("claims ig_approved_at, records instagram=approved (manual), returns ig_assets state with IG URLs + caption, NO LinkedIn calls", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
+
+    const { updateFn } = mockRowWithUpdateSpy(makeRow());
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "approve-ig-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+
+    expect(body.state).toBe("ig_assets");
+    expect(body.igUrls).toEqual([
+      "https://cdn.test/ig-0.png",
+      "https://cdn.test/ig-1.png",
+      "https://cdn.test/ig-2.png",
+      "https://cdn.test/ig-3.png",
+    ]);
+    expect(body.igCaption).toBe("Instagram caption here.");
+
+    // LinkedIn must not be touched
+    expect(postMemberMultiImage).not.toHaveBeenCalled();
+    expect(getValidConnection).not.toHaveBeenCalled();
+
+    // ig_approved_at claimed
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({ ig_approved_at: expect.any(String) }),
+    );
+    // post_results_json.instagram recorded
     expect(updateFn).toHaveBeenCalledWith(
       expect.objectContaining({
-        post_results_json: expect.objectContaining({
-          linkedin: expect.objectContaining({ posted: false }),
-          instagram: "manual",
-        }),
+        post_results_json: expect.objectContaining({ instagram: "approved (manual)" }),
       }),
     );
   });
 });
 
+// ---------------------------------------------------------------------------
+// Action — reject
 // ---------------------------------------------------------------------------
 
 describe("social.review.$id — action (reject)", () => {

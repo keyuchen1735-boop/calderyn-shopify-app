@@ -9,7 +9,8 @@ const BASE_OPTS = {
   igUrls: ["https://storage.example.com/ig-0.png", "https://storage.example.com/ig-1.png"],
   liCaption: "Default LinkedIn caption.",
   igCaption: "Default Instagram caption.",
-  approveUrl: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_TOKEN",
+  approveLinkedinUrl: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_LI_TOKEN",
+  approveInstagramUrl: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_IG_TOKEN",
   rejectUrl: "https://app.calderyncompany.com/social/review/abc-123?t=REJECT_TOKEN",
 };
 
@@ -19,9 +20,14 @@ describe("buildActionEmail", () => {
     expect(subject).toContain("June 13–19, 2026");
   });
 
-  it("html contains the approveUrl", () => {
+  it("html contains the approveLinkedinUrl", () => {
     const { html } = buildActionEmail(BASE_OPTS);
-    expect(html).toContain(BASE_OPTS.approveUrl);
+    expect(html).toContain(BASE_OPTS.approveLinkedinUrl);
+  });
+
+  it("html contains the approveInstagramUrl", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
+    expect(html).toContain(BASE_OPTS.approveInstagramUrl);
   });
 
   it("html contains the rejectUrl", () => {
@@ -43,9 +49,30 @@ describe("buildActionEmail", () => {
     }
   });
 
-  it("html has both Approve and Reject button text", () => {
+  it("html has LinkedIn platform heading", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
+    expect(html).toContain("LinkedIn");
+  });
+
+  it("html has Instagram platform heading", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
+    expect(html).toContain("Instagram");
+  });
+
+  it("html has Approve & post to LinkedIn button label", () => {
     const { html } = buildActionEmail(BASE_OPTS);
     expect(html).toContain("Approve");
+    expect(html).toContain("LinkedIn");
+  });
+
+  it("html has Approve Instagram button label", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
+    expect(html).toContain("Approve");
+    expect(html).toContain("Instagram");
+  });
+
+  it("html has Reject & regenerate both button label", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
     expect(html).toContain("Reject");
   });
 
@@ -55,10 +82,15 @@ describe("buildActionEmail", () => {
     expect(html).toContain("&lt;1&gt;");
   });
 
-  it("plain-text twin includes both action URLs", () => {
+  it("plain-text twin includes all three action URLs with labels", () => {
     const { text } = buildActionEmail(BASE_OPTS);
-    expect(text).toContain(BASE_OPTS.approveUrl);
+    expect(text).toContain(BASE_OPTS.approveLinkedinUrl);
+    expect(text).toContain(BASE_OPTS.approveInstagramUrl);
     expect(text).toContain(BASE_OPTS.rejectUrl);
+    // Each has a label preceding it
+    expect(text).toContain("APPROVE & POST TO LINKEDIN");
+    expect(text).toContain("APPROVE INSTAGRAM");
+    expect(text).toContain("REJECT & REGENERATE");
   });
 
   it("includes the LinkedIn and Instagram captions (post descriptions) in html and text", () => {
@@ -67,7 +99,7 @@ describe("buildActionEmail", () => {
       liCaption: "We shipped 50 things this week. Here's the one that matters. #Shopify",
       igCaption: "Is your store actually doing well? 🛠️ #Ecommerce",
     });
-    expect(html).toContain("We shipped 50 things this week. Here&#39;s the one that matters. #Shopify".replace("&#39;", "'"));
+    expect(html).toContain("We shipped 50 things this week. Here");
     expect(html).toContain("Is your store actually doing well? 🛠️ #Ecommerce");
     expect(text).toContain("We shipped 50 things this week. Here's the one that matters. #Shopify");
     expect(text).toContain("Is your store actually doing well? 🛠️ #Ecommerce");

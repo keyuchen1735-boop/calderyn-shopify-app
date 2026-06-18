@@ -6,8 +6,8 @@ const ID = "11111111-2222-3333-4444-555555555555";
 
 describe("social-digest action tokens", () => {
   it("round-trips a valid token", () => {
-    const t = signActionToken(ID, "approve", 0, { secret: SECRET });
-    expect(verifyActionToken(t, { secret: SECRET })).toEqual({ id: ID, action: "approve", version: 0 });
+    const t = signActionToken(ID, "approve-linkedin", 0, { secret: SECRET });
+    expect(verifyActionToken(t, { secret: SECRET })).toEqual({ id: ID, action: "approve-linkedin", version: 0 });
   });
 
   it("carries the version so regenerated rounds differ", () => {
@@ -18,7 +18,7 @@ describe("social-digest action tokens", () => {
   });
 
   it("rejects a tampered payload", () => {
-    const t = signActionToken(ID, "approve", 0, { secret: SECRET });
+    const t = signActionToken(ID, "approve-linkedin", 0, { secret: SECRET });
     const [enc, sig] = t.split(".");
     // flip the action by re-encoding a different payload but keeping the old sig
     const forged = Buffer.from(`${ID}:reject:0:${Date.now() + 10000}`).toString("base64url");
@@ -28,13 +28,13 @@ describe("social-digest action tokens", () => {
   });
 
   it("rejects a token signed with a different secret", () => {
-    const t = signActionToken(ID, "approve", 0, { secret: "other-secret" });
+    const t = signActionToken(ID, "approve-linkedin", 0, { secret: "other-secret" });
     expect(verifyActionToken(t, { secret: SECRET })).toBeNull();
   });
 
   it("rejects an expired token", () => {
     const now = 1_000_000_000_000;
-    const t = signActionToken(ID, "approve", 0, { secret: SECRET, nowMs: now, ttlMs: 1000 });
+    const t = signActionToken(ID, "approve-linkedin", 0, { secret: SECRET, nowMs: now, ttlMs: 1000 });
     expect(verifyActionToken(t, { secret: SECRET, nowMs: now + 500 })).not.toBeNull();
     expect(verifyActionToken(t, { secret: SECRET, nowMs: now + 2000 })).toBeNull();
   });
