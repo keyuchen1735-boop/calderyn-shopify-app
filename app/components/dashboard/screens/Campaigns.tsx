@@ -20,12 +20,19 @@ import {
 } from "../ui";
 import { money } from "../format";
 import { CDIcon } from "../icons";
-import { fetchAnalytics, executeCampaignAction, DashboardApiError } from "~/lib/dashboard/client";
+import { fetchAnalytics, executeCampaignAction, DashboardApiError, fetchCampaignDirection, type CampaignDirectionDTO } from "~/lib/dashboard/client";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 import { scaleReason as buildScaleReason } from "~/lib/scale-reason";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM, Platform } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
+
+const DIR_PILL: Record<string, { label: string; tone: "success" | "warn" | "critical" | "neutral"; icon?: string }> = {
+  scale_up: { label: "Scale up", tone: "success", icon: "arrowUpRight" },
+  keep: { label: "Keep", tone: "neutral" },
+  scale_down: { label: "Scale down", tone: "warn", icon: "reduce" },
+  pause: { label: "Pause", tone: "critical", icon: "pause" },
+};
 
 /* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
 function ScreenHeader({
@@ -114,6 +121,14 @@ function CampaignDetail({
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
   const [busy, setBusy] = useState(false);
+  const [direction, setDirection] = useState<CampaignDirectionDTO | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchCampaignDirection(c.id)
+      .then((d) => { if (live) setDirection(d); })
+      .catch(() => { if (live) setDirection(null); });
+    return () => { live = false; };
+  }, [c.id]);
   // Keep in sync if app.campaigns refreshes underneath us with a new value.
   useEffect(() => {
     setStatus(c.status);
@@ -140,7 +155,7 @@ function CampaignDetail({
       await executeCampaignAction(c.id, {
         type,
         ...(type === "reduce_campaign_budget"
-          ? { dailyBudgetCents: Math.round(c.daily_budget_cents * 0.7) }
+          ? { dailyBudgetCents: dailyBudgetCents ?? Math.round(c.daily_budget_cents * 0.7) }
           : type === "increase_campaign_budget"
             ? { dailyBudgetCents: dailyBudgetCents ?? Math.round(c.daily_budget_cents * 1.2) }
             : {}),
@@ -164,6 +179,21 @@ function CampaignDetail({
     } finally {
       setBusy(false);
     }
+  };
+
+  const directionActable =
+    direction != null &&
+    direction.actionKind != null &&
+    (direction.actionKind === "pause_campaign" || direction.suggestedBudgetCents != null);
+
+  const runDirection = () => {
+    if (!direction?.actionKind) return;
+    const verb =
+      direction.direction === "scale_up" ? "Budget scaled"
+      : direction.direction === "scale_down" ? "Budget reduced"
+      : "Campaign paused";
+    const nextStatus = direction.actionKind === "pause_campaign" ? "paused" : status;
+    run(direction.actionKind, `${verb} — logged to action history.`, nextStatus, direction.suggestedBudgetCents ?? undefined);
   };
 
   return (
@@ -237,6 +267,25 @@ function CampaignDetail({
         </div>
       </header>
 
+      {direction && (
+        <Card>
+          <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+            <span className="cd-h2">Recommended direction</span>
+            <Pill tone={DIR_PILL[direction.direction].tone} icon={DIR_PILL[direction.direction].icon}>
+              {DIR_PILL[direction.direction].label}
+            </Pill>
+          </div>
+          <p className="cd-body">{direction.reason}</p>
+          {directionActable && (
+            <div style={{ marginTop: 10 }}>
+              <Btn icon={DIR_PILL[direction.direction].icon} disabled={busy} onClick={runDirection}>
+                {DIR_PILL[direction.direction].label}
+              </Btn>
+            </div>
+          )}
+        </Card>
+      )}
+
       <div className="cd-stat-grid">
         <Card className="cd-stat">
           <span className="cd-stat-label">ROAS (7d)</span>
@@ -262,6 +311,16 @@ function CampaignDetail({
           </span>
           <span className="cd-caption">
             margin-adjusted ROAS {(c.roas_7d * c.contribution_margin).toFixed(1)}×
+          </span>
+        </Card>
+        <Card className="cd-stat">
+          <span className="cd-stat-label">Break-even ROAS</span>
+          <span className="cd-stat-value tabular-nums">{c.breakeven_roas.toFixed(1)}×</span>
+        </Card>
+        <Card className="cd-stat">
+          <span className="cd-stat-label">Profit ROAS (POAS)</span>
+          <span className="cd-stat-value tabular-nums">
+            {c.roas_7d > 0 && c.contribution_margin > 0 ? `${(c.roas_7d * c.contribution_margin).toFixed(1)}×` : "—"}
           </span>
         </Card>
         <Card className="cd-stat">
