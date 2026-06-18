@@ -19,6 +19,40 @@ export interface PackInput {
   range: string; // "June 13–19, 2026"
   shippedCount: number; // deterministic (merged PRs)
   waitlistDelta: number; // deterministic (new signups this week)
+  variation?: {
+    reasons: string[]; // reason-chip strings from the reject (e.g. "tone too salesy")
+    note?: string; // optional free-text from the rejecter
+    priorCopy?: string[]; // copy strings from previously-rejected versions
+  };
+}
+
+/**
+ * Returns a plain-text instruction block for the AI when this is a regeneration
+ * (i.e. a prior version was rejected). Returns "" when variation is absent or
+ * carries no meaningful content — so the caller can always safely append it.
+ */
+export function variationInstruction(variation: PackInput["variation"]): string {
+  if (!variation || variation.reasons.length === 0) return "";
+
+  const lines: string[] = [
+    "REGENERATION NOTE: The previous version of this post was rejected and must NOT be reused.",
+    `Rejection reasons: ${variation.reasons.join("; ")}.`,
+  ];
+
+  if (variation.note) {
+    lines.push(`Rejecter note: ${variation.note}`);
+  }
+
+  if (variation.priorCopy && variation.priorCopy.length > 0) {
+    lines.push(
+      "Do NOT reuse any of the following rejected copy (take a clearly different angle and tone):",
+      ...variation.priorCopy.map((s) => `  - ${s}`),
+    );
+  }
+
+  lines.push("Take a clearly different angle and tone from the rejected version.");
+
+  return lines.join("\n");
 }
 
 interface AiCopy {
@@ -134,11 +168,16 @@ export async function buildSocialPack(input: PackInput): Promise<{ pack: SocialP
   if (process.env.ANTHROPIC_API_KEY) {
     try {
       const client = getAnthropic();
+      const baseContent = activityForPrompt(input.activity);
+      const variationBlock = variationInstruction(input.variation);
+      const userContent = variationBlock ? `${baseContent}\n\n${variationBlock}` : baseContent;
+      const temperature = input.variation ? 1 : 0.7;
       const msg = await client.messages.create({
         model: assistantModel(),
         max_tokens: 1400,
+        temperature,
         system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: activityForPrompt(input.activity) }],
+        messages: [{ role: "user", content: userContent }],
       });
       const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
       copy = parseAi(text);
