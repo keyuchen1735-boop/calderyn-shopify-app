@@ -253,14 +253,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
     }
 
-    // Step 3: Persist the LinkedIn outcome.
-    await getSupabase()
+    // Step 3: Persist the LinkedIn outcome. The post (if any) already happened
+    // and the row is already claimed, so a persist failure must NOT 500 — but it
+    // must be surfaced, not swallowed (rule 12), or downstream reads of
+    // post_results_json could misjudge whether a repost is needed.
+    const { error: persistError } = await getSupabase()
       .from("social_digest")
       .update({
         post_results_json: { linkedin, instagram: "manual" },
       })
       .eq("id", id)
       .select("id");
+    if (persistError) {
+      console.error("[social.review] post_results_json persist failed", id, persistError.message);
+    }
 
     // Step 4: Mint signed URLs for the response.
     let liUrls: string[];
@@ -433,11 +439,8 @@ export default function SocialReview() {
         let liBody: React.ReactNode;
 
         if (linkedin.posted) {
-          // Successfully posted — confirm with URN-derived link where possible.
-          const postId = linkedin.postUrn.split(":").pop();
-          const liLink = postId
-            ? `https://www.linkedin.com/feed/update/${linkedin.postUrn}/`
-            : null;
+          // Successfully posted — LinkedIn feed-update URL uses the full URN.
+          const liLink = `https://www.linkedin.com/feed/update/${linkedin.postUrn}/`;
           liHeading = (
             <p style={{ color: BRAND.teal, fontWeight: 700, marginBottom: 8 }}>
               ✅ Posted to LinkedIn

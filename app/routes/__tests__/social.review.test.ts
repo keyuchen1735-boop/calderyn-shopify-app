@@ -491,8 +491,15 @@ describe("social.review.$id — action (approve)", () => {
     expect(body.state).toBe("approved");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:999" });
 
-    // Second update persists post_results_json with posted:true
-    expect(updateFn).toHaveBeenCalledWith(
+    // Call order matters: 1st update is the atomic claim (no post_results_json),
+    // 2nd update persists post_results_json — assert by position so a regression
+    // that writes the outcome into the claim update would fail.
+    expect(updateFn).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ status: "posted", consumed_at: expect.any(String) }),
+    );
+    expect(updateFn).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
         post_results_json: expect.objectContaining({
           linkedin: expect.objectContaining({ posted: true, postUrn: "urn:li:share:999" }),
