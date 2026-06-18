@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   saveConnection,
   getValidConnection,
+  getValidConnectionFor,
   signState,
   verifyState,
 } from "../linkedin-connection.server";
@@ -384,31 +385,32 @@ describe("signState / verifyState", () => {
   });
 
   it("signState + verifyState round-trip succeeds", () => {
-    const state = signState();
-    expect(verifyState(state)).toBe(true);
+    const state = signState("founder@example.com");
+    const result = verifyState(state);
+    expect(result).not.toBeNull();
+    expect(result?.owner).toBe("founder@example.com");
   });
 
-  it("verifyState returns false for a tampered state", () => {
-    const state = signState();
-    // Flip one character in the HMAC portion
+  it("verifyState returns null for a tampered state", () => {
+    const state = signState("founder@example.com");
     const tampered = state.slice(0, -2) + (state.at(-1) === "a" ? "b" : "a") + state.at(-1);
-    expect(verifyState(tampered)).toBe(false);
+    expect(verifyState(tampered)).toBeNull();
   });
 
-  it("verifyState returns false for a completely invalid string", () => {
-    expect(verifyState("not-a-valid-state")).toBe(false);
+  it("verifyState returns null for a completely invalid string", () => {
+    expect(verifyState("not-a-valid-state")).toBeNull();
   });
 
-  it("verifyState returns false for an empty string", () => {
-    expect(verifyState("")).toBe(false);
+  it("verifyState returns null for an empty string", () => {
+    expect(verifyState("")).toBeNull();
   });
 
-  it("verifyState returns false for an expired state", () => {
+  it("verifyState returns null for an expired state", () => {
     vi.useFakeTimers();
     try {
-      const state = signState();
-      vi.advanceTimersByTime(11 * 60 * 1000); // past the 10-min expiry
-      expect(verifyState(state)).toBe(false);
+      const state = signState("founder@example.com");
+      vi.advanceTimersByTime(11 * 60 * 1000);
+      expect(verifyState(state)).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -417,8 +419,145 @@ describe("signState / verifyState", () => {
   it("verifyState falls back to CRON_SECRET when SOCIAL_ACTION_SECRET is absent", () => {
     delete process.env.SOCIAL_ACTION_SECRET;
     process.env.CRON_SECRET = "cron-secret-value-32-chars-xxxxx";
+    const state = signState("other@example.com");
+    const result = verifyState(state);
+    expect(result).not.toBeNull();
+    expect(result?.owner).toBe("other@example.com");
+  });
+});
 
-    const state = signState();
-    expect(verifyState(state)).toBe(true);
+// ---------------------------------------------------------------------------
+// saveConnection — ownerEmail path
+// ---------------------------------------------------------------------------
+
+describe("saveConnection — ownerEmail path", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("upserts on owner_email when ownerEmail is provided", async () => {
+    const upsertFn = vi.fn().mockReturnValue({
+      select: async () => ({ error: null }),
+    });
+    getSupabase.mockReturnValue({
+      from: () => ({ upsert: upsertFn }),
+    });
+
+    await saveConnection({
+      tokens: { accessToken: "tok-abc", expiresInSec: 3600 },
+      memberUrn: "urn:li:person:XYZ",
+      ownerEmail: "founder@example.com",
+    });
+
+    expect(upsertFn).toHaveBeenCalledTimes(1);
+    const [payload, opts] = upsertFn.mock.calls[0] as [Record<string, unknown>, { onConflict: string }];
+    expect(payload.owner_email).toBe("founder@example.com");
+    expect(payload.member_urn).toBe("urn:li:person:XYZ");
+    expect(opts?.onConflict).toBe("owner_email");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getValidConnectionFor
+// ---------------------------------------------------------------------------
+
+describe("getValidConnectionFor", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.LINKEDIN_CLIENT_ID;
+    delete process.env.LINKEDIN_CLIENT_SECRET;
+  });
+
+  afterEach(() => {
+    delete process.env.LINKEDIN_CLIENT_ID;
+    delete process.env.LINKEDIN_CLIENT_SECRET;
+  });
+
+  it("returns the token for the specific owner when row exists and is valid", async () => {
+    const row = makeRow({
+      member_urn: "urn:li:person:FOUNDER_A",
+      access_token: "founder-a-token",
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+    });
+    getSupabase.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            limit: () => ({
+              single: async () => ({ data: row, error: null }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const result = await getValidConnectionFor("founder-a@example.com");
+    expect(result).toEqual({
+      accessToken: "founder-a-token",
+      memberUrn: "urn:li:person:FOUNDER_A",
+    });
+  });
+
+  it("returns null when no row exists for that owner", async () => {
+    getSupabase.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            limit: () => ({
+              single: async () => ({ data: null, error: { code: "PGRST116", message: "no rows" } }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const result = await getValidConnectionFor("nobody@example.com");
+    expect(result).toBeNull();
+  });
+
+  it("refreshes and returns new token when expired but refresh token + env creds exist", async () => {
+    process.env.LINKEDIN_CLIENT_ID = "cid-test";
+    process.env.LINKEDIN_CLIENT_SECRET = "csec-test";
+
+    const row = makeRow({
+      member_urn: "urn:li:person:REFRESH_OWNER",
+      access_token: "expired-tok",
+      expires_at: new Date(Date.now() - 5000).toISOString(),
+      refresh_token: "rt-owner",
+    });
+
+    const upsertFn = vi.fn().mockReturnValue({
+      select: async () => ({ error: null }),
+    });
+    let callCount = 0;
+    getSupabase.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          from: () => ({
+            select: () => ({
+              eq: () => ({
+                limit: () => ({
+                  single: async () => ({ data: row, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return { from: () => ({ upsert: upsertFn }) };
+    });
+
+    refreshAccessToken.mockResolvedValue({
+      accessToken: "fresh-owner-token",
+      expiresInSec: 7200,
+    });
+
+    const result = await getValidConnectionFor("owner@example.com");
+    expect(result).toEqual({
+      accessToken: "fresh-owner-token",
+      memberUrn: "urn:li:person:REFRESH_OWNER",
+    });
+    expect(upsertFn).toHaveBeenCalled();
   });
 });

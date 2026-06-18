@@ -5,6 +5,7 @@ import {
   refreshAccessToken,
   fetchMemberUrn,
   postMemberMultiImage,
+  LinkedInPostError,
 } from "../linkedin.server";
 
 // ---------------------------------------------------------------------------
@@ -505,5 +506,109 @@ describe("postMemberMultiImage", () => {
         images: makeImages(21),
       }),
     ).rejects.toThrow(/2.{0,10}20/);
+  });
+
+  it("throws LinkedInPostError with phase 'pre-post' when initializeUpload fails after 2 attempts", async () => {
+    // All fetch calls return 500 — initializeUpload always fails
+    vi.stubGlobal("fetch", makeFetchStub(() =>
+      new Response("server error", { status: 500 }),
+    ));
+    let caught: unknown;
+    try {
+      await postMemberMultiImage({
+        accessToken: ACCESS_TOKEN,
+        authorUrn: AUTHOR_URN,
+        commentary: "Test",
+        images: makeImages(2),
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(LinkedInPostError);
+    expect((caught as LinkedInPostError).phase).toBe("pre-post");
+  });
+
+  it("throws LinkedInPostError with phase 'post' when /rest/posts returns non-2xx", async () => {
+    let initCalls = 0;
+    vi.stubGlobal("fetch", makeFetchStub((url, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/rest/images") && url.includes("action=initializeUpload")) {
+        const i = initCalls++;
+        return jsonResponse({ value: { uploadUrl: `https://upload.linkedin.com/img/u${i}`, image: `urn:li:image:I${i}` } });
+      }
+      if (method === "PUT") return new Response(null, { status: 201 });
+      return new Response(JSON.stringify({ message: "Bad Request" }), { status: 400 });
+    }));
+    let caught: unknown;
+    try {
+      await postMemberMultiImage({
+        accessToken: ACCESS_TOKEN,
+        authorUrn: AUTHOR_URN,
+        commentary: "Test",
+        images: makeImages(2),
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(LinkedInPostError);
+    expect((caught as LinkedInPostError).phase).toBe("post");
+  });
+
+  it("throws LinkedInPostError with phase 'post' when /rest/posts returns 201 but no x-restli-id / x-linkedin-id header", async () => {
+    let initCalls = 0;
+    vi.stubGlobal("fetch", makeFetchStub((url, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/rest/images") && url.includes("action=initializeUpload")) {
+        const i = initCalls++;
+        return jsonResponse({ value: { uploadUrl: `https://upload.linkedin.com/img/u${i}`, image: `urn:li:image:I${i}` } });
+      }
+      if (method === "PUT") return new Response(null, { status: 201 });
+      // 201 but no x-restli-id / x-linkedin-id
+      return new Response(null, { status: 201 });
+    }));
+    let caught: unknown;
+    try {
+      await postMemberMultiImage({
+        accessToken: ACCESS_TOKEN,
+        authorUrn: AUTHOR_URN,
+        commentary: "Test",
+        images: makeImages(2),
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(LinkedInPostError);
+    expect((caught as LinkedInPostError).phase).toBe("post");
+  });
+
+  it("succeeds when initializeUpload fails once then succeeds on attempt 2 (retry)", async () => {
+    // Per-image: first call to initializeUpload fails, second succeeds
+    let initCallCount = 0;
+    vi.stubGlobal("fetch", makeFetchStub((url, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/rest/images") && url.includes("action=initializeUpload")) {
+        const callIdx = initCallCount++;
+        if (callIdx % 2 === 0) {
+          // First attempt for each image: fail
+          return new Response("transient error", { status: 503 });
+        }
+        // Second attempt: succeed
+        const imgIdx = Math.floor(callIdx / 2);
+        return jsonResponse({ value: { uploadUrl: `https://upload.linkedin.com/img/u${imgIdx}`, image: `urn:li:image:I${imgIdx}` } });
+      }
+      if (method === "PUT") return new Response(null, { status: 201 });
+      if (url.includes("/rest/posts") && method === "POST") {
+        return new Response(null, { status: 201, headers: new Headers({ "x-restli-id": "urn:li:share:RETRY_OK" }) });
+      }
+      return new Response("unexpected", { status: 500 });
+    }));
+
+    const result = await postMemberMultiImage({
+      accessToken: ACCESS_TOKEN,
+      authorUrn: AUTHOR_URN,
+      commentary: "Test",
+      images: makeImages(2),
+    });
+    expect(result.postUrn).toBe("urn:li:share:RETRY_OK");
   });
 });

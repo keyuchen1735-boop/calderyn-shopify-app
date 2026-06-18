@@ -18,6 +18,13 @@ const POSTS_ENDPOINT = "https://api.linkedin.com/rest/posts";
 
 const DEFAULT_SCOPE = "openid profile w_member_social";
 
+export class LinkedInPostError extends Error {
+  constructor(message: string, readonly phase: "pre-post" | "post") {
+    super(message);
+    this.name = "LinkedInPostError";
+  }
+}
+
 export interface LinkedInTokens {
   accessToken: string;
   expiresInSec: number;
@@ -195,12 +202,28 @@ export async function postMemberMultiImage(o: {
     );
   }
 
-  // Upload each image sequentially (keeps order deterministic for carousel)
+  // Upload each image sequentially (keeps order deterministic for carousel).
+  // Each image gets up to 2 attempts on initializeUpload; if both fail, throw
+  // a LinkedInPostError with phase "pre-post" so callers can classify retries.
   const uploadedImages: { id: string; altText: string }[] = [];
   for (const img of o.images) {
-    const { uploadUrl, imageUrn } = await initializeImageUpload(o.accessToken, o.authorUrn);
-    await uploadImageBytes(o.accessToken, uploadUrl, img.bytes);
-    uploadedImages.push({ id: imageUrn, altText: img.altText });
+    let lastErr: unknown;
+    let result: InitUploadResult | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const init = await initializeImageUpload(o.accessToken, o.authorUrn);
+        await uploadImageBytes(o.accessToken, init.uploadUrl, img.bytes);
+        result = init;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (result === undefined) {
+      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+      throw new LinkedInPostError(msg, "pre-post");
+    }
+    uploadedImages.push({ id: result.imageUrn, altText: img.altText });
   }
 
   // Create the post
@@ -222,24 +245,38 @@ export async function postMemberMultiImage(o: {
     isReshareDisabledByAuthor: false,
   };
 
-  const response = await fetch(POSTS_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${o.accessToken}`,
-      ...LINKEDIN_HEADERS,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(postBody),
-  });
-  await assertOk(response, "posts");
+  let response: Response;
+  try {
+    response = await fetch(POSTS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${o.accessToken}`,
+        ...LINKEDIN_HEADERS,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(postBody),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new LinkedInPostError(`LinkedIn posts network error: ${msg}`, "post");
+  }
+
+  if (!response.ok) {
+    const snippet = await response.text().catch(() => "");
+    throw new LinkedInPostError(
+      `LinkedIn posts failed: HTTP ${response.status} — ${snippet.slice(0, 200)}`,
+      "post",
+    );
+  }
 
   const postUrn =
     response.headers.get("x-restli-id") ?? response.headers.get("x-linkedin-id");
   if (!postUrn) {
-    throw new Error(
+    throw new LinkedInPostError(
       "LinkedIn posts response missing x-restli-id / x-linkedin-id header (status " +
         response.status +
         ")",
+      "post",
     );
   }
 
