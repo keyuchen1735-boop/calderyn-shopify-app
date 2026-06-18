@@ -21,15 +21,15 @@ export interface ReasonFacts {
   status: "active" | "paused";
 }
 
-function x(n: number | null): string {
+function fmtMultiplier(n: number | null): string {
   return n != null && Number.isFinite(n) ? `${n.toFixed(1)}×` : "—";
 }
 
 export function directionTemplate(direction: Direction, f: ReasonFacts): string {
   if (!f.dataSufficient) return "Not enough recent spend or margin data to make a call yet.";
   if (f.status === "paused") return "This campaign is paused — no change recommended right now.";
-  const ret = x(f.roas);
-  const be = x(f.breakEvenRoas);
+  const ret = fmtMultiplier(f.roas);
+  const be = fmtMultiplier(f.breakEvenRoas);
   switch (direction) {
     case "scale_up":
       return `Winning campaign — earning ${ret} on ad spend, above the ${be} it needs to break even. Give the winner more budget.`;
@@ -123,7 +123,7 @@ export async function resolveCampaignDirection(args: {
   const asOf = (args.now ?? new Date()).toISOString().slice(0, 10);
 
   // Cache read.
-  const { data: cached } = await args.sb
+  const { data: cached, error: cErr } = await args.sb
     .from("campaign_direction_reason")
     .select("reason, source")
     .eq("shop_id", args.shopId)
@@ -131,6 +131,7 @@ export async function resolveCampaignDirection(args: {
     .eq("as_of_date", asOf)
     .eq("direction", result.direction)
     .maybeSingle();
+  if (cErr) console.warn(`[direction] reason cache read failed for ${args.campaignId}`, cErr);
   if (cached?.reason) {
     return {
       direction: result.direction,

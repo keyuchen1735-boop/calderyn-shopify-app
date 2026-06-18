@@ -50,7 +50,7 @@ function fakeSb(cachedRow: Record<string, unknown> | null) {
         },
         upsert: (row: Record<string, unknown>) => {
           calls.upserts.push(row);
-          return { error: null };
+          return Promise.resolve({ error: null });
         },
       };
       return chain;
@@ -112,12 +112,12 @@ describe("resolveCampaignDirection", () => {
   });
 
   it("reuses the cached reason and does NOT call Claude on a hit", async () => {
-    mockClaude("SHOULD NOT BE USED");
+    const createSpy = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "SHOULD NOT BE USED" }] });
+    (getAnthropic as unknown as ReturnType<typeof vi.fn>).mockReturnValue({ messages: { create: createSpy } });
     const { sb } = fakeSb({ reason: "Cached sentence.", source: "claude" });
-    const create = (getAnthropic as any)().messages.create;
     const r = await resolveCampaignDirection({ ...baseArgs, sb });
     expect(r.reason).toBe("Cached sentence.");
-    expect(create).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it("NEVER lets Claude change the decided direction (even if the sentence says otherwise)", async () => {
@@ -140,5 +140,14 @@ describe("resolveCampaignDirection", () => {
     expect(r.direction).toBe("keep");
     expect(r.actionKind).toBeNull();
     expect(r.dataSufficient).toBe(false);
+  });
+
+  it("falls back to the template when Claude returns no text block", async () => {
+    (getAnthropic as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      messages: { create: vi.fn().mockResolvedValue({ content: [] }) },
+    });
+    const { sb } = fakeSb(null);
+    const r = await resolveCampaignDirection({ ...baseArgs, sb });
+    expect(r.reasonSource).toBe("template");
   });
 });
