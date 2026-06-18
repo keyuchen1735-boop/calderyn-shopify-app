@@ -53,6 +53,25 @@ describe("generateSeedDataset: catalog + locations", () => {
     }
     for (const categories of byProduct.values()) expect(categories.size).toBe(1);
   });
+
+  // The seed mirrors real Shopify ingestion, which stores gid://shopify/...
+  // global ids. Placeholder ids (invitem-…, loc-…) make the reallocate mutation
+  // fail with "Invalid global id" — see P0-2. Inventory-item and location ids
+  // must be well-formed Shopify GIDs.
+  it("assigns Shopify-shaped global ids to inventory items and locations", () => {
+    const INVENTORY_ITEM_GID = /^gid:\/\/shopify\/InventoryItem\/\d+$/;
+    const LOCATION_GID = /^gid:\/\/shopify\/Location\/\d+$/;
+    for (const sku of ds.skus) {
+      expect(sku.inventory_item_id, sku.sku).toMatch(INVENTORY_ITEM_GID);
+    }
+    for (const loc of ds.locations) {
+      expect(loc.external_id, loc.name).toMatch(LOCATION_GID);
+    }
+    // Inventory-item ids are unique per variant (each maps to a distinct
+    // Shopify inventory item).
+    const itemIds = ds.skus.map((s) => s.inventory_item_id);
+    expect(new Set(itemIds).size).toBe(itemIds.length);
+  });
 });
 
 describe("generateSeedDataset: orders + lines + fulfillments", () => {
