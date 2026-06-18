@@ -21,6 +21,8 @@ export interface TokenPayload {
   id: string;
   action: SocialAction;
   version: number;
+  /** For approve-linkedin: which founder's LinkedIn to post to (their email). */
+  owner?: string;
 }
 
 function secret(override?: string): string {
@@ -48,11 +50,13 @@ export function signActionToken(
   id: string,
   action: SocialAction,
   version: number,
-  opts?: { ttlMs?: number; nowMs?: number; secret?: string },
+  opts?: { ttlMs?: number; nowMs?: number; secret?: string; owner?: string },
 ): string {
   const now = opts?.nowMs ?? Date.now();
   const exp = now + (opts?.ttlMs ?? DEFAULT_TTL_MS);
-  const payload = `${id}:${action}:${version}:${exp}`;
+  // owner (an email, no ":") is an optional 5th segment for per-founder posts.
+  const base = `${id}:${action}:${version}:${exp}`;
+  const payload = opts?.owner ? `${base}:${opts.owner}` : base;
   const sig = sign(payload, secret(opts?.secret));
   return `${b64url(Buffer.from(payload))}.${sig}`;
 }
@@ -84,8 +88,10 @@ export function verifyActionToken(
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
   const parts = payload.split(":");
-  if (parts.length !== 4) return null;
+  if (parts.length < 4) return null;
   const [id, action, versionStr, expStr] = parts;
+  // owner may itself contain ":" in pathological emails — rejoin the remainder.
+  const owner = parts.length > 4 ? parts.slice(4).join(":") : undefined;
   const version = Number(versionStr);
   const exp = Number(expStr);
   if (!id || !isAction(action) || !Number.isInteger(version) || !Number.isFinite(exp)) return null;
@@ -93,5 +99,5 @@ export function verifyActionToken(
   const now = opts?.nowMs ?? Date.now();
   if (now >= exp) return null;
 
-  return { id, action, version };
+  return owner ? { id, action, version, owner } : { id, action, version };
 }
