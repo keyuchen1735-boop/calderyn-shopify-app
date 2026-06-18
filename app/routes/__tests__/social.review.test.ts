@@ -56,6 +56,13 @@ function makeRow(overrides: Partial<{
 
 /** Wire getSupabase to return a row from .select().eq().single(). */
 function mockRow(row: ReturnType<typeof makeRow> | null, dbError?: { message: string }) {
+  // Build a chainable update mock that supports:
+  //   .update({...}).eq().eq().is().eq().select("id") → { error, data }
+  const updateChain: { eq: () => typeof updateChain; is: () => typeof updateChain; select: () => Promise<{ error: null; data: { id: string }[] }> } = {
+    eq: () => updateChain,
+    is: () => updateChain,
+    select: async () => ({ error: null, data: [{ id: TEST_ID }] }),
+  };
   getSupabase.mockReturnValue({
     from: () => ({
       select: () => ({
@@ -66,9 +73,7 @@ function mockRow(row: ReturnType<typeof makeRow> | null, dbError?: { message: st
           }),
         }),
       }),
-      update: () => ({
-        eq: () => Promise.resolve({ error: null }),
-      }),
+      update: () => updateChain,
     }),
   });
 }
@@ -117,7 +122,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
 
@@ -131,7 +137,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
 
@@ -146,7 +153,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("confirm");
     expect(body.action).toBe("approve");
     expect(body.id).toBe(TEST_ID);
@@ -169,7 +177,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("confirm");
     expect(body.action).toBe("reject");
   });
@@ -184,7 +193,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("stale");
   });
 
@@ -198,7 +208,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("already_done");
   });
 
@@ -212,7 +223,8 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("stale");
   });
 
@@ -226,7 +238,24 @@ describe("social.review.$id — loader", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("invalid");
+  });
+
+  it("returns state=invalid when row shape is malformed (li_image_paths is null)", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+    // li_image_paths: null is not a valid array — row shape check must catch it.
+    mockRow(makeRow({ li_image_paths: null as unknown as string[] }));
+
+    const { loader } = await import("../social.review.$id");
+    const res = await loader({
+      request: loaderRequest(TEST_ID, "valid-token"),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
 });
@@ -242,8 +271,14 @@ describe("social.review.$id — action (approve)", () => {
   it("updates row (consumed_at/status/post_results) and returns state=approved", async () => {
     verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
 
-    const updateEq = vi.fn().mockResolvedValue({ error: null });
-    const updateFn = vi.fn().mockReturnValue({ eq: updateEq });
+    const selectFn = vi.fn().mockResolvedValue({ error: null, data: [{ id: TEST_ID }] });
+    type UChain = { eq: () => UChain; is: () => UChain; select: typeof selectFn };
+    const updateChain: UChain = {
+      eq: () => updateChain,
+      is: () => updateChain,
+      select: selectFn,
+    };
+    const updateFn = vi.fn().mockReturnValue(updateChain);
 
     getSupabase.mockReturnValue({
       from: () => ({
@@ -262,7 +297,8 @@ describe("social.review.$id — action (approve)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
 
     expect(body.state).toBe("approved");
     expect(body.liUrls).toEqual(["https://cdn.test/slide-0.png"]);
@@ -292,7 +328,8 @@ describe("social.review.$id — action (approve)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
 
@@ -306,7 +343,8 @@ describe("social.review.$id — action (approve)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("invalid");
   });
 
@@ -320,9 +358,15 @@ describe("social.review.$id — action (approve)", () => {
             single: async () => ({ data: makeRow(), error: null }),
           }),
         }),
-        update: () => ({
-          eq: () => Promise.resolve({ error: { message: "constraint violation" } }),
-        }),
+        update: () => {
+          type Ch = { eq: () => Ch; is: () => Ch; select: () => Promise<{ error: { message: string }; data: null }> };
+          const chain: Ch = {
+            eq: () => chain,
+            is: () => chain,
+            select: async () => ({ error: { message: "constraint violation" }, data: null }),
+          };
+          return chain;
+        },
       }),
     });
 
@@ -332,9 +376,42 @@ describe("social.review.$id — action (approve)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("error");
     expect(body.message).toContain("constraint violation");
+  });
+
+  it("returns state=invalid when conditional update affects 0 rows (concurrent consume)", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
+
+    // Update succeeds but data=[] — someone else consumed it first.
+    type UCh = { eq: () => UCh; is: () => UCh; select: () => Promise<{ error: null; data: never[] }> };
+    const updateChain: UCh = {
+      eq: () => updateChain,
+      is: () => updateChain,
+      select: vi.fn().mockResolvedValue({ error: null, data: [] }),
+    };
+    getSupabase.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: async () => ({ data: makeRow(), error: null }),
+          }),
+        }),
+        update: () => updateChain,
+      }),
+    });
+
+    const { action } = await import("../social.review.$id");
+    const res = await action({
+      request: actionRequest(TEST_ID, { token: "race-token" }),
+      params: { id: TEST_ID },
+      context: {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
+    expect(body.state).toBe("invalid");
   });
 });
 
@@ -361,7 +438,8 @@ describe("social.review.$id — action (reject)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
 
     expect(body.state).toBe("regenerated");
     expect(regenerateDigest).toHaveBeenCalledWith(
@@ -387,7 +465,8 @@ describe("social.review.$id — action (reject)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("capped");
   });
 
@@ -405,7 +484,8 @@ describe("social.review.$id — action (reject)", () => {
       params: { id: TEST_ID },
       context: {},
     });
-    const body = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = await res.json() as any;
     expect(body.state).toBe("error");
     expect(body.message).toContain("render failed");
   });

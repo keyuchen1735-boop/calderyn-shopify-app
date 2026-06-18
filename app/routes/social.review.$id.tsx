@@ -64,7 +64,7 @@ type ActionData =
 // Loader — GET, no mutations
 // ---------------------------------------------------------------------------
 
-export async function loader({ request, params }: LoaderFunctionArgs): Promise<Response> {
+export async function loader({ request, params }: LoaderFunctionArgs) {
   const id = params.id ?? "";
   const token = new URL(request.url).searchParams.get("t") ?? "";
 
@@ -83,7 +83,21 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
     return json<LoaderData>({ state: "invalid" });
   }
 
-  const row = data as unknown as DigestRow;
+  const r = data as Record<string, unknown>;
+  if (
+    typeof r.id !== "string" ||
+    typeof r.week_range !== "string" ||
+    typeof r.status !== "string" ||
+    typeof r.regen_count !== "number" ||
+    (r.consumed_at !== null && typeof r.consumed_at !== "string") ||
+    !Array.isArray(r.li_image_paths) ||
+    !Array.isArray(r.ig_image_paths) ||
+    typeof r.li_caption !== "string" ||
+    typeof r.ig_caption !== "string"
+  ) {
+    return json<LoaderData>({ state: "invalid" });
+  }
+  const row = r as unknown as DigestRow;
 
   // Version mismatch — a newer regeneration has superseded this token.
   if (payload.version !== row.regen_count) {
@@ -100,8 +114,14 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
     return json<LoaderData>({ state: "stale" });
   }
 
-  const liUrls = await signedUrls(row.li_image_paths);
-  const igUrls = await signedUrls(row.ig_image_paths);
+  let liUrls: string[];
+  let igUrls: string[];
+  try {
+    liUrls = await signedUrls(row.li_image_paths);
+    igUrls = await signedUrls(row.ig_image_paths);
+  } catch {
+    return json<LoaderData>({ state: "invalid" });
+  }
 
   return json<LoaderData>({
     state: "confirm",
@@ -121,7 +141,7 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
 // Action — POST, performs the mutation
 // ---------------------------------------------------------------------------
 
-export async function action({ request, params }: ActionFunctionArgs): Promise<Response> {
+export async function action({ request, params }: ActionFunctionArgs) {
   const id = params.id ?? "";
   const formData = await request.formData();
   const token = String(formData.get("token") ?? "");
@@ -142,7 +162,21 @@ export async function action({ request, params }: ActionFunctionArgs): Promise<R
     return json<ActionData>({ state: "invalid" });
   }
 
-  const row = data as unknown as DigestRow;
+  const r = data as Record<string, unknown>;
+  if (
+    typeof r.id !== "string" ||
+    typeof r.week_range !== "string" ||
+    typeof r.status !== "string" ||
+    typeof r.regen_count !== "number" ||
+    (r.consumed_at !== null && typeof r.consumed_at !== "string") ||
+    !Array.isArray(r.li_image_paths) ||
+    !Array.isArray(r.ig_image_paths) ||
+    typeof r.li_caption !== "string" ||
+    typeof r.ig_caption !== "string"
+  ) {
+    return json<ActionData>({ state: "invalid" });
+  }
+  const row = r as unknown as DigestRow;
 
   if (
     payload.version !== row.regen_count ||
@@ -159,7 +193,7 @@ export async function action({ request, params }: ActionFunctionArgs): Promise<R
       instagram: "manual",
     };
 
-    const { error: updateError } = await getSupabase()
+    const { error: updateError, data: updated } = await getSupabase()
       .from("social_digest")
       .update({
         consumed_at: now,
@@ -167,14 +201,27 @@ export async function action({ request, params }: ActionFunctionArgs): Promise<R
         post_results_json: postResults,
         acted_at: now,
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("status", "pending")
+      .is("consumed_at", null)
+      .eq("regen_count", payload.version)
+      .select("id");
 
     if (updateError) {
       return json<ActionData>({ state: "error", message: updateError.message });
     }
+    if (!updated?.length) {
+      return json<ActionData>({ state: "invalid" });
+    }
 
-    const liUrls = await signedUrls(row.li_image_paths);
-    const igUrls = await signedUrls(row.ig_image_paths);
+    let liUrls: string[];
+    let igUrls: string[];
+    try {
+      liUrls = await signedUrls(row.li_image_paths);
+      igUrls = await signedUrls(row.ig_image_paths);
+    } catch (err) {
+      return json<ActionData>({ state: "error", message: err instanceof Error ? err.message : "Storage error" });
+    }
 
     return json<ActionData>({
       state: "approved",
@@ -347,7 +394,7 @@ export default function SocialReview() {
               <CaptionBlock label="Instagram caption" caption={actionData.igCaption} />
 
               <div style={{ marginTop: 24 }}>
-                {actionData.liUrls.map((u: string, i: number) => (
+                {actionData.liUrls.map((u, i) => (
                   <a
                     key={`li-${i}`}
                     href={u}
@@ -357,7 +404,7 @@ export default function SocialReview() {
                     LI {i + 1}
                   </a>
                 ))}
-                {actionData.igUrls.map((u: string, i: number) => (
+                {actionData.igUrls.map((u, i) => (
                   <a
                     key={`ig-${i}`}
                     href={u}
@@ -427,8 +474,8 @@ export default function SocialReview() {
     case "already_done":
       return (
         <MessageCard
-          heading="Already approved"
-          body="This digest has already been approved. Check your email for download links."
+          heading="Already actioned"
+          body="This drop has already been actioned — check your inbox for the latest email."
         />
       );
 
@@ -483,7 +530,6 @@ export default function SocialReview() {
 
             <Form method="post" style={{ marginTop: 28 }}>
               <input type="hidden" name="token" value={token} />
-              <input type="hidden" name="_action" value="reject" />
 
               <span style={labelStyle}>What needs improvement?</span>
               <div style={checkboxGroupStyle}>
