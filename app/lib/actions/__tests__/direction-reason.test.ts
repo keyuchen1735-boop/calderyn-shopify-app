@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getAnthropic } from "~/lib/assistant/anthropic.server";
+import { directionTemplate, resolveCampaignDirection, type ReasonFacts } from "../direction-reason.server";
 
 vi.mock("~/lib/assistant/anthropic.server", () => ({
   getAnthropic: vi.fn(),
   assistantModel: () => "claude-test",
 }));
-
-import { getAnthropic } from "~/lib/assistant/anthropic.server";
-import { directionTemplate, resolveCampaignDirection, type ReasonFacts } from "../direction-reason.server";
 
 const facts: ReasonFacts = { roas: 1.5, breakEvenRoas: 1, dataSufficient: true, status: "active" };
 
