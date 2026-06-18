@@ -13,8 +13,7 @@ import { collectActivity } from "../github-digest/collect.server";
 import { collectWaitlistSignups } from "../github-digest/waitlist.server";
 import { sendEmail, type DeliveryResult } from "../email/send.server";
 import { buildSocialPack } from "./pack.server";
-import { buildCarousels } from "./slides.server";
-import { type SocialPack } from "./slides.server";
+import { buildCarousels, type SocialPack } from "./slides.server";
 import { renderSlideSets } from "./render.server";
 import { storeSlides, signedUrls } from "./store.server";
 import { signActionToken } from "./token.server";
@@ -447,18 +446,32 @@ export async function regenerateDigest(
     return { ok: false, error: `collect failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const waitlist = await collectWaitlistSignups({ sinceMs });
   const shippedCount = activity.mergedPRs.length;
-  const waitlistDelta = waitlist.signups.length;
+  let waitlistDelta = 0;
+  try {
+    const waitlist = await collectWaitlistSignups({ sinceMs });
+    waitlistDelta = waitlist.signups.length;
+  } catch {
+    // a waitlist hiccup shouldn't sink regeneration — treat as 0 new this week
+  }
 
-  // 4. Build priorCopy = stored prior_copy_json + extractPriorCopy(current pack), deduped.
-  const seen = new Set<string>(row.prior_copy_json);
-  const priorCopy: string[] = [...row.prior_copy_json];
-  for (const s of extractPriorCopy(row.pack_json)) {
-    if (!seen.has(s)) {
-      seen.add(s);
-      priorCopy.push(s);
+  // 4. Build priorCopy = stored (string-validated) prior_copy_json +
+  // extractPriorCopy(current pack), deduped. A malformed pack_json must not crash
+  // the regen — fall back to no prior-copy avoidance.
+  const priorStrings = (row.prior_copy_json as unknown[]).filter(
+    (x): x is string => typeof x === "string",
+  );
+  const seen = new Set<string>(priorStrings);
+  const priorCopy: string[] = [...priorStrings];
+  try {
+    for (const s of extractPriorCopy(row.pack_json)) {
+      if (!seen.has(s)) {
+        seen.add(s);
+        priorCopy.push(s);
+      }
     }
+  } catch {
+    // pack_json not a well-formed SocialPack — regenerate without avoidance hints
   }
 
   // 5. Build new pack with variation context.
@@ -490,23 +503,27 @@ export async function regenerateDigest(
   const newVersion = row.regen_count + 1;
 
   // 8. Update the row.
-  const { error: updateError } = await getSupabase()
-    .from("social_digest")
-    .update({
-      regen_count: newVersion,
-      pack_json: pack,
-      li_caption: pack.linkedinCaption,
-      ig_caption: pack.instagramCaption,
-      li_image_paths: liPaths,
-      ig_image_paths: igPaths,
-      prior_copy_json: priorCopy,
-      consumed_at: null,
-      status: "pending",
-      acted_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-  if (updateError) {
-    return { ok: false, error: `DB update failed: ${updateError.message}` };
+  try {
+    const { error: updateError } = await getSupabase()
+      .from("social_digest")
+      .update({
+        regen_count: newVersion,
+        pack_json: pack,
+        li_caption: pack.linkedinCaption,
+        ig_caption: pack.instagramCaption,
+        li_image_paths: liPaths,
+        ig_image_paths: igPaths,
+        prior_copy_json: priorCopy,
+        consumed_at: null,
+        status: "pending",
+        acted_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    if (updateError) {
+      return { ok: false, error: `DB update failed: ${updateError.message}` };
+    }
+  } catch (err) {
+    return { ok: false, error: `DB update failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   // 9. Send decision email at the new version (invalidates the previous round's links).
