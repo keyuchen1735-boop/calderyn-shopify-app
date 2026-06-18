@@ -3,16 +3,21 @@
 // Orchestrator for the weekly social digest (entry point for cron.social-digest).
 // Collects the trailing 7 days of GitHub activity + new waitlist signups, turns
 // them into LinkedIn + Instagram carousel copy (AI with deterministic fallback),
-// renders the slides to PNGs, and emails them — inline + attached — to the
-// founders via Resend. Returns a structured summary that records every failure
-// mode instead of throwing or faking success (rule 12).
+// renders the slides to PNGs, persists the row to Supabase, and emails a DECISION
+// email with inline previews and signed Approve / Reject links. Returns a
+// structured summary that records every failure mode instead of throwing or faking
+// success (rule 12).
 
+import { randomUUID } from "node:crypto";
 import { collectActivity } from "../github-digest/collect.server";
 import { collectWaitlistSignups } from "../github-digest/waitlist.server";
-import { sendEmail, type DeliveryResult, type EmailAttachment } from "../email/send.server";
+import { sendEmail, type DeliveryResult } from "../email/send.server";
 import { buildSocialPack } from "./pack.server";
 import { buildCarousels } from "./slides.server";
 import { renderSlideSets } from "./render.server";
+import { storeSlides, signedUrls } from "./store.server";
+import { signActionToken } from "./token.server";
+import { getSupabase } from "../supabase.server";
 
 const DEFAULT_REPO = "keyuchen1735-boop/calderyn-shopify-app";
 const DEFAULT_TO = ["keyuchen@calderyncompany.com", "john@calderyncompany.com", "kennethlee@calderyncompany.com"];
@@ -20,6 +25,8 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_MS = 7 * ONE_DAY_MS;
 
 export interface SocialRunSummary {
+  digestId: string | null;
+  status: "pending" | "error";
   range: string;
   sinceIso: string;
   shippedCount: number;
@@ -55,36 +62,64 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function emailHtml(opts: {
+// ---------------------------------------------------------------------------
+// Pure, testable email builder — no I/O.
+// ---------------------------------------------------------------------------
+
+export interface ActionEmailOpts {
   range: string;
   shippedCount: number;
   waitlistDelta: number;
-  liCids: string[];
-  igCids: string[];
-  liCaption: string;
-  igCaption: string;
-}): string {
-  const row = (cids: string[]) =>
-    `<div style="margin:10px 0 4px">${cids
-      .map((c) => `<img src="cid:${c}" width="150" style="border-radius:8px;border:1px solid #d9d6cc;margin-right:8px"/>`)
-      .join("")}</div>`;
-  const pre = (s: string) =>
-    `<pre style="white-space:pre-wrap;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f0;border:1px solid #e4e1d7;border-radius:10px;padding:16px;color:#17363a">${escapeHtml(
-      s,
-    )}</pre>`;
-  return `<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#17363a;max-width:680px">
-  <h2 style="margin:0 0 4px">Calderyn — weekly social drop</h2>
-  <div style="color:#5b6b6e;margin-bottom:18px">Week of ${escapeHtml(opts.range)} · ${opts.shippedCount} shipped · +${opts.waitlistDelta} waitlist</div>
-  <p>Ready-to-post carousels — 4:5 portrait, rendered at 2160×2700 (downsize to 1080×1350 if your tool needs it). Slides are attached individually; captions are copy-paste ready.</p>
-  <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn carousel (4 slides)</h3>
-  ${row(opts.liCids)}
-  ${pre(opts.liCaption)}
-  <h3 style="margin:22px 0 2px;color:#1e7079">Instagram carousel (4 slides) — different creative</h3>
-  ${row(opts.igCids)}
-  ${pre(opts.igCaption)}
-  <p style="color:#8a8a8a;font-size:13px;margin-top:22px">Numbers labelled “Illustrative · demo store” are placeholders until real aggregates are publishable. Auto-sent by the weekly social-digest cron.</p>
-</div>`;
+  liUrls: string[];
+  igUrls: string[];
+  approveUrl: string;
+  rejectUrl: string;
 }
+
+export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
+  const { range, shippedCount, waitlistDelta, liUrls, igUrls, approveUrl, rejectUrl } = opts;
+
+  const subject = `Calderyn social — approve or reject: week of ${range}`;
+
+  const imgRow = (urls: string[]) =>
+    `<div style="margin:10px 0 4px">${urls
+      .map(
+        (u) =>
+          `<img src="${escapeHtml(u)}" width="150" style="border-radius:8px;border:1px solid #d9d6cc;margin-right:8px"/>`,
+      )
+      .join("")}</div>`;
+
+  const html = `<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#17363a;max-width:680px">
+  <h2 style="margin:0 0 4px">Calderyn — weekly social drop</h2>
+  <div style="color:#5b6b6e;margin-bottom:18px">Week of ${escapeHtml(range)} · ${shippedCount} shipped · +${waitlistDelta} waitlist</div>
+  <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn previews</h3>
+  ${imgRow(liUrls)}
+  <h3 style="margin:22px 0 2px;color:#1e7079">Instagram previews</h3>
+  ${imgRow(igUrls)}
+  <div style="margin-top:32px;display:flex;gap:16px">
+    <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;background:#1a8a5a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Approve &amp; post</a>
+    <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;padding:14px 28px;background:#8a8a8a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Reject &amp; regenerate</a>
+  </div>
+  <p style="color:#8a8a8a;font-size:13px;margin-top:22px">Auto-sent by the weekly social-digest cron. Links expire in 7 days.</p>
+</div>`;
+
+  const text = [
+    `Calderyn — weekly social drop`,
+    `Week of ${range} · ${shippedCount} shipped · +${waitlistDelta} waitlist`,
+    ``,
+    `APPROVE & POST:`,
+    approveUrl,
+    ``,
+    `REJECT & REGENERATE:`,
+    rejectUrl,
+  ].join("\n");
+
+  return { subject, text, html };
+}
+
+// ---------------------------------------------------------------------------
+// Main orchestrator
+// ---------------------------------------------------------------------------
 
 export async function runSocialDigest(opts?: { nowMs?: number }): Promise<SocialRunSummary> {
   const nowMs = opts?.nowMs ?? Date.now();
@@ -97,6 +132,8 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
   const notes: string[] = [];
 
   const base: Omit<SocialRunSummary, "delivery" | "error"> = {
+    digestId: null,
+    status: "error",
     range,
     sinceIso,
     shippedCount: 0,
@@ -150,23 +187,77 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     };
   }
 
-  const liCids = liShots.map((_, i) => `li${i + 1}`);
-  const igCids = igShots.map((_, i) => `ig${i + 1}`);
-  const attachments: EmailAttachment[] = [
-    ...liShots.map((b, i) => ({
-      filename: `linkedin-slide-${i + 1}.png`,
-      content: b.toString("base64"),
-      contentType: "image/png",
-      contentId: liCids[i],
-    })),
-    ...igShots.map((b, i) => ({
-      filename: `instagram-slide-${i + 1}.png`,
-      content: b.toString("base64"),
-      contentType: "image/png",
-      contentId: igCids[i],
-    })),
-  ];
+  // Persist slides to storage.
+  const id = randomUUID();
+  let liPaths: string[];
+  let igPaths: string[];
+  try {
+    ({ liPaths, igPaths } = await storeSlides(id, liShots, igShots));
+  } catch (err) {
+    return {
+      ...base,
+      shippedCount,
+      waitlistDelta,
+      copyMode: mode,
+      slides: { linkedin: liShots.length, instagram: igShots.length },
+      delivery: { sent: false, error: "not attempted" },
+      error: `storeSlides failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 
+  // Insert the DB row.
+  const row = {
+    id,
+    week_range: range,
+    since_iso: sinceIso,
+    status: "pending" as const,
+    regen_count: 0,
+    pack_json: pack,
+    li_image_paths: liPaths,
+    ig_image_paths: igPaths,
+    li_caption: pack.linkedinCaption,
+    ig_caption: pack.instagramCaption,
+    prior_copy_json: [],
+  };
+  const { error: insertError } = await getSupabase().from("social_digest").insert(row);
+  if (insertError) {
+    return {
+      ...base,
+      shippedCount,
+      waitlistDelta,
+      copyMode: mode,
+      slides: { linkedin: liShots.length, instagram: igShots.length },
+      delivery: { sent: false, error: "not attempted" },
+      error: `DB insert failed: ${insertError.message}`,
+    };
+  }
+
+  // Mint signed preview URLs and action tokens.
+  let liUrls: string[];
+  let igUrls: string[];
+  try {
+    [liUrls, igUrls] = await Promise.all([signedUrls(liPaths), signedUrls(igPaths)]);
+  } catch (err) {
+    return {
+      ...base,
+      digestId: id,
+      status: "pending",
+      shippedCount,
+      waitlistDelta,
+      copyMode: mode,
+      slides: { linkedin: liShots.length, instagram: igShots.length },
+      delivery: { sent: false, error: "not attempted" },
+      error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const approveToken = signActionToken(id, "approve", 0);
+  const rejectToken = signActionToken(id, "reject", 0);
+  const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
+  const approveUrl = `${baseUrl}/social/review/${id}?t=${approveToken}`;
+  const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
+
+  // Send the decision email.
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.DIGEST_FROM;
   let delivery: DeliveryResult;
@@ -174,24 +265,30 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     const missing = [!apiKey && "RESEND_API_KEY", !from && "DIGEST_FROM"].filter(Boolean).join(", ");
     delivery = { sent: false, error: `email not configured (${missing})` };
   } else {
-    delivery = await sendEmail({
-      apiKey,
-      from,
-      to,
-      subject: `Calderyn social — week of ${range} (LinkedIn + Instagram)`,
-      text: `Calderyn weekly social drop — week of ${range}. ${shippedCount} shipped, +${waitlistDelta} waitlist. LinkedIn + Instagram carousels (4 slides each) attached; captions in the HTML body.`,
-      html: emailHtml({ range, shippedCount, waitlistDelta, liCids, igCids, liCaption: pack.linkedinCaption, igCaption: pack.instagramCaption }),
-      attachments,
+    const { subject, text, html } = buildActionEmail({
+      range,
+      shippedCount,
+      waitlistDelta,
+      liUrls,
+      igUrls,
+      approveUrl,
+      rejectUrl,
     });
+    delivery = await sendEmail({ apiKey, from, to, subject, text, html });
   }
 
   return {
-    ...base,
+    digestId: id,
+    status: "pending",
+    range,
+    sinceIso,
     shippedCount,
     waitlistDelta,
     copyMode: mode,
     slides: { linkedin: liShots.length, instagram: igShots.length },
     delivery,
+    to,
+    notes,
     error: null,
   };
 }
