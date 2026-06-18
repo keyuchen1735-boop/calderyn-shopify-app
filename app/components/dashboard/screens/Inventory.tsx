@@ -357,9 +357,17 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     >
                       <span
                         className="tabular-nums"
-                        style={{ color: s.days_of_cover <= 9 ? "var(--red)" : "var(--text-2)" }}
+                        style={{
+                          color:
+                            s.velocity > 0 && s.days_of_cover <= 9
+                              ? "var(--red)"
+                              : "var(--text-2)",
+                        }}
+                        // Zero-velocity SKUs have an infinite "999d" cover sentinel —
+                        // show "—" / "No recent sales" instead of a fake number (P2-15).
+                        title={s.velocity > 0 ? undefined : "No recent sales"}
                       >
-                        {s.days_of_cover}d
+                        {s.velocity > 0 ? `${s.days_of_cover}d` : "—"}
                       </span>
                       {stockoutLabel && (
                         <span
