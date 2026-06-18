@@ -103,10 +103,5 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return redirect(authorizeUrl);
 }
 
-// ---------------------------------------------------------------------------
-// Default export (Remix requires one even for loader-only routes)
-// ---------------------------------------------------------------------------
-
-export default function LinkedInConnect() {
-  return null;
-}
+// No default export ON PURPOSE: RESOURCE route. The loader's redirect/HTML
+// Response is returned directly (no client revalidation re-running the loader).

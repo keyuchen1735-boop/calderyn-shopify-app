@@ -107,10 +107,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Default export (Remix requires one even for loader-only routes)
-// ---------------------------------------------------------------------------
-
-export default function LinkedInCallback() {
-  return null;
-}
+// No default export ON PURPOSE: this is a RESOURCE route. The loader's Response
+// (redirect or HTML) is returned to the browser directly, with no React tree,
+// hydration, or client revalidation — so the one-time OAuth `code` is exchanged
+// exactly once. (A UI route here re-fetched the loader on the client and
+// re-exchanged the already-used code → "authorization code not found".)
