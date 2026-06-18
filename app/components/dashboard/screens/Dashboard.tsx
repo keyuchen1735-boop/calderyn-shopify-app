@@ -3,6 +3,7 @@
 // CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
 // CDIcon/CD_ACTION_ICON (icons), RingGauge/GradePill/etc. (ui). Charts/cards reuse ui.tsx.
 import type { ReactNode } from "react";
+import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { useState, useEffect } from "react";
 import {
   Card,
@@ -100,7 +101,7 @@ function FocusCard({ app }: { app: DashboardCtx }) {
           <div className="cd-kv">
             <span>At risk</span>
             <b className="tabular-nums" style={{ color: "var(--red)" }}>
-              {money(focus.dollar_impact)}/wk
+              {money(focus.dollar_impact)}{IMPACT_SUFFIX}
             </b>
           </div>
           {focus.campaign && (
@@ -410,7 +411,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                 <div className="cd-kv mt-auto">
                   <span>At risk</span>
                   <b className="tabular-nums" style={{ color: "var(--red)" }}>
-                    {money(a.dollar_impact)}/wk
+                    {money(a.dollar_impact)}{IMPACT_SUFFIX}
                   </b>
                 </div>
               </Card>

@@ -5,6 +5,7 @@
 // CD.* globals → live imports: money (format), CDIcon (icons),
 // Card/GradePill/PlatformMark/Sparkline/Pill/Btn/Segmented/Placeholder/CountMoney (ui).
 import { useEffect, useState, type ReactNode } from "react";
+import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
   Card,
   SectionTitle,
@@ -399,7 +400,7 @@ function CampaignDetail({
                 >
                   <span className={`cd-sev-bar sev-${a.severity}`} />
                   <span className="cd-row-title flex-1">{a.title}</span>
-                  <span className="cd-row-num tabular-nums">{money(a.dollar_impact)}/wk</span>
+                  <span className="cd-row-num tabular-nums">{money(a.dollar_impact)}{IMPACT_SUFFIX}</span>
                   <CDIcon name="chevronRight" size={14} />
                 </button>
               ))}

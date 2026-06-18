@@ -10,6 +10,7 @@
  * Everything is wired to the real Calderyn data types — no mock data.
  */
 import type { ReactNode } from "react";
+import { IMPACT_LABEL, IMPACT_METHODOLOGY } from "~/lib/impact-window";
 import {
   Badge,
   BlockStack,
@@ -252,9 +253,9 @@ export function GuardrailMeter({
  * One explanation for the projected-impact dollar figure, shared by the alert
  * card and the alert detail so the label + methodology never drift apart.
  */
-export const IMPACT_LABEL = "Projected 30-day impact";
-export const IMPACT_METHODOLOGY =
-  "Estimated from this alert's evidence — current spend, margin-adjusted return, and sales velocity — projected over the next 30 days if nothing changes. An estimate, not a guarantee; the audit log records the realized impact after you act.";
+// Re-exported from the shared single source (app/lib/impact-window) so the
+// embedded card/detail and the dashboard never drift on the window label (P1-5).
+export { IMPACT_LABEL, IMPACT_METHODOLOGY };
 
 export function AlertCard({
   alert,

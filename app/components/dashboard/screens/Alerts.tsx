@@ -4,6 +4,7 @@
 // CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
 // CDIcon/CD_ACTION_ICON (icons), Card/SevBadge/Pill/Segmented/Placeholder/etc. (ui).
 import { useState, type ReactNode } from "react";
+import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
   Card,
   SevBadge,
@@ -76,7 +77,7 @@ function AlertRow({ a, onClick }: { a: AlertVM; onClick: () => void }) {
           style={{ color: resolved ? "var(--text-3)" : "var(--red)" }}
         >
           {money(a.dollar_impact)}
-          <span className="cd-caption">/wk</span>
+          <span className="cd-caption">{IMPACT_SUFFIX}</span>
         </div>
         <div className="cd-caption">at risk</div>
       </div>
@@ -321,7 +322,7 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
         sub={
           loading
             ? "Scanning for issues across your accounts…"
-            : `${open.length} open · ${money(atRisk)}/wk at risk if left alone`
+            : `${open.length} open · ${money(atRisk)}${IMPACT_SUFFIX} at risk if left alone`
         }
       >
         <Segmented
