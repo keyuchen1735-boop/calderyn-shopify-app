@@ -3,6 +3,8 @@
 // so a recommendation never contradicts the displayed grade; PAUSE_FLOOR (0.7) is the
 // one new tunable — below it a campaign is bleeding hard enough to pause outright.
 
+import type { Alert } from "~/lib/types";
+
 export type Direction = "scale_up" | "keep" | "scale_down" | "pause";
 export type DirectionActionKind =
   | "pause_campaign"
@@ -30,8 +32,6 @@ export interface DirectionResult {
 }
 
 const KEEP: DirectionResult = { direction: "keep", actionKind: null, dataSufficient: true };
-
-import type { Alert } from "~/lib/types";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const SCALE_DETECTOR = "campaign_scaling_opportunity";
@@ -64,7 +64,7 @@ export function suggestBudgetCents(
     autopilot_max_daily_budget_cents?: number | null;
   },
 ): number | null {
-  if (!currentBudgetCents || currentBudgetCents <= 0) return null;
+  if (currentBudgetCents == null || !Number.isFinite(currentBudgetCents) || currentBudgetCents <= 0) return null;
   if (direction === "scale_up") {
     const pct = Number(guardrails.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
     let target = Math.round(currentBudgetCents * (1 + pct / 100));
@@ -87,6 +87,7 @@ export function recommendDirection(input: DirectionInput): DirectionResult {
   if (roas == null || breakEvenRoas == null || breakEvenRoas <= 0 || !Number.isFinite(roas)) {
     return { ...KEEP, dataSufficient: false };
   }
+  // Paused: no recommendation to make, even if a pause/scale alert is open — there's nothing to act on.
   if (input.status === "paused") return KEEP;
 
   if (input.pauseAlertActive || roas < PAUSE_FLOOR * breakEvenRoas) {

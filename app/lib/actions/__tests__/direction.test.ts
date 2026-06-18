@@ -58,6 +58,7 @@ describe("recommendDirection", () => {
     expect(recommendDirection({ ...base, roas: null }).dataSufficient).toBe(false);
     expect(recommendDirection({ ...base, breakEvenRoas: null }).dataSufficient).toBe(false);
     expect(recommendDirection({ ...base, breakEvenRoas: 0 }).dataSufficient).toBe(false);
+    expect(recommendDirection({ ...base, roas: Infinity }).dataSufficient).toBe(false);
     const r = recommendDirection({ ...base, roas: null });
     expect(r.direction).toBe("keep");
     expect(r.actionKind).toBeNull();
@@ -68,6 +69,15 @@ describe("recommendDirection", () => {
     expect(recommendDirection({ ...base, roas: 0.95, breakEvenRoas: 1 }).direction).toBe("keep");
     expect(recommendDirection({ ...base, roas: 0.7, breakEvenRoas: 1 }).direction).toBe("scale_down");
     expect(recommendDirection({ ...base, roas: 0.69, breakEvenRoas: 1 }).direction).toBe("pause");
+  });
+
+  it("applies thresholds against break-even, not a literal ROAS (break-even = 10)", () => {
+    expect(recommendDirection({ ...base, roas: 12, breakEvenRoas: 10, hasScalingHeadroom: true }).direction).toBe("scale_up");
+    expect(recommendDirection({ ...base, roas: 11.9, breakEvenRoas: 10 }).direction).toBe("keep");
+    expect(recommendDirection({ ...base, roas: 9.5, breakEvenRoas: 10 }).direction).toBe("keep");
+    expect(recommendDirection({ ...base, roas: 9.4, breakEvenRoas: 10 }).direction).toBe("scale_down");
+    expect(recommendDirection({ ...base, roas: 7.0, breakEvenRoas: 10 }).direction).toBe("scale_down");
+    expect(recommendDirection({ ...base, roas: 6.9, breakEvenRoas: 10 }).direction).toBe("pause");
   });
 });
 
@@ -128,5 +138,9 @@ describe("suggestBudgetCents", () => {
     expect(suggestBudgetCents("scale_up", null, gr)).toBeNull();
     expect(suggestBudgetCents("keep", 10000, gr)).toBeNull();
     expect(suggestBudgetCents("pause", 10000, gr)).toBeNull();
+  });
+  it("falls back to default 20% increase / 50% cut when guardrails are unset", () => {
+    expect(suggestBudgetCents("scale_up", 10000, {})).toBe(12000);
+    expect(suggestBudgetCents("scale_down", 10000, {})).toBe(5000);
   });
 });
