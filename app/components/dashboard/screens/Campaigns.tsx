@@ -191,6 +191,7 @@ function CampaignDetail({
     const verb =
       direction.direction === "scale_up" ? "Budget scaled"
       : direction.direction === "scale_down" ? "Budget reduced"
+      : direction.direction === "keep" ? "No action taken"
       : "Campaign paused";
     const nextStatus = direction.actionKind === "pause_campaign" ? "paused" : status;
     run(direction.actionKind, `${verb} — logged to action history.`, nextStatus, direction.suggestedBudgetCents ?? undefined);
