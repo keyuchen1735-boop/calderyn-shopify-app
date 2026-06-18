@@ -52,4 +52,10 @@ describe("buildActionEmail", () => {
     expect(html).not.toContain("<1>");
     expect(html).toContain("&lt;1&gt;");
   });
+
+  it("plain-text twin includes both action URLs", () => {
+    const { text } = buildActionEmail(BASE_OPTS);
+    expect(text).toContain(BASE_OPTS.approveUrl);
+    expect(text).toContain(BASE_OPTS.rejectUrl);
+  });
 });

@@ -76,6 +76,17 @@ export interface ActionEmailOpts {
   rejectUrl: string;
 }
 
+// Best-effort: mark a drop failed so a half-built row (inserted, but no email
+// sent) isn't mistaken for one awaiting a decision. Never throws — it must not
+// mask the original error the caller is already reporting.
+async function markDigestFailed(id: string): Promise<void> {
+  try {
+    await getSupabase().from("social_digest").update({ status: "failed" }).eq("id", id);
+  } catch {
+    // swallow — caller already returns an error summary
+  }
+}
+
 export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
   const { range, shippedCount, waitlistDelta, liUrls, igUrls, approveUrl, rejectUrl } = opts;
 
@@ -96,9 +107,9 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   ${imgRow(liUrls)}
   <h3 style="margin:22px 0 2px;color:#1e7079">Instagram previews</h3>
   ${imgRow(igUrls)}
-  <div style="margin-top:32px;display:flex;gap:16px">
-    <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;background:#1a8a5a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Approve &amp; post</a>
-    <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;padding:14px 28px;background:#8a8a8a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Reject &amp; regenerate</a>
+  <div style="margin-top:32px">
+    <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;margin:0 12px 12px 0;background:#1a8a5a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Approve &amp; post</a>
+    <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;padding:14px 28px;margin:0 0 12px 0;background:#8a8a8a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Reject &amp; regenerate</a>
   </div>
   <p style="color:#8a8a8a;font-size:13px;margin-top:22px">Auto-sent by the weekly social-digest cron. Links expire in 7 days.</p>
 </div>`;
@@ -238,10 +249,11 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
   try {
     [liUrls, igUrls] = await Promise.all([signedUrls(liPaths), signedUrls(igPaths)]);
   } catch (err) {
+    await markDigestFailed(id);
     return {
       ...base,
       digestId: id,
-      status: "pending",
+      status: "error",
       shippedCount,
       waitlistDelta,
       copyMode: mode,
@@ -251,6 +263,8 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     };
   }
 
+  // version 0 = the row's regen_count at first send; a regeneration re-mints
+  // tokens at the new version, invalidating this round's links.
   const approveToken = signActionToken(id, "approve", 0);
   const rejectToken = signActionToken(id, "reject", 0);
   const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
@@ -277,9 +291,13 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     delivery = await sendEmail({ apiKey, from, to, subject, text, html });
   }
 
+  // The email is the only way to act on this drop; if it didn't send, the row
+  // must not linger as 'pending' (it would look like it's awaiting a decision).
+  if (!delivery.sent) await markDigestFailed(id);
+
   return {
     digestId: id,
-    status: "pending",
+    status: delivery.sent ? "pending" : "error",
     range,
     sinceIso,
     shippedCount,
