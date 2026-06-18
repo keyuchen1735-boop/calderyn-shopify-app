@@ -206,7 +206,7 @@ function AlertDetail({
           >
             {money(alert.dollar_impact)}
           </div>
-          <div className="cd-caption">at risk per week</div>
+          <div className="cd-caption">at risk over 30 days</div>
         </div>
       </header>
 

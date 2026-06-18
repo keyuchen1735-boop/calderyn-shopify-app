@@ -10,7 +10,7 @@
  * Everything is wired to the real Calderyn data types — no mock data.
  */
 import type { ReactNode } from "react";
-import { IMPACT_LABEL, IMPACT_METHODOLOGY } from "~/lib/impact-window";
+import { IMPACT_LABEL, IMPACT_METHODOLOGY, IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
   Badge,
   BlockStack,
@@ -484,7 +484,7 @@ export function AmbientAlertBanner({
   if (criticalCount <= 0) return null;
   const title = `${criticalCount} critical alert${criticalCount > 1 ? "s" : ""} · ${fmtMoney(
     atRiskCents,
-  )}/mo at risk`;
+  )}${IMPACT_SUFFIX} at risk`;
   return (
     <Banner
       tone="critical"
