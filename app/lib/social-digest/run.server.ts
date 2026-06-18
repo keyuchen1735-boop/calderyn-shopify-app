@@ -107,7 +107,8 @@ export interface ActionEmailOpts {
   igUrls: string[];
   liCaption: string;
   igCaption: string;
-  approveLinkedinUrl: string;
+  /** One approve-linkedin link per founder; each posts to that founder's own profile. */
+  linkedinApprovals: { label: string; url: string }[];
   approveInstagramUrl: string;
   rejectUrl: string;
 }
@@ -126,7 +127,7 @@ async function markDigestFailed(id: string): Promise<void> {
 export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
   const {
     range, shippedCount, waitlistDelta, liUrls, igUrls, liCaption, igCaption,
-    approveLinkedinUrl, approveInstagramUrl, rejectUrl,
+    linkedinApprovals, approveInstagramUrl, rejectUrl,
   } = opts;
 
   const subject = `Calderyn social — approve or reject: week of ${range}`;
@@ -154,7 +155,9 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   ${imgRow(liUrls)}
   ${captionBlock(liCaption)}
   <div style="margin-top:16px">
-    ${btn(approveLinkedinUrl, "Approve &amp; post to LinkedIn", "#1a8a5a")}
+    ${linkedinApprovals
+      .map((a) => btn(a.url, `Post to LinkedIn — ${escapeHtml(a.label)}`, "#1a8a5a"))
+      .join("")}
   </div>
 
   <h3 style="margin:28px 0 2px;color:#1e7079">Instagram carousel</h3>
@@ -180,8 +183,8 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
     `--- Instagram caption ---`,
     igCaption,
     ``,
-    `APPROVE & POST TO LINKEDIN:`,
-    approveLinkedinUrl,
+    `POST TO LINKEDIN (each posts to that founder's own profile):`,
+    ...linkedinApprovals.flatMap((a) => [`${a.label}:`, a.url]),
     ``,
     `APPROVE INSTAGRAM (GET ASSETS):`,
     approveInstagramUrl,
@@ -224,11 +227,15 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     return { sent: false, error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const approveLinkedinToken = signActionToken(id, "approve-linkedin", version);
   const approveInstagramToken = signActionToken(id, "approve-instagram", version);
   const rejectToken = signActionToken(id, "reject", version);
   const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
-  const approveLinkedinUrl = `${baseUrl}/social/review/${id}?t=${approveLinkedinToken}`;
+  // One approve-linkedin link per recipient, each bound to that founder's own
+  // LinkedIn via the token's `owner` claim — so each posts to their own profile.
+  const linkedinApprovals = to.map((recipient) => {
+    const token = signActionToken(id, "approve-linkedin", version, { owner: recipient });
+    return { label: recipient, url: `${baseUrl}/social/review/${id}?t=${token}` };
+  });
   const approveInstagramUrl = `${baseUrl}/social/review/${id}?t=${approveInstagramToken}`;
   const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
 
@@ -247,7 +254,7 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     igUrls,
     liCaption,
     igCaption,
-    approveLinkedinUrl,
+    linkedinApprovals,
     approveInstagramUrl,
     rejectUrl,
   });

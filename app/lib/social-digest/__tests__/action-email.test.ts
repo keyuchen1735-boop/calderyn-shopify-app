@@ -9,7 +9,10 @@ const BASE_OPTS = {
   igUrls: ["https://storage.example.com/ig-0.png", "https://storage.example.com/ig-1.png"],
   liCaption: "Default LinkedIn caption.",
   igCaption: "Default Instagram caption.",
-  approveLinkedinUrl: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_LI_TOKEN",
+  linkedinApprovals: [
+    { label: "alice@example.com", url: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_LI_TOKEN_ALICE" },
+    { label: "bob@example.com", url: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_LI_TOKEN_BOB" },
+  ],
   approveInstagramUrl: "https://app.calderyncompany.com/social/review/abc-123?t=APPROVE_IG_TOKEN",
   rejectUrl: "https://app.calderyncompany.com/social/review/abc-123?t=REJECT_TOKEN",
 };
@@ -20,9 +23,17 @@ describe("buildActionEmail", () => {
     expect(subject).toContain("June 13–19, 2026");
   });
 
-  it("html contains the approveLinkedinUrl", () => {
+  it("html contains every LinkedIn approval URL", () => {
     const { html } = buildActionEmail(BASE_OPTS);
-    expect(html).toContain(BASE_OPTS.approveLinkedinUrl);
+    for (const approval of BASE_OPTS.linkedinApprovals) {
+      expect(html).toContain(approval.url);
+    }
+  });
+
+  it("html has a per-founder labelled button for each approval", () => {
+    const { html } = buildActionEmail(BASE_OPTS);
+    expect(html).toContain("Post to LinkedIn — alice@example.com");
+    expect(html).toContain("Post to LinkedIn — bob@example.com");
   });
 
   it("html contains the approveInstagramUrl", () => {
@@ -59,10 +70,10 @@ describe("buildActionEmail", () => {
     expect(html).toContain("Instagram");
   });
 
-  it("html has Approve & post to LinkedIn button label", () => {
+  it("html has per-founder Post to LinkedIn button labels", () => {
     const { html } = buildActionEmail(BASE_OPTS);
-    expect(html).toContain("Approve");
-    expect(html).toContain("LinkedIn");
+    expect(html).toContain("Post to LinkedIn — alice@example.com");
+    expect(html).toContain("Post to LinkedIn — bob@example.com");
   });
 
   it("html has Approve Instagram button label", () => {
@@ -76,19 +87,40 @@ describe("buildActionEmail", () => {
     expect(html).toContain("Reject");
   });
 
+  it("single approval entry renders exactly one LinkedIn button", () => {
+    const { html } = buildActionEmail({
+      ...BASE_OPTS,
+      linkedinApprovals: [
+        { label: "solo@example.com", url: "https://app.calderyncompany.com/social/review/abc-123?t=SOLO" },
+      ],
+    });
+    expect(html).toContain("Post to LinkedIn — solo@example.com");
+    expect(html).toContain("https://app.calderyncompany.com/social/review/abc-123?t=SOLO");
+    // No leftover labels from BASE_OPTS
+    expect(html).not.toContain("alice@example.com");
+    expect(html).not.toContain("bob@example.com");
+    // Exactly one per-founder LinkedIn button
+    expect(html.match(/Post to LinkedIn —/g)?.length).toBe(1);
+  });
+
   it("html-escapes a range containing <", () => {
     const { html } = buildActionEmail({ ...BASE_OPTS, range: "June <1>–7, 2026" });
     expect(html).not.toContain("<1>");
     expect(html).toContain("&lt;1&gt;");
   });
 
-  it("plain-text twin includes all three action URLs with labels", () => {
+  it("plain-text twin includes every LinkedIn approval URL with its founder label", () => {
     const { text } = buildActionEmail(BASE_OPTS);
-    expect(text).toContain(BASE_OPTS.approveLinkedinUrl);
+    for (const approval of BASE_OPTS.linkedinApprovals) {
+      expect(text).toContain(approval.url);
+      expect(text).toContain(approval.label);
+    }
+  });
+
+  it("plain-text twin includes Instagram + reject action URLs with labels", () => {
+    const { text } = buildActionEmail(BASE_OPTS);
     expect(text).toContain(BASE_OPTS.approveInstagramUrl);
     expect(text).toContain(BASE_OPTS.rejectUrl);
-    // Each has a label preceding it
-    expect(text).toContain("APPROVE & POST TO LINKEDIN");
     expect(text).toContain("APPROVE INSTAGRAM");
     expect(text).toContain("REJECT & REGENERATE");
   });
