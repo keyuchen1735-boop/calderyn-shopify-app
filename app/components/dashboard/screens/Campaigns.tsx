@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { trueRoas } from "~/lib/roas";
 import { gradeFromRow } from "~/lib/campaign-grade";
+import { isSourceDisconnected } from "~/lib/integration-status";
 import {
   Card,
   SectionTitle,
@@ -63,11 +64,14 @@ function CampaignRow({
   c,
   onClick,
   scaleReason,
+  staleSource,
 }: {
   c: CampaignVM;
   onClick: () => void;
   /** Plain-language "why scale" reason; null = no suggestion (no pill). */
   scaleReason: string | null;
+  /** The campaign's ad platform is disconnected — its data may be stale (P2-16). */
+  staleSource?: boolean;
 }) {
   const losing = c.roas_7d < c.breakeven_roas;
   return (
@@ -77,6 +81,11 @@ function CampaignRow({
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">{c.name}</span>
           {c.status === "paused" ? <Pill icon="pause">Paused</Pill> : <GradePill grade={c.grade} />}
+          {staleSource && (
+            <Tooltip content="This ad platform is disconnected — its data may be out of date.">
+              <Pill tone="warn" icon="clock">Stale</Pill>
+            </Tooltip>
+          )}
           {scaleReason && (
             <Tooltip content={scaleReason}>
               <Pill icon="arrowUpRight">Scale</Pill>
@@ -528,6 +537,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
                   c={c}
                   onClick={() => app.navigate("campaigns", c.id)}
                   scaleReason={hint}
+                  staleSource={isSourceDisconnected(c.platform, app.integrations)}
                 />
               );
             })}
