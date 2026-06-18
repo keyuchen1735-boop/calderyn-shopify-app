@@ -105,6 +105,8 @@ export interface ActionEmailOpts {
   waitlistDelta: number;
   liUrls: string[];
   igUrls: string[];
+  liCaption: string;
+  igCaption: string;
   approveUrl: string;
   rejectUrl: string;
 }
@@ -121,7 +123,7 @@ async function markDigestFailed(id: string): Promise<void> {
 }
 
 export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
-  const { range, shippedCount, waitlistDelta, liUrls, igUrls, approveUrl, rejectUrl } = opts;
+  const { range, shippedCount, waitlistDelta, liUrls, igUrls, liCaption, igCaption, approveUrl, rejectUrl } = opts;
 
   const subject = `Calderyn social — approve or reject: week of ${range}`;
 
@@ -133,13 +135,19 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
       )
       .join("")}</div>`;
 
+  // Caption block — the post description, shown copy-ready in a monospace box.
+  const captionBlock = (caption: string) =>
+    `<pre style="white-space:pre-wrap;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;background:#f4f2ec;border:1px solid #e0ddd2;border-radius:8px;padding:14px;margin:8px 0 0;color:#17363a">${escapeHtml(caption)}</pre>`;
+
   const html = `<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#17363a;max-width:680px">
   <h2 style="margin:0 0 4px">Calderyn — weekly social drop</h2>
   <div style="color:#5b6b6e;margin-bottom:18px">Week of ${escapeHtml(range)} · ${shippedCount} shipped · +${waitlistDelta} waitlist</div>
-  <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn previews</h3>
+  <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn carousel</h3>
   ${imgRow(liUrls)}
-  <h3 style="margin:22px 0 2px;color:#1e7079">Instagram previews</h3>
+  ${captionBlock(liCaption)}
+  <h3 style="margin:22px 0 2px;color:#1e7079">Instagram carousel</h3>
   ${imgRow(igUrls)}
+  ${captionBlock(igCaption)}
   <div style="margin-top:32px">
     <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;margin:0 12px 12px 0;background:#1a8a5a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Approve &amp; post</a>
     <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;padding:14px 28px;margin:0 0 12px 0;background:#8a8a8a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Reject &amp; regenerate</a>
@@ -150,6 +158,12 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   const text = [
     `Calderyn — weekly social drop`,
     `Week of ${range} · ${shippedCount} shipped · +${waitlistDelta} waitlist`,
+    ``,
+    `--- LinkedIn caption ---`,
+    liCaption,
+    ``,
+    `--- Instagram caption ---`,
+    igCaption,
     ``,
     `APPROVE & POST:`,
     approveUrl,
@@ -176,11 +190,13 @@ interface SendDecisionEmailArgs {
   waitlistDelta: number;
   liPaths: string[];
   igPaths: string[];
+  liCaption: string;
+  igCaption: string;
   to: string[];
 }
 
 async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryResult> {
-  const { id, version, range, shippedCount, waitlistDelta, liPaths, igPaths, to } = args;
+  const { id, version, range, shippedCount, waitlistDelta, liPaths, igPaths, liCaption, igCaption, to } = args;
 
   let liUrls: string[];
   let igUrls: string[];
@@ -209,6 +225,8 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     waitlistDelta,
     liUrls,
     igUrls,
+    liCaption,
+    igCaption,
     approveUrl,
     rejectUrl,
   });
@@ -341,6 +359,8 @@ export async function runSocialDigest(opts?: { nowMs?: number }): Promise<Social
     waitlistDelta,
     liPaths,
     igPaths,
+    liCaption: pack.linkedinCaption,
+    igCaption: pack.instagramCaption,
     to,
   });
 
@@ -535,6 +555,8 @@ export async function regenerateDigest(
     waitlistDelta,
     liPaths,
     igPaths,
+    liCaption: pack.linkedinCaption,
+    igCaption: pack.instagramCaption,
     to: recipients(),
   });
 
