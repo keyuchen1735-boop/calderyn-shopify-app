@@ -87,7 +87,8 @@ const ALERT = {
   detector_id: "reorder_timing",
   severity: "high",
   status: "open",
-  dollar_impact: 412_00,
+  dollar_impact: 412, // dollars (≈ $412), well within the $10k test cap once
+  // impact is compared to the cap in matching units (P1-8)
   claude_rank: 1,
   created_at: "2026-06-08T12:00:00Z",
   title: "Reorder window is closing",
