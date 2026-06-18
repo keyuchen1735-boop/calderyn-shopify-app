@@ -4,9 +4,10 @@
 // Mocks: verifyActionToken, getSupabase, signedUrls, regenerateDigest,
 //        getValidConnectionFor, postMemberMultiImage, downloadSlide.
 //
-// LinkedIn posting is now per-founder and double-post-safe via the
-// `social_link_post` table (UNIQUE(digest_id, owner_email, platform)). The
-// supabase mock therefore branches on the table name passed to .from().
+// The "approve" action is now the ONLY approval action: it posts LinkedIn to
+// the owner's profile AND returns Instagram assets in every result state.
+// The "approve-instagram" action is removed; "approve-linkedin" is renamed to
+// "approve". The reject flow is unchanged.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { LinkedInPostError } from "~/lib/social/linkedin.server";
@@ -65,7 +66,6 @@ function makeRow(overrides: Partial<{
   li_caption: string;
   ig_caption: string;
   li_posted_at: string | null;
-  ig_approved_at: string | null;
   post_results_json: Record<string, unknown> | null;
 }> = {}) {
   return {
@@ -79,7 +79,6 @@ function makeRow(overrides: Partial<{
     li_caption: "LinkedIn caption here.",
     ig_caption: "Instagram caption here.",
     li_posted_at: null,
-    ig_approved_at: null,
     post_results_json: null,
     ...overrides,
   };
@@ -112,14 +111,6 @@ interface SupabaseMockSpies {
 /**
  * Build a getSupabase mock that branches on table name.
  * Returns spies so tests can assert insert/update/delete payloads.
- *
- * Chain semantics:
- * - social_digest: .select().eq().single() -> { data, error }; .update().eq()... awaited
- * - social_link_post:
- *     .insert(payload)                          -> Promise<{ error }>
- *     .select(cols).eq().eq().eq().single()     -> Promise<{ data, error }>
- *     .update(payload).eq().eq().eq()           -> Promise<{ error }>  (awaited)
- *     .delete().eq().eq().eq()                  -> Promise<{ error }>  (awaited)
  */
 function mockSupabase(cfg: SupabaseMockConfig): SupabaseMockSpies {
   const linkInsert = vi.fn().mockResolvedValue({ error: cfg.linkInsertError ?? null });
@@ -128,8 +119,6 @@ function mockSupabase(cfg: SupabaseMockConfig): SupabaseMockSpies {
   const digestUpdate = vi.fn();
 
   // A thenable .eq() chain that resolves to the supplied terminal result.
-  // Exposes .select() too so the (unchanged) instagram .update().eq().is().eq()
-  // .select("id") path on social_digest keeps working against this mock.
   const eqChain = (terminal: { error: unknown } | { data: unknown; error: unknown }) => {
     const chain: Record<string, unknown> = {};
     chain.eq = () => chain;
@@ -201,7 +190,8 @@ function actionRequest(
   });
 }
 
-const liToken = () => ({ id: TEST_ID, action: "approve-linkedin", version: 0, owner: OWNER });
+// Token helpers use "approve" (not "approve-linkedin")
+const approveToken = () => ({ id: TEST_ID, action: "approve", version: 0, owner: OWNER });
 
 // ---------------------------------------------------------------------------
 // Loader tests
@@ -232,7 +222,7 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when token id does not match params.id", async () => {
-    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve-linkedin", version: 0, owner: OWNER });
+    verifyActionToken.mockReturnValue({ id: "different-id", action: "approve", version: 0, owner: OWNER });
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
@@ -247,11 +237,11 @@ describe("social.review.$id — loader", () => {
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: token missing owner → stale_link
+  // approve loader: token missing owner → stale_link
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin loader: token missing owner → state=stale_link", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+  it("approve loader: token missing owner → state=stale_link", async () => {
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
@@ -266,11 +256,11 @@ describe("social.review.$id — loader", () => {
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: no social_link_post row → confirm (owner heading)
+  // approve loader: no social_link_post row → confirm page
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin + no link_post row → state=confirm with action=approve-linkedin + owner", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  it("approve + no link_post row → state=confirm with action=approve + owner", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({ digestRow: makeRow(), linkExistingRow: null });
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
@@ -283,7 +273,7 @@ describe("social.review.$id — loader", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("confirm");
-    expect(body.action).toBe("approve-linkedin");
+    expect(body.action).toBe("approve");
     expect(body.id).toBe(TEST_ID);
     expect(body.token).toBe("valid-token");
     expect(body.range).toBe("June 13–19, 2026");
@@ -292,16 +282,16 @@ describe("social.review.$id — loader", () => {
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: link_post row status='posted' → li_result
+  // approve loader: link_post row status='posted' → li_result WITH ig assets
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin + link_post posted → state=li_result with postUrn", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  it("approve + link_post posted → state=li_result with postUrn AND igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({
       digestRow: makeRow(),
       linkExistingRow: { status: "posted", post_urn: "urn:li:share:777", error: null },
     });
-    signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
+    signedUrls.mockResolvedValue(["https://cdn.test/li-0.png", "https://cdn.test/ig-0.png"]);
 
     const { loader } = await import("../social.review.$id");
     const res = await loader({
@@ -313,14 +303,17 @@ describe("social.review.$id — loader", () => {
     const body = await res.json() as any;
     expect(body.state).toBe("li_result");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:777" });
+    // IG assets must be present in the loader result too
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
   // -------------------------------------------------------------------------
-  // approve-linkedin loader: link_post row status='failed' → li_result (staged)
+  // approve loader: link_post row status='failed' → li_result (staged) WITH ig assets
   // -------------------------------------------------------------------------
 
-  it("approve-linkedin + link_post failed → state=li_result with staged warning", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  it("approve + link_post failed → state=li_result with staged warning AND igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({
       digestRow: makeRow(),
       linkExistingRow: { status: "failed", post_urn: null, error: "boom" },
@@ -338,59 +331,12 @@ describe("social.review.$id — loader", () => {
     expect(body.state).toBe("li_result");
     expect(body.linkedin.posted).toBe(false);
     expect(body.linkedin.reason).toContain("may have been created");
-  });
-
-  // -------------------------------------------------------------------------
-  // approve-instagram loader: ig_approved_at null → confirm
-  // -------------------------------------------------------------------------
-
-  it("approve-instagram + ig_approved_at null → state=confirm with action=approve-instagram", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
-    mockSupabase({ digestRow: makeRow({ ig_approved_at: null }) });
-    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png"]);
-
-    const { loader } = await import("../social.review.$id");
-    const res = await loader({
-      request: loaderRequest(TEST_ID, "valid-token"),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("confirm");
-    expect(body.action).toBe("approve-instagram");
-    expect(body.igCaption).toBe("Instagram caption here.");
-  });
-
-  // -------------------------------------------------------------------------
-  // approve-instagram loader: ig_approved_at set → assets page
-  // -------------------------------------------------------------------------
-
-  it("approve-instagram + ig_approved_at set → state=ig_assets with IG URLs + caption", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
-    mockSupabase({
-      digestRow: makeRow({
-        ig_approved_at: "2026-06-18T12:00:00.000Z",
-        post_results_json: { instagram: "approved (manual)" },
-      }),
-    });
-    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png"]);
-
-    const { loader } = await import("../social.review.$id");
-    const res = await loader({
-      request: loaderRequest(TEST_ID, "valid-token"),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-    expect(body.state).toBe("ig_assets");
-    expect(body.igUrls).toEqual(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png"]);
+    expect(body.igUrls).toBeDefined();
     expect(body.igCaption).toBe("Instagram caption here.");
   });
 
   it("returns state=stale when token version does not match regen_count", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({ digestRow: makeRow({ regen_count: 2 }) });
 
     const { loader } = await import("../social.review.$id");
@@ -405,7 +351,7 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when DB returns an error", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({ digestRow: null, digestError: { message: "relation does not exist" } });
 
     const { loader } = await import("../social.review.$id");
@@ -420,7 +366,7 @@ describe("social.review.$id — loader", () => {
   });
 
   it("returns state=invalid when row shape is malformed (li_image_paths is null)", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({ digestRow: makeRow({ li_image_paths: null as unknown as string[] }) });
 
     const { loader } = await import("../social.review.$id");
@@ -452,10 +398,10 @@ describe("social.review.$id — loader", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Action — approve-linkedin (per-founder, social_link_post claim)
+// Action — approve (per-founder, social_link_post claim, LinkedIn + IG assets)
 // ---------------------------------------------------------------------------
 
-describe("social.review.$id — action (approve-linkedin)", () => {
+describe("social.review.$id — action (approve)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     signedUrls.mockResolvedValue(["https://cdn.test/slide-0.png"]);
@@ -464,19 +410,22 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
   });
 
-  // 1. connected + claim succeeds + post succeeds
-  it("connected + claim wins + post succeeds: inserts posting claim, updates posted, posts 4 images, state=li_posted", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 1. connected + claim succeeds + post succeeds → li_posted WITH ig assets
+  it("connected + claim wins + post succeeds: inserts posting claim, updates posted, posts 4 images, state=li_posted WITH igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
     const fakeBuffer = Buffer.from("png-bytes");
     downloadSlide.mockResolvedValue(fakeBuffer);
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:999" });
 
+    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png",
+      "https://cdn.test/ig-2.png", "https://cdn.test/ig-3.png"]);
+
     const { linkInsert, linkUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -517,11 +466,16 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     expect(body.state).toBe("li_posted");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:999" });
+
+    // KEY: IG assets must be present in every approve result state
+    expect(body.igUrls).toBeDefined();
+    expect(Array.isArray(body.igUrls)).toBe(true);
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
-  // 2. claim returns 23505, existing row posted
-  it("claim 23505 + existing posted: no post, returns li_posted with existing post_urn", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 2. claim returns 23505, existing row posted → li_posted WITH ig assets
+  it("claim 23505 + existing posted: no post, returns li_posted with existing post_urn AND igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
 
     mockSupabase({
@@ -532,7 +486,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -542,11 +496,14 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     expect(postMemberMultiImage).not.toHaveBeenCalled();
     expect(body.state).toBe("li_posted");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:existing" });
+    // IG assets must be present even on the already-claimed path
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
-  // 3. claim returns 23505, existing row failed
-  it("claim 23505 + existing failed: no post, returns li_failed with may-have-been-created", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 3. claim returns 23505, existing row failed → li_failed WITH ig assets
+  it("claim 23505 + existing failed: no post, returns li_failed with may-have-been-created AND igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
 
     mockSupabase({
@@ -557,7 +514,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -568,18 +525,21 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     expect(body.state).toBe("li_failed");
     expect(body.linkedin.posted).toBe(false);
     expect(body.linkedin.error).toContain("may have been created");
+    // IG assets must be present even on the failed path
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
-  // 4. claim wins but not connected
-  it("claim wins + not connected: deletes claim row, calls getValidConnectionFor(owner), no post, state=li_not_connected", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 4. claim wins but not connected → li_not_connected WITH ig assets
+  it("claim wins + not connected: deletes claim row, no post, state=li_not_connected WITH igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue(null);
 
     const { linkDelete } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -590,11 +550,14 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     expect(postMemberMultiImage).not.toHaveBeenCalled();
     expect(linkDelete).toHaveBeenCalledTimes(1);
     expect(body.state).toBe("li_not_connected");
+    // IG assets must be present even when not connected
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
-  // 5. post throws LinkedInPostError phase="pre-post" → row DELETED (retryable)
-  it("post throws pre-post error: claim row DELETED (retryable), state=li_failed", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 5. post throws LinkedInPostError phase="pre-post" → row DELETED (retryable), li_failed WITH ig assets
+  it("post throws pre-post error: claim row DELETED (retryable), state=li_failed WITH igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
     downloadSlide.mockResolvedValue(Buffer.from("png-bytes"));
     postMemberMultiImage.mockRejectedValue(new LinkedInPostError("upload init failed", "pre-post"));
@@ -603,7 +566,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -619,11 +582,14 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     expect(linkUpdate).not.toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed" }),
     );
+    // IG assets present even on pre-post failure
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
-  // 6. post throws LinkedInPostError phase="post" → row kept as 'failed'
-  it("post throws post-phase error: row updated to failed (NOT deleted), state=li_failed with may-have-been-created", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+  // 6. post throws LinkedInPostError phase="post" → row kept as 'failed', WITH ig assets
+  it("post throws post-phase error: row updated to failed (NOT deleted), state=li_failed with may-have-been-created AND igUrls + igCaption", async () => {
+    verifyActionToken.mockReturnValue(approveToken());
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_abc", memberUrn: "urn:li:person:XXXX" });
     downloadSlide.mockResolvedValue(Buffer.from("png-bytes"));
     postMemberMultiImage.mockRejectedValue(new LinkedInPostError("post create 500", "post"));
@@ -632,7 +598,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -648,13 +614,14 @@ describe("social.review.$id — action (approve-linkedin)", () => {
       expect.objectContaining({ status: "failed" }),
     );
     expect(linkDelete).not.toHaveBeenCalled();
+    // IG assets present even on post-phase failure
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
   // 7. two different owners — independent claims (owner A doesn't block owner B)
   it("two owners: owner B can claim+post even when owner A already has a claim", async () => {
-    // Owner A already posted (a 23505 for A would block A only). Here owner B
-    // gets a clean insert and posts independently.
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0, owner: "bob@example.com" });
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0, owner: "bob@example.com" });
     getValidConnectionFor.mockResolvedValue({ accessToken: "tok_bob", memberUrn: "urn:li:person:BOB" });
     postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:bob" });
 
@@ -662,7 +629,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token-bob" }),
+      request: actionRequest(TEST_ID, { token: "approve-token-bob" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -675,11 +642,14 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     expect(getValidConnectionFor).toHaveBeenCalledWith("bob@example.com");
     expect(body.state).toBe("li_posted");
     expect(body.linkedin).toEqual({ posted: true, postUrn: "urn:li:share:bob" });
+    // IG assets present for Bob too
+    expect(body.igUrls).toBeDefined();
+    expect(body.igCaption).toBe("Instagram caption here.");
   });
 
   // 8. claim insert returns non-23505 error → state=error
   it("claim insert non-unique error → state=error with the message", async () => {
-    verifyActionToken.mockReturnValue(liToken());
+    verifyActionToken.mockReturnValue(approveToken());
     mockSupabase({
       digestRow: makeRow(),
       linkInsertError: { code: "42501", message: "permission denied" },
@@ -687,7 +657,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
 
     const { action } = await import("../social.review.$id");
     const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-li-token" }),
+      request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
     });
@@ -698,7 +668,7 @@ describe("social.review.$id — action (approve-linkedin)", () => {
   });
 
   it("token missing owner on POST → state=stale_link", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-linkedin", version: 0 });
+    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve", version: 0 });
     mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
@@ -725,58 +695,6 @@ describe("social.review.$id — action (approve-linkedin)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Action — approve-instagram (unchanged behavior)
-// ---------------------------------------------------------------------------
-
-describe("social.review.$id — action (approve-instagram)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    signedUrls.mockResolvedValue(["https://cdn.test/ig-0.png", "https://cdn.test/ig-1.png", "https://cdn.test/ig-2.png", "https://cdn.test/ig-3.png"]);
-    downloadSlide.mockResolvedValue(Buffer.from("fake-png"));
-    getValidConnectionFor.mockResolvedValue(null);
-    postMemberMultiImage.mockResolvedValue({ postUrn: "urn:li:share:123" });
-  });
-
-  it("claims ig_approved_at, records instagram=approved (manual), returns ig_assets state with IG URLs + caption, NO LinkedIn calls", async () => {
-    verifyActionToken.mockReturnValue({ id: TEST_ID, action: "approve-instagram", version: 0 });
-
-    const { digestUpdate } = mockSupabase({ digestRow: makeRow() });
-
-    const { action } = await import("../social.review.$id");
-    const res = await action({
-      request: actionRequest(TEST_ID, { token: "approve-ig-token" }),
-      params: { id: TEST_ID },
-      context: {},
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const body = await res.json() as any;
-
-    expect(body.state).toBe("ig_assets");
-    expect(body.igUrls).toEqual([
-      "https://cdn.test/ig-0.png",
-      "https://cdn.test/ig-1.png",
-      "https://cdn.test/ig-2.png",
-      "https://cdn.test/ig-3.png",
-    ]);
-    expect(body.igCaption).toBe("Instagram caption here.");
-
-    // LinkedIn must not be touched
-    expect(postMemberMultiImage).not.toHaveBeenCalled();
-    expect(getValidConnectionFor).not.toHaveBeenCalled();
-
-    // ig_approved_at claimed on social_digest
-    expect(digestUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ ig_approved_at: expect.any(String) }),
-    );
-    expect(digestUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        post_results_json: expect.objectContaining({ instagram: "approved (manual)" }),
-      }),
-    );
   });
 });
 
