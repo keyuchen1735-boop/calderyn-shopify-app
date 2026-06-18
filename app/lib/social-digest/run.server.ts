@@ -107,9 +107,12 @@ export interface ActionEmailOpts {
   igUrls: string[];
   liCaption: string;
   igCaption: string;
-  /** One approve-linkedin link per founder; each posts to that founder's own profile. */
-  linkedinApprovals: { label: string; url: string }[];
-  approveInstagramUrl: string;
+  /**
+   * One combined "Approve & post" link per founder.
+   * Clicking the link posts LinkedIn to that founder's profile AND surfaces
+   * the Instagram slides for manual posting.
+   */
+  approvals: { label: string; url: string }[];
   rejectUrl: string;
 }
 
@@ -127,7 +130,7 @@ async function markDigestFailed(id: string): Promise<void> {
 export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
   const {
     range, shippedCount, waitlistDelta, liUrls, igUrls, liCaption, igCaption,
-    linkedinApprovals, approveInstagramUrl, rejectUrl,
+    approvals, rejectUrl,
   } = opts;
 
   const subject = `Calderyn social — approve or reject: week of ${range}`;
@@ -144,8 +147,11 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   const captionBlock = (caption: string) =>
     `<pre style="white-space:pre-wrap;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;background:#f4f2ec;border:1px solid #e0ddd2;border-radius:8px;padding:14px;margin:8px 0 0;color:#17363a">${escapeHtml(caption)}</pre>`;
 
-  const btn = (href: string, label: string, bg: string) =>
-    `<a href="${escapeHtml(href)}" style="display:inline-block;padding:14px 28px;margin:0 12px 12px 0;background:${bg};color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">${label}</a>`;
+  const btn = (href: string, label: string, bg: string, note?: string) =>
+    `<div style="margin:0 0 12px 0">` +
+    `<a href="${escapeHtml(href)}" style="display:inline-block;padding:14px 28px;background:${bg};color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">${label}</a>` +
+    (note ? `<div style="color:#5b6b6e;font-size:12px;margin-top:4px">${escapeHtml(note)}</div>` : ``) +
+    `</div>`;
 
   const html = `<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#17363a;max-width:680px">
   <h2 style="margin:0 0 4px">Calderyn — weekly social drop</h2>
@@ -154,21 +160,26 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn carousel</h3>
   ${imgRow(liUrls)}
   ${captionBlock(liCaption)}
-  <div style="margin-top:16px">
-    ${linkedinApprovals
-      .map((a) => btn(a.url, `Post to LinkedIn — ${escapeHtml(a.label)}`, "#1a8a5a"))
-      .join("")}
-  </div>
 
   <h3 style="margin:28px 0 2px;color:#1e7079">Instagram carousel</h3>
   ${imgRow(igUrls)}
   ${captionBlock(igCaption)}
-  <div style="margin-top:16px">
-    ${btn(approveInstagramUrl, "Approve Instagram (get assets)", "#1a8a5a")}
+
+  <div style="margin-top:24px">
+    ${approvals
+      .map((a) =>
+        btn(
+          a.url,
+          `Approve &amp; post — ${escapeHtml(a.label)}`,
+          "#1a8a5a",
+          "posts LinkedIn to your profile + gives you the Instagram slides",
+        ),
+      )
+      .join("")}
   </div>
 
-  <div style="margin-top:28px">
-    ${btn(rejectUrl, "Reject &amp; regenerate both", "#8a8a8a")}
+  <div style="margin-top:16px">
+    ${btn(rejectUrl, "Reject &amp; regenerate for everyone", "#8a8a8a")}
   </div>
   <p style="color:#8a8a8a;font-size:13px;margin-top:22px">Auto-sent by the weekly social-digest cron. Links expire in 7 days.</p>
 </div>`;
@@ -183,13 +194,10 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
     `--- Instagram caption ---`,
     igCaption,
     ``,
-    `POST TO LINKEDIN (each posts to that founder's own profile):`,
-    ...linkedinApprovals.flatMap((a) => [`${a.label}:`, a.url]),
+    `APPROVE & POST (posts LinkedIn to your profile + gives you the Instagram slides):`,
+    ...approvals.flatMap((a) => [`${a.label}:`, a.url]),
     ``,
-    `APPROVE INSTAGRAM (GET ASSETS):`,
-    approveInstagramUrl,
-    ``,
-    `REJECT & REGENERATE BOTH:`,
+    `REJECT & REGENERATE FOR EVERYONE:`,
     rejectUrl,
   ].join("\n");
 
@@ -227,16 +235,14 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     return { sent: false, error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const approveInstagramToken = signActionToken(id, "approve-instagram", version);
   const rejectToken = signActionToken(id, "reject", version);
   const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
-  // One approve-linkedin link per recipient, each bound to that founder's own
-  // LinkedIn via the token's `owner` claim — so each posts to their own profile.
-  const linkedinApprovals = to.map((recipient) => {
-    const token = signActionToken(id, "approve-linkedin", version, { owner: recipient });
+  // One combined "Approve & post" link per recipient, each bound to that founder's own
+  // profile via the token's `owner` claim — posts LinkedIn + surfaces Instagram assets.
+  const approvals = to.map((recipient) => {
+    const token = signActionToken(id, "approve", version, { owner: recipient });
     return { label: recipient, url: `${baseUrl}/social/review/${id}?t=${token}` };
   });
-  const approveInstagramUrl = `${baseUrl}/social/review/${id}?t=${approveInstagramToken}`;
   const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
 
   const apiKey = process.env.RESEND_API_KEY;
@@ -254,8 +260,7 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     igUrls,
     liCaption,
     igCaption,
-    linkedinApprovals,
-    approveInstagramUrl,
+    approvals,
     rejectUrl,
   });
   return sendEmail({ apiKey, from, to, subject, text, html });
@@ -566,7 +571,6 @@ export async function regenerateDigest(
         status: "pending",
         acted_at: new Date().toISOString(),
         li_posted_at: null,
-        ig_approved_at: null,
       })
       .eq("id", id);
     if (updateError) {
@@ -574,6 +578,20 @@ export async function regenerateDigest(
     }
   } catch (err) {
     return { ok: false, error: `DB update failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 8b. Clear per-founder claim rows for this drop so the new version is approvable
+  //     fresh. Best-effort: a delete failure must not block the email re-send.
+  try {
+    const { error: deleteError } = await getSupabase()
+      .from("social_link_post")
+      .delete()
+      .eq("digest_id", id);
+    if (deleteError) {
+      console.error("[regenerateDigest] social_link_post delete failed:", id, deleteError.message);
+    }
+  } catch (deleteErr) {
+    console.error("[regenerateDigest] social_link_post delete threw:", id, deleteErr);
   }
 
   // 9. Send decision email at the new version (invalidates the previous round's links).

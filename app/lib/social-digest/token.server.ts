@@ -13,7 +13,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type SocialAction = "approve-linkedin" | "approve-instagram" | "reject";
+export type SocialAction = "approve" | "reject";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -21,7 +21,7 @@ export interface TokenPayload {
   id: string;
   action: SocialAction;
   version: number;
-  /** For approve-linkedin: which founder's LinkedIn to post to (their email). */
+  /** For approve: which founder's LinkedIn to post to (their email). */
   owner?: string;
 }
 
@@ -42,7 +42,7 @@ function sign(payload: string, key: string): string {
 }
 
 function isAction(v: string): v is SocialAction {
-  return v === "approve-linkedin" || v === "approve-instagram" || v === "reject";
+  return v === "approve" || v === "reject";
 }
 
 /** Build a signed token authorizing `action` on digest `id` at `version`. */
@@ -54,7 +54,7 @@ export function signActionToken(
 ): string {
   const now = opts?.nowMs ?? Date.now();
   const exp = now + (opts?.ttlMs ?? DEFAULT_TTL_MS);
-  // owner (an email, no ":") is an optional 5th segment for per-founder posts.
+  // owner (an email, no ":") is an optional 5th segment for per-founder approve tokens.
   const base = `${id}:${action}:${version}:${exp}`;
   const payload = opts?.owner ? `${base}:${opts.owner}` : base;
   const sig = sign(payload, secret(opts?.secret));
