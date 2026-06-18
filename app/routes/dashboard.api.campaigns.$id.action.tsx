@@ -53,8 +53,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   );
 
   if (result.outcome === "failed") {
+    // Human `message` so the dashboard toast reads sensibly instead of the raw
+    // "action_failed" code; the raw provider error stays in the audit row.
     return new Response(
-      JSON.stringify({ error: "action_failed", audit_id: result.id, outcome: result.outcome }),
+      JSON.stringify({
+        error: "action_failed",
+        message: "Couldn't complete the action — the ad platform rejected it. See the action history for details.",
+        audit_id: result.id,
+        outcome: result.outcome,
+      }),
       { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
     );
   }

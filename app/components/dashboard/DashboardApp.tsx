@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
 import { CDIcon } from "./icons";
@@ -311,25 +312,35 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             ? Math.round(campaign.daily_budget_cents * 0.7)
             : undefined;
         try {
-          await client.executeCampaignAction(alert.campaign_id, {
+          const { outcome } = await client.executeCampaignAction(alert.campaign_id, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
           });
-          markResolved();
-          setCampaigns((cs) =>
-            cs.map((c) => {
-              if (c.id !== alert.campaign_id) return c;
-              if (kind === "pause_campaign") return { ...c, status: "paused" };
-              return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
-            }),
-          );
+          const view = presentActionOutcome(outcome, label);
+          // A non-succeeded outcome (retrying / failed) must NOT resolve the
+          // alert or apply the optimistic paused/budget state — only a real
+          // platform success does (P0-1). The terminal `failed` outcome arrives
+          // as an HTTP 502 → DashboardApiError (caught below); a `retrying`
+          // arrives here as a 200 and is queued, not a success.
+          if (view.succeeded) {
+            markResolved();
+            setCampaigns((cs) =>
+              cs.map((c) => {
+                if (c.id !== alert.campaign_id) return c;
+                if (kind === "pause_campaign") return { ...c, status: "paused" };
+                return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
+              }),
+            );
+          }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
             .then((au) => setAudit(au))
             .catch(() => {});
-          toast(`${label} — done. Logged to action history.`, "check");
+          if (view.succeeded) toast(view.message, "check");
+          else if (view.isError) toast(view.message, "warn", "critical");
+          else toast(view.message, "clock");
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
@@ -343,18 +354,23 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // resolution.
       if (kind === "reallocate_inventory") {
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
-          markResolved();
+          const { outcome, acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const view = presentActionOutcome(outcome, label);
+          // Only a real success resolves the alert (P0-1); a Shopify failure
+          // arrives as an HTTP 502 → DashboardApiError (caught below).
+          if (view.succeeded) markResolved();
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
             .then((au) => setAudit(au))
             .catch(() => {});
-          toast(
-            `${label} — done. Logged to action history.` +
-              (acknowledged ? "" : " Alert couldn't be acknowledged."),
-            "check",
-          );
+          if (view.succeeded) {
+            toast(view.message + (acknowledged ? "" : " Alert couldn't be acknowledged."), "check");
+          } else if (view.isError) {
+            toast(view.message, "warn", "critical");
+          } else {
+            toast(view.message, "clock");
+          }
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");

@@ -176,11 +176,15 @@ describe("POST /dashboard/api/campaigns/:id/action", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({
+    const failBody = await res.json();
+    expect(failBody).toMatchObject({
       error: "action_failed",
       audit_id: "audit-2",
       outcome: "failed",
     });
+    // A human message rides along so the dashboard toast isn't the raw code.
+    expect(typeof failBody.message).toBe("string");
+    expect(failBody.message.length).toBeGreaterThan(0);
   });
 });
 
