@@ -79,19 +79,20 @@ beforeEach(() => {
 function applyDirectionRequest(over: Record<string, string> = {}): Request {
   const fd = new FormData();
   fd.set("intent", "apply_direction");
+  fd.set("campaign_id", "cmp-dim-1");
   fd.set("action_kind", "increase_campaign_budget");
   fd.set("daily_budget_cents", "12000");
   for (const [k, v] of Object.entries(over)) fd.set(k, v);
-  return new Request("http://localhost/app/campaigns/cmp-1", { method: "POST", body: fd });
+  return new Request("http://localhost/app/campaigns/999extid", { method: "POST", body: fd });
 }
 
 describe("campaign detail action — apply_direction", () => {
-  it("calls executeAction with the correct kind, campaignId, and dailyBudgetCents", async () => {
+  it("calls executeAction with the form-supplied dim uuid (not params.campaignId)", async () => {
     executeActionSpy.mockResolvedValue({ id: "aud-1", outcome: "succeeded" });
 
     const res = await action({
       request: applyDirectionRequest(),
-      params: { campaignId: "cmp-1" },
+      params: { campaignId: "999extid" },
       context: {},
     } as unknown as ActionFunctionArgs);
 
@@ -101,11 +102,43 @@ describe("campaign detail action — apply_direction", () => {
       "shop-1",
       expect.objectContaining({
         kind: "increase_campaign_budget",
-        campaignId: "cmp-1",
+        campaignId: "cmp-dim-1",
         dailyBudgetCents: 12000,
       }),
       expect.anything(),
     );
+  });
+
+  it("returns 400 and does not call executeAction when campaign_id is missing", async () => {
+    const fd = new FormData();
+    fd.set("intent", "apply_direction");
+    fd.set("action_kind", "increase_campaign_budget");
+    fd.set("daily_budget_cents", "12000");
+    // deliberately omit campaign_id
+    const req = new Request("http://localhost/app/campaigns/999extid", { method: "POST", body: fd });
+
+    const res = await action({
+      request: req,
+      params: { campaignId: "999extid" },
+      context: {},
+    } as unknown as ActionFunctionArgs);
+
+    expect(res.status).toBe(400);
+    expect(executeActionSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 and ok:false when executeAction throws (ownership miss)", async () => {
+    executeActionSpy.mockRejectedValueOnce(new Error("ownership"));
+
+    const res = await action({
+      request: applyDirectionRequest(),
+      params: { campaignId: "999extid" },
+      context: {},
+    } as unknown as ActionFunctionArgs);
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(false);
   });
 
   it("rejects an unknown intent with 400", async () => {

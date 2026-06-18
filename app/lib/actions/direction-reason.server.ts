@@ -92,7 +92,6 @@ export async function resolveCampaignDirection(args: {
   campaignId: string;
   roas: number | null;
   breakEvenRoas: number | null;
-  contributionMargin: number | null;
   status: "active" | "paused";
   currentBudgetCents: number | null;
   alerts: Pick<Alert, "detector_id" | "status" | "campaign_id">[];

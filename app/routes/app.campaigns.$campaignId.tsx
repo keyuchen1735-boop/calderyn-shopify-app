@@ -224,20 +224,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   ) {
     return json({ ok: false, error: "missing_daily_budget_cents" }, { status: 400 });
   }
+  const campaignId = String(form.get("campaign_id") ?? "");
+  if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
   const shopId = await resolveShopId(session.shop);
-  const res = await executeAction(
-    shopId,
-    {
-      alertId: null,
-      kind,
-      campaignId: String(params.campaignId),
-      idempotencyKey: `direction:${params.campaignId}:${kind}:${new Date().toISOString().slice(0, 10)}`,
-      dailyBudgetCents,
-      actor: "merchant:admin-detail",
-    },
-    getSupabase(),
-  );
-  return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+  try {
+    const res = await executeAction(
+      shopId,
+      {
+        alertId: null,
+        kind,
+        campaignId,
+        idempotencyKey: `direction:${campaignId}:${kind}:${new Date().toISOString().slice(0, 10)}`,
+        dailyBudgetCents,
+        actor: "merchant:admin-detail",
+      },
+      getSupabase(),
+    );
+    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+  } catch (err) {
+    console.error(`[campaign-direction] action failed for ${campaignId}`, err);
+    return json({ ok: false, error: "not_actionable" }, { status: 409 });
+  }
 };
 
 /** Best-effort recommended direction for the detail view. calderynClient + alerts +
@@ -258,7 +265,6 @@ async function resolveDirectionForDetail(
     campaignId: detail.id,
     roas: perf.reportedRoas,
     breakEvenRoas: perf.breakEvenRoas,
-    contributionMargin: perf.contributionMargin,
     status: detail.status,
     currentBudgetCents: perf.dailyBudgetCents,
     alerts: openAlerts.map((a) => ({ detector_id: a.detector_id, status: a.status, campaign_id: a.campaign_id })),
@@ -576,6 +582,7 @@ export default function CampaignDetailPage() {
                 {directionActable && (
                   <directionFetcher.Form method="post">
                     <input type="hidden" name="intent" value="apply_direction" />
+                    <input type="hidden" name="campaign_id" value={detail.id} />
                     <input type="hidden" name="action_kind" value={direction.actionKind!} />
                     {direction.suggestedBudgetCents != null && (
                       <input type="hidden" name="daily_budget_cents" value={String(direction.suggestedBudgetCents)} />

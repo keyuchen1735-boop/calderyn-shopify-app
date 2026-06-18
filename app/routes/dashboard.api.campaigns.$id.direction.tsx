@@ -23,7 +23,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       campaignId: campaign.id,
       roas: campaign.roas_7d > 0 ? campaign.roas_7d : null,
       breakEvenRoas,
-      contributionMargin: campaign.contribution_margin,
       status: campaign.status,
       currentBudgetCents: campaign.daily_budget_cents,
       alerts: openAlerts.map((a) => ({ detector_id: a.detector_id, status: a.status, campaign_id: a.campaign_id })),

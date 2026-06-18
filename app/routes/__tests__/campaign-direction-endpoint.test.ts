@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { loader } from "../dashboard.api.campaigns.$id.direction";
 
-// All vi.mock calls are hoisted above imports by vitest — they must appear before
-// the route import below. Spies are declared via vi.hoisted so mock factories can
-// close over them.
+// vitest hoists vi.mock above all imports, so the route import can stay at top while these mocks still apply. Spies use vi.hoisted so factories can close over them.
 const { resolveCampaignDirectionMock } = vi.hoisted(() => ({
   resolveCampaignDirectionMock: vi.fn(),
 }));
@@ -49,8 +48,6 @@ vi.mock("~/lib/actions/direction-reason.server", () => ({
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({}),
 }));
-
-import { loader } from "../dashboard.api.campaigns.$id.direction";
 
 describe("dashboard direction endpoint — GET /dashboard/api/campaigns/:id/direction", () => {
   it("returns direction payload and calls resolveCampaignDirection with correct args", async () => {
