@@ -45,7 +45,7 @@ export function variationInstruction(variation: PackInput["variation"]): string 
 
   if (variation.priorCopy && variation.priorCopy.length > 0) {
     lines.push(
-      "Do NOT reuse any of the following rejected copy (take a clearly different angle and tone):",
+      "Do NOT reuse any of the following rejected copy:",
       ...variation.priorCopy.map((s) => `  - ${s}`),
     );
   }
@@ -171,7 +171,9 @@ export async function buildSocialPack(input: PackInput): Promise<{ pack: SocialP
       const baseContent = activityForPrompt(input.activity);
       const variationBlock = variationInstruction(input.variation);
       const userContent = variationBlock ? `${baseContent}\n\n${variationBlock}` : baseContent;
-      const temperature = input.variation ? 1 : 0.7;
+      // Raise temperature only when an actual regeneration directive is present
+      // (empty reasons → no directive → keep the steadier first-gen temperature).
+      const temperature = variationBlock ? 1 : 0.7;
       const msg = await client.messages.create({
         model: assistantModel(),
         max_tokens: 1400,
