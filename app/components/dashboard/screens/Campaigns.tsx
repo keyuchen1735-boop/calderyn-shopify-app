@@ -6,6 +6,7 @@
 // Card/GradePill/PlatformMark/Sparkline/Pill/Btn/Segmented/Placeholder/CountMoney (ui).
 import { useEffect, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
+import { trueRoas } from "~/lib/roas";
 import {
   Card,
   SectionTitle,
@@ -467,10 +468,11 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   );
 
   const totalSpend = joined.reduce((s, c) => s + c.spend_7d, 0);
-  const withData = joined.filter((c) => c.spend_7d > 0 && c.status === "active");
-  const trueRoas =
-    withData.reduce((s, c) => s + c.spend_7d * c.roas_7d * c.contribution_margin, 0) /
-    Math.max(1, withData.reduce((s, c) => s + c.spend_7d, 0));
+  // Margin-adjusted "true ROAS" via the shared helper so this header matches the
+  // Overview "Real ad return" exactly — it was a divergent inline formula here
+  // (different filter: active-only, kept the margin===0 no-data sentinel), which
+  // is why the same metric read differently per page (P1-3).
+  const trueRoasLabel = trueRoas(app.campaigns);
 
   const loading = app.loading && app.campaigns.length === 0;
 
@@ -481,9 +483,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
         sub={
           loading
             ? "Loading campaigns from your ad accounts…"
-            : `${money(totalSpend)} spent across 7 days · true ROAS ${trueRoas.toFixed(
-                1,
-              )}× (margin-adjusted)`
+            : `${money(totalSpend)} spent across 7 days · true ROAS ${trueRoasLabel} (margin-adjusted)`
         }
       >
         <Segmented
