@@ -26,7 +26,6 @@ import type {
   CampaignVM,
   DailyRow,
   GuardrailVM,
-  Grade,
   IntegrationVM,
   OverviewVM,
   Scorecard,
@@ -34,6 +33,7 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { gradeFromRow } from "~/lib/campaign-grade";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
@@ -194,27 +194,12 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   };
 }
 
-const VALID_GRADES: readonly Grade[] = ["winning", "okay", "poor"];
-
-function coerceGrade(
-  raw: string | undefined,
-  roas: number | undefined,
-  breakeven: number | undefined,
-): Grade {
-  if (raw && (VALID_GRADES as readonly string[]).includes(raw)) return raw as Grade;
-  // Derive from economics only when we have a breakeven to compare against.
-  if (typeof roas === "number" && typeof breakeven === "number" && breakeven > 0) {
-    if (roas >= breakeven * 1.2) return "winning";
-    if (roas >= breakeven) return "okay";
-    return "poor";
-  }
-  return "okay";
-}
-
 export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): CampaignVM {
   const g = grades.find((row) => row.campaign_id === c.id);
   const breakeven_roas = g?.break_even_roas ?? 0;
-  const grade = coerceGrade(g?.grade, g?.roas ?? c.roas_7d, g?.break_even_roas);
+  // Single grade source (P1-6): "nodata" when the grade row has spend but no
+  // attributed revenue, so an attribution gap never renders as "poor".
+  const grade = gradeFromRow(g ?? { roas: c.roas_7d, break_even_roas: breakeven_roas }, c.roas_7d);
 
   return {
     id: c.id,

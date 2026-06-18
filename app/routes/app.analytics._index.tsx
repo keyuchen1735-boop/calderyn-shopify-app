@@ -21,6 +21,7 @@ import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { MarginChart } from "~/components/MarginChart";
 import { toRoasSeries, formatRoas, gradeTone } from "~/lib/analytics-view";
+import { gradeFromRow, gradeLabel } from "~/lib/campaign-grade";
 import { fmtMoneyDec } from "~/lib/format";
 import type { CampaignGradeRow, DailyRoasRow, TopAdRow } from "~/lib/types";
 
@@ -77,8 +78,8 @@ export default function Analytics() {
     <Text key={`n-${g.campaign_id}`} as="span" fontWeight="semibold">
       {g.name || g.campaign_id}
     </Text>,
-    <Badge key={`g-${g.campaign_id}`} tone={gradeTone(g.grade)}>
-      {g.grade}
+    <Badge key={`g-${g.campaign_id}`} tone={gradeTone(gradeFromRow(g))}>
+      {gradeLabel(gradeFromRow(g))}
     </Badge>,
     formatRoas(g.roas),
     formatRoas(g.break_even_roas),

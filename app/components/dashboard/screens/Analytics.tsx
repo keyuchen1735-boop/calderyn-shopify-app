@@ -15,6 +15,7 @@ import {
   Placeholder,
 } from "../ui";
 import { fetchAnalytics, DashboardApiError } from "~/lib/dashboard/client";
+import { gradeFromRow } from "~/lib/campaign-grade";
 import type { DashboardCtx } from "../context";
 import type { DailyRow, TopAd } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
@@ -219,7 +220,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="cd-row-title truncate">{g.name}</span>
-                            <GradePill grade={g.grade} />
+                            <GradePill grade={gradeFromRow(g)} />
                           </div>
                           <div className="cd-grade-track">
                             <div

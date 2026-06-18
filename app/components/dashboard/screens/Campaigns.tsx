@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { trueRoas } from "~/lib/roas";
+import { gradeFromRow } from "~/lib/campaign-grade";
 import {
   Card,
   SectionTitle,
@@ -447,10 +448,9 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   const joined: CampaignVM[] = app.campaigns.map((c) => {
     const g = gradeFor(c.id);
     if (!g) return c;
-    const grade = (["winning", "okay", "poor"] as const).includes(g.grade as never)
-      ? (g.grade as CampaignVM["grade"])
-      : c.grade;
-    return { ...c, grade, breakeven_roas: g.break_even_roas };
+    // Resolve via the shared grader so a no-revenue grade row shows "no data"
+    // not "poor" (P1-6) — same logic adaptCampaign uses for the initial load.
+    return { ...c, grade: gradeFromRow(g, c.roas_7d), breakeven_roas: g.break_even_roas };
   });
 
   // Row-click / deep-link: nav.param carries the selected campaign id.

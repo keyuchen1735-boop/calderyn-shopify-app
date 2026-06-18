@@ -14,7 +14,7 @@ export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Platform = "Meta" | "Google" | "TikTok";
-export type Grade = "winning" | "okay" | "poor";
+export type Grade = "winning" | "okay" | "poor" | "nodata";
 /** Platforms enriching a SKU beyond the Shopify sync (mirrors lib/types SkuSource). */
 export type SkuSource = "quickbooks" | "vendor_invoice" | "google" | "meta" | "tiktok";
 

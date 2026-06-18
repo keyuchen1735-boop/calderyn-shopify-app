@@ -165,6 +165,7 @@ export function GradePill({ grade }: { grade: Grade | string }) {
     winning: ["Winning", "success"],
     okay: ["Okay", "warn"],
     poor: ["Poor", "critical"],
+    nodata: ["No data", "neutral"],
   };
   const [label, tone] = map[grade] || ["—", "neutral"];
   return <Pill tone={tone}>{label}</Pill>;
