@@ -113,6 +113,9 @@
     padding: calc(34px * var(--density)) calc(36px * var(--density)) 72px;
     display: flex; flex-direction: column; gap: calc(24px * var(--density));
   }
+  /* Inventory's wide table needs more than the default prose-width cap; give it
+     enough room to lay out all columns without scrolling on desktop widths. */
+  .cd-screen--wide { max-width: 1280px; }
   .cd-screen-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: calc(-2px * var(--density)); }
 
   /* ============ surfaces ============ */
@@ -267,6 +270,17 @@
     font-size: calc(11.5px * var(--type-scale)); font-weight: 550;
     color: var(--text-3); letter-spacing: -0.002em;
   }
+  /* Wide data tables (Inventory): the 12 columns need ~1200px, but the screen
+     caps content below that, so flex-shrink was crushing every column together
+     (headers wrapped, numbers ran into each other). Pin the head + rows to their
+     natural width and scroll any overflow horizontally, so each column keeps its
+     full width instead of being squeezed. Scoped to .cd-table-scroll so the
+     shared .cd-rows / .cd-table-head styles other screens use are untouched. */
+  .cd-table-scroll { overflow-x: auto; }
+  .cd-table-scroll > .cd-table-head,
+  .cd-table-scroll > .cd-rows { min-width: 1200px; }
+  .cd-table-scroll .cd-table-head > *:not(:first-child),
+  .cd-table-scroll .cd-row > *:not(:first-child) { flex-shrink: 0; }
 
   /* ============ focus card ============ */
   .cd-focus-title { font-size: calc(21px * var(--type-scale)); font-weight: 650; letter-spacing: -0.022em; margin: 0; font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif; }

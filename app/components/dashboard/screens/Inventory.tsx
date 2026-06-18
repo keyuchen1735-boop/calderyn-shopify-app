@@ -223,7 +223,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const openAlertsFor = (sku: SkuVM): AlertVM[] => alertsBySku.get(sku.sku) ?? [];
 
   return (
-    <div className="cd-screen">
+    <div className="cd-screen cd-screen--wide">
       <ScreenHeaderInline
         loading={loading}
         total={skus.length}
@@ -271,7 +271,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         ) : skus.length === 0 ? (
           <Placeholder icon="box" title="No SKUs" sub="Connect a store and your tracked SKUs will appear here." />
         ) : (
-          <>
+          <div className="cd-table-scroll">
             <div className="cd-table-head">
               <span style={{ flex: "1 1 0", minWidth: 140 }}>SKU</span>
               <span style={{ width: 64, textAlign: "right" }}>On hand</span>
@@ -482,7 +482,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </Card>
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
