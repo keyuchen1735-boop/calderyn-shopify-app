@@ -711,3 +711,57 @@
 .cd-row-between { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .cd-benchmark-row { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
 .cd-kpi-value { font-size: calc(14px * var(--type-scale)); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* Peer Benchmarks — collapsible disclosure */
+.cd-benchmarks { overflow: hidden; }
+.cd-bench-heading { margin: 0; }
+.cd-bench-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: calc(20px * var(--density)) calc(22px * var(--density));
+  background: none; border: 0; cursor: pointer; text-align: left;
+  color: inherit; font: inherit; transition: background 0.15s ease;
+}
+.cd-bench-head:hover { background: var(--gray-bg); }
+.cd-bench-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cd-bench-head .cd-badge { margin-left: auto; }
+.cd-bench-chevron {
+  display: inline-flex; color: var(--text-3);
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cd-bench-chevron[data-open="1"] { transform: rotate(90deg); }
+
+/* grid-rows trick animates 0fr -> 1fr without measuring height */
+.cd-collapse {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cd-collapse[data-open="1"] { grid-template-rows: 1fr; }
+.cd-collapse-inner { min-height: 0; overflow: hidden; padding: 0 calc(22px * var(--density)); }
+.cd-collapse[data-open="1"] .cd-collapse-inner { padding-bottom: calc(20px * var(--density)); }
+
+/* Peer-distribution bar: your value plotted inside the peer spread */
+.cd-bench-track {
+  position: relative; height: 12px; margin: 4px 0 6px;
+  background: var(--gray-bg); border-radius: 99px;
+}
+.cd-bench-band {
+  position: absolute; top: 0; bottom: 0; min-width: 3px;
+  background: var(--accent-bg); border-radius: 99px;
+}
+.cd-bench-median {
+  position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px;
+  border-radius: 99px; background: var(--text-3);
+}
+.cd-bench-you {
+  position: absolute; top: 50%; width: 3px; height: 20px; margin-left: -1.5px;
+  border-radius: 99px; background: var(--accent); transform: translateY(-50%);
+  box-shadow: 0 0 0 3px var(--card);
+}
+.cd-bench-you-dot {
+  position: absolute; top: -7px; left: 50%; width: 9px; height: 9px; margin-left: -4.5px;
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--card);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-bench-chevron, .cd-collapse { transition: none; }
+}
