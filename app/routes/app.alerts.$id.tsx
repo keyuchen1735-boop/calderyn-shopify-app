@@ -487,7 +487,7 @@ export default function AlertDetail() {
       titleMetadata={
         <InlineStack gap="200">
           <SeverityBadge severity={alert.severity} />
-          <DetectorTag detectorId={alert.detector_id} />
+          <DetectorTag detectorId={alert.detector_id} evidence={alert.evidence} />
         </InlineStack>
       }
       subtitle={`Detected ${fmtAbsTime(alert.created_at)} · ${fmtRelTime(alert.created_at)}`}

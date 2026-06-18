@@ -96,7 +96,7 @@ export const ACTION_LABELS: Record<string, string> = {
 // snake_case (P2-10). This was a partial local copy of the analyst terms that
 // was missing newer detectors (campaign_scaling_opportunity, free_shipping_
 // leakage), which then rendered raw on the dashboard.
-export { detectorLabel, detectorTerm } from "~/lib/labels";
+export { detectorLabel, detectorTerm, alertDetectorLabel } from "~/lib/labels";
 
 export const GROUP_LABELS: Record<string, string> = {
   attention: "Attention",

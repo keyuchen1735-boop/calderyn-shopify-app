@@ -60,6 +60,27 @@ export function detectorTerm(id: string): string {
   return DETECTOR_TERMS[id as DetectorId] ?? humanizeDetectorId(id);
 }
 
+/**
+ * Detector label for a specific alert, made stock-aware: a "best-seller may sell
+ * out" alert whose stock / days-of-cover are already 0 is a STOCKOUT, so the
+ * label must read "sold out", never "may sell out" — copy must not contradict
+ * the evidence on the same screen (P2-11). Evidence values may be strings.
+ */
+export function alertDetectorLabel(
+  id: string,
+  evidence: Record<string, unknown> | null | undefined,
+): string {
+  if (
+    id === "scaling_sku_fulfillment_risk" &&
+    (Number(evidence?.stock) === 0 ||
+      Number(evidence?.on_hand) === 0 ||
+      Number(evidence?.days_of_cover) === 0)
+  ) {
+    return "Best-seller sold out";
+  }
+  return detectorLabel(id);
+}
+
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
   resume_campaign: "Resume campaign",

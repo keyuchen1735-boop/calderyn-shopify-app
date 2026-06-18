@@ -16,7 +16,7 @@ import {
 } from "../ui";
 import {
   money,
-  detectorLabel,
+  alertDetectorLabel,
   ACTION_LABELS,
   timeAgo,
   evidenceLabel,
@@ -64,7 +64,7 @@ function AlertRow({ a, onClick }: { a: AlertVM; onClick: () => void }) {
           )}
         </div>
         <div className="cd-caption truncate">
-          {detectorLabel(a.detector_id) +
+          {alertDetectorLabel(a.detector_id, a.evidence) +
             " · " +
             (a.sku || a.campaign || "—") +
             " · " +
@@ -187,7 +187,7 @@ function AlertDetail({
           <div className="flex items-center gap-2 mb-2">
             <SevBadge severity={alert.severity} />
             <span className="cd-caption">
-              {detectorLabel(alert.detector_id) +
+              {alertDetectorLabel(alert.detector_id, alert.evidence) +
                 " · detected " +
                 timeAgo(alert.created_at)}
             </span>

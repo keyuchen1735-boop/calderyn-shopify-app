@@ -187,7 +187,7 @@ export default function AlertList() {
                             {a.title}
                           </Text>
                           <InlineStack gap="150" blockAlign="center">
-                            <DetectorTag detectorId={a.detector_id} />
+                            <DetectorTag detectorId={a.detector_id} evidence={a.evidence} />
                             <Text as="span" variant="bodyXs" tone="subdued">
                               {fmtRelTime(a.created_at)}
                             </Text>
