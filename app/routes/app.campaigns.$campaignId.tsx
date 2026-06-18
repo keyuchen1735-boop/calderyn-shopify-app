@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Badge,
   Banner,
   BlockStack,
+  Button,
   Card,
   InlineGrid,
   InlineStack,
@@ -38,6 +39,9 @@ import {
   buildCampaignPerformance,
   type CampaignPerformance,
 } from "~/lib/ads/campaign-detail.server";
+import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
+import { executeAction } from "~/lib/actions/execute.server";
+import type { Direction, DirectionActionKind } from "~/lib/actions/direction.server";
 import {
   loadCachedAdScorecards,
   type AdScorecard,
@@ -51,6 +55,13 @@ import type { ScoreActionPayload } from "./app.campaigns.$campaignId.score";
 import { fmtMoney } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
+
+const DIRECTION_BADGE: Record<Direction, { label: string; tone: "success" | "attention" | "critical" | undefined }> = {
+  scale_up: { label: "Scale up", tone: "success" },
+  keep: { label: "Keep", tone: undefined },
+  scale_down: { label: "Scale down", tone: "attention" },
+  pause: { label: "Pause", tone: "critical" },
+};
 
 type ScaleOpportunity = {
   reason: string;
@@ -93,6 +104,7 @@ type LoaderPayload = {
   campaignIdParam: string;
   /** Open scale opportunity for this campaign (why-to-scale), or null. */
   scale: ScaleOpportunity | null;
+  direction: CampaignDirection | null;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -195,6 +207,72 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 };
 
+export const action = async ({ request, params }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  if (String(form.get("intent")) !== "apply_direction") {
+    return json({ ok: false, error: "unknown_intent" }, { status: 400 });
+  }
+  const kind = String(form.get("action_kind")) as DirectionActionKind;
+  const allowed: DirectionActionKind[] = ["pause_campaign", "reduce_campaign_budget", "increase_campaign_budget"];
+  if (!allowed.includes(kind)) return json({ ok: false, error: "invalid_action_kind" }, { status: 400 });
+  const dailyRaw = form.get("daily_budget_cents");
+  const dailyBudgetCents = dailyRaw != null && dailyRaw !== "" ? Number(dailyRaw) : undefined;
+  if (
+    (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&
+    (!dailyBudgetCents || !Number.isFinite(dailyBudgetCents) || dailyBudgetCents <= 0)
+  ) {
+    return json({ ok: false, error: "missing_daily_budget_cents" }, { status: 400 });
+  }
+  const campaignId = String(form.get("campaign_id") ?? "");
+  if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
+  const shopId = await resolveShopId(session.shop);
+  try {
+    const res = await executeAction(
+      shopId,
+      {
+        alertId: null,
+        kind,
+        campaignId,
+        idempotencyKey: `direction:${campaignId}:${kind}:${new Date().toISOString().slice(0, 10)}`,
+        dailyBudgetCents,
+        actor: "merchant:admin-detail",
+      },
+      getSupabase(),
+    );
+    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+  } catch (err) {
+    console.error(`[campaign-direction] action failed for ${campaignId}`, err);
+    return json({ ok: false, error: "not_actionable" }, { status: 409 });
+  }
+};
+
+/** Best-effort recommended direction for the detail view. calderynClient + alerts +
+ *  guardrails feed the shared recommender; any failure yields null (page still renders). */
+async function resolveDirectionForDetail(
+  shop: string,
+  detail: CampaignDetail,
+): Promise<CampaignDirection | null> {
+  const perf = detail.performance;
+  const client = calderynClient(shop);
+  const [shopId, openAlerts, guardrails] = await Promise.all([
+    resolveShopId(shop),
+    client.alerts.list({ status: "open" }).catch(() => []),
+    client.guardrails.get().catch(() => null),
+  ]);
+  return resolveCampaignDirection({
+    shopId,
+    campaignId: detail.id,
+    roas: perf.reportedRoas,
+    breakEvenRoas: perf.breakEvenRoas,
+    status: detail.status,
+    currentBudgetCents: perf.dailyBudgetCents,
+    alerts: openAlerts.map((a) => ({ detector_id: a.detector_id, status: a.status, campaign_id: a.campaign_id })),
+    guardrails: guardrails ?? {},
+    sb: getSupabase(),
+  });
+}
+
 /** Resolve a detail's creatives + live ad metrics (independent Meta fetches, run
  * in parallel) plus cached scorecards, into the LoaderPayload. Shared by the
  * ingested and live-identity success branches so the post-resolution pipeline
@@ -204,10 +282,11 @@ async function respondForDetail(
   detail: CampaignDetail,
   campaignIdParam: string,
 ) {
-  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale] = await Promise.all([
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction] = await Promise.all([
     loadCreatives(shop, detail),
     loadAdMetrics(shop, detail),
     loadScaleOpportunity(shop, detail),
+    resolveDirectionForDetail(shop, detail).catch(() => null),
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
@@ -222,6 +301,7 @@ async function respondForDetail(
     assumedSpendCents,
     campaignIdParam,
     scale,
+    direction,
   });
 }
 
@@ -242,6 +322,7 @@ function emptyPayload(
     assumedSpendCents: DEFAULT_SPEND_CENTS,
     campaignIdParam,
     scale: null,
+    direction: null,
   };
 }
 
@@ -453,7 +534,9 @@ export default function CampaignDetailPage() {
     assumedSpendCents,
     campaignIdParam,
     scale,
+    direction,
   } = useLoaderData<typeof loader>();
+  const directionFetcher = useFetcher<typeof action>();
 
   if (!detail) {
     return (
@@ -483,6 +566,43 @@ export default function CampaignDetailPage() {
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
     >
       <BlockStack gap="400">
+        {direction && (() => {
+          const badge = DIRECTION_BADGE[direction.direction];
+          const directionActable =
+            direction.actionKind != null &&
+            (direction.actionKind === "pause_campaign" || direction.suggestedBudgetCents != null);
+          return (
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Recommended direction</Text>
+                  <Badge tone={badge.tone}>{badge.label}</Badge>
+                </InlineStack>
+                <Text as="p">{direction.reason}</Text>
+                {directionActable && (
+                  <directionFetcher.Form method="post">
+                    <input type="hidden" name="intent" value="apply_direction" />
+                    <input type="hidden" name="campaign_id" value={detail.id} />
+                    <input type="hidden" name="action_kind" value={direction.actionKind!} />
+                    {direction.suggestedBudgetCents != null && (
+                      <input type="hidden" name="daily_budget_cents" value={String(direction.suggestedBudgetCents)} />
+                    )}
+                    <Button variant="primary" submit loading={directionFetcher.state !== "idle"}>
+                      {badge.label}
+                    </Button>
+                  </directionFetcher.Form>
+                )}
+                {directionFetcher.data && (
+                  <Banner tone={directionFetcher.data.ok ? "success" : "critical"}>
+                    {directionFetcher.data.ok
+                      ? "Applied — the change is live and reversible from the Campaigns list."
+                      : "Couldn't apply that change. Please try again."}
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          );
+        })()}
         {scale && (
           <Card>
             <BlockStack gap="300">
@@ -512,7 +632,7 @@ export default function CampaignDetailPage() {
               Real performance
             </Text>
             {perf.available ? (
-              <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+              <InlineGrid columns={{ xs: 2, sm: 5 }} gap="400">
                 <Stat label="Daily budget" value={moneyOrDash(detail.status === "paused" ? null : perf.dailyBudgetCents)} />
                 <Stat label="7-day spend" value={moneyOrDash(perf.spend7dCents)} />
                 <Stat
@@ -521,9 +641,14 @@ export default function CampaignDetailPage() {
                   help="Reported ROAS — revenue ÷ ad spend, before product costs"
                 />
                 <Stat
-                  label="Real return"
+                  label="Break-even ROAS"
+                  value={perf.breakEvenRoas != null ? `${perf.breakEvenRoas.toFixed(1)}×` : "—"}
+                  help="The ROAS this campaign must clear to break even (1 ÷ margin)"
+                />
+                <Stat
+                  label="Profit ROAS (POAS)"
                   value={perf.realRoas != null ? `${perf.realRoas.toFixed(1)}×` : "—"}
-                  help="Margin-adjusted ROAS — return after product costs are taken out"
+                  help="Profit on ad spend — margin-adjusted ROAS (return after product costs)"
                   critical={perf.realRoas != null && perf.realRoas < 1}
                 />
               </InlineGrid>

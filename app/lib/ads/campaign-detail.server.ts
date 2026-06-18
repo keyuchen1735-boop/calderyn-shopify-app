@@ -14,6 +14,8 @@ export interface CampaignPerformance {
   reportedRoas: number | null;
   /** Margin-adjusted ROAS — reported ROAS after product costs (roas × margin). */
   realRoas: number | null;
+  /** ROAS a campaign must clear to break even (1 / margin); null without a positive margin. */
+  breakEvenRoas: number | null;
   contributionMargin: number | null;
   dailyBudgetCents: number | null;
 }
@@ -30,6 +32,7 @@ export function buildCampaignPerformance(campaign: Campaign | null): CampaignPer
       spend7dCents: campaign && campaign.spend_7d > 0 ? campaign.spend_7d : null,
       reportedRoas: null,
       realRoas: null,
+      breakEvenRoas: null,
       contributionMargin: null,
       dailyBudgetCents: campaign ? campaign.daily_budget_cents : null,
     };
@@ -39,6 +42,7 @@ export function buildCampaignPerformance(campaign: Campaign | null): CampaignPer
     spend7dCents: campaign.spend_7d,
     reportedRoas: campaign.roas_7d,
     realRoas: hasMargin ? campaign.roas_7d * campaign.contribution_margin : null,
+    breakEvenRoas: hasMargin ? 1 / campaign.contribution_margin : null,
     contributionMargin: hasMargin ? campaign.contribution_margin : null,
     dailyBudgetCents: campaign.daily_budget_cents,
   };

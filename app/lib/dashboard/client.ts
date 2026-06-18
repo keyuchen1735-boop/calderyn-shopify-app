@@ -452,6 +452,22 @@ export async function fetchCampaign(
   return adaptCampaign(data.campaign, grades);
 }
 
+// Mirror of CampaignDirection in ~/lib/actions/direction-reason.server.ts — a
+// browser-safe copy (.server modules can't be imported into client bundles).
+// Keep these fields in sync by hand when the server type changes.
+export interface CampaignDirectionDTO {
+  direction: "scale_up" | "scale_down" | "keep" | "pause";
+  actionKind: "pause_campaign" | "reduce_campaign_budget" | "increase_campaign_budget" | null;
+  suggestedBudgetCents: number | null;
+  reason: string;
+  reasonSource: "claude" | "template";
+  dataSufficient: boolean;
+}
+
+export async function fetchCampaignDirection(id: string): Promise<CampaignDirectionDTO> {
+  return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
+}
+
 export async function fetchSkus(): Promise<SkuVM[]> {
   const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
   return sortSkusByOnHandDesc(data.skus.map(adaptSku));
