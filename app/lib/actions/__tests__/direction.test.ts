@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { recommendDirection, type DirectionInput } from "../direction.server";
+import { recommendDirection, buildDirectionInput, suggestBudgetCents, type DirectionInput } from "../direction.server";
+import type { Alert } from "~/lib/types";
 
 const base: DirectionInput = {
   roas: 2,
@@ -67,5 +68,65 @@ describe("recommendDirection", () => {
     expect(recommendDirection({ ...base, roas: 0.95, breakEvenRoas: 1 }).direction).toBe("keep");
     expect(recommendDirection({ ...base, roas: 0.7, breakEvenRoas: 1 }).direction).toBe("scale_down");
     expect(recommendDirection({ ...base, roas: 0.69, breakEvenRoas: 1 }).direction).toBe("pause");
+  });
+});
+
+const alert = (over: Partial<Alert>): Alert => ({
+  id: "a1", detector_id: "campaign_below_breakeven", severity: "high", status: "open",
+  dollar_impact: 100, claude_rank: 1, created_at: "", title: "", narrative: "",
+  campaign: null, campaign_id: "cmp-1", campaign_external_id: null, sku: null, evidence: {},
+  ...over,
+});
+
+describe("buildDirectionInput", () => {
+  it("flags pauseAlertActive for an open below-breakeven alert on this campaign", () => {
+    const inp = buildDirectionInput({
+      campaignId: "cmp-1", roas: 2, breakEvenRoas: 1, status: "active",
+      alerts: [alert({ detector_id: "campaign_below_breakeven", status: "open", campaign_id: "cmp-1" })],
+    });
+    expect(inp.pauseAlertActive).toBe(true);
+    expect(inp.hasScalingHeadroom).toBe(false);
+  });
+
+  it("flags hasScalingHeadroom for an open scaling-opportunity alert on this campaign", () => {
+    const inp = buildDirectionInput({
+      campaignId: "cmp-1", roas: 2, breakEvenRoas: 1, status: "active",
+      alerts: [alert({ detector_id: "campaign_scaling_opportunity", status: "open", campaign_id: "cmp-1" })],
+    });
+    expect(inp.hasScalingHeadroom).toBe(true);
+    expect(inp.pauseAlertActive).toBe(false);
+  });
+
+  it("ignores alerts for other campaigns and non-open alerts", () => {
+    const inp = buildDirectionInput({
+      campaignId: "cmp-1", roas: 2, breakEvenRoas: 1, status: "active",
+      alerts: [
+        alert({ detector_id: "campaign_below_breakeven", status: "open", campaign_id: "OTHER" }),
+        alert({ detector_id: "campaign_scaling_opportunity", status: "acknowledged", campaign_id: "cmp-1" }),
+      ],
+    });
+    expect(inp.pauseAlertActive).toBe(false);
+    expect(inp.hasScalingHeadroom).toBe(false);
+  });
+});
+
+describe("suggestBudgetCents", () => {
+  const gr = { autopilot_max_budget_increase_pct: 20, autopilot_max_budget_cut_pct: 50, autopilot_max_daily_budget_cents: null };
+  it("scales up by the increase pct", () => {
+    expect(suggestBudgetCents("scale_up", 10000, gr)).toBe(12000);
+  });
+  it("caps a scale-up at the daily ceiling when set", () => {
+    expect(suggestBudgetCents("scale_up", 10000, { ...gr, autopilot_max_daily_budget_cents: 11000 })).toBe(11000);
+  });
+  it("returns null for scale_up that cannot exceed the current budget", () => {
+    expect(suggestBudgetCents("scale_up", 10000, { ...gr, autopilot_max_daily_budget_cents: 10000 })).toBeNull();
+  });
+  it("scales down by the cut pct", () => {
+    expect(suggestBudgetCents("scale_down", 10000, gr)).toBe(5000);
+  });
+  it("returns null when there is no current budget, or for keep/pause", () => {
+    expect(suggestBudgetCents("scale_up", null, gr)).toBeNull();
+    expect(suggestBudgetCents("keep", 10000, gr)).toBeNull();
+    expect(suggestBudgetCents("pause", 10000, gr)).toBeNull();
   });
 });

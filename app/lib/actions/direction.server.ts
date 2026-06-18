@@ -31,6 +31,56 @@ export interface DirectionResult {
 
 const KEEP: DirectionResult = { direction: "keep", actionKind: null, dataSufficient: true };
 
+import type { Alert } from "~/lib/types";
+
+const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
+const SCALE_DETECTOR = "campaign_scaling_opportunity";
+const DEFAULT_MAX_INCREASE_PCT = 20;
+const DEFAULT_MAX_CUT_PCT = 50;
+
+export function buildDirectionInput(args: {
+  campaignId: string;
+  roas: number | null;
+  breakEvenRoas: number | null;
+  status: "active" | "paused";
+  alerts: Pick<Alert, "detector_id" | "status" | "campaign_id">[];
+}): DirectionInput {
+  const open = args.alerts.filter((a) => a.status === "open" && a.campaign_id === args.campaignId);
+  return {
+    roas: args.roas,
+    breakEvenRoas: args.breakEvenRoas,
+    status: args.status,
+    hasScalingHeadroom: open.some((a) => a.detector_id === SCALE_DETECTOR),
+    pauseAlertActive: open.some((a) => PAUSE_DETECTORS.has(a.detector_id)),
+  };
+}
+
+export function suggestBudgetCents(
+  direction: Direction,
+  currentBudgetCents: number | null,
+  guardrails: {
+    autopilot_max_budget_increase_pct?: number | null;
+    autopilot_max_budget_cut_pct?: number | null;
+    autopilot_max_daily_budget_cents?: number | null;
+  },
+): number | null {
+  if (!currentBudgetCents || currentBudgetCents <= 0) return null;
+  if (direction === "scale_up") {
+    const pct = Number(guardrails.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
+    let target = Math.round(currentBudgetCents * (1 + pct / 100));
+    if (guardrails.autopilot_max_daily_budget_cents != null) {
+      target = Math.min(target, Number(guardrails.autopilot_max_daily_budget_cents));
+    }
+    return target > currentBudgetCents ? target : null;
+  }
+  if (direction === "scale_down") {
+    const pct = Number(guardrails.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
+    const target = Math.round(currentBudgetCents * (1 - pct / 100));
+    return target > 0 ? target : null;
+  }
+  return null;
+}
+
 export function recommendDirection(input: DirectionInput): DirectionResult {
   const { roas, breakEvenRoas } = input;
   // Fail visibly (rule 12): no fabricated direction without real numbers.
