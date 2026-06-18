@@ -335,7 +335,7 @@ export default function Dashboard() {
                   Recent actions
                 </Text>
                 <Button variant="plain" onClick={() => navigate("/app/audit")}>
-                  Audit log
+                  Action history
                 </Button>
               </InlineStack>
               <Card padding="0">

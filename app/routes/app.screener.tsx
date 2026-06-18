@@ -709,7 +709,7 @@ export default function Screener() {
   return (
     <Page
       fullWidth
-      title="Ad Pre-Screen"
+      title="Creative Predictor"
       subtitle="Score an ad before you spend — calibrated to your account history and SKU economics."
       primaryAction={
         phase === "result"

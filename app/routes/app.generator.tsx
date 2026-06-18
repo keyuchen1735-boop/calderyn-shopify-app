@@ -226,7 +226,7 @@ export default function Generator() {
       fullWidth
       title="Ad Generator"
       subtitle="Turns the pre-screen's critique into a remake brief, rendered by Higgsfield and re-scored before you spend."
-      backAction={{ content: "Ad Pre-Screen", onAction: () => navigate("/app/screener") }}
+      backAction={{ content: "Creative Predictor", onAction: () => navigate("/app/screener") }}
     >
       <BlockStack gap="500">
         {!latest || !card ? (
@@ -241,7 +241,7 @@ export default function Generator() {
               </Text>
               <InlineStack>
                 <Button variant="primary" onClick={() => navigate("/app/screener")}>
-                  Go to Ad Pre-Screen
+                  Go to Creative Predictor
                 </Button>
               </InlineStack>
             </BlockStack>

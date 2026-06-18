@@ -712,7 +712,7 @@ export default function Settings() {
                   </Text>
                   <Banner tone="info" title="Email and Slack notifications are coming soon">
                     Until then, new alerts appear on the Home screen and in the Alerts queue,
-                    and every action Calderyn takes is recorded in the Audit log.
+                    and every action Calderyn takes is recorded in the Action history.
                   </Banner>
                 </BlockStack>
               </Card>

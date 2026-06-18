@@ -39,6 +39,27 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   wrong_location_concentration: "Wrong location concentration",
 };
 
+// Title-case a raw detector id (e.g. "campaign_scaling_opportunity" → "Campaign
+// Scaling Opportunity") so an unmapped id never reaches the UI as snake_case.
+function humanizeDetectorId(id: string): string {
+  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Canonical merchant-facing detector name (plain English). Both surfaces must
+ * use this so the dashboard stops showing the analyst term where the embedded
+ * admin shows the plain label (P2-10). Falls back to a humanized id, never raw
+ * snake_case.
+ */
+export function detectorLabel(id: string): string {
+  return DETECTOR_LABELS[id as DetectorId] ?? humanizeDetectorId(id);
+}
+
+/** The analyst term for a detector (the hover/subtitle jargon). */
+export function detectorTerm(id: string): string {
+  return DETECTOR_TERMS[id as DetectorId] ?? humanizeDetectorId(id);
+}
+
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
   resume_campaign: "Resume campaign",
