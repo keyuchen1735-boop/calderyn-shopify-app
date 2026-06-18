@@ -107,7 +107,8 @@ export interface ActionEmailOpts {
   igUrls: string[];
   liCaption: string;
   igCaption: string;
-  approveUrl: string;
+  approveLinkedinUrl: string;
+  approveInstagramUrl: string;
   rejectUrl: string;
 }
 
@@ -123,7 +124,10 @@ async function markDigestFailed(id: string): Promise<void> {
 }
 
 export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text: string; html: string } {
-  const { range, shippedCount, waitlistDelta, liUrls, igUrls, liCaption, igCaption, approveUrl, rejectUrl } = opts;
+  const {
+    range, shippedCount, waitlistDelta, liUrls, igUrls, liCaption, igCaption,
+    approveLinkedinUrl, approveInstagramUrl, rejectUrl,
+  } = opts;
 
   const subject = `Calderyn social — approve or reject: week of ${range}`;
 
@@ -139,18 +143,29 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
   const captionBlock = (caption: string) =>
     `<pre style="white-space:pre-wrap;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;background:#f4f2ec;border:1px solid #e0ddd2;border-radius:8px;padding:14px;margin:8px 0 0;color:#17363a">${escapeHtml(caption)}</pre>`;
 
+  const btn = (href: string, label: string, bg: string) =>
+    `<a href="${escapeHtml(href)}" style="display:inline-block;padding:14px 28px;margin:0 12px 12px 0;background:${bg};color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">${label}</a>`;
+
   const html = `<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#17363a;max-width:680px">
   <h2 style="margin:0 0 4px">Calderyn — weekly social drop</h2>
   <div style="color:#5b6b6e;margin-bottom:18px">Week of ${escapeHtml(range)} · ${shippedCount} shipped · +${waitlistDelta} waitlist</div>
+
   <h3 style="margin:22px 0 2px;color:#1e7079">LinkedIn carousel</h3>
   ${imgRow(liUrls)}
   ${captionBlock(liCaption)}
-  <h3 style="margin:22px 0 2px;color:#1e7079">Instagram carousel</h3>
+  <div style="margin-top:16px">
+    ${btn(approveLinkedinUrl, "Approve &amp; post to LinkedIn", "#1a8a5a")}
+  </div>
+
+  <h3 style="margin:28px 0 2px;color:#1e7079">Instagram carousel</h3>
   ${imgRow(igUrls)}
   ${captionBlock(igCaption)}
-  <div style="margin-top:32px">
-    <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;margin:0 12px 12px 0;background:#1a8a5a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Approve &amp; post</a>
-    <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;padding:14px 28px;margin:0 0 12px 0;background:#8a8a8a;color:#fff;font-weight:700;font-size:15px;border-radius:8px;text-decoration:none">Reject &amp; regenerate</a>
+  <div style="margin-top:16px">
+    ${btn(approveInstagramUrl, "Approve Instagram (get assets)", "#1a8a5a")}
+  </div>
+
+  <div style="margin-top:28px">
+    ${btn(rejectUrl, "Reject &amp; regenerate both", "#8a8a8a")}
   </div>
   <p style="color:#8a8a8a;font-size:13px;margin-top:22px">Auto-sent by the weekly social-digest cron. Links expire in 7 days.</p>
 </div>`;
@@ -165,10 +180,13 @@ export function buildActionEmail(opts: ActionEmailOpts): { subject: string; text
     `--- Instagram caption ---`,
     igCaption,
     ``,
-    `APPROVE & POST:`,
-    approveUrl,
+    `APPROVE & POST TO LINKEDIN:`,
+    approveLinkedinUrl,
     ``,
-    `REJECT & REGENERATE:`,
+    `APPROVE INSTAGRAM (GET ASSETS):`,
+    approveInstagramUrl,
+    ``,
+    `REJECT & REGENERATE BOTH:`,
     rejectUrl,
   ].join("\n");
 
@@ -206,10 +224,12 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     return { sent: false, error: `signedUrls failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const approveToken = signActionToken(id, "approve", version);
+  const approveLinkedinToken = signActionToken(id, "approve-linkedin", version);
+  const approveInstagramToken = signActionToken(id, "approve-instagram", version);
   const rejectToken = signActionToken(id, "reject", version);
   const baseUrl = process.env.SOCIAL_DIGEST_BASE_URL ?? "https://app.calderyncompany.com";
-  const approveUrl = `${baseUrl}/social/review/${id}?t=${approveToken}`;
+  const approveLinkedinUrl = `${baseUrl}/social/review/${id}?t=${approveLinkedinToken}`;
+  const approveInstagramUrl = `${baseUrl}/social/review/${id}?t=${approveInstagramToken}`;
   const rejectUrl = `${baseUrl}/social/review/${id}?t=${rejectToken}`;
 
   const apiKey = process.env.RESEND_API_KEY;
@@ -227,7 +247,8 @@ async function sendDecisionEmail(args: SendDecisionEmailArgs): Promise<DeliveryR
     igUrls,
     liCaption,
     igCaption,
-    approveUrl,
+    approveLinkedinUrl,
+    approveInstagramUrl,
     rejectUrl,
   });
   return sendEmail({ apiKey, from, to, subject, text, html });
@@ -537,6 +558,8 @@ export async function regenerateDigest(
         consumed_at: null,
         status: "pending",
         acted_at: new Date().toISOString(),
+        li_posted_at: null,
+        ig_approved_at: null,
       })
       .eq("id", id);
     if (updateError) {

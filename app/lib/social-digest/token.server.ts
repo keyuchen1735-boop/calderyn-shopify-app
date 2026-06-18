@@ -13,7 +13,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type SocialAction = "approve" | "reject";
+export type SocialAction = "approve-linkedin" | "approve-instagram" | "reject";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -40,7 +40,7 @@ function sign(payload: string, key: string): string {
 }
 
 function isAction(v: string): v is SocialAction {
-  return v === "approve" || v === "reject";
+  return v === "approve-linkedin" || v === "approve-instagram" || v === "reject";
 }
 
 /** Build a signed token authorizing `action` on digest `id` at `version`. */
