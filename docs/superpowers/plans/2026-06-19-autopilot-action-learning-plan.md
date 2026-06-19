@@ -185,7 +185,16 @@ git add app/lib/actions/autopilot-targeting.server.ts app/lib/actions/__tests__/
 git commit -m "feat(autopilot): resolve shop-scoped ad_tax_overload to a campaign target (D6)"
 ```
 
-## Task 2: Resolve a campaign for SKU-scoped `negative_unit_economics`
+## Task 2: ~~Resolve a campaign for SKU-scoped `negative_unit_economics`~~ — CUT from v1
+
+> **CUT (2026-06-19, verified against prod `ajgrmnvzxfxxlwrxcgnu`).** `attribution_fact`
+> has no `sku_id` and no `roas` — it links `order_id → campaign_id → attributed_revenue_cents`.
+> The steps below assumed columns that do not exist. A real SKU→campaign map needs an
+> `order_id → order-line-item SKU → campaign` join + per-campaign ROAS from `ad_spend_fact`
+> — a follow-up feature, not a deterministic v1 one-liner. Skip this task. Task 1's committed
+> code is already the without-SKU version. `negative_unit_economics` stays in `PAUSE_DETECTORS`
+> (harmless — SKU-scoped alerts still never enter the candidate view, as today). The original
+> (invalid) steps are retained below struck-through for the record.
 
 **Files:**
 - Modify: `app/lib/actions/autopilot-targeting.server.ts`
@@ -334,7 +343,7 @@ const { data: scopedRows } = await sb
   .select("id, detector_id, dollar_impact, entity_ref")
   .eq("shop_id", shopId)
   .eq("status", "open")
-  .in("detector_id", ["ad_tax_overload", "negative_unit_economics"]);
+  .in("detector_id", ["ad_tax_overload"]); // SKU-scoped negative_unit_economics cut from v1 (Task 2)
 
 const gradedPool =
   candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id)) || (scopedRows ?? []).length > 0
