@@ -5,6 +5,7 @@
 // All DB interactions are via the Supabase mock.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { decrypt } from "~/lib/crypto.server";
 import {
   saveConnection,
   getValidConnection,
@@ -25,6 +26,12 @@ const { getSupabase, refreshAccessToken } = vi.hoisted(() => ({
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
 vi.mock("~/lib/social/linkedin.server", () => ({ refreshAccessToken }));
+
+// Tokens are encrypted at rest (crypto.server, aes-256-gcm). A fixed 32-byte
+// (64 hex char) key makes encrypt/decrypt deterministic enough to assert on.
+beforeEach(() => {
+  process.env.INTEGRATION_ENCRYPTION_KEY = "0".repeat(64);
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,8 +109,10 @@ describe("saveConnection", () => {
     expect(upsertFn).toHaveBeenCalledTimes(1);
     const [payload, opts] = upsertFn.mock.calls[0] as [Record<string, unknown>, { onConflict: string }];
 
-    // Confirm field values
-    expect(payload.access_token).toBe("tok-abc");
+    // Confirm field values — access_token is encrypted at rest: it must NOT be
+    // the plaintext, and must decrypt back to it.
+    expect(payload.access_token).not.toBe("tok-abc");
+    expect(decrypt(payload.access_token as string)).toBe("tok-abc");
     expect(payload.member_urn).toBe("urn:li:person:XYZ");
     expect(payload.scope).toBe("openid profile w_member_social");
 
@@ -140,7 +149,8 @@ describe("saveConnection", () => {
     });
 
     const [payload] = upsertFn.mock.calls[0] as [Record<string, unknown>];
-    expect(payload.refresh_token).toBe("rt-abc");
+    expect(payload.refresh_token).not.toBe("rt-abc");
+    expect(decrypt(payload.refresh_token as string)).toBe("rt-abc");
     expect(typeof payload.refresh_expires_at).toBe("string");
   });
 

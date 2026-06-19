@@ -70,10 +70,10 @@ describe("dashboard.login loader", () => {
       "https://calderyncompany.com/dashboard/auth/callback",
     );
     const cookie = res.headers.get("Set-Cookie")!;
-    expect(cookie).toContain("dash_oauth=");
+    expect(cookie).toContain("__Host-dash_oauth=");
     expect(cookie).toContain("HttpOnly");
     expect(loc.searchParams.get("state")).toBe(
-      decodeURIComponent(cookie.match(/dash_oauth=([^;]+)/)![1]).split(":")[0],
+      decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]).split(":")[0],
     );
   });
 
@@ -128,7 +128,7 @@ describe("dashboard.login loader", () => {
 
 describe("dashboard.auth.callback loader", () => {
   function callbackRequest(url: string, stateCookie: string) {
-    return new Request(url, { headers: { Cookie: `dash_oauth=${stateCookie}` } });
+    return new Request(url, { headers: { Cookie: `__Host-dash_oauth=${stateCookie}` } });
   }
 
   it("sets the session cookie and redirects to /dashboard on success", async () => {

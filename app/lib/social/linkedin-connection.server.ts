@@ -7,7 +7,23 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
+import { encrypt, decrypt } from "~/lib/crypto.server";
 import { refreshAccessToken, type LinkedInTokens } from "~/lib/social/linkedin.server";
+
+// Integration tokens are encrypted at rest with crypto.server (aes-256-gcm), the
+// same as every other provider. Ciphertext is `ivHex:tagHex:dataHex`. Rows
+// written before this change stored the token in plaintext, so decode
+// tolerantly: anything not shaped like our ciphertext is returned as-is and is
+// re-encrypted on its next saveConnection (e.g. the next token refresh).
+const CIPHERTEXT_RE = /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i;
+function decryptToken(stored: string): string {
+  if (!CIPHERTEXT_RE.test(stored)) return stored;
+  try {
+    return decrypt(stored);
+  } catch {
+    return stored;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,7 +49,7 @@ export async function saveConnection(o: {
   // Build the upsert payload; only include optional fields when present.
   const payload: Record<string, string | undefined> = {
     member_urn: o.memberUrn,
-    access_token: o.tokens.accessToken,
+    access_token: encrypt(o.tokens.accessToken),
     expires_at: expiresAt,
     updated_at: now,
   };
@@ -42,7 +58,7 @@ export async function saveConnection(o: {
     payload.owner_email = o.ownerEmail;
   }
   if (o.tokens.refreshToken !== undefined) {
-    payload.refresh_token = o.tokens.refreshToken;
+    payload.refresh_token = encrypt(o.tokens.refreshToken);
   }
   if (o.tokens.refreshExpiresInSec !== undefined) {
     payload.refresh_expires_at = new Date(
@@ -119,7 +135,7 @@ export async function getValidConnection(): Promise<ActiveConnection | null> {
 
   if (expiresAt > nowMs + bufferMs) {
     // Token is still valid
-    return { accessToken: data.access_token, memberUrn: data.member_urn };
+    return { accessToken: decryptToken(data.access_token), memberUrn: data.member_urn };
   }
 
   // Token is expired (or within the 60s buffer)
@@ -130,7 +146,7 @@ export async function getValidConnection(): Promise<ActiveConnection | null> {
   ) {
     try {
       const newTokens = await refreshAccessToken({
-        refreshToken: data.refresh_token,
+        refreshToken: decryptToken(data.refresh_token),
         clientId: process.env.LINKEDIN_CLIENT_ID,
         clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
       });
@@ -172,7 +188,7 @@ export async function getValidConnectionFor(ownerEmail: string): Promise<ActiveC
   const bufferMs = 60 * 1000; // 60s buffer
 
   if (expiresAt > nowMs + bufferMs) {
-    return { accessToken: data.access_token, memberUrn: data.member_urn };
+    return { accessToken: decryptToken(data.access_token), memberUrn: data.member_urn };
   }
 
   // Token is expired (or within the 60s buffer)
@@ -183,7 +199,7 @@ export async function getValidConnectionFor(ownerEmail: string): Promise<ActiveC
   ) {
     try {
       const newTokens = await refreshAccessToken({
-        refreshToken: data.refresh_token,
+        refreshToken: decryptToken(data.refresh_token),
         clientId: process.env.LINKEDIN_CLIENT_ID,
         clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
       });

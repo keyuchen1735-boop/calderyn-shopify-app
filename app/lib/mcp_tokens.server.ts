@@ -188,7 +188,31 @@ export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAcc
     .eq("refresh_hash", old_refresh_hash)
     .maybeSingle();
   if (error) throw error;
-  if (!data) throw invalidGrantTokens("unknown refresh_token");
+  if (!data) {
+    // Refresh-token reuse detection (OAuth 2.1 / RFC 6819 §5.2.2.3): a token that
+    // matches no current grant may be one we already rotated away. If it matches a
+    // grant's PREVIOUS refresh hash, this is a replay of a consumed token — a theft
+    // signal — so revoke the (still-active) grant and refuse, forcing re-auth.
+    const sb = getSupabase();
+    const { data: reused, error: rerr } = await sb
+      .from("mcp_tokens")
+      .select("id, revoked_at")
+      .eq("prev_refresh_hash", old_refresh_hash)
+      .maybeSingle();
+    if (rerr) throw rerr;
+    if (reused) {
+      const r = reused as { id: string; revoked_at: string | null };
+      if (!r.revoked_at) {
+        await sb
+          .from("mcp_tokens")
+          .update({ revoked_at: new Date().toISOString(), refresh_hash: null })
+          .eq("id", r.id)
+          .is("revoked_at", null);
+      }
+      throw invalidGrantTokens("refresh_token reuse detected; grant revoked");
+    }
+    throw invalidGrantTokens("unknown refresh_token");
+  }
   const row = data as { id: string; shop_id: string; client_id: string | null; scopes: string[]; revoked_at: string | null; expires_at: string | null };
   if (row.client_id !== req.client_id) throw invalidGrantTokens("client_id mismatch");
   if (row.revoked_at) throw invalidGrantTokens("revoked");
@@ -210,6 +234,7 @@ export async function rotateRefreshToken(req: RotateRefreshReq): Promise<MintAcc
     .update({
       token_hash: new_token_hash,
       refresh_hash: new_refresh_hash,
+      prev_refresh_hash: old_refresh_hash,
       token_prefix: new_prefix,
       expires_at: new_expires_at,
     })
