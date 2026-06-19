@@ -25,6 +25,7 @@ export interface ActiveConnection {
 export async function saveConnection(o: {
   tokens: LinkedInTokens;
   memberUrn: string;
+  ownerEmail?: string;
 }): Promise<void> {
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + o.tokens.expiresInSec * 1000).toISOString();
@@ -37,6 +38,9 @@ export async function saveConnection(o: {
     updated_at: now,
   };
 
+  if (o.ownerEmail !== undefined) {
+    payload.owner_email = o.ownerEmail;
+  }
   if (o.tokens.refreshToken !== undefined) {
     payload.refresh_token = o.tokens.refreshToken;
   }
@@ -49,9 +53,13 @@ export async function saveConnection(o: {
     payload.scope = o.tokens.scope;
   }
 
+  // When ownerEmail is provided, upsert on owner_email (one row per founder).
+  // Without ownerEmail, keep legacy behavior: upsert on member_urn.
+  const onConflict = o.ownerEmail !== undefined ? "owner_email" : "member_urn";
+
   const { error } = await getSupabase()
     .from("linkedin_connection")
-    .upsert(payload, { onConflict: "member_urn" })
+    .upsert(payload, { onConflict })
     .select();
 
   if (error) {
@@ -69,6 +77,7 @@ interface ConnectionRow {
   refresh_token: string | null;
   expires_at: string;
   refresh_expires_at: string | null;
+  owner_email: string | null;
 }
 
 function isConnectionRow(row: unknown): row is ConnectionRow {
@@ -139,6 +148,57 @@ export async function getValidConnection(): Promise<ActiveConnection | null> {
 }
 
 // ---------------------------------------------------------------------------
+// getValidConnectionFor — lookup by ownerEmail
+// ---------------------------------------------------------------------------
+
+export async function getValidConnectionFor(ownerEmail: string): Promise<ActiveConnection | null> {
+  const { data, error } = await getSupabase()
+    .from("linkedin_connection")
+    .select("member_urn, access_token, refresh_token, expires_at, refresh_expires_at, owner_email")
+    .eq("owner_email", ownerEmail)
+    .limit(1)
+    .single();
+
+  // No row found (PGRST116) or other DB error — treat both as "not connected"
+  if (error || data === null) return null;
+
+  if (!isConnectionRow(data)) {
+    console.error("[linkedin-connection] malformed row from DB for owner, skipping:", data);
+    return null;
+  }
+
+  const expiresAt = new Date(data.expires_at).getTime();
+  const nowMs = Date.now();
+  const bufferMs = 60 * 1000; // 60s buffer
+
+  if (expiresAt > nowMs + bufferMs) {
+    return { accessToken: data.access_token, memberUrn: data.member_urn };
+  }
+
+  // Token is expired (or within the 60s buffer)
+  if (
+    data.refresh_token &&
+    process.env.LINKEDIN_CLIENT_ID &&
+    process.env.LINKEDIN_CLIENT_SECRET
+  ) {
+    try {
+      const newTokens = await refreshAccessToken({
+        refreshToken: data.refresh_token,
+        clientId: process.env.LINKEDIN_CLIENT_ID,
+        clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
+      });
+      await saveConnection({ tokens: newTokens, memberUrn: data.member_urn, ownerEmail });
+      return { accessToken: newTokens.accessToken, memberUrn: data.member_urn };
+    } catch (err) {
+      console.error("[linkedin-connection] token refresh failed for owner:", err);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // signState / verifyState — HMAC-SHA256, ~10min expiry
 // ---------------------------------------------------------------------------
 
@@ -150,46 +210,61 @@ function getStateSecret(): string {
   return s;
 }
 
-/** Returns a signed state string: `<nonce>:<exp>.<hmac>` */
-export function signState(): string {
+/**
+ * Returns a signed state string: `<ownerB64>:<nonce>:<exp>.<hmac>`
+ * The ownerEmail is base64url-encoded so colons in email addresses don't
+ * collide with the colon delimiter.
+ */
+export function signState(ownerEmail: string): string {
+  const ownerB64 = Buffer.from(ownerEmail).toString("base64url");
   const nonce = randomBytes(16).toString("hex");
   const exp = (Date.now() + STATE_EXPIRY_MS).toString(10);
-  const payload = `${nonce}:${exp}`;
+  const payload = `${ownerB64}:${nonce}:${exp}`;
   const sig = createHmac("sha256", getStateSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
-/** Returns true iff the state was signed by us and has not expired. */
-export function verifyState(s: string): boolean {
-  if (!s) return false;
+/**
+ * Returns `{ owner: string }` iff the state was signed by us and has not
+ * expired, or `null` on any failure (tampered, expired, bad format).
+ */
+export function verifyState(s: string): { owner: string } | null {
+  if (!s) return null;
   const dotIdx = s.lastIndexOf(".");
-  if (dotIdx === -1) return false;
+  if (dotIdx === -1) return null;
 
   const payload = s.slice(0, dotIdx);
   const sig = s.slice(dotIdx + 1);
 
-  // Validate payload shape: `<nonce>:<exp>`
-  const colonIdx = payload.indexOf(":");
-  if (colonIdx === -1) return false;
-  const expStr = payload.slice(colonIdx + 1);
+  // Validate payload shape: `<ownerB64>:<nonce>:<exp>`
+  // There are exactly 2 colons: split into [ownerB64, nonce, exp]
+  const parts = payload.split(":");
+  if (parts.length !== 3) return null;
+  const [ownerB64, , expStr] = parts;
   const exp = parseInt(expStr, 10);
-  if (!Number.isFinite(exp)) return false;
+  if (!Number.isFinite(exp)) return null;
 
   // Check expiry before HMAC (fast path for obviously-stale states)
-  if (Date.now() > exp) return false;
+  if (Date.now() > exp) return null;
 
   // Constant-time HMAC comparison
   let secret: string;
   try {
     secret = getStateSecret();
   } catch {
-    return false;
+    return null;
   }
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
 
+  let valid: boolean;
   try {
-    return timingSafeEqual(Buffer.from(sig, "utf8"), Buffer.from(expected, "utf8"));
+    valid = timingSafeEqual(Buffer.from(sig, "utf8"), Buffer.from(expected, "utf8"));
   } catch {
-    return false;
+    return null;
   }
+
+  if (!valid) return null;
+
+  const owner = Buffer.from(ownerB64, "base64url").toString("utf8");
+  return { owner };
 }

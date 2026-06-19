@@ -99,13 +99,32 @@ describe("social.linkedin.connect — loader", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Happy path — valid key + LINKEDIN_CLIENT_ID set
+  // Missing ?as= param — renders info page (200, no redirect)
+  // -------------------------------------------------------------------------
+
+  it("renders a 200 info page when ?as= is missing", async () => {
+    const { loader } = await import("../social.linkedin.connect");
+    const res = await loader({
+      request: connectRequest({ key: "test-setup-key-abc" }), // no ?as=
+      params: {},
+      context: {},
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Location")).toBeNull();
+    const text = await res.text();
+    expect(text).toMatch(/missing.*as|as.*missing/i);
+    expect(signState).not.toHaveBeenCalled();
+    expect(getAuthorizeUrl).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Happy path — valid key + ?as= + LINKEDIN_CLIENT_ID set
   // -------------------------------------------------------------------------
 
   it("redirects to the LinkedIn authorize URL when key is valid and LINKEDIN_CLIENT_ID is set", async () => {
     const { loader } = await import("../social.linkedin.connect");
     const res = await loader({
-      request: connectRequest({ key: "test-setup-key-abc" }),
+      request: connectRequest({ key: "test-setup-key-abc", as: "founder@example.com" }),
       params: {},
       context: {},
     });
@@ -115,8 +134,7 @@ describe("social.linkedin.connect — loader", () => {
     expect(res.headers.get("Location")).toBe(
       "https://linkedin.com/oauth/authorize?client_id=test",
     );
-    expect(signState).toHaveBeenCalledTimes(1);
-    expect(getAuthorizeUrl).toHaveBeenCalledTimes(1);
+    expect(signState).toHaveBeenCalledWith("founder@example.com");
     expect(getAuthorizeUrl).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "test-client-id",
@@ -134,7 +152,7 @@ describe("social.linkedin.connect — loader", () => {
     delete process.env.LINKEDIN_CLIENT_ID;
     const { loader } = await import("../social.linkedin.connect");
     const res = await loader({
-      request: connectRequest({ key: "test-setup-key-abc" }),
+      request: connectRequest({ key: "test-setup-key-abc", as: "founder@example.com" }),
       params: {},
       context: {},
     });
