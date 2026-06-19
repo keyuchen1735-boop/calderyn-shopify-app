@@ -13,6 +13,15 @@
       "destination": "/oauth/authorization-server-metadata"
     }
   ],
+  "headers": [
+    {
+      "source": "/.well-known/oauth-authorization-server",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+      ]
+    }
+  ],
   "crons": [
     { "path": "/cron/ingest", "schedule": "*/30 * * * *" },
     { "path": "/cron/detect", "schedule": "15,45 * * * *" },
