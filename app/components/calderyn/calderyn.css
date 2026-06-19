@@ -233,3 +233,59 @@
   padding-inline: clamp(24px, 9vw, 160px);
   padding-block-end: 72px;
 }
+
+/* ===== Campaigns table redesign (Calderyn Campaigns.dc.html) =====
+   Custom grid table + filter chips matching the design, layered inside a
+   Polaris Card. Light-only (the embedded admin has no dark mode). */
+.cmpx-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cmpx-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.cmpx-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px;
+  border-radius: 9px; border: 1px solid #e0e0e0; background: #fff; color: #4a4a4a;
+  font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .12s ease;
+}
+.cmpx-chip:hover { color: #1a1a1a; }
+.cmpx-chip[data-on="true"] { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+.cmpx-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.cmpx-summary { font-size: 12.5px; color: #6a6a6a; }
+.cmpx-scroll { overflow-x: auto; }
+.cmpx-table { min-width: 760px; }
+.cmpx-head, .cmpx-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 196px 120px 104px 84px 132px; gap: 10px; align-items: center; }
+.cmpx-head {
+  padding: 12px 18px; border-bottom: 1px solid #f1f1f1;
+  font-size: 11.5px; font-weight: 600; color: #9a9a9a; text-transform: uppercase; letter-spacing: .03em;
+}
+.cmpx-sort { background: none; border: none; padding: 0; font: inherit; cursor: pointer; text-align: left; text-transform: uppercase; letter-spacing: .03em; }
+.cmpx-r { text-align: right; }
+.cmpx-row { padding: 14px 18px; border-top: 1px solid #f4f4f4; transition: background .12s ease; }
+.cmpx-row:hover { background: #fbfbfb; }
+.cmpx-row[data-dim="true"] { opacity: .58; }
+.cmpx-name {
+  width: 100%; background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; text-align: left;
+  font-size: 14px; font-weight: 600; color: #1a1a1a; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmpx-name:hover { color: #173a4d; text-decoration: underline; }
+.cmpx-plat { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; color: #4a4a4a; min-width: 0; }
+.cmpx-status { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.cmpx-tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 7px; }
+.cmpx-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.cmpx-tag-active { background: #e7f5ec; color: #1a7f4f; }
+.cmpx-tag-paused { background: #f1f1f1; color: #6a6a6a; }
+.cmpx-tag-scale { background: #e9eef3; color: #173a4d; }
+.cmpx-tag-pause { background: #fbf3da; color: #7a5800; }
+.cmpx-num { font-size: 13.5px; color: #4a4a4a; }
+.cmpx-roas { font-size: 14px; font-weight: 700; }
+.cmpx-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.cmpx-act { height: 30px; padding: 0 12px; border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: background .15s ease; }
+.cmpx-act-scale { background: #23556e; color: #fff; border-color: #23556e; }
+.cmpx-act-scale:hover { background: #173a4d; }
+.cmpx-act-pause { background: #fff; color: #303030; border-color: #dcdcdc; }
+.cmpx-act-pause:hover { background: #f4f4f4; }
+.cmpx-foot { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px 18px; border-top: 1px solid #f1f1f1; }
+.cmpx-foot-range { font-size: 12.5px; color: #9a9a9a; }
+.cmpx-pager { display: flex; align-items: center; gap: 10px; }
+.cmpx-page { height: 32px; padding: 0 13px; border-radius: 8px; border: 1px solid #dcdcdc; background: #fff; color: #303030; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s ease; }
+.cmpx-page:hover:not(:disabled) { background: #f6f6f6; }
+.cmpx-page:disabled { opacity: .5; cursor: default; }
+.cmpx-page-label { font-size: 12.5px; color: #6a6a6a; font-weight: 500; }
