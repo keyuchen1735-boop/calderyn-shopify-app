@@ -81,6 +81,18 @@ describe("dashboard-layout store", () => {
     expect(loadSavedLayouts(s)).toEqual(DEFAULT_LAYOUTS);
   });
 
+  // A layout saved before the min-size guard (under the old key) had tiles
+  // smaller than today's minW/minH, so restoring it rendered a squished grid on
+  // startup. Bumping the storage key discards those stale blobs: startup falls
+  // back to the clean original layout, and every new save (constrained by rgl's
+  // minW/minH) is safe.
+  it("ignores a layout saved under a previous schema version", () => {
+    expect(DASH_LAYOUT_KEY).not.toBe("cd:dash:layout:v1");
+    const s = memStorage();
+    s.setItem("cd:dash:layout:v1", JSON.stringify(DEFAULT_LAYOUTS));
+    expect(loadSavedLayouts(s)).toBeNull();
+  });
+
   it("loadSavedLayouts returns null (never throws) for a corrupt blob", () => {
     const s = memStorage();
     s.setItem(DASH_LAYOUT_KEY, "garbage{");
