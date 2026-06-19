@@ -235,6 +235,7 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     // so the merchant-facing check can't show green while the gateway blocks.
     in_business_hours: withinBusinessHours(startUtc, endUtc, new Date().getUTCHours()),
     autopilot_enabled: Boolean(r.autopilot_enabled),
+    autopilot_bypass_guardrails: Boolean(r.autopilot_bypass_guardrails),
     // null column = no cap (unlimited); preserve it rather than coercing to a number.
     autopilot_daily_action_cap:
       r.autopilot_daily_action_cap == null ? null : Number(r.autopilot_daily_action_cap),
@@ -1226,6 +1227,7 @@ export function calderynClient(shop: string) {
             updates.business_hours_only = patch.business_hours_only;
           }
           if (patch.autopilot_enabled !== undefined) updates.autopilot_enabled = patch.autopilot_enabled;
+          if (patch.autopilot_bypass_guardrails !== undefined) updates.autopilot_bypass_guardrails = patch.autopilot_bypass_guardrails;
           if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
           if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
           if (patch.autopilot_max_budget_cut_pct !== undefined) updates.autopilot_max_budget_cut_pct = patch.autopilot_max_budget_cut_pct;

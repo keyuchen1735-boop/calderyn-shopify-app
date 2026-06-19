@@ -150,6 +150,8 @@ export interface GuardrailVM {
   in_business_hours: boolean;
   business_hours_only: boolean;
   autopilot_enabled: boolean;
+  /** Bypass mode: when true, autopilot skips every safety/rate guardrail. */
+  autopilot_bypass_guardrails: boolean;
   /** Max automated actions per day; null = no cap (unlimited). */
   autopilot_daily_action_cap: number | null;
   autopilot_actions_today: number;

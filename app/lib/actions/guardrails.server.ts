@@ -57,7 +57,7 @@ export async function checkGuardrails(
   const { data: row, error } = await sb
     .from("guardrail_config")
     .select(
-      "autopilot_enabled, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc",
+      "autopilot_enabled, autopilot_bypass_guardrails, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc",
     )
     .eq("shop_id", shopId)
     .maybeSingle();
@@ -66,6 +66,7 @@ export async function checkGuardrails(
 
   const config: AutopilotGuardrails = {
     enabled: Boolean(row.autopilot_enabled),
+    bypassGuardrails: Boolean(row.autopilot_bypass_guardrails),
     // null column = no daily cap (unlimited); otherwise the configured integer.
     dailyActionCap:
       row.autopilot_daily_action_cap == null ? null : Number(row.autopilot_daily_action_cap),

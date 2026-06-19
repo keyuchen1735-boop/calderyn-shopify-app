@@ -225,6 +225,9 @@ export interface GuardrailConfig {
   /** When true, actions only execute inside business_hours; else the window is informational. */
   business_hours_only: boolean;
   autopilot_enabled: boolean;
+  /** Bypass mode: when true, autopilot skips every safety/rate guardrail (still
+   * requires autopilot_enabled). Action size is unchanged. */
+  autopilot_bypass_guardrails: boolean;
   /** Max automated actions per UTC day; null = no cap (unlimited). */
   autopilot_daily_action_cap: number | null;
   autopilot_min_spend_cents: number;

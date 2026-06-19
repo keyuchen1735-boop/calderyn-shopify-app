@@ -59,6 +59,11 @@ describe("parseGuardrailForm", () => {
     expect(patch.autopilot_max_budget_increase_pct).toBe(25);
   });
 
+  it("parses the autopilot_bypass_guardrails toggle", () => {
+    expect(parseGuardrailForm(fd({ autopilot_bypass_guardrails: "true" })).autopilot_bypass_guardrails).toBe(true);
+    expect(parseGuardrailForm(fd({ autopilot_bypass_guardrails: "false" })).autopilot_bypass_guardrails).toBe(false);
+  });
+
   it("parses the business-hours window + only toggle", () => {
     const patch = parseGuardrailForm(
       fd({

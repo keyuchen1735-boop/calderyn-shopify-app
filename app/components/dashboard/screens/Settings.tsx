@@ -306,6 +306,24 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               settings page, reinforcing that autopilot is off by default. */}
           {g.autopilot_enabled && (
             <>
+              <SettingRow
+                label="Bypass guardrails"
+                sub="DANGER: ignore every limit below (daily cap, min spend, approval $ cap, cooldown, business hours) and act on every candidate immediately. Change sizes still follow the cut/raise % below."
+              >
+                <Toggle
+                  value={g.autopilot_bypass_guardrails}
+                  disabled={saving}
+                  onChange={(v) =>
+                    commit(
+                      "autopilot_bypass_guardrails",
+                      v,
+                      v
+                        ? "Guardrails bypassed — autopilot acts without limits."
+                        : "Guardrails re-enabled.",
+                    )
+                  }
+                />
+              </SettingRow>
               <SettingRow label="Daily action cap" sub="Maximum automated actions per day. Unlimited removes the daily cap.">
                 <GuardrailField
                   value={g.autopilot_daily_action_cap}

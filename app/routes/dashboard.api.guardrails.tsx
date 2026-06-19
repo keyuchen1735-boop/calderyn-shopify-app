@@ -21,6 +21,7 @@ const PATCHABLE_KEYS: (keyof GuardrailConfig)[] = [
   "business_hours",
   "business_hours_only",
   "autopilot_enabled",
+  "autopilot_bypass_guardrails",
   "autopilot_daily_action_cap",
   "autopilot_min_spend_cents",
   "autopilot_max_budget_cut_pct",
