@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Form, useLoaderData } from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
+import { Form, useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -27,6 +27,7 @@ import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, recommendedAction } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
+import { autopilotToasts, type AutopilotDecisionVM } from "~/lib/autopilot-banner";
 import {
   AlertCard,
   AmbientAlertBanner,
@@ -46,6 +47,17 @@ type LoaderPayload = {
   // "Recovered (7d)" tile matches its label (audit.list returns up to 90d).
   recovered7d: { cents: number; count: number };
   benchmarks: PeerBenchmarks;
+};
+
+// Browser-safe shape of /app/autopilot/run's reply (the server AutopilotSummary).
+// Only the fields the home page reads — landed `decisions` for the banner lines,
+// `acted` to decide whether to revalidate.
+type AutopilotRunResult = {
+  acted: number;
+  decisions: AutopilotDecisionVM[];
+  /** Set when the run failed server-side — surfaced quietly, parity with the
+   * dashboard's error toast (rule 12: fail visibly). */
+  error?: string;
 };
 
 const RECOVERED_WINDOW_DAYS = 7;
@@ -137,6 +149,46 @@ export default function Dashboard() {
   } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
+  // ----- autopilot: act immediately on load (extension parity) -----
+  // When autopilot is on, run it the moment the embedded home opens — draining
+  // every actionable alert now instead of at the next cron tick. /cron/autopilot
+  // is the same engine for when the admin is closed. Fires once per mount; the
+  // run is idempotent server-side. Each landed action becomes a line in an info
+  // Banner, and a run that changed something revalidates so "Recent actions" and
+  // the alert list reflect the new autopilot rows.
+  const autopilotEnabled = Boolean(guardrails?.autopilot_enabled);
+  const autopilotFetcher = useFetcher<AutopilotRunResult>();
+  const revalidator = useRevalidator();
+  const autopilotFiredRef = useRef(false);
+  const autopilotRevalidatedRef = useRef(false);
+  const [autopilotDismissed, setAutopilotDismissed] = useState(false);
+
+  useEffect(() => {
+    if (autopilotFiredRef.current || !autopilotEnabled) return;
+    autopilotFiredRef.current = true;
+    autopilotFetcher.submit(null, { method: "post", action: "/app/autopilot/run" });
+  }, [autopilotEnabled, autopilotFetcher]);
+
+  useEffect(() => {
+    if (
+      autopilotFetcher.state === "idle" &&
+      autopilotFetcher.data &&
+      (autopilotFetcher.data.acted ?? 0) > 0 &&
+      !autopilotRevalidatedRef.current
+    ) {
+      autopilotRevalidatedRef.current = true;
+      revalidator.revalidate();
+    }
+  }, [autopilotFetcher.state, autopilotFetcher.data, revalidator]);
+
+  const autopilotLines = autopilotFetcher.data
+    ? autopilotToasts(
+        autopilotFetcher.data.decisions ?? [],
+        (id) => campaigns.find((c) => c.id === id)?.name ?? "",
+      ).map((b) => b.text)
+    : [];
+  const autopilotError = autopilotFetcher.data?.error ?? null;
+
   const openAlerts = alerts.filter((a) => a.status === "open");
   const critical = openAlerts.filter((a) => a.severity === "critical");
   const { cents: recovered7dCents, count: recoveredCount } = recovered7d;
@@ -181,6 +233,44 @@ export default function Dashboard() {
         {error && (
           <Banner tone="critical" title="Couldn't load dashboard data">
             <p>{error.message}</p>
+          </Banner>
+        )}
+
+        {/* Autopilot just acted on load — one line per landed action (the
+            embedded-admin mirror of the dashboard's per-action toasts). */}
+        {!autopilotDismissed && autopilotLines.length > 0 && (
+          <Banner
+            tone="info"
+            title={`Autopilot handled ${autopilotLines.length} alert${
+              autopilotLines.length === 1 ? "" : "s"
+            }`}
+            onDismiss={() => setAutopilotDismissed(true)}
+          >
+            <BlockStack gap="100">
+              <BlockStack gap="050">
+                {autopilotLines.map((line, i) => (
+                  <Text as="p" variant="bodySm" key={`${i}:${line}`}>
+                    {line}
+                  </Text>
+                ))}
+              </BlockStack>
+              <Button variant="plain" onClick={() => navigate("/app/audit")}>
+                View action history
+              </Button>
+            </BlockStack>
+          </Banner>
+        )}
+
+        {!autopilotDismissed && autopilotError && (
+          <Banner
+            tone="warning"
+            title="Autopilot couldn't run just now"
+            onDismiss={() => setAutopilotDismissed(true)}
+          >
+            <p>
+              {autopilotError} It runs again on your next visit, and the scheduled
+              backstop keeps watching.
+            </p>
           </Banner>
         )}
 
