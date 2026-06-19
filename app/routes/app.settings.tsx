@@ -14,14 +14,12 @@ import {
   Badge,
   Banner,
   BlockStack,
-  Box,
   Button,
   ButtonGroup,
   Card,
   Checkbox,
   FormLayout,
   InlineStack,
-  Layout,
   Page,
   Select,
   Text,
@@ -605,6 +603,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+type SettingsTab = "guardrails" | "integrations" | "claude" | "shipping" | "account";
+
+const SETTINGS_TABS: { key: SettingsTab; label: string }[] = [
+  { key: "guardrails", label: "Guardrails" },
+  { key: "integrations", label: "Integrations" },
+  { key: "claude", label: "Connect Claude" },
+  { key: "shipping", label: "Shipping cost" },
+  { key: "account", label: "Account & data" },
+];
+
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
   const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges } =
@@ -616,6 +624,8 @@ export default function Settings() {
   const [searchParams] = useSearchParams();
   const notice = connectionNotice(searchParams);
   useConnectionToast(notice);
+
+  const [tab, setTab] = useState<SettingsTab>("guardrails");
 
   return (
     <Page
@@ -653,11 +663,27 @@ export default function Settings() {
             </Banner>
           ))}
 
-        <Layout>
-          <Layout.AnnotatedSection
-            id="guardrails"
+        {/* Tab bar (design): one underlined row, client-side section switch. */}
+        <div className="setx-tabs" role="tablist">
+          {SETTINGS_TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              className="setx-tab"
+              data-on={tab === t.key}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "guardrails" && (
+          <SettingsSection
             title="Guardrails"
-            description="Enforced inside the action gateway before any external API call."
+            description="The limits Calderyn always respects. It never spends or changes more than you allow here — and you can pause everything anytime."
           >
             {guardrails ? (
               <GuardrailsCard guardrails={guardrails} />
@@ -668,20 +694,21 @@ export default function Settings() {
                 </Text>
               </Card>
             )}
-          </Layout.AnnotatedSection>
+          </SettingsSection>
+        )}
 
-          <Layout.AnnotatedSection
-            id="integrations"
+        {tab === "integrations" && (
+          <SettingsSection
             title="Integrations"
-            description="Connect ad-spend and accounting data sources."
+            description="Connect ad-spend, accounting, and shipping data sources."
           >
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="400">
+              <div className="setx-row-between">
                 <Text as="p" variant="bodySm" tone="subdued">
                   Pull the latest campaigns and spend from your connected accounts.
                 </Text>
                 <SyncNowButton />
-              </InlineStack>
+              </div>
               {Object.entries(integrations).map(([k, v]) => (
                 <IntegrationCard key={k} provider={k} integration={v} />
               ))}
@@ -693,20 +720,22 @@ export default function Settings() {
                 </Card>
               )}
             </BlockStack>
-          </Layout.AnnotatedSection>
+          </SettingsSection>
+        )}
 
-          <Layout.AnnotatedSection
-            id="claude-connector"
+        {tab === "claude" && (
+          <SettingsSection
             title="Claude connector"
             description="Connect Claude (or Claude Code) to read your store over MCP."
           >
             <Card>
               <McpConnectGuide onManage={() => navigate("/app/mcp")} />
             </Card>
-          </Layout.AnnotatedSection>
+          </SettingsSection>
+        )}
 
-          <Layout.AnnotatedSection
-            id="shipping-cost"
+        {tab === "shipping" && (
+          <SettingsSection
             title="Shipping cost"
             description="Tell Calderyn what you pay to ship, so margin reflects true cost."
           >
@@ -715,10 +744,11 @@ export default function Settings() {
               missingWeightPct={missingWeight}
               unmatchedCharges={unmatchedCharges}
             />
-          </Layout.AnnotatedSection>
+          </SettingsSection>
+        )}
 
-          <Layout.AnnotatedSection
-            id="account-data"
+        {tab === "account" && (
+          <SettingsSection
             title="Account & data"
             description="Notifications, privacy, and removing Calderyn."
           >
@@ -737,7 +767,7 @@ export default function Settings() {
               <Card>
                 <BlockStack gap="300">
                   <Text as="h3" variant="headingSm">
-                    Privacy & data residency
+                    Privacy &amp; data residency
                   </Text>
                   <Banner
                     tone={consent ? "success" : "info"}
@@ -758,23 +788,47 @@ export default function Settings() {
                   </ButtonGroup>
                 </BlockStack>
               </Card>
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingSm">
-                    Uninstall
-                  </Text>
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
-                    cascade purge of all merchant data within 30 days.
-                  </Text>
-                  <Button tone="critical">Uninstall Calderyn</Button>
-                </BlockStack>
-              </Card>
+              <div className="setx-danger">
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingSm">
+                      Uninstall
+                    </Text>
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
+                      cascade purge of all merchant data within 30 days.
+                    </Text>
+                    <Button tone="critical">Uninstall Calderyn</Button>
+                  </BlockStack>
+                </Card>
+              </div>
             </BlockStack>
-          </Layout.AnnotatedSection>
-        </Layout>
+          </SettingsSection>
+        )}
       </BlockStack>
     </Page>
+  );
+}
+
+/** Section header + body wrapper matching the design: a title/description block
+ *  above the section's cards. Keeps every persisting form inside Polaris Cards. */
+function SettingsSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="setx-section">
+      <div className="setx-section-head">
+        <h2 className="setx-section-title">{title}</h2>
+        <p className="setx-section-desc">{description}</p>
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -843,7 +897,9 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   return (
     <Card>
       <BlockStack gap="400">
-        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+        {/* Budget summary with progress + live guardrail checks (reused
+            GuardrailMeter sub-component) in the design's tinted panel. */}
+        <div className="setx-budget">
           <GuardrailMeter
             usedCents={guardrails.daily_action_budget_used_cents}
             totalCents={guardrails.daily_action_budget_cents}
@@ -863,214 +919,206 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               },
             ]}
           />
-        </Box>
+        </div>
         <fetcher.Form method="post">
           <input type="hidden" name="intent" value="update_guardrails" />
-        <input
-          type="hidden"
-          name="daily_action_budget_cents"
-          value={String(Math.max(0, Number(budget) * 100))}
-        />
-        <input
-          type="hidden"
-          name="dollar_cap_cents"
-          value={String(Math.max(0, Number(cap) * 100))}
-        />
-        <input
-          type="hidden"
-          name="cooldown_minutes"
-          value={String(Math.max(0, Number(cooldown)))}
-        />
-        <input
-          type="hidden"
-          name="autopilot_enabled"
-          value={autopilotEnabled ? "true" : "false"}
-        />
-        <input
-          type="hidden"
-          name="autopilot_bypass_guardrails"
-          value={autopilotBypass ? "true" : "false"}
-        />
-        {/* Empty string => Unlimited (no daily cap). Non-empty => positive int. */}
-        <input
-          type="hidden"
-          name="autopilot_daily_action_cap"
-          value={autopilotDailyActionCap.trim()}
-        />
-        {/* Pass the raw entry through; parseGuardrailForm + validateGuardrailPatch
-            are the single arbiters (no client-side clamp that hides invalid input). */}
-        <input
-          type="hidden"
-          name="autopilot_min_spend_cents"
-          value={autopilotMinSpend.trim()}
-        />
-        <input
-          type="hidden"
-          name="autopilot_max_budget_cut_pct"
-          value={autopilotMaxBudgetCutPct.trim()}
-        />
-        <input
-          type="hidden"
-          name="autopilot_max_budget_increase_pct"
-          value={autopilotMaxBudgetIncreasePct.trim()}
-        />
-        {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
-        <input
-          type="hidden"
-          name="autopilot_max_daily_budget_cents"
-          value={autopilotMaxDailyBudget.trim()}
-        />
-        <input
-          type="hidden"
-          name="business_hours_only"
-          value={businessHoursOnly ? "true" : "false"}
-        />
-        <input type="hidden" name="bh_start" value={bhStart} />
-        <input type="hidden" name="bh_end" value={bhEnd} />
-        <input type="hidden" name="bh_tz" value={bhTz} />
-        <BlockStack gap="400">
-          <FormLayout>
-            <FormLayout.Group>
-              <TextField
-                label="Total dollar value of changes Calderyn can make per day (USD)"
-                type="number"
-                value={budget}
-                autoComplete="off"
-                onChange={setBudget}
-                helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
-              />
-              <TextField
-                label="Require my approval for any change bigger than (USD)"
-                type="number"
-                value={cap}
-                autoComplete="off"
-                onChange={setCap}
-                helpText="Single-action impact above this prompts re-authentication."
-              />
-            </FormLayout.Group>
-            <FormLayout.Group>
-              <TextField
-                label="Minimum wait between changes to the same campaign (minutes)"
-                type="number"
-                value={cooldown}
-                autoComplete="off"
-                onChange={setCooldown}
-                helpText="Prevents thrash on the same campaign / SKU."
-              />
-            </FormLayout.Group>
-            <Checkbox
-              label="Only act during business hours"
-              checked={businessHoursOnly}
-              onChange={setBusinessHoursOnly}
-              helpText={`When on, Calderyn will only take actions between the hours below (${bhTz}).`}
-            />
-            {businessHoursOnly && (
+          <input
+            type="hidden"
+            name="daily_action_budget_cents"
+            value={String(Math.max(0, Number(budget) * 100))}
+          />
+          <input
+            type="hidden"
+            name="dollar_cap_cents"
+            value={String(Math.max(0, Number(cap) * 100))}
+          />
+          <input
+            type="hidden"
+            name="cooldown_minutes"
+            value={String(Math.max(0, Number(cooldown)))}
+          />
+          <input
+            type="hidden"
+            name="autopilot_enabled"
+            value={autopilotEnabled ? "true" : "false"}
+          />
+          <input
+            type="hidden"
+            name="autopilot_bypass_guardrails"
+            value={autopilotBypass ? "true" : "false"}
+          />
+          {/* Empty string => Unlimited (no daily cap). Non-empty => positive int. */}
+          <input
+            type="hidden"
+            name="autopilot_daily_action_cap"
+            value={autopilotDailyActionCap.trim()}
+          />
+          {/* Pass the raw entry through; parseGuardrailForm + validateGuardrailPatch
+              are the single arbiters (no client-side clamp that hides invalid input). */}
+          <input
+            type="hidden"
+            name="autopilot_min_spend_cents"
+            value={autopilotMinSpend.trim()}
+          />
+          <input
+            type="hidden"
+            name="autopilot_max_budget_cut_pct"
+            value={autopilotMaxBudgetCutPct.trim()}
+          />
+          <input
+            type="hidden"
+            name="autopilot_max_budget_increase_pct"
+            value={autopilotMaxBudgetIncreasePct.trim()}
+          />
+          {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
+          <input
+            type="hidden"
+            name="autopilot_max_daily_budget_cents"
+            value={autopilotMaxDailyBudget.trim()}
+          />
+          <input
+            type="hidden"
+            name="business_hours_only"
+            value={businessHoursOnly ? "true" : "false"}
+          />
+          <input type="hidden" name="bh_start" value={bhStart} />
+          <input type="hidden" name="bh_end" value={bhEnd} />
+          <input type="hidden" name="bh_tz" value={bhTz} />
+          <BlockStack gap="400">
+            <FormLayout>
               <FormLayout.Group>
-                <Select
-                  label="Business hours start"
-                  options={HOUR_OPTIONS}
-                  value={bhStart}
-                  onChange={setBhStart}
+                <TextField
+                  label="Total dollar value of changes Calderyn can make per day (USD)"
+                  type="number"
+                  value={budget}
+                  autoComplete="off"
+                  onChange={setBudget}
+                  helpText={`Used today: ${fmtMoney(guardrails.daily_action_budget_used_cents)}`}
                 />
-                <Select
-                  label="Business hours end"
-                  options={HOUR_OPTIONS}
-                  value={bhEnd}
-                  onChange={setBhEnd}
+                <TextField
+                  label="Require my approval for any change bigger than (USD)"
+                  type="number"
+                  value={cap}
+                  autoComplete="off"
+                  onChange={setCap}
+                  helpText="Single-action impact above this prompts re-authentication."
                 />
               </FormLayout.Group>
-            )}
-          </FormLayout>
-
-          {/* Autopilot lives in its own tinted sub-card so its limits never read
-              as more of the hard guardrails above; the limit fields only appear
-              once it's switched on — reinforcing that autopilot is off by default. */}
-          <Box
-            padding="400"
-            background="bg-surface-secondary"
-            borderColor="border"
-            borderWidth="025"
-            borderRadius="200"
-          >
-            <BlockStack gap="300">
+              <FormLayout.Group>
+                <TextField
+                  label="Minimum wait between changes to the same campaign (minutes)"
+                  type="number"
+                  value={cooldown}
+                  autoComplete="off"
+                  onChange={setCooldown}
+                  helpText="Prevents thrash on the same campaign / SKU."
+                />
+              </FormLayout.Group>
               <Checkbox
-                label="Let Calderyn pause money-losing campaigns on its own"
-                checked={autopilotEnabled}
-                onChange={setAutopilotEnabled}
-                helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
+                label="Only act during business hours"
+                checked={businessHoursOnly}
+                onChange={setBusinessHoursOnly}
+                helpText={`When on, Calderyn will only take actions between the hours below (${bhTz}).`}
               />
-              {autopilotEnabled && (
-                <Box paddingBlockStart="300" borderColor="border" borderBlockStartWidth="025">
-                  <BlockStack gap="300">
-                    <Checkbox
-                      label="Bypass all guardrails (act on everything immediately)"
-                      checked={autopilotBypass}
-                      onChange={setAutopilotBypass}
-                      helpText="DANGER: ignores every limit below — daily action cap, minimum spend, the approval dollar cap, cooldown, and business hours. Autopilot will act on every eligible campaign as soon as it's detected. Change sizes still follow the cut/raise % below, and actions are still logged and reversible."
-                    />
-                    <Text as="h3" variant="headingSm">
-                      Autopilot limits
-                    </Text>
-                    <FormLayout>
-                      <FormLayout.Group>
-                        <TextField
-                          label="Most automatic changes per day"
-                          type="number"
-                          value={autopilotDailyActionCap}
-                          autoComplete="off"
-                          onChange={setAutopilotDailyActionCap}
-                          helpText="Calderyn will not take more than this many automatic actions in a single day. Leave blank for no daily cap (unlimited)."
-                        />
-                        <TextField
-                          label="Ignore campaigns that have spent less than (USD)"
-                          type="number"
-                          value={autopilotMinSpend}
-                          autoComplete="off"
-                          onChange={setAutopilotMinSpend}
-                          helpText="Campaigns with less than this trailing spend are skipped — not enough data."
-                        />
-                      </FormLayout.Group>
-                      <FormLayout.Group>
-                        <TextField
-                          label="Most Calderyn can cut a campaign's budget at once (%)"
-                          type="number"
-                          value={autopilotMaxBudgetCutPct}
-                          autoComplete="off"
-                          onChange={setAutopilotMaxBudgetCutPct}
-                          helpText="Budget-reduction actions will not cut more than this percentage in a single step."
-                        />
-                      </FormLayout.Group>
-                      <FormLayout.Group>
-                        <TextField
-                          label="Most Calderyn can raise a winning campaign's budget at once (%)"
-                          type="number"
-                          value={autopilotMaxBudgetIncreasePct}
-                          autoComplete="off"
-                          onChange={setAutopilotMaxBudgetIncreasePct}
-                          helpText="Budget scale-ups will not add more than this percentage in a single step."
-                        />
-                        <TextField
-                          label="Never let a campaign's daily budget exceed (USD, optional)"
-                          type="number"
-                          value={autopilotMaxDailyBudget}
-                          autoComplete="off"
-                          onChange={setAutopilotMaxDailyBudget}
-                          helpText="Leave blank for no ceiling. Autopilot will not scale a budget above this."
-                        />
-                      </FormLayout.Group>
-                    </FormLayout>
-                  </BlockStack>
-                </Box>
+              {businessHoursOnly && (
+                <FormLayout.Group>
+                  <Select
+                    label="Business hours start"
+                    options={HOUR_OPTIONS}
+                    value={bhStart}
+                    onChange={setBhStart}
+                  />
+                  <Select
+                    label="Business hours end"
+                    options={HOUR_OPTIONS}
+                    value={bhEnd}
+                    onChange={setBhEnd}
+                  />
+                </FormLayout.Group>
               )}
-            </BlockStack>
-          </Box>
+            </FormLayout>
 
-          <InlineStack align="end">
-            <Button submit variant="primary" loading={submitting} disabled={submitting}>
-              Save guardrails
-            </Button>
-          </InlineStack>
-        </BlockStack>
+            {/* Autopilot lives in its own tinted sub-card so its limits never read
+                as more of the hard guardrails above; the limit fields only appear
+                once it's switched on — reinforcing that autopilot is off by default. */}
+            <div className="setx-autopilot">
+              <BlockStack gap="300">
+                <Checkbox
+                  label="Let Calderyn pause money-losing campaigns on its own"
+                  checked={autopilotEnabled}
+                  onChange={setAutopilotEnabled}
+                  helpText="Off by default. When on, Calderyn can pause or trim losing campaigns within the limits below. Every automatic action is logged and can be undone."
+                />
+                {autopilotEnabled && (
+                  <div className="setx-autopilot-limits">
+                    <BlockStack gap="300">
+                      <Checkbox
+                        label="Bypass all guardrails (act on everything immediately)"
+                        checked={autopilotBypass}
+                        onChange={setAutopilotBypass}
+                        helpText="DANGER: ignores every limit below — daily action cap, minimum spend, the approval dollar cap, cooldown, and business hours. Autopilot will act on every eligible campaign as soon as it's detected. Change sizes still follow the cut/raise % below, and actions are still logged and reversible."
+                      />
+                      <span className="setx-limits-label">Autopilot limits</span>
+                      <FormLayout>
+                        <FormLayout.Group>
+                          <TextField
+                            label="Most automatic changes per day"
+                            type="number"
+                            value={autopilotDailyActionCap}
+                            autoComplete="off"
+                            onChange={setAutopilotDailyActionCap}
+                            helpText="Calderyn will not take more than this many automatic actions in a single day. Leave blank for no daily cap (unlimited)."
+                          />
+                          <TextField
+                            label="Ignore campaigns that have spent less than (USD)"
+                            type="number"
+                            value={autopilotMinSpend}
+                            autoComplete="off"
+                            onChange={setAutopilotMinSpend}
+                            helpText="Campaigns with less than this trailing spend are skipped — not enough data."
+                          />
+                        </FormLayout.Group>
+                        <FormLayout.Group>
+                          <TextField
+                            label="Most Calderyn can cut a campaign's budget at once (%)"
+                            type="number"
+                            value={autopilotMaxBudgetCutPct}
+                            autoComplete="off"
+                            onChange={setAutopilotMaxBudgetCutPct}
+                            helpText="Budget-reduction actions will not cut more than this percentage in a single step."
+                          />
+                        </FormLayout.Group>
+                        <FormLayout.Group>
+                          <TextField
+                            label="Most Calderyn can raise a winning campaign's budget at once (%)"
+                            type="number"
+                            value={autopilotMaxBudgetIncreasePct}
+                            autoComplete="off"
+                            onChange={setAutopilotMaxBudgetIncreasePct}
+                            helpText="Budget scale-ups will not add more than this percentage in a single step."
+                          />
+                          <TextField
+                            label="Never let a campaign's daily budget exceed (USD, optional)"
+                            type="number"
+                            value={autopilotMaxDailyBudget}
+                            autoComplete="off"
+                            onChange={setAutopilotMaxDailyBudget}
+                            helpText="Leave blank for no ceiling. Autopilot will not scale a budget above this."
+                          />
+                        </FormLayout.Group>
+                      </FormLayout>
+                    </BlockStack>
+                  </div>
+                )}
+              </BlockStack>
+            </div>
+
+            <InlineStack align="end">
+              <Button submit variant="primary" loading={submitting} disabled={submitting}>
+                Save guardrails
+              </Button>
+            </InlineStack>
+          </BlockStack>
         </fetcher.Form>
       </BlockStack>
     </Card>
@@ -1136,7 +1184,7 @@ function IntegrationCard({
   return (
     <Card>
       <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="center">
+        <div className="setx-row-between">
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd" fontWeight="semibold">
               {integration.name}
@@ -1171,7 +1219,7 @@ function IntegrationCard({
               <Badge>Managed by Shopify</Badge>
             )}
           </InlineStack>
-        </InlineStack>
+        </div>
 
         {/* API-key connect form (EasyPost): inline so the merchant pastes the key
             in place. The action live-probes + stores it encrypted, then redirects
@@ -1234,6 +1282,15 @@ function ShippingCostSection({
   const upload = actionData?.uploadResult;
   return (
     <BlockStack gap="400">
+      {missingWeightPct > 0 && (
+        <Banner tone="warning" title={`${missingWeightPct}% of your orders are missing weight`}>
+          <p>
+            Shipping estimates are degraded for those orders. Add product weights in Shopify to
+            improve per-order accuracy.
+          </p>
+        </Banner>
+      )}
+
       <Card>
         <BlockStack gap="300">
           <Text as="h3" variant="headingSm">
@@ -1263,15 +1320,6 @@ function ShippingCostSection({
           </Form>
         </BlockStack>
       </Card>
-
-      {missingWeightPct > 0 && (
-        <Banner tone="warning" title={`${missingWeightPct}% of your orders are missing weight`}>
-          <p>
-            Shipping estimates are degraded for those orders. Add product weights in Shopify to
-            improve per-order accuracy.
-          </p>
-        </Banner>
-      )}
 
       <Card>
         <BlockStack gap="300">
@@ -1417,13 +1465,7 @@ function UnmatchedChargesCard({ unmatchedCharges }: { unmatchedCharges: Unmatche
         </Banner>
         <BlockStack gap="300">
           {items.map((it) => (
-            <Box
-              key={it.id}
-              padding="300"
-              borderColor="border"
-              borderWidth="025"
-              borderRadius="200"
-            >
+            <div key={it.id} className="setx-charge">
               <BlockStack gap="200">
                 <InlineStack align="space-between" blockAlign="center" gap="200">
                   <BlockStack gap="050">
@@ -1461,7 +1503,7 @@ function UnmatchedChargesCard({ unmatchedCharges }: { unmatchedCharges: Unmatche
                   </FormLayout>
                 </Form>
               </BlockStack>
-            </Box>
+            </div>
           ))}
         </BlockStack>
       </BlockStack>

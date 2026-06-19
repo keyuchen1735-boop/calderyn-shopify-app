@@ -13,10 +13,10 @@ import {
   Badge,
   BlockStack,
   Banner,
+  Box,
   Button,
   Card,
   InlineStack,
-  Layout,
   Modal,
   Page,
   Text,
@@ -493,102 +493,126 @@ export default function AlertDetail() {
       }
       subtitle={`Detected ${fmtAbsTime(alert.created_at)} · ${fmtRelTime(alert.created_at)}`}
     >
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            {actionData?.error && (
-              <Banner tone="critical" title="Action failed">
-                <p>{actionData.error.message}</p>
-              </Banner>
-            )}
-            {soldOut && (
-              <Banner tone="critical" title="This product is already sold out">
-                <p>
-                  On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s
-                  a stockout. Restock now, and pause or exclude the spend below until inventory is
-                  back so you stop paying for demand you can&apos;t fill.
-                </p>
-              </Banner>
-            )}
-            <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
+      <div className="alx-detail">
+        {/* LEFT MAIN */}
+        <div className="alx-detail-main">
+          {actionData?.error && (
+            <Banner tone="critical" title="Action failed">
+              <p>{actionData.error.message}</p>
+            </Banner>
+          )}
 
-            <Card>
+          {/* Critical "already sold out" banner — design's red-header card,
+              rendered only when the alert's own evidence shows a real stockout. */}
+          {soldOut && (
+            <div className="alx-crit">
+              <div className="alx-crit-head">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  aria-hidden="true"
+                >
+                  <path d="M12 9v4M12 17h.01" />
+                  <path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                </svg>
+                <span>This product is already sold out</span>
+              </div>
+              <p className="alx-crit-body">
+                On-hand stock is <strong>0 units</strong> — this isn&apos;t a &ldquo;may sell
+                out&rdquo; risk, it&apos;s a stockout. Restock now, and pause or exclude the ad
+                spend below until inventory is back, so you stop paying for demand you can&apos;t
+                fill.
+              </p>
+            </div>
+          )}
+
+          {/* "The take" — shared NarrativeCard renders the real Claude narrative
+              + priority rank in the design's accented-left card. */}
+          <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
+
+          {/* "What we noticed" — real evidence grid inside the design's card chrome. */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingSm">
+                What we noticed
+              </Text>
+              {/* title/sku_title duplicate the page header; threshold is an
+                  internal tuning constant, not merchant-facing signal. */}
+              <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
+            </BlockStack>
+          </Card>
+        </div>
+
+        {/* RIGHT SIDEBAR — sticky on desktop (CSS), stacked on phones. */}
+        <div className="alx-detail-side">
+          {/* Recommended action */}
+          <div className="alx-side-card">
+            <div className="alx-side-pad">
+              <Text as="h2" variant="headingSm">
+                Recommended action
+              </Text>
+              <Tooltip content={IMPACT_METHODOLOGY}>
+                <span className="alx-loss-label">{IMPACT_LABEL}</span>
+              </Tooltip>
+              <div className="alx-loss-val">{fmtMoney(alert.dollar_impact)}</div>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  What we noticed
-                </Text>
-                {/* title/sku_title duplicate the page header; threshold is an
-                    internal tuning constant, not merchant-facing signal. */}
-                <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
+                {allowedActions.map((kind, i) => {
+                  const deepLink = DEEP_LINK_ACTIONS[kind];
+                  const button = deepLink ? (
+                    <Button fullWidth onClick={() => navigate(deepLink.path)}>
+                      {ACTION_LABELS[kind]} →
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={i === 0 ? "primary" : undefined}
+                      onClick={() => setActionKind(kind)}
+                      fullWidth
+                    >
+                      {ACTION_LABELS[kind]}
+                    </Button>
+                  );
+                  return i === 0 ? (
+                    <BlockStack key={kind} gap="100">
+                      {button}
+                      <InlineStack gap="150" blockAlign="center">
+                        <Badge tone="success">Recommended</Badge>
+                        <Text as="span" variant="bodyXs" tone="subdued">
+                          best at preventing the loss above
+                        </Text>
+                      </InlineStack>
+                    </BlockStack>
+                  ) : (
+                    <Fragment key={kind}>{button}</Fragment>
+                  );
+                })}
               </BlockStack>
-            </Card>
-          </BlockStack>
-        </Layout.Section>
+            </div>
+          </div>
 
-        <Layout.Section variant="oneThird">
-          <BlockStack gap="400">
-            <Card>
-              <BlockStack gap="300">
-                <BlockStack gap="100">
+          {/* Your action limits / guardrails */}
+          {guardrails && (
+            <div className="alx-side-card">
+              <div className="alx-side-pad">
+                <div className="alx-limits-head">
                   <Text as="h2" variant="headingSm">
-                    Recommended actions
+                    {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
                   </Text>
-                  <Tooltip content={IMPACT_METHODOLOGY}>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {IMPACT_LABEL}
-                    </Text>
-                  </Tooltip>
-                  <Text as="p" variant="headingLg">
-                    {fmtMoney(alert.dollar_impact)}
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="300">
-                  {allowedActions.map((kind, i) => {
-                    const deepLink = DEEP_LINK_ACTIONS[kind];
-                    const button = deepLink ? (
-                      <Button fullWidth onClick={() => navigate(deepLink.path)}>
-                        {ACTION_LABELS[kind]} →
-                      </Button>
-                    ) : (
-                      <Button
-                        variant={i === 0 ? "primary" : undefined}
-                        onClick={() => setActionKind(kind)}
-                        fullWidth
-                      >
-                        {ACTION_LABELS[kind]}
-                      </Button>
-                    );
-                    return i === 0 ? (
-                      <BlockStack key={kind} gap="100">
-                        {button}
-                        <InlineStack gap="150" blockAlign="center">
-                          <Badge tone="success">Recommended</Badge>
-                          <Text as="span" variant="bodyXs" tone="subdued">
-                            best at preventing the loss above
-                          </Text>
-                        </InlineStack>
-                      </BlockStack>
-                    ) : (
-                      <Fragment key={kind}>{button}</Fragment>
-                    );
-                  })}
-                </BlockStack>
-              </BlockStack>
-            </Card>
-
-            {guardrails && (
-              <Card>
-                <BlockStack gap="300">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingSm">
-                      {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {guardrails.autopilot_enabled
-                        ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
-                        : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
-                    </Text>
-                  </BlockStack>
+                  <span
+                    className={`alx-ap ${guardrails.autopilot_enabled ? "alx-ap-on" : "alx-ap-off"}`}
+                  >
+                    {guardrails.autopilot_enabled ? "Autopilot on" : "Autopilot off"}
+                  </span>
+                </div>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {guardrails.autopilot_enabled
+                    ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
+                    : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
+                </Text>
+                <Box paddingBlockStart="300">
                   <GuardrailMeter
                     label="Today's action budget"
                     usedCents={guardrails.daily_action_budget_used_cents}
@@ -616,15 +640,15 @@ export default function AlertDetail() {
                       },
                     ]}
                   />
-                  <Text as="p" variant="bodyXs" tone="subdued">
-                    Min {guardrails.cooldown_minutes} min between actions on the same campaign.
-                  </Text>
-                </BlockStack>
-              </Card>
-            )}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+                </Box>
+                <div className="alx-limits-foot">
+                  Min {guardrails.cooldown_minutes} min between actions on the same campaign.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {actionKind && (
         <ExecuteActionModal
