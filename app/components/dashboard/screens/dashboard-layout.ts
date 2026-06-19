@@ -50,7 +50,17 @@ function stack(cols: number): Layout[] {
   let y = 0;
   return DASH_TILE_IDS.map((id) => {
     const h = STACK_H[id];
-    const item: Layout = { i: id, x: 0, y, w: cols, h, minW: cols, minH: 2 };
+    // Proportional floor so a tall tile (e.g. feed) can't be resized down to a
+    // sliver in the stacked breakpoints. ponytail: half-height heuristic.
+    const item: Layout = {
+      i: id,
+      x: 0,
+      y,
+      w: cols,
+      h,
+      minW: cols,
+      minH: Math.max(2, Math.ceil(h / 2)),
+    };
     y += h;
     return item;
   });
@@ -88,6 +98,10 @@ function isLayoutItem(o: unknown): o is Layout {
   );
 }
 
+// Note: we intentionally do NOT reject layouts containing unknown tile ids —
+// react-grid-layout ignores layout entries without a matching child, and the
+// versioned key (cd:dash:layout:v1) handles genuinely breaking schema changes.
+// Rejecting the whole blob on one stale id would needlessly wipe a user's layout.
 /** Parse a stored blob into Layouts, or null if absent/corrupt/empty/wrong-shape. */
 export function parseLayouts(raw: string | null): Layouts | null {
   if (!raw) return null;

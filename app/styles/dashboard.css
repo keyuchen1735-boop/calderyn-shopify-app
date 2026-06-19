@@ -892,7 +892,8 @@
 }
 /* The tile's content (a card or a section) fills the grid cell. */
 .cd-tile > .cd-card,
-.cd-tile > section {
+.cd-tile > section,
+.cd-tile > .cd-stat-grid {
   flex: 1 1 auto;
   min-height: 0;
 }

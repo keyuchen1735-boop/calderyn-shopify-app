@@ -27,8 +27,15 @@ import type { AlertVM } from "../view-models";
 import { PeerBenchmarks } from "./PeerBenchmarks";
 import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 import { Responsive, WidthProvider } from "react-grid-layout";
-import type { Layouts } from "react-grid-layout";
-import { loadLayouts, DASH_BREAKPOINTS, DASH_COLS } from "./dashboard-layout";
+import type { Layout, Layouts } from "react-grid-layout";
+import {
+  loadLayouts,
+  saveLayouts,
+  resetLayouts,
+  DEFAULT_LAYOUTS,
+  DASH_BREAKPOINTS,
+  DASH_COLS,
+} from "./dashboard-layout";
 
 const DashGrid = WidthProvider(Responsive);
 
@@ -426,7 +433,20 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   // Per-browser saved arrangement; SSR-safe (returns defaults when no window).
-  const [layouts] = useState<Layouts>(() => loadLayouts());
+  const [layouts, setLayouts] = useState<Layouts>(() => loadLayouts());
+  const [editing, setEditing] = useState(false);
+
+  // Only persist while editing — rgl also fires onLayoutChange on mount and on
+  // breakpoint changes, which we must not treat as user edits.
+  const onLayoutChange = (_current: Layout[], all: Layouts) => {
+    if (!editing) return;
+    setLayouts(all);
+    saveLayouts(all);
+  };
+  const handleReset = () => {
+    resetLayouts();
+    setLayouts(DEFAULT_LAYOUTS);
+  };
 
   const tiles: { id: string; node: ReactNode }[] = [
     { id: "stats", node: <StatRow app={app} /> },
@@ -443,24 +463,47 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     <div className="cd-screen">
       <ScreenHeader title={greet} sub="Watching ad spend and inventory — together.">
         <LiveBadge on={app.liveOn} onToggle={() => app.setLiveOn(!app.liveOn)} />
+        {editing && (
+          <Btn small onClick={handleReset}>
+            Reset layout
+          </Btn>
+        )}
+        <Btn
+          small
+          kind={editing ? "primary" : "secondary"}
+          onClick={() => setEditing((e) => !e)}
+        >
+          {editing ? "Done" : "Customize"}
+        </Btn>
         <Btn icon="bell" onClick={() => app.navigate("alerts")} small>
           All alerts
         </Btn>
       </ScreenHeader>
 
+      {/* A11y: drag-reorder is pointer-only — react-grid-layout has no built-in
+          keyboard reordering and the grip is aria-hidden. It degrades safely:
+          a sensible default layout ships, tile content stays keyboard-operable,
+          and customization is an optional power-user nicety. */}
       <DashGrid
-        className="cd-dash-grid"
+        className={"cd-dash-grid" + (editing ? " cd-dash-grid-editing" : "")}
         layouts={layouts}
         breakpoints={DASH_BREAKPOINTS}
         cols={DASH_COLS}
         rowHeight={30}
         margin={[16, 16]}
-        isDraggable={false}
-        isResizable={false}
+        isDraggable={editing}
+        isResizable={editing}
+        draggableHandle=".cd-tile-grip"
         compactType="vertical"
+        onLayoutChange={onLayoutChange}
       >
         {tiles.map((t) => (
           <div key={t.id} data-tile={t.id} className="cd-tile">
+            {editing && (
+              <span className="cd-tile-grip" aria-hidden="true">
+                ⠿
+              </span>
+            )}
             {t.node}
           </div>
         ))}
