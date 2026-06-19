@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
+import { runAutopilotForShop } from "~/lib/actions/autopilot.server";
 
 const MAX_DETECT_SHOPS = 10; // bounded per tick to stay under function timeout
 
@@ -15,6 +16,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     detected: [] as string[], // shop_ids that ran successfully
     alertCount: 0,
     errors: [] as string[],
+    autopiloted: 0, // autopilot actions taken inline this tick
+    autopilotErrors: [] as string[], // shop_ids whose inline autopilot run threw
   };
 
   // Call the engines through the public app origin: Vercel cron invokes this
@@ -44,8 +47,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // failure must not abort detection for the remaining shops.
   for (const row of ready ?? []) {
     const shop_id = String(row.shop_id);
+    let alerts = 0;
+    let detected = false;
     try {
-      let alerts = 0;
       for (const path of enginePaths) {
         const res = await fetch(`${origin}${path}`, {
           method: "POST",
@@ -63,10 +67,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
       summary.detected.push(shop_id);
       summary.alertCount += alerts;
+      detected = true;
     } catch (err) {
       // One shop's detection failure must not deny other shops their alerts.
       summary.errors.push(shop_id);
       console.error(`[cron.detect] engine run failed for shop ${shop_id}`, err);
+    }
+
+    // Act the moment detection surfaces something: run autopilot inline for
+    // this shop instead of waiting up to 30 min for the next /cron/autopilot
+    // tick. runAutopilotForShop no-ops for shops without autopilot enabled,
+    // and the daily-action-cap guardrail still bounds how much it does. Its
+    // own try/catch keeps an autopilot failure from masking detection success.
+    if (detected && alerts > 0) {
+      try {
+        const r = await runAutopilotForShop(shop_id, sb);
+        summary.autopiloted += r.acted;
+      } catch (err) {
+        summary.autopilotErrors.push(shop_id);
+        console.error(`[cron.detect] inline autopilot failed for shop ${shop_id}`, err);
+      }
     }
   }
 
