@@ -15,6 +15,7 @@ import {
   Page,
   Text,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -123,6 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
+  const { smDown } = useBreakpoints();
   const {
     alerts,
     audit,
@@ -196,7 +198,7 @@ export default function Dashboard() {
 
         {/* Stat row */}
         <div className="cdn-stat-row">
-          <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
+          <InlineGrid columns={{ xs: 2, sm: 2, md: 4 }} gap="400">
             <StatTile
               label="Open alerts"
               value={String(openAlerts.length)}
@@ -239,7 +241,7 @@ export default function Dashboard() {
         {/* Today's focus */}
         {focus && (
           <div className="cdn-card cdn-accent-left cdn-accent-left--primary">
-            <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+            <BlockStack gap="300">
               <BlockStack gap="150">
                 <InlineStack gap="100" blockAlign="center">
                   <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
@@ -262,9 +264,10 @@ export default function Dashboard() {
                   / 30d
                 </Text>
               </BlockStack>
-              <InlineStack gap="200" wrap={false}>
+              <InlineStack gap="200" wrap={false} align="start">
                 <Button
                   variant={focusActionKind ? undefined : "primary"}
+                  fullWidth={smDown}
                   onClick={() => navigate(`/app/alerts/${focus.id}`)}
                 >
                   Review
@@ -272,13 +275,14 @@ export default function Dashboard() {
                 {focusActionKind && (
                   <Button
                     variant="primary"
+                    fullWidth={smDown}
                     onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
                   >
                     {ACTION_LABELS[focusActionKind]}
                   </Button>
                 )}
               </InlineStack>
-            </InlineStack>
+            </BlockStack>
           </div>
         )}
 
