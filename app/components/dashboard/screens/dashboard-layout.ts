@@ -4,7 +4,10 @@
 // never touches `window` during SSR.
 import type { Layout, Layouts } from "react-grid-layout";
 
-export const DASH_LAYOUT_KEY = "cd:dash:layout:v1";
+// v2: bumped from v1 to discard layouts saved before the min-size guard
+// (minW/minH below) — those had sub-minimum tiles that rendered a squished grid
+// on startup. Dropping them lets startup fall back to the clean original layout.
+export const DASH_LAYOUT_KEY = "cd:dash:layout:v2";
 
 // Tile ids in stable DOM/registry order. Dashboard.tsx renders tiles in this
 // order; DEFAULT_LAYOUTS positions them. `stats` precedes `focus` so the
@@ -137,7 +140,7 @@ function isLayoutItem(o: unknown): o is Layout {
 
 // Note: we intentionally do NOT reject layouts containing unknown tile ids —
 // react-grid-layout ignores layout entries without a matching child, and the
-// versioned key (cd:dash:layout:v1) handles genuinely breaking schema changes.
+// versioned key (DASH_LAYOUT_KEY) handles genuinely breaking schema changes.
 // Rejecting the whole blob on one stale id would needlessly wipe a user's layout.
 /** Parse a stored blob into Layouts, or null if absent/corrupt/empty/wrong-shape. */
 export function parseLayouts(raw: string | null): Layouts | null {
