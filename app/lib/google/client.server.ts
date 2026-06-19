@@ -49,7 +49,13 @@ async function exchangeRefreshToken(refreshToken: string): Promise<string> {
   });
   const json = (await res.json()) as GoogleTokenResponse;
   if (json.error || !json.access_token) {
-    throw new Error(`Google OAuth token exchange failed: ${json.error_description ?? json.error ?? "no access_token"}`);
+    // Surface the OAuth error CODE (e.g. invalid_grant) alongside the human
+    // description: a dead refresh token reports `invalid_grant`, which
+    // isReauthError keys off to flag the integration for reconnect (vs a
+    // transient/config failure we just record as a generic error).
+    throw new Error(
+      `Google OAuth token exchange failed (${json.error ?? "unknown"}): ${json.error_description ?? json.error ?? "no access_token"}`,
+    );
   }
   return json.access_token;
 }
@@ -88,6 +94,27 @@ export function extractAdsError(body: unknown): string | null {
     .filter(Boolean)
     .join("; ");
   return detail ? `${top} — ${detail}` : top;
+}
+
+/**
+ * True when a sync failure means the merchant's stored Google credential is dead
+ * and they must re-authorize — vs a transient API/network error or a config
+ * problem (e.g. an unapproved developer token) that reconnecting wouldn't fix.
+ *
+ * The canonical signal is the OAuth `invalid_grant` code Google returns when a
+ * refresh token is expired or revoked (see exchangeRefreshToken, which now
+ * includes that code in the thrown message). We also match the human-readable
+ * "expired or revoked" form as a belt-and-suspenders fallback. Deliberately
+ * narrow: DEVELOPER_TOKEN_NOT_APPROVED / PERMISSION_DENIED are NOT reauth.
+ *
+ * Mirrors quickbooks/oauth.server.ts:isRevokedTokenError (same invalid_grant
+ * signal). The "reauth" status these feed is generic, but QuickBooks still maps
+ * a revoked token to "disconnected" — a follow-up can fold both onto one shared
+ * classifier and have every provider adopt "reauth".
+ */
+export function isReauthError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("invalid_grant") || m.includes("expired or revoked");
 }
 
 /**

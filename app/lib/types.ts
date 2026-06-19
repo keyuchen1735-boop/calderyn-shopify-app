@@ -208,7 +208,9 @@ export interface SkuAffinityItem {
 
 export interface Integration {
   name: string;
-  status: "connected" | "pending" | "disconnected";
+  // "reauth": paired before, but the stored credential is now dead (e.g. a
+  // Google refresh token expired/revoked) — the merchant must reconnect.
+  status: "connected" | "pending" | "disconnected" | "reauth";
   detail: string;
   logoCls: string;
 }

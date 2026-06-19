@@ -70,16 +70,19 @@ const CONNECTION_TONE: Record<string, PillTone> = {
   connected: "success",
   pending: "warn",
   disconnected: "critical",
+  reauth: "warn",
 };
 const CONNECTION_LABEL: Record<string, string> = {
   connected: "Connected",
   pending: "Pending",
   disconnected: "Disconnected",
+  reauth: "Reconnect needed",
 };
 const CONNECTION_ICON: Record<string, string> = {
   connected: "check",
   pending: "clock",
   disconnected: "x",
+  reauth: "warn",
 };
 
 // Human-readable reason a carrier charge stayed unmatched (Phase 3 Part C, rule 12).

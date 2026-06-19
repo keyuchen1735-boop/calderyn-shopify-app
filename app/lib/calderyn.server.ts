@@ -1293,11 +1293,18 @@ export function calderynClient(shop: string) {
                 ? "connected"
                 : r.sync_status === "pending"
                   ? "pending"
-                  : "disconnected";
+                  : r.sync_status === "reauth"
+                    ? "reauth"
+                    : "disconnected";
             out[kind] = {
               name: INTEGRATION_DISPLAY_NAME[kind] ?? kind,
               status,
-              detail: r.sync_error ?? r.external_account_id ?? (r.connected_at ? `Connected ${r.connected_at}` : "Pending"),
+              // A reauth integration shows a friendly reconnect prompt, not the
+              // raw OAuth error (which still lives in sync_error for diagnosis).
+              detail:
+                status === "reauth"
+                  ? "Connection expired — reconnect to resume syncing"
+                  : (r.sync_error ?? r.external_account_id ?? (r.connected_at ? `Connected ${r.connected_at}` : "Pending")),
               logoCls: INTEGRATION_LOGO_CLS[kind] ?? "logo-default",
             };
           }
