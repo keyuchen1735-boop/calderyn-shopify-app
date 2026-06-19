@@ -8,7 +8,7 @@ import { AssistantSendError } from "~/lib/dashboard/client";
 import type { ChatMessage, DraftedAction } from "~/lib/assistant/types";
 import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
 import { useThinkingPhrase } from "~/lib/assistant/thinking";
-import { CHAT_INLINE_ACTIONS } from "~/lib/labels";
+import { DASH_INLINE_ACTIONS } from "~/lib/labels";
 import { Markdown } from "~/components/Markdown";
 
 import { CDIcon } from "./icons";
@@ -17,11 +17,10 @@ import { Btn } from "./ui";
 import type { ActionKind as DashActionKind, DashboardCtx } from "./context";
 import type { AlertVM } from "./view-models";
 
-// The shared chat policy plus create_po_draft, which DashboardCtx.executeAction
-// handles on this surface. reallocate_budget (and anything future) deep-links
-// to its owning screen instead.
-const DASH_EXECUTABLE: ReadonlySet<string> = new Set([...CHAT_INLINE_ACTIONS, "create_po_draft"]);
-
+// Kinds the dashboard can truly execute inline come from DASH_INLINE_ACTIONS
+// (executeAction has a live endpoint for them). Everything else — exclude_geo,
+// create_po_draft, reallocate_budget — deep-links to its review surface instead
+// of faking a run.
 let localSeq = 0;
 const nextLocalId = () => `chat-local-${++localSeq}`;
 
@@ -38,7 +37,7 @@ function DraftActionCard({
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const executable = DASH_EXECUTABLE.has(action.actionKind);
+  const executable = DASH_INLINE_ACTIONS.has(action.actionKind);
 
   const review = () => {
     // The Alerts screen owns the full evidence/confirm view.
