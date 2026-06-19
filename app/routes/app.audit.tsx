@@ -23,6 +23,7 @@ import {
   Page,
   Text,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -233,6 +234,110 @@ function AuditRowEx({
   );
 }
 
+function AuditCardEx({
+  a, index, submitting,
+}: { a: AuditEntry; index: number; submitting: boolean }) {
+  const [open, setOpen] = useState(false);
+  const leg = auditLegibility(a);
+  const diff = stateDiff(a.action_kind, a.pre_state, a.post_state);
+  const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
+  const canUndo = a.undo_eligible && !a.undo_of;
+  const hasPoPdf =
+    a.action_kind === "create_po_draft" && a.outcome === "succeeded" && Boolean(a.post_state?.po);
+  const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
+  const showEstimate =
+    !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
+  const showImpact = a.dollar_impact_at_exec > 0 && !a.undo_of;
+
+  return (
+    <Box
+      padding="400"
+      borderBlockStartWidth={index === 0 ? undefined : "025"}
+      borderColor="border"
+    >
+      <BlockStack gap="200">
+        <InlineStack align="space-between" blockAlign="start" gap="200" wrap={false}>
+          <BlockStack gap="050">
+            <Text as="p" variant="bodySm" fontWeight="semibold">
+              {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
+            </Text>
+            <Text as="p" variant="bodyXs" tone="subdued">
+              {fmtRelTime(a.created_at)} · {shortId(a.target)}
+            </Text>
+          </BlockStack>
+          <Badge tone={a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"}>
+            {a.outcome}
+          </Badge>
+        </InlineStack>
+
+        <Text as="p" variant="bodySm" tone="subdued">{leg.why}</Text>
+
+        <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+          <InlineStack gap="200" blockAlign="center">
+            <Badge tone={leg.mode === "auto" ? "info" : undefined}>
+              {leg.mode === "auto" ? "Auto" : "Manual"}
+            </Badge>
+            <Text as="span" variant="bodySm" fontWeight="semibold">
+              {a.dollar_impact_at_exec < 0 ? "-" : ""}{fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
+            </Text>
+            {showEstimate && (
+              <Text as="span" variant="bodyXs" tone="subdued">est. {fmtMoney(estimateCents)}</Text>
+            )}
+          </InlineStack>
+          <InlineStack gap="200" blockAlign="center" wrap={false}>
+            {(canUndo || hasPoPdf) && (
+              <>
+                {canUndo && (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="undo" />
+                    <input type="hidden" name="auditId" value={a.id} />
+                    <Button submit variant="plain" loading={submitting} disabled={submitting}>Undo</Button>
+                  </Form>
+                )}
+                {hasPoPdf && <DownloadPoButton auditId={a.id} />}
+              </>
+            )}
+            <Button
+              variant="tertiary"
+              icon={open ? ChevronDownIcon : ChevronRightIcon}
+              onClick={() => setOpen((v) => !v)}
+              accessibilityLabel={open ? "Hide details" : "Show details"}
+            />
+          </InlineStack>
+        </InlineStack>
+
+        <Collapsible id={`mdetail-${a.id}`} open={open} transition={{ duration: "150ms" }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="150">
+              <DetailLine label="Why this fired" value={leg.whyDetail ?? leg.why} />
+              {a.failure_reason && <DetailLine label="Failure reason" value={a.failure_reason} />}
+              {showImpact && (
+                <DetailLine label="Booked margin"
+                  value={`${a.dollar_impact_at_exec < 0 ? "-" : ""}${fmtMoney(Math.abs(a.dollar_impact_at_exec))} · ${leg.marginBasisLabel}`} />
+              )}
+              {diff.length > 0 && (
+                <BlockStack gap="150">
+                  <Text as="span" variant="bodySm" fontWeight="semibold">Before → after</Text>
+                  <InlineGrid columns={{ xs: 1, sm: Math.min(diff.length, 2) as 1 | 2 }} gap="200">
+                    {diff.map((r) => (
+                      <Box key={r.label} background="bg-surface" padding="200" borderRadius="200" borderColor="border" borderWidth="025">
+                        <Text as="p" variant="bodySm" tone="subdued">{r.label}</Text>
+                        <Text as="p" variant="bodySm" fontWeight="semibold">
+                          {r.before != null && r.after != null ? `${r.before} → ${r.after}` : r.after ?? r.before}
+                        </Text>
+                      </Box>
+                    ))}
+                  </InlineGrid>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Box>
+        </Collapsible>
+      </BlockStack>
+    </Box>
+  );
+}
+
 export default function Audit() {
   const navigate = useEmbeddedNavigate();
   const { audit, error } = useLoaderData<typeof loader>();
@@ -240,6 +345,7 @@ export default function Audit() {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
+  const { smDown } = useBreakpoints();
 
   if (audit.length === 0) {
     return (
@@ -299,7 +405,7 @@ export default function Audit() {
             <p>{actionData.error.message}</p>
           </Banner>
         )}
-        <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+        <InlineGrid columns={{ xs: 2, sm: 3 }} gap="400">
           <StatTile label="Total actions" value={String(audit.length)} caption="last 90 days" />
           <StatTile
             label="Success rate"
@@ -316,18 +422,26 @@ export default function Audit() {
         </InlineGrid>
 
         <Card padding="0">
-          <IndexTable
-            selectable={false}
-            itemCount={audit.length}
-            headings={[
-              { title: "" }, { title: "Time" }, { title: "Action" }, { title: "Mode" },
-              { title: "Target" }, { title: "Impact", alignment: "end" }, { title: "Status" }, { title: "" },
-            ]}
-          >
-            {(audit as AuditEntry[]).map((a, i) => (
-              <AuditRowEx key={a.id} a={a} index={i} submitting={submitting} />
-            ))}
-          </IndexTable>
+          {smDown ? (
+            <BlockStack gap="0">
+              {(audit as AuditEntry[]).map((a, i) => (
+                <AuditCardEx key={a.id} a={a} index={i} submitting={submitting} />
+              ))}
+            </BlockStack>
+          ) : (
+            <IndexTable
+              selectable={false}
+              itemCount={audit.length}
+              headings={[
+                { title: "" }, { title: "Time" }, { title: "Action" }, { title: "Mode" },
+                { title: "Target" }, { title: "Impact", alignment: "end" }, { title: "Status" }, { title: "" },
+              ]}
+            >
+              {(audit as AuditEntry[]).map((a, i) => (
+                <AuditRowEx key={a.id} a={a} index={i} submitting={submitting} />
+              ))}
+            </IndexTable>
+          )}
         </Card>
       </BlockStack>
     </Page>

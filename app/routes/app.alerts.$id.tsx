@@ -22,6 +22,7 @@ import {
   Text,
   TextField,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
@@ -668,6 +669,7 @@ function ExecuteActionModal({
       ? (poDefaults.unit_cost_cents / 100).toFixed(2)
       : "",
   );
+  const { smDown } = useBreakpoints();
 
   const inventoryHints =
     kind === "reallocate_inventory"
@@ -707,32 +709,39 @@ function ExecuteActionModal({
                 creates another draft.
               </Banner>
             )}
-            {kind === "create_po_draft" && (
-              <InlineStack gap="200" wrap={false}>
-                <TextField
-                  label="Quantity"
-                  name="po_quantity"
-                  type="number"
-                  min={1}
-                  max={1_000_000}
-                  value={poQuantity}
-                  onChange={setPoQuantity}
-                  autoComplete="off"
-                />
-                <TextField
-                  label="Unit cost"
-                  name="po_unit_cost"
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  prefix="$"
-                  value={poUnitCost}
-                  onChange={setPoUnitCost}
-                  autoComplete="off"
-                  helpText="Leave blank if unknown — printed as TBD."
-                />
-              </InlineStack>
-            )}
+            {kind === "create_po_draft" && (() => {
+              const poFields = (
+                <>
+                  <TextField
+                    label="Quantity"
+                    name="po_quantity"
+                    type="number"
+                    min={1}
+                    max={1_000_000}
+                    value={poQuantity}
+                    onChange={setPoQuantity}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="Unit cost"
+                    name="po_unit_cost"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    prefix="$"
+                    value={poUnitCost}
+                    onChange={setPoUnitCost}
+                    autoComplete="off"
+                    helpText="Leave blank if unknown — printed as TBD."
+                  />
+                </>
+              );
+              return smDown ? (
+                <BlockStack gap="200">{poFields}</BlockStack>
+              ) : (
+                <InlineStack gap="200" wrap={false}>{poFields}</InlineStack>
+              );
+            })()}
             {missingInventoryFields ? (
               <Banner tone="critical">
                 Alert evidence is missing the inventory item, source location, destination, or

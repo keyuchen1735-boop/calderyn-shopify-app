@@ -179,8 +179,9 @@ function ScoreChip({ score }: { score: number }) {
   return (
     <span
       style={{
-        width: 34,
-        height: 34,
+        width: "var(--p-space-800)",
+        height: "var(--p-space-800)",
+        minWidth: "var(--p-space-800)",
         borderRadius: "50%",
         flexShrink: 0,
         background: "var(--p-color-bg-fill-critical-secondary)",

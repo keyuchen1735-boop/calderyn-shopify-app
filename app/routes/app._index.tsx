@@ -15,6 +15,7 @@ import {
   Page,
   Text,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -123,6 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Dashboard() {
   const navigate = useEmbeddedNavigate();
+  const { smDown } = useBreakpoints();
   const {
     alerts,
     audit,
@@ -196,7 +198,7 @@ export default function Dashboard() {
 
         {/* Stat row */}
         <div className="cdn-stat-row">
-          <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
+          <InlineGrid columns={{ xs: 2, sm: 2, md: 4 }} gap="400">
             <StatTile
               label="Open alerts"
               value={String(openAlerts.length)}
@@ -239,46 +241,63 @@ export default function Dashboard() {
         {/* Today's focus */}
         {focus && (
           <div className="cdn-card cdn-accent-left cdn-accent-left--primary">
-            <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
-              <BlockStack gap="150">
-                <InlineStack gap="100" blockAlign="center">
-                  <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
-                    <Icon name="spark" size={14} fill />
-                  </span>
-                  <Text as="span" variant="headingXs" tone="success">
-                    TODAY&apos;S FOCUS
+            {(() => {
+              const textBlock = (
+                <BlockStack gap="150">
+                  <InlineStack gap="100" blockAlign="center">
+                    <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
+                      <Icon name="spark" size={14} fill />
+                    </span>
+                    <Text as="span" variant="headingXs" tone="success">
+                      TODAY&apos;S FOCUS
+                    </Text>
+                  </InlineStack>
+                  <Text as="h3" variant="headingMd">
+                    {focus.title}
                   </Text>
-                </InlineStack>
-                <Text as="h3" variant="headingMd">
-                  {focus.title}
-                </Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {focusActionKind
-                    ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
-                    : "Protects "}
-                  <Text as="span" tone="success" fontWeight="semibold">
-                    {fmtMoney(focus.dollar_impact)}
-                  </Text>{" "}
-                  / 30d
-                </Text>
-              </BlockStack>
-              <InlineStack gap="200" wrap={false}>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {focusActionKind
+                      ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
+                      : "Protects "}
+                    <Text as="span" tone="success" fontWeight="semibold">
+                      {fmtMoney(focus.dollar_impact)}
+                    </Text>{" "}
+                    / 30d
+                  </Text>
+                </BlockStack>
+              );
+              const buttons = [
                 <Button
+                  key="review"
                   variant={focusActionKind ? undefined : "primary"}
+                  fullWidth={smDown}
                   onClick={() => navigate(`/app/alerts/${focus.id}`)}
                 >
                   Review
-                </Button>
-                {focusActionKind && (
+                </Button>,
+                focusActionKind ? (
                   <Button
+                    key="act"
                     variant="primary"
+                    fullWidth={smDown}
                     onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
                   >
                     {ACTION_LABELS[focusActionKind]}
                   </Button>
-                )}
-              </InlineStack>
-            </InlineStack>
+                ) : null,
+              ];
+              return smDown ? (
+                <BlockStack gap="300">
+                  {textBlock}
+                  <BlockStack gap="200">{buttons}</BlockStack>
+                </BlockStack>
+              ) : (
+                <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+                  {textBlock}
+                  <InlineStack gap="200" wrap={false}>{buttons}</InlineStack>
+                </InlineStack>
+              );
+            })()}
           </div>
         )}
 
