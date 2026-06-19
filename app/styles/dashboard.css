@@ -887,13 +887,28 @@
 }
 .cd-tile {
   height: 100%;
+  position: relative;
+}
+/* Clip box fills the cell and hides any scaled overflow, so a resized tile can
+   never bleed over its neighbours. Resize handles live on .cd-tile itself
+   (outside this box), so clipping never swallows them. */
+.cd-tile-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+/* True-zoom wrapper: laid out at cell-size ÷ scale, then transform-scaled back
+   to the cell (width/height/transform set inline per tile). The card/section
+   inside fills this virtual box, so the whole tile — text, gauges, buttons —
+   zooms as one piece and nothing reflows into a squished mess. */
+.cd-tile-scale {
+  transform-origin: top left;
   display: flex;
   flex-direction: column;
 }
-/* The tile's content (a card or a section) fills the grid cell. */
-.cd-tile > .cd-card,
-.cd-tile > section,
-.cd-tile > .cd-stat-grid {
+.cd-tile-scale > .cd-card,
+.cd-tile-scale > section,
+.cd-tile-scale > .cd-stat-grid {
   flex: 1 1 auto;
   min-height: 0;
 }
