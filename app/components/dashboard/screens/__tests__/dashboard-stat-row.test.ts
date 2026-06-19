@@ -120,8 +120,10 @@ function renderStatGrid(app: DashboardCtx): { html: string; grid: string } {
   // Strip SSR text-boundary markers (`across <!-- -->1<!-- --> action`) so
   // assertions can match the visible text.
   const html = renderToString(h(Dashboard, { app })).replace(/<!-- -->/g, "");
+  // The uncustomized default renders the original CSS-flow layout, so the stat
+  // grid is bounded by the `cd-grid-main` block that follows it.
   const start = html.indexOf("cd-stat-grid");
-  const end = html.indexOf('data-tile="focus"');
+  const end = html.indexOf("cd-grid-main");
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return { html, grid: html.slice(start, end) };
