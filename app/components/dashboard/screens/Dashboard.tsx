@@ -4,7 +4,7 @@
 // CDIcon/CD_ACTION_ICON (icons), RingGauge/GradePill/etc. (ui). Charts/cards reuse ui.tsx.
 import type { ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   SectionTitle,
@@ -29,7 +29,7 @@ import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 import { Responsive, WidthProvider } from "react-grid-layout";
 import type { Layout, Layouts } from "react-grid-layout";
 import {
-  loadLayouts,
+  loadSavedLayouts,
   saveLayouts,
   resetLayouts,
   DEFAULT_LAYOUTS,
@@ -405,6 +405,41 @@ function AttentionSection({ app }: { app: DashboardCtx }) {
   );
 }
 
+/* ---------- Default (uncustomized) layout ----------
+   The original CSS-flow arrangement, rendered verbatim so an uncustomized
+   dashboard looks exactly as it did before the customizable-grid feature. The
+   react-grid-layout grid only takes over once the user opens "Customize". */
+function OriginalLayout({
+  app,
+  benchmarks,
+}: {
+  app: DashboardCtx;
+  benchmarks: BenchmarksData | null;
+}) {
+  const open = app.alerts.filter((a) => a.status === "open");
+  const hasAttention = open.length >= 2;
+  return (
+    <>
+      <StatRow app={app} />
+      <div className="cd-grid-main">
+        <div className="flex flex-col gap-4 min-w-0">
+          <FocusCard app={app} />
+          <RevenueCard app={app} />
+        </div>
+        <div className="flex flex-col gap-4 min-w-0">
+          <ActivityFeed app={app} limit={7} tall />
+        </div>
+      </div>
+      {hasAttention && <AttentionSection app={app} />}
+      <div className="cd-grid-duo">
+        <PredictorCard app={app} />
+        <GuardrailCard app={app} />
+      </div>
+      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
+    </>
+  );
+}
+
 /* ---------- Screen ---------- */
 export default function Dashboard({ app }: { app: DashboardCtx }) {
   const open = app.alerts.filter((a) => a.status === "open");
@@ -432,26 +467,36 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  // Initial state stays DEFAULT_LAYOUTS so the SSR render and the first client
-  // paint agree (no hydration mismatch); the saved per-browser arrangement is
-  // applied on the first client effect — mirrors useTweaks() in tweaks-panel.tsx.
-  const [layouts, setLayouts] = useState<Layouts>(DEFAULT_LAYOUTS);
+  // Saved arrangement loads post-mount (SSR-safe). `null` = the user has not
+  // customized → render the ORIGINAL flow layout, exactly as before this feature.
+  const [layouts, setLayouts] = useState<Layouts | null>(null);
   useEffect(() => {
-    setLayouts(loadLayouts());
+    setLayouts(loadSavedLayouts());
   }, []);
   const [editing, setEditing] = useState(false);
 
-  // Only persist while editing — rgl also fires onLayoutChange on mount and on
-  // breakpoint changes, which we must not treat as user edits.
+  // Persist ONLY on a real drag/resize — never on rgl's mount/breakpoint
+  // onLayoutChange fires — so merely opening "Customize" and closing it doesn't
+  // lock the user into the grid view. onLayoutChange tracks the latest layout;
+  // commit() (from drag/resize-stop) is what actually saves it.
+  const latest = useRef<Layouts | null>(null);
   const onLayoutChange = (_current: Layout[], all: Layouts) => {
-    if (!editing) return;
-    setLayouts(all);
-    saveLayouts(all);
+    latest.current = all;
+  };
+  const commit = () => {
+    if (!latest.current) return;
+    setLayouts(latest.current);
+    saveLayouts(latest.current);
   };
   const handleReset = () => {
     resetLayouts();
-    setLayouts(DEFAULT_LAYOUTS);
+    latest.current = null;
+    setLayouts(null);
   };
+
+  // Editable grid while editing, or once the user has saved a layout. Otherwise
+  // the original CSS-flow layout — pixel-identical to before this feature.
+  const showGrid = editing || layouts !== null;
 
   const tiles: { id: string; node: ReactNode }[] = [
     { id: "stats", node: <StatRow app={app} /> },
@@ -485,34 +530,42 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Btn>
       </ScreenHeader>
 
-      {/* A11y: drag-reorder is pointer-only — react-grid-layout has no built-in
-          keyboard reordering and the grip is aria-hidden. It degrades safely:
-          a sensible default layout ships, tile content stays keyboard-operable,
-          and customization is an optional power-user nicety. */}
-      <DashGrid
-        className={"cd-dash-grid" + (editing ? " cd-dash-grid-editing" : "")}
-        layouts={layouts}
-        breakpoints={DASH_BREAKPOINTS}
-        cols={DASH_COLS}
-        rowHeight={30}
-        margin={[16, 16]}
-        isDraggable={editing}
-        isResizable={editing}
-        draggableHandle=".cd-tile-grip"
-        compactType="vertical"
-        onLayoutChange={onLayoutChange}
-      >
-        {tiles.map((t) => (
-          <div key={t.id} data-tile={t.id} className="cd-tile">
-            {editing && (
-              <span className="cd-tile-grip" aria-hidden="true">
-                ⠿
-              </span>
-            )}
-            {t.node}
-          </div>
-        ))}
-      </DashGrid>
+      {showGrid ? (
+        /* Customize canvas: drag by the grip, resize from any corner; sizes snap
+           to grid columns/rows = preset sizes. A11y: drag/resize is pointer-only
+           (rgl has no keyboard reorder), but the grip is aria-hidden, tile
+           content stays keyboard-operable, and the default view never uses the
+           grid — so nothing keyboard-accessible is lost. */
+        <DashGrid
+          className={"cd-dash-grid" + (editing ? " cd-dash-grid-editing" : "")}
+          layouts={layouts ?? DEFAULT_LAYOUTS}
+          breakpoints={DASH_BREAKPOINTS}
+          cols={DASH_COLS}
+          rowHeight={30}
+          margin={[16, 16]}
+          isDraggable={editing}
+          isResizable={editing}
+          draggableHandle=".cd-tile-grip"
+          resizeHandles={["sw", "se", "ne", "nw"]}
+          compactType="vertical"
+          onLayoutChange={onLayoutChange}
+          onDragStop={commit}
+          onResizeStop={commit}
+        >
+          {tiles.map((t) => (
+            <div key={t.id} data-tile={t.id} className="cd-tile">
+              {editing && (
+                <span className="cd-tile-grip" aria-hidden="true">
+                  ⠿
+                </span>
+              )}
+              {t.node}
+            </div>
+          ))}
+        </DashGrid>
+      ) : (
+        <OriginalLayout app={app} benchmarks={benchmarks} />
+      )}
     </div>
   );
 }

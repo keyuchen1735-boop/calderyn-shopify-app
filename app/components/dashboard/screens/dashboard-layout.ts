@@ -24,24 +24,27 @@ export type DashTileId = (typeof DASH_TILE_IDS)[number];
 // lg = hand-tuned 12-col arrangement reproducing today's two-column layout
 // (feed tall on the right alongside focus + revenue). compactType="vertical"
 // removes any leftover gaps, so exact y values only need to be in order.
+// Heights are fitted to measured content (rowHeight 30 + 16px margin → tile px
+// ≈ 46h − 16) so opening "Customize" starts roughly matching the default view;
+// the user resizes from there.
 const LG: Layout[] = [
-  { i: "stats", x: 0, y: 0, w: 12, h: 3, minW: 6, minH: 2 },
-  { i: "focus", x: 0, y: 3, w: 8, h: 6, minW: 4, minH: 4 },
-  { i: "feed", x: 8, y: 3, w: 4, h: 12, minW: 3, minH: 6 },
-  { i: "revenue", x: 0, y: 9, w: 8, h: 6, minW: 4, minH: 4 },
-  { i: "attention", x: 0, y: 15, w: 12, h: 4, minW: 4, minH: 3 },
-  { i: "predictor", x: 0, y: 19, w: 6, h: 5, minW: 3, minH: 4 },
-  { i: "autopilot", x: 6, y: 19, w: 6, h: 5, minW: 3, minH: 4 },
-  { i: "benchmarks", x: 0, y: 24, w: 12, h: 5, minW: 4, minH: 3 },
+  { i: "stats", x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
+  { i: "focus", x: 0, y: 4, w: 8, h: 6, minW: 4, minH: 4 },
+  { i: "feed", x: 8, y: 4, w: 4, h: 14, minW: 3, minH: 6 },
+  { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 4, minH: 5 },
+  { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 4, minH: 3 },
+  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 3, minH: 4 },
+  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 3, minH: 4 },
+  { i: "benchmarks", x: 0, y: 27, w: 12, h: 5, minW: 4, minH: 3 },
 ];
 
 // Smaller breakpoints: full-width vertical stack in registry order.
 const STACK_H: Record<DashTileId, number> = {
-  stats: 3,
+  stats: 4,
   focus: 6,
-  feed: 8,
-  revenue: 6,
-  attention: 4,
+  feed: 11,
+  revenue: 7,
+  attention: 5,
   predictor: 5,
   autopilot: 5,
   benchmarks: 5,
@@ -68,12 +71,14 @@ function stack(cols: number): Layout[] {
 
 export const DEFAULT_LAYOUTS: Layouts = {
   lg: LG,
-  md: stack(8),
   sm: stack(2),
 };
 
-export const DASH_BREAKPOINTS = { lg: 996, md: 768, sm: 0 };
-export const DASH_COLS = { lg: 12, md: 8, sm: 2 };
+// lg (the 2-column grid) engages whenever the screen container is ≥ 840px,
+// matching the original layout — which stays 2-column until the viewport
+// narrows (`.cd-screen` itself caps at 1020px). Below 840 the tiles stack.
+export const DASH_BREAKPOINTS = { lg: 840, sm: 0 };
+export const DASH_COLS = { lg: 12, sm: 2 };
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -126,6 +131,15 @@ export function loadLayouts(
 ): Layouts {
   const parsed = storage ? parseLayouts(storage.getItem(DASH_LAYOUT_KEY)) : null;
   return parsed ?? DEFAULT_LAYOUTS;
+}
+
+/** Like loadLayouts but returns null (not the defaults) when nothing valid is
+ *  saved — lets the screen render its ORIGINAL flow layout until the user has
+ *  actually customized, so the default view is unchanged by this feature. */
+export function loadSavedLayouts(
+  storage: StorageLike | null = browserStorage(),
+): Layouts | null {
+  return storage ? parseLayouts(storage.getItem(DASH_LAYOUT_KEY)) : null;
 }
 
 export function saveLayouts(

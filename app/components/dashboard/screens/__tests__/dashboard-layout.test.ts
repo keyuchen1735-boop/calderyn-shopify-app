@@ -8,6 +8,7 @@ import {
   DASH_LAYOUT_KEY,
   parseLayouts,
   loadLayouts,
+  loadSavedLayouts,
   saveLayouts,
   resetLayouts,
 } from "../dashboard-layout";
@@ -57,5 +58,29 @@ describe("dashboard-layout store", () => {
 
   it("loadLayouts is SSR-safe with no storage (no window) → defaults", () => {
     expect(loadLayouts(null)).toEqual(DEFAULT_LAYOUTS);
+  });
+
+  // loadSavedLayouts is what drives the "default view = original layout"
+  // behavior: it returns null (NOT the defaults) until the user has actually
+  // saved a custom arrangement, so an uncustomized dashboard renders its
+  // original flow layout instead of the grid.
+  it("loadSavedLayouts returns null when nothing is saved", () => {
+    expect(loadSavedLayouts(memStorage())).toBeNull();
+  });
+
+  it("loadSavedLayouts is SSR-safe with no storage → null", () => {
+    expect(loadSavedLayouts(null)).toBeNull();
+  });
+
+  it("loadSavedLayouts returns the saved layout once present", () => {
+    const s = memStorage();
+    saveLayouts(DEFAULT_LAYOUTS, s);
+    expect(loadSavedLayouts(s)).toEqual(DEFAULT_LAYOUTS);
+  });
+
+  it("loadSavedLayouts returns null (never throws) for a corrupt blob", () => {
+    const s = memStorage();
+    s.setItem(DASH_LAYOUT_KEY, "garbage{");
+    expect(loadSavedLayouts(s)).toBeNull();
   });
 });
