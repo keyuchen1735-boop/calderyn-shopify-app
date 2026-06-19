@@ -51,3 +51,33 @@ export function autopilotToasts(
       return { text: `${verb} ${name}`, icon: "bolt", tone: "accent" };
     });
 }
+
+// Lowercase verbs for the "Couldn't <verb> <campaign>" failure phrasing, keyed by
+// the kind the engine TRIED (decision.intendedKind) — a failed decision's `reason`
+// is a technical string ("executor outcome: failed" / "threw: …"), not a kind.
+const FAILED_VERBS: Record<string, string> = {
+  pause_campaign: "pause",
+  reduce_campaign_budget: "lower the budget on",
+  reallocate_budget: "reallocate budget from",
+  increase_campaign_budget: "scale",
+};
+
+/**
+ * One line per decision that FAILED at the executor (`outcome === "failed"`) — the
+ * "fail visibly" half of the on-load banner (rule 12). Without this a failed run
+ * (e.g. a dead Google Ads token) is silent and reads as "autopilot did nothing".
+ * The technical reason lives in Action history; this line just names what couldn't
+ * be done so the merchant knows to look.
+ */
+export function autopilotFailureLines(
+  decisions: AutopilotDecisionVM[],
+  campaignName: (id: string) => string,
+): string[] {
+  return decisions
+    .filter((d) => d.outcome === "failed")
+    .map((d) => {
+      const verb = FAILED_VERBS[d.intendedKind ?? ""] ?? "act on";
+      const name = campaignName(d.campaignId).trim() || "a campaign";
+      return `Couldn't ${verb} ${name}`;
+    });
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { autopilotToasts, type AutopilotDecisionVM } from "../autopilot-banner";
+import { autopilotToasts, autopilotFailureLines, type AutopilotDecisionVM } from "../autopilot-banner";
 
 const NAMES: Record<string, string> = {
   "c-pause": "Acme Prospecting",
@@ -65,5 +65,44 @@ describe("autopilotToasts", () => {
 
   it("returns nothing when no action landed", () => {
     expect(autopilotToasts([], nameOf)).toEqual([]);
+  });
+});
+
+function failed(intendedKind: string | null, campaignId: string): AutopilotDecisionVM {
+  // A failed decision carries intendedKind (the kind it tried) and a technical
+  // reason ("executor outcome: failed" / "threw: ..."), not an executed kind.
+  return { campaignId, detectorId: "d", intendedKind, outcome: "failed", reason: "executor outcome: failed" };
+}
+
+describe("autopilotFailureLines", () => {
+  it("emits one line per FAILED decision, phrased by the kind it tried", () => {
+    const lines = autopilotFailureLines(
+      [failed("pause_campaign", "c-pause"), failed("increase_campaign_budget", "c-scale")],
+      nameOf,
+    );
+    expect(lines).toEqual(["Couldn't pause Acme Prospecting", "Couldn't scale Winning Lookalike"]);
+  });
+
+  it("ignores acted / blocked / skipped decisions", () => {
+    const lines = autopilotFailureLines(
+      [
+        acted("pause_campaign", "c-pause"),
+        { campaignId: "c-reduce", detectorId: "d", intendedKind: "reduce_campaign_budget", outcome: "blocked", reason: "x" },
+        { campaignId: "c-scale", detectorId: "d", intendedKind: "increase_campaign_budget", outcome: "skipped", reason: "y" },
+        failed("reduce_campaign_budget", "c-reduce"),
+      ],
+      nameOf,
+    );
+    expect(lines).toEqual(["Couldn't lower the budget on Retarget EU"]);
+  });
+
+  it("falls back to a generic verb + noun for a thrown failure (null intendedKind, unknown name)", () => {
+    expect(autopilotFailureLines([failed(null, "c-missing")], nameOf)).toEqual([
+      "Couldn't act on a campaign",
+    ]);
+  });
+
+  it("returns nothing when no action failed", () => {
+    expect(autopilotFailureLines([acted("pause_campaign", "c-pause")], nameOf)).toEqual([]);
   });
 });
