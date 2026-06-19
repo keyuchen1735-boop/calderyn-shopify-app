@@ -224,6 +224,8 @@
     }
     .cd-more-item svg { color: var(--accent); opacity: 0.85; }
     .cd-more-item[data-active="1"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    /* Utility actions (Ask Calderyn / Report a bug) separated from the screen nav. */
+    .cd-more-group { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--hairline); }
     .cd-more-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px 2px; margin-top: 6px; border-top: 0.5px solid var(--hairline); }
 
     /* inventory: table -> cards. The list's outer <Card> is just the desktop
@@ -234,9 +236,10 @@
     .cd-card:has(> .cd-sku-list) { background: none; box-shadow: none; backdrop-filter: none; border-radius: 0; }
     .cd-sku-list { display: flex; flex-direction: column; gap: 11px; padding: 0; }
 
-    /* floating launchers ride above the tab bar (chat panel stays a full takeover) */
-    .cd-chat-launcher { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
-    .cd-bug-launcher { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+    /* The floating "Ask Calderyn" / "Report a bug" launchers overlap content on a
+       phone, so hide them and surface both from the More sheet instead. The chat
+       panel and bug modal themselves still open full-screen. */
+    .cd-chat-launcher, .cd-bug-launcher { display: none; }
   }
 
   @keyframes cd-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }

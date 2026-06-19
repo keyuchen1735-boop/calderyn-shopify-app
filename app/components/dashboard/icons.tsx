@@ -17,6 +17,7 @@ import {
   Bell,
   BellOff,
   Box,
+  Bug,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -90,6 +91,7 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   warn: TriangleAlert,
   assist: MessageSquareMore,
   more: MoreHorizontal,
+  bug: Bug,
 };
 
 export function CDIcon({

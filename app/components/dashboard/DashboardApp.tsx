@@ -108,6 +108,10 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
   // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
   const [moreOpen, setMoreOpen] = useState(false);
+  // Bumped by the More-sheet items to open the assistant / bug-report overlays
+  // (their floating launchers are hidden at phone width).
+  const [assistantSignal, setAssistantSignal] = useState(0);
+  const [bugSignal, setBugSignal] = useState(0);
 
   const navigate = useCallback((screen: ScreenId, param: string | null = null) => {
     setNav({ screen, param });
@@ -537,8 +541,8 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         <Screen app={app} />
       </main>
 
-      <AssistantPanel app={app} />
-      <BugReportButton app={app} />
+      <AssistantPanel app={app} openSignal={assistantSignal} />
+      <BugReportButton app={app} openSignal={bugSignal} />
 
       {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}
       <nav className="cd-tabbar" aria-label="Primary">
@@ -604,6 +608,30 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
                 </button>
               ))}
             </nav>
+            <div className="cd-more-group">
+              <button
+                type="button"
+                className="cd-more-item"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setAssistantSignal((n) => n + 1);
+                }}
+              >
+                <CDIcon name="assist" size={18} strokeWidth={1.8} />
+                <span>Ask Calderyn</span>
+              </button>
+              <button
+                type="button"
+                className="cd-more-item"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setBugSignal((n) => n + 1);
+                }}
+              >
+                <CDIcon name="bug" size={18} strokeWidth={1.8} />
+                <span>Report a bug</span>
+              </button>
+            </div>
             <div className="cd-more-foot">
               <div className="cd-live-row">
                 <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
