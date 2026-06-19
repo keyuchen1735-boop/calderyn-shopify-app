@@ -108,7 +108,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         devTokenHasWhitespace: /\s/.test(developerToken),
       });
       throw new Response(
-        `Google Ads listAccessibleCustomers failed: HTTP ${res.status} ${raw.slice(0, 300)}`,
+        `Google Ads listAccessibleCustomers failed: HTTP ${res.status} [devTokenLen=${developerToken.length}]\n${raw.slice(0, 1500)}`,
         { status: 502 },
       );
     }
