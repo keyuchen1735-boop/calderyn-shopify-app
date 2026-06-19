@@ -465,8 +465,21 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
-  const hour = new Date().getHours();
-  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  // Time-of-day greeting resolves the local hour POST-MOUNT only. Computing it
+  // during render read the wall clock, so the server (UTC) and the client's
+  // first paint (user TZ) could land in different buckets — a hydration mismatch
+  // (React #418/#425) that tore down and re-rendered the whole root. SSR and the
+  // first client paint now both render the static "Welcome back".
+  const [clientHour, setClientHour] = useState<number | null>(null);
+  useEffect(() => setClientHour(new Date().getHours()), []);
+  const greet =
+    clientHour === null
+      ? "Welcome back"
+      : clientHour < 12
+        ? "Good morning"
+        : clientHour < 17
+          ? "Good afternoon"
+          : "Good evening";
 
   // Saved arrangement loads post-mount (SSR-safe). `null` = the user has not
   // customized → render the ORIGINAL flow layout, exactly as before this feature.
