@@ -1,5 +1,27 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildAuthUrl, exchangeCodeForToken } from "../oauth.server";
+import { buildAuthUrl, exchangeCodeForToken, googleConnectErrorReason } from "../oauth.server";
+
+describe("googleConnectErrorReason", () => {
+  it("gives an actionable message when the authorizing account has no Ads account (NOT_ADS_USER)", () => {
+    // The exact authenticationError Google returns when a merchant authorizes
+    // with a Google account that isn't linked to any Google Ads account.
+    const raw = JSON.stringify({
+      error: {
+        status: "UNAUTHENTICATED",
+        details: [{ errors: [{ errorCode: { authenticationError: "NOT_ADS_USER" } }] }],
+      },
+    });
+    const msg = googleConnectErrorReason(raw);
+    expect(msg).toMatch(/Google Ads account/i);
+    expect(msg).toMatch(/reconnect|choose|account that manages/i);
+  });
+
+  it("gives a safe generic message for any other lookup failure", () => {
+    const msg = googleConnectErrorReason(JSON.stringify({ error: { code: 500 } }));
+    expect(msg).not.toContain("NOT_ADS_USER");
+    expect(msg).toMatch(/reconnect|try again/i);
+  });
+});
 
 describe("buildAuthUrl", () => {
   it("targets the Google auth endpoint with offline access and the adwords scope", () => {

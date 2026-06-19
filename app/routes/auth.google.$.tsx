@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import {
   exchangeCodeForToken,
+  googleConnectErrorReason,
   type GoogleTokenResponse,
 } from "~/lib/google/oauth.server";
 import {
@@ -97,19 +98,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // real status + body instead of crashing (rule 12: fail visibly).
     const raw = await res.text();
     if (!res.ok) {
-      // DIAGNOSTIC (fix/google-connect-401): the thrown Response truncates the
-      // body at 300 chars, hiding Google's details[].reason. Log the FULL body +
-      // developer-token sanity (length/whitespace only — never the value) so the
-      // root cause of a 401 is diagnosable from the runtime logs.
-      console.error("[auth.google] listAccessibleCustomers failed", {
-        httpStatus: res.status,
-        body: raw,
-        devTokenLen: developerToken.length,
-        devTokenHasWhitespace: /\s/.test(developerToken),
-      });
-      throw new Response(
-        `Google Ads listAccessibleCustomers failed: HTTP ${res.status} [devTokenLen=${developerToken.length}]\n${raw.slice(0, 1500)}`,
-        { status: 502 },
+      // Don't dead-end on a raw 502. The common case is NOT_ADS_USER — the
+      // merchant authorized with a Google account that has no Google Ads account
+      // — which is a "pick the right account" problem, not a server error. Log
+      // the full body for diagnosis (rule 12) and bounce back to Settings with an
+      // actionable message via the same one-shot ?google=error channel.
+      console.error(`[auth.google] customer lookup failed: HTTP ${res.status} ${raw.slice(0, 500)}`);
+      return redirect(
+        embeddedReturnUrl(
+          "/app/settings",
+          { google: "error", reason: googleConnectErrorReason(raw) },
+          returnCtx,
+        ),
       );
     }
     let body: AccessibleCustomersResponse;
@@ -199,14 +199,5 @@ async function exchangeRefreshTokenOnce(
       { status: 502 },
     );
   }
-  // DIAGNOSTIC (fix/google-connect-401): log the SCOPES granted on the minted
-  // token (decisive for a 401 on the Ads call — if `adwords` is absent the
-  // consent didn't grant it) plus token sanity (prefix/length, never the value).
-  console.error("[auth.google] refresh->access ok", {
-    tokenLen: json.access_token.length,
-    tokenPrefix: json.access_token.slice(0, 5),
-    scope: json.scope ?? "(no scope field returned)",
-    expiresIn: json.expires_in,
-  });
   return json.access_token;
 }
