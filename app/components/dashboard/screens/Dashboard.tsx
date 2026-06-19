@@ -585,8 +585,13 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
             // fill exactly (no overflow into neighbours, no clipped info).
             const src = live ?? (layouts ?? DEFAULT_LAYOUTS).lg ?? DEFAULT_LAYOUTS.lg;
             const scale = tileScale(t.id, src.find((l) => l.i === t.id), bp);
+            // data-grid is rgl's fallback geometry for a child NOT present in the
+            // active layout — e.g. peer benchmarks, which mounts only after its
+            // fetch resolves. Without it rgl auto-places a late tile at 1×1 (the
+            // "tiny tile" bug); with it the tile lands at its proper full size.
+            const fallback = (DEFAULT_LAYOUTS.lg ?? []).find((l) => l.i === t.id);
             return (
-              <div key={t.id} data-tile={t.id} className="cd-tile">
+              <div key={t.id} data-tile={t.id} className="cd-tile" data-grid={fallback}>
                 {editing && (
                   <span className="cd-tile-grip" aria-hidden="true">
                     ⠿

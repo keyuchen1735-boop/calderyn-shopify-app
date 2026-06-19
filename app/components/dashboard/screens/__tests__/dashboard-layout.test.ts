@@ -14,6 +14,8 @@ import {
   tileScale,
   TILE_SCALE_MIN,
   TILE_SCALE_MAX,
+  DASH_COLS,
+  sanitizeLayouts,
 } from "../dashboard-layout";
 
 function memStorage() {
@@ -131,5 +133,49 @@ describe("tileScale (resize zoom factor)", () => {
     expect(tileScale("predictor", { w: 2, h: 2 }, "sm")).toBe(1);
     expect(tileScale("nope", { w: 2, h: 2 }, "lg")).toBe(1);
     expect(tileScale("predictor", undefined, "lg")).toBe(1);
+  });
+});
+
+// The lg defaults are what "Customize" starts from. These invariants guarantee
+// the three behaviours the merchant asked for: the feed aligns to the revenue
+// tile, peer benchmarks is a full-width long card (never a tiny sliver), and no
+// tile can be resized to a size that hides its content.
+describe("dashboard-layout lg defaults", () => {
+  const lg = DEFAULT_LAYOUTS.lg!;
+  const byId = Object.fromEntries(lg.map((l) => [l.i, l]));
+
+  it("aligns the activity feed's bottom with the revenue tile's bottom", () => {
+    expect(byId.feed.y + byId.feed.h).toBe(byId.revenue.y + byId.revenue.h);
+  });
+
+  it("renders peer benchmarks as a fixed full-width long card", () => {
+    const b = byId.benchmarks;
+    expect(b.w).toBe(DASH_COLS.lg); // full width
+    expect(b.minW).toBe(DASH_COLS.lg); // can't be dragged narrow — stays "long"
+    expect(b.h).toBeGreaterThanOrEqual(7); // tall enough for the header + bars
+  });
+
+  it("never lets a tile shrink to a size that hides content", () => {
+    // tileScale = min(w/dw, h/dh). If the min size keeps that ratio at or above
+    // TILE_SCALE_MIN, the zoom is never clamped, so content (which fits at
+    // scale 1) always fits at every allowed size — nothing is hidden — and the
+    // smallest tile still renders at a legible scale.
+    for (const t of lg) {
+      const ratio = Math.min(t.minW! / t.w, t.minH! / t.h);
+      expect(ratio).toBeGreaterThanOrEqual(TILE_SCALE_MIN);
+    }
+  });
+});
+
+describe("sanitizeLayouts (repair stale/undersized saved tiles)", () => {
+  it("clamps a sub-minimum tile (a 1×1 auto-placed benchmarks) back up", () => {
+    const dirty = { lg: [{ i: "benchmarks", x: 0, y: 0, w: 1, h: 1 }] };
+    const clean = sanitizeLayouts(dirty).lg!.find((l) => l.i === "benchmarks")!;
+    expect(clean.w).toBeGreaterThanOrEqual(DASH_COLS.lg);
+    expect(clean.h).toBeGreaterThanOrEqual(6);
+  });
+
+  it("leaves a healthy default layout unchanged", () => {
+    expect(sanitizeLayouts(DEFAULT_LAYOUTS)).toEqual(DEFAULT_LAYOUTS);
   });
 });
