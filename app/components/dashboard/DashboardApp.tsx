@@ -11,7 +11,7 @@ import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
-import { autopilotToasts } from "./autopilot-banner";
+import { autopilotToasts } from "~/lib/autopilot-banner";
 import {
   TweaksPanel,
   TweakSection,

@@ -1,6 +1,8 @@
-// Maps an autopilot run's LANDED decisions to one notification banner each — the
-// "small notif every time something executes" the dashboard pops on load. Pure
-// (no React, no fetch) so it is unit-tested directly.
+// Maps an autopilot run's LANDED decisions to one notification line each — the
+// "small notif every time something executes" both surfaces show on load: the
+// web dashboard pops one toast per line (ToastHost), the embedded Shopify admin
+// lists the lines in a Polaris Banner (app._index). Pure (no React, no fetch),
+// surface-agnostic, so it lives in lib/ and is unit-tested directly.
 //
 // Self-contained verb map: ACTION_LABELS (format.ts) omits increase_campaign_budget
 // and reallocate_budget, both of which autopilot lands, so keying off it would
