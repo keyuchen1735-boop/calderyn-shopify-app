@@ -880,3 +880,43 @@
 @media (prefers-reduced-motion: reduce) {
   .cd-bench-chevron, .cd-collapse { transition: none; }
 }
+
+/* ---- Customizable dashboard grid (react-grid-layout) ---- */
+.cd-dash-grid {
+  position: relative;
+}
+.cd-tile {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* The tile's content (a card or a section) fills the grid cell. */
+.cd-tile > .cd-card,
+.cd-tile > section {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cd-tile-grip {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 2;
+  cursor: grab;
+  user-select: none;
+  line-height: 1;
+  font-size: 16px;
+  color: var(--text-3);
+}
+.cd-tile-grip:active {
+  cursor: grabbing;
+}
+.cd-dash-grid-editing .cd-tile {
+  outline: 1px dashed var(--border, #2a2a2a);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+.react-grid-item.react-grid-placeholder {
+  background: var(--accent);
+  opacity: 0.15;
+  border-radius: 12px;
+}

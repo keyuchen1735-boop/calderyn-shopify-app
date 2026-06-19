@@ -26,6 +26,11 @@ import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
 import { PeerBenchmarks } from "./PeerBenchmarks";
 import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
+import { Responsive, WidthProvider } from "react-grid-layout";
+import type { Layouts } from "react-grid-layout";
+import { loadLayouts, DASH_BREAKPOINTS, DASH_COLS } from "./dashboard-layout";
+
+const DashGrid = WidthProvider(Responsive);
 
 /* ---------- Header pieces ---------- */
 function ScreenHeader({
@@ -278,51 +283,161 @@ function GuardrailCard({ app }: { app: DashboardCtx }) {
   );
 }
 
-/* ---------- Screen ---------- */
-export default function Dashboard({ app }: { app: DashboardCtx }) {
+/* ---------- Stat row (4 KPI tiles) ---------- */
+function StatRow({ app }: { app: DashboardCtx }) {
   const open = app.alerts.filter((a) => a.status === "open");
   const critical = open.filter((a) => a.severity === "critical");
-
-  // Recovered (7d) — same shared computation as the extension home
-  // (app/lib/recovered.ts): succeeded actions, undo rows excluded, windowed to
-  // the trailing 7 days so the number matches the "(7d)" label.
   const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const recovered7d = recoveredWithin(app.audit, sinceIso);
-
-  // Daily action budget — same guardrail numbers the embedded extension shows.
   const g = app.guardrails;
   const budgetCap = g?.daily_action_budget_cents ?? 0;
   const budgetUsed = g?.daily_action_budget_used_cents ?? 0;
   const budgetLeft = Math.max(0, budgetCap - budgetUsed);
   const budgetPct = budgetCap > 0 ? (budgetUsed / budgetCap) * 100 : 0;
+  return (
+    <div className="cd-stat-grid">
+      <Card hover onClick={() => app.navigate("alerts")} className="cd-stat">
+        <span className="cd-stat-label">Open alerts</span>
+        <span className="cd-stat-value" style={critical.length ? { color: "var(--red)" } : undefined}>
+          {open.length}
+        </span>
+        <span className="cd-caption">
+          {critical.length ? `${critical.length} critical` : "clear of critical"}
+        </span>
+      </Card>
+      <Card hover onClick={() => app.navigate("audit")} className="cd-stat">
+        <span className="cd-stat-label">Recovered (7d)</span>
+        <span className="cd-stat-value" style={{ color: "var(--green)" }}>
+          <CountMoney cents={recovered7d.cents} />
+        </span>
+        <span className="cd-caption">
+          across {recovered7d.count} action{recovered7d.count === 1 ? "" : "s"}
+        </span>
+      </Card>
+      <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
+        <span className="cd-stat-label">Daily action budget</span>
+        {g ? (
+          <>
+            <Meter pct={budgetPct} tone={budgetPct > 85 ? "warn" : "accent"} />
+            <span className="cd-caption tabular-nums">{money(budgetLeft)} left today</span>
+          </>
+        ) : (
+          <span className="cd-caption">unavailable</span>
+        )}
+      </Card>
+      <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
+        <span className="cd-stat-label">Real ad return (7d)</span>
+        <span className="cd-stat-value tabular-nums">{trueRoas(app.campaigns)}</span>
+        <span className="cd-caption">margin-adjusted ROAS, all campaigns</span>
+      </Card>
+    </div>
+  );
+}
 
+/* ---------- Revenue vs ad spend ---------- */
+function RevenueCard({ app }: { app: DashboardCtx }) {
+  const series = app.overview?.roas_series ?? [];
+  return (
+    <Card pad={false}>
+      <div className="cd-pad-x cd-pad-t flex items-center justify-between">
+        <h2 className="cd-h2">Revenue vs ad spend</h2>
+        <span className="cd-caption">30 days · blended</span>
+      </div>
+      <div className="cd-pad" style={{ paddingTop: 8 }}>
+        {series.length > 1 ? (
+          <AreaChart rows={series} live={app.liveOn} />
+        ) : (
+          <Placeholder
+            icon="chart"
+            title={app.overview === null ? "Loading chart…" : "No history yet"}
+            sub="Revenue and ad spend for the last 30 days will plot here once data is in."
+          />
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------- Needs attention (top alerts) ---------- */
+function AttentionSection({ app }: { app: DashboardCtx }) {
+  const open = app.alerts.filter((a) => a.status === "open");
   const topAlerts: AlertVM[] = [...open]
     .sort((a, b) => a.claude_rank - b.claude_rank)
     .slice(1, 4);
+  return (
+    <section>
+      <SectionTitle action="All alerts" onAction={() => app.navigate("alerts")}>
+        Needs attention
+      </SectionTitle>
+      <div className="cd-attn-grid">
+        {topAlerts.map((a) => (
+          <Card
+            key={a.id}
+            hover
+            onClick={() => app.navigate("alerts", a.id)}
+            className="flex flex-col gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <SevBadge severity={a.severity} />
+              <span className="cd-caption truncate">
+                {detectorLabel(a.detector_id)}
+              </span>
+            </div>
+            <div className="cd-h3">{a.title}</div>
+            <div className="cd-caption truncate">{a.sku || a.campaign}</div>
+            <div className="cd-kv mt-auto">
+              <span>At risk</span>
+              <b className="tabular-nums" style={{ color: "var(--red)" }}>
+                {money(a.dollar_impact)}{IMPACT_SUFFIX}
+              </b>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-  const series = app.overview?.roas_series ?? [];
+/* ---------- Screen ---------- */
+export default function Dashboard({ app }: { app: DashboardCtx }) {
+  const open = app.alerts.filter((a) => a.status === "open");
+  const hasAttention = open.length >= 2; // slice(1,4) is empty with ≤1 open alert
 
   // Peer Benchmarks: self-fetched so no DashboardCtx threading needed.
-  // Promote into the context loader if another screen needs the same data.
   const [benchmarks, setBenchmarks] = useState<BenchmarksData | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/dashboard/api/benchmarks")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        // Only accept a well-formed payload — a soft/error response (no kpis
-        // array) keeps the card hidden rather than crashing the render.
         if (alive && d && Array.isArray((d as BenchmarksData).kpis)) {
           setBenchmarks(d as BenchmarksData);
         }
       })
-      // Card just stays hidden on failure, but surface the error (rule 12).
-      .catch((e) => { console.error("peer benchmarks fetch failed", e); });
-    return () => { alive = false; };
+      .catch((e) => {
+        console.error("peer benchmarks fetch failed", e);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  // Per-browser saved arrangement; SSR-safe (returns defaults when no window).
+  const [layouts] = useState<Layouts>(() => loadLayouts());
+
+  const tiles: { id: string; node: ReactNode }[] = [
+    { id: "stats", node: <StatRow app={app} /> },
+    { id: "focus", node: <FocusCard app={app} /> },
+    { id: "feed", node: <ActivityFeed app={app} limit={7} tall /> },
+    { id: "revenue", node: <RevenueCard app={app} /> },
+    ...(hasAttention ? [{ id: "attention", node: <AttentionSection app={app} /> }] : []),
+    { id: "predictor", node: <PredictorCard app={app} /> },
+    { id: "autopilot", node: <GuardrailCard app={app} /> },
+    ...(benchmarks ? [{ id: "benchmarks", node: <PeerBenchmarks data={benchmarks} /> }] : []),
+  ];
 
   return (
     <div className="cd-screen">
@@ -333,115 +448,23 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Btn>
       </ScreenHeader>
 
-      {/* Stat row */}
-      <div className="cd-stat-grid">
-        <Card hover onClick={() => app.navigate("alerts")} className="cd-stat">
-          <span className="cd-stat-label">Open alerts</span>
-          <span className="cd-stat-value" style={critical.length ? { color: "var(--red)" } : undefined}>
-            {open.length}
-          </span>
-          <span className="cd-caption">
-            {critical.length ? `${critical.length} critical` : "clear of critical"}
-          </span>
-        </Card>
-        <Card hover onClick={() => app.navigate("audit")} className="cd-stat">
-          <span className="cd-stat-label">Recovered (7d)</span>
-          <span className="cd-stat-value" style={{ color: "var(--green)" }}>
-            <CountMoney cents={recovered7d.cents} />
-          </span>
-          <span className="cd-caption">
-            across {recovered7d.count} action{recovered7d.count === 1 ? "" : "s"}
-          </span>
-        </Card>
-        <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
-          <span className="cd-stat-label">Daily action budget</span>
-          {g ? (
-            <>
-              <Meter pct={budgetPct} tone={budgetPct > 85 ? "warn" : "accent"} />
-              <span className="cd-caption tabular-nums">
-                {money(budgetLeft)} left today
-              </span>
-            </>
-          ) : (
-            <span className="cd-caption">unavailable</span>
-          )}
-        </Card>
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Real ad return (7d)</span>
-          <span className="cd-stat-value tabular-nums">{trueRoas(app.campaigns)}</span>
-          <span className="cd-caption">margin-adjusted ROAS, all campaigns</span>
-        </Card>
-      </div>
-
-      {/* Focus + feed */}
-      <div className="cd-grid-main">
-        <div className="flex flex-col gap-4 min-w-0">
-          <FocusCard app={app} />
-          <Card pad={false}>
-            <div className="cd-pad-x cd-pad-t flex items-center justify-between">
-              <h2 className="cd-h2">Revenue vs ad spend</h2>
-              <span className="cd-caption">30 days · blended</span>
-            </div>
-            <div className="cd-pad" style={{ paddingTop: 8 }}>
-              {series.length > 1 ? (
-                <AreaChart rows={series} live={app.liveOn} />
-              ) : (
-                <Placeholder
-                  icon="chart"
-                  title={app.overview === null ? "Loading chart…" : "No history yet"}
-                  sub="Revenue and ad spend for the last 30 days will plot here once data is in."
-                />
-              )}
-            </div>
-          </Card>
-        </div>
-        <div className="flex flex-col gap-4 min-w-0">
-          <ActivityFeed app={app} limit={7} tall />
-        </div>
-      </div>
-
-      {/* Needs attention */}
-      {topAlerts.length > 0 && (
-        <section>
-          <SectionTitle action="All alerts" onAction={() => app.navigate("alerts")}>
-            Needs attention
-          </SectionTitle>
-          <div className="cd-attn-grid">
-            {topAlerts.map((a) => (
-              <Card
-                key={a.id}
-                hover
-                onClick={() => app.navigate("alerts", a.id)}
-                className="flex flex-col gap-2"
-              >
-                <div className="flex items-center gap-2">
-                  <SevBadge severity={a.severity} />
-                  <span className="cd-caption truncate">
-                    {detectorLabel(a.detector_id)}
-                  </span>
-                </div>
-                <div className="cd-h3">{a.title}</div>
-                <div className="cd-caption truncate">{a.sku || a.campaign}</div>
-                <div className="cd-kv mt-auto">
-                  <span>At risk</span>
-                  <b className="tabular-nums" style={{ color: "var(--red)" }}>
-                    {money(a.dollar_impact)}{IMPACT_SUFFIX}
-                  </b>
-                </div>
-              </Card>
-            ))}
+      <DashGrid
+        className="cd-dash-grid"
+        layouts={layouts}
+        breakpoints={DASH_BREAKPOINTS}
+        cols={DASH_COLS}
+        rowHeight={30}
+        margin={[16, 16]}
+        isDraggable={false}
+        isResizable={false}
+        compactType="vertical"
+      >
+        {tiles.map((t) => (
+          <div key={t.id} data-tile={t.id} className="cd-tile">
+            {t.node}
           </div>
-        </section>
-      )}
-
-      {/* Predictor + autopilot */}
-      <div className="cd-grid-duo">
-        <PredictorCard app={app} />
-        <GuardrailCard app={app} />
-      </div>
-
-      {/* Peer Benchmarks — self-fetched; renders nothing until data arrives or for uncategorized niche */}
-      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
+        ))}
+      </DashGrid>
     </div>
   );
 }
