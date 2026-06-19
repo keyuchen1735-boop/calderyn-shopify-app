@@ -81,7 +81,14 @@ async def train_action_policies(conn: Any, *, pepper: str, run_date: date,
         try:
             rewards = await derive_action_reward_inputs(conn, shop_id, run_date)
         except Exception as exc:  # noqa: BLE001
-            s["skipped"] += 1; s["errors"].append(f"{shop_id}/*: reward read failed: {exc}"); continue
+            # Full detail to the structured log channel; the RETURNED summary keeps
+            # only the exception class so no DB-internal text (which an asyncpg error
+            # can carry) leaks into a persisted/echoed summary. shop_id stays raw:
+            # it is the shop's OWN training error (invariant A5) on a CRON_SECRET-
+            # auth'd internal channel, and the operator needs it to act.
+            logger.error("train_shop_reward_read_failed", shop_id=shop_id,
+                         error=str(exc), exc_type=type(exc).__name__)
+            s["skipped"] += 1; s["errors"].append(f"{shop_id}/*: reward read failed ({type(exc).__name__})"); continue
         by_group: dict[tuple[str, str], list] = {}
         for r in rewards:
             by_group.setdefault((r["detector_id"], r["action_kind"]), []).append(r)
@@ -102,7 +109,10 @@ async def train_action_policies(conn: Any, *, pepper: str, run_date: date,
                     posterior["last_reward"] = float(group[-1]["reward"]) if group else 0.0
                     await _upsert(conn, detector_id, action_kind, shop_id, pepper, posterior, _mu_from_posterior(posterior, baseline))
             except Exception as exc:  # noqa: BLE001
-                s["skipped"] += 1; s["errors"].append(f"{shop_id}/{detector_id}/{action_kind}: {exc}"); continue
+                logger.error("train_group_failed", shop_id=shop_id, detector_id=detector_id,
+                             action_kind=action_kind, error=str(exc), exc_type=type(exc).__name__)
+                s["skipped"] += 1
+                s["errors"].append(f"{shop_id}/{detector_id}/{action_kind}: {type(exc).__name__}"); continue
             s["models_written"] += 1; trained_any = True
         if trained_any:
             s["shops_trained"] += 1
