@@ -64,6 +64,10 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
+// On phones the sidebar collapses to a bottom tab bar. These four ride the bar
+// (matching the mobile design); everything else in NAV_ITEMS lives behind "More".
+const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory"];
+
 const TWEAK_DEFAULTS = {
   dark: false,
   accent: "#24556E",
@@ -102,11 +106,24 @@ function nextFeedId(): string {
 export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
+  // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const navigate = useCallback((screen: ScreenId, param: string | null = null) => {
     setNav({ screen, param });
+    setMoreOpen(false);
     document.getElementById("cd-main")?.scrollTo({ top: 0 });
   }, []);
+
+  // Escape closes the More sheet (backdrop click handles pointer dismissal).
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moreOpen]);
 
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
@@ -450,6 +467,14 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
   const openCount = alerts.filter((a) => a.status === "open").length;
 
+  // Bottom-tab-bar partition: the four primary tabs (in design order) + the rest
+  // behind "More". "More" reads active whenever a non-primary screen is open.
+  const primaryTabs = PRIMARY_TABS.map(
+    (id) => NAV_ITEMS.find((n) => n.id === id)!,
+  );
+  const moreItems = NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
+  const onMoreScreen = !PRIMARY_TABS.includes(nav.screen);
+
   return (
     <div className={"cd-root" + (t.dark ? " cd-dark" : "")} style={vars}>
       {/* Sidebar */}
@@ -514,6 +539,84 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
       <AssistantPanel app={app} />
       <BugReportButton app={app} />
+
+      {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}
+      <nav className="cd-tabbar" aria-label="Primary">
+        {primaryTabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="cd-tab"
+            data-active={nav.screen === item.id ? "1" : "0"}
+            onClick={() => navigate(item.id)}
+          >
+            <span className="cd-tab-ico">
+              <CDIcon name={item.icon} size={22} strokeWidth={1.9} />
+              {item.id === "alerts" && openCount > 0 && (
+                <span className="cd-tab-count">{openCount}</span>
+              )}
+            </span>
+            <span className="cd-tab-label">{item.label}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          className="cd-tab"
+          data-active={onMoreScreen ? "1" : "0"}
+          aria-expanded={moreOpen}
+          aria-haspopup="menu"
+          onClick={() => setMoreOpen((v) => !v)}
+        >
+          <span className="cd-tab-ico">
+            <CDIcon name="more" size={22} strokeWidth={2} />
+          </span>
+          <span className="cd-tab-label">More</span>
+        </button>
+      </nav>
+
+      {/* "More" bottom sheet — secondary nav + the controls that lived in the
+          sidebar foot, so nothing is stranded when the sidebar is hidden. */}
+      {moreOpen && (
+        <div
+          className="cd-more-overlay"
+          role="presentation"
+          onClick={() => setMoreOpen(false)}
+        >
+          <div
+            className="cd-more-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cd-more-grab" aria-hidden="true" />
+            <nav className="cd-more-nav" aria-label="More">
+              {moreItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="cd-more-item"
+                  data-active={nav.screen === item.id ? "1" : "0"}
+                  onClick={() => navigate(item.id)}
+                >
+                  <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="cd-more-foot">
+              <div className="cd-live-row">
+                <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
+                <span className="flex-1">Live sync</span>
+                <Toggle value={liveOn} onChange={setLiveOn} />
+              </div>
+              <div className="cd-caption" style={{ paddingLeft: 2 }}>
+                Shopify · Meta · Google · TikTok · QuickBooks
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ToastHost toasts={toasts} />
 

@@ -143,6 +143,104 @@
     .cd-grid-main, .cd-grid-duo, .cd-attn-grid { grid-template-columns: 1fr; }
   }
 
+  /* ============ mobile (phone) — sidebar collapses to a bottom tab bar ============ */
+  /* The tab bar, the More sheet, and the inventory card list exist only under the
+     phone breakpoint; hidden (and inert) at desktop/tablet widths. */
+  .cd-tabbar, .cd-more-overlay, .cd-sku-list { display: none; }
+
+  /* Stacked SKU cards (mobile inventory) — the wide table becomes one card per
+     SKU. Styled globally; the .cd-sku-list container gates visibility. */
+  .cd-sku-card { background: var(--card-solid); border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 13px 15px; }
+  .cd-sku-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .cd-sku-card-title { font-size: calc(14px * var(--type-scale)); font-weight: 550; letter-spacing: -0.01em; color: var(--text-1); }
+  .cd-sku-card-sku { font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--text-3); margin-top: 1px; }
+  .cd-sku-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px; }
+  .cd-sku-tile { background: var(--gray-bg); border-radius: 9px; padding: 7px 8px; min-width: 0; }
+  .cd-sku-tile-val { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); }
+  /* Ship-P&L tile reuses <ShipPnlCell> (.cd-row-num) for its color/provenance;
+     match it to the other tiles' value typography so the 4-up grid is uniform. */
+  .cd-sku-tile .cd-row-num { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; }
+  .cd-sku-tile-lab { font-size: 10px; color: var(--text-3); margin-top: 1px; white-space: nowrap; }
+  .cd-sku-card-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+  @media (max-width: 767px) {
+    /* shell: hide the rail, give the screen room and clearance for the tab bar */
+    .cd-sidebar { display: none; }
+    .cd-screen {
+      padding: calc(16px * var(--density)) calc(16px * var(--density))
+        calc(92px * var(--density));
+      gap: calc(16px * var(--density));
+    }
+    .cd-screen--wide { max-width: none; }
+    .cd-screen-head { align-items: flex-start; }
+    /* Match the design's phone screen titles (~24px) instead of the 30px desktop h1. */
+    .cd-h1 { font-size: calc(24px * var(--type-scale)); }
+    .cd-stat-grid { grid-template-columns: 1fr 1fr; }
+
+    /* bottom tab bar */
+    .cd-tabbar {
+      display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+      align-items: flex-start; justify-content: space-around;
+      padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+      background: var(--card-solid);
+      border-top: 0.5px solid var(--hairline-strong);
+      box-shadow: 0 -2px 16px -10px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(16px) saturate(1.4);
+    }
+    .cd-tab {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      width: 60px; padding: 1px 0; border: none; background: none; cursor: pointer;
+      font-family: inherit; font-size: 10px; font-weight: 500; color: var(--text-3);
+      letter-spacing: -0.005em; -webkit-tap-highlight-color: transparent;
+    }
+    .cd-tab[data-active="1"] { color: var(--accent); font-weight: 600; }
+    .cd-tab-ico { position: relative; display: inline-flex; }
+    .cd-tab-count {
+      position: absolute; top: -3px; right: -9px;
+      min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px;
+      background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .cd-tab-label { line-height: 1; }
+
+    /* More bottom sheet */
+    .cd-more-overlay {
+      display: flex; position: fixed; inset: 0; z-index: 70; align-items: flex-end;
+      background: color-mix(in oklch, black 28%, transparent);
+    }
+    .cd-more-sheet {
+      width: 100%; background: var(--card-solid); border-radius: 20px 20px 0 0;
+      padding: 8px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+      box-shadow: 0 -12px 40px -12px rgba(0, 0, 0, 0.4);
+      animation: cd-sheet-up 0.22s ease;
+    }
+    .cd-more-grab { width: 38px; height: 5px; border-radius: 3px; background: var(--hairline-strong); margin: 4px auto 10px; }
+    .cd-more-nav { display: flex; flex-direction: column; gap: 1px; }
+    .cd-more-item {
+      display: flex; align-items: center; gap: 12px; padding: 12px 10px;
+      border: none; background: none; border-radius: 10px; cursor: pointer;
+      font-family: inherit; text-align: left;
+      font-size: calc(15px * var(--type-scale)); font-weight: 480; color: var(--text-1);
+    }
+    .cd-more-item svg { color: var(--accent); opacity: 0.85; }
+    .cd-more-item[data-active="1"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    .cd-more-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px 2px; margin-top: 6px; border-top: 0.5px solid var(--hairline); }
+
+    /* inventory: table -> cards. The list's outer <Card> is just the desktop
+       table frame; on mobile the SKU cards stand alone on the background, so
+       strip the wrapper's chrome (the success state is the only one with a
+       .cd-sku-list child — loading/empty placeholders keep their card). */
+    .cd-table-scroll { display: none; }
+    .cd-card:has(> .cd-sku-list) { background: none; box-shadow: none; backdrop-filter: none; border-radius: 0; }
+    .cd-sku-list { display: flex; flex-direction: column; gap: 11px; padding: 0; }
+
+    /* floating launchers ride above the tab bar (chat panel stays a full takeover) */
+    .cd-chat-launcher { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+    .cd-bug-launcher { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  @keyframes cd-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
   /* ============ stats ============ */
   .cd-stat { display: flex; flex-direction: column; gap: 4px; }
   .cd-stat-label { font-size: calc(13px * var(--type-scale)); font-weight: 500; color: var(--text-2); letter-spacing: -0.006em; }
