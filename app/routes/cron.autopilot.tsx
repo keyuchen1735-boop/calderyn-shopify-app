@@ -12,7 +12,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return new Response("Unauthorized", { status: 401 });
   }
   const sb = getSupabase();
-  const summary = { acted: 0, blocked: 0, failed: 0, shops: 0, errors: [] as string[] };
+  const summary = {
+    acted: 0,
+    blocked: 0,
+    failed: 0,
+    considered: 0,
+    shops: 0,
+    blockedReasons: {} as Record<string, number>,
+    errors: [] as string[],
+  };
 
   // Surface a shop-list read failure as a 500 instead of swallowing it: a DB
   // outage must not look identical to "no shops opted in" (an empty 200), which
@@ -34,11 +42,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.acted += r.value.acted;
       summary.blocked += r.value.blocked;
       summary.failed += r.value.failed;
+      summary.considered += r.value.considered ?? 0;
+      for (const [reason, n] of Object.entries(r.value.blockedReasons ?? {})) {
+        summary.blockedReasons[reason] = (summary.blockedReasons[reason] ?? 0) + n;
+      }
     } else {
       const message = r.error instanceof Error ? r.error.message : String(r.error);
       summary.errors.push(`${shopIds[i]}: ${message}`);
       console.error(`[cron.autopilot] failed for ${shopIds[i]}`, r.error);
     }
   });
+  // One structured line so a silent run (acted 0, everything blocked) is still
+  // explained in the Vercel logs (rule 12: fail visibly).
+  console.info("[cron.autopilot] summary", summary);
   return json(summary);
 };

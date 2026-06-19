@@ -5,7 +5,8 @@
   "regions": ["pdx1"],
   "functions": {
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" },
-    "api/engine/moat_train.py": { "maxDuration": 300, "includeFiles": "engine/**" }
+    "api/engine/moat_train.py": { "maxDuration": 300, "includeFiles": "engine/**" },
+    "api/engine/autopilot_train.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
   "rewrites": [
     {
@@ -34,6 +35,7 @@
     { "path": "/cron/mcp-oauth-cleanup", "schedule": "0 4 * * *" },
     { "path": "/cron/github-digest", "schedule": "0 14 * * *" },
     { "path": "/cron/moat-train", "schedule": "0 3 * * *" },
+    { "path": "/cron/autopilot-train", "schedule": "0 4 * * *" },
     { "path": "/cron/social-digest", "schedule": "0 14 * * 5" }
   ]
 }

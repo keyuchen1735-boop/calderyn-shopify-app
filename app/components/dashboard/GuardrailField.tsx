@@ -1,12 +1,16 @@
 // A guardrail control: preset chips + a "Custom" reveal that shows a number
-// input. Reused for every numeric guardrail. Pure preset-matching is exported
-// for unit tests; the input commits on blur or Enter, presets commit on click.
+// input, and (optionally) an "Unlimited" chip that commits null. Reused for
+// every numeric guardrail. Pure preset-matching is exported for unit tests; the
+// input commits on blur or Enter, presets commit on click.
 import { useEffect, useState } from "react";
 import { Segmented } from "./ui";
 
 const CUSTOM = "__custom__";
+const UNLIMITED = "__unlimited__";
 
-export function activePreset(value: number, presetValues: number[]): string {
+/** null => Unlimited; an exact preset => that preset; anything else => Custom. */
+export function activePreset(value: number | null, presetValues: number[]): string {
+  if (value === null) return UNLIMITED;
   return presetValues.includes(value) ? String(value) : CUSTOM;
 }
 
@@ -18,31 +22,38 @@ export function GuardrailField({
   fromInput,
   suffix,
   disabled,
+  unlimited,
 }: {
-  value: number;
+  value: number | null;
   presets: { value: number; label: string }[];
-  onCommit: (next: number) => void;
+  onCommit: (next: number | null) => void;
   /** stored unit -> input display (e.g. cents -> dollars). Defaults to String(value). */
   toInput?: (v: number) => string;
   /** input string -> stored unit; return null to reject (e.g. dollars -> cents). */
   fromInput?: (raw: string) => number | null;
   suffix?: string;
   disabled?: boolean;
+  /** When set, adds an "Unlimited" chip that commits null (no cap/ceiling). */
+  unlimited?: { label: string };
 }) {
   const presetValues = presets.map((p) => p.value);
   const [mode, setMode] = useState(activePreset(value, presetValues));
-  const [draft, setDraft] = useState(toInput ? toInput(value) : String(value));
+  // The numeric draft only ever reflects a non-null value; null shows no input.
+  const [draft, setDraft] = useState(
+    value === null ? "" : toInput ? toInput(value) : String(value),
+  );
 
   // Re-sync when the upstream value changes (refresh / optimistic revert).
   useEffect(() => {
     setMode(activePreset(value, presetValues));
-    setDraft(toInput ? toInput(value) : String(value));
+    setDraft(value === null ? "" : toInput ? toInput(value) : String(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   const options = [
     ...presets.map((p) => ({ value: String(p.value), label: p.label })),
     { value: CUSTOM, label: "Custom" },
+    ...(unlimited ? [{ value: UNLIMITED, label: unlimited.label }] : []),
   ];
 
   const commitDraft = () => {
@@ -59,7 +70,8 @@ export function GuardrailField({
         options={options}
         onChange={(v) => {
           setMode(v);
-          if (v !== CUSTOM) onCommit(Number(v));
+          if (v === UNLIMITED) onCommit(null);
+          else if (v !== CUSTOM) onCommit(Number(v));
         }}
       />
       {mode === CUSTOM && (

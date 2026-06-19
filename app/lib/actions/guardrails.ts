@@ -9,7 +9,8 @@ export type GuardedKind = ExecutableKind | "reallocate_budget";
 
 export interface AutopilotGuardrails {
   enabled: boolean;
-  dailyActionCap: number;
+  /** Max autopilot actions per UTC day; null = no daily cap (unlimited). */
+  dailyActionCap: number | null;
   minSpendCents: number;
   maxBudgetCutPct: number;
   maxBudgetIncreasePct: number;
@@ -49,7 +50,10 @@ export function withinBusinessHours(startUtc: number, endUtc: number, hour: numb
 
 export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFacts): GuardrailResult {
   if (!cfg.enabled) return { allowed: false, reason: "auto-pilot disabled" };
-  if (facts.todayAutopilotCount >= cfg.dailyActionCap) return { allowed: false, reason: "daily action cap reached" };
+  // null cap = unlimited: skip the daily-cap check entirely.
+  if (cfg.dailyActionCap != null && facts.todayAutopilotCount >= cfg.dailyActionCap) {
+    return { allowed: false, reason: "daily action cap reached" };
+  }
   if (facts.campaignSpendCents < cfg.minSpendCents) return { allowed: false, reason: "campaign spend below minimum" };
   if (facts.dollarImpactCents > cfg.dollarCapCents) return { allowed: false, reason: "dollar impact exceeds cap" };
   if (facts.minutesSinceLastActionOnCampaign != null && facts.minutesSinceLastActionOnCampaign < cfg.cooldownMinutes) {

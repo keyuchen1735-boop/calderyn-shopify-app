@@ -150,7 +150,8 @@ export interface GuardrailVM {
   in_business_hours: boolean;
   business_hours_only: boolean;
   autopilot_enabled: boolean;
-  autopilot_daily_action_cap: number;
+  /** Max automated actions per day; null = no cap (unlimited). */
+  autopilot_daily_action_cap: number | null;
   autopilot_actions_today: number;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;

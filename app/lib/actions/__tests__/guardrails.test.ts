@@ -40,6 +40,15 @@ describe("evaluateGuardrails", () => {
     expect(evaluateGuardrails(cfg, { ...facts, todayAutopilotCount: 3 }).allowed).toBe(false);
   });
 
+  it("skips the daily-cap check entirely when the cap is null (unlimited)", () => {
+    // null cap = "no daily cap": even a wildly high today-count must not block
+    // on the daily-cap axis. Every other rule still applies.
+    const unlimited: AutopilotGuardrails = { ...cfg, dailyActionCap: null };
+    expect(evaluateGuardrails(unlimited, { ...facts, todayAutopilotCount: 999 })).toEqual({
+      allowed: true,
+    });
+  });
+
   it("blocks when campaign spend is below the minimum", () => {
     expect(evaluateGuardrails(cfg, { ...facts, campaignSpendCents: 19999 }).allowed).toBe(false);
   });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAutopilotForShop } from "../autopilot.server";
+import { getActionPolicy } from "../action-policy.server";
 import type { ReallocationCandidate, ReallocationSuggestion } from "../reallocation-suggest.server";
 import type { Platform } from "../../ads/adapter";
 
@@ -18,11 +19,24 @@ vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
+// Default: null → mu falls back to 1 → full-cap behavior (today's exact numbers).
+// Per-test override via vi.mocked(getActionPolicy).mockResolvedValueOnce(mu).
+vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolvedValue(null) }));
+// resolveScopedCandidates is NOT mocked — we test it exercised through the real
+// targeting module (which itself calls the already-mocked pickReallocation).
+vi.mock("../autopilot-targeting.server", async (importOriginal) => {
+  return await importOriginal();
+});
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
 // rows: guardrail_config (enabled), candidate alerts (with campaign + spend).
-function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>> }) {
+// scopedAlerts: rows to return for the new `alerts` table query (defaults to []).
+function fakeSb(opts: {
+  enabled: boolean;
+  alerts: Array<Record<string, unknown>>;
+  scopedAlerts?: Array<Record<string, unknown>>;
+}) {
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
@@ -38,8 +52,12 @@ function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>>
       },
       error: null,
     }));
-    chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
-      resolve({ data: table === "v_autopilot_candidates" ? opts.alerts : [], error: null });
+    chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) => {
+      let data: unknown = [];
+      if (table === "v_autopilot_candidates") data = opts.alerts;
+      else if (table === "alerts") data = opts.scopedAlerts ?? [];
+      return resolve({ data, error: null });
+    };
     return chain;
   }
   return { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
@@ -164,7 +182,7 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).not.toHaveBeenCalled();
     expect(executeReallocation).not.toHaveBeenCalled();
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1, failed: 0 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 1, failed: 0 });
   });
 
   it("keeps draining the remaining candidates after a null-budget block", async () => {
@@ -182,7 +200,7 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1, failed: 0 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 1, failed: 0 });
   });
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
@@ -233,6 +251,105 @@ describe("runAutopilotForShop", () => {
     expect(kinds).toEqual(["pause_campaign", "increase_campaign_budget"]);
   });
 
+  describe("observability (rule 12: fail visibly)", () => {
+    it("shop-level disabled short-circuit reports considered=0 and no decisions", async () => {
+      const sb = fakeSb({ enabled: false, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.skipped).toBe(true);
+      expect(r.considered).toBe(0);
+      expect(r.blockedReasons).toEqual({});
+      expect(r.decisions).toEqual([]);
+    });
+
+    it("counts every candidate considered and maps the guardrail reason when all are blocked", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: false, reason: "campaign spend below minimum" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+          { ...candidate, alert_id: "al3", campaign_id: "camp-uuid-3" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(3);
+      expect(r.considered).toBe(3);
+      expect(r.blockedReasons).toEqual({ "campaign spend below minimum": 3 });
+      // A structured decision exists for every candidate considered.
+      expect(r.decisions).toHaveLength(3);
+      expect(r.decisions[0]).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        detectorId: "campaign_below_breakeven",
+        intendedKind: "pause_campaign",
+        outcome: "blocked",
+        reason: "campaign spend below minimum",
+      });
+    });
+
+    it("reports acted and the right blocked reasons in a mixed run", async () => {
+      // al1 pauses (allowed); al2's guardrail blocks with a distinct reason.
+      checkGuardrails
+        .mockResolvedValueOnce({ allowed: true })
+        .mockResolvedValueOnce({ allowed: false, reason: "daily action cap reached" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [candidate, { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" }],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(r.considered).toBe(2);
+      expect(r.blockedReasons).toEqual({ "daily action cap reached": 1 });
+      const acted = r.decisions.find((d) => d.outcome === "acted");
+      expect(acted).toMatchObject({ alertId: "al1", outcome: "acted", reason: "pause_campaign" });
+    });
+
+    it("records a skipped-for-missing-budget candidate with a stable reason", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [{ ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null }],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      expect(r.considered).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        intendedKind: "reduce_campaign_budget",
+        outcome: "skipped",
+      });
+      expect(dec.reason).toBe("current daily budget missing from sync");
+      // A pre-flight skip still lands in the `blocked` counter, so its reason
+      // must appear in the histogram — sum(blockedReasons) === blocked.
+      expect(r.blockedReasons).toEqual({ "current daily budget missing from sync": 1 });
+    });
+
+    it("keeps sum(blockedReasons) === blocked across mixed skip + guardrail-block reasons", async () => {
+      // al1: reduce with null budget → pre-flight skip. al2: guardrail block.
+      checkGuardrails.mockResolvedValue({ allowed: false, reason: "campaign spend below minimum" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null },
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.blocked).toBe(2);
+      expect(r.blockedReasons).toEqual({
+        "current daily budget missing from sync": 1,
+        "campaign spend below minimum": 1,
+      });
+      const total = Object.values(r.blockedReasons).reduce((a, b) => a + b, 0);
+      expect(total).toBe(r.blocked);
+    });
+  });
+
   // A platform error is CAUGHT inside executeAction and returned as
   // outcome:"failed" (e.g. "meta not connected") — the budget never changed,
   // so the run summary must NOT report it as an action taken.
@@ -241,7 +358,7 @@ describe("runAutopilotForShop", () => {
     executeAction.mockResolvedValue({ id: "aud1", outcome: "failed" });
     const sb = fakeSb({ enabled: true, alerts: [candidate] });
     const r = await runAutopilotForShop(SHOP, sb);
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 0, failed: 1 });
   });
 
   // A transient platform failure is parked as outcome:"retrying" for the retry
@@ -251,7 +368,7 @@ describe("runAutopilotForShop", () => {
     executeAction.mockResolvedValue({ id: "aud1", outcome: "retrying" });
     const sb = fakeSb({ enabled: true, alerts: [candidate] });
     const r = await runAutopilotForShop(SHOP, sb);
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 0, failed: 1 });
   });
 
   // executeAction THROWS on ownership/validation/DB errors. One bad candidate
@@ -270,7 +387,92 @@ describe("runAutopilotForShop", () => {
     });
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).toHaveBeenCalledTimes(2);
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+  });
+
+  // D6: a shop-scoped ad_tax_overload alert has no campaign_id in
+  // v_autopilot_candidates (so the view row never exists), but the `alerts`
+  // table row IS present. resolveScopedCandidates picks the worst-graded
+  // source campaign from the graded pool and synthesises a candidate so the
+  // reallocation path in the loop fires normally.
+  describe("ad_tax_overload scoped candidate (D6)", () => {
+    const scopedSource: ReallocationCandidate = {
+      campaignId: "source-uuid", externalId: "g-1", platform: "google" as Platform,
+      name: "Bleeder", dailyBudgetCents: 8000, grade: "poor" as const, roas: 0.3,
+    };
+    const scopedDest: ReallocationCandidate = {
+      campaignId: "dest-uuid-d6", externalId: "m-5", platform: "meta" as Platform,
+      name: "Winner D6", dailyBudgetCents: 6000, grade: "winning" as const, roas: 5.1,
+    };
+
+    it("acts (reallocates) when v_autopilot_candidates is empty but a scoped ad_tax_overload alert exists", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // First pickReallocation call (inside resolveScopedCandidates): returns
+      // the worst source so a synthetic candidate is built. Second call (inside
+      // the loop's reallocation branch): returns the winning destination.
+      pickReallocation
+        .mockReturnValueOnce({ source: scopedSource, dest: null }) // targeting: picks source
+        .mockReturnValueOnce({ source: null, dest: scopedDest });   // loop: picks dest
+      loadReallocationCandidates.mockResolvedValue([scopedSource, scopedDest]);
+
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [],               // v_autopilot_candidates is empty
+        scopedAlerts: [           // but an open ad_tax_overload alert exists
+          { id: "al-scoped", detector_id: "ad_tax_overload", dollar_impact: 120, entity_ref: {} },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({
+          sourceCampaignId: "source-uuid",
+          destCampaignId: "dest-uuid-d6",
+          actor: "autopilot",
+          alertId: "al-scoped",
+        }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+  });
+
+  // D5: mu=0.5 halves the effective cut pct within the merchant cap.
+  // $100 (10000c) budget at maxCutPct=50 with mu=0.5 → effectivePct=25% → 7500c.
+  // With mu=null (default) → effectivePct=50% → 5000c (today's exact behavior).
+  describe("D5: learned mu scales cut/increase within guardrail cap", () => {
+    it("mu=0.5 halves the cut magnitude; null mu preserves full-cap (5000c)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null }); // force plain reduce path
+
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: 10000 };
+
+      // First: mu=null (default mock) → full 50% cut → 5000c.
+      const sbFull = fakeSb({ enabled: true, alerts: [reduceCand] });
+      await runAutopilotForShop(SHOP, sbFull);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 5000 }),
+        sbFull,
+      );
+
+      vi.clearAllMocks();
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null });
+      executeAction.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
+      executeReallocation.mockResolvedValue({ id: "aud2", outcome: "succeeded" });
+      loadReallocationCandidates.mockResolvedValue([]);
+
+      // Now: mu=0.5 → effectivePct = 50*0.5 = 25% → 10000*(1-0.25) = 7500c.
+      vi.mocked(getActionPolicy).mockResolvedValueOnce(0.5);
+      const sbHalf = fakeSb({ enabled: true, alerts: [reduceCand] });
+      await runAutopilotForShop(SHOP, sbHalf);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 7500 }),
+        sbHalf,
+      );
+    });
   });
 
   // executeReallocation THROWS when the live source budget dropped below the
@@ -293,6 +495,6 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al-pause" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
   });
 });
