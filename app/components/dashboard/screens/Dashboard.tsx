@@ -32,6 +32,7 @@ import {
   loadSavedLayouts,
   saveLayouts,
   resetLayouts,
+  tileScale,
   DEFAULT_LAYOUTS,
   DASH_BREAKPOINTS,
   DASH_COLS,
@@ -480,8 +481,20 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // lock the user into the grid view. onLayoutChange tracks the latest layout;
   // commit() (from drag/resize-stop) is what actually saves it.
   const latest = useRef<Layouts | null>(null);
-  const onLayoutChange = (_current: Layout[], all: Layouts) => {
+  // `live` is the current breakpoint's layout, updated on every onLayoutChange
+  // (which fires continuously during a resize) so tile content zooms in real
+  // time as the cell is dragged. `bp` gates zoom to the lg grid only — derived
+  // here, in the SAME callback, by matching which entry of `all` IS the current
+  // layout (rgl sets all[breakpoint] === current by reference). A separate
+  // onBreakpointChange can lag this and briefly scale sm tiles against lg's
+  // reference dims, shrinking them to the floor; deriving it keeps them in sync.
+  const [live, setLive] = useState<Layout[] | null>(null);
+  const [bp, setBp] = useState<string>("lg");
+  const onLayoutChange = (current: Layout[], all: Layouts) => {
     latest.current = all;
+    setLive(current);
+    const active = Object.keys(all).find((k) => all[k] === current);
+    if (active) setBp(active);
   };
   const commit = () => {
     if (!latest.current) return;
@@ -552,16 +565,35 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           onDragStop={commit}
           onResizeStop={commit}
         >
-          {tiles.map((t) => (
-            <div key={t.id} data-tile={t.id} className="cd-tile">
-              {editing && (
-                <span className="cd-tile-grip" aria-hidden="true">
-                  ⠿
-                </span>
-              )}
-              {t.node}
-            </div>
-          ))}
+          {tiles.map((t) => {
+            // Zoom factor from this tile's live grid size vs its default. The
+            // scaler is sized to the cell ÷ scale, then transform-scaled back up
+            // to the cell — so content lays out in that virtual box and zooms to
+            // fill exactly (no overflow into neighbours, no clipped info).
+            const src = live ?? (layouts ?? DEFAULT_LAYOUTS).lg ?? DEFAULT_LAYOUTS.lg;
+            const scale = tileScale(t.id, src.find((l) => l.i === t.id), bp);
+            return (
+              <div key={t.id} data-tile={t.id} className="cd-tile">
+                {editing && (
+                  <span className="cd-tile-grip" aria-hidden="true">
+                    ⠿
+                  </span>
+                )}
+                <div className="cd-tile-clip">
+                  <div
+                    className="cd-tile-scale"
+                    style={{
+                      width: `${100 / scale}%`,
+                      height: `${100 / scale}%`,
+                      transform: `scale(${scale})`,
+                    }}
+                  >
+                    {t.node}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </DashGrid>
       ) : (
         <OriginalLayout app={app} benchmarks={benchmarks} />

@@ -11,6 +11,9 @@ import {
   loadSavedLayouts,
   saveLayouts,
   resetLayouts,
+  tileScale,
+  TILE_SCALE_MIN,
+  TILE_SCALE_MAX,
 } from "../dashboard-layout";
 
 function memStorage() {
@@ -82,5 +85,39 @@ describe("dashboard-layout store", () => {
     const s = memStorage();
     s.setItem(DASH_LAYOUT_KEY, "garbage{");
     expect(loadSavedLayouts(s)).toBeNull();
+  });
+});
+
+// tileScale drives the "content zooms with the tile" behaviour: a tile at its
+// default size renders 1×, a smaller tile zooms down (floored so text stays
+// legible), a larger tile zooms up (capped), and only the lg grid zooms at all.
+describe("tileScale (resize zoom factor)", () => {
+  const def = DEFAULT_LAYOUTS.lg!.find((l) => l.i === "predictor")!; // 6×5
+
+  it("is 1× when a tile is at its default size", () => {
+    expect(tileScale("predictor", { w: def.w, h: def.h }, "lg")).toBe(1);
+  });
+
+  it("zooms down for a smaller tile, floored at the min", () => {
+    const s = tileScale("predictor", { w: 4, h: 3 }, "lg");
+    expect(s).toBeLessThan(1);
+    expect(s).toBeGreaterThanOrEqual(TILE_SCALE_MIN);
+  });
+
+  it("zooms up for a larger tile, capped at the max", () => {
+    const s = tileScale("predictor", { w: 12, h: 12 }, "lg");
+    expect(s).toBeGreaterThan(1);
+    expect(s).toBeLessThanOrEqual(TILE_SCALE_MAX);
+  });
+
+  it("uses the smaller of the width/height ratios (content always fits)", () => {
+    // 12 wide (2×) but 5 tall (1×) → 1×, so it can't overflow vertically.
+    expect(tileScale("predictor", { w: 12, h: 5 }, "lg")).toBe(1);
+  });
+
+  it("never zooms outside the lg grid, or for unknown/missing tiles", () => {
+    expect(tileScale("predictor", { w: 2, h: 2 }, "sm")).toBe(1);
+    expect(tileScale("nope", { w: 2, h: 2 }, "lg")).toBe(1);
+    expect(tileScale("predictor", undefined, "lg")).toBe(1);
   });
 });

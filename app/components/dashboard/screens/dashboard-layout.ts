@@ -27,15 +27,19 @@ export type DashTileId = (typeof DASH_TILE_IDS)[number];
 // Heights are fitted to measured content (rowHeight 30 + 16px margin → tile px
 // ≈ 46h − 16) so opening "Customize" starts roughly matching the default view;
 // the user resizes from there.
+// minW/minH are the "min-size guard": each tile floors at ≈0.6–0.75× its
+// default so a resize can never shrink a tile small enough to scale its text
+// into an unreadable smudge. tileScale() (below) zooms content within this
+// range; the clamp there backstops the same floor.
 const LG: Layout[] = [
-  { i: "stats", x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
-  { i: "focus", x: 0, y: 4, w: 8, h: 6, minW: 4, minH: 4 },
-  { i: "feed", x: 8, y: 4, w: 4, h: 14, minW: 3, minH: 6 },
-  { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 4, minH: 5 },
-  { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 4, minH: 3 },
-  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 3, minH: 4 },
-  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 3, minH: 4 },
-  { i: "benchmarks", x: 0, y: 27, w: 12, h: 5, minW: 4, minH: 3 },
+  { i: "stats", x: 0, y: 0, w: 12, h: 4, minW: 8, minH: 3 },
+  { i: "focus", x: 0, y: 4, w: 8, h: 6, minW: 5, minH: 4 },
+  { i: "feed", x: 8, y: 4, w: 4, h: 14, minW: 3, minH: 9 },
+  { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 5, minH: 5 },
+  { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 8, minH: 3 },
+  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 4, minH: 3 },
+  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 4, minH: 3 },
+  { i: "benchmarks", x: 0, y: 27, w: 12, h: 5, minW: 8, minH: 3 },
 ];
 
 // Smaller breakpoints: full-width vertical stack in registry order.
@@ -79,6 +83,34 @@ export const DEFAULT_LAYOUTS: Layouts = {
 // narrows (`.cd-screen` itself caps at 1020px). Below 840 the tiles stack.
 export const DASH_BREAKPOINTS = { lg: 840, sm: 0 };
 export const DASH_COLS = { lg: 12, sm: 2 };
+
+// ---- True-zoom scaling for the Customize grid -------------------------------
+// When a tile is resized its content scales proportionally with the cell (a
+// real zoom, never a squished re-flow), so every button/figure stays legible
+// and nothing overflows into a neighbouring tile. The factor is a pure function
+// of the tile's current grid size vs its default ("100%") size, clamped so the
+// content can't zoom into an unreadable smudge or a cartoonish blow-up. The
+// layout's minW/minH keep the real range comfortably inside these clamps.
+export const TILE_SCALE_MIN = 0.62;
+export const TILE_SCALE_MAX = 1.75;
+
+const LG_DEFAULT_DIMS: Record<string, { w: number; h: number }> =
+  Object.fromEntries(LG.map((l) => [l.i, { w: l.w, h: l.h }]));
+
+/** Proportional zoom factor for a tile from its live grid size vs the default.
+ *  Only the `lg` 2-column grid zooms; the stacked `sm` breakpoint is full-width
+ *  (tiles render 1×, content fills width as before). */
+export function tileScale(
+  id: string,
+  item: { w: number; h: number } | undefined,
+  breakpoint: string,
+): number {
+  if (breakpoint !== "lg") return 1;
+  const def = LG_DEFAULT_DIMS[id];
+  if (!def || !item) return 1;
+  const raw = Math.min(item.w / def.w, item.h / def.h);
+  return Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, raw));
+}
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
