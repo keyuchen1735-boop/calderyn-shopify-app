@@ -432,8 +432,13 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  // Per-browser saved arrangement; SSR-safe (returns defaults when no window).
-  const [layouts, setLayouts] = useState<Layouts>(() => loadLayouts());
+  // Initial state stays DEFAULT_LAYOUTS so the SSR render and the first client
+  // paint agree (no hydration mismatch); the saved per-browser arrangement is
+  // applied on the first client effect — mirrors useTweaks() in tweaks-panel.tsx.
+  const [layouts, setLayouts] = useState<Layouts>(DEFAULT_LAYOUTS);
+  useEffect(() => {
+    setLayouts(loadLayouts());
+  }, []);
   const [editing, setEditing] = useState(false);
 
   // Only persist while editing — rgl also fires onLayoutChange on mount and on
