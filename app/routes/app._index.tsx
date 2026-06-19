@@ -27,7 +27,7 @@ import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, recommendedAction } from "~/lib/labels";
 import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
-import { autopilotToasts, type AutopilotDecisionVM } from "~/lib/autopilot-banner";
+import { autopilotToasts, autopilotFailureLines, type AutopilotDecisionVM } from "~/lib/autopilot-banner";
 import {
   AlertCard,
   AmbientAlertBanner,
@@ -173,7 +173,8 @@ export default function Dashboard() {
     if (
       autopilotFetcher.state === "idle" &&
       autopilotFetcher.data &&
-      (autopilotFetcher.data.acted ?? 0) > 0 &&
+      ((autopilotFetcher.data.acted ?? 0) > 0 ||
+        (autopilotFetcher.data.decisions ?? []).some((d) => d.outcome === "failed")) &&
       !autopilotRevalidatedRef.current
     ) {
       autopilotRevalidatedRef.current = true;
@@ -186,6 +187,12 @@ export default function Dashboard() {
         autopilotFetcher.data.decisions ?? [],
         (id) => campaigns.find((c) => c.id === id)?.name ?? "",
       ).map((b) => b.text)
+    : [];
+  const autopilotFailures = autopilotFetcher.data
+    ? autopilotFailureLines(
+        autopilotFetcher.data.decisions ?? [],
+        (id) => campaigns.find((c) => c.id === id)?.name ?? "",
+      )
     : [];
   const autopilotError = autopilotFetcher.data?.error ?? null;
 
@@ -271,6 +278,35 @@ export default function Dashboard() {
               {autopilotError} It runs again on your next visit, and the scheduled
               backstop keeps watching.
             </p>
+          </Banner>
+        )}
+
+        {/* Failed autopilot actions — surfaced so a silent failed run (e.g. a
+            disconnected ad platform) reads as a clear signal, not "nothing
+            happened". The reason lives in Action history. */}
+        {!autopilotDismissed && autopilotFailures.length > 0 && (
+          <Banner
+            tone="warning"
+            title={`Autopilot couldn't finish ${autopilotFailures.length} action${
+              autopilotFailures.length === 1 ? "" : "s"
+            }`}
+            onDismiss={() => setAutopilotDismissed(true)}
+          >
+            <BlockStack gap="100">
+              <BlockStack gap="050">
+                {autopilotFailures.map((line, i) => (
+                  <Text as="p" variant="bodySm" key={`${i}:${line}`}>
+                    {line}
+                  </Text>
+                ))}
+              </BlockStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Often a disconnected ad platform — check the connection in Settings.
+              </Text>
+              <Button variant="plain" onClick={() => navigate("/app/audit")}>
+                View action history
+              </Button>
+            </BlockStack>
           </Banner>
         )}
 

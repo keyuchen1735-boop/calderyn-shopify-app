@@ -11,7 +11,7 @@ import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
-import { autopilotToasts } from "~/lib/autopilot-banner";
+import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
 import {
   TweaksPanel,
   TweakSection,
@@ -226,7 +226,11 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         const res = await client.runAutopilot();
         const nameOf = (id: string) => campaigns.find((c) => c.id === id)?.name ?? "";
         for (const b of autopilotToasts(res.decisions, nameOf)) toast(b.text, b.icon, b.tone);
-        if (res.acted > 0) {
+        // Surface failures too (rule 12) — a silent failed run (e.g. a dead Google
+        // Ads token) otherwise reads as "autopilot did nothing".
+        const failures = autopilotFailureLines(res.decisions, nameOf);
+        for (const line of failures) toast(`${line} — see Action history.`, "warn", "critical");
+        if (res.acted > 0 || failures.length > 0) {
           const [au, al] = await Promise.all([
             client.fetchAudit(),
             client.fetchAlerts(undefined, campaigns),
