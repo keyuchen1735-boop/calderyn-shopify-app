@@ -15,6 +15,22 @@ const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
 
+/** Per-candidate decision outcome. "skipped" = a pre-flight refusal (no
+ *  guardrail call); "blocked" = a guardrail verdict refused it; "failed" = the
+ *  executor was called but did not land (outcome "failed"/"retrying", or threw). */
+export type AutopilotOutcome = "acted" | "blocked" | "skipped" | "failed";
+
+/** One structured decision per candidate considered, so a silent run is
+ *  auditable (rule 12: fail visibly). */
+export interface AutopilotDecision {
+  alertId: string;
+  campaignId: string;
+  detectorId: string;
+  intendedKind: ExecutableKind | null;
+  outcome: AutopilotOutcome;
+  reason: string;
+}
+
 export interface AutopilotSummary {
   skipped: boolean;
   /** Actions that actually LANDED on the platform (executor outcome "succeeded"). */
@@ -23,6 +39,14 @@ export interface AutopilotSummary {
   blocked: number;
   /** Attempted but did not land: executor returned "failed"/"retrying", or threw. */
   failed: number;
+  /** Total candidates evaluated this run (one decision recorded per candidate). */
+  considered: number;
+  /** Why each blocked candidate was refused, keyed by reason — covers the full
+   *  `blocked` total (guardrail verdicts AND pre-flight skips), so
+   *  `sum(blockedReasons) === blocked`. */
+  blockedReasons: Record<string, number>;
+  /** Structured decision for every candidate considered. */
+  decisions: AutopilotDecision[];
 }
 
 interface Candidate {
@@ -47,7 +71,8 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     .eq("shop_id", shopId)
     .maybeSingle();
   if (cErr) throw cErr;
-  if (!cfg || !cfg.autopilot_enabled) return { skipped: true, acted: 0, blocked: 0, failed: 0 };
+  if (!cfg || !cfg.autopilot_enabled)
+    return { skipped: true, acted: 0, blocked: 0, failed: 0, considered: 0, blockedReasons: {}, decisions: [] };
 
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
   const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
@@ -79,13 +104,44 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   let acted = 0;
   let blocked = 0;
   let failed = 0;
+  const decisions: AutopilotDecision[] = [];
+  // reason -> count for every candidate that landed in the `blocked` counter
+  // (guardrail blocks AND pre-flight skips), so the histogram explains the
+  // FULL blocked total and `sum(blockedReasons) === blocked` holds.
+  const blockedReasons: Record<string, number> = {};
+  // Record one structured decision per candidate so the run is auditable even
+  // when nothing acts (rule 12). The acted/blocked/failed COUNTERS keep their
+  // existing buckets (a pre-flight refusal counts as `blocked`); the decision's
+  // `outcome` carries the finer label (a pre-flight refusal is `skipped`, as
+  // distinct from a guardrail `blocked`).
+  const decide = (
+    c: Candidate,
+    intendedKind: ExecutableKind | null,
+    outcome: AutopilotOutcome,
+    reason: string,
+    bucket: "acted" | "blocked" | "failed" | "none" = outcome === "skipped" ? "blocked" : outcome,
+  ) => {
+    if (bucket === "acted") acted += 1;
+    else if (bucket === "blocked") {
+      blocked += 1;
+      blockedReasons[reason] = (blockedReasons[reason] ?? 0) + 1;
+    } else if (bucket === "failed") failed += 1;
+    decisions.push({
+      alertId: c.alert_id,
+      campaignId: c.campaign_id,
+      detectorId: c.detector_id,
+      intendedKind,
+      outcome,
+      reason,
+    });
+  };
   // Bucket an executor's REAL outcome: only a landed "succeeded" is an action
   // taken. "failed"/"retrying" (platform error, or parked for the retry cron)
   // did NOT change a budget this run, so they must not inflate `acted`.
-  const record = (outcome: ExecutedAudit["outcome"]) => {
-    if (outcome === "succeeded") acted += 1;
-    else failed += 1;
-  };
+  const record = (c: Candidate, kind: ExecutableKind, outcome: ExecutedAudit["outcome"]) =>
+    outcome === "succeeded"
+      ? decide(c, kind, "acted", kind)
+      : decide(c, kind, "failed", `executor outcome: ${outcome}`);
   for (const c of ordered) {
     // Isolate each candidate. The guardrail read and both executors THROW on
     // per-campaign faults — an ownership mismatch, a DB hiccup, or a
@@ -98,25 +154,29 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
       else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
       else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
-      if (!kind) continue;
+      if (!kind) {
+        decide(c, null, "skipped", "detector not actionable by autopilot", "none");
+        continue;
+      }
 
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
       if (kind === "increase_campaign_budget") {
         if (!currentBudgetCents) {
-          console.info(
-            `[autopilot] blocked scale on ${c.campaign_id}: current daily budget is ${
-              currentBudgetCents == null ? "missing from sync" : "$0"
-            }`,
-          );
-          blocked += 1;
+          const reason =
+            currentBudgetCents == null
+              ? "current daily budget missing from sync"
+              : "current daily budget is $0";
+          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          decide(c, kind, "skipped", reason);
           continue;
         }
         let target = Math.round(currentBudgetCents * (1 + maxIncreasePct / 100));
         if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
         if (target <= currentBudgetCents) {
-          console.info(`[autopilot] skipped scale on ${c.campaign_id}: already at/above the daily ceiling`);
-          blocked += 1;
+          const reason = "already at/above the daily ceiling";
+          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          decide(c, kind, "skipped", reason);
           continue;
         }
         const verdict = await checkGuardrails(
@@ -132,7 +192,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           sb,
         );
         if (!verdict.allowed) {
-          blocked += 1;
+          decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
           continue;
         }
         const res = await executeAction(
@@ -148,7 +208,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           },
           sb,
         );
-        record(res.outcome);
+        record(c, kind, res.outcome);
         continue;
       }
 
@@ -156,14 +216,14 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // refuses a missing/zero target budget (it would otherwise zero the live
       // campaign) — so count it blocked and keep draining the remaining candidates.
       if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
-        // Distinguish "no budget synced" from "budget is $0 on the platform" in
-        // the logs — both block, but they have different operator fixes.
-        console.info(
-          `[autopilot] blocked budget cut on ${c.campaign_id}: current daily budget is ${
-            currentBudgetCents == null ? "missing from sync" : "$0 on the platform"
-          }`,
-        );
-        blocked += 1;
+        // Distinguish "no budget synced" from "budget is $0 on the platform" —
+        // both skip, but they have different operator fixes.
+        const reason =
+          currentBudgetCents == null
+            ? "current daily budget missing from sync"
+            : "current daily budget is $0 on the platform";
+        console.info(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason}`);
+        decide(c, kind, "skipped", reason);
         continue;
       }
 
@@ -176,10 +236,9 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // live campaign budget (that's a pause, not a reduction) — blocked. Only
       // reachable with maxCutPct near 100, so flag the config loudly.
       if (kind === "reduce_campaign_budget" && !newBudgetCents) {
-        console.warn(
-          `[autopilot] blocked budget cut on ${c.campaign_id}: max_budget_cut_pct=${maxCutPct} computes a $0 target budget`,
-        );
-        blocked += 1;
+        const reason = "max_budget_cut_pct computes a $0 target budget";
+        console.warn(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason} (max_budget_cut_pct=${maxCutPct})`);
+        decide(c, kind, "skipped", reason);
         continue;
       }
 
@@ -207,7 +266,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
               sb,
             );
             if (!verdict.allowed) {
-              blocked += 1;
+              decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
               continue;
             }
             const res = await executeReallocation(
@@ -223,7 +282,11 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
               },
               sb,
             );
-            record(res.outcome);
+            // The executed action is a reallocation, not a plain reduction —
+            // label the decision accordingly while keeping intendedKind = reduce.
+            res.outcome === "succeeded"
+              ? decide(c, kind, "acted", "reallocate_budget")
+              : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
             continue;
           }
         }
@@ -242,7 +305,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         sb,
       );
       if (!verdict.allowed) {
-        blocked += 1;
+        decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
         continue;
       }
 
@@ -263,13 +326,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         },
         sb,
       );
-      record(res.outcome);
+      record(c, kind, res.outcome);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
-      failed += 1;
+      decide(c, null, "failed", `threw: ${msg}`);
     }
   }
 
-  return { skipped: false, acted, blocked, failed };
+  return { skipped: false, acted, blocked, failed, considered: decisions.length, blockedReasons, decisions };
 }

@@ -164,7 +164,7 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).not.toHaveBeenCalled();
     expect(executeReallocation).not.toHaveBeenCalled();
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1, failed: 0 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 1, failed: 0 });
   });
 
   it("keeps draining the remaining candidates after a null-budget block", async () => {
@@ -182,7 +182,7 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1, failed: 0 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 1, failed: 0 });
   });
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
@@ -233,6 +233,105 @@ describe("runAutopilotForShop", () => {
     expect(kinds).toEqual(["pause_campaign", "increase_campaign_budget"]);
   });
 
+  describe("observability (rule 12: fail visibly)", () => {
+    it("shop-level disabled short-circuit reports considered=0 and no decisions", async () => {
+      const sb = fakeSb({ enabled: false, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.skipped).toBe(true);
+      expect(r.considered).toBe(0);
+      expect(r.blockedReasons).toEqual({});
+      expect(r.decisions).toEqual([]);
+    });
+
+    it("counts every candidate considered and maps the guardrail reason when all are blocked", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: false, reason: "campaign spend below minimum" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+          { ...candidate, alert_id: "al3", campaign_id: "camp-uuid-3" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(3);
+      expect(r.considered).toBe(3);
+      expect(r.blockedReasons).toEqual({ "campaign spend below minimum": 3 });
+      // A structured decision exists for every candidate considered.
+      expect(r.decisions).toHaveLength(3);
+      expect(r.decisions[0]).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        detectorId: "campaign_below_breakeven",
+        intendedKind: "pause_campaign",
+        outcome: "blocked",
+        reason: "campaign spend below minimum",
+      });
+    });
+
+    it("reports acted and the right blocked reasons in a mixed run", async () => {
+      // al1 pauses (allowed); al2's guardrail blocks with a distinct reason.
+      checkGuardrails
+        .mockResolvedValueOnce({ allowed: true })
+        .mockResolvedValueOnce({ allowed: false, reason: "daily action cap reached" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [candidate, { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" }],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(r.considered).toBe(2);
+      expect(r.blockedReasons).toEqual({ "daily action cap reached": 1 });
+      const acted = r.decisions.find((d) => d.outcome === "acted");
+      expect(acted).toMatchObject({ alertId: "al1", outcome: "acted", reason: "pause_campaign" });
+    });
+
+    it("records a skipped-for-missing-budget candidate with a stable reason", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [{ ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null }],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      expect(r.considered).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        intendedKind: "reduce_campaign_budget",
+        outcome: "skipped",
+      });
+      expect(dec.reason).toBe("current daily budget missing from sync");
+      // A pre-flight skip still lands in the `blocked` counter, so its reason
+      // must appear in the histogram — sum(blockedReasons) === blocked.
+      expect(r.blockedReasons).toEqual({ "current daily budget missing from sync": 1 });
+    });
+
+    it("keeps sum(blockedReasons) === blocked across mixed skip + guardrail-block reasons", async () => {
+      // al1: reduce with null budget → pre-flight skip. al2: guardrail block.
+      checkGuardrails.mockResolvedValue({ allowed: false, reason: "campaign spend below minimum" });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: null },
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.blocked).toBe(2);
+      expect(r.blockedReasons).toEqual({
+        "current daily budget missing from sync": 1,
+        "campaign spend below minimum": 1,
+      });
+      const total = Object.values(r.blockedReasons).reduce((a, b) => a + b, 0);
+      expect(total).toBe(r.blocked);
+    });
+  });
+
   // A platform error is CAUGHT inside executeAction and returned as
   // outcome:"failed" (e.g. "meta not connected") — the budget never changed,
   // so the run summary must NOT report it as an action taken.
@@ -241,7 +340,7 @@ describe("runAutopilotForShop", () => {
     executeAction.mockResolvedValue({ id: "aud1", outcome: "failed" });
     const sb = fakeSb({ enabled: true, alerts: [candidate] });
     const r = await runAutopilotForShop(SHOP, sb);
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 0, failed: 1 });
   });
 
   // A transient platform failure is parked as outcome:"retrying" for the retry
@@ -251,7 +350,7 @@ describe("runAutopilotForShop", () => {
     executeAction.mockResolvedValue({ id: "aud1", outcome: "retrying" });
     const sb = fakeSb({ enabled: true, alerts: [candidate] });
     const r = await runAutopilotForShop(SHOP, sb);
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 0, failed: 1 });
   });
 
   // executeAction THROWS on ownership/validation/DB errors. One bad candidate
@@ -270,7 +369,7 @@ describe("runAutopilotForShop", () => {
     });
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).toHaveBeenCalledTimes(2);
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
   });
 
   // executeReallocation THROWS when the live source budget dropped below the
@@ -293,6 +392,6 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al-pause" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
   });
 });
