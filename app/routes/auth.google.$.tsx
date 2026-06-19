@@ -97,6 +97,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // real status + body instead of crashing (rule 12: fail visibly).
     const raw = await res.text();
     if (!res.ok) {
+      // DIAGNOSTIC (fix/google-connect-401): the thrown Response truncates the
+      // body at 300 chars, hiding Google's details[].reason. Log the FULL body +
+      // developer-token sanity (length/whitespace only — never the value) so the
+      // root cause of a 401 is diagnosable from the runtime logs.
+      console.error("[auth.google] listAccessibleCustomers failed", {
+        httpStatus: res.status,
+        body: raw,
+        devTokenLen: developerToken.length,
+        devTokenHasWhitespace: /\s/.test(developerToken),
+      });
       throw new Response(
         `Google Ads listAccessibleCustomers failed: HTTP ${res.status} ${raw.slice(0, 300)}`,
         { status: 502 },
@@ -189,5 +199,14 @@ async function exchangeRefreshTokenOnce(
       { status: 502 },
     );
   }
+  // DIAGNOSTIC (fix/google-connect-401): log the SCOPES granted on the minted
+  // token (decisive for a 401 on the Ads call — if `adwords` is absent the
+  // consent didn't grant it) plus token sanity (prefix/length, never the value).
+  console.error("[auth.google] refresh->access ok", {
+    tokenLen: json.access_token.length,
+    tokenPrefix: json.access_token.slice(0, 5),
+    scope: json.scope ?? "(no scope field returned)",
+    expiresIn: json.expires_in,
+  });
   return json.access_token;
 }
