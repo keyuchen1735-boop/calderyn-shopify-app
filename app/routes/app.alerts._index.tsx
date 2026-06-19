@@ -14,6 +14,7 @@ import {
   ResourceList,
   Tabs,
   Text,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -63,6 +64,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function AlertList() {
   const navigate = useEmbeddedNavigate();
   const { alerts, error } = useLoaderData<typeof loader>();
+  const { smDown } = useBreakpoints();
   const [statusIdx, setStatusIdx] = useState(0); // default: Open
   const status = STATUS_TABS[statusIdx].id;
 
@@ -181,7 +183,7 @@ export default function AlertList() {
                       onClick={() => review(a)}
                       accessibilityLabel={`Review ${a.title}`}
                     >
-                      <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+                      <InlineStack align="space-between" blockAlign={smDown ? "start" : "center"} gap={smDown ? "200" : "400"} wrap={smDown}>
                         <BlockStack gap="050">
                           <Text as="span" fontWeight="semibold">
                             {a.title}
