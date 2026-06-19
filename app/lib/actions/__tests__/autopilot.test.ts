@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAutopilotForShop } from "../autopilot.server";
+import { getActionPolicy } from "../action-policy.server";
 import type { ReallocationCandidate, ReallocationSuggestion } from "../reallocation-suggest.server";
 import type { Platform } from "../../ads/adapter";
 
@@ -18,6 +19,9 @@ vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
+// Default: null → mu falls back to 1 → full-cap behavior (today's exact numbers).
+// Per-test override via vi.mocked(getActionPolicy).mockResolvedValueOnce(mu).
+vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolvedValue(null) }));
 // resolveScopedCandidates is NOT mocked — we test it exercised through the real
 // targeting module (which itself calls the already-mocked pickReallocation).
 vi.mock("../autopilot-targeting.server", async (importOriginal) => {
@@ -430,6 +434,44 @@ describe("runAutopilotForShop", () => {
         sb,
       );
       expect(r.acted).toBe(1);
+    });
+  });
+
+  // D5: mu=0.5 halves the effective cut pct within the merchant cap.
+  // $100 (10000c) budget at maxCutPct=50 with mu=0.5 → effectivePct=25% → 7500c.
+  // With mu=null (default) → effectivePct=50% → 5000c (today's exact behavior).
+  describe("D5: learned mu scales cut/increase within guardrail cap", () => {
+    it("mu=0.5 halves the cut magnitude; null mu preserves full-cap (5000c)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null }); // force plain reduce path
+
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: 10000 };
+
+      // First: mu=null (default mock) → full 50% cut → 5000c.
+      const sbFull = fakeSb({ enabled: true, alerts: [reduceCand] });
+      await runAutopilotForShop(SHOP, sbFull);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 5000 }),
+        sbFull,
+      );
+
+      vi.clearAllMocks();
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null });
+      executeAction.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
+      executeReallocation.mockResolvedValue({ id: "aud2", outcome: "succeeded" });
+      loadReallocationCandidates.mockResolvedValue([]);
+
+      // Now: mu=0.5 → effectivePct = 50*0.5 = 25% → 10000*(1-0.25) = 7500c.
+      vi.mocked(getActionPolicy).mockResolvedValueOnce(0.5);
+      const sbHalf = fakeSb({ enabled: true, alerts: [reduceCand] });
+      await runAutopilotForShop(SHOP, sbHalf);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 7500 }),
+        sbHalf,
+      );
     });
   });
 

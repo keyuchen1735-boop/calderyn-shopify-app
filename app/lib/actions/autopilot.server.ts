@@ -3,6 +3,7 @@
 // v_autopilot_candidates view (alert + campaign + 7d spend + current budget).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getActionPolicy } from "./action-policy.server";
 import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
@@ -178,7 +179,8 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           decide(c, kind, "skipped", reason);
           continue;
         }
-        let target = Math.round(currentBudgetCents * (1 + maxIncreasePct / 100));
+        const muInc = (await getActionPolicy(sb, shopId, c.detector_id, "increase_campaign_budget")) ?? 1;
+        let target = Math.round(currentBudgetCents * (1 + (maxIncreasePct * muInc) / 100));
         if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
         if (target <= currentBudgetCents) {
           const reason = "already at/above the daily ceiling";
@@ -234,9 +236,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         continue;
       }
 
+      const muCut =
+        kind === "reduce_campaign_budget"
+          ? (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1
+          : 1;
       const newBudgetCents =
         kind === "reduce_campaign_budget" && currentBudgetCents != null
-          ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
+          ? Math.round(currentBudgetCents * (1 - (maxCutPct * muCut) / 100))
           : undefined;
 
       // Same refusal in executeAction: a cut that lands on $0 would zero the
