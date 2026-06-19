@@ -114,8 +114,20 @@ function DraftActionCard({
   );
 }
 
-export default function AssistantPanel({ app }: { app: DashboardCtx }) {
+export default function AssistantPanel({
+  app,
+  openSignal,
+}: {
+  app: DashboardCtx;
+  openSignal?: number;
+}) {
   const [open, setOpen] = useState(false);
+
+  // The mobile "More" sheet opens the panel by bumping openSignal (the floating
+  // launcher is hidden at phone width). Each increment re-opens it.
+  useEffect(() => {
+    if (openSignal) setOpen(true);
+  }, [openSignal]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);

@@ -1,7 +1,7 @@
 // Calderyn DashV2 — "Report a bug": floating launcher + modal, rendered with the
 // dashboard's own cd-* design system. POSTs multipart form-data to
 // /dashboard/api/bug-report (same shared brain as the embedded app).
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CDIcon } from "./icons";
 import { Btn } from "./ui";
@@ -13,8 +13,20 @@ const ALLOWED = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 type Item = { file: File; url: string };
 
-export default function BugReportButton({ app }: { app: DashboardCtx }) {
+export default function BugReportButton({
+  app,
+  openSignal,
+}: {
+  app: DashboardCtx;
+  openSignal?: number;
+}) {
   const [open, setOpen] = useState(false);
+
+  // The mobile "More" sheet opens this by bumping openSignal (the floating
+  // launcher is hidden at phone width). Each increment re-opens it.
+  useEffect(() => {
+    if (openSignal) setOpen(true);
+  }, [openSignal]);
   const [description, setDescription] = useState("");
   const [email, setEmail] = useState("");
   const [items, setItems] = useState<Item[]>([]);
