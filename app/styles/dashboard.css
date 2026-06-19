@@ -921,3 +921,112 @@
   opacity: 0.15;
   border-radius: 12px;
 }
+
+/* ============ Calderyn Labs — "Autopilot replay" (hidden demo) ============ */
+/* Reached only via the secret hexagon dot in Settings. Ported from the
+   "Secret button feature request" Claude Design; light mode is pixel-identical.
+   The design's hardcoded #fff fills are mapped to var(--card-solid) (which is
+   #FFFFFF in light, #2C2C2E in dark) so the demo also reads correctly in dark
+   mode without changing a single light-mode pixel. */
+
+/* ---- secret trigger (Settings footer) ---- */
+.cd-secret-foot {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding-top: 6px; color: var(--text-3); font-size: 12px;
+}
+.cd-secret-dot {
+  width: 13px; height: 13px; padding: 0; border: none; background: none; cursor: pointer;
+  opacity: 0.28; transition: opacity 0.18s ease, transform 0.18s ease; display: inline-flex;
+}
+.cd-secret-dot svg { width: 13px; height: 13px; color: var(--accent); }
+.cd-secret-dot:hover { opacity: 1; transform: scale(1.18); }
+
+/* ---- lab bar ---- */
+.cd-labbar {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: -0.004em;
+}
+.cd-labbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.cd-labbar-replay {
+  margin-left: auto; border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-bg);
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 999px;
+  transition: background 0.14s ease;
+}
+.cd-labbar-replay:hover { background: color-mix(in oklch, var(--accent) 18%, transparent); }
+.cd-labbar-exit {
+  border: none; background: none; cursor: pointer; font-family: inherit;
+  font-size: 12.5px; font-weight: 500; color: var(--text-2); display: inline-flex; align-items: center; gap: 3px;
+}
+.cd-labbar-exit:hover { color: var(--text-1); }
+
+/* ---- agentic hero ---- */
+.cd-agentic {
+  background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 7%, var(--card-solid)), var(--card-solid) 62%);
+  border-radius: var(--radius);
+  box-shadow: var(--ring), 0 1px 1px rgba(0,0,0,0.02), 0 14px 40px -16px color-mix(in oklch, var(--accent) 50%, transparent);
+  overflow: hidden;
+}
+.cd-agentic-head { padding: 22px 24px 0; }
+.cd-auto-badge {
+  display: inline-flex; align-items: center; gap: 7px; background: var(--accent); color: #fff;
+  font-size: 11.5px; font-weight: 650; letter-spacing: 0.01em; padding: 4px 11px 4px 9px; border-radius: 999px; white-space: nowrap;
+}
+.cd-auto-ring {
+  width: 8px; height: 8px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 0 rgba(255,255,255,0.7); animation: cd-ring 1.8s ease infinite;
+}
+@keyframes cd-ring {
+  0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.6); }
+  70% { box-shadow: 0 0 0 6px rgba(255,255,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+.cd-agentic-title {
+  font-size: 23px; font-weight: 680; letter-spacing: -0.022em; margin: 14px 0 8px; line-height: 1.25;
+  max-width: 32ch; font-family: "SF Pro Display", -apple-system, sans-serif;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px;
+}
+.cd-arr { width: 22px; height: 22px; color: var(--accent); flex-shrink: 0; }
+.cd-arr-sm { width: 14px; height: 14px; vertical-align: -2px; color: var(--text-3); margin: 0 3px; }
+
+/* ---- metrics strip ---- */
+.cd-metrics {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--hairline-strong); margin: 20px 0 0; border-top: 0.5px solid var(--hairline-strong);
+}
+@media (max-width: 760px) { .cd-metrics { grid-template-columns: repeat(2, 1fr); } }
+.cd-metric { background: var(--card-solid); padding: 16px 18px; display: flex; flex-direction: column; gap: 3px; }
+.cd-metric-val {
+  font-size: 22px; font-weight: 680; letter-spacing: -0.026em; font-variant-numeric: tabular-nums;
+  font-family: "SF Pro Display", -apple-system, sans-serif;
+}
+.cd-metric-lab { font-size: 11.5px; color: var(--text-2); font-weight: 500; letter-spacing: -0.004em; }
+
+/* ---- timeline ---- */
+.cd-timeline { display: flex; flex-direction: column; padding: 6px 0 4px; }
+.cd-tl-row {
+  display: flex; align-items: flex-start; gap: 13px; padding: 9px 24px; position: relative;
+  animation: cd-tl-in 0.45s cubic-bezier(0.22,1,0.36,1);
+}
+@keyframes cd-tl-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: none; } }
+.cd-tl-ico {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gray-bg); color: var(--text-2); z-index: 1;
+}
+.cd-tl-ico[data-tone="critical"] { background: var(--red-bg); color: var(--red); }
+.cd-tl-ico[data-tone="accent"] { background: var(--accent-bg); color: var(--accent); }
+.cd-tl-row:not(:last-child) .cd-tl-ico::after {
+  content: ""; position: absolute; top: 39px; left: 38px; width: 1.5px; height: 14px; background: var(--hairline-strong);
+}
+.cd-tl-body { min-width: 0; flex: 1; padding-top: 4px; }
+.cd-tl-title { font-size: 13.5px; font-weight: 580; letter-spacing: -0.008em; }
+.cd-tl-sub { font-size: 12px; color: var(--text-2); margin-top: 1px; letter-spacing: -0.002em; }
+.cd-tl-time { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 500; padding-top: 5px; white-space: nowrap; }
+
+/* ---- paused-campaign flip card ---- */
+.cd-flipcard {
+  margin: 4px 22px 0; border: 0.5px solid var(--hairline-strong); border-radius: 13px;
+  padding: 13px 15px; display: flex; align-items: center; gap: 13px; background: var(--gray-bg);
+}
+.cd-strike { text-decoration: line-through; color: var(--text-3); }

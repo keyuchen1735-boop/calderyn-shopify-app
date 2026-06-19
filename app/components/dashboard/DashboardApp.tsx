@@ -50,6 +50,7 @@ import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenSettings from "./screens/Settings";
+import ScreenLabs from "./screens/Labs";
 
 // `generator` is reachable via navigate() but intentionally absent from the rail
 // (same as the prototype — it's an inner flow off the predictor).
@@ -87,6 +88,8 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   inventory: ScreenInventory,
   audit: ScreenAudit,
   settings: ScreenSettings,
+  // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
+  labs: ScreenLabs,
 };
 
 function relTime(ts: number): string {
@@ -470,6 +473,9 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
   const openCount = alerts.filter((a) => a.status === "open").length;
+  // The Labs replay masks as Campaigns, so keep "Campaigns" lit while it's open
+  // (sidebar, tab bar, and the "More" active state all read off this).
+  const activeNav: ScreenId = nav.screen === "labs" ? "campaigns" : nav.screen;
 
   // Bottom-tab-bar partition: the four primary tabs (in design order) + the rest
   // behind "More". "More" reads active whenever a non-primary screen is open.
@@ -477,7 +483,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     (id) => NAV_ITEMS.find((n) => n.id === id)!,
   );
   const moreItems = NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
-  const onMoreScreen = !PRIMARY_TABS.includes(nav.screen);
+  const onMoreScreen = !PRIMARY_TABS.includes(activeNav);
 
   return (
     <div className={"cd-root" + (t.dark ? " cd-dark" : "")} style={vars}>
@@ -513,7 +519,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             <button
               key={item.id}
               className="cd-nav-item"
-              data-active={nav.screen === item.id ? "1" : "0"}
+              data-active={activeNav === item.id ? "1" : "0"}
               onClick={() => navigate(item.id)}
             >
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
@@ -551,7 +557,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             key={item.id}
             type="button"
             className="cd-tab"
-            data-active={nav.screen === item.id ? "1" : "0"}
+            data-active={activeNav === item.id ? "1" : "0"}
             onClick={() => navigate(item.id)}
           >
             <span className="cd-tab-ico">

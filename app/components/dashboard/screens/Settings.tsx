@@ -578,6 +578,28 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           <McpGuide />
         </Card>
       </section>
+
+      {/* Secret Calderyn Labs trigger — the dimmed hexagon next to the build
+          string opens the hidden "Autopilot replay" demo (screens/Labs). The
+          mark is the Calderyn logo (same inline hexagon as the sidebar brand),
+          not a Lucide icon. */}
+      <div className="cd-secret-foot">
+        <span>Calderyn for Shopify · v2.4.1 · build 1180</span>
+        <button
+          type="button"
+          className="cd-secret-dot"
+          onClick={() => app.navigate("labs")}
+          title="Calderyn Labs — Autopilot replay"
+          aria-label="Calderyn Labs"
+        >
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path
+              d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
