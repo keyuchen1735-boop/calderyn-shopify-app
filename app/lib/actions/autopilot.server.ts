@@ -260,6 +260,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // reduction below when no destination exists. A guardrail-blocked
       // reallocation does NOT fall through to reduce — same alert, same day,
       // one decision (counted as blocked).
+      //
+      // Magnitude: a reallocation moves exactly the reduce amount
+      // (currentBudgetCents - newBudgetCents), so it rides the SAME learned
+      // `muCut` dial already baked into newBudgetCents above. The trainer also
+      // learns a separate `reallocate_budget` policy; consuming that μ directly
+      // here (instead of inheriting the reduce dial) is a deferred refinement.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         const amountCents = currentBudgetCents - newBudgetCents;
         if (amountCents > 0) {

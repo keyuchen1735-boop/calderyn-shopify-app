@@ -88,6 +88,12 @@ async def derive_action_reward_inputs(
     grades: dict[str, Decimal] = {
         g["campaign_id"]: Decimal(str(g["break_even_roas"])) for g in grade_rows
     }
+    # v1 simplification: a campaign with no grade row defaults to break_even=1.0
+    # (see the `grades.get(cid, Decimal("1"))` below). The spec names
+    # v_campaigns_flat as an alternate break-even source; wiring it as a fallback
+    # is a deferred refinement. This only affects a SHOP'S OWN dormant reward
+    # signal (no live behavior, no cross-tenant aggregate), so 1.0 is a safe,
+    # conservative default until the trainer has real action history to learn from.
 
     out: list[ActionRewardInput] = []
     for a in actions:
