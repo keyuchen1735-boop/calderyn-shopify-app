@@ -66,7 +66,9 @@ export async function checkGuardrails(
 
   const config: AutopilotGuardrails = {
     enabled: Boolean(row.autopilot_enabled),
-    dailyActionCap: Number(row.autopilot_daily_action_cap ?? 0),
+    // null column = no daily cap (unlimited); otherwise the configured integer.
+    dailyActionCap:
+      row.autopilot_daily_action_cap == null ? null : Number(row.autopilot_daily_action_cap),
     minSpendCents: Number(row.autopilot_min_spend_cents ?? 0),
     maxBudgetCutPct: Number(row.autopilot_max_budget_cut_pct ?? 0),
     maxBudgetIncreasePct: Number(row.autopilot_max_budget_increase_pct ?? 20),

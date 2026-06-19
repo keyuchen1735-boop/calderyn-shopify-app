@@ -413,6 +413,51 @@ describe("PUT /dashboard/api/guardrails", () => {
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 0, autopilot_enabled: true });
   });
+
+  it("round-trips an Unlimited daily action cap (null) through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: null });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: null },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: null });
+  });
+
+  it("round-trips a Custom daily action cap (integer) through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: 25 });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: 25 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: 25 });
+  });
+
+  it("422s a zero daily action cap and never calls update", async () => {
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: 0 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
 });
 
 describe("PUT /dashboard/api/consent", () => {

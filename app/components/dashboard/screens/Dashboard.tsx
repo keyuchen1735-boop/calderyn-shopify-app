@@ -261,7 +261,7 @@ function GuardrailCard({ app }: { app: DashboardCtx }) {
       <div className="grid grid-cols-3 gap-2">
         <div className="cd-mini-stat">
           <b>
-            {g.autopilot_actions_today}/{g.autopilot_daily_action_cap}
+            {g.autopilot_actions_today}/{g.autopilot_daily_action_cap ?? "∞"}
           </b>
           <span>actions today</span>
         </div>

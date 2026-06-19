@@ -178,10 +178,25 @@ export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
   if (fd.get("autopilot_enabled") !== null) {
     patch.autopilot_enabled = String(fd.get("autopilot_enabled")) === "true";
   }
-  num("autopilot_daily_action_cap", fd.get("autopilot_daily_action_cap"), (n) => Math.max(0, Math.round(n)));
-  num("autopilot_min_spend_cents", fd.get("autopilot_min_spend_cents"), (n) => Math.max(0, Math.round(n * 100)));
-  num("autopilot_max_budget_cut_pct", fd.get("autopilot_max_budget_cut_pct"), (n) => Math.max(0, Math.round(n)));
-  num("autopilot_max_budget_increase_pct", fd.get("autopilot_max_budget_increase_pct"), (n) => Math.max(0, Math.round(n)));
+  // Daily action cap: blank = Unlimited (null = no cap); otherwise the entered
+  // value, passed through faithfully so validateGuardrailPatch (not a silent
+  // round/clamp here) is the single arbiter of the 1..100-integer bound — this
+  // keeps the embedded surface in lockstep with the dashboard's GuardrailField.
+  const capRaw = fd.get("autopilot_daily_action_cap");
+  if (capRaw !== null) {
+    const s = String(capRaw).trim();
+    if (s === "") patch.autopilot_daily_action_cap = null;
+    else {
+      const n = Number(s);
+      if (Number.isFinite(n)) patch.autopilot_daily_action_cap = n;
+    }
+  }
+  // Dollars -> cents needs rounding (cents are whole); the percent fields are
+  // passed through unrounded so the validator rejects (visibly) a fractional or
+  // out-of-range entry instead of silently rewriting it (e.g. 2.5 -> 3).
+  num("autopilot_min_spend_cents", fd.get("autopilot_min_spend_cents"), (n) => Math.round(n * 100));
+  num("autopilot_max_budget_cut_pct", fd.get("autopilot_max_budget_cut_pct"));
+  num("autopilot_max_budget_increase_pct", fd.get("autopilot_max_budget_increase_pct"));
   // Daily ceiling: empty string clears it (null = no cap); otherwise dollars -> cents.
   const ceilRaw = fd.get("autopilot_max_daily_budget_cents");
   if (ceilRaw !== null) {
@@ -776,8 +791,11 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const [bhEnd, setBhEnd] = useState(guardrails.business_hours.end);
   const [bhTz] = useState(guardrails.business_hours.tz);
   const [autopilotEnabled, setAutopilotEnabled] = useState(guardrails.autopilot_enabled);
+  // Blank string represents null (Unlimited / no daily cap).
   const [autopilotDailyActionCap, setAutopilotDailyActionCap] = useState(
-    String(guardrails.autopilot_daily_action_cap),
+    guardrails.autopilot_daily_action_cap == null
+      ? ""
+      : String(guardrails.autopilot_daily_action_cap),
   );
   const [autopilotMinSpend, setAutopilotMinSpend] = useState(
     String(Math.round(guardrails.autopilot_min_spend_cents / 100)),
@@ -802,7 +820,11 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
     setBhStart(guardrails.business_hours.start);
     setBhEnd(guardrails.business_hours.end);
     setAutopilotEnabled(guardrails.autopilot_enabled);
-    setAutopilotDailyActionCap(String(guardrails.autopilot_daily_action_cap));
+    setAutopilotDailyActionCap(
+      guardrails.autopilot_daily_action_cap == null
+        ? ""
+        : String(guardrails.autopilot_daily_action_cap),
+    );
     setAutopilotMinSpend(String(Math.round(guardrails.autopilot_min_spend_cents / 100)));
     setAutopilotMaxBudgetCutPct(String(guardrails.autopilot_max_budget_cut_pct));
     setAutopilotMaxBudgetIncreasePct(String(guardrails.autopilot_max_budget_increase_pct));
@@ -859,25 +881,28 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           name="autopilot_enabled"
           value={autopilotEnabled ? "true" : "false"}
         />
+        {/* Empty string => Unlimited (no daily cap). Non-empty => positive int. */}
         <input
           type="hidden"
           name="autopilot_daily_action_cap"
-          value={String(Math.max(0, Number(autopilotDailyActionCap)))}
+          value={autopilotDailyActionCap.trim()}
         />
+        {/* Pass the raw entry through; parseGuardrailForm + validateGuardrailPatch
+            are the single arbiters (no client-side clamp that hides invalid input). */}
         <input
           type="hidden"
           name="autopilot_min_spend_cents"
-          value={String(Math.max(0, Number(autopilotMinSpend)))}
+          value={autopilotMinSpend.trim()}
         />
         <input
           type="hidden"
           name="autopilot_max_budget_cut_pct"
-          value={String(Math.max(0, Number(autopilotMaxBudgetCutPct)))}
+          value={autopilotMaxBudgetCutPct.trim()}
         />
         <input
           type="hidden"
           name="autopilot_max_budget_increase_pct"
-          value={String(Math.max(0, Number(autopilotMaxBudgetIncreasePct)))}
+          value={autopilotMaxBudgetIncreasePct.trim()}
         />
         {/* Empty string => clear the ceiling (no limit). Non-empty => dollars. */}
         <input
@@ -978,7 +1003,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
                           value={autopilotDailyActionCap}
                           autoComplete="off"
                           onChange={setAutopilotDailyActionCap}
-                          helpText="Calderyn will not take more than this many automatic actions in a single day."
+                          helpText="Calderyn will not take more than this many automatic actions in a single day. Leave blank for no daily cap (unlimited)."
                         />
                         <TextField
                           label="Ignore campaigns that have spent less than (USD)"

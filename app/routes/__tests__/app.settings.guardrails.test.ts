@@ -77,6 +77,27 @@ describe("parseGuardrailForm", () => {
     expect(patch.autopilot_max_daily_budget_cents).toBeNull();
   });
 
+  it("parses a null daily action cap when blank (Unlimited)", () => {
+    const patch = parseGuardrailForm(fd({ autopilot_daily_action_cap: "" }));
+    expect(patch.autopilot_daily_action_cap).toBeNull();
+  });
+
+  it("parses a numeric daily action cap when provided", () => {
+    const patch = parseGuardrailForm(fd({ autopilot_daily_action_cap: "8" }));
+    expect(patch.autopilot_daily_action_cap).toBe(8);
+  });
+
+  it("passes percent fields through unrounded so the validator is the single arbiter", () => {
+    // A fractional/out-of-range entry must NOT be silently rounded here (that
+    // would diverge from the dashboard's client-side reject); it flows through
+    // verbatim and validateGuardrailPatch rejects it visibly.
+    const patch = parseGuardrailForm(
+      fd({ autopilot_max_budget_cut_pct: "2.5", autopilot_max_budget_increase_pct: "150" }),
+    );
+    expect(patch.autopilot_max_budget_cut_pct).toBe(2.5);
+    expect(patch.autopilot_max_budget_increase_pct).toBe(150);
+  });
+
   it("omits keys that are absent", () => {
     expect(parseGuardrailForm(fd({}))).toEqual({});
   });

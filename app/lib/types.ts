@@ -223,7 +223,8 @@ export interface GuardrailConfig {
   /** When true, actions only execute inside business_hours; else the window is informational. */
   business_hours_only: boolean;
   autopilot_enabled: boolean;
-  autopilot_daily_action_cap: number;
+  /** Max automated actions per UTC day; null = no cap (unlimited). */
+  autopilot_daily_action_cap: number | null;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;
   autopilot_max_budget_increase_pct: number;
