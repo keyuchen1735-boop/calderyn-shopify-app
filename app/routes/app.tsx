@@ -15,7 +15,7 @@ import bugReportStyles from "../components/BugReport/bug-report.css?url";
 import calderynStyles from "../components/calderyn/calderyn.css?url";
 import { AssistantSlideout } from "../components/Assistant/AssistantSlideout";
 import { BugReportButton } from "../components/BugReport/BugReportButton";
-import { appendEmbeddedSearch, rememberEmbeddedParams } from "../lib/embedded-nav";
+import { appendEmbeddedSearch, useKeepEmbeddedUrl } from "../lib/embedded-nav";
 import { useRefreshOnFocus } from "../lib/use-refresh-on-focus";
 import { adminDeepLinkRedirect } from "../lib/admin-deeplink.server";
 import { authenticate } from "../shopify.server";
@@ -48,7 +48,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function App() {
   const { apiKey, shop, host } = useLoaderData<typeof loader>();
-  rememberEmbeddedParams({ shop, host });
+  // Keep shop/host on the iframe URL so document reloads and focus-revalidations
+  // re-authenticate instead of bouncing to the bare /auth/login form.
+  useKeepEmbeddedUrl({ shop, host });
   const withParams = (to: string) => appendEmbeddedSearch(to, { shop, host });
 
   // Quietly revalidate the current screen's loader when the merchant returns to
