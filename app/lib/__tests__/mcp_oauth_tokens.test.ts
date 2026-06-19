@@ -117,6 +117,38 @@ describe("rotateRefreshToken", () => {
     ]);
     await expect(rotateRefreshToken({ refresh_token: "x", client_id: "c" })).rejects.toThrow(/invalid_grant/);
   });
+
+  it("detects refresh-token reuse: revokes the still-active grant and rejects", async () => {
+    setSupabaseResponses([
+      { data: null, error: null }, // main lookup: token matches no CURRENT grant
+      { data: { id: "reusedrow", revoked_at: null }, error: null }, // ...but matches a grant's prev_refresh_hash → replay
+      { data: null, error: null }, // the revoke update (then-able)
+    ]);
+    await expect(
+      rotateRefreshToken({ refresh_token: "calr_consumed", client_id: "cal_client_x" }),
+    ).rejects.toThrow(/reuse detected/);
+
+    // The grant was revoked: an update setting revoked_at + null refresh_hash on the reused row.
+    const updates = getRecorded("update");
+    expect(updates.length).toBe(1);
+    const patch = updates[0][0] as Record<string, unknown>;
+    expect(patch.revoked_at).toBeTypeOf("string");
+    expect(patch.refresh_hash).toBeNull();
+    const eqCalls = getRecorded("eq");
+    expect(eqCalls.some((c) => c[0] === "prev_refresh_hash")).toBe(true);
+    expect(eqCalls.some((c) => c[0] === "id" && c[1] === "reusedrow")).toBe(true);
+  });
+
+  it("on reuse of an already-revoked grant, rejects without re-revoking", async () => {
+    setSupabaseResponses([
+      { data: null, error: null }, // no current grant
+      { data: { id: "r", revoked_at: new Date().toISOString() }, error: null }, // prev match, already revoked
+    ]);
+    await expect(
+      rotateRefreshToken({ refresh_token: "calr_consumed", client_id: "c" }),
+    ).rejects.toThrow(/reuse detected/);
+    expect(getRecorded("update").length).toBe(0); // no redundant revoke issued
+  });
 });
 
 // ---------------------------------------------------------------------------
