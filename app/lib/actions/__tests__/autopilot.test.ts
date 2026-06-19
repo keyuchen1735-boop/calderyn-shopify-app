@@ -75,6 +75,9 @@ describe("runAutopilotForShop", () => {
     executeReallocation.mockResolvedValue({ id: "aud2", outcome: "succeeded" });
     loadReallocationCandidates.mockResolvedValue([]);
     pickReallocation.mockReturnValue({ source: null, dest: null });
+    // clearAllMocks resets calls but NOT implementations — restore the default
+    // (no learned dial -> full cap) so a per-test mockImplementation can't leak.
+    vi.mocked(getActionPolicy).mockReset().mockResolvedValue(null);
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -141,6 +144,28 @@ describe("runAutopilotForShop", () => {
     );
     expect(executeAction).not.toHaveBeenCalled();
     expect(r.acted).toBe(1);
+  });
+
+  it("scales the reallocated amount by the learned reallocate_budget mu (not the reduce dial)", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+    // Learned dial only for reallocate_budget; reduce stays at full cap (null -> 1).
+    vi.mocked(getActionPolicy).mockImplementation(async (_sb, _shop, _det, actionKind) =>
+      actionKind === "reallocate_budget" ? 0.5 : null,
+    );
+    const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
+    await runAutopilotForShop(SHOP, sb);
+    // 10000 * 50% cap * 0.5 mu = 2500 moved (vs 5000 at full cap); source budget -> 7500.
+    expect(executeReallocation).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ amountCents: 2500, destCampaignId: "dest-uuid" }),
+      sb,
+    );
+    expect(checkGuardrails).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "reallocate_budget", dollarImpactCents: 2500, newBudgetCents: 7500 }),
+      sb,
+    );
   });
 
   it("passes destCampaignId into the guardrail check for reallocations", async () => {

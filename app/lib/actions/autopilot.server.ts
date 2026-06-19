@@ -261,52 +261,59 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // reallocation does NOT fall through to reduce — same alert, same day,
       // one decision (counted as blocked).
       //
-      // Magnitude: a reallocation moves exactly the reduce amount
-      // (currentBudgetCents - newBudgetCents), so it rides the SAME learned
-      // `muCut` dial already baked into newBudgetCents above. The trainer also
-      // learns a separate `reallocate_budget` policy; consuming that μ directly
-      // here (instead of inheriting the reduce dial) is a deferred refinement.
+      // Magnitude: reallocation has its OWN learned dial. We recompute the moved
+      // amount from `muRealloc` (the trainer's separate reallocate_budget policy)
+      // rather than inheriting the reduce dial baked into newBudgetCents — so that
+      // model family is actually consumed. If muRealloc zeroes the move, we fall
+      // through to a plain reduce so loss-prevention still acts. Dormant-safe: with
+      // no model both dials default to 1, so the moved amount equals prior behavior
+      // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
+      // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
-        const amountCents = currentBudgetCents - newBudgetCents;
-        if (amountCents > 0) {
+        if (currentBudgetCents - newBudgetCents > 0) {
           const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
           if (dest) {
-            const verdict = await checkGuardrails(
-              shopId,
-              {
-                kind: "reallocate_budget",
-                campaignId: c.campaign_id,
-                destCampaignId: dest.campaignId,
-                dollarImpactCents: amountCents,
-                campaignSpendCents: c.campaign_spend_cents,
-                currentBudgetCents,
-                newBudgetCents,
-              },
-              sb,
-            );
-            if (!verdict.allowed) {
-              decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
+            const muRealloc = (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1;
+            const amountCents = Math.round((currentBudgetCents * maxCutPct * muRealloc) / 100);
+            if (amountCents > 0) {
+              const reallocSrcBudget = currentBudgetCents - amountCents;
+              const verdict = await checkGuardrails(
+                shopId,
+                {
+                  kind: "reallocate_budget",
+                  campaignId: c.campaign_id,
+                  destCampaignId: dest.campaignId,
+                  dollarImpactCents: amountCents,
+                  campaignSpendCents: c.campaign_spend_cents,
+                  currentBudgetCents,
+                  newBudgetCents: reallocSrcBudget,
+                },
+                sb,
+              );
+              if (!verdict.allowed) {
+                decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
+                continue;
+              }
+              const res = await executeReallocation(
+                shopId,
+                {
+                  alertId: c.alert_id,
+                  sourceCampaignId: c.campaign_id,
+                  destCampaignId: dest.campaignId,
+                  amountCents,
+                  idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
+                  actor: "autopilot",
+                  triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
+                },
+                sb,
+              );
+              // The executed action is a reallocation, not a plain reduction —
+              // label the decision accordingly while keeping intendedKind = reduce.
+              res.outcome === "succeeded"
+                ? decide(c, kind, "acted", "reallocate_budget")
+                : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
               continue;
             }
-            const res = await executeReallocation(
-              shopId,
-              {
-                alertId: c.alert_id,
-                sourceCampaignId: c.campaign_id,
-                destCampaignId: dest.campaignId,
-                amountCents,
-                idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
-                actor: "autopilot",
-                triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
-              },
-              sb,
-            );
-            // The executed action is a reallocation, not a plain reduction —
-            // label the decision accordingly while keeping intendedKind = reduce.
-            res.outcome === "succeeded"
-              ? decide(c, kind, "acted", "reallocate_budget")
-              : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
-            continue;
           }
         }
       }
