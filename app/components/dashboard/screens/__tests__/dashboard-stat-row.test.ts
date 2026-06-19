@@ -121,7 +121,7 @@ function renderStatGrid(app: DashboardCtx): { html: string; grid: string } {
   // assertions can match the visible text.
   const html = renderToString(h(Dashboard, { app })).replace(/<!-- -->/g, "");
   const start = html.indexOf("cd-stat-grid");
-  const end = html.indexOf("cd-grid-main");
+  const end = html.indexOf('data-tile="focus"');
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return { html, grid: html.slice(start, end) };
