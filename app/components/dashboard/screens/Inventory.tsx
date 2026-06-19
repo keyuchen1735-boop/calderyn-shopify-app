@@ -281,6 +281,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         ) : skus.length === 0 ? (
           <Placeholder icon="box" title="No SKUs" sub="Connect a store and your tracked SKUs will appear here." />
         ) : (
+          <>
           <div className="cd-table-scroll">
             <div className="cd-table-head">
               <span style={{ flex: "1 1 0", minWidth: 140 }}>SKU</span>
@@ -501,6 +502,26 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
               )}
             </div>
           </div>
+          {/* Mobile: the wide table is hidden by CSS; the same rows render as
+              stacked cards instead (one SKU per card). Same data + handlers. */}
+          <div className="cd-sku-list">
+            {shown.map((s) => (
+              <SkuMobileCard
+                key={s.id}
+                sku={s}
+                alerts={openAlertsFor(s)}
+                onRelocate={setRelocating}
+                onOpenAlertsDialog={setAlertsFor}
+                onOpenAlert={(id) => app.navigate("alerts", id)}
+              />
+            ))}
+            {shown.length === 0 && (
+              <div className="cd-caption" style={{ padding: "16px 4px" }}>
+                No SKUs match these filters.
+              </div>
+            )}
+          </div>
+          </>
         )}
       </Card>
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -525,6 +546,125 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
             confirmRelocate(relocating.id, fromId, toId, qty, key)
           }
         />
+      )}
+    </div>
+  );
+}
+
+/* ---------- Mobile SKU card ---------- */
+// Phone-width render of one inventory row: title + mono SKU + status pill, a
+// 4-up tile grid (on-hand / cover / velocity / ship P&L), and a foot with the
+// alert chip + Relocate. Same handlers and coloring as the desktop table row,
+// so behavior matches; only the layout differs. Shown via CSS (.cd-sku-list).
+function SkuMobileCard({
+  sku,
+  alerts,
+  onRelocate,
+  onOpenAlertsDialog,
+  onOpenAlert,
+}: {
+  sku: SkuVM;
+  alerts: AlertVM[];
+  onRelocate: (sku: SkuVM) => void;
+  onOpenAlertsDialog: (sku: SkuVM) => void;
+  onOpenAlert: (alertId: string) => void;
+}) {
+  const st = SKU_STATUS[sku.status] ?? SKU_STATUS.healthy;
+  const primary = alerts[0];
+  const canRelocate = sku.locations_detail.some((l) => l.available > 0);
+  // Same low-cover gate as the table: only date a SKU that's actually selling
+  // down (cover < 7d); zero-velocity stock shows "—" cover, no fake date.
+  const stockoutLabel =
+    sku.projected_stockout && sku.days_of_cover < 7
+      ? formatStockoutDate(sku.projected_stockout)
+      : null;
+  const coverColor =
+    sku.velocity > 0 && sku.days_of_cover <= 9 ? "var(--red)" : undefined;
+  const hasFoot = alerts.length > 0 || canRelocate || stockoutLabel != null;
+
+  return (
+    <div
+      className="cd-sku-card"
+      style={{ cursor: primary ? "pointer" : "default" }}
+      role={primary ? "button" : undefined}
+      tabIndex={primary ? 0 : undefined}
+      onClick={primary ? () => onOpenAlert(primary.id) : undefined}
+      onKeyDown={
+        primary
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpenAlert(primary.id);
+              }
+            }
+          : undefined
+      }
+    >
+      <div className="cd-sku-card-head">
+        <div className="min-w-0">
+          <div className="cd-sku-card-title truncate">{sku.title}</div>
+          <div className="cd-sku-card-sku truncate">{sku.sku}</div>
+        </div>
+        <Pill tone={st.tone}>{st.label}</Pill>
+      </div>
+      <div className="cd-sku-tiles">
+        <div className="cd-sku-tile">
+          <div
+            className="cd-sku-tile-val tabular-nums"
+            style={sku.on_hand === 0 ? { color: "var(--red)" } : undefined}
+          >
+            {sku.on_hand}
+          </div>
+          <div className="cd-sku-tile-lab">on hand</div>
+        </div>
+        <div className="cd-sku-tile">
+          <div
+            className="cd-sku-tile-val tabular-nums"
+            style={coverColor ? { color: coverColor } : undefined}
+            title={sku.velocity > 0 ? undefined : "No recent sales"}
+          >
+            {sku.velocity > 0 ? `${sku.days_of_cover}d` : "—"}
+          </div>
+          <div className="cd-sku-tile-lab">cover</div>
+        </div>
+        <div className="cd-sku-tile">
+          <div className="cd-sku-tile-val tabular-nums">{sku.velocity.toFixed(1)}/d</div>
+          <div className="cd-sku-tile-lab">velocity</div>
+        </div>
+        <div className="cd-sku-tile">
+          <ShipPnlCell cents={sku.ship_pnl_cents} />
+          <div className="cd-sku-tile-lab">ship P&amp;L</div>
+        </div>
+      </div>
+      {hasFoot && (
+        // Stop foot actions from bubbling to the card's navigate-to-alert click.
+        <div
+          className="cd-sku-card-foot"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {alerts.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => onOpenAlertsDialog(sku)}
+              aria-label={`${alerts.length} open alerts`}
+              style={{ background: "none", border: 0, padding: 0, cursor: "pointer" }}
+            >
+              <Pill tone="warn">
+                {alerts.length} alert{alerts.length === 1 ? "" : "s"}
+              </Pill>
+            </button>
+          ) : stockoutLabel ? (
+            <span className="cd-caption tabular-nums">~{stockoutLabel}</span>
+          ) : null}
+          {canRelocate && (
+            <span style={{ marginLeft: "auto" }}>
+              <Btn small onClick={() => onRelocate(sku)}>
+                Relocate
+              </Btn>
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

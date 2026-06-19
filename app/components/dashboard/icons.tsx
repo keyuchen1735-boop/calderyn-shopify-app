@@ -30,6 +30,7 @@ import {
   Megaphone,
   MessageSquareMore,
   Moon,
+  MoreHorizontal,
   Pause,
   Play,
   Radar,
@@ -88,6 +89,7 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   arrowUpRight: ArrowUpRight,
   warn: TriangleAlert,
   assist: MessageSquareMore,
+  more: MoreHorizontal,
 };
 
 export function CDIcon({
