@@ -241,48 +241,63 @@ export default function Dashboard() {
         {/* Today's focus */}
         {focus && (
           <div className="cdn-card cdn-accent-left cdn-accent-left--primary">
-            <BlockStack gap="300">
-              <BlockStack gap="150">
-                <InlineStack gap="100" blockAlign="center">
-                  <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
-                    <Icon name="spark" size={14} fill />
-                  </span>
-                  <Text as="span" variant="headingXs" tone="success">
-                    TODAY&apos;S FOCUS
+            {(() => {
+              const textBlock = (
+                <BlockStack gap="150">
+                  <InlineStack gap="100" blockAlign="center">
+                    <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
+                      <Icon name="spark" size={14} fill />
+                    </span>
+                    <Text as="span" variant="headingXs" tone="success">
+                      TODAY&apos;S FOCUS
+                    </Text>
+                  </InlineStack>
+                  <Text as="h3" variant="headingMd">
+                    {focus.title}
                   </Text>
-                </InlineStack>
-                <Text as="h3" variant="headingMd">
-                  {focus.title}
-                </Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {focusActionKind
-                    ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
-                    : "Protects "}
-                  <Text as="span" tone="success" fontWeight="semibold">
-                    {fmtMoney(focus.dollar_impact)}
-                  </Text>{" "}
-                  / 30d
-                </Text>
-              </BlockStack>
-              <InlineStack gap="200" wrap={false} align="start">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {focusActionKind
+                      ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
+                      : "Protects "}
+                    <Text as="span" tone="success" fontWeight="semibold">
+                      {fmtMoney(focus.dollar_impact)}
+                    </Text>{" "}
+                    / 30d
+                  </Text>
+                </BlockStack>
+              );
+              const buttons = [
                 <Button
+                  key="review"
                   variant={focusActionKind ? undefined : "primary"}
                   fullWidth={smDown}
                   onClick={() => navigate(`/app/alerts/${focus.id}`)}
                 >
                   Review
-                </Button>
-                {focusActionKind && (
+                </Button>,
+                focusActionKind ? (
                   <Button
+                    key="act"
                     variant="primary"
                     fullWidth={smDown}
                     onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
                   >
                     {ACTION_LABELS[focusActionKind]}
                   </Button>
-                )}
-              </InlineStack>
-            </BlockStack>
+                ) : null,
+              ];
+              return smDown ? (
+                <BlockStack gap="300">
+                  {textBlock}
+                  <BlockStack gap="200">{buttons}</BlockStack>
+                </BlockStack>
+              ) : (
+                <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+                  {textBlock}
+                  <InlineStack gap="200" wrap={false}>{buttons}</InlineStack>
+                </InlineStack>
+              );
+            })()}
           </div>
         )}
 
