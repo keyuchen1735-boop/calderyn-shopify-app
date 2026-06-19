@@ -18,11 +18,21 @@ vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
+// resolveScopedCandidates is NOT mocked — we test it exercised through the real
+// targeting module (which itself calls the already-mocked pickReallocation).
+vi.mock("../autopilot-targeting.server", async (importOriginal) => {
+  return await importOriginal();
+});
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
 // rows: guardrail_config (enabled), candidate alerts (with campaign + spend).
-function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>> }) {
+// scopedAlerts: rows to return for the new `alerts` table query (defaults to []).
+function fakeSb(opts: {
+  enabled: boolean;
+  alerts: Array<Record<string, unknown>>;
+  scopedAlerts?: Array<Record<string, unknown>>;
+}) {
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
@@ -38,8 +48,12 @@ function fakeSb(opts: { enabled: boolean; alerts: Array<Record<string, unknown>>
       },
       error: null,
     }));
-    chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
-      resolve({ data: table === "v_autopilot_candidates" ? opts.alerts : [], error: null });
+    chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) => {
+      let data: unknown = [];
+      if (table === "v_autopilot_candidates") data = opts.alerts;
+      else if (table === "alerts") data = opts.scopedAlerts ?? [];
+      return resolve({ data, error: null });
+    };
     return chain;
   }
   return { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
@@ -370,6 +384,53 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).toHaveBeenCalledTimes(2);
     expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+  });
+
+  // D6: a shop-scoped ad_tax_overload alert has no campaign_id in
+  // v_autopilot_candidates (so the view row never exists), but the `alerts`
+  // table row IS present. resolveScopedCandidates picks the worst-graded
+  // source campaign from the graded pool and synthesises a candidate so the
+  // reallocation path in the loop fires normally.
+  describe("ad_tax_overload scoped candidate (D6)", () => {
+    const scopedSource: ReallocationCandidate = {
+      campaignId: "source-uuid", externalId: "g-1", platform: "google" as Platform,
+      name: "Bleeder", dailyBudgetCents: 8000, grade: "poor" as const, roas: 0.3,
+    };
+    const scopedDest: ReallocationCandidate = {
+      campaignId: "dest-uuid-d6", externalId: "m-5", platform: "meta" as Platform,
+      name: "Winner D6", dailyBudgetCents: 6000, grade: "winning" as const, roas: 5.1,
+    };
+
+    it("acts (reallocates) when v_autopilot_candidates is empty but a scoped ad_tax_overload alert exists", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // First pickReallocation call (inside resolveScopedCandidates): returns
+      // the worst source so a synthetic candidate is built. Second call (inside
+      // the loop's reallocation branch): returns the winning destination.
+      pickReallocation
+        .mockReturnValueOnce({ source: scopedSource, dest: null }) // targeting: picks source
+        .mockReturnValueOnce({ source: null, dest: scopedDest });   // loop: picks dest
+      loadReallocationCandidates.mockResolvedValue([scopedSource, scopedDest]);
+
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [],               // v_autopilot_candidates is empty
+        scopedAlerts: [           // but an open ad_tax_overload alert exists
+          { id: "al-scoped", detector_id: "ad_tax_overload", dollar_impact: 120, entity_ref: {} },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({
+          sourceCampaignId: "source-uuid",
+          destCampaignId: "dest-uuid-d6",
+          actor: "autopilot",
+          alertId: "al-scoped",
+        }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
   });
 
   // executeReallocation THROWS when the live source budget dropped below the

@@ -7,6 +7,7 @@ import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
 import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
+import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
@@ -49,15 +50,6 @@ export interface AutopilotSummary {
   decisions: AutopilotDecision[];
 }
 
-interface Candidate {
-  alert_id: string;
-  detector_id: string;
-  dollar_impact: number; // dollars
-  campaign_id: string;
-  campaign_spend_cents: number;
-  daily_budget_cents: number | null;
-}
-
 function autopilotReason(verb: string, detectorId: string, dollarImpact: number): string {
   const label = DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId;
   const stake = Math.round(Number(dollarImpact) || 0).toLocaleString("en-US");
@@ -87,19 +79,34 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (aErr) throw aErr;
   const candidates = (rows ?? []) as Candidate[];
 
+  // D6: shop-scoped ad_tax_overload alerts carry no campaign_id, so they never
+  // appear in v_autopilot_candidates. Resolve a campaign target for them and
+  // feed them through the same defensive loop. (SKU-scoped negative_unit_economics
+  // targeting is deferred — see spec §8.)
+  const { data: scopedRows } = await sb
+    .from("alerts")
+    .select("id, detector_id, dollar_impact, entity_ref")
+    .eq("shop_id", shopId)
+    .eq("status", "open")
+    .in("detector_id", ["ad_tax_overload"]);
+
+  // Hoisted pool: serves BOTH the scoped-candidate resolver and every
+  // reallocation decision in the loop. Load it if either needs it.
+  const gradedPool =
+    candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id)) || (scopedRows ?? []).length > 0
+      ? await loadReallocationCandidates(shopId, sb)
+      : [];
+
+  const scoped = await resolveScopedCandidates(shopId, (scopedRows ?? []) as never, gradedPool, sb);
+  const allCandidates = [...candidates, ...scoped];
+
   // Defensive actions (pause/reduce/reallocate) take priority over offensive
   // scale-ups so loss-prevention is never starved of the daily action cap by a
   // bigger-dollar scale opportunity. Each subgroup keeps its dollar_impact order.
   const ordered = [
-    ...candidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
-    ...candidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
   ];
-
-  // Hoisted: ONE candidate-pool read serves every reallocation decision this
-  // run, instead of re-reading campaign + grade facts per candidate.
-  const gradedPool = candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id))
-    ? await loadReallocationCandidates(shopId, sb)
-    : [];
 
   let acted = 0;
   let blocked = 0;
