@@ -3,6 +3,7 @@
 // campaign_below_breakeven alert as the "next step".
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import { Fragment } from "react";
 import { useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import {
@@ -12,10 +13,13 @@ import {
   Box,
   Card,
   DataTable,
+  Divider,
+  InlineStack,
   Link,
   Page,
   Text,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
@@ -60,10 +64,76 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/** One label/value pair in a mobile analytics card's metric row. */
+function AnalyticsMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <BlockStack gap="050">
+      <Text as="span" variant="bodyXs" tone="subdued">
+        {label}
+      </Text>
+      <Text as="span" variant="bodySm" fontWeight="semibold" numeric>
+        {value}
+      </Text>
+    </BlockStack>
+  );
+}
+
+/** Phone-width render of one campaign-grade row: name + grade badge + the same
+ *  four metrics as the desktop table, using the shared formatting helpers. */
+function GradeCard({ g }: { g: CampaignGradeRow }) {
+  const grade = gradeFromRow(g);
+  return (
+    <Box padding="400">
+      <BlockStack gap="200">
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <Text as="span" fontWeight="semibold">
+            {g.name || g.campaign_id}
+          </Text>
+          <Badge tone={gradeTone(grade)}>{gradeLabel(grade)}</Badge>
+        </InlineStack>
+        <InlineStack gap="400">
+          <AnalyticsMetric label="Ad return" value={formatRoas(g.roas)} />
+          <AnalyticsMetric label="Break-even" value={formatRoas(g.break_even_roas)} />
+          <AnalyticsMetric label="Spend" value={fmtMoneyDec(g.spend_cents)} />
+          <AnalyticsMetric label="Revenue" value={fmtMoneyDec(g.revenue_cents)} />
+        </InlineStack>
+      </BlockStack>
+    </Box>
+  );
+}
+
+/** Phone-width render of one top-ad row: ad name + campaign + engagement total
+ *  (with the same hover breakdown as the table). */
+function AdCard({ a }: { a: TopAdRow }) {
+  return (
+    <Box padding="400">
+      <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+        <BlockStack gap="050">
+          <Text as="span" fontWeight="semibold">
+            {a.ad_name || a.ad_external_id}
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {a.campaign_name}
+          </Text>
+        </BlockStack>
+        <Tooltip
+          content={`${a.reactions.toLocaleString()} reactions · ${a.comments.toLocaleString()} comments · ${a.shares.toLocaleString()} shares · ${a.saves.toLocaleString()} saves`}
+        >
+          <Text as="span" fontWeight="semibold" numeric>
+            {a.engagement.toLocaleString()}
+          </Text>
+        </Tooltip>
+      </InlineStack>
+    </Box>
+  );
+}
+
 export default function Analytics() {
   const navigate = useEmbeddedNavigate();
   const { roasSeries, grades, topAds, error } = useLoaderData<typeof loader>();
   const series = toRoasSeries(roasSeries);
+  // Phones get stacked cards instead of the multi-column DataTables.
+  const { smDown } = useBreakpoints();
 
   // Derive the "losing money" count from the same grades the table below renders,
   // so the banner can't disagree with the on-page list (a poor-grade campaign may
@@ -156,6 +226,13 @@ export default function Analytics() {
                 with spend in the window.
               </Text>
             </Box>
+          ) : smDown ? (
+            grades.map((g, i) => (
+              <Fragment key={g.campaign_id}>
+                {i > 0 && <Divider />}
+                <GradeCard g={g} />
+              </Fragment>
+            ))
           ) : (
             <DataTable
               columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "numeric"]}
@@ -188,6 +265,13 @@ export default function Analytics() {
                 No ad engagement synced yet.
               </Text>
             </Box>
+          ) : smDown ? (
+            topAds.map((a, i) => (
+              <Fragment key={a.ad_external_id}>
+                {i > 0 && <Divider />}
+                <AdCard a={a} />
+              </Fragment>
+            ))
           ) : (
             <DataTable
               columnContentTypes={["text", "text", "numeric"]}

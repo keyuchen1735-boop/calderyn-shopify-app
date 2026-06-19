@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Form,
   useActionData,
@@ -18,6 +18,7 @@ import {
   ButtonGroup,
   Card,
   DataTable,
+  Divider,
   InlineStack,
   Link,
   Modal,
@@ -27,6 +28,7 @@ import {
   Text,
   TextField,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import type { SelectGroup } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
@@ -35,6 +37,7 @@ import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey, isUuid } from "~/lib/ids";
 import { sortActiveFirst } from "~/lib/campaign-sort";
+import { campaignBudgetLabel, campaignRoasLabel } from "~/lib/campaign-display";
 // Campaigns load from the live Meta API, where c.id is the Meta external id (e.g.
 // "1234567890"), but executeAction keys off the ad_campaign_dim UUID. The route
 // reverse-looks-up that UUID (resolveCampaignDimId) and, when found, runs the
@@ -661,6 +664,95 @@ function RowActions({
   );
 }
 
+/** One label/value pair in a mobile campaign card's metric row. */
+function CampaignMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <BlockStack gap="050">
+      <Text as="span" variant="bodyXs" tone="subdued">
+        {label}
+      </Text>
+      <Text as="span" variant="bodySm" fontWeight="semibold" numeric>
+        {value}
+      </Text>
+    </BlockStack>
+  );
+}
+
+/** Phone-width render of one campaign row: name link, platform + status (+ scale
+ *  suggestion) badges, the same kebab actions as the table, and a 3-up metric
+ *  row. Mirrors the desktop DataTable row using shared display helpers. */
+function CampaignCard({
+  c,
+  scaleSuggestion,
+  navigate,
+  reallocEligible,
+  setPending,
+  setBudgetInput,
+}: {
+  c: Campaign;
+  scaleSuggestion: ScalePrefill | null;
+  navigate: (path: string) => void;
+  reallocEligible: boolean;
+  setPending: (p: PendingAction) => void;
+  setBudgetInput: (v: string) => void;
+}) {
+  return (
+    <Box padding="400">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="start" gap="200" wrap={false}>
+          <BlockStack gap="150">
+            <Link
+              removeUnderline
+              onClick={() =>
+                navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
+              }
+            >
+              <Text as="span" fontWeight="semibold">
+                {c.name}
+              </Text>
+            </Link>
+            <InlineStack gap="150" blockAlign="center">
+              <PlatformTag platform={c.platform} />
+              <Badge tone={c.status === "active" ? "success" : "attention"}>
+                {c.status === "active" ? "Active" : "Paused"}
+              </Badge>
+              {scaleSuggestion ? (
+                <Tooltip content={scaleSuggestion.reason}>
+                  <Link
+                    removeUnderline
+                    onClick={() =>
+                      navigate(
+                        `/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}&scale=1`,
+                      )
+                    }
+                  >
+                    <Badge tone="success">Suggested: scale</Badge>
+                  </Link>
+                </Tooltip>
+              ) : null}
+            </InlineStack>
+          </BlockStack>
+          <RowActions
+            campaign={c}
+            reallocEligible={reallocEligible}
+            scaleSuggestion={scaleSuggestion}
+            setPending={setPending}
+            setBudgetInput={setBudgetInput}
+          />
+        </InlineStack>
+        <InlineStack gap="500">
+          <CampaignMetric
+            label="Daily budget"
+            value={campaignBudgetLabel(c.status, c.daily_budget_cents)}
+          />
+          <CampaignMetric label="7d spend" value={fmtMoney(c.spend_7d)} />
+          <CampaignMetric label="ROAS" value={campaignRoasLabel(c.roas_7d)} />
+        </InlineStack>
+      </BlockStack>
+    </Box>
+  );
+}
+
 export default function Campaigns() {
   const navigate = useEmbeddedNavigate();
   const { campaigns, reallocation, scaleSuggestions, error } = useLoaderData<typeof loader>();
@@ -668,6 +760,9 @@ export default function Campaigns() {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
+  // Phones get a stacked card list instead of the 7-column DataTable (which
+  // would scroll horizontally and hide the row actions).
+  const { smDown } = useBreakpoints();
 
   // Reallocation needs both a source AND a destination with a daily budget —
   // gate every entry point on the same predicate so the modal can never open
@@ -733,9 +828,9 @@ export default function Campaigns() {
           </Tooltip>
         ) : null}
       </InlineStack>,
-      c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
+      campaignBudgetLabel(c.status, c.daily_budget_cents),
       fmtMoney(c.spend_7d),
-      c.roas_7d > 0 ? `${c.roas_7d.toFixed(1)}×` : "—",
+      campaignRoasLabel(c.roas_7d),
       <RowActions
         key={`act-${c.id}`}
         campaign={c}
@@ -789,6 +884,22 @@ export default function Campaigns() {
                 </Button>
               </BlockStack>
             </Box>
+          </Card>
+        ) : smDown ? (
+          <Card padding="0">
+            {sorted.map((c, i) => (
+              <Fragment key={c.id}>
+                {i > 0 && <Divider />}
+                <CampaignCard
+                  c={c}
+                  scaleSuggestion={scaleSuggestions.find((s) => s.campaignId === c.id) ?? null}
+                  navigate={navigate}
+                  reallocEligible={reallocEligibleCount >= 2}
+                  setPending={setPending}
+                  setBudgetInput={setBudgetInput}
+                />
+              </Fragment>
+            ))}
           </Card>
         ) : (
         <Card padding="0">
