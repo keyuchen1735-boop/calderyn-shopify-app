@@ -43,6 +43,7 @@ const GUARDRAILS: GuardrailVM = {
   in_business_hours: true,
   business_hours_only: false,
   autopilot_enabled: true,
+  autopilot_bypass_guardrails: false,
   autopilot_daily_action_cap: 5,
   autopilot_actions_today: 0,
   autopilot_min_spend_cents: 1_000,

@@ -145,6 +145,18 @@ describe("checkGuardrails", () => {
     expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
   });
 
+  it("maps autopilot_bypass_guardrails through and waives every gate", async () => {
+    // Bypass column true + a today-count well over the cap: the row must map to
+    // bypassGuardrails and the evaluator must allow despite the breached cap.
+    const sb = fakeSb({ config: { ...config, autopilot_bypass_guardrails: true }, todayCount: 999 });
+    const r = await checkGuardrails(SHOP, {
+      kind: "increase_campaign_budget", campaignId: CAMP,
+      dollarImpactCents: 99999999, campaignSpendCents: 0,
+      currentBudgetCents: 10000, newBudgetCents: 99999,
+    }, sb);
+    expect(r.allowed).toBe(true);
+  });
+
   it("loads the increase cap and blocks an over-cap increase", async () => {
     const sb = fakeSb({ todayCount: 0, lastActionAtIso: null });
     const r = await checkGuardrails(SHOP, {

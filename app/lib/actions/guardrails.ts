@@ -9,6 +9,10 @@ export type GuardedKind = ExecutableKind | "reallocate_budget";
 
 export interface AutopilotGuardrails {
   enabled: boolean;
+  /** Bypass mode: when true, skip every safety/rate gate below (still requires
+   * `enabled`). Action SIZE is unaffected — autopilot sizes changes from the
+   * cut/increase dials regardless. */
+  bypassGuardrails: boolean;
   /** Max autopilot actions per UTC day; null = no daily cap (unlimited). */
   dailyActionCap: number | null;
   minSpendCents: number;
@@ -50,6 +54,8 @@ export function withinBusinessHours(startUtc: number, endUtc: number, hour: numb
 
 export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFacts): GuardrailResult {
   if (!cfg.enabled) return { allowed: false, reason: "auto-pilot disabled" };
+  // Bypass mode: enabled autopilot, but every safety/rate gate below is waived.
+  if (cfg.bypassGuardrails) return { allowed: true };
   // null cap = unlimited: skip the daily-cap check entirely.
   if (cfg.dailyActionCap != null && facts.todayAutopilotCount >= cfg.dailyActionCap) {
     return { allowed: false, reason: "daily action cap reached" };

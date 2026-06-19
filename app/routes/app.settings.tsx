@@ -178,6 +178,9 @@ export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
   if (fd.get("autopilot_enabled") !== null) {
     patch.autopilot_enabled = String(fd.get("autopilot_enabled")) === "true";
   }
+  if (fd.get("autopilot_bypass_guardrails") !== null) {
+    patch.autopilot_bypass_guardrails = String(fd.get("autopilot_bypass_guardrails")) === "true";
+  }
   // Daily action cap: blank = Unlimited (null = no cap); otherwise the entered
   // value, passed through faithfully so validateGuardrailPatch (not a silent
   // round/clamp here) is the single arbiter of the 1..100-integer bound — this
@@ -791,6 +794,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
   const [bhEnd, setBhEnd] = useState(guardrails.business_hours.end);
   const [bhTz] = useState(guardrails.business_hours.tz);
   const [autopilotEnabled, setAutopilotEnabled] = useState(guardrails.autopilot_enabled);
+  const [autopilotBypass, setAutopilotBypass] = useState(guardrails.autopilot_bypass_guardrails);
   // Blank string represents null (Unlimited / no daily cap).
   const [autopilotDailyActionCap, setAutopilotDailyActionCap] = useState(
     guardrails.autopilot_daily_action_cap == null
@@ -820,6 +824,7 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
     setBhStart(guardrails.business_hours.start);
     setBhEnd(guardrails.business_hours.end);
     setAutopilotEnabled(guardrails.autopilot_enabled);
+    setAutopilotBypass(guardrails.autopilot_bypass_guardrails);
     setAutopilotDailyActionCap(
       guardrails.autopilot_daily_action_cap == null
         ? ""
@@ -880,6 +885,11 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
           type="hidden"
           name="autopilot_enabled"
           value={autopilotEnabled ? "true" : "false"}
+        />
+        <input
+          type="hidden"
+          name="autopilot_bypass_guardrails"
+          value={autopilotBypass ? "true" : "false"}
         />
         {/* Empty string => Unlimited (no daily cap). Non-empty => positive int. */}
         <input
@@ -992,6 +1002,12 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
               {autopilotEnabled && (
                 <Box paddingBlockStart="300" borderColor="border" borderBlockStartWidth="025">
                   <BlockStack gap="300">
+                    <Checkbox
+                      label="Bypass all guardrails (act on everything immediately)"
+                      checked={autopilotBypass}
+                      onChange={setAutopilotBypass}
+                      helpText="DANGER: ignores every limit below — daily action cap, minimum spend, the approval dollar cap, cooldown, and business hours. Autopilot will act on every eligible campaign as soon as it's detected. Change sizes still follow the cut/raise % below, and actions are still logged and reversible."
+                    />
                     <Text as="h3" variant="headingSm">
                       Autopilot limits
                     </Text>

@@ -384,6 +384,18 @@ describe("PUT /dashboard/api/guardrails", () => {
     expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
   });
 
+  it("forwards autopilot_bypass_guardrails through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({});
+    const patch = { autopilot_bypass_guardrails: true };
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
+  });
+
   it("422s on an out-of-range value above the sanity ceiling", async () => {
     const res = (await guardrailsAction({
       request: post(

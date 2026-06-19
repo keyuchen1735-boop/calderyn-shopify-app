@@ -48,6 +48,10 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     return "invalid_autopilot_enabled";
   }
 
+  if ("autopilot_bypass_guardrails" in patch && typeof patch.autopilot_bypass_guardrails !== "boolean") {
+    return "invalid_autopilot_bypass_guardrails";
+  }
+
   if ("autopilot_daily_action_cap" in patch) {
     const v = patch.autopilot_daily_action_cap;
     // null = "no cap" (unlimited) is valid; otherwise a positive integer 1..100.

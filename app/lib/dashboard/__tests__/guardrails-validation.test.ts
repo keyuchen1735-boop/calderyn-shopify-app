@@ -130,6 +130,14 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ business_hours: { start: "09:00", end: "17:00", tz: "America/New_York" } as never })).toBeNull();
   });
 
+  it("validates autopilot_bypass_guardrails as a boolean", () => {
+    expect(validateGuardrailPatch({ autopilot_bypass_guardrails: true })).toBeNull();
+    expect(validateGuardrailPatch({ autopilot_bypass_guardrails: false })).toBeNull();
+    expect(
+      validateGuardrailPatch({ autopilot_bypass_guardrails: "yes" as unknown as boolean }),
+    ).not.toBeNull();
+  });
+
   it("validates business_hours_only as a boolean", () => {
     expect(validateGuardrailPatch({ business_hours_only: true })).toBeNull();
     expect(validateGuardrailPatch({ business_hours_only: "yes" as unknown as boolean })).not.toBeNull();
