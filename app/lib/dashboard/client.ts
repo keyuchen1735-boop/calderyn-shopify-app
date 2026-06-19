@@ -523,6 +523,35 @@ function toGuardrailVM(g: GuardrailConfig): GuardrailVM {
   };
 }
 
+// Mirror of AutopilotDecision / AutopilotSummary in
+// ~/lib/actions/autopilot.server.ts — a browser-safe copy (.server modules
+// can't be imported into client bundles). The dashboard only needs the landed
+// `decisions` (to banner each execution) and the counters; extra server fields
+// (blockedReasons) are ignored. Keep in sync by hand when the server type changes.
+export interface AutopilotDecisionDTO {
+  alertId: string;
+  campaignId: string;
+  detectorId: string;
+  intendedKind: string | null;
+  outcome: "acted" | "blocked" | "skipped" | "failed";
+  reason: string;
+}
+
+export interface AutopilotRunDTO {
+  skipped: boolean;
+  acted: number;
+  blocked: number;
+  failed: number;
+  considered: number;
+  decisions: AutopilotDecisionDTO[];
+}
+
+/** Trigger an immediate autopilot run for the session's shop. The dashboard
+ * fires this on load when autopilot is enabled; it is idempotent server-side. */
+export async function runAutopilot(): Promise<AutopilotRunDTO> {
+  return apiSend<AutopilotRunDTO>("POST", "/dashboard/api/autopilot");
+}
+
 export async function fetchConsent(): Promise<boolean> {
   const data = await apiGet<{ consent: boolean }>("/dashboard/api/consent");
   return Boolean(data.consent);
