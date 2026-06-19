@@ -303,27 +303,44 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               settings page, reinforcing that autopilot is off by default. */}
           {g.autopilot_enabled && (
             <>
-              <SettingRow label="Daily action cap" sub="Maximum automated actions per day.">
-                <Segmented
-                  small
-                  value={String(g.autopilot_daily_action_cap)}
-                  onChange={(v) => commit("autopilot_daily_action_cap", Number(v))}
-                  options={["3", "6", "12"]}
+              <SettingRow label="Daily action cap" sub="Maximum automated actions per day. Unlimited removes the daily cap.">
+                <GuardrailField
+                  value={g.autopilot_daily_action_cap}
+                  presets={[
+                    { value: 3, label: "3" },
+                    { value: 6, label: "6" },
+                    { value: 12, label: "12" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                  }}
+                  suffix="per day"
+                  unlimited={{ label: "Unlimited" }}
+                  disabled={saving}
+                  onCommit={(v) => commit("autopilot_daily_action_cap", v)}
                 />
               </SettingRow>
               <SettingRow
                 label="Max budget cut"
                 sub="Autopilot never reduces a campaign budget by more than this."
               >
-                <Segmented
-                  small
-                  value={String(g.autopilot_max_budget_cut_pct)}
-                  onChange={(v) => commit("autopilot_max_budget_cut_pct", Number(v))}
-                  options={[
-                    { value: "15", label: "15%" },
-                    { value: "30", label: "30%" },
-                    { value: "50", label: "50%" },
+                <GuardrailField
+                  value={g.autopilot_max_budget_cut_pct}
+                  presets={[
+                    { value: 15, label: "15%" },
+                    { value: 30, label: "30%" },
+                    { value: 50, label: "50%" },
                   ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                  }}
+                  suffix="%"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("autopilot_max_budget_cut_pct", v);
+                  }}
                 />
               </SettingRow>
               <SettingRow
@@ -339,11 +356,13 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                   ]}
                   fromInput={(raw) => {
                     const n = Number(raw);
-                    return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
                   }}
                   suffix="%"
                   disabled={saving}
-                  onCommit={(v) => commit("autopilot_max_budget_increase_pct", v)}
+                  onCommit={(v) => {
+                    if (v !== null) commit("autopilot_max_budget_increase_pct", v);
+                  }}
                 />
               </SettingRow>
               <SettingRow
@@ -382,15 +401,23 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                 label="Minimum spend to act"
                 sub="Autopilot only touches a campaign once it has spent at least this much."
               >
-                <Segmented
-                  small
-                  value={String(g.autopilot_min_spend_cents)}
-                  onChange={(v) => commit("autopilot_min_spend_cents", Number(v))}
-                  options={[
-                    { value: "5000", label: "$50" },
-                    { value: "10000", label: "$100" },
-                    { value: "25000", label: "$250" },
+                <GuardrailField
+                  value={g.autopilot_min_spend_cents}
+                  presets={[
+                    { value: 5000, label: "$50" },
+                    { value: 10000, label: "$100" },
+                    { value: 25000, label: "$250" },
                   ]}
+                  toInput={(c) => String(Math.round(c / 100))}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+                  }}
+                  suffix="USD"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("autopilot_min_spend_cents", v);
+                  }}
                 />
               </SettingRow>
             </>
@@ -421,7 +448,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               }}
               suffix="USD/day"
               disabled={saving}
-              onCommit={(v) => commit("daily_action_budget_cents", v)}
+              onCommit={(v) => {
+                if (v !== null) commit("daily_action_budget_cents", v);
+              }}
             />
           </SettingRow>
           <SettingRow
@@ -442,7 +471,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               }}
               suffix="USD"
               disabled={saving}
-              onCommit={(v) => commit("dollar_cap_cents", v)}
+              onCommit={(v) => {
+                if (v !== null) commit("dollar_cap_cents", v);
+              }}
             />
           </SettingRow>
           <SettingRow
@@ -462,7 +493,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               }}
               suffix="minutes"
               disabled={saving}
-              onCommit={(v) => commit("cooldown_minutes", v)}
+              onCommit={(v) => {
+                if (v !== null) commit("cooldown_minutes", v);
+              }}
             />
           </SettingRow>
           <BusinessHoursEditor

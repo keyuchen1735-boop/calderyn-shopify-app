@@ -50,7 +50,10 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
 
   if ("autopilot_daily_action_cap" in patch) {
     const v = patch.autopilot_daily_action_cap;
-    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 0 || v > 100) {
+    // null = "no cap" (unlimited) is valid; otherwise a positive integer 1..100.
+    // 0 is rejected — a zero cap would silently block every autopilot action;
+    // the only way to express "no cap" is an explicit null.
+    if (v !== null && (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 100)) {
       return "invalid_autopilot_daily_action_cap";
     }
   }
@@ -62,12 +65,18 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
 
   if ("autopilot_max_budget_cut_pct" in patch) {
     const v = patch.autopilot_max_budget_cut_pct;
-    if (!isFiniteNum(v) || v < 0 || v > 100) return "invalid_autopilot_max_budget_cut_pct";
+    // Custom entry is a whole-percent 1..100 — a 0% cut is a no-op rule.
+    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 100) {
+      return "invalid_autopilot_max_budget_cut_pct";
+    }
   }
 
   if ("autopilot_max_budget_increase_pct" in patch) {
     const v = patch.autopilot_max_budget_increase_pct;
-    if (!isFiniteNum(v) || v < 0 || v > 100) return "invalid_autopilot_max_budget_increase_pct";
+    // Custom entry is a whole-percent 1..100 — a 0% increase is a no-op rule.
+    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 100) {
+      return "invalid_autopilot_max_budget_increase_pct";
+    }
   }
 
   if ("autopilot_max_daily_budget_cents" in patch) {

@@ -28,9 +28,34 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ autopilot_max_budget_cut_pct: -1 })).not.toBeNull();
   });
 
+  it("rejects a zero or non-integer budget-cut percentage (must be 1..100)", () => {
+    expect(validateGuardrailPatch({ autopilot_max_budget_cut_pct: 0 })).not.toBeNull();
+    expect(validateGuardrailPatch({ autopilot_max_budget_cut_pct: 12.5 })).not.toBeNull();
+  });
+
+  it("accepts a custom in-range budget-cut percentage", () => {
+    expect(validateGuardrailPatch({ autopilot_max_budget_cut_pct: 37 })).toBeNull();
+  });
+
+  it("rejects a zero or non-integer budget-increase percentage (must be 1..100)", () => {
+    expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 0 })).not.toBeNull();
+    expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 7.5 })).not.toBeNull();
+  });
+
   it("rejects a non-integer or negative daily action cap", () => {
     expect(validateGuardrailPatch({ autopilot_daily_action_cap: -1 })).not.toBeNull();
     expect(validateGuardrailPatch({ autopilot_daily_action_cap: 2.5 })).not.toBeNull();
+    // 0 is not a meaningful cap (it would block every action); reject it so the
+    // only way to express "no cap" is an explicit null.
+    expect(validateGuardrailPatch({ autopilot_daily_action_cap: 0 })).not.toBeNull();
+  });
+
+  it("accepts a null daily action cap (unlimited)", () => {
+    expect(validateGuardrailPatch({ autopilot_daily_action_cap: null })).toBeNull();
+  });
+
+  it("accepts a custom positive integer daily action cap", () => {
+    expect(validateGuardrailPatch({ autopilot_daily_action_cap: 25 })).toBeNull();
   });
 
   it("rejects a negative min spend", () => {

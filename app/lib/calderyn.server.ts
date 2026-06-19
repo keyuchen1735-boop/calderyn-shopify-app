@@ -235,7 +235,9 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     // so the merchant-facing check can't show green while the gateway blocks.
     in_business_hours: withinBusinessHours(startUtc, endUtc, new Date().getUTCHours()),
     autopilot_enabled: Boolean(r.autopilot_enabled),
-    autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
+    // null column = no cap (unlimited); preserve it rather than coercing to a number.
+    autopilot_daily_action_cap:
+      r.autopilot_daily_action_cap == null ? null : Number(r.autopilot_daily_action_cap),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
     autopilot_max_budget_cut_pct: Number(r.autopilot_max_budget_cut_pct ?? 50),
     autopilot_max_budget_increase_pct: Number(r.autopilot_max_budget_increase_pct ?? 20),

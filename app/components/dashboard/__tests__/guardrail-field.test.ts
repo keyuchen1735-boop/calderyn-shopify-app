@@ -16,6 +16,44 @@ describe("activePreset", () => {
   it("returns __custom__ for an off-preset value", () => {
     expect(activePreset(75000, [25000, 50000, 100000])).toBe("__custom__");
   });
+  it("returns __unlimited__ for a null value", () => {
+    expect(activePreset(null, [3, 6, 12])).toBe("__unlimited__");
+  });
+});
+
+describe("GuardrailField · unlimited option", () => {
+  it("renders an Unlimited chip when unlimited is enabled", () => {
+    const html = renderToString(
+      h(GuardrailField, {
+        value: 3,
+        presets: [
+          { value: 3, label: "3" },
+          { value: 6, label: "6" },
+          { value: 12, label: "12" },
+        ],
+        unlimited: { label: "Unlimited" },
+        onCommit: () => {},
+      }),
+    );
+    expect(html).toContain("Unlimited");
+    expect(html).toContain("Custom");
+  });
+
+  it("hides the custom input when the value is null (Unlimited active)", () => {
+    const html = renderToString(
+      h(GuardrailField, {
+        value: null,
+        presets: [
+          { value: 3, label: "3" },
+          { value: 6, label: "6" },
+          { value: 12, label: "12" },
+        ],
+        unlimited: { label: "Unlimited" },
+        onCommit: () => {},
+      }),
+    );
+    expect(html).not.toContain('type="number"');
+  });
 });
 
 describe("GuardrailField render", () => {
