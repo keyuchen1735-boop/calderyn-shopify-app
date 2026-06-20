@@ -380,6 +380,33 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
+      // reallocate_spend_sku: live endpoint — the campaign pair and shift amount
+      // are derived server-side by enrichRemediation (Task 7 route + Task 6
+      // gateway). The client sends only the action kind; no campaign ids.
+      if (kind === "reallocate_spend_sku") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — done. Logged to action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return;
+      }
+
+      // TODO(phase3-followup): dashboard cut_ads on SKU alerts needs the
+      // enriched target.loserCampaignId routed to executeCampaignAction; until
+      // then it stays advisory on the dashboard (embedded surface executes it).
+
       // exclude_geo / create_po_draft: no live endpoint yet.
       // TODO(api): wire these to real mutations once the endpoints exist.
       markResolved();

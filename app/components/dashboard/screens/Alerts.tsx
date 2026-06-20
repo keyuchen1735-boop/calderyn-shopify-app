@@ -260,8 +260,11 @@ function AlertDetail({
                 <div className="flex flex-col gap-2 mt-1">
                   {alert.remediation.moves.map((m) => {
                     const rec = m.kind === alert.remediation!.recommended;
-                    if (m.executor) {
-                      // Executable move: snooze (Phase 1) or discontinue_sku (Phase 2).
+                    const executable = m.executor !== null;
+                    if (executable) {
+                      // Executable move: render as a button. Danger styling for
+                      // destructive executors (discontinue). Phase 3 adds
+                      // reallocate_spend_sku, reduce_campaign_budget, pause_campaign.
                       const isDiscontinue = m.executor === "discontinue_sku";
                       return (
                         <button
@@ -271,12 +274,14 @@ function AlertDetail({
                           className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
                           onClick={() => run(m.executor as ActionKind)}
                         >
-                          <CDIcon name={CD_ACTION_ICON[m.executor] || "bolt"} size={16} strokeWidth={1.9} />
+                          <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
                           <span className="flex-1 text-left">{m.label}</span>
                           {rec && <span className="cd-rec-tag">Recommended</span>}
                         </button>
                       );
                     }
+                    // Advisory move (executor === null): show guidance row with
+                    // ineligibleReason when set (rule 12 — never a dead button).
                     return (
                       <div
                         key={m.kind}
@@ -294,6 +299,11 @@ function AlertDetail({
                         <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
                         <span className="flex-1 text-left">{m.label}</span>
                         {rec && <span className="cd-rec-tag">Recommended</span>}
+                        {m.ineligibleReason && (
+                          <span className="cd-caption" style={{ color: "var(--text-3)", flexShrink: 0, maxWidth: "32ch", textAlign: "right" }}>
+                            {m.ineligibleReason}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
