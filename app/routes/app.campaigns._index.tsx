@@ -17,7 +17,6 @@ import {
   Button,
   ButtonGroup,
   Card,
-  DataTable,
   Divider,
   InlineStack,
   Link,
@@ -786,6 +785,9 @@ export default function Campaigns() {
   };
   const [sortIndex, setSortIndex] = useState(4);
   const [sortDir, setSortDir] = useState<"ascending" | "descending">("descending");
+  const [platformFilter, setPlatformFilter] = useState<"All" | "Meta" | "Google" | "TikTok">("All");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 8;
 
   // Active campaigns always sort to the top; the chosen column orders rows
   // within each status group (paused never interleave with active).
@@ -794,53 +796,40 @@ export default function Campaigns() {
     return sortDir === "ascending" ? key(a) - key(b) : key(b) - key(a);
   });
 
-  const rows = sorted.map((c) => {
-    const scaleSuggestion = scaleSuggestions.find((s) => s.campaignId === c.id) ?? null;
-    return [
-      <Link
-        key={`n-${c.id}`}
-        removeUnderline
-        onClick={() =>
-          navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
-        }
-      >
-        <Text as="span" fontWeight="semibold">
-          {c.name}
-        </Text>
-      </Link>,
-      <PlatformTag key={`p-${c.id}`} platform={c.platform} />,
-      <InlineStack key={`s-${c.id}`} gap="200" blockAlign="center">
-        <Badge tone={c.status === "active" ? "success" : "attention"}>
-          {c.status === "active" ? "Active" : "Paused"}
-        </Badge>
-        {scaleSuggestion ? (
-          <Tooltip content={scaleSuggestion.reason}>
-            <Link
-              removeUnderline
-              onClick={() =>
-                navigate(
-                  `/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}&scale=1`,
-                )
-              }
-            >
-              <Badge tone="success">Suggested: scale</Badge>
-            </Link>
-          </Tooltip>
-        ) : null}
-      </InlineStack>,
-      campaignBudgetLabel(c.status, c.daily_budget_cents),
-      fmtMoney(c.spend_7d),
-      campaignRoasLabel(c.roas_7d),
-      <RowActions
-        key={`act-${c.id}`}
-        campaign={c}
-        reallocEligible={reallocEligibleCount >= 2}
-        scaleSuggestion={scaleSuggestion}
-        setPending={setPending}
-        setBudgetInput={setBudgetInput}
-      />,
-    ];
-  });
+  // Desktop list: platform filter chips + pagination over the sorted list.
+  const filtered =
+    platformFilter === "All" ? sorted : sorted.filter((c) => c.platform === platformFilter);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageIdx = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = pageIdx * PAGE_SIZE;
+  const paged = filtered.slice(start, start + PAGE_SIZE);
+  const rangeText =
+    filtered.length === 0
+      ? "No campaigns match"
+      : `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} of ${filtered.length}`;
+  const scaleCount = scaleSuggestions.length;
+  // No break-even on the embedded Campaign type; "losing money" = a real ROAS
+  // below 1× (revenue under spend). roas_7d is 0 for un-joined live rows, so
+  // the > 0 guard keeps "no data" from being counted as losing.
+  const losingCount = campaigns.filter(
+    (c) => c.status === "active" && c.roas_7d > 0 && c.roas_7d < 1,
+  ).length;
+  const sortBy = (idx: number) => {
+    if (sortIndex === idx) setSortDir((d) => (d === "descending" ? "ascending" : "descending"));
+    else {
+      setSortIndex(idx);
+      setSortDir("descending");
+    }
+    setPage(0);
+  };
+  const sortInd = (idx: number) => (sortIndex === idx ? (sortDir === "ascending" ? " ↑" : " ↓") : "");
+  const sortCol = (idx: number) => (sortIndex === idx ? "#173a4d" : "#9a9a9a");
+  const PLATS: { key: "All" | "Meta" | "Google" | "TikTok"; dot?: string }[] = [
+    { key: "All" },
+    { key: "Meta", dot: "#1877F2" },
+    { key: "Google", dot: "#EA4335" },
+    { key: "TikTok", dot: "#111111" },
+  ];
 
   return (
     <Page
@@ -848,13 +837,11 @@ export default function Campaigns() {
       title="Campaigns"
       subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
-      secondaryActions={[
-        {
-          content: "Reallocate budget",
-          onAction: () => setPending({ kind: "reallocate" }),
-          disabled: reallocEligibleCount < 2,
-        },
-      ]}
+      primaryAction={{
+        content: "Reallocate budget",
+        onAction: () => setPending({ kind: "reallocate" }),
+        disabled: reallocEligibleCount < 2,
+      }}
     >
       <BlockStack gap="400">
         {error && (
@@ -902,38 +889,149 @@ export default function Campaigns() {
             ))}
           </Card>
         ) : (
-        <Card padding="0">
-          <DataTable
-            columnContentTypes={[
-              "text",
-              "text",
-              "text",
-              "numeric",
-              "numeric",
-              "numeric",
-              "text",
-            ]}
-            headings={[
-              "Campaign",
-              "Platform",
-              "Status",
-              "Daily budget",
-              "7d spend",
-              <Tooltip key="roas" content="ROAS — revenue ÷ ad spend, before product costs">
-                <span>ROAS</span>
-              </Tooltip>,
-              "Actions",
-            ]}
-            rows={rows}
-            sortable={[false, false, false, true, true, true, false]}
-            defaultSortDirection="descending"
-            initialSortColumnIndex={4}
-            onSort={(index, direction) => {
-              setSortIndex(index);
-              setSortDir(direction === "ascending" ? "ascending" : "descending");
-            }}
-          />
-        </Card>
+          <BlockStack gap="300">
+            <div className="cmpx-toolbar">
+              <div className="cmpx-chips">
+                {PLATS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    className="cmpx-chip"
+                    data-on={platformFilter === p.key}
+                    onClick={() => {
+                      setPlatformFilter(p.key);
+                      setPage(0);
+                    }}
+                  >
+                    {p.dot && <span className="cmpx-chip-dot" style={{ background: p.dot }} />}
+                    {p.key}
+                  </button>
+                ))}
+              </div>
+              <span className="cmpx-summary">
+                {campaigns.length} campaigns · {scaleCount} to scale · {losingCount} losing money
+              </span>
+            </div>
+
+            <Card padding="0">
+              <div className="cmpx-scroll">
+                <div className="cmpx-table">
+                  <div className="cmpx-head">
+                    <span>Campaign</span>
+                    <span>Platform</span>
+                    <span>Status</span>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(3) }} onClick={() => sortBy(3)}>
+                      Daily budget{sortInd(3)}
+                    </button>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(4) }} onClick={() => sortBy(4)}>
+                      7d spend{sortInd(4)}
+                    </button>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(5) }} onClick={() => sortBy(5)}>
+                      ROAS{sortInd(5)}
+                    </button>
+                    <span className="cmpx-r">Action</span>
+                  </div>
+
+                  {paged.map((c) => {
+                    const scaleSuggestion =
+                      scaleSuggestions.find((s) => s.campaignId === c.id) ?? null;
+                    const paused = c.status !== "active";
+                    const losing = !paused && c.roas_7d > 0 && c.roas_7d < 1;
+                    const sug = paused ? null : scaleSuggestion ? "scale" : losing ? "pause" : null;
+                    return (
+                      <div key={c.id} className="cmpx-row" data-dim={paused}>
+                        <button
+                          type="button"
+                          className="cmpx-name"
+                          title={c.name}
+                          onClick={() =>
+                            navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
+                          }
+                        >
+                          {c.name}
+                        </button>
+                        <span className="cmpx-plat">
+                          <PlatformIcon platform={c.platform} size={16} />
+                          {c.platform}
+                        </span>
+                        <div className="cmpx-status">
+                          {paused ? (
+                            <span className="cmpx-tag cmpx-tag-paused">Paused</span>
+                          ) : (
+                            <span className="cmpx-tag cmpx-tag-active">
+                              <span className="cmpx-tag-dot" />
+                              Active
+                            </span>
+                          )}
+                          {sug === "scale" && <span className="cmpx-tag cmpx-tag-scale">Scale suggested</span>}
+                          {sug === "pause" && <span className="cmpx-tag cmpx-tag-pause">Pause suggested</span>}
+                        </div>
+                        <span className="cmpx-num cmpx-r">
+                          {campaignBudgetLabel(c.status, c.daily_budget_cents)}
+                        </span>
+                        <span className="cmpx-num cmpx-r">{fmtMoney(c.spend_7d)}</span>
+                        <span className="cmpx-roas cmpx-r" style={{ color: losing ? "#b3300f" : "#1a1a1a" }}>
+                          {campaignRoasLabel(c.roas_7d)}
+                        </span>
+                        <div className="cmpx-actions">
+                          {sug === "scale" && scaleSuggestion && (
+                            <button
+                              type="button"
+                              className="cmpx-act cmpx-act-scale"
+                              onClick={() => setPending({ kind: "scale", campaign: c, suggestion: scaleSuggestion })}
+                            >
+                              Scale
+                            </button>
+                          )}
+                          {sug === "pause" && (
+                            <button
+                              type="button"
+                              className="cmpx-act cmpx-act-pause"
+                              onClick={() => setPending({ kind: "pause", campaign: c })}
+                            >
+                              Pause
+                            </button>
+                          )}
+                          <RowActions
+                            campaign={c}
+                            reallocEligible={reallocEligibleCount >= 2}
+                            scaleSuggestion={scaleSuggestion}
+                            setPending={setPending}
+                            setBudgetInput={setBudgetInput}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="cmpx-foot">
+                    <span className="cmpx-foot-range">{rangeText}</span>
+                    <div className="cmpx-pager">
+                      <button
+                        type="button"
+                        className="cmpx-page"
+                        disabled={pageIdx <= 0}
+                        onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      >
+                        ‹ Prev
+                      </button>
+                      <span className="cmpx-page-label">
+                        Page {pageIdx + 1} of {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        className="cmpx-page"
+                        disabled={pageIdx >= totalPages - 1}
+                        onClick={() => setPage((p) => p + 1)}
+                      >
+                        Next ›
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </BlockStack>
         )}
       </BlockStack>
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Form,
   useActionData,
@@ -9,32 +9,15 @@ import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import {
-  Badge,
-  Banner,
-  BlockStack,
-  Box,
-  Button,
-  Card,
-  Collapsible,
-  IndexTable,
-  InlineGrid,
-  InlineStack,
-  Page,
-  Text,
-  Tooltip,
-  useBreakpoints,
-} from "@shopify/polaris";
-import { ChevronDownIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { Banner, BlockStack, Box, Button, Card, Page, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
-import { fmtMoney, fmtRelTime, fmtAbsTime, shortId } from "~/lib/format";
+import { fmtMoney, fmtRelTime, fmtAbsTime } from "~/lib/format";
 import { recovered as recoveredOf } from "~/lib/recovered";
 import { ACTION_LABELS, COST_SOURCE_LABELS } from "~/lib/labels";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
 import { useActionToast } from "~/lib/toast";
-import { StatTile } from "~/components/calderyn";
 import type { AuditEntry } from "~/lib/types";
 
 type LoaderPayload = {
@@ -100,256 +83,344 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-function DetailLine({ label, value }: { label: string; value: string }) {
+/* ─────────────────────────── icons ─────────────────────────── */
+// One small inline SVG per action shape. Stroke icons (no external icon set on
+// this surface so the page is self-contained); chosen from the action_kind, with
+// reversal rows always reading as an "undo" regardless of the original kind.
+type IconName = "pause" | "play" | "inventory" | "po" | "undo" | "ship" | "clock";
+
+function iconFor(a: AuditEntry): IconName {
+  if (a.undo_of) return "undo";
+  switch (a.action_kind) {
+    case "pause_campaign":
+    case "reduce_campaign_budget":
+    case "reallocate_budget":
+    case "exclude_geo":
+      return "pause";
+    case "resume_campaign":
+    case "increase_campaign_budget":
+      return "play";
+    case "reallocate_inventory":
+      return "inventory";
+    case "create_po_draft":
+      return "po";
+    case "raise_free_ship_threshold":
+    case "exclude_sku_free_ship":
+      return "ship";
+    default:
+      return "clock";
+  }
+}
+
+function ActionIcon({ name }: { name: IconName }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.9,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  switch (name) {
+    case "pause":
+      return (
+        <svg {...common}>
+          <path d="M9 5v14M15 5v14" />
+        </svg>
+      );
+    case "play":
+      return (
+        <svg {...common}>
+          <path d="M7 5l12 7-12 7V5Z" />
+        </svg>
+      );
+    case "inventory":
+      return (
+        <svg {...common}>
+          <path d="M3 7l9-4 9 4-9 4-9-4Z" />
+          <path d="M3 7v10l9 4 9-4V7" />
+          <path d="M12 11v10" />
+        </svg>
+      );
+    case "po":
+      return (
+        <svg {...common}>
+          <rect x="5" y="3" width="14" height="18" rx="2" />
+          <path d="M9 8h6M9 12h6M9 16h4" />
+        </svg>
+      );
+    case "undo":
+      return (
+        <svg {...common}>
+          <path d="M9 14 4 9l5-5" />
+          <path d="M4 9h11a5 5 0 0 1 0 10h-3" />
+        </svg>
+      );
+    case "ship":
+      return (
+        <svg {...common}>
+          <path d="M3 13h13V6H3zM16 9h4l1 4v3h-5" />
+          <circle cx="7.5" cy="18" r="1.6" />
+          <circle cx="17.5" cy="18" r="1.6" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v4l3 2" />
+        </svg>
+      );
+  }
+}
+
+function Chevron({ open }: { open: boolean }) {
   return (
-    <InlineStack gap="150">
-      <Text as="span" variant="bodySm" fontWeight="semibold">{label}:</Text>
-      <Text as="span" variant="bodySm" tone="subdued">{value}</Text>
-    </InlineStack>
+    <span className="aux-chev" data-open={open}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M6 9l6 6 6-6" />
+      </svg>
+    </span>
   );
 }
 
-function AuditRowEx({
-  a, index, submitting,
-}: { a: AuditEntry; index: number; submitting: boolean }) {
+/* ─────────────────────────── buckets ─────────────────────────── */
+type Bucket = "Today" | "This week" | "Earlier";
+
+function bucketOf(iso: string, now: number): Bucket {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "Earlier";
+  const days = (now - t) / 86_400_000;
+  if (days < 1) return "Today";
+  if (days < 7) return "This week";
+  return "Earlier";
+}
+
+/* ─────────────────────────── CSV export ─────────────────────────── */
+function buildCsv(rows: AuditEntry[]): string {
+  const head = ["Time", "Action", "Target", "Mode", "Impact (USD)", "Status", "Action ID"];
+  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const lines = rows.map((a) => {
+    const leg = auditLegibility(a);
+    const label = a.undo_of ? `Reversed — ${ACTION_LABELS[a.action_kind] ?? a.action_kind}` : ACTION_LABELS[a.action_kind] ?? a.action_kind;
+    const impact = ((a.dollar_impact_at_exec || 0) / 100).toFixed(2);
+    return [
+      fmtAbsTime(a.created_at),
+      label,
+      a.target,
+      leg.mode === "auto" ? "Auto" : "Manual",
+      impact,
+      a.outcome,
+      a.id,
+    ]
+      .map((c) => esc(String(c)))
+      .join(",");
+  });
+  return [head.map(esc).join(","), ...lines].join("\r\n");
+}
+
+/* ─────────────────────────── one timeline row ─────────────────────────── */
+function AuditRow({ a, submitting }: { a: AuditEntry; submitting: boolean }) {
   const [open, setOpen] = useState(false);
   const leg = auditLegibility(a);
   const diff = stateDiff(a.action_kind, a.pre_state, a.post_state);
   const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
+  const title = a.undo_of ? `Reversed — ${actionLabel}` : actionLabel;
+
+  const ok = a.outcome === "succeeded";
+  const retrying = a.outcome === "retrying";
+  const impact = a.dollar_impact_at_exec || 0;
+  const isReversal = Boolean(a.undo_of) || impact < 0;
+
+  const railClass = !ok ? (retrying ? "aux-rail-warn" : "aux-rail-fail") : isReversal ? "aux-rail-mute" : "aux-rail-ok";
+
+  // The booked-margin caption + detail describe a genuine recovery — gate to
+  // positive, non-reversal rows (matches the dashboard's `> 0 && !undone`).
+  const showImpactCaption = impact > 0 && !a.undo_of;
+  let impactText = "";
+  let impactClass = "aux-impact-mute";
+  if (impact > 0 && !a.undo_of) {
+    impactText = `+${fmtMoney(impact)} recovered`;
+    impactClass = "aux-impact-ok";
+  } else if (impact < 0 || a.undo_of) {
+    impactText = `−${fmtMoney(Math.abs(impact))} reversed`;
+    impactClass = "aux-impact-mute";
+  }
+
   const canUndo = a.undo_eligible && !a.undo_of;
   const hasPoPdf =
     a.action_kind === "create_po_draft" && a.outcome === "succeeded" && Boolean(a.post_state?.po);
-  const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
-  const showEstimate =
-    !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
-  // The margin-source caption + booked-margin detail describe a genuine booked
-  // recovery — gate them to positive, non-reversal rows so a reversal (negative
-  // impact, undo_of set) never reads as "Estimated from alert" (matches the
-  // dashboard's `> 0 && !undone` intent). The impact figure itself still renders.
-  const showImpact = a.dollar_impact_at_exec > 0 && !a.undo_of;
+
+  const statusLabel = ok ? "Succeeded" : retrying ? "Retrying" : "Failed";
+  const statusClass = ok ? "aux-pill-ok" : retrying ? "aux-pill-warn" : "aux-pill-fail";
 
   return (
-    <>
-      <IndexTable.Row id={a.id} position={index * 2}>
-        <IndexTable.Cell>
-          <Button
-            variant="tertiary"
-            icon={open ? ChevronDownIcon : ChevronRightIcon}
-            onClick={() => setOpen((v) => !v)}
-            accessibilityLabel={open ? "Hide details" : "Show details"}
-          />
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Tooltip content={fmtAbsTime(a.created_at)}>
-            <Text as="span" variant="bodySm" fontWeight="semibold">{fmtRelTime(a.created_at)}</Text>
-          </Tooltip>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <BlockStack gap="050">
-            <Text as="p" variant="bodySm" fontWeight="semibold">
-              {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">{leg.why}</Text>
-          </BlockStack>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Badge tone={leg.mode === "auto" ? "info" : undefined}>
-            {leg.mode === "auto" ? "Auto" : "Manual"}
-          </Badge>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Tooltip content={a.target}><Text as="span" variant="bodySm">{shortId(a.target)}</Text></Tooltip>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <BlockStack gap="050" inlineAlign="end">
-            <Text as="p" alignment="end" variant="bodySm" fontWeight="semibold">
-              {a.dollar_impact_at_exec < 0 ? "-" : ""}{fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
-            </Text>
-            {showImpact && <Text as="p" alignment="end" variant="bodySm" tone="subdued">{leg.marginBasisLabel}</Text>}
-            {showEstimate && <Text as="p" alignment="end" variant="bodySm" tone="subdued">est. {fmtMoney(estimateCents)}</Text>}
-          </BlockStack>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Badge tone={a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"}>
-            {a.outcome}
-          </Badge>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          {canUndo || hasPoPdf ? (
-            <InlineStack gap="200" wrap={false}>
-              {canUndo && (
-                <Form method="post">
-                  <input type="hidden" name="intent" value="undo" />
-                  <input type="hidden" name="auditId" value={a.id} />
-                  <Button submit variant="plain" loading={submitting} disabled={submitting}>Undo</Button>
-                </Form>
+    <div className="aux-row">
+      <div className={`aux-rail ${railClass}`} />
+      <div className="aux-row-body">
+        <button
+          type="button"
+          className="aux-row-head"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+        >
+          <span className="aux-icon">
+            <ActionIcon name={iconFor(a)} />
+          </span>
+          <span className="aux-row-main">
+            <span className="aux-row-title">{title}</span>
+            <span className="aux-row-sub">
+              {a.target} · {fmtRelTime(a.created_at)}
+            </span>
+          </span>
+          {impactText && <span className={`aux-impact ${impactClass}`}>{impactText}</span>}
+          <span className={`aux-pill ${statusClass}`}>{statusLabel}</span>
+          <Chevron open={open} />
+        </button>
+
+        {open && (
+          <div className="aux-detail">
+            <div className="aux-detail-grid">
+              <div className="aux-field">
+                <div className="aux-field-label">Why this fired</div>
+                <div className="aux-field-value">{leg.whyDetail ?? leg.why}</div>
+              </div>
+              <div className="aux-field">
+                <div className="aux-field-label">Triggered by</div>
+                <div className="aux-field-value">{leg.actorDisplay}</div>
+              </div>
+              <div className="aux-field">
+                <div className="aux-field-label">When</div>
+                <div className="aux-field-value">{fmtAbsTime(a.created_at)}</div>
+              </div>
+              <div className="aux-field">
+                <div className="aux-field-label">Action ID</div>
+                <div className="aux-field-value aux-mono">{a.id}</div>
+              </div>
+              {a.failure_reason && (
+                <div className="aux-field aux-field-wide">
+                  <div className="aux-field-label">Why it didn&apos;t run</div>
+                  <div className="aux-field-value">{a.failure_reason}</div>
+                </div>
               )}
-              {hasPoPdf && <DownloadPoButton auditId={a.id} />}
-            </InlineStack>
-          ) : (<Text as="span" tone="subdued">—</Text>)}
-        </IndexTable.Cell>
-      </IndexTable.Row>
-      <IndexTable.Row id={`${a.id}-d`} position={index * 2 + 1} disabled>
-        <IndexTable.Cell colSpan={8}>
-          <Collapsible id={`detail-${a.id}`} open={open} transition={{ duration: "150ms" }}>
-            <Box padding="300" background="bg-surface-secondary">
-              <BlockStack gap="150">
-                <DetailLine label="Why this fired" value={leg.whyDetail ?? leg.why} />
-                {a.failure_reason && <DetailLine label="Failure reason" value={a.failure_reason} />}
-                {showImpact && (
-                  <DetailLine label="Booked margin"
-                    value={`${a.dollar_impact_at_exec < 0 ? "-" : ""}${fmtMoney(Math.abs(a.dollar_impact_at_exec))} · ${leg.marginBasisLabel}`} />
-                )}
-                {leg.costLineage.length > 0 && (
-                  <InlineStack gap="150" blockAlign="center">
-                    <Text as="span" variant="bodySm" fontWeight="semibold">Cost lineage:</Text>
-                    {leg.costLineage.map((s, i) => (
-                      <Badge key={i} tone={s.source === "unavailable" ? "warning" : undefined}>
-                        {`${s.kind === "ad_spend" ? "Ad spend" : s.kind === "cogs" ? "COGS" : "Price"}: ${COST_SOURCE_LABELS[s.source] ?? s.source}`}
-                      </Badge>
-                    ))}
-                  </InlineStack>
-                )}
-                {diff.length > 0 && (
-                  <BlockStack gap="150">
-                    <Text as="span" variant="bodySm" fontWeight="semibold">Before → after</Text>
-                    <InlineGrid columns={{ xs: 1, sm: Math.min(diff.length, 3) as 1 | 2 | 3 }} gap="200">
-                      {diff.map((r) => (
-                        <Box key={r.label} background="bg-surface" padding="200" borderRadius="200" borderColor="border" borderWidth="025">
-                          <Text as="p" variant="bodySm" tone="subdued">{r.label}</Text>
-                          <Text as="p" variant="bodySm" fontWeight="semibold">
-                            {r.before != null && r.after != null ? `${r.before} → ${r.after}` : r.after ?? r.before}
-                          </Text>
-                        </Box>
-                      ))}
-                    </InlineGrid>
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Box>
-          </Collapsible>
-        </IndexTable.Cell>
-      </IndexTable.Row>
-    </>
-  );
-}
+              {showImpactCaption && (
+                <div className="aux-field aux-field-wide">
+                  <div className="aux-field-label">Booked margin</div>
+                  <div className="aux-field-value">
+                    {fmtMoney(impact)} · {leg.marginBasisLabel}
+                  </div>
+                </div>
+              )}
+            </div>
 
-function AuditCardEx({
-  a, index, submitting,
-}: { a: AuditEntry; index: number; submitting: boolean }) {
-  const [open, setOpen] = useState(false);
-  const leg = auditLegibility(a);
-  const diff = stateDiff(a.action_kind, a.pre_state, a.post_state);
-  const actionLabel = ACTION_LABELS[a.action_kind] ?? a.action_kind;
-  const canUndo = a.undo_eligible && !a.undo_of;
-  const hasPoPdf =
-    a.action_kind === "create_po_draft" && a.outcome === "succeeded" && Boolean(a.post_state?.po);
-  const estimateCents = Number(a.post_state?.estimate_cents ?? 0);
-  const showEstimate =
-    !a.dollar_impact_at_exec && estimateCents > 0 && a.action_kind !== "snooze_alert";
-  const showImpact = a.dollar_impact_at_exec > 0 && !a.undo_of;
-
-  return (
-    <Box
-      padding="400"
-      borderBlockStartWidth={index === 0 ? undefined : "025"}
-      borderColor="border"
-    >
-      <BlockStack gap="200">
-        <InlineStack align="space-between" blockAlign="start" gap="200" wrap={false}>
-          <BlockStack gap="050">
-            <Text as="p" variant="bodySm" fontWeight="semibold">
-              {a.undo_of ? `Reversed — ${actionLabel}` : actionLabel}
-            </Text>
-            <Text as="p" variant="bodyXs" tone="subdued">
-              {fmtRelTime(a.created_at)} · {shortId(a.target)}
-            </Text>
-          </BlockStack>
-          <Badge tone={a.outcome === "succeeded" ? "success" : a.outcome === "retrying" ? "attention" : "critical"}>
-            {a.outcome}
-          </Badge>
-        </InlineStack>
-
-        <Text as="p" variant="bodySm" tone="subdued">{leg.why}</Text>
-
-        <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
-          <InlineStack gap="200" blockAlign="center">
-            <Badge tone={leg.mode === "auto" ? "info" : undefined}>
-              {leg.mode === "auto" ? "Auto" : "Manual"}
-            </Badge>
-            <Text as="span" variant="bodySm" fontWeight="semibold">
-              {a.dollar_impact_at_exec < 0 ? "-" : ""}{fmtMoney(Math.abs(a.dollar_impact_at_exec || 0))}
-            </Text>
-            {showEstimate && (
-              <Text as="span" variant="bodyXs" tone="subdued">est. {fmtMoney(estimateCents)}</Text>
+            {leg.costLineage.length > 0 && (
+              <div className="aux-lineage">
+                <span className="aux-field-label">Cost lineage</span>
+                {leg.costLineage.map((s, i) => (
+                  <span key={i} className="aux-tag" data-warn={s.source === "unavailable"}>
+                    {`${s.kind === "ad_spend" ? "Ad spend" : s.kind === "cogs" ? "COGS" : "Price"}: ${COST_SOURCE_LABELS[s.source] ?? s.source}`}
+                  </span>
+                ))}
+              </div>
             )}
-          </InlineStack>
-          <InlineStack gap="200" blockAlign="center" wrap={false}>
+
+            {diff.length > 0 && (
+              <div className="aux-diff">
+                <span className="aux-field-label">Before → after</span>
+                <div className="aux-diff-grid">
+                  {diff.map((r) => (
+                    <div key={r.label} className="aux-diff-cell">
+                      <div className="aux-field-label">{r.label}</div>
+                      <div className="aux-field-value aux-strong">
+                        {r.before != null && r.after != null ? `${r.before} → ${r.after}` : r.after ?? r.before}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {(canUndo || hasPoPdf) && (
-              <>
+              <div className="aux-row-actions">
                 {canUndo && (
                   <Form method="post">
                     <input type="hidden" name="intent" value="undo" />
                     <input type="hidden" name="auditId" value={a.id} />
-                    <Button submit variant="plain" loading={submitting} disabled={submitting}>Undo</Button>
+                    <Button submit variant="secondary" loading={submitting} disabled={submitting}>
+                      Undo this action
+                    </Button>
                   </Form>
                 )}
                 {hasPoPdf && <DownloadPoButton auditId={a.id} />}
-              </>
+              </div>
             )}
-            <Button
-              variant="tertiary"
-              icon={open ? ChevronDownIcon : ChevronRightIcon}
-              onClick={() => setOpen((v) => !v)}
-              accessibilityLabel={open ? "Hide details" : "Show details"}
-            />
-          </InlineStack>
-        </InlineStack>
-
-        <Collapsible id={`mdetail-${a.id}`} open={open} transition={{ duration: "150ms" }}>
-          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-            <BlockStack gap="150">
-              <DetailLine label="Why this fired" value={leg.whyDetail ?? leg.why} />
-              {a.failure_reason && <DetailLine label="Failure reason" value={a.failure_reason} />}
-              {showImpact && (
-                <DetailLine label="Booked margin"
-                  value={`${a.dollar_impact_at_exec < 0 ? "-" : ""}${fmtMoney(Math.abs(a.dollar_impact_at_exec))} · ${leg.marginBasisLabel}`} />
-              )}
-              {diff.length > 0 && (
-                <BlockStack gap="150">
-                  <Text as="span" variant="bodySm" fontWeight="semibold">Before → after</Text>
-                  <InlineGrid columns={{ xs: 1, sm: Math.min(diff.length, 2) as 1 | 2 }} gap="200">
-                    {diff.map((r) => (
-                      <Box key={r.label} background="bg-surface" padding="200" borderRadius="200" borderColor="border" borderWidth="025">
-                        <Text as="p" variant="bodySm" tone="subdued">{r.label}</Text>
-                        <Text as="p" variant="bodySm" fontWeight="semibold">
-                          {r.before != null && r.after != null ? `${r.before} → ${r.after}` : r.after ?? r.before}
-                        </Text>
-                      </Box>
-                    ))}
-                  </InlineGrid>
-                </BlockStack>
-              )}
-            </BlockStack>
-          </Box>
-        </Collapsible>
-      </BlockStack>
-    </Box>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
+type StatusFilter = "all" | "ok" | "failed";
+
 export default function Audit() {
   const navigate = useEmbeddedNavigate();
-  const { audit, error } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  // Remix's useLoaderData Jsonify wrapper marks AuditEntry's nullable fields
+  // optional, but the runtime objects ARE full AuditEntry rows and the
+  // legibility/state-diff/CSV helpers all tolerate the null fields — widen back
+  // so those helpers type-check (justification per the no-`any` rule).
+  const audit = loaderData.audit as unknown as AuditEntry[];
+  const error = loaderData.error;
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
-  const { smDown } = useBreakpoints();
+
+  const [filter, setFilter] = useState<StatusFilter>("all");
+
+  const now = Date.now();
+
+  const filtered = useMemo(
+    () =>
+      audit.filter((a) =>
+        filter === "all"
+          ? true
+          : filter === "ok"
+            ? a.outcome === "succeeded"
+            : a.outcome !== "succeeded",
+      ),
+    [audit, filter],
+  );
+
+  const groups = useMemo(() => {
+    const order: Bucket[] = ["Today", "This week", "Earlier"];
+    return order
+      .map((label) => ({
+        label,
+        items: filtered.filter((a) => bucketOf(a.created_at, now) === label),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [filtered, now]);
+
+  const exportCsv = () => {
+    const csv = buildCsv(audit);
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "calderyn-action-history.csv";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
 
   if (audit.length === 0) {
     return (
-      <Page title="Action audit log" backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}>
+      <Page
+        title="Action history"
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      >
         {error && (
           <Box paddingBlockEnd="400">
             <Banner tone="critical" title="Couldn't load audit log">
@@ -367,12 +438,12 @@ export default function Audit() {
                 Every action Calderyn takes — and your one-click Undo for each — is recorded
                 here. Approve an alert recommendation or pause a campaign to log your first.
               </Text>
-              <InlineStack gap="200">
+              <div className="aux-empty-actions">
                 <Button variant="primary" onClick={() => navigate("/app/alerts")}>
                   Open alerts
                 </Button>
                 <Button onClick={() => navigate("/app/campaigns")}>Manage campaigns</Button>
-              </InlineStack>
+              </div>
             </BlockStack>
           </Box>
         </Card>
@@ -380,21 +451,32 @@ export default function Audit() {
     );
   }
 
-  const successRate = Math.round(
-    (audit.filter((a) => a.outcome === "succeeded").length / audit.length) * 100,
-  );
+  const succeeded = audit.filter((a) => a.outcome === "succeeded").length;
+  const successRate = Math.round((succeeded / audit.length) * 100);
   // Shared with the home tile and the web dashboard (app/lib/recovered.ts):
   // succeeded actions, undo rows excluded.
   const recovered = recoveredOf(audit).cents;
 
+  const showingText =
+    filtered.length === audit.length
+      ? `${audit.length} actions`
+      : `Showing ${filtered.length} of ${audit.length} actions`;
+
+  const CHIPS: { key: StatusFilter; label: string; dot?: string }[] = [
+    { key: "all", label: "All" },
+    { key: "ok", label: "Succeeded", dot: "#1a7f4f" },
+    { key: "failed", label: "Failed", dot: "#b3300f" },
+  ];
+
   return (
     <Page
       fullWidth
-      title="Action audit log"
-      subtitle={`Every action executed by the gateway · ${audit.length} entries · 90-day retention`}
+      title="Action history"
+      subtitle="Every action Calderyn ran for you, newest first. Click any row for the details. Kept for 90 days."
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      secondaryActions={[{ content: "Export CSV", onAction: exportCsv }]}
     >
-      <BlockStack gap="500">
+      <BlockStack gap="400">
         {error && (
           <Banner tone="critical" title="Couldn't load audit log">
             <p>{error.message}</p>
@@ -405,44 +487,79 @@ export default function Audit() {
             <p>{actionData.error.message}</p>
           </Banner>
         )}
-        <InlineGrid columns={{ xs: 2, sm: 3 }} gap="400">
-          <StatTile label="Total actions" value={String(audit.length)} caption="last 90 days" />
-          <StatTile
-            label="Success rate"
-            value={`${successRate}%`}
-            tone={successRate >= 90 ? "success" : undefined}
-            caption={`${audit.filter((a) => a.outcome === "succeeded").length} of ${audit.length} succeeded`}
-          />
-          <StatTile
-            label="Recovered impact"
-            value={fmtMoney(recovered)}
-            tone="success"
-            caption="from successful actions"
-          />
-        </InlineGrid>
 
-        <Card padding="0">
-          {smDown ? (
-            <BlockStack gap="0">
-              {(audit as AuditEntry[]).map((a, i) => (
-                <AuditCardEx key={a.id} a={a} index={i} submitting={submitting} />
-              ))}
-            </BlockStack>
-          ) : (
-            <IndexTable
-              selectable={false}
-              itemCount={audit.length}
-              headings={[
-                { title: "" }, { title: "Time" }, { title: "Action" }, { title: "Mode" },
-                { title: "Target" }, { title: "Impact", alignment: "end" }, { title: "Status" }, { title: "" },
-              ]}
-            >
-              {(audit as AuditEntry[]).map((a, i) => (
-                <AuditRowEx key={a.id} a={a} index={i} submitting={submitting} />
-              ))}
-            </IndexTable>
-          )}
-        </Card>
+        {/* KPI strip */}
+        <div className="aux-kpis">
+          <div className="aux-kpi">
+            <div className="aux-kpi-label">Actions run</div>
+            <div className="aux-kpi-value">{audit.length}</div>
+            <div className="aux-kpi-caption">in the last 90 days</div>
+          </div>
+          <div className="aux-kpi">
+            <div className="aux-kpi-label">Success rate</div>
+            <div className="aux-kpi-rate">
+              <span className="aux-kpi-value">{successRate}%</span>
+              <span className="aux-kpi-sub">
+                {succeeded} of {audit.length}
+              </span>
+            </div>
+            <div className="aux-bar">
+              <div className="aux-bar-fill" style={{ width: `${successRate}%` }} />
+            </div>
+          </div>
+          <div className="aux-kpi aux-kpi-accent">
+            <div className="aux-kpi-label">Money recovered</div>
+            <div className="aux-kpi-value aux-accent">{fmtMoney(recovered)}</div>
+            <div className="aux-kpi-caption">from actions that succeeded</div>
+          </div>
+        </div>
+
+        {/* Filter chips */}
+        <div className="aux-toolbar">
+          <div className="aux-chips">
+            {CHIPS.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                className="aux-chip"
+                data-on={filter === c.key}
+                onClick={() => setFilter(c.key)}
+              >
+                {c.dot && <span className="aux-chip-dot" style={{ background: c.dot }} />}
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <span className="aux-showing">{showingText}</span>
+        </div>
+
+        {/* Timeline */}
+        {groups.length === 0 ? (
+          <Card>
+            <Box padding="500">
+              <BlockStack gap="100" inlineAlign="center">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  No actions match this filter.
+                </Text>
+              </BlockStack>
+            </Box>
+          </Card>
+        ) : (
+          <div className="aux-timeline">
+            {groups.map((g) => (
+              <div key={g.label} className="aux-group">
+                <div className="aux-group-label">{g.label}</div>
+                <Card padding="0">
+                  <div className="aux-group-rows">
+                    {g.items.map((a) => (
+                      <AuditRow key={a.id} a={a} submitting={submitting} />
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            ))}
+          </div>
+        )}
       </BlockStack>
     </Page>
   );
