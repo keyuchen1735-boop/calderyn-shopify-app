@@ -589,9 +589,29 @@ export default function AlertDetail() {
                         </Text>
                       )}
                       {alert.remediation.moves
-                        .filter((m) => m.executor !== "snooze_alert")
+                        .filter((m) => m.kind !== "snooze")
                         .map((m) => {
                           const rec = m.kind === alert.remediation!.recommended;
+                          if (m.executor) {
+                            // Executable move (Phase 2: discontinue_sku). The kind
+                            // submitted is the EXECUTOR, which the action handler +
+                            // DETECTOR_TO_ACTIONS gate on.
+                            return (
+                              <InlineStack key={m.kind} gap="200" blockAlign="center" wrap={false}>
+                                {rec && <Badge tone="success">Recommended</Badge>}
+                                <Button
+                                  variant={rec ? "primary" : "secondary"}
+                                  tone={m.executor === "discontinue_sku" ? "critical" : undefined}
+                                  loading={navigation.state !== "idle" && actionKind === m.executor}
+                                  onClick={() => setActionKind(m.executor as ActionKind)}
+                                >
+                                  {m.label}
+                                </Button>
+                              </InlineStack>
+                            );
+                          }
+                          // Advisory move (cut_ads / reallocate_to_winner / fix_returns
+                          // / review_pricing) — still guidance text in Phase 2.
                           return (
                             <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
                               {rec && <Badge tone="success">Recommended</Badge>}
@@ -606,8 +626,7 @@ export default function AlertDetail() {
                           );
                         })}
                       <Text as="p" variant="bodyXs" tone="subdued">
-                        One-click execution for these moves is rolling out. You can still snooze
-                        below.
+                        Advisory moves are guidance; the highlighted action runs with one click.
                       </Text>
                     </BlockStack>
                   )}
