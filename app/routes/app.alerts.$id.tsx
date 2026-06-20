@@ -538,6 +538,23 @@ export default function AlertDetail() {
   }
 
   const allowedActions = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
+
+  // When a remediation block is present, its executable moves (m.executor truthy,
+  // m.kind !== "snooze") are the canonical surface for those action kinds. Remove
+  // those executor kinds from allowedActions so they don't render a second time
+  // below. snooze_alert is always kept here — the moves block excludes snooze
+  // intentionally, so it must still appear once via allowedActions.
+  const remediationExecutorKinds: Set<ActionKind> = alert.remediation
+    ? new Set(
+        alert.remediation.moves
+          .filter((m) => m.kind !== "snooze" && !!m.executor)
+          .map((m) => m.executor as ActionKind),
+      )
+    : new Set();
+  const dedupedAllowedActions = allowedActions.filter(
+    (k) => k === "snooze_alert" || !remediationExecutorKinds.has(k),
+  );
+
   const submitting = navigation.state !== "idle";
   const evidence = alert.evidence ?? {};
 
@@ -672,7 +689,7 @@ export default function AlertDetail() {
                       </Text>
                     </BlockStack>
                   )}
-                  {allowedActions.map((kind, i) => {
+                  {dedupedAllowedActions.map((kind, i) => {
                     const deepLink = DEEP_LINK_ACTIONS[kind];
                     const button = deepLink ? (
                       <Button fullWidth onClick={() => navigate(deepLink.path)}>
