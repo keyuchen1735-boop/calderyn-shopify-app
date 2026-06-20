@@ -26,6 +26,7 @@ import {
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { encrypt } from "./crypto.server";
+import { friendlyIntegrationError } from "./friendly-error";
 import { newIdempotencyKey } from "./ids";
 import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
@@ -1301,12 +1302,17 @@ export function calderynClient(shop: string) {
             out[kind] = {
               name: INTEGRATION_DISPLAY_NAME[kind] ?? kind,
               status,
-              // A reauth integration shows a friendly reconnect prompt, not the
-              // raw OAuth error (which still lives in sync_error for diagnosis).
+              // An errored integration shows a plain-language reason, not the raw
+              // provider/API string (which still lives in sync_error for
+              // diagnosis). reauth keeps its dedicated reconnect prompt;
+              // friendlyIntegrationError returns null when there's no error, so a
+              // healthy row falls through to the account id / connected date.
               detail:
                 status === "reauth"
                   ? "Connection expired — reconnect to resume syncing"
-                  : (r.sync_error ?? r.external_account_id ?? (r.connected_at ? `Connected ${r.connected_at}` : "Pending")),
+                  : (friendlyIntegrationError(r.sync_error) ??
+                    r.external_account_id ??
+                    (r.connected_at ? `Connected ${r.connected_at}` : "Pending")),
               logoCls: INTEGRATION_LOGO_CLS[kind] ?? "logo-default",
             };
           }
