@@ -280,7 +280,22 @@ type LoaderPayload = {
   shipMode: string;
   missingWeightPct: number;
   unmatchedCharges: UnmatchedCharges;
+  /** Shopify-admin deep link the Uninstall button opens at the top level. */
+  uninstallUrl: string;
 };
+
+/**
+ * Shopify-admin deep link to the Apps settings page, where a merchant uninstalls
+ * an app. An embedded app can't run the merchant uninstall flow itself — Shopify
+ * requires the merchant to pick an uninstall reason in the admin UI — so the
+ * Uninstall button escapes the iframe to here. `shop` is the session's
+ * `<handle>.myshopify.com` domain; the admin URL is keyed by the bare handle
+ * (mirrors the handle derivation in admin-deeplink.server.ts).
+ */
+export function buildAdminUninstallUrl(shop: string): string {
+  const handle = shop.replace(/\.myshopify\.com$/, "");
+  return `https://admin.shopify.com/store/${handle}/settings/apps`;
+}
 
 type ActionPayload = {
   ok: boolean;
@@ -294,6 +309,7 @@ type ActionPayload = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
+  const uninstallUrl = buildAdminUninstallUrl(session.shop);
   try {
     const [guardrails, integrations, consent] = await Promise.all([
       client.guardrails.get(request.signal),
@@ -319,6 +335,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shipMode,
       missingWeightPct: missingWeight,
       unmatchedCharges,
+      uninstallUrl,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -330,6 +347,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shipMode: "auto",
       missingWeightPct: 0,
       unmatchedCharges: { count: 0, items: [] },
+      uninstallUrl,
     });
   }
 };
@@ -673,7 +691,7 @@ const SETTINGS_TABS: { key: SettingsTab; label: string }[] = [
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges } =
+  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges, uninstallUrl } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
@@ -856,7 +874,13 @@ export default function Settings() {
                       When you uninstall Calderyn from your Shopify admin, we trigger a 28-table
                       cascade purge of all merchant data within 30 days.
                     </Text>
-                    <Button tone="critical">Uninstall Calderyn</Button>
+                    {/* Shopify doesn't let an embedded app run the merchant uninstall flow
+                        itself (the admin requires an uninstall-reason prompt), so this links
+                        to the admin Apps settings page. target="_top" navigates the top-level
+                        browsing context, escaping the embedded iframe. */}
+                    <Button tone="critical" url={uninstallUrl} target="_top">
+                      Uninstall Calderyn
+                    </Button>
                   </BlockStack>
                 </Card>
               </div>
