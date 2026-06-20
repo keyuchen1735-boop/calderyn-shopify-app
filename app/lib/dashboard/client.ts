@@ -190,7 +190,8 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
     campaign_id,
     actions,
     recommended,
-    rec_detail: "", // TODO(api): server-provided recommendation
+    rec_detail: a.rec_detail ?? "",
+    remediation: a.remediation ?? null,
   };
 }
 

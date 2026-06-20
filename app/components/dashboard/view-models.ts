@@ -10,6 +10,7 @@ import type {
   ShipCostSource,
   ShipCostConfidence,
 } from "~/lib/ship-cost/types";
+import type { RemediationPlan } from "~/lib/remediation/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -50,6 +51,7 @@ export interface AlertVM {
   actions: string[];
   recommended: string | null;
   rec_detail: string;
+  remediation: RemediationPlan | null;
 }
 
 export interface AuditVM {
