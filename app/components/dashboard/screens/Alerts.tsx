@@ -250,34 +250,84 @@ function AlertDetail({
                 <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
                 your audit history and can be reverted there.
               </p>
+            ) : alert.remediation ? (
+              <>
+                {alert.rec_detail && (
+                  <p className="cd-body" style={{ maxWidth: "52ch" }}>
+                    {alert.rec_detail}
+                  </p>
+                )}
+                <div className="flex flex-col gap-2 mt-1">
+                  {alert.remediation.moves.map((m) => {
+                    const rec = m.kind === alert.remediation!.recommended;
+                    // Phase 1: only snooze executes; other moves are advisory guidance.
+                    if (m.executor === "snooze_alert") {
+                      return (
+                        <button
+                          key={m.kind}
+                          disabled={resolved || busy}
+                          aria-busy={busy && attempted === "snooze_alert"}
+                          className="cd-action-btn"
+                          onClick={() => run("snooze_alert" as ActionKind)}
+                        >
+                          <CDIcon name={CD_ACTION_ICON.snooze_alert || "bell"} size={16} strokeWidth={1.9} />
+                          <span className="flex-1 text-left">Snooze</span>
+                        </button>
+                      );
+                    }
+                    return (
+                      <div
+                        key={m.kind}
+                        className={"cd-move-row" + (rec ? " rec" : "")}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--border)",
+                          background: rec ? "var(--surface-2)" : "transparent",
+                        }}
+                      >
+                        <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
+                        <span className="flex-1 text-left">{m.label}</span>
+                        {rec && <span className="cd-rec-tag">Recommended</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                  logged. One-click execution for these moves is rolling out.
+                </p>
+              </>
             ) : (
-              alert.rec_detail && <p className="cd-caption">{alert.rec_detail}</p>
+              <>
+                {alert.rec_detail && <p className="cd-caption">{alert.rec_detail}</p>}
+                <div className="flex flex-col gap-2 mt-1">
+                  {alert.actions.map((kind) => {
+                    const rec = kind === alert.recommended;
+                    return (
+                      <button
+                        key={kind}
+                        disabled={resolved || busy}
+                        aria-busy={busy && attempted === kind}
+                        className={"cd-action-btn" + (rec ? " rec" : "")}
+                        onClick={() => run(kind as ActionKind)}
+                      >
+                        <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
+                        <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
+                        {rec && <span className="cd-rec-tag">Recommended</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                  logged.
+                </p>
+              </>
             )}
-            <div className="flex flex-col gap-2 mt-1">
-              {alert.actions.map((kind) => {
-                const rec = kind === alert.recommended;
-                return (
-                  <button
-                    key={kind}
-                    disabled={resolved || busy}
-                    aria-busy={busy && attempted === kind}
-                    className={"cd-action-btn" + (rec ? " rec" : "")}
-                    onClick={() => run(kind as ActionKind)}
-                  >
-                    <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
-                    <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
-                    {rec && <span className="cd-rec-tag">Recommended</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <p
-              className="cd-caption mt-1"
-              style={{ display: "flex", gap: 6, alignItems: "center" }}
-            >
-              <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-              logged.
-            </p>
           </Card>
         </div>
       </div>
