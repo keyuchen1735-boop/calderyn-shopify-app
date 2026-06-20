@@ -20,7 +20,15 @@ export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
  * and the stored credential is keyed off the nonce's shop_id, never off `shop`
  * here. These only steer where the browser is re-embedded.
  */
-export type OAuthReturnContext = { host?: string | null; shop?: string | null };
+// `popup` flags a connect started from the onboarding wizard's NEW-TAB flow: the
+// provider callback then lands on the standalone /auth/connected page (close this
+// tab + return) instead of an embedded-admin deep link, which can't render in a
+// bare top-level tab. Still non-secret — it only steers the final redirect.
+export type OAuthReturnContext = {
+  host?: string | null;
+  shop?: string | null;
+  popup?: boolean;
+};
 
 /**
  * Pack the nonce together with the (non-secret) embedded return context into the
@@ -28,8 +36,8 @@ export type OAuthReturnContext = { host?: string | null; shop?: string | null };
  * context, so old callers/flows keep producing plain-nonce states.
  */
 export function packOAuthState(nonce: string, ctx?: OAuthReturnContext): string {
-  if (!ctx?.host && !ctx?.shop) return nonce;
-  const payload = { n: nonce, h: ctx.host ?? null, s: ctx.shop ?? null };
+  if (!ctx?.host && !ctx?.shop && !ctx?.popup) return nonce;
+  const payload = { n: nonce, h: ctx.host ?? null, s: ctx.shop ?? null, p: ctx.popup ? 1 : 0 };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
@@ -43,19 +51,42 @@ export function parseOAuthState(state: string): {
   nonce: string;
   host: string | null;
   shop: string | null;
+  popup: boolean;
 } {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
     if (decoded.startsWith("{")) {
-      const o = JSON.parse(decoded) as { n?: string; h?: string | null; s?: string | null };
+      const o = JSON.parse(decoded) as {
+        n?: string;
+        h?: string | null;
+        s?: string | null;
+        p?: number;
+      };
       if (o && typeof o.n === "string") {
-        return { nonce: o.n, host: o.h ?? null, shop: o.s ?? null };
+        return { nonce: o.n, host: o.h ?? null, shop: o.s ?? null, popup: o.p === 1 };
       }
     }
   } catch {
     /* not a packed state — treat the whole value as the nonce */
   }
-  return { nonce: state, host: null, shop: null };
+  return { nonce: state, host: null, shop: null, popup: false };
+}
+
+/**
+ * Where a popup (new-tab) OAuth callback should land: the standalone result page
+ * that tells the merchant the connect finished and to return to the setup tab.
+ * `?provider=` is the display label, `?status=connected|error`, plus an optional
+ * `?reason=` on error. The setup tab itself detects the new pairing by polling
+ * the server, so this page only needs to message + (best-effort) close.
+ */
+export function popupResultUrl(args: {
+  provider: string;
+  status: "connected" | "error";
+  reason?: string;
+}): string {
+  const params = new URLSearchParams({ provider: args.provider, status: args.status });
+  if (args.reason) params.set("reason", args.reason);
+  return `/auth/connected?${params.toString()}`;
 }
 
 /**

@@ -3,7 +3,7 @@
 // Onboarding step persistence round-trip through the real calderynClient.
 //
 // The onboarding UI (app/routes/app.onboarding.tsx) and the persistence layer
-// (ONBOARDING_STEPS in calderyn.server.ts) each hold an 8-entry step list and
+// (ONBOARDING_STEPS in calderyn.server.ts) each hold a 5-entry step list and
 // talk to each other ONLY via numeric indices: the route submits the index it
 // wants, advance() persists the name at that index, getState() maps the stored
 // name back to its index. These tests pin that index round-trip — if either
@@ -56,7 +56,7 @@ vi.mock("../supabase.server", () => ({
 // eslint-disable-next-line import/first -- import must follow vi.mock so the supabase fake is registered before the module under test loads
 import { calderynClient } from "../calderyn.server";
 
-const TOTAL_STEPS = 9; // mirrors STEPS in app.onboarding.tsx and ONBOARDING_STEPS in calderyn.server.ts
+const TOTAL_STEPS = 5; // mirrors STEPS in app.onboarding.tsx and ONBOARDING_STEPS in calderyn.server.ts
 
 beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k];
@@ -77,7 +77,7 @@ describe("onboarding state persistence", () => {
 
   it("marks onboarding done when the route's finish intent advances past the last step", async () => {
     const client = calderynClient("a.myshopify.com");
-    // The route's "finish" intent submits STEPS.length (8); advance clamps to "complete".
+    // The route's "finish" intent submits STEPS.length (5); advance clamps to "complete".
     await client.onboarding.advance(TOTAL_STEPS);
 
     expect(store["shops"][0].onboarding_step).toBe("complete");
@@ -96,22 +96,12 @@ describe("onboarding state persistence", () => {
   });
 
   it("persists step NAMES in the wizard's order (semantic contract with app.onboarding.tsx)", async () => {
-    // The index round-trip above passes for ANY 8-entry list — it never failed
+    // The index round-trip above passes for ANY 5-entry list — it never failed
     // while the server enum was in a different order than the wizard, which
     // persisted wrong step names for cross-surface readers of
-    // shops.onboarding_step. Pin the names at each index to the wizard's flow:
-    // Shop → Guardrails → Google → Meta → QuickBooks → Creative → Consent → Complete.
-    const expected = [
-      "shopify",
-      "guardrails",
-      "google",
-      "meta",
-      "tiktok",
-      "quickbooks",
-      "creative_mapping",
-      "consent",
-      "complete",
-    ];
+    // shops.onboarding_step. Pin the names at each index to the redesigned flow:
+    // Shop → Set your limits → Connect → Compare → Complete.
+    const expected = ["shopify", "guardrails", "connect", "consent", "complete"];
     const client = calderynClient("a.myshopify.com");
     for (let i = 0; i < expected.length; i++) {
       await client.onboarding.advance(i);

@@ -89,14 +89,14 @@ export type OnboardingState = { step: number; done: boolean };
 // stores the step NAME, so a divergent order here persists a step the merchant
 // is not actually on (and any other surface reading shops.onboarding_step
 // would resume them at the wrong place).
+// 5-step model (2026-06 onboarding redesign): the four ad/accounting OAuth
+// providers collapsed from one step each into a single "connect" screen, and the
+// creative-mapping step was dropped. Persisted in shops.onboarding_step; the index
+// drives the wizard. postOAuthPath still keys off "complete"/onboarding_completed_at.
 const ONBOARDING_STEPS = [
   "shopify",
   "guardrails",
-  "google",
-  "meta",
-  "tiktok",
-  "quickbooks",
-  "creative_mapping",
+  "connect",
   "consent",
   "complete",
 ] as const;
@@ -1324,6 +1324,9 @@ export function calderynClient(shop: string) {
       async startOAuth(
         provider: IntegrationProvider,
         host?: string | null,
+        // popup=true (onboarding new-tab connect) makes the provider callback land
+        // on the standalone /auth/connected page instead of an embedded deep link.
+        popup?: boolean,
       ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
@@ -1340,7 +1343,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
@@ -1358,7 +1361,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/google`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/google.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "tiktok") {
@@ -1376,7 +1379,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/tiktok`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "quickbooks") {
@@ -1394,7 +1397,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/quickbooks`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "shippo") {
@@ -1415,7 +1418,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/shippo`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/shippo.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
         }
         // NOTE: ShipHero is intentionally NOT handled here. It is credential/token-based

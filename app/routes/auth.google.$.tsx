@@ -9,6 +9,7 @@ import {
   consumeOAuthState,
   parseOAuthState,
   embeddedReturnUrl,
+  popupResultUrl,
   postOAuthPath,
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
@@ -72,7 +73,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // wizard (via postOAuthPath) instead of stranding the merchant on Settings;
   // fall back to Settings when the nonce is missing/expired.
   if (oauthError) {
+    // Consume the nonce regardless so a declined connect doesn't leave it live.
     const declinedShop = state ? await consumeOAuthState(sb, state) : null;
+    // New-tab (onboarding) connect: land on the standalone result page.
+    if (returnCtx.popup)
+      return redirect(popupResultUrl({ provider: "Google Ads", status: "error", reason: oauthError }));
     const dest = declinedShop ? await errorRedirectDest(sb, declinedShop) : "/app/settings";
     return redirect(
       embeddedReturnUrl(dest, { google: "error", reason: oauthError }, returnCtx),
@@ -129,6 +134,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // postOAuthPath so a merchant connecting mid-onboarding returns to the
       // wizard rather than being stranded on Settings.
       console.error(`[auth.google] customer lookup failed: HTTP ${res.status} ${raw.slice(0, 500)}`);
+      if (returnCtx.popup)
+        return redirect(
+          popupResultUrl({
+            provider: "Google Ads",
+            status: "error",
+            reason: googleConnectErrorReason(raw),
+          }),
+        );
       return redirect(
         embeddedReturnUrl(
           await errorRedirectDest(sb, shopId),
@@ -195,6 +208,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
+  if (returnCtx.popup) return redirect(popupResultUrl({ provider: "Google Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { google: "connected" }, returnCtx));
 };
 
