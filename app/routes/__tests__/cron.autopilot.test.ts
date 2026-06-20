@@ -48,7 +48,7 @@ describe("cron.autopilot loader", () => {
 
   it("calls runAutopilotForShop once per enabled shop", async () => {
     getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
-    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 0 });
+    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 0, failed: 1 });
 
     const res = await loader({ request: req("Bearer s3cret") } as never);
     const body = await res.json();
@@ -58,13 +58,15 @@ describe("cron.autopilot loader", () => {
     expect(runAutopilotForShop).toHaveBeenCalledWith(SHOP_B, expect.anything());
     expect(body.shops).toBe(2);
     expect(body.acted).toBe(2);
+    // Per-candidate failures from each shop are summed into the cron response.
+    expect(body.failed).toBe(2);
   });
 
   it("isolates one shop's throw into errors without aborting the other", async () => {
     getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
     runAutopilotForShop
       .mockRejectedValueOnce(new Error("shop A exploded"))
-      .mockResolvedValueOnce({ skipped: false, acted: 1, blocked: 0 });
+      .mockResolvedValueOnce({ skipped: false, acted: 1, blocked: 0, failed: 0 });
 
     const res = await loader({ request: req("Bearer s3cret") } as never);
     const body = await res.json();

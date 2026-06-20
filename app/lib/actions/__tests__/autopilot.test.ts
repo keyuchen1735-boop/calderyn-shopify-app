@@ -164,7 +164,7 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).not.toHaveBeenCalled();
     expect(executeReallocation).not.toHaveBeenCalled();
-    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1 });
+    expect(r).toEqual({ skipped: false, acted: 0, blocked: 1, failed: 0 });
   });
 
   it("keeps draining the remaining candidates after a null-budget block", async () => {
@@ -182,7 +182,32 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
       sb,
     );
-    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1 });
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 1, failed: 0 });
+  });
+
+  it("keeps acting on remaining alerts after one action throws, counting the failure", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    // First candidate's execution throws (e.g. a DB/ownership error inside
+    // executeAction); the second must still be attempted, not skipped.
+    executeAction
+      .mockRejectedValueOnce(new Error("ownership check failed"))
+      .mockResolvedValue({ id: "aud1", outcome: "succeeded" });
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [
+        { ...candidate, alert_id: "al1", campaign_id: "camp-1" },
+        { ...candidate, alert_id: "al2", campaign_id: "camp-2" },
+      ],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    expect(executeAction).toHaveBeenNthCalledWith(
+      2,
+      SHOP,
+      expect.objectContaining({ alertId: "al2" }),
+      sb,
+    );
+    expect(r).toEqual({ skipped: false, acted: 1, blocked: 0, failed: 1 });
   });
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {

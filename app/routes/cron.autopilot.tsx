@@ -12,7 +12,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return new Response("Unauthorized", { status: 401 });
   }
   const sb = getSupabase();
-  const summary = { acted: 0, blocked: 0, shops: 0, errors: [] as string[] };
+  const summary = { acted: 0, blocked: 0, failed: 0, shops: 0, errors: [] as string[] };
 
   const { data: rows } = await sb
     .from("guardrail_config")
@@ -26,6 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.shops += 1;
       summary.acted += r.value.acted;
       summary.blocked += r.value.blocked;
+      summary.failed += r.value.failed;
     } else {
       const message = r.error instanceof Error ? r.error.message : String(r.error);
       summary.errors.push(`${shopIds[i]}: ${message}`);
