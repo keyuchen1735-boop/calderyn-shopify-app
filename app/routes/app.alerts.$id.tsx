@@ -50,6 +50,8 @@ import {
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
+import { resolveSkuForDiscontinue } from "~/lib/actions/discontinue.server";
+import { executeDiscontinueAlertAction } from "~/lib/actions/alert-action.server";
 import {
   DetectorTag,
   EvidencePanel,
@@ -269,6 +271,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
+      // A discontinued SKU must never be re-orderable (rule 12). Resolve the
+      // flag shop-scoped from sku_dim and refuse loudly if set.
+      {
+        const sbCheck = getSupabase();
+        const shopIdCheck = await resolveShopId(session.shop);
+        const target = await resolveSkuForDiscontinue(sbCheck, shopIdCheck, alert.sku);
+        if (target?.alreadyFlagged) {
+          throw new CalderynError({
+            code: "SKU_DISCONTINUED",
+            status: 409,
+            message:
+              "This product is marked Do Not Reorder. Restore it (undo the discontinue) before drafting a purchase order.",
+          });
+        }
+      }
+
       const ev = alert.evidence ?? {};
       const title = stringOrEmpty(ev.title) || stringOrEmpty(ev.sku_title) || alert.sku;
 
@@ -281,6 +299,30 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         quantity,
         unitCostCents,
         now: new Date(),
+      });
+    }
+
+    if (kind === "discontinue_sku") {
+      const shopId = await resolveShopId(session.shop);
+      const { outcome, acknowledged } = await executeDiscontinueAlertAction({
+        client,
+        admin,
+        sb: getSupabase(),
+        shopId,
+        alertId,
+        kind: "discontinue_sku",
+        idempotencyKey,
+        signal: request.signal,
+      });
+      return json<ActionPayload>({
+        ok: outcome === "succeeded",
+        toast: {
+          message:
+            outcome === "succeeded"
+              ? `Product discontinued — archived on Shopify and marked Do Not Reorder.${acknowledged ? "" : " Alert couldn't be acknowledged."}`
+              : "Discontinue recorded as failed — check the audit log.",
+          isError: outcome !== "succeeded",
+        },
       });
     }
 
@@ -840,6 +882,8 @@ function actionDescription(kind: ActionKind) {
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":
       return "Drafts a purchase order and records it in the action audit log, where the PDF can be downloaded. Review and send to your supplier manually.";
+    case "discontinue_sku":
+      return "Archives this product on Shopify and marks it Do Not Reorder, blocking future PO drafts. Fully reversible — undo re-activates the product and clears the flag.";
     case "snooze_alert":
       return "Suppresses this alert until the condition resolves. Calderyn re-evaluates on the next detection pass.";
   }
