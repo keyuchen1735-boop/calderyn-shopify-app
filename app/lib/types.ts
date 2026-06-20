@@ -16,6 +16,7 @@ export type ActionKind =
   | "create_po_draft"
   | "raise_free_ship_threshold"
   | "exclude_sku_free_ship"
+  | "discontinue_sku"
   | "snooze_alert";
 export type DetectorId =
   | "ad_tax_overload"

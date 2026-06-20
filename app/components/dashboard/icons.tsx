@@ -11,6 +11,7 @@
 // Do not import Lucide there.
 import type { CSSProperties } from "react";
 import {
+  Archive,
   ArrowDown,
   ArrowLeftRight,
   ArrowUpRight,
@@ -61,6 +62,7 @@ export interface CDIconProps {
 
 // name -> Lucide component. Names are stable so the 14 call sites never change.
 export const CD_ICONS: Record<string, LucideIcon> = {
+  archive: Archive,
   gauge: Gauge,
   bell: Bell,
   megaphone: Megaphone,
@@ -128,6 +130,7 @@ export const CD_ACTION_ICON: Record<string, string> = {
   create_po_draft: "doc",
   snooze_alert: "snooze",
   discontinue: "ban",
+  discontinue_sku: "archive",
   cut_ads: "scissors",
   reallocate_to_winner: "trendingUp",
   fix_returns: "rotateCcw",
