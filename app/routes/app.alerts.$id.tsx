@@ -539,6 +539,36 @@ export default function AlertDetail() {
                   </Text>
                 </BlockStack>
                 <BlockStack gap="300">
+                  {alert.remediation && (
+                    <BlockStack gap="200">
+                      {alert.rec_detail && (
+                        <Text as="p" variant="bodyMd">
+                          {alert.rec_detail}
+                        </Text>
+                      )}
+                      {alert.remediation.moves
+                        .filter((m) => m.executor !== "snooze_alert")
+                        .map((m) => {
+                          const rec = m.kind === alert.remediation!.recommended;
+                          return (
+                            <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
+                              {rec && <Badge tone="success">Recommended</Badge>}
+                              <Text
+                                as="span"
+                                variant="bodyMd"
+                                fontWeight={rec ? "semibold" : "regular"}
+                              >
+                                {m.label}
+                              </Text>
+                            </InlineStack>
+                          );
+                        })}
+                      <Text as="p" variant="bodyXs" tone="subdued">
+                        One-click execution for these moves is rolling out. You can still snooze
+                        below.
+                      </Text>
+                    </BlockStack>
+                  )}
                   {allowedActions.map((kind, i) => {
                     const deepLink = DEEP_LINK_ACTIONS[kind];
                     const button = deepLink ? (
