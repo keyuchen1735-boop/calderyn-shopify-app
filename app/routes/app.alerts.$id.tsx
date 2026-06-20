@@ -52,6 +52,8 @@ import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
 import { resolveSkuForDiscontinue } from "~/lib/actions/discontinue.server";
 import { executeDiscontinueAlertAction } from "~/lib/actions/alert-action.server";
+import { executeReallocateSpendSku } from "~/lib/actions/reallocate-sku.server";
+import { enrichRemediation } from "~/lib/remediation/enrich.server";
 import {
   DetectorTag,
   EvidencePanel,
@@ -102,6 +104,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       client.alerts.get(id, request.signal),
       client.guardrails.get(request.signal),
     ]);
+
+    // Async enrichment: fill winner/campaign target + flip reallocate_to_winner
+    // from advisory to executable when eligible (Phase 3). Best-effort: enrich
+    // already falls back to advisory on any DB error so the page never breaks.
+    if (alert.remediation) {
+      const shopId = await resolveShopId(session.shop);
+      alert.remediation = await enrichRemediation(alert, alert.remediation, getSupabase(), shopId);
+    }
 
     // Pre-fill the PO modal from the alert's evidence and the current COGS
     // row; both may be unknown (null) — the modal renders those blank/TBD.
@@ -299,6 +309,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         quantity,
         unitCostCents,
         now: new Date(),
+      });
+    }
+
+    if (kind === "reallocate_spend_sku") {
+      const shopId = await resolveShopId(session.shop);
+      const { outcome } = await executeReallocateSpendSku({
+        client,
+        sb: getSupabase(),
+        shopId,
+        alertId,
+        idempotencyKey,
+        actor: "merchant",
+        signal: request.signal,
+      });
+      return json<ActionPayload>({
+        ok: outcome === "succeeded",
+        toast: {
+          message:
+            outcome === "succeeded"
+              ? "Moved ad budget to your top product — logged to action history"
+              : outcome === "retrying"
+                ? "Couldn't reach Meta — queued, will retry automatically"
+                : "Action recorded as failed — check the audit log",
+          isError: outcome === "failed",
+        },
       });
     }
 
@@ -593,15 +628,17 @@ export default function AlertDetail() {
                         .map((m) => {
                           const rec = m.kind === alert.remediation!.recommended;
                           if (m.executor) {
-                            // Executable move (Phase 2: discontinue_sku). The kind
-                            // submitted is the EXECUTOR, which the action handler +
-                            // DETECTOR_TO_ACTIONS gate on.
+                            // Executable move. The kind submitted is the EXECUTOR,
+                            // which the action handler + DETECTOR_TO_ACTIONS gate on.
+                            // Tone: critical for destructive kinds (discontinue); primary
+                            // for value-recovering kinds (reallocate, cut_ads, etc.).
+                            const isDestructive = m.executor === "discontinue_sku";
                             return (
                               <InlineStack key={m.kind} gap="200" blockAlign="center" wrap={false}>
                                 {rec && <Badge tone="success">Recommended</Badge>}
                                 <Button
                                   variant={rec ? "primary" : "secondary"}
-                                  tone={m.executor === "discontinue_sku" ? "critical" : undefined}
+                                  tone={isDestructive ? "critical" : undefined}
                                   loading={navigation.state !== "idle" && actionKind === m.executor}
                                   onClick={() => setActionKind(m.executor as ActionKind)}
                                 >
@@ -611,7 +648,7 @@ export default function AlertDetail() {
                             );
                           }
                           // Advisory move (cut_ads / reallocate_to_winner / fix_returns
-                          // / review_pricing) — still guidance text in Phase 2.
+                          // / review_pricing) — guidance text with optional ineligibleReason.
                           return (
                             <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
                               {rec && <Badge tone="success">Recommended</Badge>}
@@ -622,6 +659,11 @@ export default function AlertDetail() {
                               >
                                 {m.label}
                               </Text>
+                              {m.ineligibleReason && (
+                                <Text as="span" variant="bodyXs" tone="subdued">
+                                  — {m.ineligibleReason}
+                                </Text>
+                              )}
                             </InlineStack>
                           );
                         })}
@@ -901,6 +943,8 @@ function actionDescription(kind: ActionKind) {
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":
       return "Drafts a purchase order and records it in the action audit log, where the PDF can be downloaded. Review and send to your supplier manually.";
+    case "reallocate_spend_sku":
+      return "Shifts half of this product's daily ad budget to your top-ranked winner product. Fully reversible via Undo. Meta only — both campaigns must be active and dedicated to their SKU.";
     case "discontinue_sku":
       return "Archives this product on Shopify and marks it Do Not Reorder, blocking future PO drafts. Fully reversible — undo re-activates the product and clears the flag.";
     case "snooze_alert":
