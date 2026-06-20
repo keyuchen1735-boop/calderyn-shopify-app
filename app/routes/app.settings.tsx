@@ -220,6 +220,56 @@ export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
   return patch;
 }
 
+/**
+ * The "Save guardrails" form resubmits EVERY field, so a single pre-existing,
+ * out-of-range stored value (e.g. a grandfathered dollar cap above
+ * MONEY_CAP_CENTS) would make validateGuardrailPatch reject the whole patch and
+ * silently revert an unrelated edit. Keep only the fields whose value actually
+ * differs from the current config, so we validate/persist just the real change —
+ * mirroring the dashboard's per-field saves. A still-invalid CHANGED value stays
+ * in the patch so the validator can reject it visibly (rule 12).
+ */
+// Money fields the form round-trips through WHOLE DOLLARS (cents/100 to display,
+// *100 to submit), so a resubmitted untouched value loses any sub-dollar cents.
+// They must be compared at whole-dollar granularity — otherwise a stored
+// fractional value (e.g. a $X.50 cap, or a $200.99 min-spend set via the
+// dashboard) reads as "changed", which would re-trigger the very 422 this fixes
+// AND silently re-round a money limit the merchant never touched (rule 12).
+const DOLLAR_DISPLAY_FIELDS = new Set<keyof GuardrailConfig>([
+  "daily_action_budget_cents",
+  "dollar_cap_cents",
+  "autopilot_min_spend_cents",
+  "autopilot_max_daily_budget_cents",
+]);
+
+export function changedGuardrailFields(
+  patch: Partial<GuardrailConfig>,
+  current: GuardrailConfig,
+): Partial<GuardrailConfig> {
+  const changed: Partial<GuardrailConfig> = {};
+  for (const key of Object.keys(patch) as (keyof GuardrailConfig)[]) {
+    const next = patch[key];
+    if (key === "business_hours") {
+      const a = next as GuardrailConfig["business_hours"] | undefined;
+      const b = current.business_hours;
+      if (!a || a.start !== b.start || a.end !== b.end || a.tz !== b.tz) {
+        changed.business_hours = a;
+      }
+    } else if (DOLLAR_DISPLAY_FIELDS.has(key)) {
+      const cur = current[key] as number | null;
+      const nv = next as number | null;
+      // null = no ceiling: compare directly; otherwise compare whole dollars so
+      // the form's lossy round-trip of an untouched value isn't seen as a change.
+      const same =
+        nv == null || cur == null ? nv === cur : Math.round(nv / 100) === Math.round(cur / 100);
+      if (!same) (changed as Record<string, unknown>)[key] = next;
+    } else if (next !== current[key]) {
+      (changed as Record<string, unknown>)[key] = next;
+    }
+  }
+  return changed;
+}
+
 // ---------------------------------------------------------------------------
 
 type LoaderPayload = {
@@ -380,7 +430,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
     if (intent === "update_guardrails") {
-      const patch = parseGuardrailForm(formData);
+      const submitted = parseGuardrailForm(formData);
+      // The form resubmits every field; narrow to what actually changed so a
+      // pre-existing out-of-range value can't reject the whole patch and revert
+      // an unrelated edit (see changedGuardrailFields).
+      const current = await client.guardrails.get(request.signal);
+      const patch = changedGuardrailFields(submitted, current);
+      if (Object.keys(patch).length === 0) {
+        return json<ActionPayload>({ ok: true, toast: { message: "No changes to save" } });
+      }
       if (validateGuardrailPatch(patch) !== null) {
         return json<ActionPayload>(
           {
