@@ -5,7 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import { actionAdapterForShop } from "../ads/action-registry.server";
-import { inventoryAdjustQuantities, type AdminGraphqlClient } from "../shopify/inventory.server";
+import { type AdminGraphqlClient } from "../shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 
 // The undo guarantee is a *24-hour* window. Beyond it the recorded reversal is
 // stale — a campaign budget has drifted, or (worse) an inventory transfer's
@@ -231,12 +232,12 @@ export async function undoAction(
         `cannot undo inventory transfer: ${ip.to_location_id} now holds ${destAvailable} unit${destAvailable === 1 ? "" : "s"}, fewer than the ${delta} the reverse would move back`,
       );
     }
-    const reversal = await inventoryAdjustQuantities(deps.admin, {
+    const reversal = await inventoryAdjustQuantitiesForShop(shopId, deps.admin, {
       inventoryItemId: ip.inventory_item_id,
       fromLocationId: ip.to_location_id,
       toLocationId: ip.from_location_id,
       delta,
-    });
+    }, sb);
     appliedInventoryOperationId = reversal.operationId;
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead

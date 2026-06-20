@@ -11,10 +11,10 @@ import { fmtMoney } from "../format";
 import { acknowledgeAlert } from "../alerts.server";
 import { snoozeAlert } from "./snooze.server";
 import {
-  inventoryAdjustQuantities,
   transferPlanFromEvidence,
   type AdminGraphqlClient,
 } from "../shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import type { ActionKind, Alert, AuditEntry, GuardrailConfig } from "../types";
 
 export type InventoryAlertActionKind = "reallocate_inventory" | "snooze_alert";
@@ -99,7 +99,7 @@ export async function executeInventoryAlertAction(opts: {
     }
     let operationId: string;
     try {
-      ({ operationId } = await inventoryAdjustQuantities(admin, plan));
+      ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
     } catch (err) {
       throw new CalderynError({
         code: "action_failed",

@@ -34,10 +34,8 @@ import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
-import {
-  inventoryAdjustQuantities,
-  transferPlanFromEvidence,
-} from "~/lib/shopify/inventory.server";
+import { transferPlanFromEvidence } from "~/lib/shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "~/lib/demo/showcase.server";
 import {
   buildPoDraft,
   derivePoQuantity,
@@ -225,7 +223,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
-      const { operationId } = await inventoryAdjustQuantities(admin, plan);
+      // Resolve the shop id so the inventory transfer is simulated for a
+      // showcase/demo store (its seeded inventory item has no live Shopify
+      // object); a real shop falls through to the live Shopify mutation.
+      const invShopId = await resolveShopId(session.shop);
+      const { operationId } = await inventoryAdjustQuantitiesForShop(invShopId, admin, plan, getSupabase());
 
       execParams.inventory_item_id = plan.inventoryItemId;
       execParams.from_location_id = plan.fromLocationId;
