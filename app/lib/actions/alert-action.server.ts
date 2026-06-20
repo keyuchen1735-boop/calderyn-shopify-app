@@ -70,9 +70,10 @@ export async function executeInventoryAlertAction(opts: {
   // deferral and exempt (same rule as the alert detail page).
   if (kind !== "snooze_alert") {
     const guardrails = await client.guardrails.get(signal);
-    // alert.dollar_impact is dollars; dollar_cap_cents is cents — compare in
-    // cents so a $500 cap actually caps at $500 (was 100x too lenient, P1-8).
-    const impactCents = Math.round(alert.dollar_impact * 100);
+    // alert.dollar_impact is ALREADY in cents (rowToAlert converts the DB dollars
+    // at the boundary), and so is dollar_cap_cents — compare directly. The prior
+    // `* 100` double-converted and inflated the impact 100x.
+    const impactCents = alert.dollar_impact;
     if (impactCents > guardrails.dollar_cap_cents) {
       throw new CalderynError({
         code: "guardrail_dollar_cap",

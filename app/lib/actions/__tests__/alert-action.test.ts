@@ -29,7 +29,7 @@ function makeAlert(overrides: Record<string, unknown> = {}) {
     detector_id: "regional_spend_starved_stock",
     severity: "high",
     status: "open",
-    dollar_impact: 12000,
+    dollar_impact: 1_200_000, // cents ($12,000) — alert.dollar_impact is cents
     claude_rank: 1,
     created_at: "2026-06-12T00:00:00Z",
     title: "Starved region",
@@ -69,8 +69,8 @@ function run(kind: "reallocate_inventory" | "snooze_alert", over: Record<string,
 beforeEach(() => {
   vi.clearAllMocks();
   alertsGet.mockResolvedValue(makeAlert());
-  // Default cap $20,000 (cents) comfortably clears the default $12,000 alert
-  // impact so the proceed-path tests proceed under matching units.
+  // Both values are cents. Default cap $20,000 (2,000,000c) comfortably clears
+  // the default $12,000 alert impact (1,200,000c) so proceed-path tests proceed.
   guardrailsGet.mockResolvedValue({ dollar_cap_cents: 2_000_000 });
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
   actionsExecute.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
@@ -124,17 +124,27 @@ describe("executeInventoryAlertAction — reallocate_inventory", () => {
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
   });
 
-  it("compares impact to the cap in matching units (dollars vs cents)", async () => {
-    // $600 impact vs a $500 cap → exceeds. The old check compared dollars to
-    // cents (600 <= 50000), so a $600 action slipped past a $500 cap — the cap
-    // was effectively 100x too lenient (P1-8).
-    alertsGet.mockResolvedValue(makeAlert({ dollar_impact: 600 }));
+  it("compares impact to the cap in matching units (both cents)", async () => {
+    // alert.dollar_impact and dollar_cap_cents are BOTH cents. A $600 impact
+    // (60,000c) exceeds a $500 cap (50,000c) → blocked.
+    alertsGet.mockResolvedValue(makeAlert({ dollar_impact: 60000 }));
     guardrailsGet.mockResolvedValue({ dollar_cap_cents: 50000 }); // $500
     await expect(run("reallocate_inventory")).rejects.toMatchObject({
       code: "guardrail_dollar_cap",
       status: 403,
     });
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when impact is within the cap — does NOT 100x-inflate it", async () => {
+    // Regression: a $4,515 impact (451,538c) must clear a $25,000 cap
+    // (2,500,000c). The old `* 100` inflated it to a notional $451,538 and
+    // wrongly tripped the cap on every action once a realistic cap was set.
+    alertsGet.mockResolvedValue(makeAlert({ dollar_impact: 451538 }));
+    guardrailsGet.mockResolvedValue({ dollar_cap_cents: 2_500_000 }); // $25,000
+    const res = await run("reallocate_inventory");
+    expect(res.outcome).toBe("succeeded");
+    expect(inventoryAdjustQuantities).toHaveBeenCalled();
   });
 
   it("allows an action whose impact is within the cap", async () => {
