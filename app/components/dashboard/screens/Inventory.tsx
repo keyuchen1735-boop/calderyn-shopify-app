@@ -19,6 +19,7 @@ import {
 } from "~/lib/dashboard/client";
 import { inventoryAlertActions, openAlertsBySku } from "~/lib/inventory-alerts";
 import { formatDemandUnits, formatStockoutDate, returnRateLevel } from "~/lib/inventory-demand";
+import { splitSkuTitle } from "~/lib/sku-title";
 import { money, moneyK } from "../format";
 import { ShipPnlCell } from "../ship-pnl-cell";
 import type { DashboardCtx } from "../context";
@@ -313,6 +314,8 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     ? formatStockoutDate(s.projected_stockout)
                     : null;
                 const retLevel = s.returns ? returnRateLevel(s.returns.rate) : null;
+                // Variant-first: lead with the variant, product name beneath.
+                const { product, variant } = splitSkuTitle(s.title);
                 return (
                   <div
                     key={s.id}
@@ -333,9 +336,9 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     }
                   >
                     <div className="min-w-0" style={{ flex: "1 1 0", minWidth: 140 }}>
-                      <div className="cd-row-title truncate">{s.title}</div>
+                      <div className="cd-row-title truncate">{variant ?? product}</div>
                       <div className="cd-caption truncate">
-                        {s.category ? `${s.sku} · ${s.category}` : s.sku}
+                        {variant ? product : s.category ? `${s.sku} · ${s.category}` : s.sku}
                       </div>
                     </div>
                     <span
@@ -581,6 +584,7 @@ function SkuMobileCard({
   const coverColor =
     sku.velocity > 0 && sku.days_of_cover <= 9 ? "var(--red)" : undefined;
   const hasFoot = alerts.length > 0 || canRelocate || stockoutLabel != null;
+  const { product, variant } = splitSkuTitle(sku.title);
 
   return (
     <div
@@ -602,8 +606,8 @@ function SkuMobileCard({
     >
       <div className="cd-sku-card-head">
         <div className="min-w-0">
-          <div className="cd-sku-card-title truncate">{sku.title}</div>
-          <div className="cd-sku-card-sku truncate">{sku.sku}</div>
+          <div className="cd-sku-card-title truncate">{variant ?? product}</div>
+          <div className="cd-sku-card-sku truncate">{variant ? product : sku.sku}</div>
         </div>
         <Pill tone={st.tone}>{st.label}</Pill>
       </div>

@@ -34,6 +34,7 @@ import { useActionToast, type ActionToast } from "~/lib/toast";
 import { BrandGlyph } from "~/components/calderyn/brand-icons";
 import type { Alert, ShopLocation, SKU, SkuAffinityItem, SkuHistoryPoint } from "~/lib/types";
 import { fmtMoney } from "~/lib/format";
+import { splitSkuTitle } from "~/lib/sku-title";
 import {
   inventoryAlertActions,
   openAlertsBySku,
@@ -537,14 +538,17 @@ export default function SKUs() {
                   paged.map((s) => {
                     const skuAlerts = alertsBySku.get(s.sku) ?? [];
                     const canRelocate = s.locations_detail.some((l) => l.available > 0);
+                    // Variant-first: lead with the variant, product name beneath.
+                    // Single-variant SKUs (no variant) keep product + sku code.
+                    const { product, variant } = splitSkuTitle(s.title);
                     return (
                       <div key={s.id} className="invx-row">
                         <div className="invx-prod">
                           <div className="invx-prod-title" title={s.title}>
-                            {s.title}
+                            {variant ?? product}
                           </div>
                           <div className="invx-prod-sku" title={s.id}>
-                            {s.sku}
+                            {variant ? product : s.sku}
                           </div>
                         </div>
                         <StockCover s={s} />
@@ -722,16 +726,17 @@ function SkuCard({
   onRelocate: () => void;
 }) {
   const canRelocate = s.locations_detail.some((l) => l.available > 0);
+  const { product, variant } = splitSkuTitle(s.title);
   return (
     <Box padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="start" gap="200" wrap={false}>
           <BlockStack gap="050">
             <Text as="span" fontWeight="semibold">
-              {s.title}
+              {variant ?? product}
             </Text>
             <Text as="span" tone="subdued" variant="bodySm">
-              {s.sku}
+              {variant ? product : s.sku}
             </Text>
           </BlockStack>
           {alerts.length > 0 && <AlertsPill alerts={alerts} />}
