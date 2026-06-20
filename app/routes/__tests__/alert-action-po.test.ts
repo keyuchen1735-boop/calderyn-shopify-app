@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 // Importing the shared chain mock also registers its beforeEach state reset.
 import {
-  setSupabaseResponse,
   setSupabaseResponses,
   getRecorded,
 } from "../../lib/__tests__/_supabase_chain_mock";

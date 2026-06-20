@@ -1,7 +1,6 @@
 // app/lib/actions/__tests__/reallocate-sku.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeReallocateSpendSku } from "../reallocate-sku.server";
-import { CalderynError } from "../../calderyn.server";
 
 const executeReallocation = vi.fn();
 vi.mock("../reallocate.server", () => ({
