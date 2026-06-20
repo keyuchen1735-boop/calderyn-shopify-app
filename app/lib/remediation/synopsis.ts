@@ -56,7 +56,7 @@ export function synopsisFor(plan: RemediationPlan, input: RemediationInput): str
     case "cogs_drift":
       return (
         `Unit cost rose from ${usd(ev.prior_unit_cost_usd)} to ${usd(ev.current_unit_cost_usd)} ` +
-        `(${pct((ev.drift_pct ?? 0) / 100)}), thinning every sale. Re-price or renegotiate COGS.`
+        `(${pct(ev.drift_pct)}), thinning every sale. Re-price or renegotiate COGS.`
       );
     default:
       return `Review this product's unit economics — it's losing margin.`;

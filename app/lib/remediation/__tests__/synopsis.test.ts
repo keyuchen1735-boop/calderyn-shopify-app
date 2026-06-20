@@ -40,6 +40,17 @@ describe("synopsisFor", () => {
     expect(s).toContain("$1,800");
   });
 
+  it("cogs_drift names the cost rise and drift percentage (drift_pct is a 0..1 fraction)", () => {
+    const s = withSynopsis({
+      detectorId: "cogs_drift",
+      dollarImpactCents: 40000,
+      evidence: { prior_unit_cost_usd: 9, current_unit_cost_usd: 13, drift_pct: 0.44, gross_profit_7d_usd: 400 },
+    });
+    expect(s).toContain("$9");
+    expect(s).toContain("$13");
+    expect(s).toContain("44%");
+  });
+
   it("never returns an empty string for any in-scope detector", () => {
     for (const detectorId of [
       "negative_unit_economics",
