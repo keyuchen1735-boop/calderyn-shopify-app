@@ -134,3 +134,63 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(realloc.ineligibleReason).toBeUndefined();
   });
 });
+
+describe("enrichRemediation — both moves enriched in one pass (no-clobber invariant)", () => {
+  it("loser with dedicated Meta campaign AND qualifying Meta winner → cut_ads executor set AND reallocate executor set on the same returned plan", async () => {
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU,
+        contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: LOSER_CAMP,
+        dedicated_campaign_platform: "meta",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winners: [
+        {
+          sku_id: WINNER_SKU,
+          title: "Hydration Bottle",
+          winner_rank: 1,
+          dedicated_campaign_id: WINNER_CAMP,
+          dedicated_campaign_platform: "meta",
+          dedicated_campaign_budget_cents: 7000,
+          contribution_per_unit_cents: 1800,
+        },
+      ],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+
+    // cut_ads must be executable with the loser campaign wired in
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).not.toBeNull();
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+
+    // reallocate_to_winner must ALSO be executable with winner details — same plan, not clobbered
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.executor).toBe("reallocate_spend_sku");
+    expect(realloc.target?.winnerLabel).toBe("Hydration Bottle");
+    expect(realloc.target?.winnerSkuId).toBe(WINNER_SKU);
+    expect(realloc.target?.amountCents).toBeGreaterThan(0);
+  });
+});
+
+describe("enrichRemediation — cut_ads", () => {
+  it("dedicated loser campaign → cut_ads becomes reduce_campaign_budget with loserCampaignId, even with no winner", async () => {
+    const sb = fakeSb({
+      loser: { sku_id: LOSER_SKU, contribution_per_unit_cents: 2300, dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta", dedicated_campaign_budget_cents: 45000 },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).toBe("reduce_campaign_budget");
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+  });
+
+  it("no dedicated loser campaign → cut_ads stays advisory too", async () => {
+    const sb = fakeSb({
+      loser: { sku_id: LOSER_SKU, contribution_per_unit_cents: 2300, dedicated_campaign_id: null, dedicated_campaign_platform: null, dedicated_campaign_budget_cents: null },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    expect(out.moves.find((m) => m.kind === "cut_ads")?.executor).toBeNull();
+  });
+});

@@ -25,12 +25,18 @@ interface SkuRemediationRow {
 // amount >= source budget); 0.5 is well clear and matches the autopilot cut feel.
 const SHIFT_FRACTION = 0.5;
 
+// Below this daily budget, a percentage cut is pointless → pause outright.
+const REDUCE_FLOOR_CENTS = 1000;
+
 /**
  * Enrich a remediation plan with live SKU->campaign resolution. Returns a NEW
  * plan (does not mutate the input). A missing sku_id, missing view row, no
  * dedicated campaign, no qualifying winner, or a cross-platform winner all leave
  * the reallocate move advisory with an ineligibleReason. Best-effort: any DB
  * error logs and returns the plan unchanged (the advisory plan still renders).
+ *
+ * Both `reallocate_to_winner` and `cut_ads` are enriched in a single pass on the
+ * same in-progress plan object — no closure clobbering (Task 4).
  */
 export async function enrichRemediation(
   alert: Alert,
@@ -41,13 +47,15 @@ export async function enrichRemediation(
   const reallocIdx = plan.moves.findIndex((m) => m.kind === "reallocate_to_winner");
   if (reallocIdx < 0) return plan; // nothing to enrich (e.g. discontinue/fix_returns plan)
 
+  const cutIdx = plan.moves.findIndex((m) => m.kind === "cut_ads");
+
   const skuId = typeof alert.evidence?.sku_id === "string" ? alert.evidence.sku_id : null;
 
-  // setAdvisory closes over the outer `plan`. Task 4 (which enriches cut_ads in
-  // the same pass) must operate on the same in-progress plan object so that one
-  // path's mutation doesn't clobber the other's.
-  const setAdvisory = (reason: string): RemediationPlan =>
-    withMove(plan, reallocIdx, (m) => ({
+  // advisory patches reallocate on the given base plan, leaving cut_ads as-is on
+  // that base. Callers pass `plan` when cut_ads is also ineligible, or `enriched`
+  // (with cut_ads already patched) when cut_ads is executable but reallocate is not.
+  const advisory = (base: RemediationPlan, reason: string): RemediationPlan =>
+    withMove(base, reallocIdx, (m) => ({
       ...m,
       executor: null,
       ineligibleReason: reason,
@@ -68,13 +76,31 @@ export async function enrichRemediation(
 
     const loserRow = loser as SkuRemediationRow | null;
     if (!loserRow) {
-      return setAdvisory("campaign data unavailable — no attribution found for this SKU");
+      return advisory(plan, "campaign data unavailable — no attribution found for this SKU");
     }
     if (!loserRow.dedicated_campaign_id || loserRow.dedicated_campaign_budget_cents == null) {
-      return setAdvisory("served by a shared campaign — exclude this SKU inside Advantage+ instead");
+      return advisory(plan, "served by a shared campaign — exclude this SKU inside Advantage+ instead");
     }
     if (loserRow.dedicated_campaign_platform !== "meta") {
-      return setAdvisory("budget shift is Meta-only — adjust this campaign in its platform");
+      return advisory(plan, "budget shift is Meta-only — adjust this campaign in its platform");
+    }
+
+    // The loser has a dedicated mutable Meta campaign. Enrich cut_ads now — it
+    // is executable regardless of whether a winner exists. Both moves are patched
+    // on the same in-progress plan object; no closure clobbering.
+    const cutKind: StrategicMove["executor"] =
+      loserRow.dedicated_campaign_budget_cents < REDUCE_FLOOR_CENTS
+        ? "pause_campaign"
+        : "reduce_campaign_budget";
+
+    let enriched = plan;
+    if (cutIdx >= 0) {
+      enriched = withMove(enriched, cutIdx, (m) => ({
+        ...m,
+        executor: cutKind,
+        ineligibleReason: undefined,
+        target: { skuId, loserCampaignId: loserRow.dedicated_campaign_id! },
+      }));
     }
 
     // Top catalog winner with its own dedicated mutable campaign, excluding the
@@ -91,14 +117,14 @@ export async function enrichRemediation(
     const winner = ((winners ?? []) as SkuRemediationRow[]).find(
       (w) => w.sku_id !== skuId && w.dedicated_campaign_id,
     );
-    if (!winner) return setAdvisory("no qualifying winner — no higher-margin product with stock headroom and a scalable campaign");
+    if (!winner) return advisory(enriched, "no qualifying winner — no higher-margin product with stock headroom and a scalable campaign");
     if (winner.dedicated_campaign_platform !== "meta") {
-      return setAdvisory("winner runs on a different platform — budget shift must stay on Meta");
+      return advisory(enriched, "winner runs on a different platform — budget shift must stay on Meta");
     }
 
     const amountCents = Math.max(1, Math.floor(loserRow.dedicated_campaign_budget_cents * SHIFT_FRACTION));
 
-    return withMove(plan, reallocIdx, (m) => ({
+    return withMove(enriched, reallocIdx, (m) => ({
       ...m,
       executor: "reallocate_spend_sku",
       ineligibleReason: undefined,
@@ -114,7 +140,7 @@ export async function enrichRemediation(
     }));
   } catch (err) {
     console.error(`[remediation] enrich failed for alert ${alert.id} (advisory fallback)`, err);
-    return setAdvisory("couldn't resolve the campaign — review manually");
+    return advisory(plan, "couldn't resolve the campaign — review manually");
   }
 }
 
