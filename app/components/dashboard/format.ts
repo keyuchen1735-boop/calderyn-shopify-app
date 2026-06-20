@@ -89,6 +89,12 @@ export const ACTION_LABELS: Record<string, string> = {
   reallocate_inventory: "Reallocate inventory",
   create_po_draft: "Create PO draft",
   snooze_alert: "Snooze",
+  // remediation move kinds (Phase 1 advisory)
+  discontinue: "Stop reordering",
+  cut_ads: "Cut ad spend",
+  reallocate_to_winner: "Reallocate to a winner",
+  fix_returns: "Fix returns",
+  review_pricing: "Review pricing",
 };
 
 export const DETECTOR_TERMS: Record<string, string> = {
