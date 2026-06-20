@@ -30,19 +30,22 @@ export type DashTileId = (typeof DASH_TILE_IDS)[number];
 // Heights are fitted to measured content (rowHeight 30 + 16px margin → tile px
 // ≈ 46h − 16) so opening "Customize" starts roughly matching the default view;
 // the user resizes from there.
-// minW/minH are the "min-size guard": each tile floors at ≈0.6–0.75× its
-// default so a resize can never shrink a tile small enough to scale its text
-// into an unreadable smudge. tileScale() (below) zooms content within this
-// range; the clamp there backstops the same floor.
+// minW/minH are the "min-size guard". They're set so min(minW/w, minH/h) stays
+// ≥ TILE_SCALE_MIN for every tile: the zoom factor is then never clamped, so a
+// resize only ever shrinks content down to that legible floor and NEVER past
+// the point where it would overflow the cell and get clipped (nothing hidden).
+// Full-width sections (stats/attention/benchmarks) pin minW = cols so they stay
+// long bars, never narrow slivers. feed.h is sized so its bottom lines up with
+// revenue's; benchmarks.h fits the header + its KPI bars at scale 1.
 const LG: Layout[] = [
-  { i: "stats", x: 0, y: 0, w: 12, h: 4, minW: 8, minH: 3 },
-  { i: "focus", x: 0, y: 4, w: 8, h: 6, minW: 5, minH: 4 },
-  { i: "feed", x: 8, y: 4, w: 4, h: 14, minW: 3, minH: 9 },
-  { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 5, minH: 5 },
-  { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 8, minH: 3 },
-  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 4, minH: 3 },
-  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 4, minH: 3 },
-  { i: "benchmarks", x: 0, y: 27, w: 12, h: 5, minW: 8, minH: 3 },
+  { i: "stats", x: 0, y: 0, w: 12, h: 4, minW: 12, minH: 3 },
+  { i: "focus", x: 0, y: 4, w: 8, h: 6, minW: 6, minH: 5 },
+  { i: "feed", x: 8, y: 4, w: 4, h: 13, minW: 3, minH: 10 },
+  { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 6, minH: 6 },
+  { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 12, minH: 4 },
+  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 5, minH: 4 },
+  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 5, minH: 4 },
+  { i: "benchmarks", x: 0, y: 27, w: 12, h: 10, minW: 12, minH: 7 },
 ];
 
 // Smaller breakpoints: full-width vertical stack in registry order.
@@ -54,7 +57,7 @@ const STACK_H: Record<DashTileId, number> = {
   attention: 5,
   predictor: 5,
   autopilot: 5,
-  benchmarks: 5,
+  benchmarks: 10,
 };
 function stack(cols: number): Layout[] {
   let y = 0;
@@ -94,11 +97,44 @@ export const DASH_COLS = { lg: 12, sm: 2 };
 // of the tile's current grid size vs its default ("100%") size, clamped so the
 // content can't zoom into an unreadable smudge or a cartoonish blow-up. The
 // layout's minW/minH keep the real range comfortably inside these clamps.
-export const TILE_SCALE_MIN = 0.62;
+export const TILE_SCALE_MIN = 0.7;
 export const TILE_SCALE_MAX = 1.75;
 
 const LG_DEFAULT_DIMS: Record<string, { w: number; h: number }> =
   Object.fromEntries(LG.map((l) => [l.i, { w: l.w, h: l.h }]));
+
+// Canonical lg geometry per tile, used to repair stored layouts (sanitizeLayouts).
+const LG_CANON: Record<
+  string,
+  { w: number; h: number; minW: number; minH: number }
+> = Object.fromEntries(
+  LG.map((l) => [l.i, { w: l.w, h: l.h, minW: l.minW!, minH: l.minH! }]),
+);
+
+/** Repair a stored layout before it drives the grid: a saved tile below its
+ *  canonical minimum — e.g. a conditionally-mounted tile (peer benchmarks) that
+ *  react-grid-layout auto-placed at 1×1 because it loaded after the layout was
+ *  saved — is clamped back up and re-stamped with its minW/minH, so it can't
+ *  render as an illegible sliver. Only the lg grid is repaired; the sm stack is
+ *  always full-width. Unknown tile ids pass through untouched. */
+export function sanitizeLayouts(layouts: Layouts): Layouts {
+  const lg = layouts.lg;
+  if (!Array.isArray(lg)) return layouts;
+  return {
+    ...layouts,
+    lg: lg.map((item) => {
+      const c = LG_CANON[item.i];
+      if (!c) return item;
+      return {
+        ...item,
+        w: Math.max(item.w, c.minW),
+        h: Math.max(item.h, c.minH),
+        minW: c.minW,
+        minH: c.minH,
+      };
+    }),
+  };
+}
 
 /** Proportional zoom factor for a tile from its live grid size vs the default.
  *  Only the `lg` 2-column grid zooms; the stacked `sm` breakpoint is full-width
@@ -165,7 +201,7 @@ export function loadLayouts(
   storage: StorageLike | null = browserStorage(),
 ): Layouts {
   const parsed = storage ? parseLayouts(storage.getItem(DASH_LAYOUT_KEY)) : null;
-  return parsed ?? DEFAULT_LAYOUTS;
+  return parsed ? sanitizeLayouts(parsed) : DEFAULT_LAYOUTS;
 }
 
 /** Like loadLayouts but returns null (not the defaults) when nothing valid is
@@ -174,7 +210,8 @@ export function loadLayouts(
 export function loadSavedLayouts(
   storage: StorageLike | null = browserStorage(),
 ): Layouts | null {
-  return storage ? parseLayouts(storage.getItem(DASH_LAYOUT_KEY)) : null;
+  const parsed = storage ? parseLayouts(storage.getItem(DASH_LAYOUT_KEY)) : null;
+  return parsed ? sanitizeLayouts(parsed) : null;
 }
 
 export function saveLayouts(

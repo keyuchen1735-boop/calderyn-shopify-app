@@ -1,7 +1,7 @@
 // Calderyn DashV2 — app shell: sidebar nav, live data engine, tweaks, router.
 // Ported from the prototype's app.jsx, rewired to the real /dashboard/api/*
 // data layer (app/lib/dashboard/client.ts) instead of the static CD.* fixtures.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -11,6 +11,7 @@ import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
+import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
 import {
   TweaksPanel,
   TweakSection,
@@ -207,6 +208,43 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
   // it respects the "Live sync" toggle — off means the screen stays put.
   useRefreshOnFocus(refresh, { enabled: liveOn });
+
+  // ----- autopilot: act immediately on load -----
+  // When autopilot is enabled, drain every open actionable alert the moment the
+  // dashboard opens (the /cron/autopilot schedule is the same engine for when
+  // it's closed). One banner per landed action, then re-pull audit + alerts so
+  // Action history shows the new "Autopilot" rows and resolved alerts drop.
+  // Fires ONCE per mount (autopilotRan ref): the run is idempotent server-side,
+  // and the live poller already streams any later cron actions.
+  const autopilotRan = useRef(false);
+  useEffect(() => {
+    if (autopilotRan.current || loading || !guardrails) return;
+    if (!guardrails.autopilot_enabled) return;
+    autopilotRan.current = true;
+    (async () => {
+      try {
+        const res = await client.runAutopilot();
+        const nameOf = (id: string) => campaigns.find((c) => c.id === id)?.name ?? "";
+        for (const b of autopilotToasts(res.decisions, nameOf)) toast(b.text, b.icon, b.tone);
+        // Surface failures too (rule 12) — a silent failed run (e.g. a dead Google
+        // Ads token) otherwise reads as "autopilot did nothing".
+        const failures = autopilotFailureLines(res.decisions, nameOf);
+        for (const line of failures) toast(`${line} — see Action history.`, "warn", "critical");
+        if (res.acted > 0 || failures.length > 0) {
+          const [au, al] = await Promise.all([
+            client.fetchAudit(),
+            client.fetchAlerts(undefined, campaigns),
+          ]);
+          setAudit(au);
+          setAlerts(al);
+        }
+      } catch (err) {
+        // Fail visibly (rule 12) but never break the dashboard render.
+        const msg = err instanceof DashboardApiError ? err.message : "Autopilot run failed.";
+        toast(msg, "warn", "critical");
+      }
+    })();
+  }, [loading, guardrails, campaigns, toast]);
 
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
