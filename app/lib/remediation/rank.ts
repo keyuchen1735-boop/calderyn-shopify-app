@@ -77,7 +77,12 @@ function move(kind: MoveKind, dollarImpactCents: number): StrategicMove {
   return {
     kind,
     dollarImpactCents,
-    executor: kind === "snooze" ? "snooze_alert" : null,
+    executor:
+      kind === "snooze"
+        ? "snooze_alert"
+        : kind === "discontinue"
+          ? "discontinue_sku"
+          : null,
     label: MOVE_LABELS[kind],
   };
 }

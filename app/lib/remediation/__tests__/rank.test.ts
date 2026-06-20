@@ -118,3 +118,32 @@ describe("rankMoves — returns, margin, cogs", () => {
     expect(plan.recommended).toBe("review_pricing");
   });
 });
+
+describe("rankMoves — executors (Phase 2)", () => {
+  it("the discontinue move carries the discontinue_sku executor", () => {
+    const plan = rankMoves(
+      input({
+        detectorId: "negative_unit_economics",
+        evidence: { gross_unit_margin_usd: -4, cac_per_unit_usd: 30, net_per_unit_usd: -34 },
+      }),
+    );
+    const discontinue = plan.moves.find((m) => m.kind === "discontinue")!;
+    expect(discontinue).toBeDefined();
+    expect(discontinue.executor).toBe("discontinue_sku");
+  });
+
+  it("non-discontinue moves stay advisory (executor null), snooze stays snooze_alert", () => {
+    const plan = rankMoves(
+      input({
+        detectorId: "negative_unit_economics",
+        evidence: { gross_unit_margin_usd: 23, cac_per_unit_usd: 170, net_per_unit_usd: -147 },
+      }),
+    );
+    const cut = plan.moves.find((m) => m.kind === "cut_ads")!;
+    const realloc = plan.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    const snooze = plan.moves.find((m) => m.kind === "snooze")!;
+    expect(cut.executor).toBeNull();
+    expect(realloc.executor).toBeNull();
+    expect(snooze.executor).toBe("snooze_alert");
+  });
+});

@@ -20,9 +20,11 @@ export interface StrategicMove {
   kind: MoveKind;
   /** Projected 30-day dollars recovered/gained, in cents. Drives the ranking. */
   dollarImpactCents: number;
-  /** Phase 1: only "snooze" maps to a live executor ("snooze_alert"); the rest
-   *  are advisory (null) until their executors ship. */
-  executor: "snooze_alert" | null;
+  /** Live executor for this move, or null when the move is advisory only.
+   *  Phase 1: only "snooze" → "snooze_alert". Phase 2 adds "discontinue_sku" on
+   *  the discontinue move. Phase 3 will add the Meta budget-shift executor; keep
+   *  this union open so later phases extend it without breaking existing values. */
+  executor: "snooze_alert" | "discontinue_sku" | null;
   /** Short human label for the move (UI). */
   label: string;
 }
