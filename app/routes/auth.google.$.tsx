@@ -13,6 +13,24 @@ import {
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * Where an ERROR/decline redirect should land the merchant, defaulting to
+ * Settings if the onboarding-state lookup fails. The error and decline handlers
+ * exist to fail gracefully, so a transient shops-table error must never turn
+ * them into a 500 — unlike the success path, which calls postOAuthPath directly
+ * (a throw there is a genuine error). Returns onboarding while setup is
+ * incomplete so a failed connect mid-wizard returns to the wizard, not Settings.
+ */
+async function errorRedirectDest(sb: SupabaseClient, shopId: string): Promise<string> {
+  try {
+    return await postOAuthPath(sb, shopId);
+  } catch (e) {
+    console.error(`[auth.google] postOAuthPath failed for ${shopId}; defaulting to Settings`, e);
+    return "/app/settings";
+  }
+}
 
 // Google Ads OAuth callback. Mirrors app/routes/auth.meta.$.tsx:
 //   1. consume the single-use `state` nonce (CSRF + resolves the shop),
@@ -47,11 +65,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // so every redirect below re-embeds the merchant in the Shopify admin instead
   // of dead-ending on a top-level 410 HTML page.
   const returnCtx = parseOAuthState(state ?? "");
+  const sb = getSupabase();
 
-  // Surface a user-declined consent cleanly rather than as a 400.
+  // Surface a user-declined consent cleanly rather than as a 400. Resolve the
+  // shop from the single-use state so a decline mid-onboarding returns to the
+  // wizard (via postOAuthPath) instead of stranding the merchant on Settings;
+  // fall back to Settings when the nonce is missing/expired.
   if (oauthError) {
+    const declinedShop = state ? await consumeOAuthState(sb, state) : null;
+    const dest = declinedShop ? await errorRedirectDest(sb, declinedShop) : "/app/settings";
     return redirect(
-      embeddedReturnUrl("/app/settings", { google: "error", reason: oauthError }, returnCtx),
+      embeddedReturnUrl(dest, { google: "error", reason: oauthError }, returnCtx),
     );
   }
   if (!code || !state || !clientId || !clientSecret || !appUrl) {
@@ -60,7 +84,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Consume the single-use state nonce first: authenticates the callback and
   // resolves the destination shop. Reject before any token exchange.
-  const sb = getSupabase();
   const shopId = await consumeOAuthState(sb, state);
   if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
 
@@ -101,12 +124,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Don't dead-end on a raw 502. The common case is NOT_ADS_USER — the
       // merchant authorized with a Google account that has no Google Ads account
       // — which is a "pick the right account" problem, not a server error. Log
-      // the full body for diagnosis (rule 12) and bounce back to Settings with an
-      // actionable message via the same one-shot ?google=error channel.
+      // the full body for diagnosis (rule 12) and bounce back with an actionable
+      // message via the same one-shot ?google=error channel. Route through
+      // postOAuthPath so a merchant connecting mid-onboarding returns to the
+      // wizard rather than being stranded on Settings.
       console.error(`[auth.google] customer lookup failed: HTTP ${res.status} ${raw.slice(0, 500)}`);
       return redirect(
         embeddedReturnUrl(
-          "/app/settings",
+          await errorRedirectDest(sb, shopId),
           { google: "error", reason: googleConnectErrorReason(raw) },
           returnCtx,
         ),
