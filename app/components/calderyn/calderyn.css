@@ -337,8 +337,8 @@
 .ovx-queue-sub { margin: 3px 0 0; font-size: 13px; color: #9a9a9a; }
 .ovx-row {
   display: grid; grid-template-columns: 92px minmax(0, 1fr) 96px 92px; gap: 16px; align-items: center;
-  width: 100%; text-align: left; padding: 15px 20px; border-top: 1px solid #f1f1f1;
-  background: none; font-family: inherit; cursor: pointer; transition: background .12s ease;
+  width: 100%; text-align: left; padding: 15px 20px; border: none; border-top: 1px solid #f1f1f1;
+  background: none; font-family: inherit; cursor: pointer; transition: background .12s ease; appearance: none;
 }
 .ovx-row:first-of-type { border-top: none; }
 .ovx-row:hover { background: #fafafa; }
