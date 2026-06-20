@@ -1,6 +1,7 @@
 // Type definitions for the Calderyn prototype.
 
 import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
+import type { RemediationPlan } from "./remediation/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
@@ -51,6 +52,12 @@ export interface Alert {
   campaign_external_id: string | null;
   sku: string | null;
   evidence: Record<string, any>;
+  /** Strategic remediation for product-economics detectors (computed on read in
+   *  rowToAlert). Null for other detectors. */
+  remediation: RemediationPlan | null;
+  /** One-to-two sentence plain-language synopsis derived from the remediation
+   *  plan. Empty string when there is no plan. */
+  rec_detail: string;
 }
 
 /** One input that fed an action's booked-margin figure, with its data source.

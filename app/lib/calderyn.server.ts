@@ -6,6 +6,7 @@ import type {
   CampaignGradeRow,
   CostSource,
   DailyRoasRow,
+  DetectorId,
   GuardrailConfig,
   Integration,
   ShopLocation,
@@ -15,6 +16,9 @@ import type {
   SkuSource,
   TopAdRow,
 } from "./types";
+import { rankMoves, toNumericEvidence } from "./remediation/rank";
+import { synopsisFor } from "./remediation/synopsis";
+import type { RemediationInput } from "./remediation/types";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   affinityFromRow,
@@ -123,8 +127,32 @@ function embeddedName(rel: unknown): string {
   return String((obj as { name?: unknown } | null)?.name ?? "");
 }
 
+const PRODUCT_ECON_DETECTORS: ReadonlySet<DetectorId> = new Set<DetectorId>([
+  "negative_unit_economics",
+  "ad_tax_overload",
+  "return_rate_hidden_loss",
+  "margin_erosion",
+  "cogs_drift",
+]);
+
+/** Compute the remediation plan + synopsis for product-economics alerts and
+ *  attach them to the Alert. Pure, no I/O — evidence already carries the per-unit
+ *  economics the engine needs. Exported for unit tests. */
+export function attachRemediation(a: Alert): Alert {
+  if (!PRODUCT_ECON_DETECTORS.has(a.detector_id)) {
+    return { ...a, remediation: null, rec_detail: "" };
+  }
+  const input: RemediationInput = {
+    detectorId: a.detector_id,
+    dollarImpactCents: a.dollar_impact,
+    evidence: toNumericEvidence(a.evidence),
+  };
+  const plan = rankMoves(input);
+  return { ...a, remediation: plan, rec_detail: synopsisFor(plan, input) };
+}
+
 function rowToAlert(r: Record<string, unknown>): Alert {
-  return {
+  const base: Alert = {
     id: String(r.id),
     detector_id: r.detector_id as Alert["detector_id"],
     severity: r.severity as Alert["severity"],
@@ -140,7 +168,10 @@ function rowToAlert(r: Record<string, unknown>): Alert {
     campaign_external_id: (r.campaign_external_id as string | null) ?? null,
     sku: (r.sku as string | null) ?? null,
     evidence: (r.evidence as Record<string, unknown>) ?? {},
+    remediation: null,
+    rec_detail: "",
   };
+  return attachRemediation(base);
 }
 
 function rowToAudit(r: Record<string, unknown>): AuditEntry {
