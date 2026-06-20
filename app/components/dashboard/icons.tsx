@@ -125,6 +125,7 @@ export const CD_ACTION_ICON: Record<string, string> = {
   pause_campaign: "pause",
   reduce_campaign_budget: "reduce",
   reallocate_budget: "swap",
+  reallocate_spend_sku: "trendingUp",
   exclude_geo: "globe",
   reallocate_inventory: "swap",
   create_po_draft: "doc",

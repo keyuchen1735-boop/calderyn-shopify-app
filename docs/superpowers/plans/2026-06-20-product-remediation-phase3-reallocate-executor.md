@@ -764,9 +764,11 @@ and to `ACTION_VERBS`:
 In `DETECTOR_TO_ACTIONS`, add `reallocate_spend_sku` to the two detectors `rankMoves` ever recommends reallocate for (the gateway's `DETECTOR_TO_ACTIONS` allow-check, `alert-action.server.ts:60`, gates execution):
 
 ```typescript
-  ad_tax_overload: ["reallocate_budget", "reallocate_spend_sku", "reduce_campaign_budget", "pause_campaign", "snooze_alert"],
-  negative_unit_economics: ["reallocate_spend_sku", "pause_campaign", "reduce_campaign_budget", "snooze_alert"],
+  ad_tax_overload: ["reallocate_budget", "reallocate_spend_sku", "reduce_campaign_budget", "pause_campaign", "discontinue_sku", "snooze_alert"],
+  negative_unit_economics: ["reallocate_spend_sku", "pause_campaign", "reduce_campaign_budget", "discontinue_sku", "snooze_alert"],
 ```
+
+> **Note (additive — preserves Phase 2's discontinue_sku authorization; do not drop it.)** Phase 2 deliberately authorized `discontinue_sku` for all 5 product-economics detectors. These arrays must keep `discontinue_sku` before `snooze_alert`; removing it regresses the discontinue gateway (403 on a structurally-dead alert's Discontinue button).
 
 (`pause_campaign` / `reduce_campaign_budget` are already allowed for both — cut_ads reuses them.)
 

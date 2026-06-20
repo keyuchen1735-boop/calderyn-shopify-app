@@ -11,6 +11,7 @@ export type ActionKind =
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
   | "reallocate_budget"
+  | "reallocate_spend_sku"
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
