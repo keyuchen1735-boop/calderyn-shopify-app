@@ -331,6 +331,30 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
+      // discontinue_sku: live endpoint — archives the product on Shopify and
+      // sets the internal Do-Not-Reorder flag, both derived server-side from the
+      // alert. A failure (e.g. SKU with no Shopify product) surfaces as an error
+      // toast, never a fake resolution.
+      if (kind === "discontinue_sku") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — product archived and marked Do Not Reorder.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return;
+      }
+
       // reallocate_inventory: live endpoint — the transfer plan is derived
       // server-side from the alert's evidence, so failures (e.g. evidence
       // without a concrete move) surface as an error toast, never a fake

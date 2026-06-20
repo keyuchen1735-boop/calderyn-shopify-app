@@ -260,18 +260,20 @@ function AlertDetail({
                 <div className="flex flex-col gap-2 mt-1">
                   {alert.remediation.moves.map((m) => {
                     const rec = m.kind === alert.remediation!.recommended;
-                    // Phase 1: only snooze executes; other moves are advisory guidance.
-                    if (m.executor === "snooze_alert") {
+                    if (m.executor) {
+                      // Executable move: snooze (Phase 1) or discontinue_sku (Phase 2).
+                      const isDiscontinue = m.executor === "discontinue_sku";
                       return (
                         <button
                           key={m.kind}
                           disabled={resolved || busy}
-                          aria-busy={busy && attempted === "snooze_alert"}
-                          className="cd-action-btn"
-                          onClick={() => run("snooze_alert" as ActionKind)}
+                          aria-busy={busy && attempted === m.executor}
+                          className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
+                          onClick={() => run(m.executor as ActionKind)}
                         >
-                          <CDIcon name={CD_ACTION_ICON.snooze_alert || "bell"} size={16} strokeWidth={1.9} />
-                          <span className="flex-1 text-left">Snooze</span>
+                          <CDIcon name={CD_ACTION_ICON[m.executor] || "bolt"} size={16} strokeWidth={1.9} />
+                          <span className="flex-1 text-left">{m.label}</span>
+                          {rec && <span className="cd-rec-tag">Recommended</span>}
                         </button>
                       );
                     }
@@ -298,7 +300,7 @@ function AlertDetail({
                 </div>
                 <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-                  logged. One-click execution for these moves is rolling out.
+                  logged. Advisory moves are guidance; the highlighted action runs with one click.
                 </p>
               </>
             ) : (
