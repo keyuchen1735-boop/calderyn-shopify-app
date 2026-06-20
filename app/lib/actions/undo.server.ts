@@ -6,6 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { inventoryAdjustQuantities, type AdminGraphqlClient } from "../shopify/inventory.server";
+import { restoreProduct } from "../shopify/product.server";
+import { setDoNotReorder } from "./discontinue.server";
 
 // The undo guarantee is a *24-hour* window. Beyond it the recorded reversal is
 // stale — a campaign budget has drifted, or (worse) an inventory transfer's
@@ -238,6 +240,22 @@ export async function undoAction(
       delta,
     });
     appliedInventoryOperationId = reversal.operationId;
+  } else if (orig.action_kind === "discontinue_sku") {
+    // Reverse a discontinue: re-activate the product on Shopify, then clear the
+    // internal flag. Refuse loudly without an admin client rather than record a
+    // success that never touched Shopify (rule 12 — same stance as inventory).
+    if (!deps.admin) {
+      throw new Error("Shopify admin client unavailable; cannot undo a product discontinue");
+    }
+    const dp = (orig.params ?? {}) as { sku_id?: string; product_id?: string };
+    if (!dp.product_id || !dp.sku_id) {
+      throw new Error(`audit ${auditId} lacks the product/sku to restore; cannot undo`);
+    }
+    // Restore to ACTIVE (restoreProduct's default — the pre-status isn't captured
+    // on the write path; a previously-DRAFT product re-activating is the safe,
+    // visible default rather than staying archived).
+    await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
+    await setDoNotReorder(sb, shopId, dp.sku_id, false);
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).
