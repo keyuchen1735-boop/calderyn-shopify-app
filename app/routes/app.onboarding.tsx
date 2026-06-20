@@ -20,7 +20,6 @@ import {
   InlineStack,
   Modal,
   Page,
-  Spinner,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -56,12 +55,11 @@ const CONNECT_PROVIDERS: ReadonlyArray<{
   id: "google" | "meta" | "tiktok" | "quickbooks";
   brand: BrandName;
   name: string;
-  sub: string;
 }> = [
-  { id: "google", brand: "google", name: "Google Ads", sub: "Spend, impressions & conversions for true ROAS" },
-  { id: "meta", brand: "meta", name: "Meta Ads", sub: "Spend, attribution & ad-set structure" },
-  { id: "tiktok", brand: "tiktok", name: "TikTok Ads", sub: "Spend & advertiser performance" },
-  { id: "quickbooks", brand: "quickbooks", name: "QuickBooks", sub: "COGS entries to validate landed cost" },
+  { id: "google", brand: "google", name: "Google Ads" },
+  { id: "meta", brand: "meta", name: "Meta Ads" },
+  { id: "tiktok", brand: "tiktok", name: "TikTok Ads" },
+  { id: "quickbooks", brand: "quickbooks", name: "QuickBooks" },
 ];
 
 const ACCENT = "#23556e";
@@ -594,6 +592,9 @@ function ConnectStep({
   const [skipOpen, setSkipOpen] = useState(false);
 
   const pendingProviderRef = useRef<string | null>(null);
+  // Handle to the tab we pre-open in the click gesture (see connect()); set its
+  // location once the server returns the provider URL.
+  const pendingTabRef = useRef<Window | null>(null);
   const lastOpenedRef = useRef<string | null>(null);
   // Set when a re-check is allowed to REVERT a still-connecting provider to idle
   // (the merchant returned to this tab without finishing) — only focus/visibility
@@ -607,23 +608,33 @@ function ConnectStep({
   loadStatusRef.current = loadStatus;
 
   const connect = (id: string) => {
+    // Open the new tab SYNCHRONOUSLY inside the click gesture so the browser
+    // doesn't block it as a popup, then point it at the provider URL once the
+    // server mints it (third-party OAuth pages can't be framed in the admin iframe).
+    pendingTabRef.current = window.open("about:blank", "_blank");
     pendingProviderRef.current = id;
+    setStatus((prev) => ({ ...prev, [id]: "connecting" }));
     connectFetcher.submit(
       { intent: "connect_integration", provider: id, host },
       { method: "post", action: "/app/onboarding" },
     );
   };
 
-  // When the connect action returns a redirectUrl, open the provider's sign-in in a
-  // NEW TAB and mark that provider "connecting". A bare top-level tab is required —
-  // third-party OAuth pages refuse to be framed inside the embedded admin iframe.
+  // Point the pre-opened tab at the provider URL once the action returns it. On a
+  // setup failure (no redirectUrl — e.g. provider not configured) close the
+  // placeholder tab and revert the row; the reason surfaces via the action toast.
   useEffect(() => {
-    const url = connectFetcher.data?.redirectUrl;
-    if (url && url !== lastOpenedRef.current) {
-      lastOpenedRef.current = url;
-      window.open(url, "_blank", "noopener,noreferrer");
+    const d = connectFetcher.data;
+    if (!d) return;
+    if (d.redirectUrl && d.redirectUrl !== lastOpenedRef.current) {
+      lastOpenedRef.current = d.redirectUrl;
+      const win = pendingTabRef.current;
+      if (win && !win.closed) win.location.href = d.redirectUrl;
+      else window.open(d.redirectUrl, "_blank");
+    } else if (d.ok === false) {
+      if (pendingTabRef.current && !pendingTabRef.current.closed) pendingTabRef.current.close();
       const id = pendingProviderRef.current;
-      if (id) setStatus((prev) => ({ ...prev, [id]: "connecting" }));
+      if (id) setStatus((prev) => (prev[id] === "connecting" ? { ...prev, [id]: "idle" } : prev));
     }
   }, [connectFetcher.data]);
 
@@ -727,23 +738,22 @@ function ConnectStep({
                     <Text as="p" fontWeight="semibold">
                       {p.name}
                     </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {st === "connecting" ? "Finish sign-in in the new tab…" : p.sub}
-                    </Text>
+                    {st === "connecting" && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Finish sign-in in the new tab
+                      </Text>
+                    )}
                   </BlockStack>
                 </InlineStack>
 
                 {st === "connected" ? (
                   <Badge tone="success">Connected</Badge>
                 ) : st === "connecting" ? (
-                  <InlineStack gap="200" blockAlign="center">
-                    <Spinner size="small" accessibilityLabel={`Connecting ${p.name}`} />
-                    <Button variant="plain" onClick={() => connect(p.id)}>
-                      Retry
-                    </Button>
-                  </InlineStack>
+                  <Button disabled>Connecting…</Button>
                 ) : (
-                  <Button onClick={() => connect(p.id)}>Connect</Button>
+                  <Button onClick={() => connect(p.id)} disabled={connectFetcher.state !== "idle"}>
+                    Connect
+                  </Button>
                 )}
               </InlineStack>
             </Box>

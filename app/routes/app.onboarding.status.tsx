@@ -21,24 +21,26 @@ export type OnboardingStatus = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
+  // Polled every few seconds — never let an intermediary serve a stale pairing.
+  const headers = { "Cache-Control": "no-store" };
   try {
     const integrations = await client.integrations.list(request.signal);
-    return json<OnboardingStatus>({
-      ok: true,
-      google: providerPaired(integrations, "google"),
-      meta: providerPaired(integrations, "meta"),
-      tiktok: providerPaired(integrations, "tiktok"),
-      quickbooks: providerPaired(integrations, "quickbooks"),
-    });
+    return json<OnboardingStatus>(
+      {
+        ok: true,
+        google: providerPaired(integrations, "google"),
+        meta: providerPaired(integrations, "meta"),
+        tiktok: providerPaired(integrations, "tiktok"),
+        quickbooks: providerPaired(integrations, "quickbooks"),
+      },
+      { headers },
+    );
   } catch {
     // A transient read failure must not downgrade the UI or throw mid-poll;
     // ok:false tells the client to ignore this tick (don't revert "connecting").
-    return json<OnboardingStatus>({
-      ok: false,
-      google: false,
-      meta: false,
-      tiktok: false,
-      quickbooks: false,
-    });
+    return json<OnboardingStatus>(
+      { ok: false, google: false, meta: false, tiktok: false, quickbooks: false },
+      { headers },
+    );
   }
 };
