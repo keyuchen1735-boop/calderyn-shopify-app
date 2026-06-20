@@ -20,11 +20,33 @@ export interface StrategicMove {
   kind: MoveKind;
   /** Projected 30-day dollars recovered/gained, in cents. Drives the ranking. */
   dollarImpactCents: number;
-  /** Live executor for this move, or null when the move is advisory only.
-   *  Phase 1: only "snooze" → "snooze_alert". Phase 2 adds "discontinue_sku" on
-   *  the discontinue move. Phase 3 will add the Meta budget-shift executor; keep
-   *  this union open so later phases extend it without breaking existing values. */
-  executor: "snooze_alert" | "discontinue_sku" | null;
+  /** Live executor for this move, or null = advisory (rule 12: a null executor
+   *  renders as a guidance row, never a dead button). Widened additively across
+   *  phases — never remove a prior value:
+   *    P1: "snooze_alert"
+   *    P2: "discontinue_sku"
+   *    P3: "reallocate_spend_sku" | "pause_campaign" | "reduce_campaign_budget"
+   */
+  executor:
+    | "snooze_alert"
+    | "discontinue_sku"
+    | "reallocate_spend_sku"
+    | "pause_campaign"
+    | "reduce_campaign_budget"
+    | null;
+  /** Why this move is advisory instead of executable, when known. Surfaced in
+   *  the panel (rule 12), e.g. "served by a shared campaign". */
+  ineligibleReason?: string;
+  /** Concrete refs the executor needs, filled by enrichRemediation (Phase 3).
+   *  Absent on advisory moves and on plans that were never enriched. */
+  target?: {
+    skuId?: string;
+    loserCampaignId?: string;
+    winnerSkuId?: string;
+    winnerCampaignId?: string;
+    winnerLabel?: string;
+    amountCents?: number;
+  };
   /** Short human label for the move (UI). */
   label: string;
 }
