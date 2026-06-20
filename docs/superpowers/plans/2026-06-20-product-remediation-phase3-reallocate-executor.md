@@ -68,7 +68,7 @@ target?: {
 
 | File | Responsibility | Task |
 |---|---|---|
-| `supabase/migrations/20260620120000_v_sku_remediation_inputs.sql` | New view: per-SKU contribution + returns + dedicated mutable campaign + ranked catalog winner | 1 |
+| `supabase/migrations/20260620121000_v_sku_remediation_inputs.sql` | New view: per-SKU contribution + returns + dedicated mutable campaign + ranked catalog winner | 1 |
 | `app/lib/remediation/types.ts` | Widen `MoveKind.executor` union; add `target` to `StrategicMove`; add `RemediationEnrichment` types | 2 |
 | `app/lib/remediation/enrich.server.ts` | `enrichRemediation(alert, sb)` — read view, fill target/executor/ineligibleReason | 3, 4 |
 | `app/lib/remediation/__tests__/enrich.test.ts` | Eligibility tests (dedicated present/absent, winner present/absent, shared→advisory) | 3, 4 |
@@ -89,7 +89,7 @@ target?: {
 Exposes everything `enrichRemediation` needs in ONE indexed read per SKU. No SKU→campaign key exists, so dedication is inferred from attribution-revenue concentration.
 
 **Files:**
-- Create: `supabase/migrations/20260620120000_v_sku_remediation_inputs.sql`
+- Create: `supabase/migrations/20260620121000_v_sku_remediation_inputs.sql`
 
 - [ ] **Step 1: Write the migration**
 
@@ -273,7 +273,7 @@ Expected: migration applies clean; the select returns the column set above (no e
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/migrations/20260620120000_v_sku_remediation_inputs.sql
+git add supabase/migrations/20260620121000_v_sku_remediation_inputs.sql
 git commit -m "supabase: v_sku_remediation_inputs (contribution + returns + dedicated campaign + winner rank)"
 ```
 
