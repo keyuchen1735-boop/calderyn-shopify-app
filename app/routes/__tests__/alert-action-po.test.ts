@@ -246,7 +246,20 @@ describe("alert action — acknowledges the alert after success", () => {
   });
 
   it("surfaces an acknowledge failure in the toast without failing the action", async () => {
-    setSupabaseResponse({ data: null, error: { message: "update blew up" } });
+    // The action hits TWO Supabase calls in sequence:
+    //   1. resolveSkuForDiscontinue — maybeSingle() on sku_dim (the Phase 2 gate)
+    //   2. acknowledgeAlert         — .then() on the alerts UPDATE
+    // setSupabaseResponse() is too coarse — it returns the same error for BOTH,
+    // causing the gate to throw and the action to return ok:false before it ever
+    // reaches the acknowledge path.  Use the queue form so the gate gets a valid
+    // unflagged-SKU result (passes) and only the acknowledge UPDATE sees the error.
+    setSupabaseResponses([
+      // sku_dim SELECT (gate): SKU exists, not discontinued → gate passes.
+      { data: { id: "sku-1", product_id: "gid://shopify/Product/1", do_not_reorder: false }, error: null },
+      // alerts UPDATE (acknowledge): simulate a DB error — the action must still
+      // return ok:true and surface the failure in the toast message.
+      { data: null, error: { message: "update blew up" } },
+    ]);
     const res = await call(poRequest());
     const body = (await res.json()) as { ok: boolean; toast: { message: string } };
 
