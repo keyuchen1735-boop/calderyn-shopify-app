@@ -193,6 +193,9 @@ export interface SKU {
    * divide-by-zero) or no returns. `rate` is 0..1; `returned_units_30d` is the
    * absolute refunded-unit count. */
   returns?: { returned_units_30d: number; rate: number };
+  /** Internal "do not reorder" flag — set by discontinue_sku, blocks PO drafts.
+   *  Surfaced on the Inventory surface. */
+  do_not_reorder: boolean;
 }
 
 /** One day's total on-hand for a SKU (sum across locations), for the stock-trend

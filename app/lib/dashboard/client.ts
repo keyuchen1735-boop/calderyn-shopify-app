@@ -331,6 +331,7 @@ export function adaptSku(s: SKU): SkuVM {
     ship_cost_source: s.ship_cost_source ?? null,
     ship_cost_confidence: s.ship_cost_confidence ?? null,
     ship_pnl_cents: s.ship_pnl_cents ?? null,
+    do_not_reorder: s.do_not_reorder ?? false,
   };
 }
 
