@@ -33,6 +33,13 @@ describe("recomputeShopCalibration", () => {
     expect(res.display).toBeLessThanOrEqual(100);
     expect(updates[0]).toHaveProperty("calibration_pct", res.display);
     expect(updates[0]).toHaveProperty("calibration_updated_at");
+    // Emergent-baseline canary: cold-start must land in low-to-mid range (Task 10 measures live value).
+    // Kills always-0 regression:
+    expect(res.display).toBeGreaterThan(0);
+    // Kills always-50/always-100 regression (foundation baseline observed ~36):
+    expect(res.display).toBeLessThan(50);
+    // Cold start with null prev: smooth is a no-op, so display must equal raw:
+    expect(res.display).toBe(res.raw);
   });
 });
 
