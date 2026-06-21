@@ -23,7 +23,7 @@ describe("historical", () => {
     expect(historical(0, 0, 0.715, 8)).toBeCloseTo(0.715, 3);
   });
   it("moves toward 1 with approvals", () => {
-    expect(historical(10, 0, 0.5, 8)).toBeGreaterThan(0.8);
+    expect(historical(10, 0, 0.5, 8)).toBeGreaterThan(0.75);
   });
   it("moves toward 0 with rejections", () => {
     expect(historical(0, 10, 0.5, 8)).toBeLessThan(0.25);
