@@ -3,15 +3,10 @@
  * No I/O, no server imports.
  */
 
-import type { ActionKind } from "../types";
-import { DETECTOR_LABELS, ACTION_VERBS } from "../labels";
+import type { ActionKind, RejectReason } from "../types";
+import { DETECTOR_LABELS, ACTION_LABELS } from "../labels";
 
-export type RejectReason =
-  | "too_aggressive"
-  | "wrong_timing"
-  | "not_enough_data"
-  | "i_handle_this"
-  | "other";
+export type { RejectReason };
 
 export interface RejectEffect {
   betaDelta: number;
@@ -38,18 +33,17 @@ export function reflection(
   actionKind: ActionKind,
 ): string {
   const label = DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId;
-  const verbRaw = ACTION_VERBS[actionKind];
-  const verb = verbRaw.toLowerCase();
+  const action = ACTION_LABELS[actionKind].toLowerCase();
 
   switch (reason) {
     case "too_aggressive":
-      return `Got it. I'll be gentler with ${verb} on ${label} and keep the size smaller.`;
+      return `Got it. I'll be gentler on ${label} and keep any ${action} smaller.`;
     case "wrong_timing":
-      return `Thanks. I'll factor in timing before I suggest ${verb} on ${label} again.`;
+      return `Thanks. I'll factor in timing before I suggest a ${action} for ${label} again.`;
     case "not_enough_data":
-      return `Fair. I'll wait for stronger proof before I suggest ${verb} on ${label}, and keep asking you first for a while.`;
+      return `Fair. I'll wait for stronger proof on ${label}, and keep asking you first for a while.`;
     case "i_handle_this":
-      return `Got it. I'll leave ${verb} on ${label} to you. Hand it back any time from Learned rules.`;
+      return `Got it. I'll leave ${label} to you. Hand it back any time from Learned rules.`;
     case "other":
       return `Noted. Pick a reason category next time so I can learn more precisely.`;
   }

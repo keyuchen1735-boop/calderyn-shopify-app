@@ -24,26 +24,31 @@ describe("reflection", () => {
     const r = reflection("i_handle_this", "sku_stockout_vs_spend", "pause_campaign");
     expect(r.length).toBeGreaterThan(0);
     expect(r).not.toContain("—"); // em dash
+    expect(r).not.toContain("–"); // en dash
     expect(r.toLowerCase()).toContain("leave");
   });
   it("too_aggressive contains 'gentler'", () => {
     const r = reflection("too_aggressive", "campaign_below_breakeven", "pause_campaign");
     expect(r).not.toContain("—");
+    expect(r).not.toContain("–");
     expect(r.toLowerCase()).toContain("gentler");
   });
   it("wrong_timing contains 'timing'", () => {
     const r = reflection("wrong_timing", "sku_stockout_vs_spend", "reduce_campaign_budget");
     expect(r).not.toContain("—");
+    expect(r).not.toContain("–");
     expect(r.toLowerCase()).toContain("timing");
   });
   it("not_enough_data contains 'proof'", () => {
     const r = reflection("not_enough_data", "margin_erosion", "pause_campaign");
     expect(r).not.toContain("—");
+    expect(r).not.toContain("–");
     expect(r.toLowerCase()).toContain("proof");
   });
   it("other contains 'reason'", () => {
     const r = reflection("other", "reorder_timing", "create_po_draft");
     expect(r).not.toContain("—");
+    expect(r).not.toContain("–");
     expect(r.toLowerCase()).toContain("reason");
   });
 });
