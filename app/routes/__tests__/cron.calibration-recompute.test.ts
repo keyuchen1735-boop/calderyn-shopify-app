@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader } from "../cron.calibration-recompute";
 
 // Mock the recompute + supabase so the route is tested in isolation.
 vi.mock("../../lib/calibration/recompute.server", () => ({
@@ -9,8 +10,6 @@ vi.mock("~/lib/supabase.server", () => ({
     from: () => ({ select: () => Promise.resolve({ data: [{ id: "shop-1" }], error: null }) }),
   }),
 }));
-
-import { loader } from "../cron.calibration-recompute";
 
 const req = (auth?: string) =>
   new Request("https://app.test/cron/calibration-recompute", {

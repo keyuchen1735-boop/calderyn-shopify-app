@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeWeights, recomputeShopCalibration } from "../recompute.server";
 
 describe("computeWeights", () => {
@@ -75,5 +76,5 @@ function makeStubSb(opts: {
       return { select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }) };
     },
     rpc: () => Promise.resolve({ data: null, error: null }), // peer prior absent -> static seed
-  } as unknown as import("@supabase/supabase-js").SupabaseClient;
+  } as unknown as SupabaseClient;
 }
