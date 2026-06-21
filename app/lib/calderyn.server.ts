@@ -1,13 +1,16 @@
-import type {
+﻿import type {
   ActionKind,
   Alert,
   AuditEntry,
+  Calibration,
   Campaign,
   CampaignGradeRow,
   CostSource,
   DailyRoasRow,
   GuardrailConfig,
   Integration,
+  LearnedRule,
+  QueueProposal,
   ShopLocation,
   SKU,
   SkuAffinityItem,
@@ -15,6 +18,11 @@ import type {
   SkuSource,
   TopAdRow,
 } from "./types";
+import { buildActionQueue } from "./calibration/queue.server";
+import { recordApproval as _recordApproval } from "./calibration/approval.server";
+import { recordRejection as _recordRejection } from "./calibration/reject.server";
+import type { RecordRejectionInput } from "./calibration/reject.server";
+import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   affinityFromRow,
@@ -211,6 +219,30 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
   };
 }
 
+/** Plain-language summary for a calibration_rule row, shown in the Learned Rules list. */
+function ruleSummary(r: { detector_id: string; action_kind: ActionKind; rule_kind: string; rule_value: unknown }): string {
+  const detector = DETECTOR_LABELS[r.detector_id as keyof typeof DETECTOR_LABELS] ?? r.detector_id;
+  const action = ACTION_LABELS[r.action_kind]?.toLowerCase() ?? r.action_kind;
+  const label = `${action} on ${detector}`;
+  const val = r.rule_value as Record<string, unknown> | null;
+  switch (r.rule_kind) {
+    case "muted_pair":
+      return `I leave ${label} to you`;
+    case "pair_dollar_cap": {
+      const cents = Number(val?.cents ?? 0);
+      const dollars = (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+      return `I will not go bigger than ${dollars} on ${label}`;
+    }
+    case "pair_probation_until": {
+      const iso = String(val?.until ?? "");
+      const date = iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "a future date";
+      return `Waiting for more proof on ${label} until ${date}`;
+    }
+    default:
+      return `Rule on ${label}`;
+  }
+}
+
 // Start of the current UTC day — the window the daily action budget resets on,
 // matching the autopilot guardrail enforcement (actions/guardrails.server.ts).
 function startOfUtcDayIso(now = new Date()): string {
@@ -394,6 +426,20 @@ async function probeShipHeroToken(
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
   const shopIdP = resolveShopId(shop);
+
+  // Shared helper: fetch all open alerts for a shop, ordered by claude_rank.
+  // Used by both alerts.list({status:"open"}) and queue.list — single source of
+  // truth so the open-alerts query is never duplicated.
+  async function fetchOpenAlerts(shopId: string): Promise<Alert[]> {
+    const { data, error } = await supabase
+      .from("v_alerts_view")
+      .select("*")
+      .eq("shop_id", shopId)
+      .eq("status", "open")
+      .order("claude_rank", { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(rowToAlert);
+  }
 
   // Dollars (in cents) the shop's actions have recovered since the start of the
   // UTC day — the "used" half of the daily action budget meter. Same inclusion
@@ -1253,6 +1299,154 @@ export function calderynClient(shop: string) {
           return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.update", err);
+        }
+      },
+    },
+
+    calibration: {
+      async get(_signal?: AbortSignal): Promise<Calibration> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("shops")
+            .select("calibration_pct, calibration_updated_at")
+            .eq("id", shopId)
+            .maybeSingle();
+          if (error) throw error;
+          return {
+            pct: data?.calibration_pct == null ? null : Number(data.calibration_pct),
+            updated_at: (data?.calibration_updated_at as string | null) ?? null,
+          };
+        } catch (err) {
+          rethrow("calibration.get", err);
+        }
+      },
+      // Positive calibration signal. Resolves shopId internally so call sites
+      // need only the (detectorId, actionKind) pair. Never throws -- a bump
+      // failure must not surface as an action failure (see approval.server.ts).
+      async recordApproval(detectorId: string, actionKind: ActionKind): Promise<void> {
+        const shopId = await shopIdP;
+        await _recordApproval(shopId, detectorId, actionKind, supabase);
+      },
+      // Negative calibration signal. Never throws (pure UX bookkeeping).
+      async recordRejection(input: RecordRejectionInput): Promise<{ reflection: string }> {
+        const shopId = await shopIdP;
+        return _recordRejection(shopId, input, supabase);
+      },
+      // Return all active learned rules for this shop, with plain-language summaries.
+      async learnedRules(): Promise<LearnedRule[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("calibration_rule")
+            .select("id, detector_id, action_kind, rule_kind, rule_value, created_at")
+            .eq("shop_id", shopId)
+            .eq("active", true)
+            .order("created_at", { ascending: false });
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            id: String(r.id),
+            detector_id: String(r.detector_id),
+            action_kind: r.action_kind as ActionKind,
+            rule_kind: r.rule_kind as LearnedRule["rule_kind"],
+            summary: ruleSummary(r as { detector_id: string; action_kind: ActionKind; rule_kind: string; rule_value: unknown }),
+            created_at: String(r.created_at),
+          }));
+        } catch (err) {
+          rethrow("calibration.learnedRules", err);
+        }
+      },
+      // Deactivate a specific rule by id (scoped to this shop for safety).
+      async undoRule(ruleId: string): Promise<void> {
+        try {
+          const shopId = await shopIdP;
+          const { error } = await supabase
+            .from("calibration_rule")
+            .update({ active: false })
+            .eq("id", ruleId)
+            .eq("shop_id", shopId);
+          if (error) throw error;
+        } catch (err) {
+          rethrow("calibration.undoRule", err);
+        }
+      },
+    },
+
+    queue: {
+      /**
+       * Return the current action queue: open alerts that have a real recommended
+       * action, ranked by claude_rank and scored with calibrated confidence.
+       * peerP50 = null in this slice (no RPC call; peer baselines land in Slice 3).
+       *
+       * Filters applied before building proposals:
+       *  - rejectedAlertIds: alerts the merchant already said no to (action_feedback decision='reject')
+       *  - mutedPairs: (detector, action) pairs the merchant has muted via a calibration_rule
+       */
+      async list(_signal?: AbortSignal): Promise<QueueProposal[]> {
+        try {
+          const shopId = await shopIdP;
+          // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
+          // so the open-alerts SQL is not duplicated.
+          const [alerts, pairsRes, feedbackRes, rulesRes, graduatedRes] = await Promise.all([
+            fetchOpenAlerts(shopId),
+            supabase
+              .from("pair_calibration")
+              .select("detector_id, action_kind, alpha, beta")
+              .eq("shop_id", shopId),
+            // Alerts the merchant explicitly rejected — exclude from queue so
+            // they don't keep resurfacing after a thumbs-down.
+            supabase
+              .from("action_feedback")
+              .select("alert_id")
+              .eq("shop_id", shopId)
+              .eq("decision", "reject")
+              .not("alert_id", "is", null),
+            // Active muted-pair rules — suppress a (detector, action) pair the
+            // merchant has trained Calderyn to leave to them.
+            supabase
+              .from("calibration_rule")
+              .select("detector_id, action_kind")
+              .eq("shop_id", shopId)
+              .eq("active", true)
+              .eq("rule_kind", "muted_pair"),
+            // I5: graduated pairs auto-run via autopilot; exclude from the queue
+            // so merchant-approve and autopilot cannot both fire for the same alert.
+            supabase
+              .from("pair_calibration")
+              .select("detector_id, action_kind")
+              .eq("shop_id", shopId)
+              .eq("graduated", true),
+          ]);
+
+          if (pairsRes.error) throw pairsRes.error;
+          if (feedbackRes.error) throw feedbackRes.error;
+          if (rulesRes.error) throw rulesRes.error;
+          if (graduatedRes.error) throw graduatedRes.error;
+
+          const map = new Map(
+            (pairsRes.data ?? []).map((r) => [
+              `${r.detector_id}:${r.action_kind}`,
+              { alpha: Number(r.alpha), beta: Number(r.beta) },
+            ]),
+          );
+
+          const rejectedAlertIds = new Set(
+            (feedbackRes.data ?? [])
+              .map((r) => r.alert_id as string | null)
+              .filter((id): id is string => id !== null),
+          );
+
+          const mutedPairs = new Set(
+            (rulesRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+          );
+
+          const graduatedPairs = new Set(
+            (graduatedRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+          );
+
+          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs, graduatedPairs);
+        } catch (err) {
+          rethrow("queue.list", err);
         }
       },
     },

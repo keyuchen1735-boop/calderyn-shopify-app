@@ -43,10 +43,21 @@ function startOfUtcDayIso(): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
 }
 
+export interface CheckGuardrailsOpts {
+  /** Force bypass mode OFF regardless of the DB setting. Use for autonomous
+   * (autopilot) calls so a bypass-enabled config never silently waives safety
+   * gates on autonomous actions (I1). */
+  forceBypassOff?: boolean;
+  /** Mark this as an autonomous (autopilot) call. Affects null-cap treatment:
+   * null dailyActionCap is treated as 5 (not unlimited) for autonomous calls. */
+  autonomous?: boolean;
+}
+
 export async function checkGuardrails(
   shopId: string,
   input: CheckInput,
   sb: SupabaseClient,
+  opts?: CheckGuardrailsOpts,
 ): Promise<GuardrailResult> {
   // Ids are interpolated into a PostgREST .or() filter — refuse anything that
   // is not a plain uuid rather than risk corrupting the filter expression.
@@ -57,7 +68,7 @@ export async function checkGuardrails(
   const { data: row, error } = await sb
     .from("guardrail_config")
     .select(
-      "autopilot_enabled, autopilot_bypass_guardrails, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc",
+      "autopilot_enabled, autopilot_bypass_guardrails, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, daily_action_budget, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc",
     )
     .eq("shop_id", shopId)
     .maybeSingle();
@@ -66,7 +77,8 @@ export async function checkGuardrails(
 
   const config: AutopilotGuardrails = {
     enabled: Boolean(row.autopilot_enabled),
-    bypassGuardrails: Boolean(row.autopilot_bypass_guardrails),
+    // I1: bypass forced OFF for autonomous calls regardless of DB setting.
+    bypassGuardrails: opts?.forceBypassOff ? false : Boolean(row.autopilot_bypass_guardrails),
     // null column = no daily cap (unlimited); otherwise the configured integer.
     dailyActionCap:
       row.autopilot_daily_action_cap == null ? null : Number(row.autopilot_daily_action_cap),
@@ -76,6 +88,9 @@ export async function checkGuardrails(
     maxDailyBudgetCents:
       row.autopilot_max_daily_budget_cents == null ? null : Number(row.autopilot_max_daily_budget_cents),
     dollarCapCents: Math.round(Number(row.dollar_impact_cap_without_2fa ?? 0) * 100),
+    // daily_action_budget stored in DOLLARS in DB; convert to cents for evaluator.
+    dailyActionBudgetCents:
+      row.daily_action_budget == null ? null : Math.round(Number(row.daily_action_budget) * 100),
     cooldownMinutes: Number(row.cooldown_minutes_per_campaign ?? 0),
     businessHoursOnly: Boolean(row.business_hours_only),
     businessHoursStartUtc: Number(row.business_hours_start_utc ?? 0),
@@ -93,6 +108,24 @@ export async function checkGuardrails(
     .eq("outcome", "succeeded")
     .gte("created_at", startOfUtcDayIso());
 
+  // I2: sum today's autonomous dollar impact (DOLLARS in DB → cents here).
+  // Only relevant for autonomous calls; merchant calls skip this query.
+  let todayAutopilotDollarsCents: number | undefined;
+  if (opts?.autonomous) {
+    const { data: dollarRows } = await sb
+      .from("action_audit")
+      .select("dollar_impact_at_exec")
+      .eq("shop_id", shopId)
+      .eq("actor_user_id", "autopilot")
+      .eq("outcome", "succeeded")
+      .gte("created_at", startOfUtcDayIso());
+    // dollar_impact_at_exec is stored in DOLLARS; convert to cents.
+    todayAutopilotDollarsCents = (dollarRows ?? []).reduce(
+      (sum, r) => sum + Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),
+      0,
+    );
+  }
+
   const minutesSince = await minutesSinceLastAutopilotActionOn(sb, shopId, input.campaignId);
   const minutesSinceDest = input.destCampaignId
     ? await minutesSinceLastAutopilotActionOn(sb, shopId, input.destCampaignId)
@@ -108,5 +141,7 @@ export async function checkGuardrails(
     minutesSinceLastActionOnCampaign: minutesSince,
     minutesSinceLastActionOnDestCampaign: minutesSinceDest,
     nowUtcHour: new Date().getUTCHours(),
+    todayAutopilotDollarsCents,
+    autonomous: opts?.autonomous,
   });
 }

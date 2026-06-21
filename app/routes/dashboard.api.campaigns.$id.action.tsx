@@ -1,10 +1,12 @@
-// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
+﻿// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
 
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { calderynClient } from "~/lib/calderyn.server";
+import { recordApproval } from "~/lib/calibration/approval.server";
 
 const KINDS: ExecutableKind[] = [
   "pause_campaign",
@@ -39,17 +41,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return jsonError(422, "invalid_daily_budget_cents");
   }
 
+  const alertId = typeof body.alert_id === "string" ? body.alert_id : null;
+  const sb = getSupabase();
+
   const result = await executeAction(
     session.shopId,
     {
-      alertId: typeof body.alert_id === "string" ? body.alert_id : null,
+      alertId,
       kind,
       campaignId: String(params.id),
       idempotencyKey,
       dailyBudgetCents,
       actor: "merchant:web-dashboard",
     },
-    getSupabase(),
+    sb,
   );
 
   if (result.outcome === "failed") {
@@ -64,6 +69,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }),
       { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
     );
+  }
+
+  // Calibration signal: bump approval confidence for the (detector, action) pair.
+  // Only when a real alert drove this action (alertId present + outcome succeeded).
+  // AWAITED before return so the promise is not abandoned on serverless cold-flush.
+  // Guarded: a signal failure must NEVER affect the action result.
+  if (result.outcome === "succeeded" && alertId) {
+    const client = calderynClient(session.shopDomain);
+    const alert = await client.alerts.get(alertId).catch(() => null);
+    if (alert) recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
   }
 
   return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));

@@ -10,6 +10,11 @@ import { executeReallocation } from "./reallocate.server";
 import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
 import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
+import { isGraduated } from "../calibration/graduation.server";
+import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
+import { loadAndApplyRules } from "./rule-enforce.server";
+import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
+import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -67,6 +72,71 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (!cfg || !cfg.autopilot_enabled)
     return { skipped: true, acted: 0, blocked: 0, failed: 0, considered: 0, blockedReasons: {}, decisions: [] };
 
+  // I6: Per-shop concurrency lock — prevents overlapping cron ticks from
+  // double-acting on the same shop. Fail-safe: if the lock is NOT acquired
+  // (concurrent tick holds it, OR the DB call errored), we skip this tick
+  // rather than running unlocked and risking double-action.
+  //
+  // Mechanism: plain INSERT via supabase-js. The shop_id PK unique constraint
+  // means exactly one concurrent tick wins; the loser receives a Postgres 23505
+  // unique-violation error (not a silent 0-row result), which we treat as
+  // "lock held — skip". TTL-row (not pg_try_advisory_lock) because Supabase
+  // uses PgBouncer in Transaction mode — advisory locks are session-scoped and
+  // are immediately released when the connection returns to the pool.
+  const lock = await acquireAutopilotLock(shopId, sb);
+  if (!lock.acquired) {
+    console.info(`[autopilot] skipping shop ${shopId}: ${lock.reason ?? "lock not acquired"}`);
+    return {
+      skipped: true,
+      acted: 0,
+      blocked: 0,
+      failed: 0,
+      considered: 0,
+      blockedReasons: {},
+      decisions: [],
+    };
+  }
+
+  // I6: Wrap the entire tick in try/finally so the lock is ALWAYS released,
+  // even if a DB error or throw escapes the per-candidate catch blocks below.
+  try {
+
+  // Load merchant contact email for autonomous-action notifications (best-effort;
+  // a missing email row just means no notification fires — never a thrown error).
+  // Email lives in shopify_sessions (online sessions carry the account-owner email);
+  // join via shops.shop_domain → shopify_sessions.shop, preferring online sessions.
+  let merchantEmail: string | null = null;
+  try {
+    const { data: shopRow } = await sb
+      .from("shops")
+      .select("shop_domain")
+      .eq("id", shopId)
+      .maybeSingle();
+    const shopDomain = (shopRow as { shop_domain?: string | null } | null)?.shop_domain ?? null;
+    if (shopDomain) {
+      const { data: sessions } = await sb
+        .from("shopify_sessions")
+        .select("email, isOnline, accountOwner")
+        .eq("shop", shopDomain)
+        .not("email", "is", null);
+      // Prefer: online + accountOwner first, then online, then offline accountOwner, then any.
+      const rows = (sessions ?? []) as Array<{
+        email: string | null;
+        isOnline: boolean;
+        accountOwner: boolean;
+      }>;
+      const best =
+        rows.find((r) => r.isOnline && r.accountOwner) ??
+        rows.find((r) => r.isOnline) ??
+        rows.find((r) => r.accountOwner) ??
+        rows[0] ??
+        null;
+      merchantEmail = best?.email ?? null;
+    }
+  } catch {
+    // Non-fatal: if we can't read the session email, we just skip the notification.
+  }
+
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
   const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
   const maxDailyBudgetCents =
@@ -113,6 +183,11 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   let blocked = 0;
   let failed = 0;
   const decisions: AutopilotDecision[] = [];
+  // Collect notify promises so they are awaited (via Promise.allSettled) before
+  // runAutopilotForShop returns. This prevents Vercel cron from abandoning them
+  // mid-flight when the response is sent. allSettled means a delivery failure
+  // never fails the run or affects the summary.
+  const notifyPromises: Promise<void>[] = [];
   // reason -> count for every candidate that landed in the `blocked` counter
   // (guardrail blocks AND pre-flight skips), so the histogram explains the
   // FULL blocked total and `sum(blockedReasons) === blocked` holds.
@@ -167,6 +242,51 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         continue;
       }
 
+      // Graduation gate (Slice 5 Task 2, I3/I7): a (detector, action) pair MUST
+      // have earned calibration graduation before it may auto-execute. isGraduated
+      // is fail-safe (returns false on any read error), so a DB hiccup can never
+      // grant autonomy. With no pair graduated yet, autopilot skips everything —
+      // that is the intended "gate everything, re-earn trust" default.
+      if (!(await isGraduated(shopId, c.detector_id, kind, sb))) {
+        decide(c, kind, "skipped", "pair not graduated");
+        continue;
+      }
+
+      // Rule enforcement (Slice 5 Task 5): apply the merchant's learned
+      // calibration_rule rows for this (detector, action) pair BEFORE any
+      // execute path is reached. This single check dominates all execute paths
+      // for the three graduatable kinds (pause/reduce/increase).
+      // Fail-safe: a thrown load returns { veto: "rules unavailable" } —
+      // we must never execute when we can't verify the merchant's restrictions.
+      {
+        const nowUtc = new Date();
+        const ruleVerdict = await loadAndApplyRules(
+          shopId,
+          c.detector_id,
+          kind,
+          {
+            dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+            campaignSpendCents: c.campaign_spend_cents,
+            nowUtcHour: nowUtc.getUTCHours(),
+            nowIso: nowUtc.toISOString(),
+          },
+          sb,
+        );
+        if (ruleVerdict.veto) {
+          console.info(`[autopilot] rule veto for ${c.campaign_id} (${c.detector_id}/${kind}): ${ruleVerdict.veto}`);
+          decide(c, kind, "skipped", `rule: ${ruleVerdict.veto}`);
+          continue;
+        }
+        // pair_dollar_cap on reduce: cap the cut amount by storing into a
+        // candidate-local that the reduce path reads below.
+        if (ruleVerdict.cappedDollarCents !== undefined) {
+          // Stash the cap so the reduce path clamps newBudgetCents.
+          // We piggy-back on the existing Candidate shape via a local variable.
+          // The capped amount is resolved after currentBudgetCents is known, below.
+          (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents = ruleVerdict.cappedDollarCents;
+        }
+      }
+
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
       if (kind === "increase_campaign_budget") {
@@ -199,6 +319,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
             newBudgetCents: target,
           },
           sb,
+          { forceBypassOff: true, autonomous: true },
         );
         if (!verdict.allowed) {
           decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
@@ -218,6 +339,15 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           sb,
         );
         record(c, kind, res.outcome);
+        if (res.outcome === "succeeded") {
+          // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
+          notifyPromises.push(
+            notifyAutonomousAction(
+              { shopId, actionDescription: `Scaled up campaign budget (campaign ${c.campaign_id})` },
+              merchantEmail,
+            ).catch((e) => console.error("[autopilot-notify] unexpected error (budget scale)", e)),
+          );
+        }
         continue;
       }
 
@@ -240,10 +370,29 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         kind === "reduce_campaign_budget"
           ? (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1
           : 1;
-      const newBudgetCents =
+      let newBudgetCents =
         kind === "reduce_campaign_budget" && currentBudgetCents != null
           ? Math.round(currentBudgetCents * (1 - (maxCutPct * muCut) / 100))
           : undefined;
+
+      // pair_dollar_cap clamp for reduce: ensure the cut (currentBudgetCents -
+      // newBudgetCents) does not exceed the merchant's dollar cap. The cap was
+      // stashed by the rule-enforcement block above. This adjusts the target
+      // upward so the cut is smaller — never executes a bigger cut than allowed.
+      if (
+        kind === "reduce_campaign_budget" &&
+        currentBudgetCents != null &&
+        newBudgetCents !== undefined
+      ) {
+        const cappedCents = (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents;
+        if (cappedCents !== undefined) {
+          // Clamp: newBudgetCents >= currentBudgetCents - cappedCents
+          newBudgetCents = Math.max(newBudgetCents, currentBudgetCents - cappedCents);
+          console.info(
+            `[autopilot] pair_dollar_cap clamped reduce for ${c.campaign_id}: newBudget=${newBudgetCents}c (cap=${cappedCents}c)`,
+          );
+        }
+      }
 
       // Same refusal in executeAction: a cut that lands on $0 would zero the
       // live campaign budget (that's a pause, not a reduction) — blocked. Only
@@ -269,10 +418,17 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // no model both dials default to 1, so the moved amount equals prior behavior
       // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
       // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
+      //
+      // Calibration gate: reallocate_budget is NOT in GRADUATABLE_V1 and can NEVER
+      // auto-execute in v1. Even if reduce_campaign_budget is graduated, we must
+      // independently verify reallocate_budget graduation before entering the
+      // reallocation sub-branch. This prevents a graduated reduce from smuggling in
+      // an autonomous reallocation. When not graduated (always in v1), fall through
+      // to the plain reduce path so loss-prevention still acts.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         if (currentBudgetCents - newBudgetCents > 0) {
           const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
-          if (dest) {
+          if (dest && (await isGraduated(shopId, c.detector_id, "reallocate_budget", sb))) {
             const muRealloc = (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1;
             const amountCents = Math.round((currentBudgetCents * maxCutPct * muRealloc) / 100);
             if (amountCents > 0) {
@@ -289,6 +445,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
                   newBudgetCents: reallocSrcBudget,
                 },
                 sb,
+                { forceBypassOff: true, autonomous: true },
               );
               if (!verdict.allowed) {
                 decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
@@ -312,6 +469,15 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
               res.outcome === "succeeded"
                 ? decide(c, kind, "acted", "reallocate_budget")
                 : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
+              if (res.outcome === "succeeded") {
+                // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
+                notifyPromises.push(
+                  notifyAutonomousAction(
+                    { shopId, actionDescription: `Reallocated budget from campaign ${c.campaign_id}` },
+                    merchantEmail,
+                  ).catch((e) => console.error("[autopilot-notify] unexpected error (realloc)", e)),
+                );
+              }
               continue;
             }
           }
@@ -329,10 +495,48 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           newBudgetCents,
         },
         sb,
+        { forceBypassOff: true, autonomous: true },
       );
       if (!verdict.allowed) {
         decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
         continue;
+      }
+
+      // I4: Freshness + live precondition re-check — runs AFTER graduation + guardrails
+      // pass and BEFORE the executor fires. Fail-safe: a thrown check is ok:false,
+      // so a DB hiccup can never silently permit an autonomous action.
+      if (kind === "pause_campaign" || kind === "reduce_campaign_budget") {
+        const precheck = await preconditionFresh({ kind, candidate: c, sb, nowMs: Date.now() });
+        if (!precheck.ok) {
+          console.info(`[autopilot] precondition re-check failed for ${c.campaign_id}: ${precheck.reason}`);
+          decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
+          continue;
+        }
+      }
+
+      // I10: For sku_stockout_vs_spend → pause_campaign specifically, also require
+      // the stockout allowlist to clear. The detector is NOT in PAUSE_DETECTORS today
+      // (so it won't reach this path), but the gate is wired here so that IF it ever
+      // appears as an autonomous pause candidate the allowlist is enforced. The check
+      // ALWAYS returns ok:false in the current schema (inventory_policy not synced),
+      // which is the correct conservative default — it queues for human review.
+      if (kind === "pause_campaign" && c.detector_id === "sku_stockout_vs_spend") {
+        // Load the raw alert so stockoutPauseAllowed can read entity_ref.
+        const { data: alertRow } = await sb
+          .from("alerts")
+          .select("id, detector_id, entity_ref")
+          .eq("id", c.alert_id)
+          .maybeSingle();
+        if (!alertRow) {
+          decide(c, kind, "skipped", "stockout_allowlist: alert row not found");
+          continue;
+        }
+        const stockCheck = await stockoutPauseAllowed({ shopId, alert: alertRow, sb });
+        if (!stockCheck.ok) {
+          console.info(`[autopilot] stockout allowlist blocked ${c.campaign_id}: ${stockCheck.reason}`);
+          decide(c, kind, "skipped", stockCheck.reason ?? "stockout_precondition_not_met");
+          continue;
+        }
       }
 
       const res = await executeAction(
@@ -353,6 +557,16 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         sb,
       );
       record(c, kind, res.outcome);
+      if (res.outcome === "succeeded") {
+        // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
+        const actionLabel = kind === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";
+        notifyPromises.push(
+          notifyAutonomousAction(
+            { shopId, actionDescription: `${actionLabel} ${c.campaign_id}` },
+            merchantEmail,
+          ).catch((e) => console.error("[autopilot-notify] unexpected error (pause/reduce)", e)),
+        );
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
@@ -360,5 +574,18 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     }
   }
 
+  // Await all notification promises before returning so Vercel cron doesn't
+  // abandon them when the response is sent. allSettled: a delivery failure
+  // never affects the summary (the action already landed and was recorded).
+  if (notifyPromises.length > 0) {
+    await Promise.allSettled(notifyPromises);
+  }
+
   return { skipped: false, acted, blocked, failed, considered: decisions.length, blockedReasons, decisions };
+
+  } finally {
+    // I6: Always release the per-shop lock on completion OR error. The TTL
+    // (LOCK_TTL_MS) acts as a backstop if this finally somehow doesn't run.
+    await releaseAutopilotLock(shopId, lock.acquiredAt!, sb);
+  }
 }

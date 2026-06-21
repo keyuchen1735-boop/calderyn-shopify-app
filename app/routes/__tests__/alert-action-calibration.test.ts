@@ -1,0 +1,216 @@
+﻿import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ActionFunctionArgs } from "@remix-run/node";
+import { action } from "../app.alerts.$id";
+
+// Hoisted spies
+const { recordApprovalSpy, alertsGetSpy, guardrailsGetSpy, executeSpy, clientExecuteSpy } =
+  vi.hoisted(() => ({
+    recordApprovalSpy: vi.fn(),
+    alertsGetSpy: vi.fn(),
+    guardrailsGetSpy: vi.fn(),
+    executeSpy: vi.fn(),     // executeAction (gateway)
+    clientExecuteSpy: vi.fn(), // calderynClient.actions.execute (legacy)
+  }));
+
+// UI stubs
+vi.mock("@shopify/polaris", () => {
+  const Stub = () => null;
+  const Modal = Object.assign(() => null, { Section: Stub });
+  return {
+    Badge: Stub,
+    BlockStack: Stub,
+    Banner: Stub,
+    Box: Stub,
+    Button: Stub,
+    Card: Stub,
+    InlineStack: Stub,
+    Modal,
+    Page: Stub,
+    Text: Stub,
+    TextField: Stub,
+    Tooltip: Stub,
+    useBreakpoints: () => ({ smDown: false }),
+  };
+});
+vi.mock("~/lib/toast", () => ({ useActionToast: () => {} }));
+vi.mock("~/components/calderyn", () => ({
+  DetectorTag: () => null,
+  EvidencePanel: () => null,
+  GuardrailMeter: () => null,
+  IMPACT_LABEL: "Impact",
+  IMPACT_METHODOLOGY: "",
+  NarrativeCard: () => null,
+  SeverityBadge: () => null,
+}));
+vi.mock("../lib/embedded-nav", () => ({ useEmbeddedNavigate: () => () => {} }));
+
+vi.mock("../../shopify.server", () => ({
+  authenticate: {
+    admin: async () => ({ admin: {}, session: { shop: "test.myshopify.com" } }),
+  },
+}));
+
+vi.mock("~/lib/calderyn.server", () => {
+  class CalderynError extends Error {
+    code: string;
+    status: number;
+    constructor(opts: { code: string; status: number; message: string }) {
+      super(opts.message);
+      this.code = opts.code;
+      this.status = opts.status;
+    }
+  }
+  return {
+    CalderynError,
+    calderynClient: () => ({
+      alerts: { get: (...a: unknown[]) => alertsGetSpy(...a) },
+      guardrails: { get: (...a: unknown[]) => guardrailsGetSpy(...a) },
+      actions: { execute: (...a: unknown[]) => clientExecuteSpy(...a) },
+    }),
+  };
+});
+
+// Mock the calibration approval — this is what we are asserting.
+vi.mock("~/lib/calibration/approval.server", () => ({
+  recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
+}));
+
+vi.mock("~/lib/actions/execute.server", () => ({
+  executeAction: (...a: unknown[]) => executeSpy(...a),
+}));
+
+vi.mock("~/lib/alerts.server", () => ({
+  acknowledgeAlert: vi.fn(async () => true),
+}));
+
+vi.mock("~/lib/actions/snooze.server", () => ({
+  snoozeAlert: vi.fn(async () => {}),
+}));
+
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: vi.fn(() => ({})),
+  resolveShopId: vi.fn(async () => "shop-uuid-1"),
+}));
+
+vi.mock("~/lib/shopify/inventory.server", () => ({
+  transferPlanFromEvidence: vi.fn(() => null),
+}));
+vi.mock("~/lib/demo/showcase.server", () => ({
+  inventoryAdjustQuantitiesForShop: vi.fn(async () => ({ operationId: "op-1" })),
+}));
+vi.mock("~/lib/po/draft.server", () => ({
+  buildPoDraft: vi.fn(() => ({})),
+  derivePoQuantity: vi.fn(() => 10),
+  getCurrentUnitCostCents: vi.fn(async () => null),
+}));
+vi.mock("~/lib/assistant/action-param", () => ({
+  resolveActionParam: vi.fn(() => null),
+}));
+
+// A simple open alert that allows pause_campaign and snooze_alert.
+const ALERT = {
+  id: "alert-cal-1",
+  detector_id: "campaign_below_breakeven",
+  severity: "high",
+  status: "open",
+  dollar_impact: 1000, // cents
+  claude_rank: 1,
+  created_at: "2026-06-20T00:00:00Z",
+  title: "Campaign below breakeven",
+  narrative: "ROAS has been below breakeven for 7 days.",
+  campaign: "Camp A",
+  campaign_id: "camp-dim-uuid",
+  campaign_external_id: "ext-123",
+  sku: null,
+  evidence: { campaign_id: "camp-dim-uuid" },
+};
+
+function makeRequest(kind: string, alertId = ALERT.id): Request {
+  const fd = new FormData();
+  fd.set("kind", kind);
+  fd.set("alertId", alertId);
+  fd.set("idempotencyKey", "test-idem-key-1");
+  return new Request(`http://localhost/app/alerts/${alertId}`, {
+    method: "POST",
+    body: fd,
+  });
+}
+
+function call(request: Request) {
+  return action({ request, params: { id: ALERT.id } } as unknown as ActionFunctionArgs);
+}
+
+beforeEach(() => {
+  recordApprovalSpy.mockReset();
+  recordApprovalSpy.mockResolvedValue(undefined);
+  alertsGetSpy.mockReset();
+  alertsGetSpy.mockResolvedValue(ALERT);
+  guardrailsGetSpy.mockReset();
+  guardrailsGetSpy.mockResolvedValue({ dollar_cap_cents: 100_000_00 });
+  clientExecuteSpy.mockReset();
+  clientExecuteSpy.mockResolvedValue({ id: "aud-1", outcome: "succeeded" });
+  executeSpy.mockReset();
+  executeSpy.mockResolvedValue({ outcome: "succeeded" });
+});
+
+describe("alert action — calibration signal fires on approval", () => {
+  it("calls recordApproval with detector_id + kind on executeAction success", async () => {
+    // pause_campaign with campaign_id in evidence hits the executeAction gateway path.
+    const res = await call(makeRequest("pause_campaign"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "campaign_below_breakeven",
+      "pause_campaign",
+      expect.anything(), // supabase client
+    );
+  });
+
+  it("does NOT call recordApproval when executeAction outcome is not succeeded", async () => {
+    executeSpy.mockResolvedValue({ outcome: "failed" });
+    const res = await call(makeRequest("pause_campaign"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(false);
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls recordApproval on the legacy path (client.actions.execute)", async () => {
+    // exclude_geo is NOT in executableKinds so it always takes the legacy path.
+    // sku_stockout_vs_spend allows exclude_geo (DETECTOR_TO_ACTIONS).
+    const alertWithGeo = {
+      ...ALERT,
+      detector_id: "sku_stockout_vs_spend",
+      evidence: {}, // no campaign_id -> legacy path for exclude_geo
+      campaign_id: null,
+      campaign_external_id: null,
+    };
+    alertsGetSpy.mockResolvedValue(alertWithGeo);
+    const res = await call(makeRequest("exclude_geo"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "sku_stockout_vs_spend",
+      "exclude_geo",
+      expect.anything(),
+    );
+  });
+
+  it("does NOT call recordApproval for snooze_alert", async () => {
+    // snooze_alert is in DETECTOR_TO_ACTIONS for every detector; allow it here.
+    const alertWithSnooze = {
+      ...ALERT,
+      detector_id: "campaign_below_breakeven",
+      evidence: {}, // no campaign_id -> legacy path
+      campaign_id: null,
+    };
+    alertsGetSpy.mockResolvedValue(alertWithSnooze);
+    const res = await call(makeRequest("snooze_alert"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+});

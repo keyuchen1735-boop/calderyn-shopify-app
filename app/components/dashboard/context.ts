@@ -8,7 +8,9 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
+  LearnedRuleVM,
   OverviewVM,
+  QueueProposalVM,
 } from "./view-models";
 
 export type Screen =
@@ -20,6 +22,7 @@ export type Screen =
   | "analytics"
   | "inventory"
   | "audit"
+  | "action-queue"
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
@@ -70,6 +73,15 @@ export interface DashboardCtx {
   // --- chrome ---
   toast: (text: string, icon?: string, tone?: string) => void;
   relTime: (ts: number) => string;
+
+  /** Calibration headline; null until loaded or when no data yet. */
+  calibration: { pct: number | null; updated_at: string | null } | null;
+
+  /** Action Queue proposals; empty until loaded. */
+  actionQueue: QueueProposalVM[];
+
+  /** Learned calibration rules; empty until loaded. */
+  learnedRules: LearnedRuleVM[];
 
   // --- data lifecycle ---
   refresh: () => void;

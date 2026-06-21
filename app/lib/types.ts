@@ -237,6 +237,22 @@ export interface GuardrailConfig {
   autopilot_max_daily_budget_cents: number | null;
 }
 
+/** Why a merchant rejected a calibration proposal. Used by the feedback
+ * module to update Beta counters and emit learned rules. */
+export type RejectReason =
+  | "too_aggressive"
+  | "wrong_timing"
+  | "not_enough_data"
+  | "i_handle_this"
+  | "other";
+
+/** Read-only calibration headline for a shop. Foundation slice: just the
+ * cached %; later slices add per-pair detail and trend. */
+export interface Calibration {
+  pct: number | null;
+  updated_at: string | null;
+}
+
 // --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---
 
 export interface DailyRoasRow {
@@ -265,4 +281,35 @@ export interface TopAdRow {
   shares: number;
   saves: number;
   engagement: number;
+}
+
+/** A learned rule from a merchant rejection — stored in calibration_rule. */
+export interface LearnedRule {
+  id: string;
+  detector_id: string;
+  action_kind: ActionKind;
+  rule_kind: "pair_dollar_cap" | "pair_probation_until" | "muted_pair";
+  summary: string;
+  created_at: string;
+}
+
+/** One calibrated action proposal for the Action Queue (Calibration Slice 2).
+ *  Built from open alerts + pair_calibration Beta counters; returned by
+ *  `client.queue.list()`. Confidence is 0-100 (integer). */
+export interface QueueProposal {
+  alertId: string;
+  detector_id: DetectorId;
+  action_kind: ActionKind;
+  title: string;
+  dollar_impact: number;
+  /** Calibrated confidence score, 0-100 (integer). */
+  confidence: number;
+  /** One-line reasoning carried from the alert's narrative. */
+  reasoning: string;
+  /**
+   * I8: true when this is a no-brainer pair that has been muted — it appears
+   * in the queue as "always ask" rather than being silently suppressed like a
+   * normal muted pair. Absent (undefined) for un-muted proposals.
+   */
+  always_ask?: boolean;
 }

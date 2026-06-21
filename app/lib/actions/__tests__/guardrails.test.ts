@@ -131,6 +131,116 @@ describe("evaluateGuardrails · bypass mode", () => {
   });
 });
 
+describe("evaluateGuardrails · I1 bypass forced off", () => {
+  // When the caller sets bypassGuardrails=false (forced by checkGuardrails for
+  // autonomous calls), caps must be enforced even if the DB had bypass=true.
+  const violatingFacts: GuardrailFacts = {
+    kind: "pause_campaign",
+    dollarImpactCents: 99_999_999, // over the dollar cap
+    campaignSpendCents: 50000,
+    todayAutopilotCount: 999, // over the daily cap
+    minutesSinceLastActionOnCampaign: null,
+    nowUtcHour: 16,
+    autonomous: true,
+  };
+
+  it("an over-cap action is blocked when bypassGuardrails is false (even if DB had true)", () => {
+    // Simulate: DB had autopilot_bypass_guardrails=true but forceBypassOff
+    // forced config.bypassGuardrails=false before calling evaluateGuardrails.
+    const cfgBypassForcedOff: AutopilotGuardrails = { ...cfg, bypassGuardrails: false };
+    const r = evaluateGuardrails(cfgBypassForcedOff, violatingFacts);
+    expect(r.allowed).toBe(false);
+  });
+
+  it("bypass=true in config allows (merchant path — bypass not forced off)", () => {
+    const cfgBypass: AutopilotGuardrails = { ...cfg, bypassGuardrails: true };
+    const r = evaluateGuardrails(cfgBypass, { ...violatingFacts, autonomous: false });
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("evaluateGuardrails · I2 daily dollar ceiling", () => {
+  const baseFacts: GuardrailFacts = {
+    kind: "pause_campaign",
+    dollarImpactCents: 10_000, // $100
+    campaignSpendCents: 50000,
+    todayAutopilotCount: 0,
+    minutesSinceLastActionOnCampaign: null,
+    nowUtcHour: 16,
+    autonomous: true,
+    todayAutopilotDollarsCents: 0,
+  };
+  const cfgWithCeiling: AutopilotGuardrails = {
+    ...cfg,
+    dailyActionBudgetCents: 25_000, // $250 ceiling
+  };
+
+  it("blocks when today's sum + this action exceeds the ceiling", () => {
+    // 20000 used + 10000 this = 30000 > 25000 ceiling
+    const r = evaluateGuardrails(cfgWithCeiling, { ...baseFacts, todayAutopilotDollarsCents: 20_000 });
+    expect(r).toEqual({ allowed: false, reason: "daily dollar ceiling reached" });
+  });
+
+  it("allows when today's sum + this action is under the ceiling", () => {
+    // 10000 used + 10000 this = 20000 <= 25000 ceiling
+    const r = evaluateGuardrails(cfgWithCeiling, { ...baseFacts, todayAutopilotDollarsCents: 10_000 });
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("allows when today's sum + this action equals the ceiling exactly", () => {
+    // 15000 used + 10000 this = 25000 == 25000 ceiling (not strictly >)
+    const r = evaluateGuardrails(cfgWithCeiling, { ...baseFacts, todayAutopilotDollarsCents: 15_000 });
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("skips the daily-dollar check when dailyActionBudgetCents is null", () => {
+    const cfgNoCeiling: AutopilotGuardrails = { ...cfg, dailyActionBudgetCents: null };
+    // Even with absurd todayAutopilotDollarsCents: no ceiling = no block on that axis.
+    const r = evaluateGuardrails(cfgNoCeiling, { ...baseFacts, todayAutopilotDollarsCents: 999_999_999 });
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("skips the daily-dollar check when todayAutopilotDollarsCents is absent (merchant call)", () => {
+    // Merchant calls don't supply todayAutopilotDollarsCents — must not block.
+    const merchantFacts: GuardrailFacts = {
+      kind: "pause_campaign", dollarImpactCents: 10_000, campaignSpendCents: 50000,
+      todayAutopilotCount: 0, minutesSinceLastActionOnCampaign: null, nowUtcHour: 16,
+    };
+    const r = evaluateGuardrails(cfgWithCeiling, merchantFacts);
+    expect(r).toEqual({ allowed: true });
+  });
+});
+
+describe("evaluateGuardrails · null count-cap treatment", () => {
+  const nullCapCfg: AutopilotGuardrails = { ...cfg, dailyActionCap: null };
+  const baseFacts: GuardrailFacts = {
+    kind: "pause_campaign", dollarImpactCents: 50000, campaignSpendCents: 50000,
+    currentBudgetCents: 10000, todayAutopilotCount: 5,
+    minutesSinceLastActionOnCampaign: null, nowUtcHour: 16,
+  };
+
+  it("null cap + autonomous: blocks the 6th action (treated as cap=5)", () => {
+    const r = evaluateGuardrails(nullCapCfg, { ...baseFacts, todayAutopilotCount: 5, autonomous: true });
+    expect(r).toEqual({ allowed: false, reason: "daily action cap reached" });
+  });
+
+  it("null cap + autonomous: allows when count is below the implicit 5 cap", () => {
+    const r = evaluateGuardrails(nullCapCfg, { ...baseFacts, todayAutopilotCount: 4, autonomous: true });
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("null cap + NOT autonomous: unlimited — count=999 still allows (merchant behavior unchanged)", () => {
+    const r = evaluateGuardrails(nullCapCfg, { ...baseFacts, todayAutopilotCount: 999, autonomous: false });
+    expect(r).toEqual({ allowed: true });
+  });
+
+  it("null cap + absent autonomous flag: unlimited — preserves today's merchant behavior", () => {
+    // autonomous absent (undefined) — the original non-autonomous path
+    const r = evaluateGuardrails(nullCapCfg, { ...baseFacts, todayAutopilotCount: 999 });
+    expect(r).toEqual({ allowed: true });
+  });
+});
+
 describe("evaluateGuardrails · reallocate_budget", () => {
   const cfg: AutopilotGuardrails = {
     enabled: true, bypassGuardrails: false, dailyActionCap: 10, minSpendCents: 0, maxBudgetCutPct: 50,

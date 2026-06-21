@@ -285,3 +285,28 @@ export interface Toast {
 export interface Tweaks {
   [key: string]: unknown;
 }
+
+/** Dashboard view-model for a single action-queue proposal. */
+export interface QueueProposalVM {
+  alertId: string;
+  detector_id: string;
+  action_kind: string;
+  title: string;
+  dollar_impact: number;
+  /** Calibrated confidence, 0-100. */
+  confidence: number;
+  /** One-line reasoning from the alert narrative. */
+  reasoning: string;
+}
+
+/** Dashboard view-model for a single learned calibration rule.
+ *  Mirrors LearnedRule in ~/lib/types.ts; carries a plain-language summary
+ *  computed server-side via ruleSummary(). */
+export interface LearnedRuleVM {
+  id: string;
+  detector_id: string;
+  action_kind: string;
+  rule_kind: "pair_dollar_cap" | "pair_probation_until" | "muted_pair";
+  summary: string;
+  created_at: string;
+}

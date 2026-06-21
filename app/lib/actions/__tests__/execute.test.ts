@@ -295,6 +295,76 @@ describe("executeAction", () => {
       executeAction(SHOP, { alertId: null, kind: "increase_campaign_budget", campaignId: CAMP, idempotencyKey: "kib2" }, sb),
     ).rejects.toThrow(/no positive dailyBudgetCents/);
   });
+
+  // ─── I5: Outcome-idempotent budget guard ─────────────────────────────────
+  // When live budget <= target, the reduce is a no-op: setDailyBudget must NOT
+  // be called and a succeeded audit row with noop_reason must be recorded.
+  // This makes overlapping/replayed ticks idempotent on outcome.
+
+  describe("I5: outcome-idempotent budget (reduce_campaign_budget)", () => {
+    it("no-ops (no setDailyBudget) when live budget is already at the target", async () => {
+      // campaign.daily_budget_cents = 5000; target = 5000 → live == target → no-op.
+      const { sb } = fakeSb({ campaign });
+      const result = await executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "ki5-eq", dailyBudgetCents: 5000 },
+        sb,
+      );
+      expect(adapter.setDailyBudget).not.toHaveBeenCalled();
+      expect(result.outcome).toBe("succeeded");
+    });
+
+    it("no-ops when live budget is already BELOW the target (second tick scenario)", async () => {
+      // campaign.daily_budget_cents = 3000; target = 5000 → live < target → no-op.
+      // This is the double-cut scenario: first tick already reduced to 3000,
+      // second tick tries to reduce to 5000 (its snapshot target) — must no-op.
+      const alreadyReduced = { ...campaign, daily_budget_cents: 3000 };
+      const { sb } = fakeSb({ campaign: alreadyReduced });
+      const result = await executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "ki5-lt", dailyBudgetCents: 5000 },
+        sb,
+      );
+      expect(adapter.setDailyBudget).not.toHaveBeenCalled();
+      expect(result.outcome).toBe("succeeded");
+    });
+
+    it("records noop_reason in params when skipping the platform call", async () => {
+      const { sb, calls } = fakeSb({ campaign }); // daily_budget_cents: 5000, target: 5000
+      await executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "ki5-pr", dailyBudgetCents: 5000 },
+        sb,
+      );
+      const audit = calls.inserts.find((i) => i.table === "action_audit");
+      expect((audit?.rows as Record<string, unknown>).params).toMatchObject({ noop_reason: "already_at_target" });
+    });
+
+    it("DOES call setDailyBudget when live budget is ABOVE the target (normal reduce path)", async () => {
+      // campaign.daily_budget_cents = 5000; target = 3500 → live > target → normal cut.
+      const { sb } = fakeSb({ campaign });
+      await executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "ki5-ok", dailyBudgetCents: 3500 },
+        sb,
+      );
+      expect(adapter.setDailyBudget).toHaveBeenCalledWith("c1", 3500);
+    });
+
+    it("two sequential calls with the same key: first reduces normally, second is a key-dedup no-op", async () => {
+      // The second call is caught by idempotency key dedup (priorExecutionForKey),
+      // not the live-budget guard — both mechanisms protect against double-acting.
+      const { sb } = fakeSb({ idempotent: { audit_id: "prev" }, campaign, priorOutcome: "succeeded" });
+      const result = await executeAction(
+        SHOP,
+        { alertId: null, kind: "reduce_campaign_budget", campaignId: CAMP, idempotencyKey: "ki5-dup", dailyBudgetCents: 3500 },
+        sb,
+      );
+      // Returns the prior outcome without calling the adapter.
+      expect(adapter.setDailyBudget).not.toHaveBeenCalled();
+      expect(result.outcome).toBe("succeeded");
+    });
+  });
 });
 
 // Cross-tenant accounting guard: the alerts lookup that drives recovered-impact

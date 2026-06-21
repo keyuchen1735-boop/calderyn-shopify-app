@@ -63,6 +63,7 @@ vi.mock("~/lib/calderyn.server", () => ({
     campaigns: { list: (...a: unknown[]) => campaignsListSpy(...a) },
     guardrails: { get: (...a: unknown[]) => guardrailsGetSpy(...a) },
     onboarding: { getState: (...a: unknown[]) => getStateSpy(...a) },
+    calibration: { get: vi.fn().mockResolvedValue({ pct: null, updated_at: null }) },
   }),
 }));
 

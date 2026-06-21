@@ -26,6 +26,7 @@ import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
 import { PeerBenchmarks } from "./PeerBenchmarks";
 import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
+import { CalibrationHeader } from "../CalibrationHeader";
 import { Responsive, WidthProvider } from "react-grid-layout";
 import type { Layout, Layouts } from "react-grid-layout";
 import {
@@ -555,6 +556,8 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           All alerts
         </Btn>
       </ScreenHeader>
+
+      <CalibrationHeader app={app} />
 
       {showGrid ? (
         /* Customize canvas: drag by the grip, resize from any corner; sizes snap
