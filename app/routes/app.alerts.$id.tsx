@@ -338,7 +338,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       // Never blocks the response (recordApproval never throws).
       if (result.outcome === "succeeded") {
         const sb1 = getSupabase();
-        await recordApproval(shopId, alert.detector_id, kind, sb1);
+        await recordApproval(shopId, alert.detector_id, kind, sb1).catch(() => {});
       }
 
       return json<ActionPayload>({
@@ -380,7 +380,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // snooze_alert is excluded -- it defers rather than approves the action.
     // Never blocks the action result (recordApproval never throws).
     if (kind !== "snooze_alert") {
-      await recordApproval(shopId, alert.detector_id, kind, sb);
+      await recordApproval(shopId, alert.detector_id, kind, sb).catch(() => {});
     }
     return json<ActionPayload>({
       ok: true,
