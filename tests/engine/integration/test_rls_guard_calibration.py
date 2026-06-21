@@ -5,9 +5,11 @@ SET LOCAL ROLE authenticated pattern).
 
 Assertions:
   1. shop A bound via set_config('app.shop_id', ...) sees only its own
-     pair_calibration rows; shop B sees none of A's rows.
+     pair_calibration rows; shop B bound to B's GUC sees only its own row.
+     Both shops must be non-empty: the test fails if either GUC returns zero
+     rows (vacuous pass) or returns the other shop's row (RLS breach).
   2. An authenticated session with NO shop GUC bound sees zero rows from
-     pair_calibration (NULL = NULL in the policy is false → deny all).
+     pair_calibration (NULL = NULL in the policy is false -> deny all).
   3. anon/authenticated cannot EXECUTE action_pair_prior (EXECUTE revoked;
      Postgres raises permission denied).
 """
@@ -22,16 +24,6 @@ from calderyn_engine.db import with_shop_context
 # Distinct trailing bytes so UUIDs cannot collide with other test modules.
 SHOP_A = "00000000-0000-0000-0000-0000000000ca"
 SHOP_B = "00000000-0000-0000-0000-0000000000cb"
-
-
-async def _seed_shop(conn: asyncpg.Connection, shop_id: str) -> None:
-    suffix = shop_id.replace("-", "")[-12:]
-    await conn.execute(
-        "INSERT INTO public.shops (id, shop_domain) VALUES ($1, $2)"
-        " ON CONFLICT (id) DO NOTHING",
-        shop_id,
-        f"test-cal-{suffix}.myshopify.com",
-    )
 
 
 async def _seed_pair(conn: asyncpg.Connection, shop_id: str) -> None:
@@ -50,11 +42,20 @@ async def _seed_pair(conn: asyncpg.Connection, shop_id: str) -> None:
 @pytest.mark.asyncio
 async def test_pair_calibration_is_shop_scoped(
     pg_pool: asyncpg.Pool,
+    seed_shop,
 ) -> None:
-    """Shop A bound via GUC sees only its own row; B's GUC sees none of A's."""
+    """Shop A GUC sees only its own row; shop B GUC sees only its own row.
+
+    Both assertions are falsifiable in both directions:
+    - If RLS is broken and lets A see B's row (or vice versa), the shop_id
+      equality check fails.
+    - If RLS is broken and returns zero rows for either shop, the non-empty
+      assert fails (vacuous pass is rejected).
+    """
+    await seed_shop(SHOP_A)
+    await seed_shop(SHOP_B)
+
     async with pg_pool.acquire() as conn:
-        await _seed_shop(conn, SHOP_A)
-        await _seed_shop(conn, SHOP_B)
         await _seed_pair(conn, SHOP_A)
         await _seed_pair(conn, SHOP_B)
 
@@ -67,36 +68,38 @@ async def test_pair_calibration_is_shop_scoped(
             "GRANT USAGE ON SCHEMA public TO authenticated"
         )
 
-        # Shop A's GUC: should see exactly A's row.
+        # Shop A's GUC: must see exactly A's row (non-empty, all shop_id == A).
         async with with_shop_context(conn, SHOP_A):
             await conn.execute("SET LOCAL ROLE authenticated")
             a_rows = await conn.fetch(
                 "SELECT shop_id FROM public.pair_calibration"
             )
+            assert a_rows, "shop A GUC must see its own pair_calibration row (non-empty)"
+            assert all(str(r["shop_id"]) == SHOP_A for r in a_rows), (
+                "shop A GUC must not see shop B's rows"
+            )
 
-        # Shop B's GUC: should see zero of A's rows (only B's if any).
+        # Shop B's GUC: must see exactly B's row (non-empty, all shop_id == B).
         async with with_shop_context(conn, SHOP_B):
             await conn.execute("SET LOCAL ROLE authenticated")
             b_rows = await conn.fetch(
                 "SELECT shop_id FROM public.pair_calibration"
             )
-
-    assert a_rows, "shop A should see its own pair_calibration row"
-    assert all(str(r["shop_id"]) == SHOP_A for r in a_rows), (
-        "shop A must not see shop B's rows"
-    )
-    assert all(str(r["shop_id"]) != SHOP_A for r in b_rows), (
-        "shop B must not see shop A's rows"
-    )
+            assert b_rows, "shop B GUC must see its own pair_calibration row (non-empty)"
+            assert all(str(r["shop_id"]) == SHOP_B for r in b_rows), (
+                "shop B GUC must not see shop A's rows"
+            )
 
 
 @pytest.mark.asyncio
 async def test_unbound_session_sees_nothing(
     pg_pool: asyncpg.Pool,
+    seed_shop,
 ) -> None:
     """authenticated role + no GUC bound -> RLS hides every pair_calibration row."""
+    await seed_shop(SHOP_A)
+
     async with pg_pool.acquire() as conn:
-        await _seed_shop(conn, SHOP_A)
         await _seed_pair(conn, SHOP_A)
 
         # Confirm superuser baseline: the row exists.
