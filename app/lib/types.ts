@@ -237,6 +237,15 @@ export interface GuardrailConfig {
   autopilot_max_daily_budget_cents: number | null;
 }
 
+/** Why a merchant rejected a calibration proposal. Used by the feedback
+ * module to update Beta counters and emit learned rules. */
+export type RejectReason =
+  | "too_aggressive"
+  | "wrong_timing"
+  | "not_enough_data"
+  | "i_handle_this"
+  | "other";
+
 /** Read-only calibration headline for a shop. Foundation slice: just the
  * cached %; later slices add per-pair detail and trend. */
 export interface Calibration {
