@@ -21,6 +21,7 @@
 import { buildActionQueue } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
+import { recomputeShopCalibration } from "./calibration/recompute.server";
 import type { RecordRejectionInput } from "./calibration/reject.server";
 import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
@@ -1313,10 +1314,41 @@ export function calderynClient(shop: string) {
             .eq("id", shopId)
             .maybeSingle();
           if (error) throw error;
-          return {
-            pct: data?.calibration_pct == null ? null : Number(data.calibration_pct),
-            updated_at: (data?.calibration_updated_at as string | null) ?? null,
-          };
+
+          // Fast path: calibration already computed — return it directly.
+          if (data?.calibration_pct != null) {
+            return {
+              pct: Number(data.calibration_pct),
+              updated_at: (data.calibration_updated_at as string | null) ?? null,
+            };
+          }
+
+          // Lazy-compute path: calibration_pct is NULL (fresh install or not yet
+          // recomputed). Compute + persist so the merchant sees a real baseline
+          // immediately rather than "Calibrating". This is a one-time cache fill —
+          // idempotent and only fires when the value is missing. Runs inside a
+          // loader (read context); that is acceptable because subsequent reads hit
+          // the fast path above. skipPeerPrior avoids N+1 RPCs on first load
+          // (peer baselines are empty in prod anyway at this stage).
+          try {
+            await recomputeShopCalibration(shopId, { sb: supabase }, { skipPeerPrior: true });
+            // Re-read the freshly persisted value so returned data matches DB.
+            const { data: fresh, error: freshErr } = await supabase
+              .from("shops")
+              .select("calibration_pct, calibration_updated_at")
+              .eq("id", shopId)
+              .maybeSingle();
+            if (freshErr) throw freshErr;
+            return {
+              pct: fresh?.calibration_pct == null ? null : Number(fresh.calibration_pct),
+              updated_at: (fresh?.calibration_updated_at as string | null) ?? null,
+            };
+          } catch (computeErr) {
+            // Degrade gracefully: a compute failure shows "Calibrating" rather
+            // than breaking the page loader. The nightly cron will fill the value.
+            console.error(`[calibration.get] lazy recompute failed for shop ${shopId}`, computeErr);
+            return { pct: null, updated_at: null };
+          }
         } catch (err) {
           rethrow("calibration.get", err);
         }

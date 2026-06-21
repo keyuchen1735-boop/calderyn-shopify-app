@@ -63,9 +63,18 @@ export function computeWeights(
   return out;
 }
 
+export interface RecomputeOpts {
+  /** Skip the per-pair `action_pair_prior` RPC call.
+   * Use on the synchronous first-load path (loader lazy-compute) where peer
+   * baselines are not yet populated — avoids N+1 RPCs at request time. The
+   * nightly cron leaves this unset to keep peer-prior enrichment intact. */
+  skipPeerPrior?: boolean;
+}
+
 export async function recomputeShopCalibration(
   shopId: string,
   deps: RecomputeDeps,
+  opts?: RecomputeOpts,
 ): Promise<{ shopId: string; pairs: number; raw: number; display: number }> {
   const { sb } = deps;
 
@@ -116,16 +125,20 @@ export async function recomputeShopCalibration(
   for (const { detector, action, weight } of weights) {
     const key = `${detector}:${action}`;
     let peerP50: number | null = null;
-    try {
-      const { data } = await sb.rpc("action_pair_prior", {
-        p_shop_id: shopId,
-        p_detector_id: detector,
-        p_action_kind: action,
-      });
-      peerP50 = data == null ? null : Number(data);
-    } catch {
-      peerP50 = null; // peer baselines optional; fall back to static seed
+    if (!opts?.skipPeerPrior) {
+      try {
+        const { data } = await sb.rpc("action_pair_prior", {
+          p_shop_id: shopId,
+          p_detector_id: detector,
+          p_action_kind: action,
+        });
+        peerP50 = data == null ? null : Number(data);
+      } catch {
+        peerP50 = null; // peer baselines optional; fall back to static seed
+      }
     }
+    // skipPeerPrior=true: peerP50 stays null → static seed used (same outcome
+    // as a failed RPC, but without the network round-trip per pair).
     const ev = pairMap.get(key);
     const conf = pairConfidence(detector, action, { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 }, peerP50);
     scored.push({ conf, weight });

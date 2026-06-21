@@ -94,6 +94,54 @@ function makeStubSb(opts: {
   } as unknown as SupabaseClient;
 }
 
+// ─── skipPeerPrior option ─────────────────────────────────────────────────────
+
+describe("recomputeShopCalibration — skipPeerPrior option", () => {
+  it("does NOT call sb.rpc when skipPeerPrior=true and still returns display in [0,100]", async () => {
+    const rpcCalls: unknown[] = [];
+    const sb = makeStubSb({
+      pairRows: [],
+      detectorFires: { campaign_below_breakeven: 3 },
+      prevPct: null,
+      onShopUpdate: () => {},
+    });
+    // Wrap rpc to track calls.
+    const trackedSb = {
+      ...sb,
+      rpc: (...args: unknown[]) => {
+        rpcCalls.push(args);
+        return Promise.resolve({ data: null, error: null });
+      },
+    } as unknown as typeof sb;
+
+    const res = await recomputeShopCalibration("shop-skip-1", { sb: trackedSb }, { skipPeerPrior: true });
+    expect(rpcCalls).toHaveLength(0); // no rpc called
+    expect(res.display).toBeGreaterThanOrEqual(0);
+    expect(res.display).toBeLessThanOrEqual(100);
+  });
+
+  it("DOES call sb.rpc when skipPeerPrior is not set (default path)", async () => {
+    const rpcCalls: unknown[] = [];
+    const sb = makeStubSb({
+      pairRows: [],
+      detectorFires: { campaign_below_breakeven: 3 },
+      prevPct: null,
+      onShopUpdate: () => {},
+    });
+    const trackedSb = {
+      ...sb,
+      rpc: (...args: unknown[]) => {
+        rpcCalls.push(args);
+        return Promise.resolve({ data: null, error: null });
+      },
+    } as unknown as typeof sb;
+
+    await recomputeShopCalibration("shop-skip-2", { sb: trackedSb });
+    // rpc is called once per weight pair (many pairs for a real detector)
+    expect(rpcCalls.length).toBeGreaterThan(0);
+  });
+});
+
 // ─── Slice 5 Task 2: graduated cache tests ───────────────────────────────────
 
 describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => {
