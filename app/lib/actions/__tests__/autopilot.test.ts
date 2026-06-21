@@ -173,6 +173,7 @@ describe("runAutopilotForShop", () => {
       SHOP,
       expect.objectContaining({ kind: "reallocate_budget", dollarImpactCents: 2500, newBudgetCents: 7500 }),
       sb,
+      { forceBypassOff: true, autonomous: true },
     );
   });
 
@@ -190,6 +191,7 @@ describe("runAutopilotForShop", () => {
         dollarImpactCents: 5000,
       }),
       sb,
+      { forceBypassOff: true, autonomous: true },
     );
   });
 

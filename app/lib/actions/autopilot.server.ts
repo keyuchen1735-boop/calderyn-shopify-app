@@ -210,6 +210,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
             newBudgetCents: target,
           },
           sb,
+          { forceBypassOff: true, autonomous: true },
         );
         if (!verdict.allowed) {
           decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
@@ -307,6 +308,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
                   newBudgetCents: reallocSrcBudget,
                 },
                 sb,
+                { forceBypassOff: true, autonomous: true },
               );
               if (!verdict.allowed) {
                 decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
@@ -347,6 +349,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           newBudgetCents,
         },
         sb,
+        { forceBypassOff: true, autonomous: true },
       );
       if (!verdict.allowed) {
         decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
