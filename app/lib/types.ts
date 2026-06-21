@@ -283,6 +283,16 @@ export interface TopAdRow {
   engagement: number;
 }
 
+/** A learned rule from a merchant rejection — stored in calibration_rule. */
+export interface LearnedRule {
+  id: string;
+  detector_id: string;
+  action_kind: ActionKind;
+  rule_kind: "pair_dollar_cap" | "pair_probation_until" | "muted_pair";
+  summary: string;
+  created_at: string;
+}
+
 /** One calibrated action proposal for the Action Queue (Calibration Slice 2).
  *  Built from open alerts + pair_calibration Beta counters; returned by
  *  `client.queue.list()`. Confidence is 0-100 (integer). */

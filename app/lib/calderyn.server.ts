@@ -9,6 +9,7 @@
   DailyRoasRow,
   GuardrailConfig,
   Integration,
+  LearnedRule,
   QueueProposal,
   ShopLocation,
   SKU,
@@ -19,6 +20,9 @@
 } from "./types";
 import { buildActionQueue } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
+import { recordRejection as _recordRejection } from "./calibration/reject.server";
+import type { RecordRejectionInput } from "./calibration/reject.server";
+import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   affinityFromRow,
@@ -213,6 +217,30 @@ function rowToSku(r: Record<string, unknown>, sources: SkuSource[] = []): SKU {
     ship_cost_confidence: (r.ship_cost_confidence as SKU["ship_cost_confidence"]) ?? null,
     ship_pnl_cents: r.ship_pnl_cents == null ? null : Number(r.ship_pnl_cents),
   };
+}
+
+/** Plain-language summary for a calibration_rule row, shown in the Learned Rules list. */
+function ruleSummary(r: { detector_id: string; action_kind: ActionKind; rule_kind: string; rule_value: unknown }): string {
+  const detector = DETECTOR_LABELS[r.detector_id as keyof typeof DETECTOR_LABELS] ?? r.detector_id;
+  const action = ACTION_LABELS[r.action_kind]?.toLowerCase() ?? r.action_kind;
+  const label = `${action} on ${detector}`;
+  const val = r.rule_value as Record<string, unknown> | null;
+  switch (r.rule_kind) {
+    case "muted_pair":
+      return `I leave ${label} to you`;
+    case "pair_dollar_cap": {
+      const cents = Number(val?.cents ?? 0);
+      const dollars = (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+      return `I will not go bigger than ${dollars} on ${label}`;
+    }
+    case "pair_probation_until": {
+      const iso = String(val?.until ?? "");
+      const date = iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "a future date";
+      return `Waiting for more proof on ${label} until ${date}`;
+    }
+    default:
+      return `Rule on ${label}`;
+  }
 }
 
 // Start of the current UTC day — the window the daily action budget resets on,
@@ -1299,6 +1327,48 @@ export function calderynClient(shop: string) {
       async recordApproval(detectorId: string, actionKind: ActionKind): Promise<void> {
         const shopId = await shopIdP;
         await _recordApproval(shopId, detectorId, actionKind, supabase);
+      },
+      // Negative calibration signal. Never throws (pure UX bookkeeping).
+      async recordRejection(input: RecordRejectionInput): Promise<{ reflection: string }> {
+        const shopId = await shopIdP;
+        return _recordRejection(shopId, input, supabase);
+      },
+      // Return all active learned rules for this shop, with plain-language summaries.
+      async learnedRules(): Promise<LearnedRule[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("calibration_rule")
+            .select("id, detector_id, action_kind, rule_kind, rule_value, created_at")
+            .eq("shop_id", shopId)
+            .eq("active", true)
+            .order("created_at", { ascending: false });
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            id: String(r.id),
+            detector_id: String(r.detector_id),
+            action_kind: r.action_kind as ActionKind,
+            rule_kind: r.rule_kind as LearnedRule["rule_kind"],
+            summary: ruleSummary(r as { detector_id: string; action_kind: ActionKind; rule_kind: string; rule_value: unknown }),
+            created_at: String(r.created_at),
+          }));
+        } catch (err) {
+          rethrow("calibration.learnedRules", err);
+        }
+      },
+      // Deactivate a specific rule by id (scoped to this shop for safety).
+      async undoRule(ruleId: string): Promise<void> {
+        try {
+          const shopId = await shopIdP;
+          const { error } = await supabase
+            .from("calibration_rule")
+            .update({ active: false })
+            .eq("id", ruleId)
+            .eq("shop_id", shopId);
+          if (error) throw error;
+        } catch (err) {
+          rethrow("calibration.undoRule", err);
+        }
       },
     },
 
