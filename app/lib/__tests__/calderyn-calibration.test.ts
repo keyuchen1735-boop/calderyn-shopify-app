@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock supabase.server so we control both resolveShopId and the supabase
-// client, matching the pattern in calderyn-shop-scope.test.ts.
+// Top-level vi.fn() handles so each test can reassign the shops maybeSingle
+// result without needing vi.resetModules() or doMock re-imports.
+const shopsMaybeSingle = vi.fn();
+
 vi.mock("../supabase.server", () => ({
   resolveShopId: async (_domain: string) => "shop-1",
   getSupabase: () => ({
@@ -10,14 +12,7 @@ vi.mock("../supabase.server", () => ({
         return {
           select: () => ({
             eq: () => ({
-              maybeSingle: () =>
-                Promise.resolve({
-                  data: {
-                    calibration_pct: 25,
-                    calibration_updated_at: "2026-06-20T00:00:00Z",
-                  },
-                  error: null,
-                }),
+              maybeSingle: shopsMaybeSingle,
             }),
           }),
         };
@@ -37,24 +32,43 @@ vi.mock("../supabase.server", () => ({
 import { calderynClient } from "../calderyn.server";
 
 describe("client.calibration.get", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns the cached pct and timestamp", async () => {
-    const c = calderynClient("demo.myshopify.com");
-    const cal = await c.calibration.get();
+    shopsMaybeSingle.mockResolvedValueOnce({
+      data: {
+        calibration_pct: 25,
+        calibration_updated_at: "2026-06-20T00:00:00Z",
+      },
+      error: null,
+    });
+
+    const cal = await calderynClient("demo.myshopify.com").calibration.get();
     expect(cal.pct).toBe(25);
     expect(cal.updated_at).toBe("2026-06-20T00:00:00Z");
   });
 
-  it("coerces null calibration columns to null in the Calibration shape", () => {
-    // Validate the mapping logic directly: null DB values -> null shape values.
-    // (The full integration path is covered by the first test; this guards the
-    // null-coercion branch without needing a second supabase mock override.)
-    const calibrationPct: number | null = null;
-    const calibrationUpdatedAt: string | null = null;
-    const result = {
-      pct: calibrationPct == null ? null : Number(calibrationPct),
-      updated_at: calibrationUpdatedAt ?? null,
-    };
-    expect(result.pct).toBeNull();
-    expect(result.updated_at).toBeNull();
+  it("returns null pct and null updated_at when calibration columns are null", async () => {
+    // Row exists but calibration has not been computed yet — columns are null.
+    shopsMaybeSingle.mockResolvedValueOnce({
+      data: { calibration_pct: null, calibration_updated_at: null },
+      error: null,
+    });
+
+    const cal = await calderynClient("demo.myshopify.com").calibration.get();
+    expect(cal.pct).toBeNull();
+    expect(cal.updated_at).toBeNull();
+  });
+
+  it("returns null pct and null updated_at when no calibration row exists", async () => {
+    // maybeSingle returns data: null — "no calibration computed yet" (UI shows
+    // "calibrating" spinner). This is the absent-row path.
+    shopsMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+    const cal = await calderynClient("demo.myshopify.com").calibration.get();
+    expect(cal.pct).toBeNull();
+    expect(cal.updated_at).toBeNull();
   });
 });
