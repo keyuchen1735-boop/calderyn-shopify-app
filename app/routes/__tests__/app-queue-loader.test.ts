@@ -29,7 +29,10 @@ vi.mock("../../shopify.server", () => ({
 vi.mock("~/lib/calderyn.server", () => ({
   calderynClient: () => ({
     queue: { list: (...a: unknown[]) => queueListSpy(...a) },
-    calibration: { get: async () => ({ pct: null, updated_at: null }) },
+    calibration: {
+      get: async () => ({ pct: null, updated_at: null }),
+      learnedRules: async () => [],
+    },
   }),
 }));
 
