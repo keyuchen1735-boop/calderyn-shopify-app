@@ -350,11 +350,9 @@ export default function Dashboard() {
           />
         )}
 
-        <Layout>
-          <Layout.Section>
-            <CalibrationHeader calibration={calibration} />
-          </Layout.Section>
-        </Layout>
+        {/* Calibration header — placed above the smDown fork so it renders
+            as the first content section on both mobile and desktop paths. */}
+        <CalibrationHeader calibration={calibration} />
 
         {smDown ? (
           /* ── Phone fallback: keep the Polaris stat grid + AlertCards (the
