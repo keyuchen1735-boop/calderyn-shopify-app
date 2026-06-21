@@ -1377,25 +1377,62 @@ export function calderynClient(shop: string) {
        * Return the current action queue: open alerts that have a real recommended
        * action, ranked by claude_rank and scored with calibrated confidence.
        * peerP50 = null in this slice (no RPC call; peer baselines land in Slice 3).
+       *
+       * Filters applied before building proposals:
+       *  - rejectedAlertIds: alerts the merchant already said no to (action_feedback decision='reject')
+       *  - mutedPairs: (detector, action) pairs the merchant has muted via a calibration_rule
        */
       async list(_signal?: AbortSignal): Promise<QueueProposal[]> {
         try {
           const shopId = await shopIdP;
           // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
           // so the open-alerts SQL is not duplicated.
-          const alerts = await fetchOpenAlerts(shopId);
-          const { data: pairs, error } = await supabase
-            .from("pair_calibration")
-            .select("detector_id, action_kind, alpha, beta")
-            .eq("shop_id", shopId);
-          if (error) throw error;
+          const [alerts, pairsRes, feedbackRes, rulesRes] = await Promise.all([
+            fetchOpenAlerts(shopId),
+            supabase
+              .from("pair_calibration")
+              .select("detector_id, action_kind, alpha, beta")
+              .eq("shop_id", shopId),
+            // Alerts the merchant explicitly rejected — exclude from queue so
+            // they don't keep resurfacing after a thumbs-down.
+            supabase
+              .from("action_feedback")
+              .select("alert_id")
+              .eq("shop_id", shopId)
+              .eq("decision", "reject")
+              .not("alert_id", "is", null),
+            // Active muted-pair rules — suppress a (detector, action) pair the
+            // merchant has trained Calderyn to leave to them.
+            supabase
+              .from("calibration_rule")
+              .select("detector_id, action_kind")
+              .eq("shop_id", shopId)
+              .eq("active", true)
+              .eq("rule_kind", "muted_pair"),
+          ]);
+
+          if (pairsRes.error) throw pairsRes.error;
+          if (feedbackRes.error) throw feedbackRes.error;
+          if (rulesRes.error) throw rulesRes.error;
+
           const map = new Map(
-            (pairs ?? []).map((r) => [
+            (pairsRes.data ?? []).map((r) => [
               `${r.detector_id}:${r.action_kind}`,
               { alpha: Number(r.alpha), beta: Number(r.beta) },
             ]),
           );
-          return buildActionQueue(alerts, map);
+
+          const rejectedAlertIds = new Set(
+            (feedbackRes.data ?? [])
+              .map((r) => r.alert_id as string | null)
+              .filter((id): id is string => id !== null),
+          );
+
+          const mutedPairs = new Set(
+            (rulesRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+          );
+
+          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs);
         } catch (err) {
           rethrow("queue.list", err);
         }
