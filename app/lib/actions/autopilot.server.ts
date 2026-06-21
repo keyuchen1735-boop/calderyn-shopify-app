@@ -332,8 +332,6 @@ export async function runAutopilotForShop(
         blocked += 1;
         continue;
       }
-      const campaignId: string = c.campaign_id;
-
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
       if (kind === "increase_campaign_budget") {
