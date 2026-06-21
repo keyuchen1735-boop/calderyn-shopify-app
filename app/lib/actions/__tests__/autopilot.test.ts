@@ -605,6 +605,45 @@ describe("runAutopilotForShop", () => {
       );
     });
 
+    it("graduated reduce + dest available + reallocate_budget NOT graduated → plain reduce fires, reallocation skipped", async () => {
+      // reduce_campaign_budget is graduated; reallocate_budget is not (v1 invariant).
+      // isGraduated is called twice: once for reduce (top-of-loop, must return true),
+      // once for reallocate_budget (sub-branch gate, must return false).
+      isGraduated
+        .mockResolvedValueOnce(true)  // top-of-loop: reduce_campaign_budget → graduated
+        .mockResolvedValueOnce(false); // sub-branch gate: reallocate_budget → NOT graduated
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+      const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // executeReallocation must NOT have been called — reallocate_budget is not graduated.
+      expect(executeReallocation).not.toHaveBeenCalled();
+      // The plain reduce must still fire so loss-prevention acts.
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 5000 }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("(optional) graduated reduce + dest + reallocate_budget graduated → reallocation proceeds", async () => {
+      // When reallocate_budget IS graduated (hypothetical, not possible in v1), the
+      // reallocation path executes normally.
+      isGraduated.mockResolvedValue(true); // all kinds graduated
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+      const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ sourceCampaignId: "camp-uuid", destCampaignId: "dest-uuid" }),
+        sb,
+      );
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(1);
+    });
+
     it("mixed: graduated candidate acts, non-graduated is skipped; guardrails only called for graduated", async () => {
       // First call: graduated (al1); second call: not graduated (al2).
       isGraduated

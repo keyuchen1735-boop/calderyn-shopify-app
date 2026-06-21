@@ -280,10 +280,17 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // no model both dials default to 1, so the moved amount equals prior behavior
       // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
       // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
+      //
+      // Calibration gate: reallocate_budget is NOT in GRADUATABLE_V1 and can NEVER
+      // auto-execute in v1. Even if reduce_campaign_budget is graduated, we must
+      // independently verify reallocate_budget graduation before entering the
+      // reallocation sub-branch. This prevents a graduated reduce from smuggling in
+      // an autonomous reallocation. When not graduated (always in v1), fall through
+      // to the plain reduce path so loss-prevention still acts.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         if (currentBudgetCents - newBudgetCents > 0) {
           const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
-          if (dest) {
+          if (dest && (await isGraduated(shopId, c.detector_id, "reallocate_budget", sb))) {
             const muRealloc = (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1;
             const amountCents = Math.round((currentBudgetCents * maxCutPct * muRealloc) / 100);
             if (amountCents > 0) {
