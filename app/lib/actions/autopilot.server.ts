@@ -14,6 +14,7 @@ import { isGraduated } from "../calibration/graduation.server";
 import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
+import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -70,6 +71,33 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled)
     return { skipped: true, acted: 0, blocked: 0, failed: 0, considered: 0, blockedReasons: {}, decisions: [] };
+
+  // I6: Per-shop concurrency lock — prevents overlapping cron ticks from
+  // double-acting on the same shop. Fail-safe: if the lock is NOT acquired
+  // (concurrent tick holds it, OR the DB call errored), we skip this tick
+  // rather than running unlocked and risking double-action.
+  //
+  // Mechanism: TTL-row (not pg_try_advisory_lock) because Supabase uses
+  // PgBouncer in Transaction mode — advisory locks are session-scoped and
+  // are immediately released when the connection returns to the pool, so
+  // they provide zero protection over a pooled client.
+  const lock = await acquireAutopilotLock(shopId, sb);
+  if (!lock.acquired) {
+    console.info(`[autopilot] skipping shop ${shopId}: ${lock.reason ?? "lock not acquired"}`);
+    return {
+      skipped: true,
+      acted: 0,
+      blocked: 0,
+      failed: 0,
+      considered: 0,
+      blockedReasons: {},
+      decisions: [],
+    };
+  }
+
+  // I6: Wrap the entire tick in try/finally so the lock is ALWAYS released,
+  // even if a DB error or throw escapes the per-candidate catch blocks below.
+  try {
 
   // Load merchant contact email for autonomous-action notifications (best-effort;
   // a missing email row just means no notification fires — never a thrown error).
@@ -552,4 +580,10 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   }
 
   return { skipped: false, acted, blocked, failed, considered: decisions.length, blockedReasons, decisions };
+
+  } finally {
+    // I6: Always release the per-shop lock on completion OR error. The TTL
+    // (LOCK_TTL_MS) acts as a backstop if this finally somehow doesn't run.
+    await releaseAutopilotLock(shopId, sb);
+  }
 }

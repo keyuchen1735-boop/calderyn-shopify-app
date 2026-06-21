@@ -18,6 +18,8 @@ const {
   stockoutPauseAllowed,
   loadAndApplyRules,
   notifyAutonomousAction,
+  acquireAutopilotLock,
+  releaseAutopilotLock,
 } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
@@ -37,6 +39,10 @@ const {
   // Default: resolves immediately — so notify tests can assert calls without
   // needing real Resend credentials. Override per-test if needed.
   notifyAutonomousAction: vi.fn(async () => {}),
+  // I6: Default: lock acquired — so all existing tests that reach executeAction
+  // continue to pass. Concurrency-lock tests override this per-test.
+  acquireAutopilotLock: vi.fn(async (): Promise<{ acquired: boolean; reason?: string }> => ({ acquired: true })),
+  releaseAutopilotLock: vi.fn(async () => {}),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
@@ -61,6 +67,9 @@ vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, st
 vi.mock("../rule-enforce.server", () => ({ loadAndApplyRules }));
 // Notification mock (Slice 5 Task 6). Default = no-op so existing tests are unaffected.
 vi.mock("../../calibration/notify-autonomous.server", () => ({ notifyAutonomousAction }));
+// I6: Concurrency lock mock (Slice 5 Task 7). Default = acquired:true so all
+// existing tests that reach executeAction continue to pass. Lock tests override below.
+vi.mock("../autopilot-lock.server", () => ({ acquireAutopilotLock, releaseAutopilotLock }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
@@ -137,6 +146,10 @@ describe("runAutopilotForShop", () => {
     loadAndApplyRules.mockReset().mockResolvedValue({});
     // Default: no-op so existing tests are unaffected by the notification path.
     notifyAutonomousAction.mockReset().mockResolvedValue(undefined);
+    // Default: lock acquired (acquired:true) so existing tests that reach
+    // executeAction continue to pass. I6 tests override below.
+    acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true });
+    releaseAutopilotLock.mockReset().mockResolvedValue(undefined);
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -894,6 +907,86 @@ describe("runAutopilotForShop", () => {
       const r = await runAutopilotForShop(SHOP, sb);
       expect(r.acted).toBe(0);
       expect(notifyAutonomousAction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Slice 5 Task 7: Concurrency lock (I6) tests ────────────────────────
+
+  describe("concurrency lock (Slice 5 Task 7, I6)", () => {
+    it("skips the tick (returns skipped:true) when lock is NOT acquired (concurrent tick)", async () => {
+      // Simulate: another tick holds the lock.
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "locked_by_concurrent_tick (age=5s)" });
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // The run must short-circuit before touching any candidates.
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(checkGuardrails).not.toHaveBeenCalled();
+      expect(r.skipped).toBe(true);
+      expect(r.acted).toBe(0);
+    });
+
+    it("executes nothing when lock acquisition fails due to a DB error (fail-safe)", async () => {
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "db_error: connection refused" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.skipped).toBe(true);
+    });
+
+    it("releases the lock after a successful run", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, sb);
+    });
+
+    it("releases the lock even when the run throws (finally-block guarantee)", async () => {
+      // Simulate a thrown error after lock acquisition (e.g., v_autopilot_candidates read fails).
+      // To trigger this we'll have acquireAutopilotLock succeed but then have
+      // the first from() call after lock acquisition throw. We can't easily
+      // intercept that here since fakeSb doesn't throw; instead we verify the
+      // finally-block release by checking releaseAutopilotLock is still called
+      // when executeAction throws (which is caught per-candidate, not per-run).
+      // For a true outer-throw test: override the sb.from to throw on the shops table.
+      const throwingSb = {
+        from: vi.fn((table: string) => {
+          if (table === "guardrail_config") {
+            // Simulate the guardrail_config read returning enabled=true first,
+            // then everything else throws.
+            const chain: Record<string, unknown> = {};
+            chain.select = vi.fn(() => chain);
+            chain.eq = vi.fn(() => chain);
+            chain.maybeSingle = vi.fn(async () => ({
+              data: { autopilot_enabled: true, autopilot_max_budget_cut_pct: 50, autopilot_max_budget_increase_pct: 20, autopilot_max_daily_budget_cents: null },
+              error: null,
+            }));
+            return chain;
+          }
+          // All other table reads throw — simulates an unexpected DB error.
+          throw new Error("DB connection lost mid-run");
+        }),
+      } as unknown as SupabaseClient;
+
+      // acquireAutopilotLock itself is mocked (acquired:true) so the lock is held.
+      // The outer try block will throw, and finally must release.
+      await expect(runAutopilotForShop(SHOP, throwingSb)).rejects.toThrow("DB connection lost mid-run");
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, throwingSb);
+    });
+
+    it("does NOT call releaseAutopilotLock when the lock was never acquired (early return)", async () => {
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "locked_by_concurrent_tick (age=5s)" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      // The function returns before the try block, so releaseAutopilotLock is never called.
+      expect(releaseAutopilotLock).not.toHaveBeenCalled();
+    });
+
+    it("normal run calls acquireAutopilotLock with shopId and sb", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(acquireAutopilotLock).toHaveBeenCalledWith(SHOP, sb);
     });
   });
 
