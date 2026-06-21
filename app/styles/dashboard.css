@@ -469,6 +469,22 @@
   .cd-action-btn.rec:hover { background: color-mix(in oklch, var(--accent) 88%, black); }
   .cd-rec-tag { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; opacity: 0.75; }
 
+  /* ============ action queue ============ */
+  .cd-queue-item {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: calc(15px * var(--density)) calc(22px * var(--density));
+  }
+  .cd-queue-main { display: flex; align-items: flex-start; gap: 14px; width: 100%; }
+  .cd-queue-side {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    flex-shrink: 0; white-space: nowrap;
+  }
+  .cd-reject-panel {
+    display: flex; flex-direction: column; gap: 10px;
+    margin-left: calc(28px * var(--density));
+    padding-top: 12px; border-top: 0.5px solid var(--hairline-strong);
+  }
+
   /* ============ chart bits ============ */
   .cd-tip {
     position: absolute; top: 8px; z-index: 10; pointer-events: none;

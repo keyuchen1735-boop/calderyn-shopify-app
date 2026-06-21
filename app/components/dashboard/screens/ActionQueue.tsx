@@ -13,7 +13,7 @@
 //
 // Learned rules section: lists LearnedRuleVM[] from ctx + undo button per rule.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, Meter, Placeholder } from "../ui";
+import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, ACTION_LABELS, alertDetectorLabel } from "../format";
 import type { ActionKind, DashboardCtx } from "../context";
@@ -51,14 +51,14 @@ function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   );
 }
 
-/* ---------- Confidence label ---------- */
-function confidenceLabel(pct: number): string {
-  if (pct >= 75) return "High";
-  if (pct >= 45) return "Medium";
-  return "Low";
+/* ---------- Confidence → label + tone ---------- */
+function confidenceMeta(pct: number): { label: string; tone: "success" | "warn" | "critical" } {
+  if (pct >= 75) return { label: "High", tone: "success" };
+  if (pct >= 45) return { label: "Medium", tone: "warn" };
+  return { label: "Low", tone: "critical" };
 }
 
-/* ---------- Reject picker ---------- */
+/* ---------- Reject reason picker ---------- */
 function RejectPanel({
   alertId,
   onDone,
@@ -70,12 +70,12 @@ function RejectPanel({
   onCancel: () => void;
   toast: DashboardCtx["toast"];
 }) {
-  const [reason, setReason] = useState<RejectReason>("too_aggressive");
+  const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   const onSubmit = async () => {
-    if (busy) return;
+    if (busy || !reason) return;
     setBusy(true);
     try {
       const { reflection } = await client.rejectProposal({
@@ -94,31 +94,32 @@ function RejectPanel({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-      <label className="cd-caption" style={{ color: "var(--text-2)", fontWeight: 600 }}>
-        Why are you rejecting this?
-      </label>
-      <select
-        className="cd-input"
-        value={reason}
-        onChange={(e) => setReason(e.target.value as RejectReason)}
-        disabled={busy}
-        style={{
-          fontSize: "0.875rem",
-          padding: "6px 10px",
-          borderRadius: "var(--radius, 8px)",
-          border: "1px solid var(--border)",
-          background: "var(--surface-2)",
-          color: "var(--text-1)",
-          cursor: "pointer",
-        }}
-      >
-        {REJECT_REASONS.map((r) => (
-          <option key={r} value={r}>
-            {REJECT_REASON_LABELS[r]}
-          </option>
-        ))}
-      </select>
+    <div className="cd-reject-panel">
+      <p className="cd-caption" style={{ color: "var(--text-2)", fontWeight: 600 }}>
+        Why are you rejecting this? Calderyn learns from your reason.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {REJECT_REASONS.map((r) => {
+          const active = reason === r;
+          return (
+            <button
+              key={r}
+              type="button"
+              className={"cd-action-btn" + (active ? " rec" : "")}
+              onClick={() => setReason(r)}
+              disabled={busy}
+            >
+              <CDIcon
+                name={active ? "check" : "chevronRight"}
+                size={15}
+                strokeWidth={2}
+                style={{ opacity: active ? 1 : 0.45 }}
+              />
+              <span className="flex-1 text-left">{REJECT_REASON_LABELS[r]}</span>
+            </button>
+          );
+        })}
+      </div>
       {reason === "other" && (
         <textarea
           className="cd-input"
@@ -127,39 +128,15 @@ function RejectPanel({
           onChange={(e) => setNote(e.target.value)}
           disabled={busy}
           rows={2}
-          style={{
-            fontSize: "0.875rem",
-            padding: "6px 10px",
-            borderRadius: "var(--radius, 8px)",
-            border: "1px solid var(--border)",
-            background: "var(--surface-2)",
-            color: "var(--text-1)",
-            resize: "vertical",
-          }}
         />
       )}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          className="cd-btn"
-          style={{ background: "var(--red)", color: "#fff", opacity: busy ? 0.6 : 1 }}
-          disabled={busy}
-          onClick={onSubmit}
-        >
-          {busy ? (
-            <>
-              <CDIcon name="rotate" size={13} strokeWidth={2} />
-              Rejecting&hellip;
-            </>
-          ) : (
-            <>
-              <CDIcon name="x" size={13} strokeWidth={2.2} />
-              Confirm reject
-            </>
-          )}
-        </button>
-        <button className="cd-btn" disabled={busy} onClick={onCancel}>
+      <div className="flex gap-2">
+        <Btn kind="primary" small icon={busy ? "rotate" : "x"} disabled={busy || !reason} onClick={onSubmit}>
+          {busy ? "Rejecting" : "Confirm reject"}
+        </Btn>
+        <Btn kind="secondary" small disabled={busy} onClick={onCancel}>
           Cancel
-        </button>
+        </Btn>
       </div>
     </div>
   );
@@ -182,9 +159,7 @@ function ProposalRow({
   const detectorLabel = alertDetectorLabel(proposal.detector_id, alert?.evidence ?? {});
   const actionLabel = ACTION_LABELS[proposal.action_kind] ?? proposal.action_kind;
   const confPct = Math.min(100, Math.max(0, proposal.confidence));
-  const confLabel = confidenceLabel(confPct);
-  const confTone: "success" | "accent" | "warn" =
-    confPct >= 75 ? "success" : confPct >= 45 ? "accent" : "warn";
+  const conf = confidenceMeta(confPct);
 
   const onApprove = async () => {
     if (busy) return;
@@ -201,98 +176,76 @@ function ProposalRow({
   };
 
   return (
-    <div className="cd-row" style={{ alignItems: "flex-start", gap: 12, flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, width: "100%" }}>
+    <div className="cd-queue-item">
+      <div className="cd-queue-main">
         <span className="cd-feed-icon" data-tone="accent">
           <CDIcon name="bolt" size={14} strokeWidth={1.9} />
         </span>
-        <div
-          className="min-w-0 flex-1"
-          style={{ display: "flex", flexDirection: "column", gap: 6 }}
-        >
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            <span className="cd-row-title">{proposal.title}</span>
-          </div>
-          <div className="cd-caption" style={{ color: "var(--text-2)" }}>
-            {detectorLabel} &middot; {actionLabel}
-          </div>
-          <div className="cd-caption" style={{ color: "var(--text-3)" }}>
-            {proposal.reasoning}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
-            <div style={{ flex: 1, maxWidth: 120 }}>
-              <Meter pct={confPct} tone={confTone} height={5} />
-            </div>
-            <span className="cd-caption" style={{ color: "var(--text-2)", whiteSpace: "nowrap" }}>
-              {confLabel} confidence ({confPct}%)
+
+        <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+          <span className="cd-row-title">{proposal.title}</span>
+          <span className="cd-caption" style={{ color: "var(--text-2)" }}>
+            {detectorLabel} · {actionLabel}
+          </span>
+          {proposal.reasoning && (
+            <span className="cd-caption" style={{ color: "var(--text-3)" }}>
+              {proposal.reasoning}
             </span>
+          )}
+          <div className="flex items-center gap-2" style={{ marginTop: 2 }}>
+            <Pill tone={conf.tone} icon="bolt">
+              {conf.label} confidence · {confPct}%
+            </Pill>
           </div>
         </div>
-        <div
-          style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}
-        >
-          <div
-            className="cd-row-num tabular-nums"
-            style={{ color: "var(--red)", whiteSpace: "nowrap" }}
-          >
-            {money(proposal.dollar_impact)}
+
+        <div className="cd-queue-side">
+          <div className="text-right">
+            <div className="cd-row-num tabular-nums" style={{ color: "var(--red)" }}>
+              {money(proposal.dollar_impact)}
+            </div>
+            <div className="cd-caption">at risk</div>
           </div>
-          <div className="cd-caption">at risk</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              className="cd-btn"
-              style={{ color: "var(--red)" }}
+          <div className="flex gap-2">
+            <Btn
+              kind="secondary"
+              small
+              icon={showReject ? undefined : "x"}
               disabled={busy}
               onClick={() => setShowReject((v) => !v)}
             >
-              <CDIcon name="x" size={13} strokeWidth={2.2} />
               {showReject ? "Cancel" : "Reject"}
-            </button>
-            <button
-              className="cd-btn cd-btn-accent"
+            </Btn>
+            <Btn
+              kind="primary"
+              small
+              icon={busy ? "rotate" : "check"}
               disabled={busy || !alert}
               onClick={onApprove}
             >
-              {busy ? (
-                <>
-                  <CDIcon name="rotate" size={13} strokeWidth={2} />
-                  Running&hellip;
-                </>
-              ) : (
-                <>
-                  <CDIcon name="check" size={13} strokeWidth={2.2} />
-                  Approve
-                </>
-              )}
-            </button>
+              {busy ? "Running" : "Approve"}
+            </Btn>
           </div>
         </div>
       </div>
+
       {showReject && (
-        <div style={{ paddingLeft: 26, width: "100%" }}>
-          <RejectPanel
-            alertId={proposal.alertId}
-            toast={app.toast}
-            onDone={() => {
-              setShowReject(false);
-              onRejected(proposal.alertId);
-            }}
-            onCancel={() => setShowReject(false)}
-          />
-        </div>
+        <RejectPanel
+          alertId={proposal.alertId}
+          toast={app.toast}
+          onDone={() => {
+            setShowReject(false);
+            onRejected(proposal.alertId);
+          }}
+          onCancel={() => setShowReject(false)}
+        />
       )}
     </div>
   );
 }
 
 /* ---------- Learned rules section ---------- */
-function LearnedRulesSection({
-  rules,
-  app,
-}: {
-  rules: LearnedRuleVM[];
-  app: DashboardCtx;
-}) {
+function LearnedRulesSection({ rules, app }: { rules: LearnedRuleVM[]; app: DashboardCtx }) {
   const [undoingId, setUndoingId] = useState<string | null>(null);
 
   const onUndo = async (rule: LearnedRuleVM) => {
@@ -301,7 +254,7 @@ function LearnedRulesSection({
     try {
       await client.undoRule(rule.id);
       app.refresh();
-      app.toast("Rule removed — Calderyn will consider these actions again.", "undo");
+      app.toast("Rule removed. Calderyn will consider these actions again.", "undo");
     } catch (err) {
       const msg = err instanceof DashboardApiError ? err.message : "Could not remove rule.";
       app.toast(msg, "warn", "critical");
@@ -311,47 +264,42 @@ function LearnedRulesSection({
   };
 
   return (
-    <Card>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <h2 className="cd-h2" style={{ marginBottom: 2 }}>
-            What Calderyn has learned
-          </h2>
-          <p className="cd-caption" style={{ color: "var(--text-3)" }}>
-            Rules picked up from your rejections. Undo any rule to let Calderyn reconsider.
-          </p>
-        </div>
-        {rules.length === 0 ? (
-          <p className="cd-caption" style={{ color: "var(--text-3)" }}>
-            Nothing learned yet. As you reject suggestions, the rules Calderyn picks up will
-            appear here.
-          </p>
-        ) : (
-          rules.map((rule) => (
-            <div
-              key={rule.id}
-              className="cd-row"
-              style={{ alignItems: "center", justifyContent: "space-between", gap: 12 }}
-            >
-              <span className="cd-caption" style={{ color: "var(--text-2)", flex: 1 }}>
+    <Card pad={false}>
+      <div className="cd-pad-x cd-pad-t">
+        <h2 className="cd-h2">What Calderyn has learned</h2>
+        <p className="cd-caption" style={{ color: "var(--text-3)", marginTop: 2 }}>
+          Rules picked up from your rejections. Undo any rule to let Calderyn reconsider it.
+        </p>
+      </div>
+      {rules.length === 0 ? (
+        <Placeholder
+          icon="scan"
+          title="Nothing learned yet"
+          sub="As you reject suggestions, the rules Calderyn picks up about how you run your shop will appear here."
+        />
+      ) : (
+        <div className="cd-rows">
+          {rules.map((rule) => (
+            <div key={rule.id} className="cd-row" style={{ cursor: "default" }}>
+              <span className="cd-feed-icon" data-tone="neutral">
+                <CDIcon name="shield" size={14} strokeWidth={1.9} />
+              </span>
+              <span className="min-w-0 flex-1 cd-caption" style={{ color: "var(--text-2)" }}>
                 {rule.summary}
               </span>
-              <button
-                className="cd-btn"
+              <Btn
+                kind="secondary"
+                small
+                icon={undoingId === rule.id ? "rotate" : "undo"}
                 disabled={undoingId === rule.id}
                 onClick={() => onUndo(rule)}
               >
-                {undoingId === rule.id ? (
-                  <CDIcon name="rotate" size={13} strokeWidth={2} />
-                ) : (
-                  <CDIcon name="undo" size={13} strokeWidth={2} />
-                )}
                 Undo
-              </button>
+              </Btn>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -374,43 +322,50 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
   }, [app.actionQueue]);
 
   const sorted = [...proposals].sort((a, b) => b.confidence - a.confidence);
-
-  const onRejected = (alertId: string) => {
-    setProposals((prev) => prev.filter((p) => p.alertId !== alertId));
-  };
+  const atRisk = sorted.reduce((s, p) => s + p.dollar_impact, 0);
+  const loading = app.loading && sorted.length === 0;
 
   return (
     <div className="cd-screen">
       <ScreenHeader
         title="Action Queue"
-        sub="Calibration-ranked proposals — highest confidence first."
+        sub={
+          loading
+            ? "Lining up what Calderyn wants to do…"
+            : sorted.length === 0
+              ? "Approve or reject what Calderyn suggests to train your agent."
+              : `${sorted.length} waiting · ${money(atRisk)} at risk · approve or reject to train your agent`
+        }
       />
 
-      {app.loading && sorted.length === 0 ? (
-        <Placeholder title="Loading action queue…" />
+      {loading ? (
+        <Card>
+          <Placeholder icon="scan" title="Loading action queue" sub="Calibration is ranking your proposals." />
+        </Card>
       ) : sorted.length === 0 ? (
         <Card>
           <Placeholder
-            title="No proposals right now"
-            sub="Check back after the next detector sweep."
+            icon="check"
+            title="Nothing needs you right now"
+            sub="Calderyn will line up suggestions here as it spots money leaks. Approving and rejecting them trains your agent."
           />
         </Card>
       ) : (
-        <Card>
-          {sorted.map((p) => (
-            <ProposalRow
-              key={`${p.alertId}:${p.action_kind}`}
-              proposal={p}
-              app={app}
-              onRejected={onRejected}
-            />
-          ))}
+        <Card pad={false}>
+          <div className="cd-rows">
+            {sorted.map((p) => (
+              <ProposalRow
+                key={`${p.alertId}:${p.action_kind}`}
+                proposal={p}
+                app={app}
+                onRejected={(id) => setProposals((prev) => prev.filter((x) => x.alertId !== id))}
+              />
+            ))}
+          </div>
         </Card>
       )}
 
-      <div style={{ marginTop: 24 }}>
-        <LearnedRulesSection rules={app.learnedRules} app={app} />
-      </div>
+      <LearnedRulesSection rules={app.learnedRules} app={app} />
     </div>
   );
 }
