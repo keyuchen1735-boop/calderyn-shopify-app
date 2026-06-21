@@ -8,6 +8,7 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
+  LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
 } from "./view-models";
@@ -78,6 +79,9 @@ export interface DashboardCtx {
 
   /** Action Queue proposals; empty until loaded. */
   actionQueue: QueueProposalVM[];
+
+  /** Learned calibration rules; empty until loaded. */
+  learnedRules: LearnedRuleVM[];
 
   // --- data lifecycle ---
   refresh: () => void;

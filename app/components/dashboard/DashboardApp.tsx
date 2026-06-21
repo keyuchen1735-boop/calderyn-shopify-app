@@ -36,6 +36,7 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
+  LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
   Toast,
@@ -147,6 +148,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
   const [actionQueue, setActionQueue] = useState<QueueProposalVM[]>([]);
+  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[]>([]);
   const [loading, setLoading] = useState(true);
 
   // ----- live engine state -----
@@ -169,7 +171,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal, aq] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal, aq, lr] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
@@ -178,6 +180,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       client.fetchConsent(),
       client.fetchCalibration(),
       client.fetchActionQueue(),
+      client.fetchLearnedRules(),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -188,6 +191,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setConsent(co);
     setCalibration(cal);
     setActionQueue(aq);
+    setLearnedRules(lr);
   }, []);
 
   useEffect(() => {
@@ -494,6 +498,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     overview,
     calibration,
     actionQueue,
+    learnedRules,
     feed,
     liveOn,
     setLiveOn,
