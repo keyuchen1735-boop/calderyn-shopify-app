@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ActionKind,
   Alert,
   AuditEntry,
@@ -18,6 +18,7 @@ import type {
   TopAdRow,
 } from "./types";
 import { buildActionQueue } from "./calibration/queue.server";
+import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   affinityFromRow,
@@ -1291,6 +1292,13 @@ export function calderynClient(shop: string) {
         } catch (err) {
           rethrow("calibration.get", err);
         }
+      },
+      // Positive calibration signal. Resolves shopId internally so call sites
+      // need only the (detectorId, actionKind) pair. Never throws -- a bump
+      // failure must not surface as an action failure (see approval.server.ts).
+      async recordApproval(detectorId: string, actionKind: ActionKind): Promise<void> {
+        const shopId = await shopIdP;
+        await _recordApproval(shopId, detectorId, actionKind, supabase);
       },
     },
 

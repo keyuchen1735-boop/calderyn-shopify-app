@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+﻿import { Fragment, useEffect, useState } from "react";
 import {
   Form,
   useActionData,
@@ -31,6 +31,7 @@ import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
+import { recordApproval } from "~/lib/calibration/approval.server";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
@@ -333,6 +334,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       ) {
         successMessage += " — alert couldn't be acknowledged";
       }
+      // Positive calibration signal on success only.
+      // Never blocks the response (recordApproval never throws).
+      if (result.outcome === "succeeded") {
+        const sb1 = getSupabase();
+        await recordApproval(shopId, alert.detector_id, kind, sb1);
+      }
 
       return json<ActionPayload>({
         ok: result.outcome === "succeeded",
@@ -368,6 +375,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       await snoozeAlert(sb, shopId, alertId);
     } else {
       acknowledged = await acknowledgeAlert(sb, shopId, alertId);
+    }
+    // Positive calibration signal: merchant approved this (detector, action).
+    // snooze_alert is excluded -- it defers rather than approves the action.
+    // Never blocks the action result (recordApproval never throws).
+    if (kind !== "snooze_alert") {
+      await recordApproval(shopId, alert.detector_id, kind, sb);
     }
     return json<ActionPayload>({
       ok: true,
