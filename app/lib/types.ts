@@ -237,6 +237,13 @@ export interface GuardrailConfig {
   autopilot_max_daily_budget_cents: number | null;
 }
 
+/** Read-only calibration headline for a shop. Foundation slice: just the
+ * cached %; later slices add per-pair detail and trend. */
+export interface Calibration {
+  pct: number | null;
+  updated_at: string | null;
+}
+
 // --- Analytics (ad ROAS trend + per-campaign grade + ad engagement) ---
 
 export interface DailyRoasRow {

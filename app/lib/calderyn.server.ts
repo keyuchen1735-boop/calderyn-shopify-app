@@ -2,6 +2,7 @@ import type {
   ActionKind,
   Alert,
   AuditEntry,
+  Calibration,
   Campaign,
   CampaignGradeRow,
   CostSource,
@@ -1253,6 +1254,26 @@ export function calderynClient(shop: string) {
           return rowToGuardrails(data, await dailyUsedCents(shopId));
         } catch (err) {
           rethrow("guardrails.update", err);
+        }
+      },
+    },
+
+    calibration: {
+      async get(_signal?: AbortSignal): Promise<Calibration> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("shops")
+            .select("calibration_pct, calibration_updated_at")
+            .eq("id", shopId)
+            .maybeSingle();
+          if (error) throw error;
+          return {
+            pct: data?.calibration_pct == null ? null : Number(data.calibration_pct),
+            updated_at: (data?.calibration_updated_at as string | null) ?? null,
+          };
+        } catch (err) {
+          rethrow("calibration.get", err);
         }
       },
     },
