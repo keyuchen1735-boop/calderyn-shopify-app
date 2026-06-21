@@ -11,6 +11,15 @@ import {
   pickReallocation,
 } from "./reallocation-suggest.server";
 import { DETECTOR_LABELS } from "../labels";
+import { rankMoves, toNumericEvidence } from "../remediation/rank";
+import { enrichRemediation } from "../remediation/enrich.server";
+import type { MoveKind, StrategicMove } from "../remediation/types";
+import { remediationReason } from "./remediation-reason";
+import { checkSkuGuardrails } from "./remediation-guard.server";
+import { executeDiscontinueAlertAction } from "./alert-action.server";
+import { executeReallocateSpendSku } from "./reallocate-sku.server";
+import { calderynClient } from "../calderyn.server";
+import type { Alert, DetectorId } from "../types";
 
 const PAUSE_DETECTORS = new Set([
   "campaign_below_breakeven",
@@ -21,10 +30,21 @@ const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
 
+const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
+  "negative_unit_economics",
+  "ad_tax_overload",
+  "return_rate_hidden_loss",
+  "margin_erosion",
+  "cogs_drift",
+]);
+
 export interface AutopilotSummary {
   skipped: boolean;
   acted: number;
   blocked: number;
+  /** Remediation recommendations that were advisory/non-executable and not acted
+   *  on (distinct from `blocked`, which is a guardrail/cap/precondition refusal). */
+  skippedMoves: number;
   /** Candidates whose action threw (DB/ownership/insert error). Counted, logged,
    *  and skipped so the run keeps draining the rest; retriable platform failures
    *  are handled separately by the action-retry cron, not here. */
@@ -35,9 +55,190 @@ interface Candidate {
   alert_id: string;
   detector_id: string;
   dollar_impact: number; // dollars
-  campaign_id: string;
+  campaign_id: string | null; // nullable: SKU-only economics alerts have no campaign
   campaign_spend_cents: number;
   daily_budget_cents: number | null;
+  // New (Task 3 view): for the remediation plan + SKU targeting.
+  evidence: Record<string, unknown> | null;
+  sku: string | null;
+  sku_id: string | null;
+}
+
+// Maps a plan move's executor to a guarded execution. Returns "acted" |
+// "blocked" | "skipped" | "fell_through". "fell_through" means "not an
+// executable remediation move — let the legacy campaign logic handle it".
+type RemediationOutcome = "acted" | "blocked" | "skipped" | "fell_through";
+
+/** Try to act on the candidate's stored remediation recommendation. Returns
+ *  whether it acted/blocked/skipped, or "fell_through" to defer to the legacy
+ *  campaign logic. The decision is the Phase-1 plan + the Phase-3 enrichment —
+ *  we never re-rank or re-resolve the winner/campaign here (re-deriving would
+ *  drift from the merchant path, which routes the *same* enriched move). */
+async function tryRemediation(
+  shopId: string,
+  c: Candidate,
+  sb: SupabaseClient,
+): Promise<RemediationOutcome> {
+  if (!PRODUCT_ECON_DETECTORS.has(c.detector_id as DetectorId)) return "fell_through";
+
+  // Reuse the Phase-1 engine on the candidate's own evidence — identical input
+  // to attachRemediation(), so autopilot and the UI agree on the recommendation.
+  const dollarImpactCentsAlert = Math.round(Number(c.dollar_impact) * 100);
+  const basePlan = rankMoves({
+    detectorId: c.detector_id as DetectorId,
+    dollarImpactCents: dollarImpactCentsAlert,
+    evidence: toNumericEvidence(c.evidence ?? {}),
+  });
+
+  // Phase-3 enrichment fills the executable target + flips executor null →
+  // "reallocate_spend_sku"/cut kinds. Phase 4 calls the SAME resolver the
+  // merchant detail paths call — it does NOT re-derive the winner/campaign
+  // itself (re-deriving here would drift from the merchant path). enrich takes
+  // an Alert-shaped object; the candidate row carries everything it reads
+  // (id, detector_id, dollar_impact, evidence with sku_id).
+  const alertForEnrich = {
+    id: c.alert_id,
+    detector_id: c.detector_id as DetectorId,
+    dollar_impact: dollarImpactCentsAlert,
+    evidence: { ...(c.evidence ?? {}), sku_id: c.sku_id ?? undefined },
+  } as unknown as Alert;
+  const plan = await enrichRemediation(alertForEnrich, basePlan, sb, shopId);
+
+  const recommended = plan.recommended;
+  if (!recommended) {
+    // Only snooze applies → nothing to automate. Surface, don't drop (rule 12).
+    console.info(`[autopilot] remediation skip on alert ${c.alert_id}: no recommended move`);
+    return "skipped";
+  }
+  const move: StrategicMove | undefined = plan.moves.find((m) => m.kind === recommended);
+
+  // Advisory / not-yet-executable recommendation (executor null, or snooze):
+  // autopilot does not auto-snooze and does not act on advisory moves. This
+  // includes a reallocate_to_winner that enrichRemediation left advisory
+  // (no dedicated campaign / no winner → executor stayed null). Fall through so
+  // the legacy campaign logic can still pause/reduce if applicable.
+  if (!move || move.executor == null || move.executor === "snooze_alert") {
+    console.info(
+      `[autopilot] remediation skip on alert ${c.alert_id}: recommended ${recommended} is advisory/non-executable`,
+    );
+    return "fell_through";
+  }
+
+  const dollarImpactCents = move.dollarImpactCents;
+  const reason = remediationReason(plan, recommended as MoveKind, c.detector_id as DetectorId);
+  const idempotencyKey = `autopilot:${c.alert_id}:${move.executor}`;
+
+  // SKU-scoped move (discontinue_sku): SKU guard, no campaign needed. The Phase-2
+  // gateway takes a single opts object with a `client` (slice of calderynClient)
+  // and a Shopify `admin` client; it re-derives the product GID from the alert's
+  // own SKU record (never request input). Autopilot passes the alert id + reason.
+  if (move.executor === "discontinue_sku") {
+    if (!c.sku_id) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: discontinue_sku has no sku_id`);
+      return "blocked";
+    }
+    const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return "blocked";
+    }
+    const client = calderynClient(shopId);
+    const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+    await executeDiscontinueAlertAction({
+      client,
+      admin,
+      sb,
+      shopId,
+      alertId: c.alert_id,
+      kind: "discontinue_sku",
+      idempotencyKey,
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    return "acted";
+  }
+
+  // Campaign-scoped remediation moves: reallocate_spend_sku, or a plain cut via
+  // pause/reduce. These need a campaign; without one, block (rule 12 — the
+  // engine should not have offered an executable campaign move with no campaign).
+  if (!c.campaign_id) {
+    console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${move.executor} needs a campaign`);
+    return "blocked";
+  }
+
+  // SKU budget shift: route to the Phase-3 SKU gateway. It re-runs
+  // enrichRemediation server-side to re-resolve the loser→winner pair from the
+  // trusted alert (it does NOT trust client-supplied campaign ids), then
+  // delegates to the shipped executeReallocation. Autopilot passes only the
+  // alert id + idempotency key + reason; the enriched `target` we read above is
+  // used solely to confirm executor === "reallocate_spend_sku" before routing.
+  if (move.executor === "reallocate_spend_sku") {
+    const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return "blocked";
+    }
+    const client = calderynClient(shopId);
+    await executeReallocateSpendSku({
+      client,
+      sb,
+      shopId,
+      alertId: c.alert_id,
+      idempotencyKey,
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    return "acted";
+  }
+
+  // Plain cut: pause_campaign / reduce_campaign_budget through the existing
+  // campaign executor seam executeAction(shopId, ExecuteInput, sb) + the
+  // campaign guard. triggerReason flows through ExecuteInput.triggerReason.
+  if (move.executor === "pause_campaign" || move.executor === "reduce_campaign_budget") {
+    const currentBudgetCents = c.daily_budget_cents ?? null;
+    const newBudgetCents =
+      move.executor === "reduce_campaign_budget" && currentBudgetCents != null
+        ? Math.round(currentBudgetCents * 0.5) // mirror DEFAULT_MAX_CUT_PCT (guard enforces the live value)
+        : undefined;
+    if (move.executor === "reduce_campaign_budget" && !newBudgetCents) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: no current budget to cut`);
+      return "blocked";
+    }
+    const verdict = await checkGuardrails(
+      shopId,
+      {
+        kind: move.executor,
+        campaignId: c.campaign_id,
+        dollarImpactCents,
+        campaignSpendCents: c.campaign_spend_cents,
+        currentBudgetCents: currentBudgetCents ?? undefined,
+        newBudgetCents,
+      },
+      sb,
+    );
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return "blocked";
+    }
+    await executeAction(
+      shopId,
+      {
+        alertId: c.alert_id,
+        kind: move.executor,
+        campaignId: c.campaign_id,
+        idempotencyKey,
+        dailyBudgetCents: newBudgetCents,
+        actor: "autopilot",
+        triggerReason: reason,
+      },
+      sb,
+    );
+    return "acted";
+  }
+
+  // Unknown executor union member — fail visibly rather than silently dropping.
+  console.warn(`[autopilot] remediation skip on alert ${c.alert_id}: unhandled executor ${move.executor}`);
+  return "skipped";
 }
 
 function autopilotReason(
@@ -64,7 +265,7 @@ export async function runAutopilotForShop(
     .maybeSingle();
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled)
-    return { skipped: true, acted: 0, blocked: 0, failed: 0 };
+    return { skipped: true, acted: 0, blocked: 0, skippedMoves: 0, failed: 0 };
 
   const maxCutPct = Number(
     cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT,
@@ -80,7 +281,7 @@ export async function runAutopilotForShop(
   const { data: rows, error: aErr } = await sb
     .from("v_autopilot_candidates")
     .select(
-      "alert_id, detector_id, dollar_impact, campaign_id, campaign_spend_cents, daily_budget_cents",
+      "alert_id, detector_id, dollar_impact, campaign_id, campaign_spend_cents, daily_budget_cents, evidence, sku, sku_id",
     )
     .eq("shop_id", shopId)
     .order("dollar_impact", { ascending: false });
@@ -103,9 +304,16 @@ export async function runAutopilotForShop(
 
   let acted = 0;
   let blocked = 0;
+  let skippedMoves = 0;
   let failed = 0;
   for (const c of ordered) {
     try {
+      const rem = await tryRemediation(shopId, c, sb);
+      if (rem === "acted") { acted += 1; continue; }
+      if (rem === "blocked") { blocked += 1; continue; }
+      if (rem === "skipped") { skippedMoves += 1; continue; }
+      // rem === "fell_through": legacy campaign logic below.
+
       let kind: ExecutableKind | null = null;
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
       else if (BUDGET_DETECTORS.has(c.detector_id))
@@ -113,6 +321,18 @@ export async function runAutopilotForShop(
       else if (SCALE_DETECTORS.has(c.detector_id))
         kind = "increase_campaign_budget";
       if (!kind) continue;
+
+      // Legacy campaign logic requires a non-null campaign_id. A fell-through
+      // candidate without one (data gap in the view) is blocked, not silently
+      // dropped (rule 12).
+      if (!c.campaign_id) {
+        console.info(
+          `[autopilot] blocked legacy action on alert ${c.alert_id}: ${kind} requires campaign_id`,
+        );
+        blocked += 1;
+        continue;
+      }
+      const campaignId: string = c.campaign_id;
 
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
@@ -314,5 +534,5 @@ export async function runAutopilotForShop(
     }
   }
 
-  return { skipped: false, acted, blocked, failed };
+  return { skipped: false, acted, blocked, skippedMoves, failed };
 }
