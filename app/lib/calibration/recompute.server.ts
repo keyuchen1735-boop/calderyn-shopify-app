@@ -114,7 +114,7 @@ export async function recomputeShopCalibration(
     .from("alerts")
     .select("detector_id")
     .eq("shop_id", shopId)
-    .gte("created_at", sinceIso);
+    .gte("first_seen_at", sinceIso);
   if (alertErr) throw alertErr;
   const fires: Record<string, number> = {};
   for (const r of alertRows ?? []) fires[r.detector_id] = (fires[r.detector_id] ?? 0) + 1;
