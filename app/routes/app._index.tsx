@@ -26,7 +26,7 @@ import { fmtMoney, fmtRelTime } from "~/lib/format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
 import { ACTION_LABELS, ACTION_VERBS, detectorLabel, recommendedAction } from "~/lib/labels";
-import type { Alert, AuditEntry, Campaign, GuardrailConfig } from "~/lib/types";
+import type { Alert, AuditEntry, Calibration, Campaign, GuardrailConfig } from "~/lib/types";
 import { autopilotToasts, autopilotFailureLines, type AutopilotDecisionVM } from "~/lib/autopilot-banner";
 import {
   AlertCard,
@@ -35,6 +35,7 @@ import {
   Icon,
   StatTile,
 } from "~/components/calderyn";
+import CalibrationHeader from "~/components/calderyn/CalibrationHeader";
 
 type LoaderPayload = {
   alerts: Alert[];
@@ -47,6 +48,7 @@ type LoaderPayload = {
   // "Recovered (7d)" tile matches its label (audit.list returns up to 90d).
   recovered7d: { cents: number; count: number };
   benchmarks: PeerBenchmarks;
+  calibration: Calibration;
 };
 
 // Browser-safe shape of /app/autopilot/run's reply (the server AutopilotSummary).
@@ -96,12 +98,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Onboarded: load dashboard data, failing soft (error banner) on a transient
   // error instead of trapping the merchant.
   try {
-    const [alerts, audit, campaigns, guardrails, benchmarks] = await Promise.all([
+    const [alerts, audit, campaigns, guardrails, benchmarks, calibration] = await Promise.all([
       client.alerts.list({ status: "open" }, request.signal),
       client.audit.list(request.signal),
       client.campaigns.list(request.signal),
       client.guardrails.get(request.signal),
       getPeerBenchmarks(session.shop),
+      client.calibration.get(request.signal),
     ]);
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -115,6 +118,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       dashboardLoginUrl,
       recovered7d: recoveredWithin(audit, sinceIso),
       benchmarks,
+      calibration,
     });
   } catch (err) {
     // Any auth bounce thrown as a Response must propagate, not be misread as a
@@ -130,6 +134,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       dashboardLoginUrl,
       recovered7d: { cents: 0, count: 0 },
       benchmarks: { niche: "cat:uncategorized", consented: false, kpis: [] },
+      calibration: { pct: null, updated_at: null },
     });
   }
 };
@@ -152,6 +157,7 @@ export default function Dashboard() {
     dashboardLoginUrl,
     recovered7d,
     benchmarks,
+    calibration,
   } = useLoaderData<typeof loader>();
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -343,6 +349,12 @@ export default function Dashboard() {
             onDismiss={() => setBannerDismissed(true)}
           />
         )}
+
+        <Layout>
+          <Layout.Section>
+            <CalibrationHeader calibration={calibration} />
+          </Layout.Section>
+        </Layout>
 
         {smDown ? (
           /* ── Phone fallback: keep the Polaris stat grid + AlertCards (the
