@@ -21,12 +21,19 @@ export function recovered(entries: RecoveredInput[]): {
   const undone = new Set(
     entries.map((e) => e.undo_of).filter((id): id is string => Boolean(id)),
   );
-  const succeeded = entries.filter(
-    (e) => e.outcome === "succeeded" && !e.undo_of && !(e.id && undone.has(e.id)),
+  // Only actions that actually recovered money count toward "Recovered $X across
+  // N actions" — a succeeded snooze/neutral-resume recovers $0 and must not
+  // inflate N (else "$0 across 2 actions" reads as a contradiction). P1-4.
+  const recovering = entries.filter(
+    (e) =>
+      e.outcome === "succeeded" &&
+      !e.undo_of &&
+      !(e.id && undone.has(e.id)) &&
+      (e.dollar_impact_at_exec || 0) > 0,
   );
   return {
-    cents: succeeded.reduce((s, e) => s + (e.dollar_impact_at_exec || 0), 0),
-    count: succeeded.length,
+    cents: recovering.reduce((s, e) => s + (e.dollar_impact_at_exec || 0), 0),
+    count: recovering.length,
   };
 }
 

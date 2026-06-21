@@ -14,10 +14,15 @@ import {
 
 import dashboardUtils from "~/styles/dashboard-utils.css?url";
 import dashboard from "~/styles/dashboard.css?url";
+import rglStyles from "react-grid-layout/css/styles.css?url";
+import rglResize from "react-resizable/css/styles.css?url";
 
 // Utils first so the cd-* rules in dashboard.css can override the utility layer.
+// react-grid-layout base styles before dashboard.css so our .cd-tile rules win.
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: dashboardUtils },
+  { rel: "stylesheet", href: rglStyles },
+  { rel: "stylesheet", href: rglResize },
   { rel: "stylesheet", href: dashboard },
 ];
 

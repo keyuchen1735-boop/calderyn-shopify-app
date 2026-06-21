@@ -176,11 +176,15 @@ describe("POST /dashboard/api/campaigns/:id/action", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({
+    const failBody = await res.json();
+    expect(failBody).toMatchObject({
       error: "action_failed",
       audit_id: "audit-2",
       outcome: "failed",
     });
+    // A human message rides along so the dashboard toast isn't the raw code.
+    expect(typeof failBody.message).toBe("string");
+    expect(failBody.message.length).toBeGreaterThan(0);
   });
 });
 
@@ -363,6 +367,50 @@ describe("PUT /dashboard/api/guardrails", () => {
     expect(guardrailsUpdate).not.toHaveBeenCalled();
   });
 
+  it("passes the new patchable keys through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({});
+    const patch = {
+      business_hours_only: true,
+      business_hours: { start: "09:00", end: "17:00", tz: "America/New_York" },
+      autopilot_max_budget_increase_pct: 25,
+      autopilot_max_daily_budget_cents: 50_000,
+    };
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
+  });
+
+  it("forwards autopilot_bypass_guardrails through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({});
+    const patch = { autopilot_bypass_guardrails: true };
+    const res = (await guardrailsAction({
+      request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
+  });
+
+  it("422s on an out-of-range value above the sanity ceiling", async () => {
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { daily_action_budget_cents: 100_000_001 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
+
   it("accepts a zero cooldown and an autopilot-only patch (no budget/cap to validate)", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 0 });
     const res = (await guardrailsAction({
@@ -376,6 +424,51 @@ describe("PUT /dashboard/api/guardrails", () => {
     })) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 0, autopilot_enabled: true });
+  });
+
+  it("round-trips an Unlimited daily action cap (null) through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: null });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: null },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: null });
+  });
+
+  it("round-trips a Custom daily action cap (integer) through to update", async () => {
+    guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: 25 });
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: 25 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: 25 });
+  });
+
+  it("422s a zero daily action cap and never calls update", async () => {
+    const res = (await guardrailsAction({
+      request: post(
+        "https://calderyncompany.com/dashboard/api/guardrails",
+        { autopilot_daily_action_cap: 0 },
+        "PUT",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_guardrails");
+    expect(guardrailsUpdate).not.toHaveBeenCalled();
   });
 });
 

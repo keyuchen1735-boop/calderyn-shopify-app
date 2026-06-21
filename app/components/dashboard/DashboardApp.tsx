@@ -1,14 +1,17 @@
 // Calderyn DashV2 — app shell: sidebar nav, live data engine, tweaks, router.
 // Ported from the prototype's app.jsx, rewired to the real /dashboard/api/*
 // data layer (app/lib/dashboard/client.ts) instead of the static CD.* fixtures.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { presentActionOutcome } from "~/lib/action-outcome";
+import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
+import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
 import {
   TweaksPanel,
   TweakSection,
@@ -48,6 +51,7 @@ import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenSettings from "./screens/Settings";
+import ScreenLabs from "./screens/Labs";
 
 // `generator` is reachable via navigate() but intentionally absent from the rail
 // (same as the prototype — it's an inner flow off the predictor).
@@ -61,6 +65,10 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "audit", label: "Action history", icon: "clock" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
+
+// On phones the sidebar collapses to a bottom tab bar. These four ride the bar
+// (matching the mobile design); everything else in NAV_ITEMS lives behind "More".
+const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory"];
 
 const TWEAK_DEFAULTS = {
   dark: false,
@@ -81,15 +89,8 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   inventory: ScreenInventory,
   audit: ScreenAudit,
   settings: ScreenSettings,
-};
-
-const ACTION_VERBS: Record<string, string> = {
-  pause_campaign: "Paused campaign",
-  reduce_campaign_budget: "Reduced budget",
-  exclude_geo: "Excluded geo",
-  reallocate_inventory: "Reallocated inventory",
-  create_po_draft: "Created PO draft",
-  snooze_alert: "Snoozed alert",
+  // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
+  labs: ScreenLabs,
 };
 
 function relTime(ts: number): string {
@@ -109,11 +110,28 @@ function nextFeedId(): string {
 export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
+  // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Bumped by the More-sheet items to open the assistant / bug-report overlays
+  // (their floating launchers are hidden at phone width).
+  const [assistantSignal, setAssistantSignal] = useState(0);
+  const [bugSignal, setBugSignal] = useState(0);
 
   const navigate = useCallback((screen: ScreenId, param: string | null = null) => {
     setNav({ screen, param });
+    setMoreOpen(false);
     document.getElementById("cd-main")?.scrollTo({ top: 0 });
   }, []);
+
+  // Escape closes the More sheet (backdrop click handles pointer dismissal).
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moreOpen]);
 
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
@@ -186,6 +204,48 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     });
   }, [load, toast]);
 
+  // Returning to the tab does an immediate refresh instead of waiting up to one
+  // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
+  // it respects the "Live sync" toggle — off means the screen stays put.
+  useRefreshOnFocus(refresh, { enabled: liveOn });
+
+  // ----- autopilot: act immediately on load -----
+  // When autopilot is enabled, drain every open actionable alert the moment the
+  // dashboard opens (the /cron/autopilot schedule is the same engine for when
+  // it's closed). One banner per landed action, then re-pull audit + alerts so
+  // Action history shows the new "Autopilot" rows and resolved alerts drop.
+  // Fires ONCE per mount (autopilotRan ref): the run is idempotent server-side,
+  // and the live poller already streams any later cron actions.
+  const autopilotRan = useRef(false);
+  useEffect(() => {
+    if (autopilotRan.current || loading || !guardrails) return;
+    if (!guardrails.autopilot_enabled) return;
+    autopilotRan.current = true;
+    (async () => {
+      try {
+        const res = await client.runAutopilot();
+        const nameOf = (id: string) => campaigns.find((c) => c.id === id)?.name ?? "";
+        for (const b of autopilotToasts(res.decisions, nameOf)) toast(b.text, b.icon, b.tone);
+        // Surface failures too (rule 12) — a silent failed run (e.g. a dead Google
+        // Ads token) otherwise reads as "autopilot did nothing".
+        const failures = autopilotFailureLines(res.decisions, nameOf);
+        for (const line of failures) toast(`${line} — see Action history.`, "warn", "critical");
+        if (res.acted > 0 || failures.length > 0) {
+          const [au, al] = await Promise.all([
+            client.fetchAudit(),
+            client.fetchAlerts(undefined, campaigns),
+          ]);
+          setAudit(au);
+          setAlerts(al);
+        }
+      } catch (err) {
+        // Fail visibly (rule 12) but never break the dashboard render.
+        const msg = err instanceof DashboardApiError ? err.message : "Autopilot run failed.";
+        toast(msg, "warn", "critical");
+      }
+    })();
+  }, [loading, guardrails, campaigns, toast]);
+
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
     liveOn,
@@ -233,41 +293,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     async (alert: AlertVM, kind: ActionKind) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
-      const logAudit = (impact: number) => {
-        const entry: AuditVM = {
-          id: "au-live-" + Date.now(),
-          action_kind: kind,
-          verb: ACTION_VERBS[kind] ?? kind,
-          target: alert.campaign ?? alert.sku ?? alert.title,
-          detail: alert.rec_detail || alert.title,
-          dollar_impact_at_exec: impact,
-          outcome: "succeeded",
-          actor: "You",
-          when: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          undo_eligible: kind !== "snooze_alert",
-          undo_of: null,
-          pre: "—",
-          post: "—",
-          mode: "manual",
-          actorDisplay: "You",
-          marginBasis: "none",
-          marginBasisLabel: "No booked margin",
-          costLineage: [],
-          why: "Manual — dashboard",
-          stateDiff: [],
-        };
-        setAudit((au) => [entry, ...au]);
-        pushFeed({
-          kind: "action",
-          icon: kind === "snooze_alert" ? "snooze" : "bolt",
-          text: `${entry.verb} — ${entry.target}`,
-          sub: "Triggered from dashboard",
-          tone: "accent",
-          cents: impact,
-        });
-      };
-
       const markResolved = () => {
         setAlerts((as) =>
           as.map((a) => (a.id === alert.id ? { ...a, status: "resolved" } : a)),
@@ -305,25 +330,35 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             ? Math.round(campaign.daily_budget_cents * 0.7)
             : undefined;
         try {
-          await client.executeCampaignAction(alert.campaign_id, {
+          const { outcome } = await client.executeCampaignAction(alert.campaign_id, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
           });
-          markResolved();
-          setCampaigns((cs) =>
-            cs.map((c) => {
-              if (c.id !== alert.campaign_id) return c;
-              if (kind === "pause_campaign") return { ...c, status: "paused" };
-              return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
-            }),
-          );
+          const view = presentActionOutcome(outcome, label);
+          // A non-succeeded outcome (retrying / failed) must NOT resolve the
+          // alert or apply the optimistic paused/budget state — only a real
+          // platform success does (P0-1). The terminal `failed` outcome arrives
+          // as an HTTP 502 → DashboardApiError (caught below); a `retrying`
+          // arrives here as a 200 and is queued, not a success.
+          if (view.succeeded) {
+            markResolved();
+            setCampaigns((cs) =>
+              cs.map((c) => {
+                if (c.id !== alert.campaign_id) return c;
+                if (kind === "pause_campaign") return { ...c, status: "paused" };
+                return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
+              }),
+            );
+          }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
             .then((au) => setAudit(au))
             .catch(() => {});
-          toast(`${label} — done. Logged to action history.`, "check");
+          if (view.succeeded) toast(view.message, "check");
+          else if (view.isError) toast(view.message, "warn", "critical");
+          else toast(view.message, "clock");
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
@@ -361,18 +396,23 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // resolution.
       if (kind === "reallocate_inventory") {
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
-          markResolved();
+          const { outcome, acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const view = presentActionOutcome(outcome, label);
+          // Only a real success resolves the alert (P0-1); a Shopify failure
+          // arrives as an HTTP 502 → DashboardApiError (caught below).
+          if (view.succeeded) markResolved();
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
             .then((au) => setAudit(au))
             .catch(() => {});
-          toast(
-            `${label} — done. Logged to action history.` +
-              (acknowledged ? "" : " Alert couldn't be acknowledged."),
-            "check",
-          );
+          if (view.succeeded) {
+            toast(view.message + (acknowledged ? "" : " Alert couldn't be acknowledged."), "check");
+          } else if (view.isError) {
+            toast(view.message, "warn", "critical");
+          } else {
+            toast(view.message, "clock");
+          }
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
@@ -407,13 +447,22 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // enriched target.loserCampaignId routed to executeCampaignAction; until
       // then it stays advisory on the dashboard (embedded surface executes it).
 
-      // exclude_geo / create_po_draft: no live endpoint yet.
-      // TODO(api): wire these to real mutations once the endpoints exist.
-      markResolved();
-      logAudit(alert.dollar_impact);
-      toast(`${label} — logged.`, "check");
+      // No live dashboard endpoint for this kind. Two ways to land here:
+      //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
+      //       so the assistant renders "Review & confirm" (deep-link), not
+      //       "Run now"; only a direct executeAction caller reaches this.
+      //   (2) pause_campaign / reduce_campaign_budget on a (malformed) alert
+      //       with no campaign_id — the live branch above is skipped.
+      // Either way NEVER fake a success (rule 12): leave the alert unresolved
+      // and surface a visible toast, no phantom audit row.
+      // TODO(api): wire real mutations + acknowledge for (1).
+      toast(
+        `${label} isn't available on the dashboard yet — open it on the alert to review.`,
+        "warn",
+        "critical",
+      );
     },
-    [campaigns, pushFeed, toast],
+    [campaigns, toast],
   );
 
   const undoAction = useCallback(
@@ -513,6 +562,17 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
   const openCount = alerts.filter((a) => a.status === "open").length;
+  // The Labs replay masks as Campaigns, so keep "Campaigns" lit while it's open
+  // (sidebar, tab bar, and the "More" active state all read off this).
+  const activeNav: ScreenId = nav.screen === "labs" ? "campaigns" : nav.screen;
+
+  // Bottom-tab-bar partition: the four primary tabs (in design order) + the rest
+  // behind "More". "More" reads active whenever a non-primary screen is open.
+  const primaryTabs = PRIMARY_TABS.map(
+    (id) => NAV_ITEMS.find((n) => n.id === id)!,
+  );
+  const moreItems = NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
+  const onMoreScreen = !PRIMARY_TABS.includes(activeNav);
 
   return (
     <div className={"cd-root" + (t.dark ? " cd-dark" : "")} style={vars}>
@@ -548,7 +608,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             <button
               key={item.id}
               className="cd-nav-item"
-              data-active={nav.screen === item.id ? "1" : "0"}
+              data-active={activeNav === item.id ? "1" : "0"}
               onClick={() => navigate(item.id)}
             >
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
@@ -576,8 +636,110 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         <Screen app={app} />
       </main>
 
-      <AssistantPanel app={app} />
-      <BugReportButton app={app} />
+      <AssistantPanel app={app} openSignal={assistantSignal} />
+      <BugReportButton app={app} openSignal={bugSignal} />
+
+      {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}
+      <nav className="cd-tabbar" aria-label="Primary">
+        {primaryTabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="cd-tab"
+            data-active={activeNav === item.id ? "1" : "0"}
+            onClick={() => navigate(item.id)}
+          >
+            <span className="cd-tab-ico">
+              <CDIcon name={item.icon} size={22} strokeWidth={1.9} />
+              {item.id === "alerts" && openCount > 0 && (
+                <span className="cd-tab-count">{openCount}</span>
+              )}
+            </span>
+            <span className="cd-tab-label">{item.label}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          className="cd-tab"
+          data-active={onMoreScreen ? "1" : "0"}
+          aria-expanded={moreOpen}
+          aria-haspopup="menu"
+          onClick={() => setMoreOpen((v) => !v)}
+        >
+          <span className="cd-tab-ico">
+            <CDIcon name="more" size={22} strokeWidth={2} />
+          </span>
+          <span className="cd-tab-label">More</span>
+        </button>
+      </nav>
+
+      {/* "More" bottom sheet — secondary nav + the controls that lived in the
+          sidebar foot, so nothing is stranded when the sidebar is hidden. */}
+      {moreOpen && (
+        <div
+          className="cd-more-overlay"
+          role="presentation"
+          onClick={() => setMoreOpen(false)}
+        >
+          <div
+            className="cd-more-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cd-more-grab" aria-hidden="true" />
+            <nav className="cd-more-nav" aria-label="More">
+              {moreItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="cd-more-item"
+                  data-active={nav.screen === item.id ? "1" : "0"}
+                  onClick={() => navigate(item.id)}
+                >
+                  <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="cd-more-group">
+              <button
+                type="button"
+                className="cd-more-item"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setAssistantSignal((n) => n + 1);
+                }}
+              >
+                <CDIcon name="assist" size={18} strokeWidth={1.8} />
+                <span>Ask Calderyn</span>
+              </button>
+              <button
+                type="button"
+                className="cd-more-item"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setBugSignal((n) => n + 1);
+                }}
+              >
+                <CDIcon name="bug" size={18} strokeWidth={1.8} />
+                <span>Report a bug</span>
+              </button>
+            </div>
+            <div className="cd-more-foot">
+              <div className="cd-live-row">
+                <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
+                <span className="flex-1">Live sync</span>
+                <Toggle value={liveOn} onChange={setLiveOn} />
+              </div>
+              <div className="cd-caption" style={{ paddingLeft: 2 }}>
+                Shopify · Meta · Google · TikTok · QuickBooks
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ToastHost toasts={toasts} />
 

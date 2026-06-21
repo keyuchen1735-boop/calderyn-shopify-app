@@ -53,6 +53,29 @@ const MUTATION = /* GraphQL */ `
   }
 `;
 
+// A well-formed Shopify global id for a given type, e.g.
+// gid://shopify/InventoryItem/300. A malformed id (a bare/internal id, a seed
+// placeholder like "invitem-…", or the wrong type) is rejected by Shopify's
+// GraphQL layer as a raw "Invalid global id" parse error — see P0-2. Validate
+// the shape HERE so both relocate paths fail with a clear message before the
+// mutation instead of surfacing that raw error in the audit log.
+const SHOPIFY_GID_BY_TYPE = {
+  InventoryItem: /^gid:\/\/shopify\/InventoryItem\/\d+$/,
+  Location: /^gid:\/\/shopify\/Location\/\d+$/,
+} as const;
+
+function assertShopifyGid(
+  value: string,
+  type: keyof typeof SHOPIFY_GID_BY_TYPE,
+  field: string,
+): void {
+  if (!SHOPIFY_GID_BY_TYPE[type].test(value)) {
+    throw new Error(
+      `inventoryAdjustQuantities: ${field} must be a gid://shopify/${type}/<id> (got "${value}")`,
+    );
+  }
+}
+
 export async function inventoryAdjustQuantities(
   admin: AdminGraphqlClient,
   input: InventoryAdjustInput,
@@ -61,6 +84,9 @@ export async function inventoryAdjustQuantities(
   if (delta === 0) {
     throw new Error("inventoryAdjustQuantities called with delta=0");
   }
+  assertShopifyGid(input.inventoryItemId, "InventoryItem", "inventoryItemId");
+  assertShopifyGid(input.fromLocationId, "Location", "fromLocationId");
+  assertShopifyGid(input.toLocationId, "Location", "toLocationId");
 
   const variables = {
     input: {

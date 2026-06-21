@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Form,
   useActionData,
@@ -17,7 +17,7 @@ import {
   Button,
   ButtonGroup,
   Card,
-  DataTable,
+  Divider,
   InlineStack,
   Link,
   Modal,
@@ -27,14 +27,16 @@ import {
   Text,
   TextField,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import type { SelectGroup } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { PlatformIcon } from "../components/PlatformIcon";
 import { authenticate } from "../shopify.server";
 import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
-import { newIdempotencyKey } from "~/lib/ids";
+import { newIdempotencyKey, isUuid } from "~/lib/ids";
 import { sortActiveFirst } from "~/lib/campaign-sort";
+import { campaignBudgetLabel, campaignRoasLabel } from "~/lib/campaign-display";
 // Campaigns load from the live Meta API, where c.id is the Meta external id (e.g.
 // "1234567890"), but executeAction keys off the ad_campaign_dim UUID. The route
 // reverse-looks-up that UUID (resolveCampaignDimId) and, when found, runs the
@@ -94,39 +96,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    // Ingested campaigns from v_campaigns_flat cover EVERY connected platform
-    // (Meta, Google, TikTok). When Meta is live-connected, its rows are replaced
-    // by the live API list (works pre-ingest, fresher status); other platforms
-    // always come from the ingested view.
-    //
-    // TODO(merchant-review item 3): this live-Meta REPLACEMENT makes Campaigns
-    // and Analytics disagree. Analytics reads the ingested/graded Meta campaigns
-    // (campaign_grade_fact → ad_campaign_dim), but here those ingested rows are
-    // dropped and swapped for whatever the live ad account returns — a different
-    // set whenever the connected account doesn't match the ingested data (e.g.
-    // seeded/demo campaigns vs a real live account). The two surfaces then show
-    // different Meta campaigns. Reconciling them (back both from the same source,
-    // or overlay live status onto ingested rows instead of replacing) is a
-    // deferred maintainer decision — flagged, not yet fixed.
-    const ingested = await client.campaigns.list(request.signal);
-    const meta = await metaClientForShop(session.shop);
-    let campaigns: Campaign[];
-    if (meta) {
-      const live = await listCampaigns(meta.client, meta.adAccountId);
-      const liveMeta = live.map((c) => ({
-        id: c.id,
-        name: c.name,
-        platform: "Meta" as const,
-        status: c.status === "PAUSED" ? ("paused" as const) : ("active" as const),
-        daily_budget_cents: c.dailyBudgetCents ?? 0,
-        roas_7d: 0,
-        contribution_margin: 0,
-        spend_7d: 0,
-      }));
-      campaigns = [...liveMeta, ...ingested.filter((c) => c.platform !== "Meta")];
-    } else {
-      campaigns = ingested;
-    }
+    // Campaigns come from the ingested/graded view (v_campaigns_flat) for EVERY
+    // platform — the SAME source Analytics and the scale detector use — so the two
+    // surfaces agree and scale suggestions show for Meta too. (Previously Meta rows
+    // were replaced wholesale by the live Meta API list; that made Campaigns and
+    // Analytics disagree and hid Meta scale badges whenever the live account didn't
+    // match the graded data, e.g. seeded/demo campaigns. Status now comes from
+    // ingestion plus the optimistic mirror executeAction writes after each action;
+    // every campaign row is keyed by its ad_campaign_dim uuid, so actions resolve
+    // uniformly through the orchestrator — no per-platform external-id bridging.)
+    const campaigns: Campaign[] = await client.campaigns.list(request.signal);
 
     // Best-effort grade-driven prefill for the reallocate modal. Failure
     // degrades VISIBLY to "no suggestion" (no Suggested badges, defaults
@@ -233,10 +212,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Meta rows post the live external id; resolve to the dim uuid. The
     // composite action has NO legacy direct-Meta fallback: both campaigns
     // must be ingested before budget can be moved between them.
-    const sourceDim =
-      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
-    const destDim =
-      destPlatform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId) : destCampaignId;
+    // Rows are keyed by the ad_campaign_dim uuid (ingested source). Use it
+    // directly; the external-id resolve remains only as a fallback for any
+    // non-uuid id (legacy/stale form posts).
+    const sourceDim = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
+    const destDim = isUuid(destCampaignId)
+      ? destCampaignId
+      : destPlatform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId)
+        : destCampaignId;
     if (!sourceDim || !destDim) {
       return json<ActionPayload>(
         {
@@ -307,8 +295,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId =
-      platform === "Meta" ? await resolveCampaignDimId(sb, shopId, "meta", campaignId) : campaignId;
+    const dimId = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
+        ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
+        : campaignId;
     if (!dimId) {
       return json<ActionPayload>(
         {
@@ -429,8 +420,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   {
     const sb = getSupabase();
     const shopId = await resolveShopId(session.shop);
-    const dimId =
-      platform === "Meta"
+    const dimId = isUuid(campaignId)
+      ? campaignId
+      : platform === "Meta"
         ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
         : campaignId;
     if (dimId) {
@@ -671,6 +663,95 @@ function RowActions({
   );
 }
 
+/** One label/value pair in a mobile campaign card's metric row. */
+function CampaignMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <BlockStack gap="050">
+      <Text as="span" variant="bodyXs" tone="subdued">
+        {label}
+      </Text>
+      <Text as="span" variant="bodySm" fontWeight="semibold" numeric>
+        {value}
+      </Text>
+    </BlockStack>
+  );
+}
+
+/** Phone-width render of one campaign row: name link, platform + status (+ scale
+ *  suggestion) badges, the same kebab actions as the table, and a 3-up metric
+ *  row. Mirrors the desktop DataTable row using shared display helpers. */
+function CampaignCard({
+  c,
+  scaleSuggestion,
+  navigate,
+  reallocEligible,
+  setPending,
+  setBudgetInput,
+}: {
+  c: Campaign;
+  scaleSuggestion: ScalePrefill | null;
+  navigate: (path: string) => void;
+  reallocEligible: boolean;
+  setPending: (p: PendingAction) => void;
+  setBudgetInput: (v: string) => void;
+}) {
+  return (
+    <Box padding="400">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="start" gap="200" wrap={false}>
+          <BlockStack gap="150">
+            <Link
+              removeUnderline
+              onClick={() =>
+                navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
+              }
+            >
+              <Text as="span" fontWeight="semibold">
+                {c.name}
+              </Text>
+            </Link>
+            <InlineStack gap="150" blockAlign="center">
+              <PlatformTag platform={c.platform} />
+              <Badge tone={c.status === "active" ? "success" : "attention"}>
+                {c.status === "active" ? "Active" : "Paused"}
+              </Badge>
+              {scaleSuggestion ? (
+                <Tooltip content={scaleSuggestion.reason}>
+                  <Link
+                    removeUnderline
+                    onClick={() =>
+                      navigate(
+                        `/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}&scale=1`,
+                      )
+                    }
+                  >
+                    <Badge tone="success">Suggested: scale</Badge>
+                  </Link>
+                </Tooltip>
+              ) : null}
+            </InlineStack>
+          </BlockStack>
+          <RowActions
+            campaign={c}
+            reallocEligible={reallocEligible}
+            scaleSuggestion={scaleSuggestion}
+            setPending={setPending}
+            setBudgetInput={setBudgetInput}
+          />
+        </InlineStack>
+        <InlineStack gap="500">
+          <CampaignMetric
+            label="Daily budget"
+            value={campaignBudgetLabel(c.status, c.daily_budget_cents)}
+          />
+          <CampaignMetric label="7d spend" value={fmtMoney(c.spend_7d)} />
+          <CampaignMetric label="ROAS" value={campaignRoasLabel(c.roas_7d)} />
+        </InlineStack>
+      </BlockStack>
+    </Box>
+  );
+}
+
 export default function Campaigns() {
   const navigate = useEmbeddedNavigate();
   const { campaigns, reallocation, scaleSuggestions, error } = useLoaderData<typeof loader>();
@@ -678,6 +759,9 @@ export default function Campaigns() {
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
+  // Phones get a stacked card list instead of the 7-column DataTable (which
+  // would scroll horizontally and hide the row actions).
+  const { smDown } = useBreakpoints();
 
   // Reallocation needs both a source AND a destination with a daily budget —
   // gate every entry point on the same predicate so the modal can never open
@@ -701,6 +785,9 @@ export default function Campaigns() {
   };
   const [sortIndex, setSortIndex] = useState(4);
   const [sortDir, setSortDir] = useState<"ascending" | "descending">("descending");
+  const [platformFilter, setPlatformFilter] = useState<"All" | "Meta" | "Google" | "TikTok">("All");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 8;
 
   // Active campaigns always sort to the top; the chosen column orders rows
   // within each status group (paused never interleave with active).
@@ -709,44 +796,40 @@ export default function Campaigns() {
     return sortDir === "ascending" ? key(a) - key(b) : key(b) - key(a);
   });
 
-  const rows = sorted.map((c) => {
-    const scaleSuggestion = scaleSuggestions.find((s) => s.campaignId === c.id) ?? null;
-    return [
-      <Link
-        key={`n-${c.id}`}
-        removeUnderline
-        onClick={() =>
-          navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
-        }
-      >
-        <Text as="span" fontWeight="semibold">
-          {c.name}
-        </Text>
-      </Link>,
-      <PlatformTag key={`p-${c.id}`} platform={c.platform} />,
-      <InlineStack key={`s-${c.id}`} gap="200" blockAlign="center">
-        <Badge tone={c.status === "active" ? "success" : "attention"}>
-          {c.status === "active" ? "Active" : "Paused"}
-        </Badge>
-        {scaleSuggestion ? (
-          <Tooltip content={scaleSuggestion.reason}>
-            <Badge tone="success">Suggested: scale</Badge>
-          </Tooltip>
-        ) : null}
-      </InlineStack>,
-      c.status === "paused" ? "—" : fmtMoney(c.daily_budget_cents),
-      fmtMoney(c.spend_7d),
-      c.roas_7d > 0 ? `${c.roas_7d.toFixed(1)}×` : "—",
-      <RowActions
-        key={`act-${c.id}`}
-        campaign={c}
-        reallocEligible={reallocEligibleCount >= 2}
-        scaleSuggestion={scaleSuggestion}
-        setPending={setPending}
-        setBudgetInput={setBudgetInput}
-      />,
-    ];
-  });
+  // Desktop list: platform filter chips + pagination over the sorted list.
+  const filtered =
+    platformFilter === "All" ? sorted : sorted.filter((c) => c.platform === platformFilter);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageIdx = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = pageIdx * PAGE_SIZE;
+  const paged = filtered.slice(start, start + PAGE_SIZE);
+  const rangeText =
+    filtered.length === 0
+      ? "No campaigns match"
+      : `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} of ${filtered.length}`;
+  const scaleCount = scaleSuggestions.length;
+  // No break-even on the embedded Campaign type; "losing money" = a real ROAS
+  // below 1× (revenue under spend). roas_7d is 0 for un-joined live rows, so
+  // the > 0 guard keeps "no data" from being counted as losing.
+  const losingCount = campaigns.filter(
+    (c) => c.status === "active" && c.roas_7d > 0 && c.roas_7d < 1,
+  ).length;
+  const sortBy = (idx: number) => {
+    if (sortIndex === idx) setSortDir((d) => (d === "descending" ? "ascending" : "descending"));
+    else {
+      setSortIndex(idx);
+      setSortDir("descending");
+    }
+    setPage(0);
+  };
+  const sortInd = (idx: number) => (sortIndex === idx ? (sortDir === "ascending" ? " ↑" : " ↓") : "");
+  const sortCol = (idx: number) => (sortIndex === idx ? "#173a4d" : "#9a9a9a");
+  const PLATS: { key: "All" | "Meta" | "Google" | "TikTok"; dot?: string }[] = [
+    { key: "All" },
+    { key: "Meta", dot: "#1877F2" },
+    { key: "Google", dot: "#EA4335" },
+    { key: "TikTok", dot: "#111111" },
+  ];
 
   return (
     <Page
@@ -754,13 +837,11 @@ export default function Campaigns() {
       title="Campaigns"
       subtitle="All ad campaigns from your connected platforms — Meta, Google, and TikTok · pause, resume, or adjust budgets directly"
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
-      secondaryActions={[
-        {
-          content: "Reallocate budget",
-          onAction: () => setPending({ kind: "reallocate" }),
-          disabled: reallocEligibleCount < 2,
-        },
-      ]}
+      primaryAction={{
+        content: "Reallocate budget",
+        onAction: () => setPending({ kind: "reallocate" }),
+        disabled: reallocEligibleCount < 2,
+      }}
     >
       <BlockStack gap="400">
         {error && (
@@ -791,39 +872,166 @@ export default function Campaigns() {
               </BlockStack>
             </Box>
           </Card>
+        ) : smDown ? (
+          <Card padding="0">
+            {sorted.map((c, i) => (
+              <Fragment key={c.id}>
+                {i > 0 && <Divider />}
+                <CampaignCard
+                  c={c}
+                  scaleSuggestion={scaleSuggestions.find((s) => s.campaignId === c.id) ?? null}
+                  navigate={navigate}
+                  reallocEligible={reallocEligibleCount >= 2}
+                  setPending={setPending}
+                  setBudgetInput={setBudgetInput}
+                />
+              </Fragment>
+            ))}
+          </Card>
         ) : (
-        <Card padding="0">
-          <DataTable
-            columnContentTypes={[
-              "text",
-              "text",
-              "text",
-              "numeric",
-              "numeric",
-              "numeric",
-              "text",
-            ]}
-            headings={[
-              "Campaign",
-              "Platform",
-              "Status",
-              "Daily budget",
-              "7d spend",
-              <Tooltip key="roas" content="ROAS — revenue ÷ ad spend, before product costs">
-                <span>ROAS</span>
-              </Tooltip>,
-              "Actions",
-            ]}
-            rows={rows}
-            sortable={[false, false, false, true, true, true, false]}
-            defaultSortDirection="descending"
-            initialSortColumnIndex={4}
-            onSort={(index, direction) => {
-              setSortIndex(index);
-              setSortDir(direction === "ascending" ? "ascending" : "descending");
-            }}
-          />
-        </Card>
+          <BlockStack gap="300">
+            <div className="cmpx-toolbar">
+              <div className="cmpx-chips">
+                {PLATS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    className="cmpx-chip"
+                    data-on={platformFilter === p.key}
+                    onClick={() => {
+                      setPlatformFilter(p.key);
+                      setPage(0);
+                    }}
+                  >
+                    {p.dot && <span className="cmpx-chip-dot" style={{ background: p.dot }} />}
+                    {p.key}
+                  </button>
+                ))}
+              </div>
+              <span className="cmpx-summary">
+                {campaigns.length} campaigns · {scaleCount} to scale · {losingCount} losing money
+              </span>
+            </div>
+
+            <Card padding="0">
+              <div className="cmpx-scroll">
+                <div className="cmpx-table">
+                  <div className="cmpx-head">
+                    <span>Campaign</span>
+                    <span>Platform</span>
+                    <span>Status</span>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(3) }} onClick={() => sortBy(3)}>
+                      Daily budget{sortInd(3)}
+                    </button>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(4) }} onClick={() => sortBy(4)}>
+                      7d spend{sortInd(4)}
+                    </button>
+                    <button type="button" className="cmpx-sort cmpx-r" style={{ color: sortCol(5) }} onClick={() => sortBy(5)}>
+                      ROAS{sortInd(5)}
+                    </button>
+                    <span className="cmpx-r">Action</span>
+                  </div>
+
+                  {paged.map((c) => {
+                    const scaleSuggestion =
+                      scaleSuggestions.find((s) => s.campaignId === c.id) ?? null;
+                    const paused = c.status !== "active";
+                    const losing = !paused && c.roas_7d > 0 && c.roas_7d < 1;
+                    const sug = paused ? null : scaleSuggestion ? "scale" : losing ? "pause" : null;
+                    return (
+                      <div key={c.id} className="cmpx-row" data-dim={paused}>
+                        <button
+                          type="button"
+                          className="cmpx-name"
+                          title={c.name}
+                          onClick={() =>
+                            navigate(`/app/campaigns/${encodeURIComponent(c.id)}?platform=${c.platform}`)
+                          }
+                        >
+                          {c.name}
+                        </button>
+                        <span className="cmpx-plat">
+                          <PlatformIcon platform={c.platform} size={16} />
+                          {c.platform}
+                        </span>
+                        <div className="cmpx-status">
+                          {paused ? (
+                            <span className="cmpx-tag cmpx-tag-paused">Paused</span>
+                          ) : (
+                            <span className="cmpx-tag cmpx-tag-active">
+                              <span className="cmpx-tag-dot" />
+                              Active
+                            </span>
+                          )}
+                          {sug === "scale" && <span className="cmpx-tag cmpx-tag-scale">Scale suggested</span>}
+                          {sug === "pause" && <span className="cmpx-tag cmpx-tag-pause">Pause suggested</span>}
+                        </div>
+                        <span className="cmpx-num cmpx-r">
+                          {campaignBudgetLabel(c.status, c.daily_budget_cents)}
+                        </span>
+                        <span className="cmpx-num cmpx-r">{fmtMoney(c.spend_7d)}</span>
+                        <span className="cmpx-roas cmpx-r" style={{ color: losing ? "#b3300f" : "#1a1a1a" }}>
+                          {campaignRoasLabel(c.roas_7d)}
+                        </span>
+                        <div className="cmpx-actions">
+                          {sug === "scale" && scaleSuggestion && (
+                            <button
+                              type="button"
+                              className="cmpx-act cmpx-act-scale"
+                              onClick={() => setPending({ kind: "scale", campaign: c, suggestion: scaleSuggestion })}
+                            >
+                              Scale
+                            </button>
+                          )}
+                          {sug === "pause" && (
+                            <button
+                              type="button"
+                              className="cmpx-act cmpx-act-pause"
+                              onClick={() => setPending({ kind: "pause", campaign: c })}
+                            >
+                              Pause
+                            </button>
+                          )}
+                          <RowActions
+                            campaign={c}
+                            reallocEligible={reallocEligibleCount >= 2}
+                            scaleSuggestion={scaleSuggestion}
+                            setPending={setPending}
+                            setBudgetInput={setBudgetInput}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="cmpx-foot">
+                    <span className="cmpx-foot-range">{rangeText}</span>
+                    <div className="cmpx-pager">
+                      <button
+                        type="button"
+                        className="cmpx-page"
+                        disabled={pageIdx <= 0}
+                        onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      >
+                        ‹ Prev
+                      </button>
+                      <span className="cmpx-page-label">
+                        Page {pageIdx + 1} of {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        className="cmpx-page"
+                        disabled={pageIdx >= totalPages - 1}
+                        onClick={() => setPage((p) => p + 1)}
+                      >
+                        Next ›
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </BlockStack>
         )}
       </BlockStack>
 

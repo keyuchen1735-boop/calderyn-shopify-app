@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loader } from "../cron.detect";
 
-const { getSupabase } = vi.hoisted(() => ({
+const { getSupabase, runAutopilotForShop } = vi.hoisted(() => ({
   getSupabase: vi.fn(),
+  // Default: shop hasn't enabled autopilot (skipped). Individual tests override.
+  runAutopilotForShop: vi.fn().mockResolvedValue({ skipped: true, acted: 0, blocked: 0 }),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
+vi.mock("~/lib/actions/autopilot.server", () => ({ runAutopilotForShop }));
 
 const SHOP_A = "aaaaaaaa-0000-0000-0000-000000000001";
 
@@ -39,6 +42,7 @@ describe("cron.detect loader", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     process.env.CRON_SECRET = "s3cret";
+    runAutopilotForShop.mockResolvedValue({ skipped: true, acted: 0, blocked: 0 });
   });
 
   it("rejects an unauthorized request", async () => {
@@ -141,5 +145,67 @@ describe("cron.detect loader", () => {
 
     expect(body.errors).toEqual([SHOP_A]);
     expect(body.detected).toEqual([]);
+  });
+
+  it("runs autopilot inline for a shop whose detection surfaced new alerts", async () => {
+    // The point of chaining: a fresh money-losing alert is acted on the same
+    // cycle, not up to 30 min later on the next /cron/autopilot tick.
+    vi.stubEnv("SHOPIFY_APP_URL", "https://app.example.com");
+    getSupabase.mockReturnValue(fakeSb([SHOP_A]));
+    // Fresh Response per call — a Response body can only be read once.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ shop_id: SHOP_A, alert_ids: ["a1"] }), { status: 200 }),
+        ),
+      ),
+    );
+    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 2, blocked: 1 });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(runAutopilotForShop).toHaveBeenCalledWith(SHOP_A, expect.anything());
+    expect(body.autopiloted).toBe(2);
+    expect(body.autopilotErrors).toEqual([]);
+  });
+
+  it("skips autopilot when detection produced no new alerts", async () => {
+    vi.stubEnv("SHOPIFY_APP_URL", "https://app.example.com");
+    getSupabase.mockReturnValue(fakeSb([SHOP_A]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ shop_id: SHOP_A, alert_ids: [] }), { status: 200 }),
+        ),
+      ),
+    );
+
+    await loader({ request: req("Bearer s3cret") } as never);
+
+    expect(runAutopilotForShop).not.toHaveBeenCalled();
+  });
+
+  it("an inline autopilot failure does not mark detection as failed", async () => {
+    vi.stubEnv("SHOPIFY_APP_URL", "https://app.example.com");
+    getSupabase.mockReturnValue(fakeSb([SHOP_A]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ shop_id: SHOP_A, alert_ids: ["a1"] }), { status: 200 }),
+        ),
+      ),
+    );
+    runAutopilotForShop.mockRejectedValue(new Error("autopilot boom"));
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.detected).toEqual([SHOP_A]); // detection still succeeded
+    expect(body.errors).toEqual([]);
+    expect(body.autopilotErrors).toEqual([SHOP_A]);
   });
 });

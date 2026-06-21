@@ -20,7 +20,10 @@ export type Screen =
   | "analytics"
   | "inventory"
   | "audit"
-  | "settings";
+  | "settings"
+  // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
+  // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
+  | "labs";
 
 export interface NavState {
   screen: Screen;

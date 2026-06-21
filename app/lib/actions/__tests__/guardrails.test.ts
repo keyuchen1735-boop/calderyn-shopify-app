@@ -4,6 +4,7 @@ import type { AutopilotGuardrails, GuardrailFacts } from "../guardrails";
 
 const cfg: AutopilotGuardrails = {
   enabled: true,
+  bypassGuardrails: false,
   dailyActionCap: 3,
   minSpendCents: 20000,
   maxBudgetCutPct: 50,
@@ -38,6 +39,15 @@ describe("evaluateGuardrails", () => {
 
   it("blocks when the daily action cap is reached", () => {
     expect(evaluateGuardrails(cfg, { ...facts, todayAutopilotCount: 3 }).allowed).toBe(false);
+  });
+
+  it("skips the daily-cap check entirely when the cap is null (unlimited)", () => {
+    // null cap = "no daily cap": even a wildly high today-count must not block
+    // on the daily-cap axis. Every other rule still applies.
+    const unlimited: AutopilotGuardrails = { ...cfg, dailyActionCap: null };
+    expect(evaluateGuardrails(unlimited, { ...facts, todayAutopilotCount: 999 })).toEqual({
+      allowed: true,
+    });
   });
 
   it("blocks when campaign spend is below the minimum", () => {
@@ -94,9 +104,36 @@ describe("evaluateGuardrails", () => {
   });
 });
 
+describe("evaluateGuardrails · bypass mode", () => {
+  // These facts violate the daily cap, min spend, dollar cap, cooldown, the cut
+  // ceiling, AND business hours at once — bypass mode must ignore all of them.
+  const violating: GuardrailFacts = {
+    kind: "reduce_campaign_budget",
+    dollarImpactCents: 99_999_999, // over the dollar cap
+    campaignSpendCents: 0, // below min spend
+    currentBudgetCents: 10000,
+    newBudgetCents: 1000, // 90% cut, over maxBudgetCutPct
+    todayAutopilotCount: 999, // over the daily cap
+    minutesSinceLastActionOnCampaign: 1, // inside cooldown
+    nowUtcHour: 5, // outside business hours
+  };
+
+  it("skips every guardrail gate when bypassGuardrails is on", () => {
+    const bypass: AutopilotGuardrails = { ...cfg, bypassGuardrails: true, businessHoursOnly: true };
+    expect(evaluateGuardrails(bypass, violating)).toEqual({ allowed: true });
+  });
+
+  it("still blocks when autopilot is disabled, even with bypass on", () => {
+    // Bypass is subordinate to the enable kill-switch: it must be evaluated
+    // AFTER the enabled check, never before it.
+    const bypassButOff: AutopilotGuardrails = { ...cfg, enabled: false, bypassGuardrails: true };
+    expect(evaluateGuardrails(bypassButOff, violating)).toMatchObject({ allowed: false });
+  });
+});
+
 describe("evaluateGuardrails · reallocate_budget", () => {
   const cfg: AutopilotGuardrails = {
-    enabled: true, dailyActionCap: 10, minSpendCents: 0, maxBudgetCutPct: 50,
+    enabled: true, bypassGuardrails: false, dailyActionCap: 10, minSpendCents: 0, maxBudgetCutPct: 50,
     maxBudgetIncreasePct: 20, maxDailyBudgetCents: null,
     dollarCapCents: 100000, cooldownMinutes: 30, businessHoursOnly: false,
     businessHoursStartUtc: 0, businessHoursEndUtc: 0,

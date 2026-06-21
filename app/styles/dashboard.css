@@ -143,6 +143,107 @@
     .cd-grid-main, .cd-grid-duo, .cd-attn-grid { grid-template-columns: 1fr; }
   }
 
+  /* ============ mobile (phone) — sidebar collapses to a bottom tab bar ============ */
+  /* The tab bar, the More sheet, and the inventory card list exist only under the
+     phone breakpoint; hidden (and inert) at desktop/tablet widths. */
+  .cd-tabbar, .cd-more-overlay, .cd-sku-list { display: none; }
+
+  /* Stacked SKU cards (mobile inventory) — the wide table becomes one card per
+     SKU. Styled globally; the .cd-sku-list container gates visibility. */
+  .cd-sku-card { background: var(--card-solid); border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 13px 15px; }
+  .cd-sku-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .cd-sku-card-title { font-size: calc(14px * var(--type-scale)); font-weight: 550; letter-spacing: -0.01em; color: var(--text-1); }
+  .cd-sku-card-sku { font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--text-3); margin-top: 1px; }
+  .cd-sku-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px; }
+  .cd-sku-tile { background: var(--gray-bg); border-radius: 9px; padding: 7px 8px; min-width: 0; }
+  .cd-sku-tile-val { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); }
+  /* Ship-P&L tile reuses <ShipPnlCell> (.cd-row-num) for its color/provenance;
+     match it to the other tiles' value typography so the 4-up grid is uniform. */
+  .cd-sku-tile .cd-row-num { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; }
+  .cd-sku-tile-lab { font-size: 10px; color: var(--text-3); margin-top: 1px; white-space: nowrap; }
+  .cd-sku-card-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+  @media (max-width: 767px) {
+    /* shell: hide the rail, give the screen room and clearance for the tab bar */
+    .cd-sidebar { display: none; }
+    .cd-screen {
+      padding: calc(16px * var(--density)) calc(16px * var(--density))
+        calc(92px * var(--density));
+      gap: calc(16px * var(--density));
+    }
+    .cd-screen--wide { max-width: none; }
+    .cd-screen-head { align-items: flex-start; }
+    /* Match the design's phone screen titles (~24px) instead of the 30px desktop h1. */
+    .cd-h1 { font-size: calc(24px * var(--type-scale)); }
+    .cd-stat-grid { grid-template-columns: 1fr 1fr; }
+
+    /* bottom tab bar */
+    .cd-tabbar {
+      display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+      align-items: flex-start; justify-content: space-around;
+      padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+      background: var(--card-solid);
+      border-top: 0.5px solid var(--hairline-strong);
+      box-shadow: 0 -2px 16px -10px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(16px) saturate(1.4);
+    }
+    .cd-tab {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      width: 60px; padding: 1px 0; border: none; background: none; cursor: pointer;
+      font-family: inherit; font-size: 10px; font-weight: 500; color: var(--text-3);
+      letter-spacing: -0.005em; -webkit-tap-highlight-color: transparent;
+    }
+    .cd-tab[data-active="1"] { color: var(--accent); font-weight: 600; }
+    .cd-tab-ico { position: relative; display: inline-flex; }
+    .cd-tab-count {
+      position: absolute; top: -3px; right: -9px;
+      min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px;
+      background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .cd-tab-label { line-height: 1; }
+
+    /* More bottom sheet */
+    .cd-more-overlay {
+      display: flex; position: fixed; inset: 0; z-index: 70; align-items: flex-end;
+      background: color-mix(in oklch, black 28%, transparent);
+    }
+    .cd-more-sheet {
+      width: 100%; background: var(--card-solid); border-radius: 20px 20px 0 0;
+      padding: 8px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+      box-shadow: 0 -12px 40px -12px rgba(0, 0, 0, 0.4);
+      animation: cd-sheet-up 0.22s ease;
+    }
+    .cd-more-grab { width: 38px; height: 5px; border-radius: 3px; background: var(--hairline-strong); margin: 4px auto 10px; }
+    .cd-more-nav { display: flex; flex-direction: column; gap: 1px; }
+    .cd-more-item {
+      display: flex; align-items: center; gap: 12px; padding: 12px 10px;
+      border: none; background: none; border-radius: 10px; cursor: pointer;
+      font-family: inherit; text-align: left;
+      font-size: calc(15px * var(--type-scale)); font-weight: 480; color: var(--text-1);
+    }
+    .cd-more-item svg { color: var(--accent); opacity: 0.85; }
+    .cd-more-item[data-active="1"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    /* Utility actions (Ask Calderyn / Report a bug) separated from the screen nav. */
+    .cd-more-group { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--hairline); }
+    .cd-more-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px 2px; margin-top: 6px; border-top: 0.5px solid var(--hairline); }
+
+    /* inventory: table -> cards. The list's outer <Card> is just the desktop
+       table frame; on mobile the SKU cards stand alone on the background, so
+       strip the wrapper's chrome (the success state is the only one with a
+       .cd-sku-list child — loading/empty placeholders keep their card). */
+    .cd-table-scroll { display: none; }
+    .cd-card:has(> .cd-sku-list) { background: none; box-shadow: none; backdrop-filter: none; border-radius: 0; }
+    .cd-sku-list { display: flex; flex-direction: column; gap: 11px; padding: 0; }
+
+    /* The floating "Ask Calderyn" / "Report a bug" launchers overlap content on a
+       phone, so hide them and surface both from the More sheet instead. The chat
+       panel and bug modal themselves still open full-screen. */
+    .cd-chat-launcher, .cd-bug-launcher { display: none; }
+  }
+
+  @keyframes cd-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
   /* ============ stats ============ */
   .cd-stat { display: flex; flex-direction: column; gap: 4px; }
   .cd-stat-label { font-size: calc(13px * var(--type-scale)); font-weight: 500; color: var(--text-2); letter-spacing: -0.006em; }
@@ -173,12 +274,15 @@
     background: var(--gray-bg);
   }
 
-  /* ============ tooltip ============ */
+  /* ============ hover tooltip ============ */
   /* Styled hover/focus tooltip in the dashboard's own design system (replaces
-     native title= text). Reveal is CSS-only; rows/cards don't clip overflow
-     (only .cd-main scrolls), so the absolute bubble shows above the trigger. */
-  .cd-tip { position: relative; display: inline-flex; }
-  .cd-tip-pop {
+     native title= text). NOTE: class is `cd-htip`, NOT `cd-tip` — `.cd-tip` is
+     already taken by the chart hover-label below (position:absolute, fixed
+     width), and reusing it floated this wrapper out of flow over the row.
+     Reveal is CSS-only; rows/cards don't clip overflow (only .cd-main scrolls),
+     so the absolute bubble shows above the trigger. */
+  .cd-htip { position: relative; display: inline-flex; }
+  .cd-htip-pop {
     position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 60;
     width: max-content; max-width: 260px; padding: 8px 11px;
     border-radius: 10px; background: var(--card-solid); color: var(--text-1);
@@ -188,17 +292,17 @@
     opacity: 0; visibility: hidden; pointer-events: none;
     transform: translateY(4px); transition: opacity 0.14s ease, transform 0.14s ease;
   }
-  .cd-tip:hover .cd-tip-pop,
-  .cd-tip:focus-within .cd-tip-pop {
+  .cd-htip:hover .cd-htip-pop,
+  .cd-htip:focus-within .cd-htip-pop {
     opacity: 1; visibility: visible; transform: translateY(0);
   }
-  .cd-tip-pop::after {
+  .cd-htip-pop::after {
     content: ""; position: absolute; top: 100%; left: 14px;
     border: 5px solid transparent; border-top-color: var(--card-solid);
   }
   @media (prefers-reduced-motion: reduce) {
-    .cd-tip-pop { transition: opacity 0.14s ease; transform: none; }
-    .cd-tip:hover .cd-tip-pop, .cd-tip:focus-within .cd-tip-pop { transform: none; }
+    .cd-htip-pop { transition: opacity 0.14s ease; transform: none; }
+    .cd-htip:hover .cd-htip-pop, .cd-htip:focus-within .cd-htip-pop { transform: none; }
   }
 
   /* ============ controls ============ */
@@ -723,32 +827,16 @@
 .cd-benchmark-row { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
 .cd-kpi-value { font-size: calc(14px * var(--type-scale)); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 
-/* Peer Benchmarks — collapsible disclosure */
+/* Peer Benchmarks — graphic always shown (no disclosure toggle) */
 .cd-benchmarks { overflow: hidden; }
-.cd-bench-heading { margin: 0; }
-.cd-bench-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: calc(20px * var(--density)) calc(22px * var(--density));
-  background: none; border: 0; cursor: pointer; text-align: left;
-  color: inherit; font: inherit; transition: background 0.15s ease;
+.cd-bench-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(20px * var(--density)) calc(22px * var(--density)) 0;
 }
-.cd-bench-head:hover { background: var(--gray-bg); }
-.cd-bench-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.cd-bench-head .cd-badge { margin-left: auto; }
-.cd-bench-chevron {
-  display: inline-flex; color: var(--text-3);
-  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+.cd-bench-header .cd-badge { margin-left: auto; }
+.cd-bench-body {
+  padding: 0 calc(22px * var(--density)) calc(20px * var(--density));
 }
-.cd-bench-chevron[data-open="1"] { transform: rotate(90deg); }
-
-/* grid-rows trick animates 0fr -> 1fr without measuring height */
-.cd-collapse {
-  display: grid; grid-template-rows: 0fr;
-  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.cd-collapse[data-open="1"] { grid-template-rows: 1fr; }
-.cd-collapse-inner { min-height: 0; overflow: hidden; padding: 0 calc(22px * var(--density)); }
-.cd-collapse[data-open="1"] .cd-collapse-inner { padding-bottom: calc(20px * var(--density)); }
 
 /* Peer-distribution bar: your value plotted inside the peer spread */
 .cd-bench-track {
@@ -773,6 +861,167 @@
   border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--card);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .cd-bench-chevron, .cd-collapse { transition: none; }
+/* ---- Customizable dashboard grid (react-grid-layout) ---- */
+.cd-dash-grid {
+  position: relative;
 }
+.cd-tile {
+  height: 100%;
+  position: relative;
+}
+/* Clip box fills the cell and hides any scaled overflow, so a resized tile can
+   never bleed over its neighbours. Resize handles live on .cd-tile itself
+   (outside this box), so clipping never swallows them. */
+.cd-tile-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+/* True-zoom wrapper: laid out at cell-size ÷ scale, then transform-scaled back
+   to the cell (width/height/transform set inline per tile). The card/section
+   inside fills this virtual box, so the whole tile — text, gauges, buttons —
+   zooms as one piece and nothing reflows into a squished mess. */
+.cd-tile-scale {
+  transform-origin: top left;
+  display: flex;
+  flex-direction: column;
+}
+.cd-tile-scale > .cd-card,
+.cd-tile-scale > section,
+.cd-tile-scale > .cd-stat-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cd-tile-grip {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 2;
+  cursor: grab;
+  user-select: none;
+  line-height: 1;
+  font-size: 16px;
+  color: var(--text-3);
+}
+.cd-tile-grip:active {
+  cursor: grabbing;
+}
+.cd-dash-grid-editing .cd-tile {
+  outline: 1px dashed var(--border, #2a2a2a);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+.react-grid-item.react-grid-placeholder {
+  background: var(--accent);
+  opacity: 0.15;
+  border-radius: 12px;
+}
+
+/* ============ Calderyn Labs — "Autopilot replay" (hidden demo) ============ */
+/* Reached only via the secret hexagon dot in Settings. Ported from the
+   "Secret button feature request" Claude Design; light mode is pixel-identical.
+   The design's hardcoded #fff fills are mapped to var(--card-solid) (which is
+   #FFFFFF in light, #2C2C2E in dark) so the demo also reads correctly in dark
+   mode without changing a single light-mode pixel. */
+
+/* ---- secret trigger (Settings footer) ---- */
+.cd-secret-foot {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding-top: 6px; color: var(--text-3); font-size: 12px;
+}
+.cd-secret-dot {
+  width: 13px; height: 13px; padding: 0; border: none; background: none; cursor: pointer;
+  opacity: 0.28; transition: opacity 0.18s ease, transform 0.18s ease; display: inline-flex;
+}
+.cd-secret-dot svg { width: 13px; height: 13px; color: var(--accent); }
+.cd-secret-dot:hover { opacity: 1; transform: scale(1.18); }
+
+/* ---- lab bar ---- */
+.cd-labbar {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: -0.004em;
+}
+.cd-labbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.cd-labbar-replay {
+  margin-left: auto; border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-bg);
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 999px;
+  transition: background 0.14s ease;
+}
+.cd-labbar-replay:hover { background: color-mix(in oklch, var(--accent) 18%, transparent); }
+.cd-labbar-exit {
+  border: none; background: none; cursor: pointer; font-family: inherit;
+  font-size: 12.5px; font-weight: 500; color: var(--text-2); display: inline-flex; align-items: center; gap: 3px;
+}
+.cd-labbar-exit:hover { color: var(--text-1); }
+
+/* ---- agentic hero ---- */
+.cd-agentic {
+  background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 7%, var(--card-solid)), var(--card-solid) 62%);
+  border-radius: var(--radius);
+  box-shadow: var(--ring), 0 1px 1px rgba(0,0,0,0.02), 0 14px 40px -16px color-mix(in oklch, var(--accent) 50%, transparent);
+  overflow: hidden;
+}
+.cd-agentic-head { padding: 22px 24px 0; }
+.cd-auto-badge {
+  display: inline-flex; align-items: center; gap: 7px; background: var(--accent); color: #fff;
+  font-size: 11.5px; font-weight: 650; letter-spacing: 0.01em; padding: 4px 11px 4px 9px; border-radius: 999px; white-space: nowrap;
+}
+.cd-auto-ring {
+  width: 8px; height: 8px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 0 rgba(255,255,255,0.7); animation: cd-ring 1.8s ease infinite;
+}
+@keyframes cd-ring {
+  0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.6); }
+  70% { box-shadow: 0 0 0 6px rgba(255,255,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+.cd-agentic-title {
+  font-size: 23px; font-weight: 680; letter-spacing: -0.022em; margin: 14px 0 8px; line-height: 1.25;
+  max-width: 32ch; font-family: "SF Pro Display", -apple-system, sans-serif;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px;
+}
+.cd-arr { width: 22px; height: 22px; color: var(--accent); flex-shrink: 0; }
+.cd-arr-sm { width: 14px; height: 14px; vertical-align: -2px; color: var(--text-3); margin: 0 3px; }
+
+/* ---- metrics strip ---- */
+.cd-metrics {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--hairline-strong); margin: 20px 0 0; border-top: 0.5px solid var(--hairline-strong);
+}
+@media (max-width: 760px) { .cd-metrics { grid-template-columns: repeat(2, 1fr); } }
+.cd-metric { background: var(--card-solid); padding: 16px 18px; display: flex; flex-direction: column; gap: 3px; }
+.cd-metric-val {
+  font-size: 22px; font-weight: 680; letter-spacing: -0.026em; font-variant-numeric: tabular-nums;
+  font-family: "SF Pro Display", -apple-system, sans-serif;
+}
+.cd-metric-lab { font-size: 11.5px; color: var(--text-2); font-weight: 500; letter-spacing: -0.004em; }
+
+/* ---- timeline ---- */
+.cd-timeline { display: flex; flex-direction: column; padding: 6px 0 4px; }
+.cd-tl-row {
+  display: flex; align-items: flex-start; gap: 13px; padding: 9px 24px; position: relative;
+  animation: cd-tl-in 0.45s cubic-bezier(0.22,1,0.36,1);
+}
+@keyframes cd-tl-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: none; } }
+.cd-tl-ico {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gray-bg); color: var(--text-2); z-index: 1;
+}
+.cd-tl-ico[data-tone="critical"] { background: var(--red-bg); color: var(--red); }
+.cd-tl-ico[data-tone="accent"] { background: var(--accent-bg); color: var(--accent); }
+.cd-tl-row:not(:last-child) .cd-tl-ico::after {
+  content: ""; position: absolute; top: 39px; left: 38px; width: 1.5px; height: 14px; background: var(--hairline-strong);
+}
+.cd-tl-body { min-width: 0; flex: 1; padding-top: 4px; }
+.cd-tl-title { font-size: 13.5px; font-weight: 580; letter-spacing: -0.008em; }
+.cd-tl-sub { font-size: 12px; color: var(--text-2); margin-top: 1px; letter-spacing: -0.002em; }
+.cd-tl-time { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 500; padding-top: 5px; white-space: nowrap; }
+
+/* ---- paused-campaign flip card ---- */
+.cd-flipcard {
+  margin: 4px 22px 0; border: 0.5px solid var(--hairline-strong); border-radius: 13px;
+  padding: 13px 15px; display: flex; align-items: center; gap: 13px; background: var(--gray-bg);
+}
+.cd-strike { text-decoration: line-through; color: var(--text-3); }

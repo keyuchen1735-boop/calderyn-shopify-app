@@ -93,3 +93,18 @@ export async function exchangeCodeForToken(
     expiresInSec: res.expires_in ?? 0,
   };
 }
+
+/**
+ * Human-readable reason for a failed accessible-customer lookup during connect,
+ * derived from the raw Ads API error body. The common, non-bug case is
+ * NOT_ADS_USER: the merchant completed OAuth with a Google account that isn't
+ * linked to any Google Ads account (e.g. a personal Gmail) — give them an
+ * actionable "pick the right account" message instead of a raw 502. Anything
+ * else gets a safe generic prompt (the full body is still server-logged).
+ */
+export function googleConnectErrorReason(rawBody: string): string {
+  if (rawBody.includes("NOT_ADS_USER")) {
+    return "that Google account isn't linked to a Google Ads account — reconnect and choose the account that manages your ads";
+  }
+  return "we couldn't read your Google Ads account — reconnect and try again";
+}

@@ -11,7 +11,11 @@ import {
 } from "~/lib/dashboard/shopify-oauth.server";
 import { jsonError, rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 
-export const STATE_COOKIE_NAME = "dash_oauth";
+// __Host- prefix: the browser only accepts it over HTTPS, with Path=/ and no
+// Domain — so a sibling subdomain (or a network position on a less-secure host)
+// can't inject/fixate the OAuth state nonce. Matches __Host-dash_shop / the
+// __Host-calderyn_dash session cookie.
+export const STATE_COOKIE_NAME = "__Host-dash_oauth";
 
 // Long-lived hint so a returning merchant whose dashboard session expired (or
 // who bookmarked /dashboard) can be auto-redirected to Shopify without us

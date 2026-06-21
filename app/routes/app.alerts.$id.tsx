@@ -13,15 +13,16 @@ import {
   Badge,
   BlockStack,
   Banner,
+  Box,
   Button,
   Card,
   InlineStack,
-  Layout,
   Modal,
   Page,
   Text,
   TextField,
   Tooltip,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
@@ -33,10 +34,8 @@ import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
-import {
-  inventoryAdjustQuantities,
-  transferPlanFromEvidence,
-} from "~/lib/shopify/inventory.server";
+import { transferPlanFromEvidence } from "~/lib/shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "~/lib/demo/showcase.server";
 import {
   buildPoDraft,
   derivePoQuantity,
@@ -207,11 +206,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Guardrail: enforce the per-action dollar-impact cap server-side using the
     // alert's real impact (not a form value). Snooze is harmless and exempt.
     const guardrails = await client.guardrails.get(request.signal);
-    if (kind !== "snooze_alert" && alert.dollar_impact > guardrails.dollar_cap_cents) {
+    // alert.dollar_impact is ALREADY in cents (rowToAlert converts the DB dollars
+    // at the boundary), and so is dollar_cap_cents — compare directly. The prior
+    // `* 100` double-converted, inflating the impact 100x and tripping the cap on
+    // every action once a realistic (non-sentinel) cap is configured.
+    const impactCents = alert.dollar_impact;
+    if (kind !== "snooze_alert" && impactCents > guardrails.dollar_cap_cents) {
       throw new CalderynError({
         code: "GUARDRAIL_DOLLAR_CAP",
         status: 403,
-        message: `This action's impact (${fmtMoney(alert.dollar_impact)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
+        message: `This action's impact (${fmtMoney(impactCents)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
       });
     }
 
@@ -233,7 +237,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
-      const { operationId } = await inventoryAdjustQuantities(admin, plan);
+      // Resolve the shop id so the inventory transfer is simulated for a
+      // showcase/demo store (its seeded inventory item has no live Shopify
+      // object); a real shop falls through to the live Shopify mutation.
+      const invShopId = await resolveShopId(session.shop);
+      const { operationId } = await inventoryAdjustQuantitiesForShop(invShopId, admin, plan, getSupabase());
 
       execParams.inventory_item_id = plan.inventoryItemId;
       execParams.from_location_id = plan.fromLocationId;
@@ -578,163 +586,186 @@ export default function AlertDetail() {
       titleMetadata={
         <InlineStack gap="200">
           <SeverityBadge severity={alert.severity} />
-          <DetectorTag detectorId={alert.detector_id} />
+          <DetectorTag detectorId={alert.detector_id} evidence={alert.evidence} />
         </InlineStack>
       }
       subtitle={`Detected ${fmtAbsTime(alert.created_at)} · ${fmtRelTime(alert.created_at)}`}
     >
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            {actionData?.error && (
-              <Banner tone="critical" title="Action failed">
-                <p>{actionData.error.message}</p>
-              </Banner>
-            )}
-            {soldOut && (
-              <Banner tone="critical" title="This product is already sold out">
-                <p>
-                  On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s
-                  a stockout. Restock now, and pause or exclude the spend below until inventory is
-                  back so you stop paying for demand you can&apos;t fill.
-                </p>
-              </Banner>
-            )}
-            <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
+      <div className="alx-detail">
+        {/* LEFT MAIN */}
+        <div className="alx-detail-main">
+          {actionData?.error && (
+            <Banner tone="critical" title="Action failed">
+              <p>{actionData.error.message}</p>
+            </Banner>
+          )}
 
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingSm">
-                  What we noticed
-                </Text>
-                {/* title/sku_title duplicate the page header; threshold is an
-                    internal tuning constant, not merchant-facing signal. */}
-                <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </Layout.Section>
+          {/* Critical "already sold out" banner — design's red-header card,
+              rendered only when the alert's own evidence shows a real stockout. */}
+          {soldOut && (
+            <div className="alx-crit">
+              <div className="alx-crit-head">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  aria-hidden="true"
+                >
+                  <path d="M12 9v4M12 17h.01" />
+                  <path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                </svg>
+                <span>This product is already sold out</span>
+              </div>
+              <p className="alx-crit-body">
+                On-hand stock is <strong>0 units</strong> — this isn&apos;t a &ldquo;may sell
+                out&rdquo; risk, it&apos;s a stockout. Restock now, and pause or exclude the ad
+                spend below until inventory is back, so you stop paying for demand you can&apos;t
+                fill.
+              </p>
+            </div>
+          )}
 
-        <Layout.Section variant="oneThird">
-          <BlockStack gap="400">
-            <Card>
+          {/* "The take" — shared NarrativeCard renders the real Claude narrative
+              + priority rank in the design's accented-left card. */}
+          <NarrativeCard rank={alert.claude_rank}>{alert.narrative}</NarrativeCard>
+
+          {/* "What we noticed" — real evidence grid inside the design's card chrome. */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingSm">
+                What we noticed
+              </Text>
+              {/* title/sku_title duplicate the page header; threshold is an
+                  internal tuning constant, not merchant-facing signal. */}
+              <EvidencePanel evidence={evidence} hideKeys={["sku_title", "title", "threshold"]} />
+            </BlockStack>
+          </Card>
+        </div>
+
+        {/* RIGHT SIDEBAR — sticky on desktop (CSS), stacked on phones. */}
+        <div className="alx-detail-side">
+          {/* Recommended action */}
+          <div className="alx-side-card">
+            <div className="alx-side-pad">
+              <Text as="h2" variant="headingSm">
+                Recommended action
+              </Text>
+              <Tooltip content={IMPACT_METHODOLOGY}>
+                <span className="alx-loss-label">{IMPACT_LABEL}</span>
+              </Tooltip>
+              <div className="alx-loss-val">{fmtMoney(alert.dollar_impact)}</div>
               <BlockStack gap="300">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingSm">
-                    Recommended actions
-                  </Text>
-                  <Tooltip content={IMPACT_METHODOLOGY}>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {IMPACT_LABEL}
-                    </Text>
-                  </Tooltip>
-                  <Text as="p" variant="headingLg">
-                    {fmtMoney(alert.dollar_impact)}
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="300">
-                  {alert.remediation && (
-                    <BlockStack gap="200">
-                      {alert.rec_detail && (
-                        <Text as="p" variant="bodyMd">
-                          {alert.rec_detail}
-                        </Text>
-                      )}
-                      {alert.remediation.moves
-                        .filter((m) => m.kind !== "snooze")
-                        .map((m) => {
-                          const rec = m.kind === alert.remediation!.recommended;
-                          if (m.executor) {
-                            // Executable move. The kind submitted is the EXECUTOR,
-                            // which the action handler + DETECTOR_TO_ACTIONS gate on.
-                            // Tone: critical for destructive kinds (discontinue); primary
-                            // for value-recovering kinds (reallocate, cut_ads, etc.).
-                            const isDestructive = m.executor === "discontinue_sku";
-                            return (
-                              <InlineStack key={m.kind} gap="200" blockAlign="center" wrap={false}>
-                                {rec && <Badge tone="success">Recommended</Badge>}
-                                <Button
-                                  variant={rec ? "primary" : "secondary"}
-                                  tone={isDestructive ? "critical" : undefined}
-                                  loading={navigation.state !== "idle" && actionKind === m.executor}
-                                  onClick={() => setActionKind(m.executor as ActionKind)}
-                                >
-                                  {m.label}
-                                </Button>
-                              </InlineStack>
-                            );
-                          }
-                          // Advisory move (cut_ads / reallocate_to_winner / fix_returns
-                          // / review_pricing) — guidance text with optional ineligibleReason.
+                {alert.remediation && (
+                  <BlockStack gap="200">
+                    {alert.rec_detail && (
+                      <Text as="p" variant="bodyMd">
+                        {alert.rec_detail}
+                      </Text>
+                    )}
+                    {alert.remediation.moves
+                      .filter((m) => m.kind !== "snooze")
+                      .map((m) => {
+                        const rec = m.kind === alert.remediation!.recommended;
+                        if (m.executor) {
+                          // Executable move. The kind submitted is the EXECUTOR,
+                          // which the action handler + DETECTOR_TO_ACTIONS gate on.
+                          // Tone: critical for destructive kinds (discontinue); primary
+                          // for value-recovering kinds (reallocate, cut_ads, etc.).
+                          const isDestructive = m.executor === "discontinue_sku";
                           return (
-                            <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
+                            <InlineStack key={m.kind} gap="200" blockAlign="center" wrap={false}>
                               {rec && <Badge tone="success">Recommended</Badge>}
-                              <Text
-                                as="span"
-                                variant="bodyMd"
-                                fontWeight={rec ? "semibold" : "regular"}
+                              <Button
+                                variant={rec ? "primary" : "secondary"}
+                                tone={isDestructive ? "critical" : undefined}
+                                loading={navigation.state !== "idle" && actionKind === m.executor}
+                                onClick={() => setActionKind(m.executor as ActionKind)}
                               >
                                 {m.label}
-                              </Text>
-                              {m.ineligibleReason && (
-                                <Text as="span" variant="bodyXs" tone="subdued">
-                                  — {m.ineligibleReason}
-                                </Text>
-                              )}
+                              </Button>
                             </InlineStack>
                           );
-                        })}
-                      <Text as="p" variant="bodyXs" tone="subdued">
-                        Advisory moves are guidance; the highlighted action runs with one click.
-                      </Text>
-                    </BlockStack>
-                  )}
-                  {dedupedAllowedActions.map((kind, i) => {
-                    const deepLink = DEEP_LINK_ACTIONS[kind];
-                    const button = deepLink ? (
-                      <Button fullWidth onClick={() => navigate(deepLink.path)}>
-                        {ACTION_LABELS[kind]} →
-                      </Button>
-                    ) : (
-                      <Button
-                        variant={i === 0 ? "primary" : undefined}
-                        onClick={() => setActionKind(kind)}
-                        fullWidth
-                      >
-                        {ACTION_LABELS[kind]}
-                      </Button>
-                    );
-                    return i === 0 ? (
-                      <BlockStack key={kind} gap="100">
-                        {button}
-                        <InlineStack gap="150" blockAlign="center">
-                          <Badge tone="success">Recommended</Badge>
-                          <Text as="span" variant="bodyXs" tone="subdued">
-                            best at preventing the loss above
-                          </Text>
-                        </InlineStack>
-                      </BlockStack>
-                    ) : (
-                      <Fragment key={kind}>{button}</Fragment>
-                    );
-                  })}
-                </BlockStack>
-              </BlockStack>
-            </Card>
-
-            {guardrails && (
-              <Card>
-                <BlockStack gap="300">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingSm">
-                      {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {guardrails.autopilot_enabled
-                        ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
-                        : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
+                        }
+                        // Advisory move (cut_ads / reallocate_to_winner / fix_returns
+                        // / review_pricing) — guidance text with optional ineligibleReason.
+                        return (
+                          <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
+                            {rec && <Badge tone="success">Recommended</Badge>}
+                            <Text as="span" variant="bodyMd" fontWeight={rec ? "semibold" : "regular"}>
+                              {m.label}
+                            </Text>
+                            {m.ineligibleReason && (
+                              <Text as="span" variant="bodyXs" tone="subdued">
+                                — {m.ineligibleReason}
+                              </Text>
+                            )}
+                          </InlineStack>
+                        );
+                      })}
+                    <Text as="p" variant="bodyXs" tone="subdued">
+                      Advisory moves are guidance; the highlighted action runs with one click.
                     </Text>
                   </BlockStack>
+                )}
+                {dedupedAllowedActions.map((kind, i) => {
+                  const deepLink = DEEP_LINK_ACTIONS[kind];
+                  const button = deepLink ? (
+                    <Button fullWidth onClick={() => navigate(deepLink.path)}>
+                      {ACTION_LABELS[kind]} →
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={i === 0 && !alert.remediation?.recommended ? "primary" : undefined}
+                      onClick={() => setActionKind(kind)}
+                      fullWidth
+                    >
+                      {ACTION_LABELS[kind]}
+                    </Button>
+                  );
+                  // When a remediation plan already emphasises its recommended
+                  // move above, don't also stamp "Recommended" on the first
+                  // legacy action (would show two recommendations).
+                  return i === 0 && !alert.remediation?.recommended ? (
+                    <BlockStack key={kind} gap="100">
+                      {button}
+                      <InlineStack gap="150" blockAlign="center">
+                        <Badge tone="success">Recommended</Badge>
+                        <Text as="span" variant="bodyXs" tone="subdued">
+                          best at preventing the loss above
+                        </Text>
+                      </InlineStack>
+                    </BlockStack>
+                  ) : (
+                    <Fragment key={kind}>{button}</Fragment>
+                  );
+                })}
+              </BlockStack>
+            </div>
+          </div>
+
+          {/* Your action limits / guardrails */}
+          {guardrails && (
+            <div className="alx-side-card">
+              <div className="alx-side-pad">
+                <div className="alx-limits-head">
+                  <Text as="h2" variant="headingSm">
+                    {guardrails.autopilot_enabled ? "Before Autopilot acts" : "Your action limits"}
+                  </Text>
+                  <span
+                    className={`alx-ap ${guardrails.autopilot_enabled ? "alx-ap-on" : "alx-ap-off"}`}
+                  >
+                    {guardrails.autopilot_enabled ? "Autopilot on" : "Autopilot off"}
+                  </span>
+                </div>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {guardrails.autopilot_enabled
+                    ? "Autopilot only runs an action when every check below passes. If any fail, the action waits for your approval."
+                    : "Autopilot is off — nothing runs without your approval. These limits apply to actions you approve here, and to Autopilot if you turn it on in Settings."}
+                </Text>
+                <Box paddingBlockStart="300">
                   <GuardrailMeter
                     label="Today's action budget"
                     usedCents={guardrails.daily_action_budget_used_cents}
@@ -752,6 +783,7 @@ export default function AlertDetail() {
                       },
                       {
                         label: `Per-action cap · ${fmtMoney(guardrails.dollar_cap_cents)} max risk per action`,
+                        // alert.dollar_impact is already cents (see action handler above).
                         ok: alert.dollar_impact <= guardrails.dollar_cap_cents,
                       },
                       {
@@ -762,15 +794,15 @@ export default function AlertDetail() {
                       },
                     ]}
                   />
-                  <Text as="p" variant="bodyXs" tone="subdued">
-                    Min {guardrails.cooldown_minutes} min between actions on the same campaign.
-                  </Text>
-                </BlockStack>
-              </Card>
-            )}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+                </Box>
+                <div className="alx-limits-foot">
+                  Min {guardrails.cooldown_minutes} min between actions on the same campaign.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {actionKind && (
         <ExecuteActionModal
@@ -815,6 +847,7 @@ function ExecuteActionModal({
       ? (poDefaults.unit_cost_cents / 100).toFixed(2)
       : "",
   );
+  const { smDown } = useBreakpoints();
 
   const inventoryHints =
     kind === "reallocate_inventory"
@@ -854,32 +887,39 @@ function ExecuteActionModal({
                 creates another draft.
               </Banner>
             )}
-            {kind === "create_po_draft" && (
-              <InlineStack gap="200" wrap={false}>
-                <TextField
-                  label="Quantity"
-                  name="po_quantity"
-                  type="number"
-                  min={1}
-                  max={1_000_000}
-                  value={poQuantity}
-                  onChange={setPoQuantity}
-                  autoComplete="off"
-                />
-                <TextField
-                  label="Unit cost"
-                  name="po_unit_cost"
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  prefix="$"
-                  value={poUnitCost}
-                  onChange={setPoUnitCost}
-                  autoComplete="off"
-                  helpText="Leave blank if unknown — printed as TBD."
-                />
-              </InlineStack>
-            )}
+            {kind === "create_po_draft" && (() => {
+              const poFields = (
+                <>
+                  <TextField
+                    label="Quantity"
+                    name="po_quantity"
+                    type="number"
+                    min={1}
+                    max={1_000_000}
+                    value={poQuantity}
+                    onChange={setPoQuantity}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="Unit cost"
+                    name="po_unit_cost"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    prefix="$"
+                    value={poUnitCost}
+                    onChange={setPoUnitCost}
+                    autoComplete="off"
+                    helpText="Leave blank if unknown — printed as TBD."
+                  />
+                </>
+              );
+              return smDown ? (
+                <BlockStack gap="200">{poFields}</BlockStack>
+              ) : (
+                <InlineStack gap="200" wrap={false}>{poFields}</InlineStack>
+              );
+            })()}
             {missingInventoryFields ? (
               <Banner tone="critical">
                 Alert evidence is missing the inventory item, source location, destination, or

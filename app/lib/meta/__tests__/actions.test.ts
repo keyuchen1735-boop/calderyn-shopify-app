@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeMetaActionAdapter } from "../actions.server";
-import { isRetriableFailure } from "../../ads/actions";
+import { ActionError, isRetriableFailure } from "../../ads/actions";
 import { RateLimitError } from "../../ads/backoff";
 import type { MetaClient } from "../campaigns.server";
 
@@ -75,7 +75,7 @@ describe("metaActionAdapter rate limiting", () => {
     expect(c.post).toHaveBeenCalledTimes(1);
   });
 
-  it("pause retries a throttled status post through setCampaignStatus", async () => {
+  it("pause retries a throttled status post", async () => {
     let calls = 0;
     const c: MetaClient = {
       get: vi.fn(async () => ({})),
@@ -95,5 +95,59 @@ describe("metaActionAdapter rate limiting", () => {
     const s = await makeMetaActionAdapter(c, NO_SLEEP).getState("c1");
     expect(s).toEqual({ status: "paused", dailyBudgetCents: 500 });
     expect(c.get).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A permanent Graph error (object deleted on Meta's side, dead token, missing
+// permission) must fail TERMINALLY, not park as `retrying`. Misclassifying it
+// retriable both burns the action-retry budget against an action that can never
+// succeed AND (because the dashboard route returns HTTP 200 for `retrying`) lets
+// the UI report a false success. Regression guard for P0-1.
+describe("metaActionAdapter permanent-error classification", () => {
+  const NO_SLEEP = { maxAttempts: 3, baseDelayMs: 1, sleep: async () => {} };
+  const errResponse = (message: string, code: number) => ({ error: { message, code } });
+  const grab = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
+
+  it("pause classifies 'object does not exist' (code 100) as a terminal, non-retriable failure", async () => {
+    const c: MetaClient = {
+      get: vi.fn(async () => ({})),
+      post: vi.fn(async () =>
+        errResponse("Unsupported post request. Object with ID '120247426477610026' does not exist", 100),
+      ),
+    };
+    const err = await grab(makeMetaActionAdapter(c, NO_SLEEP).pause("c1"));
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(false);
+    expect(c.post).toHaveBeenCalledTimes(1); // no retry of a permanent error
+  });
+
+  it("resume classifies an expired token (code 190) as non-retriable", async () => {
+    const c: MetaClient = {
+      get: vi.fn(async () => ({})),
+      post: vi.fn(async () => errResponse("Error validating access token", 190)),
+    };
+    const err = await grab(makeMetaActionAdapter(c, NO_SLEEP).resume("c1"));
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(false);
+  });
+
+  it("setDailyBudget classifies a permissions error (code 200) as non-retriable", async () => {
+    const c: MetaClient = {
+      get: vi.fn(async () => ({})),
+      post: vi.fn(async () => errResponse("Permissions error", 200)),
+    };
+    const err = await grab(makeMetaActionAdapter(c, NO_SLEEP).setDailyBudget("c1", 700));
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(false);
+  });
+
+  it("keeps an unknown/transient Graph error retriable (a blip must not lose the recovery)", async () => {
+    const c: MetaClient = {
+      get: vi.fn(async () => ({})),
+      post: vi.fn(async () => errResponse("Temporary internal error", 2)),
+    };
+    const err = await grab(makeMetaActionAdapter(c, NO_SLEEP).pause("c1"));
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(true);
   });
 });

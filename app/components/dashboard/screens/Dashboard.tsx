@@ -3,7 +3,8 @@
 // CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
 // CDIcon/CD_ACTION_ICON (icons), RingGauge/GradePill/etc. (ui). Charts/cards reuse ui.tsx.
 import type { ReactNode } from "react";
-import { useState, useEffect } from "react";
+import { IMPACT_SUFFIX } from "~/lib/impact-window";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   SectionTitle,
@@ -17,7 +18,7 @@ import {
   RingGauge,
   GradePill,
 } from "../ui";
-import { money, DETECTOR_TERMS, ACTION_LABELS, timeAgo } from "../format";
+import { money, detectorLabel, ACTION_LABELS, timeAgo } from "../format";
 import { trueRoas } from "~/lib/roas";
 import { recoveredWithin } from "~/lib/recovered";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
@@ -25,6 +26,19 @@ import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
 import { PeerBenchmarks } from "./PeerBenchmarks";
 import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
+import { Responsive, WidthProvider } from "react-grid-layout";
+import type { Layout, Layouts } from "react-grid-layout";
+import {
+  loadSavedLayouts,
+  saveLayouts,
+  resetLayouts,
+  tileScale,
+  DEFAULT_LAYOUTS,
+  DASH_BREAKPOINTS,
+  DASH_COLS,
+} from "./dashboard-layout";
+
+const DashGrid = WidthProvider(Responsive);
 
 /* ---------- Header pieces ---------- */
 function ScreenHeader({
@@ -70,6 +84,20 @@ function FocusCard({ app }: { app: DashboardCtx }) {
     .sort((a, b) => a.claude_rank - b.claude_rank);
   const focus = open[0];
   if (!focus) {
+    // Cold load: before the first alerts fetch resolves, app.alerts is empty —
+    // show a loading state, NOT "All clear", which would look like a healthy
+    // store when we simply haven't fetched yet (P2-9).
+    if (app.loading && app.alerts.length === 0) {
+      return (
+        <Card className="cd-focus">
+          <Placeholder
+            icon="clock"
+            title="Checking your store…"
+            sub="Loading open alerts across ad spend and inventory."
+          />
+        </Card>
+      );
+    }
     return (
       <Card className="cd-focus">
         <Placeholder
@@ -86,7 +114,7 @@ function FocusCard({ app }: { app: DashboardCtx }) {
         <div className="flex items-center gap-2">
           <SevBadge severity={focus.severity} />
           <span className="cd-caption">
-            {DETECTOR_TERMS[focus.detector_id] || focus.detector_id} · {timeAgo(focus.created_at)}
+            {detectorLabel(focus.detector_id)} · {timeAgo(focus.created_at)}
           </span>
           <span className="cd-caption ml-auto">Top priority</span>
         </div>
@@ -100,7 +128,7 @@ function FocusCard({ app }: { app: DashboardCtx }) {
           <div className="cd-kv">
             <span>At risk</span>
             <b className="tabular-nums" style={{ color: "var(--red)" }}>
-              {money(focus.dollar_impact)}/wk
+              {money(focus.dollar_impact)}{IMPACT_SUFFIX}
             </b>
           </div>
           {focus.campaign && (
@@ -246,7 +274,7 @@ function GuardrailCard({ app }: { app: DashboardCtx }) {
       <div className="grid grid-cols-3 gap-2">
         <div className="cd-mini-stat">
           <b>
-            {g.autopilot_actions_today}/{g.autopilot_daily_action_cap}
+            {g.autopilot_actions_today}/{g.autopilot_daily_action_cap ?? "∞"}
           </b>
           <span>actions today</span>
         </div>
@@ -263,170 +291,331 @@ function GuardrailCard({ app }: { app: DashboardCtx }) {
   );
 }
 
-/* ---------- Screen ---------- */
-export default function Dashboard({ app }: { app: DashboardCtx }) {
+/* ---------- Stat row (4 KPI tiles) ---------- */
+function StatRow({ app }: { app: DashboardCtx }) {
   const open = app.alerts.filter((a) => a.status === "open");
   const critical = open.filter((a) => a.severity === "critical");
-
-  // Recovered (7d) — same shared computation as the extension home
-  // (app/lib/recovered.ts): succeeded actions, undo rows excluded, windowed to
-  // the trailing 7 days so the number matches the "(7d)" label.
   const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const recovered7d = recoveredWithin(app.audit, sinceIso);
-
-  // Daily action budget — same guardrail numbers the embedded extension shows.
   const g = app.guardrails;
   const budgetCap = g?.daily_action_budget_cents ?? 0;
   const budgetUsed = g?.daily_action_budget_used_cents ?? 0;
   const budgetLeft = Math.max(0, budgetCap - budgetUsed);
   const budgetPct = budgetCap > 0 ? (budgetUsed / budgetCap) * 100 : 0;
+  return (
+    <div className="cd-stat-grid">
+      <Card hover onClick={() => app.navigate("alerts")} className="cd-stat">
+        <span className="cd-stat-label">Open alerts</span>
+        <span className="cd-stat-value" style={critical.length ? { color: "var(--red)" } : undefined}>
+          {open.length}
+        </span>
+        <span className="cd-caption">
+          {critical.length ? `${critical.length} critical` : "clear of critical"}
+        </span>
+      </Card>
+      <Card hover onClick={() => app.navigate("audit")} className="cd-stat">
+        <span className="cd-stat-label">Recovered (7d)</span>
+        <span className="cd-stat-value" style={{ color: "var(--green)" }}>
+          <CountMoney cents={recovered7d.cents} />
+        </span>
+        <span className="cd-caption">
+          across {recovered7d.count} action{recovered7d.count === 1 ? "" : "s"}
+        </span>
+      </Card>
+      <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
+        <span className="cd-stat-label">Daily action budget</span>
+        {g ? (
+          <>
+            <Meter pct={budgetPct} tone={budgetPct > 85 ? "warn" : "accent"} />
+            <span className="cd-caption tabular-nums">{money(budgetLeft)} left today</span>
+          </>
+        ) : (
+          <span className="cd-caption">unavailable</span>
+        )}
+      </Card>
+      <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
+        <span className="cd-stat-label">Real ad return (7d)</span>
+        <span className="cd-stat-value tabular-nums">{trueRoas(app.campaigns)}</span>
+        <span className="cd-caption">margin-adjusted ROAS, all campaigns</span>
+      </Card>
+    </div>
+  );
+}
 
+/* ---------- Revenue vs ad spend ---------- */
+function RevenueCard({ app }: { app: DashboardCtx }) {
+  const series = app.overview?.roas_series ?? [];
+  return (
+    <Card pad={false}>
+      <div className="cd-pad-x cd-pad-t flex items-center justify-between">
+        <h2 className="cd-h2">Revenue vs ad spend</h2>
+        <span className="cd-caption">30 days · blended</span>
+      </div>
+      <div className="cd-pad" style={{ paddingTop: 8 }}>
+        {series.length > 1 ? (
+          <AreaChart rows={series} live={app.liveOn} />
+        ) : (
+          <Placeholder
+            icon="chart"
+            title={app.overview === null ? "Loading chart…" : "No history yet"}
+            sub="Revenue and ad spend for the last 30 days will plot here once data is in."
+          />
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------- Needs attention (top alerts) ---------- */
+function AttentionSection({ app }: { app: DashboardCtx }) {
+  const open = app.alerts.filter((a) => a.status === "open");
   const topAlerts: AlertVM[] = [...open]
     .sort((a, b) => a.claude_rank - b.claude_rank)
     .slice(1, 4);
+  return (
+    <section>
+      <SectionTitle action="All alerts" onAction={() => app.navigate("alerts")}>
+        Needs attention
+      </SectionTitle>
+      <div className="cd-attn-grid">
+        {topAlerts.map((a) => (
+          <Card
+            key={a.id}
+            hover
+            onClick={() => app.navigate("alerts", a.id)}
+            className="flex flex-col gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <SevBadge severity={a.severity} />
+              <span className="cd-caption truncate">
+                {detectorLabel(a.detector_id)}
+              </span>
+            </div>
+            <div className="cd-h3">{a.title}</div>
+            <div className="cd-caption truncate">{a.sku || a.campaign}</div>
+            <div className="cd-kv mt-auto">
+              <span>At risk</span>
+              <b className="tabular-nums" style={{ color: "var(--red)" }}>
+                {money(a.dollar_impact)}{IMPACT_SUFFIX}
+              </b>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-  const series = app.overview?.roas_series ?? [];
+/* ---------- Default (uncustomized) layout ----------
+   The original CSS-flow arrangement, rendered verbatim so an uncustomized
+   dashboard looks exactly as it did before the customizable-grid feature. The
+   react-grid-layout grid only takes over once the user opens "Customize". */
+function OriginalLayout({
+  app,
+  benchmarks,
+}: {
+  app: DashboardCtx;
+  benchmarks: BenchmarksData | null;
+}) {
+  const open = app.alerts.filter((a) => a.status === "open");
+  const hasAttention = open.length >= 2;
+  return (
+    <>
+      <StatRow app={app} />
+      <div className="cd-grid-main">
+        <div className="flex flex-col gap-4 min-w-0">
+          <FocusCard app={app} />
+          <RevenueCard app={app} />
+        </div>
+        <div className="flex flex-col gap-4 min-w-0">
+          <ActivityFeed app={app} limit={7} tall />
+        </div>
+      </div>
+      {hasAttention && <AttentionSection app={app} />}
+      <div className="cd-grid-duo">
+        <PredictorCard app={app} />
+        <GuardrailCard app={app} />
+      </div>
+      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
+    </>
+  );
+}
+
+/* ---------- Screen ---------- */
+export default function Dashboard({ app }: { app: DashboardCtx }) {
+  const open = app.alerts.filter((a) => a.status === "open");
+  const hasAttention = open.length >= 2; // slice(1,4) is empty with ≤1 open alert
 
   // Peer Benchmarks: self-fetched so no DashboardCtx threading needed.
-  // Promote into the context loader if another screen needs the same data.
   const [benchmarks, setBenchmarks] = useState<BenchmarksData | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/dashboard/api/benchmarks")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        // Only accept a well-formed payload — a soft/error response (no kpis
-        // array) keeps the card hidden rather than crashing the render.
         if (alive && d && Array.isArray((d as BenchmarksData).kpis)) {
           setBenchmarks(d as BenchmarksData);
         }
       })
-      // Card just stays hidden on failure, but surface the error (rule 12).
-      .catch((e) => { console.error("peer benchmarks fetch failed", e); });
-    return () => { alive = false; };
+      .catch((e) => {
+        console.error("peer benchmarks fetch failed", e);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const hour = new Date().getHours();
-  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  // Time-of-day greeting resolves the local hour POST-MOUNT only. Computing it
+  // during render read the wall clock, so the server (UTC) and the client's
+  // first paint (user TZ) could land in different buckets — a hydration mismatch
+  // (React #418/#425) that tore down and re-rendered the whole root. SSR and the
+  // first client paint now both render the static "Welcome back".
+  const [clientHour, setClientHour] = useState<number | null>(null);
+  useEffect(() => setClientHour(new Date().getHours()), []);
+  const greet =
+    clientHour === null
+      ? "Welcome back"
+      : clientHour < 12
+        ? "Good morning"
+        : clientHour < 17
+          ? "Good afternoon"
+          : "Good evening";
+
+  // Saved arrangement loads post-mount (SSR-safe). `null` = the user has not
+  // customized → render the ORIGINAL flow layout, exactly as before this feature.
+  const [layouts, setLayouts] = useState<Layouts | null>(null);
+  useEffect(() => {
+    setLayouts(loadSavedLayouts());
+  }, []);
+  const [editing, setEditing] = useState(false);
+
+  // Persist ONLY on a real drag/resize — never on rgl's mount/breakpoint
+  // onLayoutChange fires — so merely opening "Customize" and closing it doesn't
+  // lock the user into the grid view. onLayoutChange tracks the latest layout;
+  // commit() (from drag/resize-stop) is what actually saves it.
+  const latest = useRef<Layouts | null>(null);
+  // `live` is the current breakpoint's layout, updated on every onLayoutChange
+  // (which fires continuously during a resize) so tile content zooms in real
+  // time as the cell is dragged. `bp` gates zoom to the lg grid only — derived
+  // here, in the SAME callback, by matching which entry of `all` IS the current
+  // layout (rgl sets all[breakpoint] === current by reference). A separate
+  // onBreakpointChange can lag this and briefly scale sm tiles against lg's
+  // reference dims, shrinking them to the floor; deriving it keeps them in sync.
+  const [live, setLive] = useState<Layout[] | null>(null);
+  const [bp, setBp] = useState<string>("lg");
+  const onLayoutChange = (current: Layout[], all: Layouts) => {
+    latest.current = all;
+    setLive(current);
+    const active = Object.keys(all).find((k) => all[k] === current);
+    if (active) setBp(active);
+  };
+  const commit = () => {
+    if (!latest.current) return;
+    setLayouts(latest.current);
+    saveLayouts(latest.current);
+  };
+  const handleReset = () => {
+    resetLayouts();
+    latest.current = null;
+    setLayouts(null);
+  };
+
+  // Editable grid while editing, or once the user has saved a layout. Otherwise
+  // the original CSS-flow layout — pixel-identical to before this feature.
+  const showGrid = editing || layouts !== null;
+
+  const tiles: { id: string; node: ReactNode }[] = [
+    { id: "stats", node: <StatRow app={app} /> },
+    { id: "focus", node: <FocusCard app={app} /> },
+    { id: "feed", node: <ActivityFeed app={app} limit={7} tall /> },
+    { id: "revenue", node: <RevenueCard app={app} /> },
+    ...(hasAttention ? [{ id: "attention", node: <AttentionSection app={app} /> }] : []),
+    { id: "predictor", node: <PredictorCard app={app} /> },
+    { id: "autopilot", node: <GuardrailCard app={app} /> },
+    ...(benchmarks ? [{ id: "benchmarks", node: <PeerBenchmarks data={benchmarks} /> }] : []),
+  ];
 
   return (
     <div className="cd-screen">
       <ScreenHeader title={greet} sub="Watching ad spend and inventory — together.">
         <LiveBadge on={app.liveOn} onToggle={() => app.setLiveOn(!app.liveOn)} />
+        {editing && (
+          <Btn small onClick={handleReset}>
+            Reset layout
+          </Btn>
+        )}
+        <Btn
+          small
+          kind={editing ? "primary" : "secondary"}
+          onClick={() => setEditing((e) => !e)}
+        >
+          {editing ? "Done" : "Customize"}
+        </Btn>
         <Btn icon="bell" onClick={() => app.navigate("alerts")} small>
           All alerts
         </Btn>
       </ScreenHeader>
 
-      {/* Stat row */}
-      <div className="cd-stat-grid">
-        <Card hover onClick={() => app.navigate("alerts")} className="cd-stat">
-          <span className="cd-stat-label">Open alerts</span>
-          <span className="cd-stat-value" style={critical.length ? { color: "var(--red)" } : undefined}>
-            {open.length}
-          </span>
-          <span className="cd-caption">
-            {critical.length ? `${critical.length} critical` : "clear of critical"}
-          </span>
-        </Card>
-        <Card hover onClick={() => app.navigate("audit")} className="cd-stat">
-          <span className="cd-stat-label">Recovered (7d)</span>
-          <span className="cd-stat-value" style={{ color: "var(--green)" }}>
-            <CountMoney cents={recovered7d.cents} />
-          </span>
-          <span className="cd-caption">
-            across {recovered7d.count} action{recovered7d.count === 1 ? "" : "s"}
-          </span>
-        </Card>
-        <Card hover onClick={() => app.navigate("settings")} className="cd-stat">
-          <span className="cd-stat-label">Daily action budget</span>
-          {g ? (
-            <>
-              <Meter pct={budgetPct} tone={budgetPct > 85 ? "warn" : "accent"} />
-              <span className="cd-caption tabular-nums">
-                {money(budgetLeft)} left today
-              </span>
-            </>
-          ) : (
-            <span className="cd-caption">unavailable</span>
-          )}
-        </Card>
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Real ad return (7d)</span>
-          <span className="cd-stat-value tabular-nums">{trueRoas(app.campaigns)}</span>
-          <span className="cd-caption">margin-adjusted ROAS, all campaigns</span>
-        </Card>
-      </div>
-
-      {/* Focus + feed */}
-      <div className="cd-grid-main">
-        <div className="flex flex-col gap-4 min-w-0">
-          <FocusCard app={app} />
-          <Card pad={false}>
-            <div className="cd-pad-x cd-pad-t flex items-center justify-between">
-              <h2 className="cd-h2">Revenue vs ad spend</h2>
-              <span className="cd-caption">30 days · blended</span>
-            </div>
-            <div className="cd-pad" style={{ paddingTop: 8 }}>
-              {series.length > 1 ? (
-                <AreaChart rows={series} live={app.liveOn} />
-              ) : (
-                <Placeholder
-                  icon="chart"
-                  title={app.overview === null ? "Loading chart" : "No history yet"}
-                  sub="Revenue and ad spend for the last 30 days will plot here once data is in."
-                />
-              )}
-            </div>
-          </Card>
-        </div>
-        <div className="flex flex-col gap-4 min-w-0">
-          <ActivityFeed app={app} limit={7} tall />
-        </div>
-      </div>
-
-      {/* Needs attention */}
-      {topAlerts.length > 0 && (
-        <section>
-          <SectionTitle action="All alerts" onAction={() => app.navigate("alerts")}>
-            Needs attention
-          </SectionTitle>
-          <div className="cd-attn-grid">
-            {topAlerts.map((a) => (
-              <Card
-                key={a.id}
-                hover
-                onClick={() => app.navigate("alerts", a.id)}
-                className="flex flex-col gap-2"
-              >
-                <div className="flex items-center gap-2">
-                  <SevBadge severity={a.severity} />
-                  <span className="cd-caption truncate">
-                    {DETECTOR_TERMS[a.detector_id] || a.detector_id}
+      {showGrid ? (
+        /* Customize canvas: drag by the grip, resize from any corner; sizes snap
+           to grid columns/rows = preset sizes. A11y: drag/resize is pointer-only
+           (rgl has no keyboard reorder), but the grip is aria-hidden, tile
+           content stays keyboard-operable, and the default view never uses the
+           grid — so nothing keyboard-accessible is lost. */
+        <DashGrid
+          className={"cd-dash-grid" + (editing ? " cd-dash-grid-editing" : "")}
+          layouts={layouts ?? DEFAULT_LAYOUTS}
+          breakpoints={DASH_BREAKPOINTS}
+          cols={DASH_COLS}
+          rowHeight={30}
+          margin={[16, 16]}
+          isDraggable={editing}
+          isResizable={editing}
+          draggableHandle=".cd-tile-grip"
+          resizeHandles={["sw", "se", "ne", "nw"]}
+          compactType="vertical"
+          onLayoutChange={onLayoutChange}
+          onDragStop={commit}
+          onResizeStop={commit}
+        >
+          {tiles.map((t) => {
+            // Zoom factor from this tile's live grid size vs its default. The
+            // scaler is sized to the cell ÷ scale, then transform-scaled back up
+            // to the cell — so content lays out in that virtual box and zooms to
+            // fill exactly (no overflow into neighbours, no clipped info).
+            const src = live ?? (layouts ?? DEFAULT_LAYOUTS).lg ?? DEFAULT_LAYOUTS.lg;
+            const scale = tileScale(t.id, src.find((l) => l.i === t.id), bp);
+            // data-grid is rgl's fallback geometry for a child NOT present in the
+            // active layout — e.g. peer benchmarks, which mounts only after its
+            // fetch resolves. Without it rgl auto-places a late tile at 1×1 (the
+            // "tiny tile" bug); with it the tile lands at its proper full size.
+            const fallback = (DEFAULT_LAYOUTS.lg ?? []).find((l) => l.i === t.id);
+            return (
+              <div key={t.id} data-tile={t.id} className="cd-tile" data-grid={fallback}>
+                {editing && (
+                  <span className="cd-tile-grip" aria-hidden="true">
+                    ⠿
                   </span>
+                )}
+                <div className="cd-tile-clip">
+                  <div
+                    className="cd-tile-scale"
+                    style={{
+                      width: `${100 / scale}%`,
+                      height: `${100 / scale}%`,
+                      transform: `scale(${scale})`,
+                    }}
+                  >
+                    {t.node}
+                  </div>
                 </div>
-                <div className="cd-h3">{a.title}</div>
-                <div className="cd-caption truncate">{a.sku || a.campaign}</div>
-                <div className="cd-kv mt-auto">
-                  <span>At risk</span>
-                  <b className="tabular-nums" style={{ color: "var(--red)" }}>
-                    {money(a.dollar_impact)}/wk
-                  </b>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </section>
+              </div>
+            );
+          })}
+        </DashGrid>
+      ) : (
+        <OriginalLayout app={app} benchmarks={benchmarks} />
       )}
-
-      {/* Predictor + autopilot */}
-      <div className="cd-grid-duo">
-        <PredictorCard app={app} />
-        <GuardrailCard app={app} />
-      </div>
-
-      {/* Peer Benchmarks — self-fetched; renders nothing until data arrives or for uncategorized niche */}
-      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
     </div>
   );
 }

@@ -4,8 +4,8 @@ import { renderToString } from "react-dom/server";
 import { PeerBenchmarks } from "../PeerBenchmarks";
 import type { PeerBenchmarks as Data } from "~/lib/benchmarks/types";
 
-function html(data: Data, opts?: { defaultOpen?: boolean }): string {
-  return renderToString(h(PeerBenchmarks, { data, ...opts })).replace(/<!-- -->/g, "");
+function html(data: Data): string {
+  return renderToString(h(PeerBenchmarks, { data })).replace(/<!-- -->/g, "");
 }
 
 const AVAILABLE: Data = {
@@ -92,37 +92,24 @@ describe("dashboard PeerBenchmarks", () => {
   });
 });
 
-describe("dashboard PeerBenchmarks — collapsible disclosure", () => {
-  it("is collapsed by default with an aria-expanded toggle", () => {
+describe("dashboard PeerBenchmarks — always expanded (no dropdown)", () => {
+  it("shows the graphic up front with no disclosure toggle", () => {
     const out = html(AVAILABLE);
-    expect(out).toContain('aria-expanded="false"');
-    expect(out).toContain('data-open="0"');
+    expect(out).toContain("cd-bench-track"); // graphic is rendered…
+    expect(out).not.toContain("aria-expanded"); // …with no collapse toggle
+    expect(out).not.toContain("<button"); // and no toggle button at all
   });
 
-  it("renders expanded when defaultOpen is set", () => {
-    const out = html(AVAILABLE, { defaultOpen: true });
-    expect(out).toContain('aria-expanded="true"');
-    expect(out).toContain('data-open="1"');
-  });
-
-  it("keeps the metric content in the DOM while collapsed (CSS-driven)", () => {
-    // Disclosure hides via CSS, so the values remain server-rendered.
+  it("does not wrap the content in a collapsible region", () => {
     const out = html(AVAILABLE);
-    expect(out).toContain("Average order value");
-    expect(out).toContain("$300.00");
-  });
-
-  it("wires the toggle button to the panel via aria-controls", () => {
-    const out = html(AVAILABLE);
-    const m = out.match(/aria-controls="([^"]+)"/);
-    expect(m).not.toBeNull();
-    expect(out).toContain(`id="${m![1]}"`);
+    expect(out).not.toContain("cd-collapse");
+    expect(out).not.toContain("data-open");
   });
 });
 
 describe("dashboard PeerBenchmarks — peer-distribution bar", () => {
   it("draws the track, peer IQR band, median tick and you-marker when available", () => {
-    const out = html(AVAILABLE, { defaultOpen: true });
+    const out = html(AVAILABLE);
     expect(out).toContain("cd-bench-track");
     expect(out).toContain("cd-bench-band");
     expect(out).toContain("cd-bench-median");
@@ -130,36 +117,30 @@ describe("dashboard PeerBenchmarks — peer-distribution bar", () => {
   });
 
   it("positions the bar elements with percentage offsets", () => {
-    const out = html(AVAILABLE, { defaultOpen: true });
+    const out = html(AVAILABLE);
     // band is placed by inline left/width percentages derived from the geometry
     expect(out).toMatch(/cd-bench-band[^>]*style="[^"]*%/);
   });
 
   it("omits the you-marker but keeps the band when the shop has no own value", () => {
-    const out = html(
-      {
-        niche: "cat:electronics",
-        consented: true,
-        kpis: [{ ...AVAILABLE.kpis[0], your_value: null, percentile: null, n: 7, available: true }],
-      },
-      { defaultOpen: true },
-    );
+    const out = html({
+      niche: "cat:electronics",
+      consented: true,
+      kpis: [{ ...AVAILABLE.kpis[0], your_value: null, percentile: null, n: 7, available: true }],
+    });
     expect(out).toContain("cd-bench-band");
     expect(out).not.toContain("cd-bench-you");
     expect(out).not.toContain("null");
   });
 
   it("renders no bar track for a locked (unavailable) KPI", () => {
-    const out = html(
-      {
-        niche: "cat:electronics",
-        consented: true,
-        kpis: [
-          { ...AVAILABLE.kpis[0], available: false, p25: null, p50: null, p75: null, n: null, percentile: null },
-        ],
-      },
-      { defaultOpen: true },
-    );
+    const out = html({
+      niche: "cat:electronics",
+      consented: true,
+      kpis: [
+        { ...AVAILABLE.kpis[0], available: false, p25: null, p50: null, p75: null, n: null, percentile: null },
+      ],
+    });
     expect(out).not.toContain("cd-bench-track");
     expect(out).toContain("$300.00"); // own value still shown
   });

@@ -1,6 +1,4 @@
-import { useId, useState } from "react";
 import { Card, Pill } from "~/components/dashboard/ui";
-import { CDIcon } from "~/components/dashboard/icons";
 import type { PeerBenchmarks as Data, PeerKpi } from "~/lib/benchmarks/types";
 
 export interface BenchmarkBarGeometry {
@@ -104,50 +102,31 @@ function KpiRow({ kpi }: { kpi: PeerKpi }) {
   );
 }
 
-export function PeerBenchmarks({
-  data,
-  defaultOpen = false,
-}: {
-  data: Data;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const panelId = useId();
+// The graphic leads — peer-distribution bars are always shown (no disclosure
+// toggle); the card sits open on the dashboard like every other tile.
+export function PeerBenchmarks({ data }: { data: Data }) {
   if (data.niche === "cat:uncategorized") return null; // spec §7: card hidden
 
   const noneAvailable = data.kpis.every((k) => !k.available);
   return (
     <Card className="cd-benchmarks" pad={false}>
-      <h2 className="cd-bench-heading">
-        <button
-          type="button"
-          className="cd-bench-head"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="cd-bench-chevron" data-open={open ? "1" : "0"}>
-            <CDIcon name="chevronRight" size={16} strokeWidth={2.2} />
+      <div className="cd-bench-header">
+        <h2 className="cd-h2">Peer Benchmarks</h2>
+        <Pill tone="neutral">{categoryLabel(data.niche)}</Pill>
+      </div>
+      <div className="cd-bench-body">
+        {!data.consented ? (
+          <span className="cd-caption">
+            Share anonymized metrics to see how you compare — unlocks at 5 peers.
           </span>
-          <span className="cd-h2">Peer Benchmarks</span>
-          <Pill tone="neutral">{categoryLabel(data.niche)}</Pill>
-        </button>
-      </h2>
-      <div className="cd-collapse" data-open={open ? "1" : "0"} id={panelId}>
-        <div className="cd-collapse-inner">
-          {!data.consented ? (
-            <span className="cd-caption">
-              Share anonymized metrics to see how you compare — unlocks at 5 peers.
-            </span>
-          ) : noneAvailable ? (
-            <span className="cd-caption">
-              Benchmarks unlock when 5+ {categoryLabel(data.niche)} stores opt in.
-            </span>
-          ) : null}
-          {data.kpis.map((kpi) => (
-            <KpiRow key={kpi.metric_key} kpi={kpi} />
-          ))}
-        </div>
+        ) : noneAvailable ? (
+          <span className="cd-caption">
+            Benchmarks unlock when 5+ {categoryLabel(data.niche)} stores opt in.
+          </span>
+        ) : null}
+        {data.kpis.map((kpi) => (
+          <KpiRow key={kpi.metric_key} kpi={kpi} />
+        ))}
       </div>
     </Card>
   );

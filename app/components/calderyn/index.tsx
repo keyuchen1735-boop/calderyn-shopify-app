@@ -10,6 +10,7 @@
  * Everything is wired to the real Calderyn data types — no mock data.
  */
 import type { ReactNode } from "react";
+import { IMPACT_LABEL, IMPACT_METHODOLOGY, IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
   Badge,
   BlockStack,
@@ -27,8 +28,9 @@ import {
 import type { Alert, DetectorId, Severity } from "~/lib/types";
 import { fmtMoney, fmtRelTime } from "~/lib/format";
 import {
-  DETECTOR_LABELS,
-  DETECTOR_TERMS,
+  detectorLabel,
+  detectorTerm,
+  alertDetectorLabel,
   EVIDENCE_PAIRS,
   INTERNAL_EVIDENCE_ID_KEYS,
   formatEvidenceKey,
@@ -110,10 +112,18 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
 }
 
 /** The plain-language detector name as a Badge, with the technical term on hover. */
-export function DetectorTag({ detectorId }: { detectorId: DetectorId }) {
+export function DetectorTag({
+  detectorId,
+  evidence,
+}: {
+  detectorId: DetectorId;
+  evidence?: Record<string, unknown>;
+}) {
+  // When the alert's evidence is supplied, the label becomes stock-aware so a
+  // "may sell out" detector reads "sold out" once stock hits 0 (P2-11).
   return (
-    <Tooltip content={DETECTOR_TERMS[detectorId]}>
-      <Badge>{DETECTOR_LABELS[detectorId]}</Badge>
+    <Tooltip content={detectorTerm(detectorId)}>
+      <Badge>{evidence ? alertDetectorLabel(detectorId, evidence) : detectorLabel(detectorId)}</Badge>
     </Tooltip>
   );
 }
@@ -252,9 +262,9 @@ export function GuardrailMeter({
  * One explanation for the projected-impact dollar figure, shared by the alert
  * card and the alert detail so the label + methodology never drift apart.
  */
-export const IMPACT_LABEL = "Projected 30-day impact";
-export const IMPACT_METHODOLOGY =
-  "Estimated from this alert's evidence — current spend, margin-adjusted return, and sales velocity — projected over the next 30 days if nothing changes. An estimate, not a guarantee; the audit log records the realized impact after you act.";
+// Re-exported from the shared single source (app/lib/impact-window) so the
+// embedded card/detail and the dashboard never drift on the window label (P1-5).
+export { IMPACT_LABEL, IMPACT_METHODOLOGY };
 
 export function AlertCard({
   alert,
@@ -271,7 +281,7 @@ export function AlertCard({
         <BlockStack gap="150">
           <InlineStack gap="150" blockAlign="center">
             <SeverityBadge severity={alert.severity} />
-            <DetectorTag detectorId={alert.detector_id} />
+            <DetectorTag detectorId={alert.detector_id} evidence={alert.evidence} />
             <Text as="span" variant="bodySm" tone="subdued">
               {fmtRelTime(alert.created_at)}
             </Text>
@@ -483,7 +493,7 @@ export function AmbientAlertBanner({
   if (criticalCount <= 0) return null;
   const title = `${criticalCount} critical alert${criticalCount > 1 ? "s" : ""} · ${fmtMoney(
     atRiskCents,
-  )}/mo at risk`;
+  )}${IMPACT_SUFFIX} at risk`;
   return (
     <Banner
       tone="critical"

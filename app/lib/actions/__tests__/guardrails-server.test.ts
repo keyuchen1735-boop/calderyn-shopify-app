@@ -67,6 +67,16 @@ describe("checkGuardrails", () => {
     expect(r).toMatchObject({ allowed: false });
   });
 
+  it("treats a null daily-cap row as unlimited — a huge today-count still allows", async () => {
+    // The DB column is nullable; null = no cap. checkGuardrails must map null
+    // through to the evaluator and skip the daily-cap check entirely.
+    const sb = fakeSb({ config: { ...config, autopilot_daily_action_cap: null }, todayCount: 999 });
+    const r = await checkGuardrails(SHOP, {
+      kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000,
+    }, sb);
+    expect(r.allowed).toBe(true);
+  });
+
   it("counts only SUCCEEDED autopilot actions toward the daily cap", async () => {
     // A day of retrying/failed attempts must not exhaust the cap with zero
     // landed actions — the count query has to filter outcome=succeeded.
@@ -133,6 +143,18 @@ describe("checkGuardrails", () => {
       dollarImpactCents: 500, campaignSpendCents: 50000,
     }, sb);
     expect(r).toEqual({ allowed: false, reason: "campaign in cooldown" });
+  });
+
+  it("maps autopilot_bypass_guardrails through and waives every gate", async () => {
+    // Bypass column true + a today-count well over the cap: the row must map to
+    // bypassGuardrails and the evaluator must allow despite the breached cap.
+    const sb = fakeSb({ config: { ...config, autopilot_bypass_guardrails: true }, todayCount: 999 });
+    const r = await checkGuardrails(SHOP, {
+      kind: "increase_campaign_budget", campaignId: CAMP,
+      dollarImpactCents: 99999999, campaignSpendCents: 0,
+      currentBudgetCents: 10000, newBudgetCents: 99999,
+    }, sb);
+    expect(r.allowed).toBe(true);
   });
 
   it("loads the increase cap and blocks an over-cap increase", async () => {

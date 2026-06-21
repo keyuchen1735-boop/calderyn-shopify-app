@@ -3,13 +3,19 @@
 // v_autopilot_candidates view (alert + campaign + 7d spend + current budget).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getActionPolicy } from "./action-policy.server";
 import { checkGuardrails } from "./guardrails.server";
-import { executeAction, type ExecutableKind } from "./execute.server";
+import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
 import {
   loadReallocationCandidates,
   pickReallocation,
 } from "./reallocation-suggest.server";
+// Main's scoped resolver synthesises campaign targets for campaign-less
+// ad_tax_overload alerts. Its Candidate is ad_tax_overload-specific (no
+// evidence/sku/sku_id), so it is aliased — the merged `Candidate` below is the
+// one the loop and tryRemediation use.
+import { resolveScopedCandidates } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
 import { rankMoves, toNumericEvidence } from "../remediation/rank";
 import { enrichRemediation } from "../remediation/enrich.server";
@@ -38,17 +44,42 @@ const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
   "cogs_drift",
 ]);
 
+/** Per-candidate decision outcome. "skipped" = a pre-flight refusal (no
+ *  guardrail call); "blocked" = a guardrail verdict refused it; "failed" = the
+ *  executor was called but did not land (outcome "failed"/"retrying", or threw). */
+export type AutopilotOutcome = "acted" | "blocked" | "skipped" | "failed";
+
+/** One structured decision per candidate considered, so a silent run is
+ *  auditable (rule 12: fail visibly). */
+export interface AutopilotDecision {
+  alertId: string;
+  /** Null for SKU-only economics alerts that carry no campaign. */
+  campaignId: string | null;
+  detectorId: string;
+  intendedKind: ExecutableKind | null;
+  outcome: AutopilotOutcome;
+  reason: string;
+}
+
 export interface AutopilotSummary {
   skipped: boolean;
+  /** Actions that actually LANDED on the platform (executor outcome "succeeded"). */
   acted: number;
+  /** Candidates a guardrail or pre-flight check refused (no budget written). */
   blocked: number;
   /** Remediation recommendations that were advisory/non-executable and not acted
    *  on (distinct from `blocked`, which is a guardrail/cap/precondition refusal). */
   skippedMoves: number;
-  /** Candidates whose action threw (DB/ownership/insert error). Counted, logged,
-   *  and skipped so the run keeps draining the rest; retriable platform failures
-   *  are handled separately by the action-retry cron, not here. */
+  /** Attempted but did not land: executor returned "failed"/"retrying", or threw. */
   failed: number;
+  /** Total candidates evaluated this run (one decision recorded per candidate). */
+  considered: number;
+  /** Why each blocked candidate was refused, keyed by reason — covers the full
+   *  `blocked` total (guardrail verdicts AND pre-flight skips), so
+   *  `sum(blockedReasons) === blocked`. */
+  blockedReasons: Record<string, number>;
+  /** Structured decision for every candidate considered. */
+  decisions: AutopilotDecision[];
 }
 
 interface Candidate {
@@ -58,28 +89,37 @@ interface Candidate {
   campaign_id: string | null; // nullable: SKU-only economics alerts have no campaign
   campaign_spend_cents: number;
   daily_budget_cents: number | null;
-  // New (Task 3 view): for the remediation plan + SKU targeting.
-  evidence: Record<string, unknown> | null;
-  sku: string | null;
-  sku_id: string | null;
+  // New (Task 3 view): for the remediation plan + SKU targeting. Optional so the
+  // synthetic scoped candidates (which lack them) still satisfy the type.
+  evidence?: Record<string, unknown> | null;
+  sku?: string | null;
+  sku_id?: string | null;
 }
 
-// Maps a plan move's executor to a guarded execution. Returns "acted" |
-// "blocked" | "skipped" | "fell_through". "fell_through" means "not an
-// executable remediation move — let the legacy campaign logic handle it".
+// Maps a plan move's executor to a guarded execution. The `outcome` is one of
+// "acted" | "blocked" | "skipped" | "fell_through"; "fell_through" means "not an
+// executable remediation move — let the legacy campaign logic handle it". The
+// `reason` is a plain-language line for the structured decision / blockedReasons
+// histogram (rule 12: every blocked/skipped path is explained).
 type RemediationOutcome = "acted" | "blocked" | "skipped" | "fell_through";
+interface RemediationResult {
+  outcome: RemediationOutcome;
+  reason: string;
+}
 
 /** Try to act on the candidate's stored remediation recommendation. Returns
- *  whether it acted/blocked/skipped, or "fell_through" to defer to the legacy
- *  campaign logic. The decision is the Phase-1 plan + the Phase-3 enrichment —
- *  we never re-rank or re-resolve the winner/campaign here (re-deriving would
- *  drift from the merchant path, which routes the *same* enriched move). */
+ *  whether it acted/blocked/skipped (with a reason), or "fell_through" to defer
+ *  to the legacy campaign logic. The decision is the Phase-1 plan + the Phase-3
+ *  enrichment — we never re-rank or re-resolve the winner/campaign here
+ *  (re-deriving would drift from the merchant path, which routes the *same*
+ *  enriched move). */
 async function tryRemediation(
   shopId: string,
   c: Candidate,
   sb: SupabaseClient,
-): Promise<RemediationOutcome> {
-  if (!PRODUCT_ECON_DETECTORS.has(c.detector_id as DetectorId)) return "fell_through";
+): Promise<RemediationResult> {
+  if (!PRODUCT_ECON_DETECTORS.has(c.detector_id as DetectorId))
+    return { outcome: "fell_through", reason: "not a product-economics detector" };
 
   // Reuse the Phase-1 engine on the candidate's own evidence — identical input
   // to attachRemediation(), so autopilot and the UI agree on the recommendation.
@@ -108,7 +148,7 @@ async function tryRemediation(
   if (!recommended) {
     // Only snooze applies → nothing to automate. Surface, don't drop (rule 12).
     console.info(`[autopilot] remediation skip on alert ${c.alert_id}: no recommended move`);
-    return "skipped";
+    return { outcome: "skipped", reason: "remediation: no recommended move" };
   }
   const move: StrategicMove | undefined = plan.moves.find((m) => m.kind === recommended);
 
@@ -121,7 +161,10 @@ async function tryRemediation(
     console.info(
       `[autopilot] remediation skip on alert ${c.alert_id}: recommended ${recommended} is advisory/non-executable`,
     );
-    return "fell_through";
+    return {
+      outcome: "fell_through",
+      reason: `remediation: ${recommended} is advisory/non-executable`,
+    };
   }
 
   const dollarImpactCents = move.dollarImpactCents;
@@ -135,12 +178,12 @@ async function tryRemediation(
   if (move.executor === "discontinue_sku") {
     if (!c.sku_id) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: discontinue_sku has no sku_id`);
-      return "blocked";
+      return { outcome: "blocked", reason: "remediation: discontinue_sku has no sku_id" };
     }
     const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
     if (!verdict.allowed) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
-      return "blocked";
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
     }
     const client = calderynClient(shopId);
     const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
@@ -155,7 +198,7 @@ async function tryRemediation(
       actor: "autopilot",
       triggerReason: reason,
     });
-    return "acted";
+    return { outcome: "acted", reason };
   }
 
   // Campaign-scoped remediation moves: reallocate_spend_sku, or a plain cut via
@@ -163,7 +206,7 @@ async function tryRemediation(
   // engine should not have offered an executable campaign move with no campaign).
   if (!c.campaign_id) {
     console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${move.executor} needs a campaign`);
-    return "blocked";
+    return { outcome: "blocked", reason: `remediation: ${move.executor} needs a campaign` };
   }
 
   // SKU budget shift: route to the Phase-3 SKU gateway. It re-runs
@@ -176,7 +219,7 @@ async function tryRemediation(
     const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
     if (!verdict.allowed) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
-      return "blocked";
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
     }
     const client = calderynClient(shopId);
     await executeReallocateSpendSku({
@@ -188,7 +231,7 @@ async function tryRemediation(
       actor: "autopilot",
       triggerReason: reason,
     });
-    return "acted";
+    return { outcome: "acted", reason };
   }
 
   // Plain cut: pause_campaign / reduce_campaign_budget through the existing
@@ -202,7 +245,7 @@ async function tryRemediation(
         : undefined;
     if (move.executor === "reduce_campaign_budget" && !newBudgetCents) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: no current budget to cut`);
-      return "blocked";
+      return { outcome: "blocked", reason: "remediation: no current budget to cut" };
     }
     const verdict = await checkGuardrails(
       shopId,
@@ -218,7 +261,7 @@ async function tryRemediation(
     );
     if (!verdict.allowed) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
-      return "blocked";
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by guardrails" };
     }
     await executeAction(
       shopId,
@@ -233,12 +276,12 @@ async function tryRemediation(
       },
       sb,
     );
-    return "acted";
+    return { outcome: "acted", reason };
   }
 
   // Unknown executor union member — fail visibly rather than silently dropping.
   console.warn(`[autopilot] remediation skip on alert ${c.alert_id}: unhandled executor ${move.executor}`);
-  return "skipped";
+  return { outcome: "skipped", reason: `remediation: unhandled executor ${move.executor}` };
 }
 
 function autopilotReason(
@@ -265,7 +308,16 @@ export async function runAutopilotForShop(
     .maybeSingle();
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled)
-    return { skipped: true, acted: 0, blocked: 0, skippedMoves: 0, failed: 0 };
+    return {
+      skipped: true,
+      acted: 0,
+      blocked: 0,
+      skippedMoves: 0,
+      failed: 0,
+      considered: 0,
+      blockedReasons: {},
+      decisions: [],
+    };
 
   const maxCutPct = Number(
     cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT,
@@ -288,72 +340,184 @@ export async function runAutopilotForShop(
   if (aErr) throw aErr;
   const candidates = (rows ?? []) as Candidate[];
 
+  // D6: shop-scoped ad_tax_overload alerts carry no campaign_id, so they never
+  // appear in v_autopilot_candidates. Resolve a campaign target for them and
+  // feed them through the same defensive loop. (SKU-scoped negative_unit_economics
+  // targeting is deferred — see spec §8.)
+  const { data: scopedRows } = await sb
+    .from("alerts")
+    .select("id, detector_id, dollar_impact, entity_ref")
+    .eq("shop_id", shopId)
+    .eq("status", "open")
+    .in("detector_id", ["ad_tax_overload"]);
+
+  // Hoisted pool: serves BOTH the scoped-candidate resolver and every
+  // reallocation decision in the loop. Load it if either needs it.
+  const gradedPool =
+    candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id)) || (scopedRows ?? []).length > 0
+      ? await loadReallocationCandidates(shopId, sb)
+      : [];
+
+  const scoped = await resolveScopedCandidates(shopId, (scopedRows ?? []) as never, gradedPool, sb);
+
+  // Merge per alert_id so EACH alert is exactly one candidate (rule 12: no
+  // double-processing of live money). A campaign-less ad_tax_overload alert now
+  // surfaces in BOTH sources: the view row (LEFT JOIN) carries evidence/sku with
+  // a null campaign_id; the scoped resolver carries an attribution-resolved
+  // campaign_id + budget but no evidence. Without this, that one alert would
+  // appear twice — tryRemediation could act on one copy while the other
+  // fell_through to a legacy reduce, and the campaign-less view copy would emit a
+  // spurious "requires a campaign_id" block, corrupting the audit.
+  //
+  // For each view candidate whose campaign_id is null with a matching scoped
+  // entry, backfill the resolved campaign_id + the budget/spend fields the legacy
+  // path reads (daily_budget_cents → currentBudgetCents, campaign_spend_cents →
+  // the guardrail check). Then append only scoped entries whose alert_id is not
+  // already covered by a view candidate. Result: one candidate per alert_id,
+  // carrying BOTH evidence (for tryRemediation) AND a campaign target (for a
+  // fell-through legacy reduce/reallocate). dollar_impact ordering is preserved:
+  // view candidates keep their position; scoped-only candidates append after.
+  const scopedByAlert = new Map(scoped.map((s) => [s.alert_id, s]));
+  const seenAlertIds = new Set(candidates.map((c) => c.alert_id));
+  const mergedViewCandidates = candidates.map((c) => {
+    if (c.campaign_id != null) return c;
+    const s = scopedByAlert.get(c.alert_id);
+    if (!s) return c;
+    return {
+      ...c,
+      campaign_id: s.campaign_id,
+      daily_budget_cents: s.daily_budget_cents,
+      campaign_spend_cents: s.campaign_spend_cents,
+    };
+  });
+  const scopedOnly = scoped.filter((s) => !seenAlertIds.has(s.alert_id));
+  const allCandidates = [...mergedViewCandidates, ...scopedOnly];
+
   // Defensive actions (pause/reduce/reallocate) take priority over offensive
   // scale-ups so loss-prevention is never starved of the daily action cap by a
   // bigger-dollar scale opportunity. Each subgroup keeps its dollar_impact order.
   const ordered = [
-    ...candidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
-    ...candidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
   ];
-
-  // Hoisted: ONE candidate-pool read serves every reallocation decision this
-  // run, instead of re-reading campaign + grade facts per candidate.
-  const gradedPool = candidates.some((c) => BUDGET_DETECTORS.has(c.detector_id))
-    ? await loadReallocationCandidates(shopId, sb)
-    : [];
 
   let acted = 0;
   let blocked = 0;
+  // Remediation recommendations that were advisory/non-executable and not acted
+  // on (distinct from `blocked`, a guardrail/cap/precondition refusal).
   let skippedMoves = 0;
   let failed = 0;
+  const decisions: AutopilotDecision[] = [];
+  // reason -> count for every candidate that landed in the `blocked` counter
+  // (guardrail blocks AND pre-flight skips), so the histogram explains the
+  // FULL blocked total and `sum(blockedReasons) === blocked` holds.
+  const blockedReasons: Record<string, number> = {};
+  // Record one structured decision per candidate so the run is auditable even
+  // when nothing acts (rule 12). The acted/blocked/failed COUNTERS keep their
+  // existing buckets (a pre-flight refusal counts as `blocked`); the decision's
+  // `outcome` carries the finer label (a pre-flight refusal is `skipped`, as
+  // distinct from a guardrail `blocked`).
+  const decide = (
+    c: Candidate,
+    intendedKind: ExecutableKind | null,
+    outcome: AutopilotOutcome,
+    reason: string,
+    bucket: "acted" | "blocked" | "failed" | "none" = outcome === "skipped" ? "blocked" : outcome,
+  ) => {
+    if (bucket === "acted") acted += 1;
+    else if (bucket === "blocked") {
+      blocked += 1;
+      blockedReasons[reason] = (blockedReasons[reason] ?? 0) + 1;
+    } else if (bucket === "failed") failed += 1;
+    decisions.push({
+      alertId: c.alert_id,
+      campaignId: c.campaign_id,
+      detectorId: c.detector_id,
+      intendedKind,
+      outcome,
+      reason,
+    });
+  };
+  // Bucket an executor's REAL outcome: only a landed "succeeded" is an action
+  // taken. "failed"/"retrying" (platform error, or parked for the retry cron)
+  // did NOT change a budget this run, so they must not inflate `acted`.
+  const record = (c: Candidate, kind: ExecutableKind, outcome: ExecutedAudit["outcome"]) =>
+    outcome === "succeeded"
+      ? decide(c, kind, "acted", kind)
+      : decide(c, kind, "failed", `executor outcome: ${outcome}`);
   for (const c of ordered) {
+    // Isolate each candidate. The guardrail read and both executors THROW on
+    // per-campaign faults — an ownership mismatch, a DB hiccup, or a
+    // stale-budget reallocation (live source budget dropped below the view
+    // snapshot, so amount >= source budget). An uncaught throw here would
+    // abort loss-prevention for the shop's OTHER money-losing campaigns, so
+    // count it failed and keep draining.
     try {
+      // FIRST branch: route product-economics detectors through the engine's
+      // recommended remediation move (discontinue / reallocate / cut a SKU or
+      // campaign) within its OWN guardrails. tryRemediation bypasses
+      // getActionPolicy on purpose — these are SKU/structural moves, not the
+      // campaign-budget multipliers the learned dial scales. A candidate that
+      // ACTS or BLOCKS here is fully resolved (`continue`) so it can never also
+      // hit the legacy path below — no double execution on live money.
       const rem = await tryRemediation(shopId, c, sb);
-      if (rem === "acted") { acted += 1; continue; }
-      if (rem === "blocked") { blocked += 1; continue; }
-      if (rem === "skipped") { skippedMoves += 1; continue; }
-      // rem === "fell_through": legacy campaign logic below.
+      if (rem.outcome === "acted") {
+        decide(c, null, "acted", rem.reason);
+        continue;
+      }
+      if (rem.outcome === "blocked") {
+        decide(c, null, "blocked", rem.reason);
+        continue;
+      }
+      if (rem.outcome === "skipped") {
+        // Advisory / non-executable remediation: not acted, not a guardrail
+        // block. Count it separately and record a decision (rule 12), but keep
+        // it OUT of the `blocked` counter/histogram (bucket "none").
+        skippedMoves += 1;
+        decide(c, null, "skipped", rem.reason, "none");
+        continue;
+      }
+      // rem.outcome === "fell_through": defer to the legacy campaign logic so an
+      // overlapping detector (e.g. ad_tax_overload) still reduces/reallocates.
 
       let kind: ExecutableKind | null = null;
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
-      else if (BUDGET_DETECTORS.has(c.detector_id))
-        kind = "reduce_campaign_budget";
-      else if (SCALE_DETECTORS.has(c.detector_id))
-        kind = "increase_campaign_budget";
-      if (!kind) continue;
+      else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
+      else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
+      if (!kind) {
+        decide(c, null, "skipped", "detector not actionable by autopilot", "none");
+        continue;
+      }
 
       // Legacy campaign logic requires a non-null campaign_id. A fell-through
       // candidate without one (data gap in the view) is blocked, not silently
       // dropped (rule 12).
       if (!c.campaign_id) {
-        console.info(
-          `[autopilot] blocked legacy action on alert ${c.alert_id}: ${kind} requires campaign_id`,
-        );
-        blocked += 1;
+        const reason = `${kind} requires a campaign_id`;
+        console.info(`[autopilot] blocked legacy action on alert ${c.alert_id}: ${reason}`);
+        decide(c, kind, "blocked", reason);
         continue;
       }
+
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
       if (kind === "increase_campaign_budget") {
         if (!currentBudgetCents) {
-          console.info(
-            `[autopilot] blocked scale on ${c.campaign_id}: current daily budget is ${
-              currentBudgetCents == null ? "missing from sync" : "$0"
-            }`,
-          );
-          blocked += 1;
+          const reason =
+            currentBudgetCents == null
+              ? "current daily budget missing from sync"
+              : "current daily budget is $0";
+          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          decide(c, kind, "skipped", reason);
           continue;
         }
-        let target = Math.round(
-          currentBudgetCents * (1 + maxIncreasePct / 100),
-        );
-        if (maxDailyBudgetCents != null)
-          target = Math.min(target, maxDailyBudgetCents);
+        const muInc = (await getActionPolicy(sb, shopId, c.detector_id, "increase_campaign_budget")) ?? 1;
+        let target = Math.round(currentBudgetCents * (1 + (maxIncreasePct * muInc) / 100));
+        if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
         if (target <= currentBudgetCents) {
-          console.info(
-            `[autopilot] skipped scale on ${c.campaign_id}: already at/above the daily ceiling`,
-          );
-          blocked += 1;
+          const reason = "already at/above the daily ceiling";
+          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          decide(c, kind, "skipped", reason);
           continue;
         }
         const verdict = await checkGuardrails(
@@ -369,10 +533,10 @@ export async function runAutopilotForShop(
           sb,
         );
         if (!verdict.allowed) {
-          blocked += 1;
+          decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
           continue;
         }
-        await executeAction(
+        const res = await executeAction(
           shopId,
           {
             alertId: c.alert_id,
@@ -381,49 +545,45 @@ export async function runAutopilotForShop(
             idempotencyKey: `autopilot:${c.alert_id}:increase_campaign_budget`,
             dailyBudgetCents: target,
             actor: "autopilot",
-            triggerReason: autopilotReason(
-              "Auto scale budget",
-              c.detector_id,
-              c.dollar_impact,
-            ),
+            triggerReason: autopilotReason("Auto scale budget", c.detector_id, c.dollar_impact),
           },
           sb,
         );
-        acted += 1;
+        record(c, kind, res.outcome);
         continue;
       }
 
       // A budget cut needs a known current budget to cut from. executeAction
       // refuses a missing/zero target budget (it would otherwise zero the live
-      // campaign), and an uncaught throw here would abort the whole run — so
-      // count it blocked and keep draining the remaining candidates.
+      // campaign) — so count it blocked and keep draining the remaining candidates.
       if (kind === "reduce_campaign_budget" && !currentBudgetCents) {
-        // Distinguish "no budget synced" from "budget is $0 on the platform" in
-        // the logs — both block, but they have different operator fixes.
-        console.info(
-          `[autopilot] blocked budget cut on ${c.campaign_id}: current daily budget is ${
-            currentBudgetCents == null
-              ? "missing from sync"
-              : "$0 on the platform"
-          }`,
-        );
-        blocked += 1;
+        // Distinguish "no budget synced" from "budget is $0 on the platform" —
+        // both skip, but they have different operator fixes.
+        const reason =
+          currentBudgetCents == null
+            ? "current daily budget missing from sync"
+            : "current daily budget is $0 on the platform";
+        console.info(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason}`);
+        decide(c, kind, "skipped", reason);
         continue;
       }
 
+      const muCut =
+        kind === "reduce_campaign_budget"
+          ? (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1
+          : 1;
       const newBudgetCents =
         kind === "reduce_campaign_budget" && currentBudgetCents != null
-          ? Math.round(currentBudgetCents * (1 - maxCutPct / 100))
+          ? Math.round(currentBudgetCents * (1 - (maxCutPct * muCut) / 100))
           : undefined;
 
       // Same refusal in executeAction: a cut that lands on $0 would zero the
       // live campaign budget (that's a pause, not a reduction) — blocked. Only
       // reachable with maxCutPct near 100, so flag the config loudly.
       if (kind === "reduce_campaign_budget" && !newBudgetCents) {
-        console.warn(
-          `[autopilot] blocked budget cut on ${c.campaign_id}: max_budget_cut_pct=${maxCutPct} computes a $0 target budget`,
-        );
-        blocked += 1;
+        const reason = "max_budget_cut_pct computes a $0 target budget";
+        console.warn(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason} (max_budget_cut_pct=${maxCutPct})`);
+        decide(c, kind, "skipped", reason);
         continue;
       }
 
@@ -432,53 +592,60 @@ export async function runAutopilotForShop(
       // reduction below when no destination exists. A guardrail-blocked
       // reallocation does NOT fall through to reduce — same alert, same day,
       // one decision (counted as blocked).
-      if (
-        kind === "reduce_campaign_budget" &&
-        currentBudgetCents != null &&
-        newBudgetCents != null
-      ) {
-        const amountCents = currentBudgetCents - newBudgetCents;
-        if (amountCents > 0) {
-          const { dest } = pickReallocation(gradedPool, {
-            sourceCampaignId: c.campaign_id,
-          });
+      //
+      // Magnitude: reallocation has its OWN learned dial. We recompute the moved
+      // amount from `muRealloc` (the trainer's separate reallocate_budget policy)
+      // rather than inheriting the reduce dial baked into newBudgetCents — so that
+      // model family is actually consumed. If muRealloc zeroes the move, we fall
+      // through to a plain reduce so loss-prevention still acts. Dormant-safe: with
+      // no model both dials default to 1, so the moved amount equals prior behavior
+      // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
+      // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
+      if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
+        if (currentBudgetCents - newBudgetCents > 0) {
+          const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
           if (dest) {
-            const verdict = await checkGuardrails(
-              shopId,
-              {
-                kind: "reallocate_budget",
-                campaignId: c.campaign_id,
-                destCampaignId: dest.campaignId,
-                dollarImpactCents: amountCents,
-                campaignSpendCents: c.campaign_spend_cents,
-                currentBudgetCents,
-                newBudgetCents,
-              },
-              sb,
-            );
-            if (!verdict.allowed) {
-              blocked += 1;
+            const muRealloc = (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1;
+            const amountCents = Math.round((currentBudgetCents * maxCutPct * muRealloc) / 100);
+            if (amountCents > 0) {
+              const reallocSrcBudget = currentBudgetCents - amountCents;
+              const verdict = await checkGuardrails(
+                shopId,
+                {
+                  kind: "reallocate_budget",
+                  campaignId: c.campaign_id,
+                  destCampaignId: dest.campaignId,
+                  dollarImpactCents: amountCents,
+                  campaignSpendCents: c.campaign_spend_cents,
+                  currentBudgetCents,
+                  newBudgetCents: reallocSrcBudget,
+                },
+                sb,
+              );
+              if (!verdict.allowed) {
+                decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
+                continue;
+              }
+              const res = await executeReallocation(
+                shopId,
+                {
+                  alertId: c.alert_id,
+                  sourceCampaignId: c.campaign_id,
+                  destCampaignId: dest.campaignId,
+                  amountCents,
+                  idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
+                  actor: "autopilot",
+                  triggerReason: autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact),
+                },
+                sb,
+              );
+              // The executed action is a reallocation, not a plain reduction —
+              // label the decision accordingly while keeping intendedKind = reduce.
+              res.outcome === "succeeded"
+                ? decide(c, kind, "acted", "reallocate_budget")
+                : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
               continue;
             }
-            await executeReallocation(
-              shopId,
-              {
-                alertId: c.alert_id,
-                sourceCampaignId: c.campaign_id,
-                destCampaignId: dest.campaignId,
-                amountCents,
-                idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
-                actor: "autopilot",
-                triggerReason: autopilotReason(
-                  "Auto reallocate budget",
-                  c.detector_id,
-                  c.dollar_impact,
-                ),
-              },
-              sb,
-            );
-            acted += 1;
-            continue;
           }
         }
       }
@@ -496,11 +663,11 @@ export async function runAutopilotForShop(
         sb,
       );
       if (!verdict.allowed) {
-        blocked += 1;
+        decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
         continue;
       }
 
-      await executeAction(
+      const res = await executeAction(
         shopId,
         {
           alertId: c.alert_id,
@@ -517,20 +684,27 @@ export async function runAutopilotForShop(
         },
         sb,
       );
-      acted += 1;
+      record(c, kind, res.outcome);
     } catch (err) {
       // A throw here (DB/ownership/insert error in checkGuardrails or an
       // executor) must not abort the run — log it, count it, and move to the
-      // next alert. Retriable platform failures are already parked as
+      // next candidate. Retriable platform failures are already parked as
       // `retrying` by executeAction for the action-retry cron, so there is
       // nothing to retry inline; we just stop one bad alert from starving the rest.
-      console.error(
-        `[autopilot] action failed for alert ${c.alert_id} (detector ${c.detector_id}, campaign ${c.campaign_id}); skipping to next`,
-        err,
-      );
-      failed += 1;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
+      decide(c, null, "failed", `threw: ${msg}`);
     }
   }
 
-  return { skipped: false, acted, blocked, skippedMoves, failed };
+  return {
+    skipped: false,
+    acted,
+    blocked,
+    skippedMoves,
+    failed,
+    considered: decisions.length,
+    blockedReasons,
+    decisions,
+  };
 }

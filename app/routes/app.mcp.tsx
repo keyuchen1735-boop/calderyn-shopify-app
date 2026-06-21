@@ -7,15 +7,18 @@ import {
   Badge,
   Banner,
   BlockStack,
+  Box,
   Button,
   ButtonGroup,
   Card,
   DataTable,
+  InlineStack,
   Layout,
   Modal,
   Page,
   Text,
   TextField,
+  useBreakpoints,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import {
@@ -169,6 +172,8 @@ export default function McpTokens() {
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
 
+  const { smDown } = useBreakpoints();
+
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
 
@@ -229,6 +234,36 @@ export default function McpTokens() {
                     connector) read this store&apos;s data.
                   </Text>
                 </BlockStack>
+              ) : smDown ? (
+                <BlockStack gap="300">
+                  {tokens.map((t) => (
+                    <Box key={t.id} padding="300" borderColor="border" borderWidth="025" borderRadius="200">
+                      <BlockStack gap="150">
+                        <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+                          <Text as="span" variant="bodySm" fontWeight="semibold">{t.name}</Text>
+                          <Text as="span" variant="bodyXs" tone="subdued">{t.token_prefix}…</Text>
+                        </InlineStack>
+                        <Text as="span" variant="bodyXs" tone="subdued">{(t.scopes ?? []).join(", ")}</Text>
+                        <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+                          <Text as="span" variant="bodyXs" tone="subdued">
+                            Last used {t.last_used_at ? new Date(t.last_used_at).toLocaleDateString() : "never"}
+                          </Text>
+                          {t.revoked_at ? (
+                            <Badge tone="critical">Revoked</Badge>
+                          ) : (
+                            <Form method="post">
+                              <input type="hidden" name="intent" value="revoke" />
+                              <input type="hidden" name="token_id" value={t.id} />
+                              <Button submit tone="critical" variant="plain" loading={submitting} disabled={submitting}>
+                                Revoke
+                              </Button>
+                            </Form>
+                          )}
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </BlockStack>
               ) : (
                 <DataTable
                   columnContentTypes={["text", "text", "text", "text", "text", "text"]}
@@ -245,22 +280,47 @@ export default function McpTokens() {
                   <Text as="h3" variant="headingSm">
                     Connected Claude.ai workspaces
                   </Text>
-                  <DataTable
-                    columnContentTypes={["text", "text", "text", "text"]}
-                    headings={["Name", "Connected", "Last used", ""]}
-                    rows={oauthGrants.map((g) => [
-                      g.name,
-                      new Date(g.created_at).toLocaleString(),
-                      g.last_used_at ? new Date(g.last_used_at).toLocaleString() : "—",
-                      <Form method="post" key={`oauth-revoke-${g.id}`}>
-                        <input type="hidden" name="intent" value="oauth-revoke" />
-                        <input type="hidden" name="token_id" value={g.id} />
-                        <Button submit tone="critical" loading={submitting} disabled={submitting}>
-                          Disconnect
-                        </Button>
-                      </Form>,
-                    ])}
-                  />
+                  {smDown ? (
+                    <BlockStack gap="300">
+                      {oauthGrants.map((g) => (
+                        <Box key={g.id} padding="300" borderColor="border" borderWidth="025" borderRadius="200">
+                          <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">{g.name}</Text>
+                              <Text as="span" variant="bodyXs" tone="subdued">
+                                Connected {new Date(g.created_at).toLocaleDateString()}
+                                {g.last_used_at ? ` · last used ${new Date(g.last_used_at).toLocaleDateString()}` : ""}
+                              </Text>
+                            </BlockStack>
+                            <Form method="post">
+                              <input type="hidden" name="intent" value="oauth-revoke" />
+                              <input type="hidden" name="token_id" value={g.id} />
+                              <Button submit tone="critical" variant="plain" loading={submitting} disabled={submitting}>
+                                Disconnect
+                              </Button>
+                            </Form>
+                          </InlineStack>
+                        </Box>
+                      ))}
+                    </BlockStack>
+                  ) : (
+                    <DataTable
+                      columnContentTypes={["text", "text", "text", "text"]}
+                      headings={["Name", "Connected", "Last used", ""]}
+                      rows={oauthGrants.map((g) => [
+                        g.name,
+                        new Date(g.created_at).toLocaleString(),
+                        g.last_used_at ? new Date(g.last_used_at).toLocaleString() : "—",
+                        <Form method="post" key={`oauth-revoke-${g.id}`}>
+                          <input type="hidden" name="intent" value="oauth-revoke" />
+                          <input type="hidden" name="token_id" value={g.id} />
+                          <Button submit tone="critical" loading={submitting} disabled={submitting}>
+                            Disconnect
+                          </Button>
+                        </Form>,
+                      ])}
+                    />
+                  )}
                 </BlockStack>
               </Card>
             </Layout.Section>

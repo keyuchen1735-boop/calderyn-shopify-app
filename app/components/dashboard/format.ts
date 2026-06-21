@@ -97,20 +97,12 @@ export const ACTION_LABELS: Record<string, string> = {
   review_pricing: "Review pricing",
 };
 
-export const DETECTOR_TERMS: Record<string, string> = {
-  sku_stockout_vs_spend: "SKU stockout vs spend",
-  campaign_below_breakeven: "Campaign below breakeven",
-  regional_spend_starved_stock: "Regional spend on starved stock",
-  margin_erosion: "Margin erosion",
-  scaling_sku_fulfillment_risk: "Scaling SKU fulfillment risk",
-  return_rate_hidden_loss: "Return-rate hidden loss",
-  reorder_timing: "Reorder timing",
-  wrong_location_concentration: "Wrong location concentration",
-  cogs_drift: "COGS drift",
-  ad_tax_overload: "Ad-tax overload",
-  negative_unit_economics: "Negative unit economics",
-  regional_shortage_risk: "Regional shortage risk",
-};
+// Detector names come from the single source (app/lib/labels) so the dashboard
+// shows the same PLAIN labels as the embedded admin, and no id ever leaks as
+// snake_case (P2-10). This was a partial local copy of the analyst terms that
+// was missing newer detectors (campaign_scaling_opportunity, free_shipping_
+// leakage), which then rendered raw on the dashboard.
+export { detectorLabel, detectorTerm, alertDetectorLabel } from "~/lib/labels";
 
 export const GROUP_LABELS: Record<string, string> = {
   attention: "Attention",

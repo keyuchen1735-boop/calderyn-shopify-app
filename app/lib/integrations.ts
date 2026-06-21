@@ -65,6 +65,10 @@ export function integrationBadge(status: Integration["status"]): {
 } {
   if (status === "connected") return { label: "Connected", tone: "success" };
   if (status === "pending") return { label: "Connected", tone: "info" };
+  // Paired before but the credential died — prompt a reconnect, don't read as
+  // never-connected. isPaired stays false for "reauth", so the card re-renders
+  // the Connect button (which is the reconnect affordance).
+  if (status === "reauth") return { label: "Reconnect needed", tone: "attention" };
   return { label: "Not connected", tone: "attention" };
 }
 

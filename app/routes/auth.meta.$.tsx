@@ -8,6 +8,7 @@ import {
   consumeOAuthState,
   parseOAuthState,
   embeddedReturnUrl,
+  popupResultUrl,
   postOAuthPath,
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
@@ -33,6 +34,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // auth.google/tiktok/quickbooks). Facebook sends ?error=...&state=... with no
   // code when the merchant clicks Cancel.
   if (oauthError) {
+    // New-tab (onboarding) connect: land on the standalone result page, not an
+    // embedded deep link that can't render in a bare tab.
+    if (returnCtx.popup)
+      return redirect(popupResultUrl({ provider: "Meta Ads", status: "error", reason: oauthError }));
     return redirect(
       embeddedReturnUrl("/app/settings", { meta: "error", reason: oauthError }, returnCtx),
     );
@@ -102,5 +107,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
+  if (returnCtx.popup) return redirect(popupResultUrl({ provider: "Meta Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { meta: "connected" }, returnCtx));
 };

@@ -26,7 +26,6 @@ import type {
   CampaignVM,
   DailyRow,
   GuardrailVM,
-  Grade,
   IntegrationVM,
   OverviewVM,
   Scorecard,
@@ -34,6 +33,8 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { gradeFromRow } from "~/lib/campaign-grade";
+import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
@@ -195,27 +196,12 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   };
 }
 
-const VALID_GRADES: readonly Grade[] = ["winning", "okay", "poor"];
-
-function coerceGrade(
-  raw: string | undefined,
-  roas: number | undefined,
-  breakeven: number | undefined,
-): Grade {
-  if (raw && (VALID_GRADES as readonly string[]).includes(raw)) return raw as Grade;
-  // Derive from economics only when we have a breakeven to compare against.
-  if (typeof roas === "number" && typeof breakeven === "number" && breakeven > 0) {
-    if (roas >= breakeven * 1.2) return "winning";
-    if (roas >= breakeven) return "okay";
-    return "poor";
-  }
-  return "okay";
-}
-
 export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): CampaignVM {
   const g = grades.find((row) => row.campaign_id === c.id);
   const breakeven_roas = g?.break_even_roas ?? 0;
-  const grade = coerceGrade(g?.grade, g?.roas ?? c.roas_7d, g?.break_even_roas);
+  // Single grade source (P1-6): "nodata" when the grade row has spend but no
+  // attributed revenue, so an attribution gap never renders as "poor".
+  const grade = gradeFromRow(g ?? { roas: c.roas_7d, break_even_roas: breakeven_roas }, c.roas_7d);
 
   return {
     id: c.id,
@@ -267,7 +253,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     id: e.id,
     action_kind: e.action_kind,
     verb: AUDIT_VERBS[e.action_kind] ?? e.action_kind,
-    target: e.target,
+    target: displayAuditTarget(e.target),
     detail: e.failure_reason ?? "",
     dollar_impact_at_exec: e.dollar_impact_at_exec,
     outcome: e.outcome,
@@ -280,6 +266,7 @@ export function adaptAudit(e: AuditEntry): AuditVM {
     pre: summarizeState(e.pre_state),
     post: summarizeState(e.post_state),
     failure: e.failure_reason,
+    failureFriendly: friendlyActionError(e.failure_reason) ?? undefined,
     mode: leg.mode,
     actorDisplay: leg.actorDisplay,
     marginBasis: leg.marginBasis,
@@ -304,7 +291,9 @@ export function adaptSku(s: SKU): SkuVM {
   if (s.on_hand === 0) status = "stockout";
   else if (s.days_of_cover < 10) status = "risk";
   else if (s.days_of_cover < 21) status = "reorder";
-  else if (total > 0 && maxShare > 0.6) status = "misplaced";
+  // "Wrong location concentration" only matters when the SKU is actually selling
+  // — concentrated stock at ~0 velocity is not at risk, it's just sitting (P2-13).
+  else if (total > 0 && maxShare > 0.6 && s.velocity > 0) status = "misplaced";
   else status = "healthy";
 
   return {
@@ -353,6 +342,20 @@ export function sortSkus(skus: SkuVM[], key: SkuSortKey): SkuVM[] {
  */
 export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
   return sortSkus(skus, "on_hand");
+}
+
+/**
+ * "Needs attention" ranking by urgency (P2-13): soonest to run out first
+ * (days_of_cover ASC), then higher 30-day revenue first as a tiebreaker so a
+ * real best-seller outranks a zero-revenue sample at the same days-of-cover —
+ * instead of the stock-DESC load order that buried the real at-risk SKUs.
+ */
+export function sortSkusByUrgency(skus: SkuVM[]): SkuVM[] {
+  return [...skus].sort(
+    (a, b) =>
+      a.days_of_cover - b.days_of_cover ||
+      Number(b.revenue_30d_cents ?? 0) - Number(a.revenue_30d_cents ?? 0),
+  );
 }
 
 const INTEGRATION_ORDER = [
@@ -454,6 +457,22 @@ export async function fetchCampaign(
   return adaptCampaign(data.campaign, grades);
 }
 
+// Mirror of CampaignDirection in ~/lib/actions/direction-reason.server.ts — a
+// browser-safe copy (.server modules can't be imported into client bundles).
+// Keep these fields in sync by hand when the server type changes.
+export interface CampaignDirectionDTO {
+  direction: "scale_up" | "scale_down" | "keep" | "pause";
+  actionKind: "pause_campaign" | "reduce_campaign_budget" | "increase_campaign_budget" | null;
+  suggestedBudgetCents: number | null;
+  reason: string;
+  reasonSource: "claude" | "template";
+  dataSufficient: boolean;
+}
+
+export async function fetchCampaignDirection(id: string): Promise<CampaignDirectionDTO> {
+  return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
+}
+
 export async function fetchSkus(): Promise<SkuVM[]> {
   const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
   return sortSkusByOnHandDesc(data.skus.map(adaptSku));
@@ -504,6 +523,35 @@ function toGuardrailVM(g: GuardrailConfig): GuardrailVM {
     autopilot_actions_today: (g as { autopilot_actions_today?: number })
       .autopilot_actions_today ?? 0,
   };
+}
+
+// Mirror of AutopilotDecision / AutopilotSummary in
+// ~/lib/actions/autopilot.server.ts — a browser-safe copy (.server modules
+// can't be imported into client bundles). The dashboard only needs the landed
+// `decisions` (to banner each execution) and the counters; extra server fields
+// (blockedReasons) are ignored. Keep in sync by hand when the server type changes.
+export interface AutopilotDecisionDTO {
+  alertId: string;
+  campaignId: string;
+  detectorId: string;
+  intendedKind: string | null;
+  outcome: "acted" | "blocked" | "skipped" | "failed";
+  reason: string;
+}
+
+export interface AutopilotRunDTO {
+  skipped: boolean;
+  acted: number;
+  blocked: number;
+  failed: number;
+  considered: number;
+  decisions: AutopilotDecisionDTO[];
+}
+
+/** Trigger an immediate autopilot run for the session's shop. The dashboard
+ * fires this on load when autopilot is enabled; it is idempotent server-side. */
+export async function runAutopilot(): Promise<AutopilotRunDTO> {
+  return apiSend<AutopilotRunDTO>("POST", "/dashboard/api/autopilot");
 }
 
 export async function fetchConsent(): Promise<boolean> {

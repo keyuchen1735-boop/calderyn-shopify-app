@@ -68,7 +68,7 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     )) as Response;
     expect(r.status).toBe(302);
     const cookie = r.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain("dash_oauth=");
+    expect(cookie).toContain("__Host-dash_oauth=");
     // state:shop:enc(returnTo)
     expect(cookie).toContain(`:myshop.myshopify.com:${encodeURIComponent("/dashboard/connect?t=abc")}`);
   });
@@ -81,7 +81,7 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     )) as Response;
     expect(r.status).toBe(302);
     const cookie = r.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain("dash_oauth=");
+    expect(cookie).toContain("__Host-dash_oauth=");
     expect(cookie).not.toContain("evil.example");
   });
 

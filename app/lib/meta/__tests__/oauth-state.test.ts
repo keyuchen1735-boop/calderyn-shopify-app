@@ -125,6 +125,20 @@ describe("packOAuthState / parseOAuthState", () => {
       nonce: "nonce-1",
       host: "aHsdf==",
       shop: "demo.myshopify.com",
+      popup: false,
+    });
+  });
+
+  it("round-trips the popup flag (new-tab onboarding connect)", () => {
+    // popup alone is enough context to force a packed (non-bare) state, so the
+    // callback can route to the standalone /auth/connected page.
+    const state = packOAuthState("nonce-1", { popup: true });
+    expect(state).not.toBe("nonce-1");
+    expect(parseOAuthState(state)).toEqual({
+      nonce: "nonce-1",
+      host: null,
+      shop: null,
+      popup: true,
     });
   });
 
@@ -132,6 +146,7 @@ describe("packOAuthState / parseOAuthState", () => {
     expect(packOAuthState("nonce-1")).toBe("nonce-1");
     expect(packOAuthState("nonce-1", {})).toBe("nonce-1");
     expect(packOAuthState("nonce-1", { host: null, shop: null })).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", { popup: false })).toBe("nonce-1");
   });
 
   it("parses a plain nonce as the nonce with null context", () => {
@@ -139,6 +154,7 @@ describe("packOAuthState / parseOAuthState", () => {
       nonce: "just-a-nonce",
       host: null,
       shop: null,
+      popup: false,
     });
   });
 });

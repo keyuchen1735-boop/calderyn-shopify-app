@@ -5,6 +5,7 @@ import {
   consumeOAuthState,
   parseOAuthState,
   embeddedReturnUrl,
+  popupResultUrl,
   postOAuthPath,
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
@@ -37,6 +38,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const returnCtx = parseOAuthState(state ?? "");
 
   if (oauthError) {
+    if (returnCtx.popup)
+      return redirect(popupResultUrl({ provider: "QuickBooks", status: "error", reason: oauthError }));
     return redirect(
       embeddedReturnUrl("/app/settings", { quickbooks: "error", reason: oauthError }, returnCtx),
     );
@@ -98,5 +101,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
 
+  if (returnCtx.popup) return redirect(popupResultUrl({ provider: "QuickBooks", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { quickbooks: "connected" }, returnCtx));
 };

@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GoogleAdsClient } from "./client.server";
-import { googleClientForShop } from "./client.server";
+import { googleClientForShop, isReauthError } from "./client.server";
 import {
   transformCampaign,
   transformReportRow,
@@ -104,12 +104,16 @@ export function googleSource(
 async function recordSyncError(shopId: string, err: unknown, sb: SupabaseClient): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   const now = new Date().toISOString();
+  // A dead refresh token (invalid_grant) isn't a generic failure: the merchant
+  // must reconnect. Flag it as "reauth" so the settings card shows "Reconnect
+  // needed" + a Connect button instead of a raw error string.
+  const syncStatus = isReauthError(message) ? "reauth" : "error";
   // Best-effort status write inside the caller's catch: surface a write failure
   // (supabase-js returns { error } without throwing) but never throw it — the
   // caller re-throws the ORIGINAL ingestion error, which must not be masked.
   const { error: writeErr } = await sb
     .from("shop_integrations")
-    .update({ sync_status: "error", sync_error: message.slice(0, 500), updated_at: now })
+    .update({ sync_status: syncStatus, sync_error: message.slice(0, 500), updated_at: now })
     .eq("shop_id", shopId)
     .eq("kind", "google_ads");
   if (writeErr) {

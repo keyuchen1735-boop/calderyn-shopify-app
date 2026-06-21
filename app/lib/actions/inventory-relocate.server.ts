@@ -10,10 +10,8 @@
 // Shopify failures record a failed row visibly (rule 12).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  inventoryAdjustQuantities,
-  type AdminGraphqlClient,
-} from "../shopify/inventory.server";
+import { type AdminGraphqlClient } from "../shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import {
   insertAuditWithIdempotency,
   priorExecutionForKey,
@@ -132,12 +130,12 @@ export async function executeInventoryRelocation(
   let lastError: string | null = null;
   let operationId: string | null = null;
   try {
-    ({ operationId } = await inventoryAdjustQuantities(admin, {
+    ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
       inventoryItemId: inventoryItemId,
       fromLocationId: input.fromLocationId,
       toLocationId: input.toLocationId,
       delta: input.quantity,
-    }));
+    }, sb));
   } catch (err) {
     outcome = "failed";
     lastError = err instanceof Error ? err.message : String(err);

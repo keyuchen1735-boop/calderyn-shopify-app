@@ -11,10 +11,10 @@ import { fmtMoney } from "../format";
 import { acknowledgeAlert } from "../alerts.server";
 import { snoozeAlert } from "./snooze.server";
 import {
-  inventoryAdjustQuantities,
   transferPlanFromEvidence,
   type AdminGraphqlClient,
 } from "../shopify/inventory.server";
+import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import type { ActionKind, Alert, AuditEntry, GuardrailConfig } from "../types";
 import { discontinueProduct } from "../shopify/product.server";
 import { resolveSkuForDiscontinue, setDoNotReorder } from "./discontinue.server";
@@ -72,11 +72,15 @@ export async function executeInventoryAlertAction(opts: {
   // deferral and exempt (same rule as the alert detail page).
   if (kind !== "snooze_alert") {
     const guardrails = await client.guardrails.get(signal);
-    if (alert.dollar_impact > guardrails.dollar_cap_cents) {
+    // alert.dollar_impact is ALREADY in cents (rowToAlert converts the DB dollars
+    // at the boundary), and so is dollar_cap_cents — compare directly. The prior
+    // `* 100` double-converted and inflated the impact 100x.
+    const impactCents = alert.dollar_impact;
+    if (impactCents > guardrails.dollar_cap_cents) {
       throw new CalderynError({
         code: "guardrail_dollar_cap",
         status: 403,
-        message: `This action's impact (${fmtMoney(alert.dollar_impact)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
+        message: `This action's impact (${fmtMoney(impactCents)}) exceeds the per-action cap of ${fmtMoney(guardrails.dollar_cap_cents)}.`,
       });
     }
   }
@@ -98,7 +102,7 @@ export async function executeInventoryAlertAction(opts: {
     }
     let operationId: string;
     try {
-      ({ operationId } = await inventoryAdjustQuantities(admin, plan));
+      ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
     } catch (err) {
       throw new CalderynError({
         code: "action_failed",

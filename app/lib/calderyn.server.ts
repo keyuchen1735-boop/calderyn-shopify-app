@@ -30,6 +30,7 @@ import {
 } from "./inventory-demand";
 import { getSupabase, resolveShopId } from "./supabase.server";
 import { encrypt } from "./crypto.server";
+import { friendlyIntegrationError } from "./friendly-error";
 import { newIdempotencyKey } from "./ids";
 import { GRADE_ROWS_CAP } from "./actions/reallocation-suggest.server";
 import { buildAuthUrl } from "./meta/oauth.server";
@@ -41,6 +42,7 @@ import { refreshShipHeroToken } from "./shiphero/auth.server";
 import { createOAuthState } from "./meta/oauth-state.server";
 import { undoAction } from "./actions/undo.server";
 import { withinBusinessHours } from "./actions/guardrails";
+import { localHourToUtc, utcHourToLocal } from "./dashboard/business-hours";
 import { DEFAULT_GUARDRAILS } from "./guardrail-defaults";
 import { recoveredDollarsForAlertAction } from "./actions/execute.server";
 import { dailyActionBudgetUsedCents } from "./recovered";
@@ -91,14 +93,14 @@ export type OnboardingState = { step: number; done: boolean };
 // stores the step NAME, so a divergent order here persists a step the merchant
 // is not actually on (and any other surface reading shops.onboarding_step
 // would resume them at the wrong place).
+// 5-step model (2026-06 onboarding redesign): the four ad/accounting OAuth
+// providers collapsed from one step each into a single "connect" screen, and the
+// creative-mapping step was dropped. Persisted in shops.onboarding_step; the index
+// drives the wizard. postOAuthPath still keys off "complete"/onboarding_completed_at.
 const ONBOARDING_STEPS = [
   "shopify",
   "guardrails",
-  "google",
-  "meta",
-  "tiktok",
-  "quickbooks",
-  "creative_mapping",
+  "connect",
   "consent",
   "complete",
 ] as const;
@@ -248,25 +250,28 @@ function startOfUtcDayIso(now = new Date()): string {
 }
 
 function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailConfig {
+  const tz = String(r.timezone ?? "America/New_York");
+  const startUtc = Number(r.business_hours_start_utc ?? 14);
+  const endUtc = Number(r.business_hours_end_utc ?? 0);
   return {
     daily_action_budget_cents: Number(r.daily_action_budget ?? 0) * 100,
     daily_action_budget_used_cents: usedCents,
     dollar_cap_cents: Math.round(Number(r.dollar_impact_cap_without_2fa ?? 0) * 100),
     cooldown_minutes: Number(r.cooldown_minutes_per_campaign ?? 30),
     business_hours: {
-      start: `${String(r.business_hours_start_utc ?? 14).padStart(2, "0")}:00`,
-      end: `${String(r.business_hours_end_utc ?? 0).padStart(2, "0")}:00`,
-      tz: String(r.timezone ?? "America/New_York"),
+      start: utcHourToLocal(startUtc, tz),
+      end: utcHourToLocal(endUtc, tz),
+      tz,
     },
+    business_hours_only: Boolean(r.business_hours_only),
     // Same window math the autopilot gateway enforces (actions/guardrails.ts),
     // so the merchant-facing check can't show green while the gateway blocks.
-    in_business_hours: withinBusinessHours(
-      Number(r.business_hours_start_utc ?? 14),
-      Number(r.business_hours_end_utc ?? 0),
-      new Date().getUTCHours(),
-    ),
+    in_business_hours: withinBusinessHours(startUtc, endUtc, new Date().getUTCHours()),
     autopilot_enabled: Boolean(r.autopilot_enabled),
-    autopilot_daily_action_cap: Number(r.autopilot_daily_action_cap ?? 3),
+    autopilot_bypass_guardrails: Boolean(r.autopilot_bypass_guardrails),
+    // null column = no cap (unlimited); preserve it rather than coercing to a number.
+    autopilot_daily_action_cap:
+      r.autopilot_daily_action_cap == null ? null : Number(r.autopilot_daily_action_cap),
     autopilot_min_spend_cents: Number(r.autopilot_min_spend_cents ?? 20000),
     autopilot_max_budget_cut_pct: Number(r.autopilot_max_budget_cut_pct ?? 50),
     autopilot_max_budget_increase_pct: Number(r.autopilot_max_budget_increase_pct ?? 20),
@@ -1244,8 +1249,18 @@ export function calderynClient(shop: string) {
           if (patch.cooldown_minutes !== undefined) {
             updates.cooldown_minutes_per_campaign = patch.cooldown_minutes;
           }
-          if (patch.business_hours?.tz) updates.timezone = patch.business_hours.tz;
+          if (patch.business_hours) {
+            const tz = patch.business_hours.tz;
+            if (tz) updates.timezone = tz;
+            const zone = tz ?? "America/New_York";
+            updates.business_hours_start_utc = localHourToUtc(patch.business_hours.start, zone);
+            updates.business_hours_end_utc = localHourToUtc(patch.business_hours.end, zone);
+          }
+          if (patch.business_hours_only !== undefined) {
+            updates.business_hours_only = patch.business_hours_only;
+          }
           if (patch.autopilot_enabled !== undefined) updates.autopilot_enabled = patch.autopilot_enabled;
+          if (patch.autopilot_bypass_guardrails !== undefined) updates.autopilot_bypass_guardrails = patch.autopilot_bypass_guardrails;
           if (patch.autopilot_daily_action_cap !== undefined) updates.autopilot_daily_action_cap = patch.autopilot_daily_action_cap;
           if (patch.autopilot_min_spend_cents !== undefined) updates.autopilot_min_spend_cents = patch.autopilot_min_spend_cents;
           if (patch.autopilot_max_budget_cut_pct !== undefined) updates.autopilot_max_budget_cut_pct = patch.autopilot_max_budget_cut_pct;
@@ -1313,11 +1328,23 @@ export function calderynClient(shop: string) {
                 ? "connected"
                 : r.sync_status === "pending"
                   ? "pending"
-                  : "disconnected";
+                  : r.sync_status === "reauth"
+                    ? "reauth"
+                    : "disconnected";
             out[kind] = {
               name: INTEGRATION_DISPLAY_NAME[kind] ?? kind,
               status,
-              detail: r.sync_error ?? r.external_account_id ?? (r.connected_at ? `Connected ${r.connected_at}` : "Pending"),
+              // An errored integration shows a plain-language reason, not the raw
+              // provider/API string (which still lives in sync_error for
+              // diagnosis). reauth keeps its dedicated reconnect prompt;
+              // friendlyIntegrationError returns null when there's no error, so a
+              // healthy row falls through to the account id / connected date.
+              detail:
+                status === "reauth"
+                  ? "Connection expired — reconnect to resume syncing"
+                  : (friendlyIntegrationError(r.sync_error) ??
+                    r.external_account_id ??
+                    (r.connected_at ? `Connected ${r.connected_at}` : "Pending")),
               logoCls: INTEGRATION_LOGO_CLS[kind] ?? "logo-default",
             };
           }
@@ -1329,6 +1356,9 @@ export function calderynClient(shop: string) {
       async startOAuth(
         provider: IntegrationProvider,
         host?: string | null,
+        // popup=true (onboarding new-tab connect) makes the provider callback land
+        // on the standalone /auth/connected page instead of an embedded deep link.
+        popup?: boolean,
       ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
@@ -1345,7 +1375,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
@@ -1363,7 +1393,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/google`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/google.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "tiktok") {
@@ -1381,7 +1411,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/tiktok`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "quickbooks") {
@@ -1399,7 +1429,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/quickbooks`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "shippo") {
@@ -1420,7 +1450,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/shippo`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/shippo.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
           return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
         }
         // NOTE: ShipHero is intentionally NOT handled here. It is credential/token-based

@@ -15,6 +15,7 @@ import {
   Placeholder,
 } from "../ui";
 import { fetchAnalytics, DashboardApiError } from "~/lib/dashboard/client";
+import { gradeFromRow } from "~/lib/campaign-grade";
 import type { DashboardCtx } from "../context";
 import type { DailyRow, TopAd } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
@@ -139,21 +140,21 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       </ScreenHeader>
 
       <div className="cd-stat-grid">
-        <Card className="cd-stat">
+        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
           <span className="cd-stat-label">Ad spend ({range})</span>
           <span className="cd-stat-value">
             <CountMoney cents={spend} />
           </span>
           <span className="cd-caption">across {grades.length} graded campaigns</span>
         </Card>
-        <Card className="cd-stat">
+        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
           <span className="cd-stat-label">Attributed revenue</span>
           <span className="cd-stat-value">
             <CountMoney cents={revenue} />
           </span>
           <span className="cd-caption">last-click + modeled</span>
         </Card>
-        <Card className="cd-stat">
+        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
           <span className="cd-stat-label">Blended ROAS</span>
           <span
             className="cd-stat-value tabular-nums"
@@ -163,7 +164,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
           </span>
           <span className="cd-caption">revenue ÷ spend, blended</span>
         </Card>
-        <Card className="cd-stat">
+        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
           <span className="cd-stat-label">Campaign health</span>
           <span className="cd-stat-value tabular-nums">
             {winning.length}
@@ -219,7 +220,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="cd-row-title truncate">{g.name}</span>
-                            <GradePill grade={g.grade} />
+                            <GradePill grade={gradeFromRow(g)} />
                           </div>
                           <div className="cd-grade-track">
                             <div

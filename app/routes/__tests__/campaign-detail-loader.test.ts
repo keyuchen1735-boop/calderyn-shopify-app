@@ -49,8 +49,15 @@ vi.mock("../../shopify.server", () => ({
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
-  calderynClient: () => ({ campaigns: { get: (...a: unknown[]) => getSpy(...a) } }),
+  calderynClient: () => ({
+    campaigns: { get: (...a: unknown[]) => getSpy(...a) },
+    alerts: { list: async () => [] },
+    guardrails: { get: async () => ({}) },
+  }),
 }));
+
+const { resolveDirectionMock } = vi.hoisted(() => ({ resolveDirectionMock: vi.fn() }));
+vi.mock("~/lib/actions/direction-reason.server", () => ({ resolveCampaignDirection: resolveDirectionMock }));
 
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ __fake: "sb" }),
@@ -92,6 +99,7 @@ vi.mock("~/lib/ads/campaign-detail.server", () => ({
     spend7dCents: null,
     reportedRoas: null,
     realRoas: null,
+    breakEvenRoas: null,
   }),
 }));
 
@@ -130,6 +138,11 @@ beforeEach(() => {
   listAdInsightsSpy.mockResolvedValue([]);
   loadCachedSpy.mockReset();
   loadCachedSpy.mockResolvedValue([]);
+  resolveDirectionMock.mockReset();
+  resolveDirectionMock.mockResolvedValue({
+    direction: "scale_up", actionKind: "increase_campaign_budget",
+    suggestedBudgetCents: 12000, reason: "Winner with room.", reasonSource: "claude", dataSufficient: true,
+  });
 });
 
 describe("campaign detail loader — non-uuid (Meta external) id", () => {
@@ -150,6 +163,7 @@ describe("campaign detail loader — non-uuid (Meta external) id", () => {
     const body = (await res.json()) as {
       error: { code: string } | null;
       detail: { name: string; metaExternalId: string | null } | null;
+      direction: { direction: string; suggestedBudgetCents: number } | null;
     };
 
     expect(body.error).toBeNull();
@@ -158,5 +172,7 @@ describe("campaign detail loader — non-uuid (Meta external) id", () => {
     expect(body.detail?.metaExternalId).toBe(META_EXTERNAL_ID);
     // The non-uuid id must never be passed into the uuid-typed dim lookup.
     expect(getSpy).not.toHaveBeenCalledWith(META_EXTERNAL_ID);
+    // direction is resolved and included in the payload
+    expect(body.direction).toMatchObject({ direction: "scale_up", suggestedBudgetCents: 12000 });
   });
 });

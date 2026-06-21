@@ -1,6 +1,7 @@
 import type { LocationRow, SkuRow, OrderRow, OrderLineRow } from "./types";
 import { parseLandingSite } from "../attribution/parse";
 import type { AttributionSignals } from "../attribution/types";
+import { buildSkuTitle } from "../sku-title";
 
 export function gidToId(gid: string): string {
   const m = gid.match(/\/([^/]+)$/);
@@ -83,7 +84,6 @@ export function mapLocation(shopId: string, n: LocationNode): LocationRow {
 }
 
 export function mapVariantToSku(shopId: string, product: ProductNode, variant: VariantNode): SkuRow {
-  const variantTitle = variant.title && variant.title !== "Default Title" ? variant.title : null;
   const unitCost = variant.inventoryItem?.unitCost?.amount;
   // Product facets for inventory slicing. `category` carries Shopify's
   // productType (the inventory page's "type" facet); empty strings are nulled so
@@ -99,7 +99,9 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
     product_id: product.id,
     inventory_item_id: variant.inventoryItem?.id ?? null,
     sku: variant.sku ?? null,
-    title: variantTitle ? `${product.title} — ${variantTitle}` : product.title,
+    // "<product> — <variant>" with any repeated product name stripped from the
+    // variant (Shopify sample options often repeat it); see buildSkuTitle.
+    title: buildSkuTitle(product.title, variant.title),
     unit_cost_cents: unitCost != null ? moneyToCents(unitCost) : null,
     currency: "USD",
     category: productType,

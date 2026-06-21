@@ -19,7 +19,9 @@ const PATCHABLE_KEYS: (keyof GuardrailConfig)[] = [
   "dollar_cap_cents",
   "cooldown_minutes",
   "business_hours",
+  "business_hours_only",
   "autopilot_enabled",
+  "autopilot_bypass_guardrails",
   "autopilot_daily_action_cap",
   "autopilot_min_spend_cents",
   "autopilot_max_budget_cut_pct",
@@ -45,24 +47,9 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   if (Object.keys(patch).length === 0) return jsonError(422, "empty_patch");
 
-  // Mirror the onboarding guard (app/routes/app.onboarding.tsx): a present
-  // budget or per-action cap must be a positive number, and cooldown >= 0 —
-  // otherwise the patch would silently disable the guardrail. Only validate
-  // keys actually in the patch, since this is a partial update.
-  const positive = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v > 0;
-  const nonNegative = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
-  if ("daily_action_budget_cents" in patch && !positive(patch.daily_action_budget_cents)) {
-    return jsonError(422, "invalid_guardrails");
-  }
-  if ("dollar_cap_cents" in patch && !positive(patch.dollar_cap_cents)) {
-    return jsonError(422, "invalid_guardrails");
-  }
-  if ("cooldown_minutes" in patch && !nonNegative(patch.cooldown_minutes)) {
-    return jsonError(422, "invalid_guardrails");
-  }
-  // Autopilot limits + business_hours are persisted and later trusted by the
-  // autopilot executor; bound them so e.g. a 999% budget-cut can't be stored.
-  if (validateGuardrailPatch(patch)) return jsonError(422, "invalid_guardrails");
+  // Single source of truth for bounds (lib/dashboard/guardrails-validation.ts).
+  // Response code stays generic for the web client; the specific code is internal.
+  if (validateGuardrailPatch(patch) !== null) return jsonError(422, "invalid_guardrails");
 
   return dashboardJson(async () => ({
     guardrails: await calderynClient(session.shopDomain).guardrails.update(patch),

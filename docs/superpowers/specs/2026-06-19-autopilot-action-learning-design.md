@@ -180,20 +180,29 @@ runtime (new helper beside `autopilot.server.ts`), mirroring Python `get_thresho
 
 ## 8. Targeting (D6 — deterministic v1, the "where it sees fit" enabler)
 
-Shop-scoped (`ad_tax_overload`) and SKU-scoped (`negative_unit_economics`) alerts
-gain a campaign target so they can finally act. **Do not loosen
-`v_autopilot_candidates`'s inner join** (it correctly serves campaign-scoped
-detectors); instead add a SECOND candidate source for the scoped detectors that
-resolves the campaign in TS:
-- `ad_tax_overload` (cut/reallocate-source) → the lowest-ROAS, below-break-even
-  campaign with a live daily budget, from `campaign_grade_fact` / `v_campaigns_flat`.
-- `negative_unit_economics` (SKU) → the campaign(s) driving that SKU via
-  `attribution_fact`; act on the worst-ROAS such campaign.
+Shop-scoped `ad_tax_overload` alerts gain a campaign target so they can finally
+act. **Do not loosen `v_autopilot_candidates`'s inner join** (it correctly serves
+campaign-scoped detectors); instead add a SECOND candidate source for the scoped
+detector that resolves the campaign in TS:
+- `ad_tax_overload` (cut/reallocate-source) → the worst-graded non-winning
+  campaign with a live daily budget, via the existing `pickReallocation` helper
+  (which already ranks by `campaign_grade_fact` grade then ROAS).
 
 v1 selection is **deterministic grade-rank** (rule 5: routing in code, not the
 model). The reward loop attributes outcomes per `(detector, chosen campaign,
 action)`, so learned campaign-selection is a clean future extension — explicitly
 **deferred**, not designed here.
+
+**SKU-scoped `negative_unit_economics` targeting is CUT from v1** (verified against
+prod `ajgrmnvzxfxxlwrxcgnu`, 2026-06-19): `attribution_fact` carries
+`order_id → campaign_id → attributed_revenue_cents`, **no `sku_id` and no `roas`**.
+A SKU→campaign map therefore needs an `order_id → order-line-item SKU → campaign`
+join plus per-campaign ROAS derived from `ad_spend_fact` — a real feature, not a
+deterministic one-liner, and `negative_unit_economics` is a unit-economics/COGS
+signal that doesn't cleanly map to a single ad campaign anyway. Deferred to a
+follow-up; v1 targeting is `ad_tax_overload` only. `negative_unit_economics`
+remains in `PAUSE_DETECTORS` (harmless: SKU-scoped alerts still never enter the
+campaign-scoped candidate view, exactly as today).
 
 ## 9. Architecture — Hybrid (reuse kernels, own model family + cron)
 

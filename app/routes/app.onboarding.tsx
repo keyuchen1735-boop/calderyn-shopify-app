@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Form,
   useActionData,
   useFetcher,
   useLoaderData,
   useNavigation,
   useSearchParams,
+  useSubmit,
 } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -17,10 +17,9 @@ import {
   Button,
   Card,
   Checkbox,
-  InlineGrid,
   InlineStack,
+  Modal,
   Page,
-  ProgressBar,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -34,42 +33,46 @@ import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
 import { providerPaired } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
-import { fmtMoney } from "~/lib/format";
-import { GuardrailMeter } from "~/components/calderyn";
-import type { GuardrailConfig, Integration } from "~/lib/types";
+import { Icon } from "~/components/calderyn";
+import { BrandGlyph, type BrandName } from "~/components/calderyn/brand-icons";
+import type { GuardrailConfig } from "~/lib/types";
 
-// The OAuth providers that are ONBOARDING STEPS — the literal subset the wizard renders
-// an OAuthStep for. Deliberately narrower than integrations.ts's OAuthProvider, which also
-// includes the Phase-2 ship-cost OAuth 'shippo' (a Settings-only connect, not an onboarding
-// step). Keeping this local prevents a new ship-cost connector from forcing an onboarding
-// label entry.
-type OnboardingOAuthProvider = "google" | "meta" | "tiktok" | "quickbooks";
-
-// Only Shop + Guardrails are required; the stepper marks the rest so an
-// 8-step wall doesn't read as 8 mandatory commitments.
+// 5-step redesign (2026-06): Shop, Guardrails ("Set your limits"), Connect (all four
+// ad/accounting providers on one screen), Consent, Complete. Mirrors the server-side
+// ONBOARDING_STEPS in calderyn.server.ts; the index drives this wizard.
 const STEPS = [
   { key: "shopify", label: "Shop" },
-  { key: "guardrails", label: "Guardrails" },
-  { key: "google", label: "Google Ads (optional)" },
-  { key: "meta", label: "Meta Ads (optional)" },
-  { key: "tiktok", label: "TikTok Ads (optional)" },
-  { key: "quickbooks", label: "QuickBooks (optional)" },
-  { key: "creative", label: "Creative mapping" },
-  { key: "consent", label: "Consent" },
+  { key: "guardrails", label: "Set your limits" },
+  { key: "connect", label: "Connect accounts" },
+  { key: "consent", label: "Compare" },
   { key: "complete", label: "Complete" },
 ] as const;
 
-// Only these two gate completion; every other step is skippable. Drives the
-// "Required/Optional" marker on the stepper so an 8-step flow doesn't read as 8
-// mandatory commitments.
-const REQUIRED_KEYS = new Set<string>(["shopify", "guardrails"]);
+// The four onboarding OAuth providers shown on the single Connect screen. `id` is
+// the OAuth provider short-name (what connect_integration + the status poll speak);
+// `brand` indexes the shared BrandGlyph registry.
+const CONNECT_PROVIDERS: ReadonlyArray<{
+  id: "google" | "meta" | "tiktok" | "quickbooks";
+  brand: BrandName;
+  name: string;
+}> = [
+  { id: "google", brand: "google", name: "Google Ads" },
+  { id: "meta", brand: "meta", name: "Meta Ads" },
+  { id: "tiktok", brand: "tiktok", name: "TikTok Ads" },
+  { id: "quickbooks", brand: "quickbooks", name: "QuickBooks" },
+];
+
+const ACCENT = "#23556e";
+
+type PairedMap = { google: boolean; meta: boolean; tiktok: boolean; quickbooks: boolean };
 
 type LoaderPayload = {
   step: number;
-  done: boolean;
   shopDomain: string;
+  shopName: string | null;
+  shopLive: boolean;
   guardrails: GuardrailConfig | null;
-  integrations: Record<string, Integration>;
+  paired: PairedMap;
   consent: boolean;
   error: { code: string; message: string } | null;
   devBypass: boolean;
@@ -79,32 +82,25 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
-  // External OAuth URL to open at the top level (escaping the embedded iframe).
+  // External OAuth URL the client opens in a NEW TAB (escaping the embedded iframe).
   redirectUrl?: string;
 };
 
 // ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
-// Renders an onboarding "skip" button that jumps straight to the dashboard,
-// bypassing guardrail setup and the privacy/peer-baseline consent step. This is
-// a deliberate, known shortcut for testing before Google/QuickBooks OAuth is
-// wired. It is now OFF by default and only enabled when ONBOARDING_DEV_BYPASS is
-// explicitly set to "true" (e.g. on preview/staging) — it must never be "true"
-// in the production merchant environment. Tracked in agent memory: onboarding-prod-bypass.
+// Off by default; only enabled when ONBOARDING_DEV_BYPASS === "true" (preview/staging).
+// Must never be "true" in production. Tracked in agent memory: onboarding-prod-bypass.
 const ONBOARDING_DEV_BYPASS = process.env.ONBOARDING_DEV_BYPASS === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  // Self-heal a missed install-time provision: afterAuth calls provisionShop
-  // but swallows its errors, so the shops row can be absent here. provisionShop
-  // is idempotent — ensure the row exists BEFORE constructing the client (whose
-  // shop-id lookup is created eagerly and would otherwise reject for the whole
-  // request), so a fresh merchant never dead-ends on onboarding.
+  const { admin, session } = await authenticate.admin(request);
+  // Self-heal a missed install-time provision (afterAuth swallows its errors), so a
+  // fresh merchant never dead-ends. provisionShop is idempotent.
   try {
     await provisionShop(session.shop);
   } catch (err) {
     console.error(`[onboarding.loader] provisionShop failed for ${session.shop}`, err);
-    // Fall through: getState below surfaces a readable error if the row is still missing.
   }
+
   const client = calderynClient(session.shop);
   try {
     const [state, guardrails, integrations, consent] = await Promise.all([
@@ -113,12 +109,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.integrations.list(request.signal),
       client.consent.get(request.signal),
     ]);
+
+    const safeStep = Math.min(Math.max(state.step, 0), STEPS.length - 1);
+
+    // Step 1 "Connected to your store" does a REAL, live Admin API round-trip instead
+    // of a hardcoded badge — proves the offline token actually works for this shop.
+    // Only on the shopify step (avoids an Admin call on every wizard transition).
+    let shopName: string | null = null;
+    let shopLive = false;
+    if (STEPS[safeStep].key === "shopify") {
+      try {
+        const resp = await admin.graphql(
+          `#graphql
+          query OnboardingShopCheck { shop { name myshopifyDomain } }`,
+        );
+        const body = (await resp.json()) as {
+          data?: { shop?: { name?: string | null; myshopifyDomain?: string | null } };
+        };
+        shopName = body?.data?.shop?.name ?? null;
+        shopLive = Boolean(body?.data?.shop);
+      } catch (e) {
+        console.error(`[onboarding.loader] live shop check failed for ${session.shop}`, e);
+        shopLive = false;
+      }
+    }
+
     return json<LoaderPayload>({
       step: state.step,
-      done: state.done,
       shopDomain: session.shop,
+      shopName,
+      shopLive,
       guardrails,
-      integrations,
+      paired: {
+        google: providerPaired(integrations, "google"),
+        meta: providerPaired(integrations, "meta"),
+        tiktok: providerPaired(integrations, "tiktok"),
+        quickbooks: providerPaired(integrations, "quickbooks"),
+      },
       consent,
       error: null,
       devBypass: ONBOARDING_DEV_BYPASS,
@@ -127,10 +154,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const e = err as CalderynError;
     return json<LoaderPayload>({
       step: 0,
-      done: false,
       shopDomain: session.shop,
+      shopName: null,
+      shopLive: false,
       guardrails: null,
-      integrations: {},
+      paired: { google: false, meta: false, tiktok: false, quickbooks: false },
       consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
       devBypass: ONBOARDING_DEV_BYPASS,
@@ -153,12 +181,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "save_guardrails") {
       const budget = Number(formData.get("budget"));
       const cap = Number(formData.get("cap"));
-      const cooldown = Number(formData.get("cooldown"));
-      // Validate at the action boundary (don't trust FormData): a $0 / blank /
-      // NaN budget or cap would silently disable the guardrail it represents,
-      // letting a merchant finish setup with no real limits. Reject instead of
-      // persisting a no-op. Cooldown of 0 (no wait between actions) is allowed.
-      if (!(budget > 0) || !(cap > 0) || !Number.isFinite(cooldown) || cooldown < 0) {
+      // Validate at the boundary (don't trust FormData): a $0 / blank / NaN budget or
+      // cap would silently disable the guardrail it represents. Reject the no-op.
+      // Cooldown is intentionally NOT touched here — the redesigned step dropped that
+      // field, so an existing cooldown stays as the merchant last set it.
+      if (!(budget > 0) || !(cap > 0)) {
         const message = "Enter a daily budget and per-action cap greater than $0.";
         return json<ActionPayload>(
           { ok: false, error: { code: "INVALID_GUARDRAILS", message }, toast: { message, isError: true } },
@@ -168,35 +195,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const patch: Partial<GuardrailConfig> = {
         daily_action_budget_cents: Math.round(budget) * 100,
         dollar_cap_cents: Math.round(cap) * 100,
-        cooldown_minutes: Math.round(cooldown),
       };
       await client.guardrails.update(patch, request.signal);
       const step = Number(formData.get("step") || 0);
       await client.onboarding.advance(step, request.signal);
-      return json<ActionPayload>({ ok: true, toast: { message: "Guardrails saved" } });
+      return json<ActionPayload>({ ok: true, toast: { message: "Limits saved" } });
     }
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
-      // Carry the embedded App Bridge `host` through the OAuth round-trip: the
-      // provider callback lands at the top level (outside the admin iframe) and
-      // needs host to redirect the merchant back INTO the embedded admin.
       const host = String(formData.get("host") || "") || null;
-      const { redirectUrl } = await client.integrations.startOAuth(provider, host);
-      // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
-      // be framed. Hand the URL back so the client opens it at the top level.
+      // popup=true: the provider callback lands on the standalone /auth/connected page,
+      // and the client opens this URL in a NEW TAB (window.open _blank).
+      const { redirectUrl } = await client.integrations.startOAuth(provider, host, true);
       return json<ActionPayload>({ ok: true, redirectUrl });
     }
     if (intent === "save_consent") {
-      // Persist the peer-baseline consent choice (opt-in: the box defaults
-      // off), then advance. This is the only writer of peer_data_consent in the
-      // onboarding flow — without it the checkbox was decorative.
       const consent = formData.get("consent") === "true";
       await client.consent.set(consent, request.signal);
       const step = Number(formData.get("step") || 0);
       await client.onboarding.advance(step, request.signal);
       return json<ActionPayload>({
         ok: true,
-        toast: { message: consent ? "Peer baseline enabled" : "Saved — not contributing to peer baselines" },
+        toast: { message: consent ? "Added to the comparison" : "Saved — not added to the comparison" },
       });
     }
     if (intent === "finish") {
@@ -226,512 +246,631 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Onboarding() {
-  const { step, shopDomain, guardrails, integrations, consent, error, devBypass } =
-    useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const submit = useSubmit();
   const submitting = navigation.state !== "idle";
   useActionToast(actionData);
 
-  const safeStep = Math.min(Math.max(step, 0), STEPS.length - 1);
+  const safeStep = Math.min(Math.max(data.step, 0), STEPS.length - 1);
   const key = STEPS[safeStep].key;
 
+  const goStep = (step: number) =>
+    submit({ intent: "advance", step: String(step) }, { method: "post" });
+  const finish = () => submit({ intent: "finish" }, { method: "post" });
+
   return (
-    <Page title="Welcome to Calderyn" subtitle="A 4-minute setup that gets Calderyn watching your store.">
-      <BlockStack gap="500">
-        {error && (
-          <Banner tone="critical" title="Couldn't load onboarding state">
-            <p>{error.message}</p>
+    <Page narrowWidth>
+      <BlockStack gap="400">
+        {data.error && (
+          <Banner tone="critical" title="Couldn't load setup">
+            <p>{data.error.message}</p>
           </Banner>
         )}
-        {actionData?.error && (
-          <Banner tone="critical" title="Onboarding action failed">
+        {actionData?.error && actionData.error.code !== "INVALID_GUARDRAILS" && (
+          <Banner tone="critical" title="Setup action failed">
             <p>{actionData.error.message}</p>
           </Banner>
         )}
 
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center" gap="200">
-              <Text as="h2" variant="headingSm">
-                Step {safeStep + 1} of {STEPS.length} ·{" "}
-                {STEPS[safeStep].label.replace(" (optional)", "")}
-              </Text>
-              {key !== "complete" &&
-                (REQUIRED_KEYS.has(key) ? (
-                  <Badge tone="info">Required</Badge>
-                ) : (
-                  <Badge>Optional</Badge>
-                ))}
-            </InlineStack>
-            <ProgressBar
-              progress={(safeStep / (STEPS.length - 1)) * 100}
-              size="small"
-              tone="primary"
-            />
-            <Text as="p" variant="bodySm" tone="subdued">
-              Only Shop and Guardrails are required — you can skip the rest and set them up
-              later from Settings.
-            </Text>
-          </BlockStack>
-        </Card>
+        <ProgressDots step={safeStep} />
 
-        {devBypass && (
-          <Banner tone="warning" title="Temporary testing shortcut">
-            <BlockStack gap="200">
-              <p>
-                OAuth providers aren&apos;t fully wired yet. Skip setup to jump straight to the
-                dashboard. This is a temporary pre-launch shortcut and must be removed before
-                real merchants get access.
-              </p>
-              <Form method="post">
-                <input type="hidden" name="intent" value="finish" />
-                <Button submit loading={submitting} disabled={submitting}>
-                  Skip setup → dashboard (dev only)
-                </Button>
-              </Form>
-            </BlockStack>
-          </Banner>
-        )}
-
-        <Card>
+        <Card padding="600">
           {key === "shopify" && (
-            <ShopifyStep nextStep={safeStep + 1} shopDomain={shopDomain} submitting={submitting} />
+            <ShopStep
+              shopDomain={data.shopDomain}
+              shopName={data.shopName}
+              shopLive={data.shopLive}
+              submitting={submitting}
+              onNext={() => goStep(safeStep + 1)}
+            />
           )}
           {key === "guardrails" && (
             <GuardrailsStep
-              guardrails={guardrails}
-              nextStep={safeStep + 1}
+              guardrails={data.guardrails}
               submitting={submitting}
+              onBack={() => goStep(safeStep - 1)}
+              onSave={(budget, cap) =>
+                submit(
+                  { intent: "save_guardrails", step: String(safeStep + 1), budget, cap },
+                  { method: "post" },
+                )
+              }
             />
           )}
-          {(key === "google" || key === "meta" || key === "tiktok" || key === "quickbooks") && (
-            <OAuthStep
-              provider={key}
-              connected={providerPaired(integrations, key)}
-              nextStep={safeStep + 1}
-              prevStep={Math.max(0, safeStep - 1)}
+          {key === "connect" && (
+            <ConnectStep
+              initialPaired={data.paired}
               submitting={submitting}
+              onBack={() => goStep(safeStep - 1)}
+              onContinue={() => goStep(safeStep + 1)}
             />
-          )}
-          {key === "creative" && (
-            <CreativeStep nextStep={safeStep + 1} prevStep={safeStep - 1} submitting={submitting} />
           )}
           {key === "consent" && (
             <ConsentStep
-              consent={consent}
-              nextStep={safeStep + 1}
-              prevStep={safeStep - 1}
+              consent={data.consent}
               submitting={submitting}
+              onBack={() => goStep(safeStep - 1)}
+              onSave={(consent) =>
+                submit(
+                  { intent: "save_consent", step: String(safeStep + 1), consent: consent ? "true" : "false" },
+                  { method: "post" },
+                )
+              }
             />
           )}
-          {key === "complete" && (
-            <CompleteStep prevStep={safeStep - 1} submitting={submitting} />
-          )}
+          {key === "complete" && <CompleteStep submitting={submitting} onFinish={finish} />}
         </Card>
+
+        {data.devBypass && key !== "complete" && (
+          <InlineStack align="center">
+            <Button variant="plain" tone="critical" onClick={finish} disabled={submitting}>
+              Skip setup → dashboard (dev only)
+            </Button>
+          </InlineStack>
+        )}
       </BlockStack>
     </Page>
   );
 }
 
-function AdvanceForm({
-  step,
-  children,
-}: {
-  step: number;
-  children: React.ReactNode;
-}) {
+/* ───────────────────────────── shared bits ───────────────────────────── */
+
+function ProgressDots({ step }: { step: number }) {
   return (
-    <Form method="post" style={{ display: "inline" }}>
-      <input type="hidden" name="intent" value="advance" />
-      <input type="hidden" name="step" value={String(step)} />
-      {children}
-    </Form>
+    <InlineStack align="center" gap="200">
+      {STEPS.map((s, i) => (
+        <span
+          key={s.key}
+          aria-hidden="true"
+          style={{
+            width: i === step ? 22 : 8,
+            height: 8,
+            borderRadius: 999,
+            background: i <= step ? ACCENT : "#d8d8d8",
+            transition: "width .25s ease, background .25s ease",
+          }}
+        />
+      ))}
+    </InlineStack>
   );
 }
 
-function ShopifyStep({
-  nextStep,
+function CircleIcon({ tone }: { tone: "success" | "pending" }) {
+  const bg = tone === "success" ? "#e7f5ec" : "#fdf3da";
+  const color = tone === "success" ? "#1a7f4f" : "#9a7400";
+  return (
+    <span
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 14,
+        background: bg,
+        color,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Icon name={tone === "success" ? "check" : "clock"} size={28} strokeWidth={2.4} />
+    </span>
+  );
+}
+
+function StepHeading({ title, sub }: { title: string; sub: string }) {
+  return (
+    <BlockStack gap="100" inlineAlign="center">
+      <Text as="h2" variant="headingLg" alignment="center">
+        {title}
+      </Text>
+      <Text as="p" tone="subdued" alignment="center">
+        {sub}
+      </Text>
+    </BlockStack>
+  );
+}
+
+/* ───────────────────────────── step 1: shop ───────────────────────────── */
+
+function ShopStep({
   shopDomain,
+  shopName,
+  shopLive,
   submitting,
+  onNext,
 }: {
-  nextStep: number;
   shopDomain: string;
+  shopName: string | null;
+  shopLive: boolean;
   submitting: boolean;
+  onNext: () => void;
 }) {
   return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        Confirm your Shopify shop
-      </Text>
-      <Text as="p" tone="subdued">
-        Calderyn syncs the last 60 days of orders, inventory levels at every location, and
-        product cost. This happens once and runs in the background.
-      </Text>
-      <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
-        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-          <BlockStack gap="100">
-            <Text as="p" fontWeight="semibold">
-              {shopDomain}
-            </Text>
-            <Badge tone="success">Connected</Badge>
-          </BlockStack>
-        </Box>
-        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-          <BlockStack gap="100">
-            <Text as="p" fontWeight="semibold">
-              First sync
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Calderyn is pulling products, orders, inventory, and webhooks. You can continue
-              while the sync finishes in the background.
-            </Text>
-          </BlockStack>
-        </Box>
-      </InlineGrid>
-      <InlineStack align="end">
-        <AdvanceForm step={nextStep}>
-          <Button submit variant="primary" loading={submitting} disabled={submitting}>
-            Continue
-          </Button>
-        </AdvanceForm>
-      </InlineStack>
+    <BlockStack gap="500">
+      <BlockStack gap="300" inlineAlign="center">
+        <CircleIcon tone={shopLive ? "success" : "pending"} />
+        <StepHeading
+          title={shopLive ? "Calderyn is connected to your store" : "Connecting to your store"}
+          sub={
+            shopLive
+              ? "Now syncing your orders, inventory, and costs."
+              : "We're confirming the live connection — this updates on its own."
+          }
+        />
+      </BlockStack>
+
+      <Box borderWidth="025" borderColor="border" borderRadius="300" background="bg-surface-secondary" padding="400">
+        <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <span
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 9,
+                background: "#f4f4f5",
+                border: "1px solid #ececec",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "none",
+              }}
+            >
+              <BrandGlyph name="shopify" size={18} />
+            </span>
+            <BlockStack gap="050">
+              <Text as="p" fontWeight="semibold">
+                {shopName ?? shopDomain}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {shopLive ? "Shopify · syncing now" : "Shopify · confirming connection"}
+              </Text>
+            </BlockStack>
+          </InlineStack>
+          <Badge tone={shopLive ? "success" : "attention"}>{shopLive ? "Connected" : "Checking…"}</Badge>
+        </InlineStack>
+      </Box>
+
+      <Button variant="primary" fullWidth size="large" onClick={onNext} loading={submitting} disabled={submitting}>
+        Get started
+      </Button>
     </BlockStack>
+  );
+}
+
+/* ───────────────────────────── step 2: guardrails ───────────────────────────── */
+
+function GuardrailRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Box borderWidth="025" borderColor="border" borderRadius="300" padding="400">
+      <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+        <Text as="span" variant="bodyMd">
+          {label}
+        </Text>
+        <div style={{ width: 132 }}>
+          <TextField
+            label={label}
+            labelHidden
+            type="number"
+            min={0}
+            prefix="$"
+            value={value}
+            onChange={onChange}
+            autoComplete="off"
+          />
+        </div>
+      </InlineStack>
+    </Box>
   );
 }
 
 function GuardrailsStep({
   guardrails,
-  nextStep,
   submitting,
+  onBack,
+  onSave,
 }: {
   guardrails: GuardrailConfig | null;
-  nextStep: number;
   submitting: boolean;
+  onBack: () => void;
+  onSave: (budget: string, cap: string) => void;
 }) {
   const [budget, setBudget] = useState(
     String(
       Math.round(
-        (guardrails?.daily_action_budget_cents ?? DEFAULT_GUARDRAILS.daily_action_budget_cents) /
-          100,
+        (guardrails?.daily_action_budget_cents ?? DEFAULT_GUARDRAILS.daily_action_budget_cents) / 100,
       ),
     ),
   );
   const [cap, setCap] = useState(
     String(Math.round((guardrails?.dollar_cap_cents ?? DEFAULT_GUARDRAILS.dollar_cap_cents) / 100)),
   );
-  const [cooldown, setCooldown] = useState(
-    String(guardrails?.cooldown_minutes ?? DEFAULT_GUARDRAILS.cooldown_minutes),
-  );
-  // Mirror the server-side guard: a positive daily budget AND per-action cap
-  // are required. Gating Continue here turns the rejection into a non-event for
-  // the common case instead of a round-trip error toast.
-  const guardrailsValid = Number(budget) > 0 && Number(cap) > 0;
+  const valid = Number(budget) > 0 && Number(cap) > 0;
 
   return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        Set your guardrails
-      </Text>
-      <Text as="p" tone="subdued">
-        By default, Calderyn only acts when you approve it — nothing runs on its own. These
-        limits apply if you later turn on Autopilot, and cap any action you approve. Every
-        limit is enforced before a change reaches your ad accounts. You can adjust them
-        anytime in Settings.
-      </Text>
-      <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-        <GuardrailMeter
-          usedCents={guardrails?.daily_action_budget_used_cents ?? 0}
-          totalCents={Math.max(0, Number(budget) * 100)}
-          checks={[
-            {
-              label: `Daily action budget · ${fmtMoney(Math.max(0, Number(budget) * 100))}`,
-              ok: Number(budget) > 0,
-            },
-            {
-              label: `Per-action cap · ${fmtMoney(Math.max(0, Number(cap) * 100))}`,
-              ok: Number(cap) > 0,
-            },
-            { label: `Cooldown · ${cooldown} min between actions`, ok: true },
-          ]}
-        />
-      </Box>
+    <BlockStack gap="500">
+      <StepHeading title="Set your limits" sub="Calderyn never spends more than this. Change it anytime." />
+
       <BlockStack gap="300">
-        <TextField
-          label="Daily action budget cap (USD)"
-          type="number"
-          value={budget}
-          onChange={setBudget}
-          autoComplete="off"
-          helpText={`Used today: ${fmtMoney(
-            guardrails?.daily_action_budget_used_cents ?? 0,
-          )} of ${fmtMoney(Number(budget) * 100)}`}
-        />
-        <TextField
-          label="Per-action dollar cap (USD)"
-          type="number"
-          value={cap}
-          onChange={setCap}
-          autoComplete="off"
-          helpText="Single-action impact above this prompts re-authentication."
-        />
-        <TextField
-          label="Cooldown between actions (minutes)"
-          type="number"
-          value={cooldown}
-          onChange={setCooldown}
-          autoComplete="off"
-        />
-        {/* The Back button renders its own <form>, so it must stay a sibling of
-            this one — a form nested inside a form is dropped by the HTML parser
-            and Back would silently submit save_guardrails instead. */}
-        <InlineStack align="space-between">
-          <BackButton step={Math.max(0, nextStep - 2)} submitting={submitting} />
-          <Form method="post" style={{ display: "inline" }}>
-            <input type="hidden" name="intent" value="save_guardrails" />
-            <input type="hidden" name="step" value={String(nextStep)} />
-            <input type="hidden" name="budget" value={budget} />
-            <input type="hidden" name="cap" value={cap} />
-            <input type="hidden" name="cooldown" value={cooldown} />
-            <Button
-              submit
-              variant="primary"
-              loading={submitting}
-              disabled={submitting || !guardrailsValid}
-            >
-              Continue
-            </Button>
-          </Form>
-        </InlineStack>
+        <GuardrailRow label="Spend at most per day" value={budget} onChange={setBudget} />
+        <GuardrailRow label="Ask me before any change over" value={cap} onChange={setCap} />
+        {!valid && (
+          <InlineStack gap="150" blockAlign="center">
+            <span style={{ color: "#b3300f", display: "inline-flex" }}>
+              <Icon name="x" size={14} strokeWidth={2.4} />
+            </span>
+            <Text as="span" variant="bodySm" tone="critical">
+              Enter an amount greater than $0.
+            </Text>
+          </InlineStack>
+        )}
       </BlockStack>
-    </BlockStack>
-  );
-}
 
-function OAuthStep({
-  provider,
-  connected,
-  nextStep,
-  prevStep,
-  submitting,
-}: {
-  // Only the four ad/accounting OAuth providers are onboarding steps (the call site
-  // narrows `key` to exactly these four). EasyPost (API-key) and the Phase-3 3PL houses
-  // ShipBob (API-key PAT) / ShipHero (credential/refresh-token paste) connect from Settings,
-  // plus the Phase-2 Shippo ship-cost OAuth — none of them is an onboarding step — so this is
-  // the literal onboarding subset, not the wider OAuthProvider (which also includes 'shippo')
-  // nor IntegrationProvider.
-  provider: OnboardingOAuthProvider;
-  connected: boolean;
-  nextStep: number;
-  prevStep: number;
-  submitting: boolean;
-}) {
-  // App Bridge appends `host` to the embedded URL; forward it on connect so the
-  // OAuth callback can re-embed the merchant in the Shopify admin afterwards.
-  const [searchParams] = useSearchParams();
-  // Connect runs through its own fetcher so the provider's OAuth page can be
-  // opened at the top level — embedded iframes can't load third-party OAuth
-  // pages (they refuse to be framed).
-  const connectFetcher = useFetcher<ActionPayload>();
-  const connecting = connectFetcher.state !== "idle";
-  useActionToast(connectFetcher.data ?? undefined);
-  useEffect(() => {
-    const url = connectFetcher.data?.redirectUrl;
-    if (url) window.open(url, "_top");
-  }, [connectFetcher.data]);
-  const labels: Record<OnboardingOAuthProvider, { title: string; blurb: string }> = {
-    google: {
-      title: "Connect Google Ads",
-      blurb:
-        "Calderyn reads spend, impressions, and conversions to compute true ROAS. You can skip and connect later from Settings.",
-    },
-    meta: {
-      title: "Connect Meta Ads",
-      blurb:
-        "Calderyn reads Meta Ads spend, attribution, and ad-set structure. You can skip and connect later from Settings.",
-    },
-    tiktok: {
-      title: "Connect TikTok Ads",
-      blurb:
-        "Calderyn reads TikTok Ads spend and advertiser performance. You can skip and connect later from Settings.",
-    },
-    quickbooks: {
-      title: "Connect QuickBooks (optional)",
-      blurb:
-        "Optional. Calderyn reads COGS journal entries to validate landed cost. Skip to use Shopify cost-per-item only.",
-    },
-  };
-  const cfg = labels[provider];
-
-  return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        {cfg.title}
-      </Text>
-      <Text as="p" tone="subdued">
-        {cfg.blurb}
-      </Text>
-      <Text as="p" tone="subdued" variant="bodySm">
-        Clicking Connect opens the provider&apos;s secure sign-in in this window — you&apos;ll
-        be brought back here after you approve access.
-      </Text>
-      <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="p" fontWeight="semibold">
-            {provider === "google"
-              ? "Google Ads"
-              : provider === "meta"
-                ? "Meta Ads"
-                : provider === "tiktok"
-                  ? "TikTok Ads"
-                  : "QuickBooks Online"}
-          </Text>
-          {connected ? (
-            <Badge tone="success">Connected</Badge>
-          ) : (
-            <connectFetcher.Form method="post">
-              <input type="hidden" name="intent" value="connect_integration" />
-              <input type="hidden" name="provider" value={provider} />
-              <input type="hidden" name="host" value={searchParams.get("host") ?? ""} />
-              <Button submit variant="primary" loading={connecting} disabled={connecting}>
-                Connect
-              </Button>
-            </connectFetcher.Form>
-          )}
-        </InlineStack>
-      </Box>
-      <InlineStack align="space-between">
-        <BackButton step={prevStep} submitting={submitting} />
-        <InlineStack gap="200">
-          {!connected && (
-            <AdvanceForm step={nextStep}>
-              <Button submit loading={submitting} disabled={submitting}>
-                Skip for now
-              </Button>
-            </AdvanceForm>
-          )}
-          <AdvanceForm step={nextStep}>
-            <Button
-              submit
-              variant="primary"
-              loading={submitting}
-              disabled={submitting || !connected}
-            >
-              Continue
-            </Button>
-          </AdvanceForm>
-        </InlineStack>
-      </InlineStack>
-    </BlockStack>
-  );
-}
-
-function CreativeStep({
-  nextStep,
-  prevStep,
-  submitting,
-}: {
-  nextStep: number;
-  prevStep: number;
-  submitting: boolean;
-}) {
-  return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        Map creative to SKUs
-      </Text>
-      <Text as="p" tone="subdued">
-        Calderyn auto-detects which SKU each ad creative drives from your campaign UTM tags and
-        ad copy. You can review mappings after onboarding.
-      </Text>
-      <InlineStack align="space-between">
-        <BackButton step={prevStep} submitting={submitting} />
-        <AdvanceForm step={nextStep}>
-          <Button submit variant="primary" loading={submitting} disabled={submitting}>
+      <InlineStack gap="300" wrap={false}>
+        <Button size="large" onClick={onBack} disabled={submitting}>
+          Back
+        </Button>
+        <div style={{ flex: 1 }}>
+          <Button
+            variant="primary"
+            fullWidth
+            size="large"
+            onClick={() => onSave(budget, cap)}
+            loading={submitting}
+            disabled={submitting || !valid}
+          >
             Continue
           </Button>
-        </AdvanceForm>
+        </div>
       </InlineStack>
     </BlockStack>
   );
 }
+
+/* ───────────────────────────── step 3: connect ───────────────────────────── */
+
+type ConnState = "idle" | "connecting" | "connected";
+
+function ConnectStep({
+  initialPaired,
+  submitting,
+  onBack,
+  onContinue,
+}: {
+  initialPaired: PairedMap;
+  submitting: boolean;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const [searchParams] = useSearchParams();
+  const host = searchParams.get("host") ?? "";
+  const statusUrl = `/app/onboarding/status?${searchParams.toString()}`;
+
+  const connectFetcher = useFetcher<ActionPayload>();
+  const statusFetcher = useFetcher<{
+    ok: boolean;
+    google: boolean;
+    meta: boolean;
+    tiktok: boolean;
+    quickbooks: boolean;
+  }>();
+  useActionToast(connectFetcher.data ?? undefined);
+
+  const [status, setStatus] = useState<Record<string, ConnState>>(() => {
+    const seed: Record<string, ConnState> = {};
+    for (const p of CONNECT_PROVIDERS) seed[p.id] = initialPaired[p.id] ? "connected" : "idle";
+    return seed;
+  });
+  const [skipOpen, setSkipOpen] = useState(false);
+
+  const pendingProviderRef = useRef<string | null>(null);
+  // Handle to the tab we pre-open in the click gesture (see connect()); set its
+  // location once the server returns the provider URL.
+  const pendingTabRef = useRef<Window | null>(null);
+  const lastOpenedRef = useRef<string | null>(null);
+  // Set when a re-check is allowed to REVERT a still-connecting provider to idle
+  // (the merchant returned to this tab without finishing) — only focus/visibility
+  // re-checks set it, so the background poll never reverts a live attempt.
+  const revertPendingRef = useRef(false);
+
+  // Stable handle to the status poll so the interval/focus effects don't depend on
+  // the (re-created-each-render) fetcher object.
+  const loadStatus = () => statusFetcher.load(statusUrl);
+  const loadStatusRef = useRef(loadStatus);
+  loadStatusRef.current = loadStatus;
+
+  const connect = (id: string) => {
+    // Open the new tab SYNCHRONOUSLY inside the click gesture so the browser
+    // doesn't block it as a popup, then point it at the provider URL once the
+    // server mints it (third-party OAuth pages can't be framed in the admin iframe).
+    pendingTabRef.current = window.open("about:blank", "_blank");
+    pendingProviderRef.current = id;
+    setStatus((prev) => ({ ...prev, [id]: "connecting" }));
+    connectFetcher.submit(
+      { intent: "connect_integration", provider: id, host },
+      { method: "post", action: "/app/onboarding" },
+    );
+  };
+
+  // Point the pre-opened tab at the provider URL once the action returns it. On a
+  // setup failure (no redirectUrl — e.g. provider not configured) close the
+  // placeholder tab and revert the row; the reason surfaces via the action toast.
+  useEffect(() => {
+    const d = connectFetcher.data;
+    if (!d) return;
+    if (d.redirectUrl && d.redirectUrl !== lastOpenedRef.current) {
+      lastOpenedRef.current = d.redirectUrl;
+      const win = pendingTabRef.current;
+      if (win && !win.closed) win.location.href = d.redirectUrl;
+      else window.open(d.redirectUrl, "_blank");
+    } else if (d.ok === false) {
+      if (pendingTabRef.current && !pendingTabRef.current.closed) pendingTabRef.current.close();
+      const id = pendingProviderRef.current;
+      if (id) setStatus((prev) => (prev[id] === "connecting" ? { ...prev, [id]: "idle" } : prev));
+    }
+  }, [connectFetcher.data]);
+
+  // Apply fresh pairing status from the poll. A normal tick only ever UPGRADES to
+  // connected, so a transient read (ok:false) can't downgrade the UI. A focus/
+  // visibility re-check (revertPendingRef) additionally reverts a still-connecting
+  // provider that never paired back to idle — the merchant came back without
+  // finishing, so it shouldn't spin forever (and connectingCount→0 stops the poll).
+  useEffect(() => {
+    const d = statusFetcher.data;
+    if (!d || !d.ok) return;
+    const revert = revertPendingRef.current;
+    revertPendingRef.current = false;
+    setStatus((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const p of CONNECT_PROVIDERS) {
+        if (d[p.id]) {
+          if (next[p.id] !== "connected") {
+            next[p.id] = "connected";
+            changed = true;
+          }
+        } else if (revert && next[p.id] === "connecting") {
+          next[p.id] = "idle";
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [statusFetcher.data]);
+
+  const connectingCount = CONNECT_PROVIDERS.filter((p) => status[p.id] === "connecting").length;
+  const connectedCount = CONNECT_PROVIDERS.filter((p) => status[p.id] === "connected").length;
+  // Read inside the (mount-once) focus listener without re-subscribing each render.
+  const connectingCountRef = useRef(0);
+  connectingCountRef.current = connectingCount;
+
+  // Poll while any provider is mid-connect (its new tab is open). Stops once all
+  // resolve. The server's shop_integrations row is the source of truth.
+  useEffect(() => {
+    if (connectingCount === 0) return;
+    loadStatusRef.current();
+    const h = window.setInterval(() => loadStatusRef.current(), 3000);
+    return () => window.clearInterval(h);
+  }, [connectingCount]);
+
+  // Returning focus to the setup tab (after the new tab) triggers an immediate
+  // re-check, so a paired provider flips to Connected without waiting for the next
+  // poll — and an unfinished one reverts to idle (revertPendingRef). Skip the fetch
+  // entirely when nothing is connecting.
+  useEffect(() => {
+    const recheck = () => {
+      if (connectingCountRef.current === 0) return;
+      revertPendingRef.current = true;
+      loadStatusRef.current();
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") recheck();
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  const continueLabel = connectedCount === 0 ? "Skip for now" : "Continue";
+  const onPrimary = () => {
+    if (connectedCount === 0) setSkipOpen(true);
+    else onContinue();
+  };
+
+  return (
+    <BlockStack gap="500">
+      <StepHeading title="Connect your accounts" sub="Optional. Connect now, or later from Settings." />
+
+      <BlockStack gap="200">
+        {CONNECT_PROVIDERS.map((p) => {
+          const st = status[p.id];
+          return (
+            <Box key={p.id} borderWidth="025" borderColor="border" borderRadius="300" padding="300">
+              <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+                <InlineStack gap="300" blockAlign="center" wrap={false}>
+                  <span
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 9,
+                      background: "#f4f4f5",
+                      border: "1px solid #ececec",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flex: "none",
+                    }}
+                  >
+                    <BrandGlyph name={p.brand} size={18} />
+                  </span>
+                  <BlockStack gap="025">
+                    <Text as="p" fontWeight="semibold">
+                      {p.name}
+                    </Text>
+                    {st === "connecting" && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Finish sign-in in the new tab
+                      </Text>
+                    )}
+                  </BlockStack>
+                </InlineStack>
+
+                {st === "connected" ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : st === "connecting" ? (
+                  <Button disabled>Connecting…</Button>
+                ) : (
+                  <Button onClick={() => connect(p.id)} disabled={connectFetcher.state !== "idle"}>
+                    Connect
+                  </Button>
+                )}
+              </InlineStack>
+            </Box>
+          );
+        })}
+      </BlockStack>
+
+      <InlineStack gap="300" wrap={false}>
+        <Button size="large" onClick={onBack} disabled={submitting}>
+          Back
+        </Button>
+        <div style={{ flex: 1 }}>
+          <Button variant="primary" fullWidth size="large" onClick={onPrimary} loading={submitting} disabled={submitting}>
+            {continueLabel}
+          </Button>
+        </div>
+      </InlineStack>
+
+      <Modal
+        open={skipOpen}
+        onClose={() => setSkipOpen(false)}
+        title="Skip connecting accounts?"
+        primaryAction={{ content: "Connect an account", onAction: () => setSkipOpen(false) }}
+        secondaryActions={[
+          {
+            content: "Skip anyway",
+            onAction: () => {
+              setSkipOpen(false);
+              onContinue();
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            Calderyn will still track your orders and inventory, but it can&apos;t measure your true
+            ROAS or ad waste until an account is connected. You can do this anytime from Settings.
+          </Text>
+        </Modal.Section>
+      </Modal>
+    </BlockStack>
+  );
+}
+
+/* ───────────────────────────── step 4: consent ───────────────────────────── */
 
 function ConsentStep({
-  consent: initialConsent,
-  nextStep,
-  prevStep,
+  consent: initial,
   submitting,
+  onBack,
+  onSave,
 }: {
   consent: boolean;
-  nextStep: number;
-  prevStep: number;
   submitting: boolean;
+  onBack: () => void;
+  onSave: (consent: boolean) => void;
 }) {
-  // Opt-in: seed from the stored value (false for a new shop) rather than
-  // defaulting checked, so clicking Continue never silently enrolls a merchant.
-  const [consent, setConsent] = useState(initialConsent);
+  // Opt-in: seed from the stored value so Continue never silently enrolls a merchant.
+  const [consent, setConsent] = useState(initial);
   return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        Peer baseline (optional)
-      </Text>
-      <Text as="p" tone="subdued">
-        Calderyn benchmarks your performance against anonymized peer shops in your category. Your
-        shop ID is hashed with HMAC-SHA256 before any aggregation. Withdraw anytime — your data is
-        purged within 30 days.
-      </Text>
-      <Checkbox
-        label="I consent to contributing pseudonymous metrics to peer baselines."
-        checked={consent}
-        onChange={setConsent}
+    <BlockStack gap="500">
+      <StepHeading
+        title="See how you compare"
+        sub="Calderyn can show how your sales and ad spend stack up against similar stores."
       />
-      <InlineStack align="space-between">
-        <BackButton step={prevStep} submitting={submitting} />
-        {/* save_consent persists the choice (the checkbox value) and then
-            advances — sibling form, not nested, same reason as GuardrailsStep. */}
-        <Form method="post" style={{ display: "inline" }}>
-          <input type="hidden" name="intent" value="save_consent" />
-          <input type="hidden" name="step" value={String(nextStep)} />
-          <input type="hidden" name="consent" value={consent ? "true" : "false"} />
-          <Button submit variant="primary" loading={submitting} disabled={submitting}>
+
+      <Box
+        borderWidth="025"
+        borderColor={consent ? "border-emphasis" : "border"}
+        borderRadius="300"
+        background={consent ? "bg-surface-secondary" : "bg-surface"}
+        padding="400"
+      >
+        <Checkbox
+          label="Add my store to the comparison"
+          helpText="No one sees your store's numbers, only group averages. Turn off anytime."
+          checked={consent}
+          onChange={setConsent}
+        />
+      </Box>
+
+      <InlineStack gap="300" wrap={false}>
+        <Button size="large" onClick={onBack} disabled={submitting}>
+          Back
+        </Button>
+        <div style={{ flex: 1 }}>
+          <Button
+            variant="primary"
+            fullWidth
+            size="large"
+            onClick={() => onSave(consent)}
+            loading={submitting}
+            disabled={submitting}
+          >
             Continue
           </Button>
-        </Form>
+        </div>
       </InlineStack>
     </BlockStack>
   );
 }
 
-function CompleteStep({ prevStep, submitting }: { prevStep: number; submitting: boolean }) {
-  return (
-    <BlockStack gap="400">
-      <Text as="h2" variant="headingMd">
-        You&apos;re ready
-      </Text>
-      <Text as="p" tone="subdued">
-        Calderyn is now watching your store. The first pass over your historical data is running
-        — alerts will populate as detections complete.
-      </Text>
-      <InlineStack align="space-between">
-        <BackButton step={prevStep} submitting={submitting} />
-        <Form method="post">
-          <input type="hidden" name="intent" value="finish" />
-          <Button submit variant="primary" loading={submitting} disabled={submitting}>
-            Open dashboard
-          </Button>
-        </Form>
-      </InlineStack>
-    </BlockStack>
-  );
-}
+/* ───────────────────────────── step 5: complete ───────────────────────────── */
 
-function BackButton({ step, submitting }: { step: number; submitting: boolean }) {
+function CompleteStep({ submitting, onFinish }: { submitting: boolean; onFinish: () => void }) {
   return (
-    <AdvanceForm step={step}>
-      <Button submit loading={submitting} disabled={submitting}>
-        Back
+    <BlockStack gap="500">
+      <BlockStack gap="300" inlineAlign="center">
+        <CircleIcon tone="success" />
+        <StepHeading
+          title="You're all set"
+          sub="Calderyn is watching your store. Alerts will appear as they come in."
+        />
+      </BlockStack>
+      <Button variant="primary" fullWidth size="large" onClick={onFinish} loading={submitting} disabled={submitting}>
+        Open dashboard
       </Button>
-    </AdvanceForm>
+    </BlockStack>
   );
 }

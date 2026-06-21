@@ -15,7 +15,7 @@ export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Platform = "Meta" | "Google" | "TikTok";
-export type Grade = "winning" | "okay" | "poor";
+export type Grade = "winning" | "okay" | "poor" | "nodata";
 /** Platforms enriching a SKU beyond the Shopify sync (mirrors lib/types SkuSource). */
 export type SkuSource = "quickbooks" | "vendor_invoice" | "google" | "meta" | "tiktok";
 
@@ -72,6 +72,9 @@ export interface AuditVM {
   pre: string;
   post: string;
   failure?: string;
+  /** Merchant-safe version of `failure`; the raw `failure` stays for the
+   *  details expansion (P2-12). */
+  failureFriendly?: string;
   /** Legibility signals derived once in audit-legibility.ts (parity with the
    *  extension). Rendered in the dashboard's own primitives. */
   mode: "auto" | "manual";
@@ -150,8 +153,12 @@ export interface GuardrailVM {
   cooldown_minutes: number;
   business_hours: { start: string; end: string; tz: string };
   in_business_hours: boolean;
+  business_hours_only: boolean;
   autopilot_enabled: boolean;
-  autopilot_daily_action_cap: number;
+  /** Bypass mode: when true, autopilot skips every safety/rate guardrail. */
+  autopilot_bypass_guardrails: boolean;
+  /** Max automated actions per day; null = no cap (unlimited). */
+  autopilot_daily_action_cap: number | null;
   autopilot_actions_today: number;
   autopilot_min_spend_cents: number;
   autopilot_max_budget_cut_pct: number;

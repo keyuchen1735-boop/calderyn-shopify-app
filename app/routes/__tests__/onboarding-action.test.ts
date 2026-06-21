@@ -34,9 +34,10 @@ vi.mock("@shopify/polaris", () => {
     Button: Stub,
     Card: Stub,
     Checkbox: Stub,
-    InlineGrid: Stub,
     InlineStack: Stub,
+    Modal: Object.assign(Stub, { Section: Stub }),
     Page: Stub,
+    Spinner: Stub,
     Text: Stub,
     TextField: Stub,
   };
@@ -45,10 +46,18 @@ vi.mock("~/lib/toast", () => ({ useActionToast: () => {} }));
 // The onboarding loader self-heals a missing shops row via provisionShop before
 // reading state; stub it so the loader tests don't hit a real Supabase client.
 vi.mock("~/lib/supabase.server", () => ({ provisionShop: vi.fn(async () => {}) }));
-vi.mock("~/components/calderyn", () => ({ GuardrailMeter: () => null }));
+vi.mock("~/components/calderyn", () => ({ Icon: () => null, GuardrailMeter: () => null }));
 
+// The shopify step's live Admin check calls admin.graphql; the action tests never
+// hit the shopify step (step 0), and the one loader test that does is wrapped in a
+// try/catch in the route, so a minimal admin stub keeps the module honest.
 vi.mock("../../shopify.server", () => ({
-  authenticate: { admin: async () => ({ session: { shop: "acme.myshopify.com" } }) },
+  authenticate: {
+    admin: async () => ({
+      session: { shop: "acme.myshopify.com" },
+      admin: { graphql: async () => ({ json: async () => ({ data: { shop: { name: "Acme" } } }) }) },
+    }),
+  },
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -121,18 +130,18 @@ describe("onboarding action — guardrails", () => {
         step: "2",
         budget: "2500",
         cap: "1000",
-        cooldown: "30",
       }),
     );
     const body = (await res.json()) as { ok: boolean; toast?: { message: string } };
 
     expect(body.ok).toBe(true);
-    expect(body.toast?.message).toBe("Guardrails saved");
+    expect(body.toast?.message).toBe("Limits saved");
+    // The redesigned "Set your limits" step has only budget + cap — cooldown is NOT
+    // in the patch, so an existing cooldown stays as the merchant last set it.
     expect(guardrailsUpdateSpy).toHaveBeenCalledWith(
       {
         daily_action_budget_cents: 250000,
         dollar_cap_cents: 100000,
-        cooldown_minutes: 30,
       },
       expect.anything(),
     );
@@ -167,17 +176,17 @@ describe("onboarding action — guardrails", () => {
     },
   );
 
-  it("accepts a zero cooldown (no wait between actions is valid)", async () => {
+  it("patches only budget + cap (the step no longer carries cooldown)", async () => {
     guardrailsUpdateSpy.mockResolvedValue({});
 
     const res = await callAction(
-      postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50", cooldown: "0" }),
+      postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50" }),
     );
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
     expect(guardrailsUpdateSpy).toHaveBeenCalledWith(
-      { daily_action_budget_cents: 10000, dollar_cap_cents: 5000, cooldown_minutes: 0 },
+      { daily_action_budget_cents: 10000, dollar_cap_cents: 5000 },
       expect.anything(),
     );
   });
@@ -208,18 +217,20 @@ describe("onboarding action — integration connect", () => {
     );
     const body = (await res.json()) as { ok: boolean; redirectUrl?: string };
 
-    expect(startOAuthSpy).toHaveBeenCalledWith("google", "abc123");
+    // popup=true (3rd arg): the callback lands on /auth/connected; the client opens
+    // this URL in a NEW TAB rather than redirecting the embedded iframe.
+    expect(startOAuthSpy).toHaveBeenCalledWith("google", "abc123", true);
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.redirectUrl).toBe("https://accounts.google.com/o/oauth2/auth?x=1");
   });
 
-  it("passes a null host when the form omits it", async () => {
+  it("passes a null host (and popup=true) when the form omits the host", async () => {
     startOAuthSpy.mockResolvedValue({ redirectUrl: "https://example.com/oauth" });
 
     await callAction(postRequest({ intent: "connect_integration", provider: "google" }));
 
-    expect(startOAuthSpy).toHaveBeenCalledWith("google", null);
+    expect(startOAuthSpy).toHaveBeenCalledWith("google", null, true);
   });
 
   it("surfaces a not-configured provider as an error toast instead of redirecting", async () => {
@@ -246,12 +257,13 @@ describe("onboarding action — integration connect", () => {
 
 describe("onboarding action — consent", () => {
   it("persists an opt-in then advances", async () => {
-    const res = await callAction(postRequest({ intent: "save_consent", step: "8", consent: "true" }));
+    // Consent is step index 3; Continue advances to "complete" (index 4).
+    const res = await callAction(postRequest({ intent: "save_consent", step: "4", consent: "true" }));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
     expect(consentSetSpy).toHaveBeenCalledWith(true, expect.anything());
-    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(4, expect.anything());
     // consent is written before the step advances
     expect(consentSetSpy.mock.invocationCallOrder[0]).toBeLessThan(
       advanceSpy.mock.invocationCallOrder[0],
@@ -259,10 +271,10 @@ describe("onboarding action — consent", () => {
   });
 
   it("records a decline (consent=false) and still advances", async () => {
-    await callAction(postRequest({ intent: "save_consent", step: "8", consent: "false" }));
+    await callAction(postRequest({ intent: "save_consent", step: "4", consent: "false" }));
 
     expect(consentSetSpy).toHaveBeenCalledWith(false, expect.anything());
-    expect(advanceSpy).toHaveBeenCalledWith(8, expect.anything());
+    expect(advanceSpy).toHaveBeenCalledWith(4, expect.anything());
   });
 });
 
@@ -270,8 +282,8 @@ describe("onboarding action — finish and unknown intents", () => {
   it("marks onboarding complete and redirects to the dashboard", async () => {
     const res = await callAction(postRequest({ intent: "finish" }));
 
-    // 9 steps total; the client clamps to the final "complete" step server-side.
-    expect(advanceSpy).toHaveBeenCalledWith(9, expect.anything());
+    // 5 steps total; advance clamps the submitted STEPS.length to "complete" server-side.
+    expect(advanceSpy).toHaveBeenCalledWith(5, expect.anything());
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/app");
   });
@@ -294,7 +306,8 @@ function callLoader(url = "http://localhost/app/onboarding") {
 }
 
 describe("onboarding loader", () => {
-  it("assembles step, guardrails, and integrations for the current shop", async () => {
+  it("assembles step, guardrails, and per-provider pairing for the current shop", async () => {
+    // step 2 is the connect screen — the loader skips the live Admin shop check there.
     getStateSpy.mockResolvedValue({ step: 2, done: false });
     guardrailsGetSpy.mockResolvedValue({ daily_action_budget_cents: 250000 });
     integrationsListSpy.mockResolvedValue({
@@ -305,10 +318,10 @@ describe("onboarding loader", () => {
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(body.step).toBe(2);
-    expect(body.done).toBe(false);
     expect(body.shopDomain).toBe("acme.myshopify.com");
     expect(body.guardrails).toEqual({ daily_action_budget_cents: 250000 });
-    expect(body.integrations).toEqual({ google_ads: { status: "connected" } });
+    // integrations.list is collapsed to the four onboarding providers' paired booleans.
+    expect(body.paired).toEqual({ google: true, meta: false, tiktok: false, quickbooks: false });
     expect(body.error).toBeNull();
   });
 

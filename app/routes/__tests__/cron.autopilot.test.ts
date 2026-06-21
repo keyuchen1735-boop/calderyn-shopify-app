@@ -28,6 +28,17 @@ function fakeSb(shopIds: string[]) {
   };
 }
 
+// The shop-list query fails (DB outage). data is null, error is set.
+function fakeSbError(message: string) {
+  return {
+    from: () => ({
+      select: () => ({
+        eq: () => Promise.resolve({ data: null, error: { message } }),
+      }),
+    }),
+  };
+}
+
 function req(auth?: string): Request {
   const headers = new Headers();
   if (auth) headers.set("authorization", auth);
@@ -78,5 +89,84 @@ describe("cron.autopilot loader", () => {
     // Shop B still ran and counted
     expect(body.shops).toBe(1);
     expect(body.acted).toBe(1);
+  });
+
+  it("sums acted, blocked and failed across shops", async () => {
+    getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
+    runAutopilotForShop.mockResolvedValue({ skipped: false, acted: 1, blocked: 2, failed: 3 });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.acted).toBe(2);
+    expect(body.blocked).toBe(4);
+    expect(body.failed).toBe(6);
+  });
+
+  it("aggregates considered and merges blockedReasons across shops", async () => {
+    getSupabase.mockReturnValue(fakeSb([SHOP_A, SHOP_B]));
+    runAutopilotForShop
+      .mockResolvedValueOnce({
+        skipped: false,
+        acted: 0,
+        blocked: 2,
+        failed: 0,
+        considered: 2,
+        blockedReasons: { "campaign spend below minimum": 2 },
+        decisions: [],
+      })
+      .mockResolvedValueOnce({
+        skipped: false,
+        acted: 1,
+        blocked: 1,
+        failed: 0,
+        considered: 3,
+        blockedReasons: { "campaign spend below minimum": 1, "daily action cap reached": 1 },
+        decisions: [],
+      });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(body.considered).toBe(5);
+    expect(body.blockedReasons).toEqual({
+      "campaign spend below minimum": 3,
+      "daily action cap reached": 1,
+    });
+  });
+
+  it("emits one structured summary log line", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    getSupabase.mockReturnValue(fakeSb([SHOP_A]));
+    runAutopilotForShop.mockResolvedValue({
+      skipped: false,
+      acted: 0,
+      blocked: 1,
+      failed: 0,
+      considered: 1,
+      blockedReasons: { "campaign spend below minimum": 1 },
+      decisions: [],
+    });
+
+    await loader({ request: req("Bearer s3cret") } as never);
+
+    const summaryCall = infoSpy.mock.calls.find((c) => String(c[0]).includes("[cron.autopilot] summary"));
+    expect(summaryCall).toBeDefined();
+    expect(summaryCall?.[1]).toMatchObject({
+      considered: 1,
+      blockedReasons: { "campaign spend below minimum": 1 },
+    });
+    infoSpy.mockRestore();
+  });
+
+  it("surfaces a shop-list query error instead of silently reporting zero shops", async () => {
+    getSupabase.mockReturnValue(fakeSbError("connection terminated"));
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+
+    expect(res.status).toBe(500);
+    expect(runAutopilotForShop).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.error).toContain("connection terminated");
   });
 });

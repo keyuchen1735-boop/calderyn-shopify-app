@@ -39,6 +39,48 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   wrong_location_concentration: "Wrong location concentration",
 };
 
+// Title-case a raw detector id (e.g. "campaign_scaling_opportunity" → "Campaign
+// Scaling Opportunity") so an unmapped id never reaches the UI as snake_case.
+function humanizeDetectorId(id: string): string {
+  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Canonical merchant-facing detector name (plain English). Both surfaces must
+ * use this so the dashboard stops showing the analyst term where the embedded
+ * admin shows the plain label (P2-10). Falls back to a humanized id, never raw
+ * snake_case.
+ */
+export function detectorLabel(id: string): string {
+  return DETECTOR_LABELS[id as DetectorId] ?? humanizeDetectorId(id);
+}
+
+/** The analyst term for a detector (the hover/subtitle jargon). */
+export function detectorTerm(id: string): string {
+  return DETECTOR_TERMS[id as DetectorId] ?? humanizeDetectorId(id);
+}
+
+/**
+ * Detector label for a specific alert, made stock-aware: a "best-seller may sell
+ * out" alert whose stock / days-of-cover are already 0 is a STOCKOUT, so the
+ * label must read "sold out", never "may sell out" — copy must not contradict
+ * the evidence on the same screen (P2-11). Evidence values may be strings.
+ */
+export function alertDetectorLabel(
+  id: string,
+  evidence: Record<string, unknown> | null | undefined,
+): string {
+  if (
+    id === "scaling_sku_fulfillment_risk" &&
+    (Number(evidence?.stock) === 0 ||
+      Number(evidence?.on_hand) === 0 ||
+      Number(evidence?.days_of_cover) === 0)
+  ) {
+    return "Best-seller sold out";
+  }
+  return detectorLabel(id);
+}
+
 export const ACTION_LABELS: Record<ActionKind, string> = {
   pause_campaign: "Pause campaign",
   resume_campaign: "Resume campaign",
@@ -305,6 +347,17 @@ export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
   "reallocate_inventory",
 ]);
 
+// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD can actually execute inline
+// today — the kinds DashboardApp.executeAction has a live endpoint for (campaign
+// pause/reduce, snooze, reallocate_inventory). exclude_geo has no dashboard
+// endpoint yet, so the dashboard assistant deep-links it to the Alerts review
+// screen instead of faking a run. Keep in sync with executeAction in
+// app/components/dashboard/DashboardApp.tsx. (create_po_draft is not chat-inline
+// on any surface — it collects quantity/cost on a review surface.)
+export const DASH_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set(
+  [...CHAT_INLINE_ACTIONS].filter((k) => k !== "exclude_geo"),
+);
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   free_shipping_leakage: ["raise_free_ship_threshold", "exclude_sku_free_ship", "snooze_alert"],
@@ -321,3 +374,41 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   scaling_sku_fulfillment_risk: ["create_po_draft", "reallocate_inventory", "snooze_alert"],
   wrong_location_concentration: ["reallocate_inventory", "snooze_alert"],
 };
+
+// Campaign-scoped actions are meaningless on an alert with no campaign attached
+// (e.g. a SKU-level negative_unit_economics) — never recommend one there (P2-14).
+const CAMPAIGN_ACTIONS: ReadonlySet<ActionKind> = new Set([
+  "pause_campaign",
+  "reduce_campaign_budget",
+  "increase_campaign_budget",
+  "reallocate_budget",
+]);
+
+// Remediation-plan-only executors: discontinue (destructive) and the per-SKU
+// budget shift (needs a dedicated mutable campaign + a qualifying winner the
+// engine verifies). The coarse recommendedAction hint can't validate either, so
+// it never surfaces them — they're offered only via the ranked remediation plan.
+const PLAN_ONLY_ACTIONS: ReadonlySet<ActionKind> = new Set([
+  "reallocate_spend_sku",
+  "discontinue_sku",
+]);
+
+/**
+ * The recommended (default) action for an alert: the first allowed action that
+ * is a real fix (not snooze) AND applicable to this alert — a campaign action
+ * requires a campaign. Returns null when the only thing left is to snooze/review,
+ * so the UI can offer "Review" instead of a meaningless "Pause campaign".
+ */
+export function recommendedAction(
+  detectorId: string,
+  opts: { hasCampaign: boolean },
+): ActionKind | null {
+  const actions = DETECTOR_TO_ACTIONS[detectorId as DetectorId] ?? ["snooze_alert"];
+  const firstReal = actions.find(
+    (a) =>
+      a !== "snooze_alert" &&
+      !PLAN_ONLY_ACTIONS.has(a) &&
+      (opts.hasCampaign || !CAMPAIGN_ACTIONS.has(a)),
+  );
+  return firstReal ?? null;
+}

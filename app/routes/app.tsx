@@ -1,5 +1,11 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import {
+  Link,
+  Outlet,
+  useLoaderData,
+  useRevalidator,
+  useRouteError,
+} from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -9,7 +15,8 @@ import bugReportStyles from "../components/BugReport/bug-report.css?url";
 import calderynStyles from "../components/calderyn/calderyn.css?url";
 import { AssistantSlideout } from "../components/Assistant/AssistantSlideout";
 import { BugReportButton } from "../components/BugReport/BugReportButton";
-import { appendEmbeddedSearch, rememberEmbeddedParams } from "../lib/embedded-nav";
+import { appendEmbeddedSearch, useKeepEmbeddedUrl } from "../lib/embedded-nav";
+import { useRefreshOnFocus } from "../lib/use-refresh-on-focus";
 import { adminDeepLinkRedirect } from "../lib/admin-deeplink.server";
 import { authenticate } from "../shopify.server";
 
@@ -41,8 +48,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function App() {
   const { apiKey, shop, host } = useLoaderData<typeof loader>();
-  rememberEmbeddedParams({ shop, host });
+  // Keep shop/host on the iframe URL so document reloads and focus-revalidations
+  // re-authenticate instead of bouncing to the bare /auth/login form.
+  useKeepEmbeddedUrl({ shop, host });
   const withParams = (to: string) => appendEmbeddedSearch(to, { shop, host });
+
+  // Quietly revalidate the current screen's loader when the merchant returns to
+  // the tab, so they never look at stale data. revalidate() re-runs in place —
+  // no full reload. Throttled by the hook's cooldown.
+  const { revalidate } = useRevalidator();
+  useRefreshOnFocus(revalidate);
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
@@ -52,10 +67,10 @@ export default function App() {
         </Link>
         <Link to={withParams("/app/alerts")}>Alerts</Link>
         <Link to={withParams("/app/analytics")}>Analytics</Link>
-        <Link to={withParams("/app/audit")}>Audit log</Link>
+        <Link to={withParams("/app/audit")}>Action history</Link>
         <Link to={withParams("/app/campaigns")}>Campaigns</Link>
         <Link to={withParams("/app/skus")}>Inventory</Link>
-        <Link to={withParams("/app/screener")}>Ad Pre-Screen</Link>
+        <Link to={withParams("/app/screener")}>Creative Predictor</Link>
         <Link to={withParams("/app/generator")}>Ad Generator</Link>
         <Link to={withParams("/app/settings")}>Settings</Link>
         <Link to={withParams("/app/mcp")}>Claude connections</Link>

@@ -149,6 +149,36 @@ describe("backfillGoogle", () => {
     warn.mockRestore();
   });
 
+  it("flags a dead refresh token (invalid_grant) as reauth, not a generic error", async () => {
+    const throwing: GoogleAdsClient = {
+      search: vi.fn(async () => {
+        throw new Error(
+          "Google OAuth token exchange failed (invalid_grant): Token has been expired or revoked.",
+        );
+      }),
+    };
+    const { sb, calls } = makeFakeSupabase([]);
+
+    await expect(backfillGoogle(throwing, SHOP, sb)).rejects.toThrow(/invalid_grant/);
+
+    const statusUpdate = calls.updates.find((u) => u.table === "shop_integrations");
+    expect((statusUpdate?.values as Record<string, unknown>).sync_status).toBe("reauth");
+  });
+
+  it("records a generic sync failure as error, not reauth", async () => {
+    const throwing: GoogleAdsClient = {
+      search: vi.fn(async () => {
+        throw new Error("Google Ads API error: HTTP 500");
+      }),
+    };
+    const { sb, calls } = makeFakeSupabase([]);
+
+    await expect(backfillGoogle(throwing, SHOP, sb)).rejects.toThrow(/HTTP 500/);
+
+    const statusUpdate = calls.updates.find((u) => u.table === "shop_integrations");
+    expect((statusUpdate?.values as Record<string, unknown>).sync_status).toBe("error");
+  });
+
   it("issues a single batched `in` lookup, not one query per report row", async () => {
     const campaigns = [
       { campaign: { id: "111", status: "ENABLED" } },

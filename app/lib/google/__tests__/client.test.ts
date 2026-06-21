@@ -7,7 +7,35 @@
 // recorded as a clean, empty sync.
 
 import { describe, it, expect } from "vitest";
-import { extractAdsError, parseSearchStreamResponse } from "../client.server";
+import { extractAdsError, isReauthError, parseSearchStreamResponse } from "../client.server";
+
+describe("isReauthError", () => {
+  it("flags an invalid_grant token-exchange failure as needing reconnect", () => {
+    // What googleClientForShop surfaces when the stored refresh token is dead.
+    expect(
+      isReauthError(
+        "Google OAuth token exchange failed (invalid_grant): Token has been expired or revoked.",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags the bare human-readable 'expired or revoked' message", () => {
+    expect(isReauthError("Token has been expired or revoked.")).toBe(true);
+  });
+
+  it("does NOT flag a developer-token-not-approved error — that's config, not reconnect", () => {
+    expect(
+      isReauthError(
+        "Google Ads API error: The caller does not have permission — authorizationError/DEVELOPER_TOKEN_NOT_APPROVED: apply for Basic or Standard access",
+      ),
+    ).toBe(false);
+  });
+
+  it("does NOT flag a generic API/network error", () => {
+    expect(isReauthError("Google Ads API error: HTTP 500")).toBe(false);
+    expect(isReauthError("")).toBe(false);
+  });
+});
 
 describe("extractAdsError", () => {
   it("returns null for a successful (results) batch array", () => {

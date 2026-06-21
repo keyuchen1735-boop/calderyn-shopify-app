@@ -31,6 +31,14 @@ describe("integration pairing view", () => {
     expect(integrationBadge("connected").tone).toBe("success");
     expect(integrationBadge("pending").tone).toBe("info");
   });
+
+  it("surfaces a dead-token integration as 'Reconnect needed', not paired", () => {
+    // A reauth integration HAS a stored credential but it's expired/revoked, so
+    // it must read as not-paired (the card shows Connect again, not Disconnect)
+    // and badge an attention-tone "Reconnect needed".
+    expect(isPaired("reauth")).toBe(false);
+    expect(integrationBadge("reauth")).toEqual({ label: "Reconnect needed", tone: "attention" });
+  });
 });
 
 // --- Post-OAuth confirmation notice (the pairing confirmation UI) ----------
@@ -122,5 +130,35 @@ describe("integrations.list status derivation", () => {
     store["shop_integrations"] = [];
     const out = await calderynClient("x.myshopify.com").integrations.list();
     expect(out.google_ads.status).toBe("disconnected");
+  });
+
+  it("maps a 'reauth' sync_status (dead refresh token) to reauth, not disconnected", async () => {
+    store["shop_integrations"] = [
+      { shop_id: "shop-X", kind: "google_ads", sync_status: "reauth", connected_at: "2026-06-07T04:26:07Z", external_account_id: "7526998186", sync_error: "Google OAuth token exchange failed (invalid_grant): Token has been expired or revoked." },
+    ];
+    const out = await calderynClient("x.myshopify.com").integrations.list();
+    expect(out.google_ads.status).toBe("reauth");
+    // Merchant-facing detail is a friendly prompt, not the raw OAuth error string.
+    expect(out.google_ads.detail).toBe("Connection expired — reconnect to resume syncing");
+  });
+
+  it("shows a plain-language detail for a CUSTOMER_NOT_ENABLED sync error, not the raw API string", async () => {
+    store["shop_integrations"] = [
+      {
+        shop_id: "shop-X",
+        kind: "google_ads",
+        sync_status: "error",
+        connected_at: "2026-06-20T17:30:24Z",
+        external_account_id: "5673422352",
+        sync_error:
+          "Google Ads API error: The caller does not have permission — CUSTOMER_NOT_ENABLED: The customer account can't be accessed because it is not yet enabled or has been deactivated.",
+      },
+    ];
+    const out = await calderynClient("x.myshopify.com").integrations.list();
+    // The errored row is still not paired (Connect button shows), but the detail
+    // the merchant reads explains the problem instead of dumping the API string.
+    expect(out.google_ads.status).toBe("disconnected");
+    expect(out.google_ads.detail).toMatch(/google ads account/i);
+    expect(out.google_ads.detail).not.toMatch(/CUSTOMER_NOT_ENABLED|does not have permission/i);
   });
 });

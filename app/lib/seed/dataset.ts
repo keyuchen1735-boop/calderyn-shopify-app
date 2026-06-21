@@ -95,11 +95,14 @@ function uuidFrom(rng: () => number): string {
   return `${b[0]}${b[1]}${b[2]}${b[3]}-${b[4]}${b[5]}-${b[6]}${b[7]}-${b[8]}${b[9]}-${b[10]}${b[11]}${b[12]}${b[13]}${b[14]}${b[15]}`;
 }
 
+// external_id mirrors real Shopify ingestion (gid://shopify/Location/<id>); a
+// placeholder slug here makes the reallocate mutation fail "Invalid global id"
+// on the location (P0-2). Names/regions carry the human identity.
 const LOCATIONS = [
-  { external_id: "loc-edison-nj", name: "Northeast DC — Edison, NJ", country: "US", region: "us-east", city: "Edison" },
-  { external_id: "loc-reno-nv", name: "West DC — Reno, NV", country: "US", region: "us-west", city: "Reno" },
-  { external_id: "loc-columbus-oh", name: "Midwest DC — Columbus, OH", country: "US", region: "us-central", city: "Columbus" },
-  { external_id: "loc-austin-tx", name: "Flagship Store — Austin, TX", country: "US", region: "us-south", city: "Austin" },
+  { external_id: "gid://shopify/Location/7001", name: "Northeast DC — Edison, NJ", country: "US", region: "us-east", city: "Edison" },
+  { external_id: "gid://shopify/Location/7002", name: "West DC — Reno, NV", country: "US", region: "us-west", city: "Reno" },
+  { external_id: "gid://shopify/Location/7003", name: "Midwest DC — Columbus, OH", country: "US", region: "us-central", city: "Columbus" },
+  { external_id: "gid://shopify/Location/7004", name: "Flagship Store — Austin, TX", country: "US", region: "us-south", city: "Austin" },
 ];
 
 interface ProductSpec {
@@ -268,6 +271,8 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
 
   const skus: SkuRow[] = [];
   const priceBySkuId = new Map<string, number>();
+  // Deterministic per-variant inventory-item id sequence (loop order is stable).
+  let invItemSeq = 0;
   for (const p of PRODUCTS) {
     for (const variant of p.variants) {
       const id = uuidFrom(rng);
@@ -277,7 +282,9 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
         shop_id: config.shopId,
         external_id: `variant-${p.handle}-${variant}`,
         product_id: `product-${p.handle}`,
-        inventory_item_id: `invitem-${p.handle}-${variant}`,
+        // Shopify-shaped global id (matches real ingestion's variant.inventoryItem.id);
+        // a placeholder makes the reallocate mutation fail "Invalid global id" (P0-2).
+        inventory_item_id: `gid://shopify/InventoryItem/${100000 + invItemSeq++}`,
         sku: `PP-${p.handle.toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 16)}-${variant.toUpperCase()}`,
         title: `${p.title}${suffix}`,
         category: p.category,

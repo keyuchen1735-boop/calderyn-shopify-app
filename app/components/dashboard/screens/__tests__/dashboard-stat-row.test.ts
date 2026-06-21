@@ -46,7 +46,9 @@ const GUARDRAILS: GuardrailVM = {
   cooldown_minutes: 30,
   business_hours: { start: "09:00", end: "17:00", tz: "America/New_York" },
   in_business_hours: true,
+  business_hours_only: false,
   autopilot_enabled: true,
+  autopilot_bypass_guardrails: false,
   autopilot_daily_action_cap: 5,
   autopilot_actions_today: 1,
   autopilot_min_spend_cents: 1_000,
@@ -118,6 +120,8 @@ function renderStatGrid(app: DashboardCtx): { html: string; grid: string } {
   // Strip SSR text-boundary markers (`across <!-- -->1<!-- --> action`) so
   // assertions can match the visible text.
   const html = renderToString(h(Dashboard, { app })).replace(/<!-- -->/g, "");
+  // The uncustomized default renders the original CSS-flow layout, so the stat
+  // grid is bounded by the `cd-grid-main` block that follows it.
   const start = html.indexOf("cd-stat-grid");
   const end = html.indexOf("cd-grid-main");
   expect(start).toBeGreaterThan(-1);
