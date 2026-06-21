@@ -1,4 +1,4 @@
-// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
+﻿// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
 
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
@@ -73,12 +73,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   // Calibration signal: bump approval confidence for the (detector, action) pair.
   // Only when a real alert drove this action (alertId present + outcome succeeded).
+  // AWAITED before return so the promise is not abandoned on serverless cold-flush.
   // Guarded: a signal failure must NEVER affect the action result.
   if (result.outcome === "succeeded" && alertId) {
     const client = calderynClient(session.shopDomain);
-    client.alerts.get(alertId).then((alert) => {
-      recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
-    }).catch(() => {});
+    const alert = await client.alerts.get(alertId).catch(() => null);
+    if (alert) recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
   }
 
   return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
