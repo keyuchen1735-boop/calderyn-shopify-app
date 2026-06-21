@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   pairPrior, historical, confidence, calibrationPct, smooth,
   actionTier, reversibilityFactor, NO_BRAINER, HAS_EXECUTOR,
+  pairConfidence, DETECTION_COLD,
 } from "../confidence";
 import { DETECTOR_TO_ACTIONS } from "../../labels";
 
@@ -66,6 +67,24 @@ describe("smooth", () => {
   });
   it("holds steady inside the dead-band", () => {
     expect(smooth(51, 50)).toBe(50); // EWMA ~50.3, |delta|<1 -> hold
+  });
+});
+
+describe("pairConfidence", () => {
+  it("matches the canonical no-brainer at cold start (~74)", () => {
+    // sku_stockout_vs_spend:pause_campaign is a NO_BRAINER, reversible, has executor
+    expect(pairConfidence("sku_stockout_vs_spend", "pause_campaign", { alpha: 0, beta: 0 }, null)).toBe(74);
+  });
+  it("is 0 for a no-executor action (guardrail veto)", () => {
+    expect(pairConfidence("margin_erosion", "snooze_alert", { alpha: 0, beta: 0 }, null)).toBe(0);
+  });
+  it("rises as approvals accrue", () => {
+    const cold = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 0, beta: 0 }, null);
+    const warm = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 10, beta: 0 }, null);
+    expect(warm).toBeGreaterThan(cold);
+  });
+  it("exposes the cold-start detection constant", () => {
+    expect(DETECTION_COLD).toBe(0.6);
   });
 });
 

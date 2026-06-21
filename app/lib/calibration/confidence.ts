@@ -103,6 +103,30 @@ export function confidence(i: {
   return Number.isFinite(c) ? clampInt(c, 0, 100) : 0;
 }
 
+// Cold-start detection factor (capped until per-detector precision history exists).
+export const DETECTION_COLD = 0.6;
+
+// Convenience: full per-(detector, action) confidence from the pair's Beta
+// counters + optional peer prior. The single entry point used by both the
+// nightly recompute and the Action Queue, so the two never diverge.
+export function pairConfidence(
+  detectorId: string,
+  actionKind: ActionKind,
+  ev: { alpha: number; beta: number },
+  peerP50: number | null,
+): number {
+  const tier = actionTier(actionKind);
+  const veto: 0 | 1 = HAS_EXECUTOR.has(actionKind) ? 1 : 0;
+  const prior = pairPrior(tier, NO_BRAINER.has(`${detectorId}:${actionKind}`), peerP50);
+  const hist = historical(ev.alpha, ev.beta, prior);
+  return confidence({
+    guardrailVeto: veto,
+    detection: DETECTION_COLD,
+    historical: hist,
+    reversibility: reversibilityFactor(tier),
+  });
+}
+
 export function calibrationPct(pairs: { conf: number; weight: number }[]): number {
   let totalWeight = 0;
   let acc = 0;

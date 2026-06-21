@@ -7,8 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, DetectorId } from "../types";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import {
-  actionTier, calibrationPct, confidence, historical, pairPrior,
-  reversibilityFactor, smooth, HAS_EXECUTOR, NO_BRAINER,
+  calibrationPct, pairConfidence, smooth,
 } from "./confidence";
 
 export interface RecomputeDeps {
@@ -18,7 +17,6 @@ export interface RecomputeDeps {
 const RANK_DECAY = 0.6; // first action gets 60% of a detector's weight; rest split the remainder
 const SEED_FIRES = 1; // every legal detector gets a baseline fire so new shops show a stable %
 const WINDOW_DAYS = 90;
-const DETECTION_COLD = 0.6; // detection factor at cold start (spec section 2)
 
 export function computeWeights(
   detectorFires: Record<string, number>,
@@ -85,8 +83,6 @@ export async function recomputeShopCalibration(
   const scored: { conf: number; weight: number }[] = [];
   for (const { detector, action, weight } of weights) {
     const key = `${detector}:${action}`;
-    const tier = actionTier(action);
-    const veto: 0 | 1 = HAS_EXECUTOR.has(action) ? 1 : 0;
     let peerP50: number | null = null;
     try {
       const { data } = await sb.rpc("action_pair_prior", {
@@ -98,16 +94,8 @@ export async function recomputeShopCalibration(
     } catch {
       peerP50 = null; // peer baselines optional; fall back to static seed
     }
-    const isNb = NO_BRAINER.has(key);
-    const prior = pairPrior(tier, isNb, peerP50);
     const ev = pairMap.get(key);
-    const hist = historical(ev?.alpha ?? 0, ev?.beta ?? 0, prior);
-    const conf = confidence({
-      guardrailVeto: veto,
-      detection: DETECTION_COLD,
-      historical: hist,
-      reversibility: reversibilityFactor(tier),
-    });
+    const conf = pairConfidence(detector, action, { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 }, peerP50);
     scored.push({ conf, weight });
   }
 
