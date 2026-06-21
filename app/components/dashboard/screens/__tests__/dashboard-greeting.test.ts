@@ -29,6 +29,7 @@ const ctx: DashboardCtx = {
   consent: null,
   overview: null,
   calibration: null,
+  actionQueue: [],
   feed: [],
   liveOn: true,
   setLiveOn: () => {},

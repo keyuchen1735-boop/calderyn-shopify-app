@@ -285,3 +285,16 @@ export interface Toast {
 export interface Tweaks {
   [key: string]: unknown;
 }
+
+/** Dashboard view-model for a single action-queue proposal. */
+export interface QueueProposalVM {
+  alertId: string;
+  detector_id: string;
+  action_kind: string;
+  title: string;
+  dollar_impact: number;
+  /** Calibrated confidence, 0-100. */
+  confidence: number;
+  /** One-line reasoning from the alert narrative. */
+  reasoning: string;
+}

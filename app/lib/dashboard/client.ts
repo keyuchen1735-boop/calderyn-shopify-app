@@ -28,6 +28,7 @@ import type {
   GuardrailVM,
   IntegrationVM,
   OverviewVM,
+  QueueProposalVM,
   Scorecard,
   SkuVM,
   TopAd,
@@ -804,6 +805,11 @@ export async function fetchCalibration(): Promise<{
     "/dashboard/api/calibration",
   );
   return { pct: data.pct, updated_at: data.updated_at };
+}
+
+export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
+  const data = await apiGet<{ proposals: QueueProposalVM[] }>("/dashboard/api/queue");
+  return data.proposals;
 }
 
 // --- creative screener (Predictor) ------------------------------------------

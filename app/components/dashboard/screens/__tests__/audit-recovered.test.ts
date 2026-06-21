@@ -54,6 +54,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     consent: null,
     overview: null,
     calibration: null,
+    actionQueue: [],
     feed: [],
     liveOn: false,
     setLiveOn: () => {},

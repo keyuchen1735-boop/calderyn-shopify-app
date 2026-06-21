@@ -37,6 +37,7 @@ import type {
   GuardrailVM,
   IntegrationVM,
   OverviewVM,
+  QueueProposalVM,
   Toast,
 } from "./view-models";
 
@@ -50,6 +51,7 @@ import ScreenGenerator from "./screens/Generator";
 import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
+import ScreenActionQueue from "./screens/ActionQueue";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
 
@@ -63,6 +65,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
+  { id: "action-queue", label: "Action Queue", icon: "target" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -88,6 +91,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
   audit: ScreenAudit,
+  "action-queue": ScreenActionQueue,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,
@@ -142,6 +146,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [consent, setConsent] = useState<boolean | null>(null);
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
+  const [actionQueue, setActionQueue] = useState<QueueProposalVM[]>([]);
   const [loading, setLoading] = useState(true);
 
   // ----- live engine state -----
@@ -164,7 +169,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal, aq] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
@@ -172,6 +177,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       client.fetchIntegrations(),
       client.fetchConsent(),
       client.fetchCalibration(),
+      client.fetchActionQueue(),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -181,6 +187,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setIntegrations(integ);
     setConsent(co);
     setCalibration(cal);
+    setActionQueue(aq);
   }, []);
 
   useEffect(() => {
@@ -486,6 +493,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     consent,
     overview,
     calibration,
+    actionQueue,
     feed,
     liveOn,
     setLiveOn,
