@@ -33,4 +33,13 @@ describe("cron.calibration-recompute loader", () => {
     expect(body.ok).toBe(true);
     expect(body.shops).toBe(1);
   });
+  it("500s when a shop recompute throws", async () => {
+    const { recomputeShopCalibration } = await import("../../lib/calibration/recompute.server");
+    vi.mocked(recomputeShopCalibration).mockRejectedValueOnce(new Error("boom"));
+    const res = await loader({ request: req("Bearer s3cret"), params: {}, context: {} } as never);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.errors.length).toBeGreaterThan(0);
+  });
 });
