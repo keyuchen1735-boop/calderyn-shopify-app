@@ -1,13 +1,18 @@
 -- Autopilot concurrency lock (I6): per-shop "run in progress" row.
--- A cron tick acquires the lock by inserting a row. If a row already exists
--- for this shop_id and is younger than TTL_SECONDS, the tick is skipped.
--- The lock is released by deleting the row when the tick finishes (or errors).
+-- A cron tick acquires the lock by issuing a plain INSERT via supabase-js.
+-- The shop_id primary-key unique constraint makes exactly one concurrent INSERT
+-- win; the loser receives a Postgres 23505 unique-violation error (not a silent
+-- 0-row result -- supabase-js does not issue ON CONFLICT DO NOTHING). The app
+-- branches on error code 23505 to detect "lock held -- skip this tick".
+-- The lock is released by deleting the row (fenced on locked_at) when the tick
+-- finishes or errors; an orphaned row from a crashed tick expires via TTL logic
+-- in autopilot-lock.server.ts (LOCK_TTL_MS = 10 min).
 --
 -- Rationale: Supabase uses PgBouncer in Transaction mode by default. Advisory
--- locks (pg_try_advisory_lock) are session-scoped — in Transaction mode the
+-- locks (pg_try_advisory_lock) are session-scoped -- in Transaction mode the
 -- connection is returned to the pool between statements, so the advisory lock
--- is immediately released and provides NO protection. The TTL-row approach is
--- atomic (ON CONFLICT DO NOTHING) and works correctly over any connection pool.
+-- is immediately released and provides NO protection. The TTL-row approach
+-- works correctly over any connection pool.
 --
 -- RLS: service_role only (no anon/authenticated access).
 -- Row is deleted by the tick on completion/error; an orphaned row expires after

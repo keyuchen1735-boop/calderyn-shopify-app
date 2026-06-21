@@ -41,7 +41,7 @@ const {
   notifyAutonomousAction: vi.fn(async () => {}),
   // I6: Default: lock acquired — so all existing tests that reach executeAction
   // continue to pass. Concurrency-lock tests override this per-test.
-  acquireAutopilotLock: vi.fn(async (): Promise<{ acquired: boolean; reason?: string }> => ({ acquired: true })),
+  acquireAutopilotLock: vi.fn(async (): Promise<{ acquired: boolean; reason?: string; acquiredAt?: string }> => ({ acquired: true, acquiredAt: new Date().toISOString() })),
   releaseAutopilotLock: vi.fn(async () => {}),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
@@ -148,7 +148,7 @@ describe("runAutopilotForShop", () => {
     notifyAutonomousAction.mockReset().mockResolvedValue(undefined);
     // Default: lock acquired (acquired:true) so existing tests that reach
     // executeAction continue to pass. I6 tests override below.
-    acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true });
+    acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true, acquiredAt: new Date().toISOString() });
     releaseAutopilotLock.mockReset().mockResolvedValue(undefined);
   });
 
@@ -938,7 +938,7 @@ describe("runAutopilotForShop", () => {
       checkGuardrails.mockResolvedValue({ allowed: true });
       const sb = fakeSb({ enabled: true, alerts: [candidate] });
       await runAutopilotForShop(SHOP, sb);
-      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, sb);
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, expect.any(String), sb);
     });
 
     it("releases the lock even when the run throws (finally-block guarantee)", async () => {
@@ -971,7 +971,7 @@ describe("runAutopilotForShop", () => {
       // acquireAutopilotLock itself is mocked (acquired:true) so the lock is held.
       // The outer try block will throw, and finally must release.
       await expect(runAutopilotForShop(SHOP, throwingSb)).rejects.toThrow("DB connection lost mid-run");
-      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, throwingSb);
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, expect.any(String), throwingSb);
     });
 
     it("does NOT call releaseAutopilotLock when the lock was never acquired (early return)", async () => {

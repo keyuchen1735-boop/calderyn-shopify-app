@@ -77,10 +77,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   // (concurrent tick holds it, OR the DB call errored), we skip this tick
   // rather than running unlocked and risking double-action.
   //
-  // Mechanism: TTL-row (not pg_try_advisory_lock) because Supabase uses
-  // PgBouncer in Transaction mode — advisory locks are session-scoped and
-  // are immediately released when the connection returns to the pool, so
-  // they provide zero protection over a pooled client.
+  // Mechanism: plain INSERT via supabase-js. The shop_id PK unique constraint
+  // means exactly one concurrent tick wins; the loser receives a Postgres 23505
+  // unique-violation error (not a silent 0-row result), which we treat as
+  // "lock held — skip". TTL-row (not pg_try_advisory_lock) because Supabase
+  // uses PgBouncer in Transaction mode — advisory locks are session-scoped and
+  // are immediately released when the connection returns to the pool.
   const lock = await acquireAutopilotLock(shopId, sb);
   if (!lock.acquired) {
     console.info(`[autopilot] skipping shop ${shopId}: ${lock.reason ?? "lock not acquired"}`);
@@ -584,6 +586,6 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   } finally {
     // I6: Always release the per-shop lock on completion OR error. The TTL
     // (LOCK_TTL_MS) acts as a backstop if this finally somehow doesn't run.
-    await releaseAutopilotLock(shopId, sb);
+    await releaseAutopilotLock(shopId, lock.acquiredAt!, sb);
   }
 }

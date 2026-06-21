@@ -41,12 +41,14 @@ function makeSb({
 }
 
 describe("acquireAutopilotLock", () => {
-  it("returns acquired:true when insert succeeds (no existing lock)", async () => {
+  it("returns acquired:true with acquiredAt when insert succeeds (no existing lock)", async () => {
+    const lockedAt = new Date().toISOString();
     const sb = makeSb({
-      insertResult: { data: { locked_at: new Date().toISOString() }, error: null },
+      insertResult: { data: { locked_at: lockedAt }, error: null },
     });
     const result = await acquireAutopilotLock(SHOP, sb);
     expect(result.acquired).toBe(true);
+    expect(typeof result.acquiredAt).toBe("string");
   });
 
   it("returns acquired:false when a live lock exists (unique violation → existing row younger than TTL)", async () => {
@@ -96,15 +98,20 @@ describe("acquireAutopilotLock", () => {
 });
 
 describe("releaseAutopilotLock", () => {
-  it("deletes the lock row without throwing", async () => {
+  const ACQUIRED_AT = new Date(Date.now() - 5000).toISOString();
+
+  it("deletes only the owned lock row (fenced on acquiredAt) without throwing", async () => {
     const sb = makeSb({ deleteResult: { error: null } });
-    await expect(releaseAutopilotLock(SHOP, sb)).resolves.toBeUndefined();
+    await expect(releaseAutopilotLock(SHOP, ACQUIRED_AT, sb)).resolves.toBeUndefined();
+    // Verify both eq() calls were made (shop_id + locked_at fence)
+    const chain = (sb as unknown as { _chain: Record<string, unknown> })._chain;
+    expect((chain.eq as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("logs but does NOT throw when delete errors", async () => {
     const sb = makeSb({ deleteResult: { error: { message: "connection lost" } } });
     // releaseAutopilotLock is best-effort: should resolve (not reject).
-    await expect(releaseAutopilotLock(SHOP, sb)).resolves.toBeUndefined();
+    await expect(releaseAutopilotLock(SHOP, ACQUIRED_AT, sb)).resolves.toBeUndefined();
   });
 });
 
