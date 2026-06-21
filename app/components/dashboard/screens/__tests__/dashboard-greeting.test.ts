@@ -28,6 +28,7 @@ const ctx: DashboardCtx = {
   integrations: [],
   consent: null,
   overview: null,
+  calibration: null,
   feed: [],
   liveOn: true,
   setLiveOn: () => {},

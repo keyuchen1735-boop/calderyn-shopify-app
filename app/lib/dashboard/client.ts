@@ -794,6 +794,18 @@ export async function sendAssistantMessage(
   };
 }
 
+// --- calibration -------------------------------------------------------------
+
+export async function fetchCalibration(): Promise<{
+  pct: number | null;
+  updated_at: string | null;
+}> {
+  const data = await apiGet<{ pct: number | null; updated_at: string | null }>(
+    "/dashboard/api/calibration",
+  );
+  return { pct: data.pct, updated_at: data.updated_at };
+}
+
 // --- creative screener (Predictor) ------------------------------------------
 
 export async function fetchLatestScreenRun(): Promise<CreativeScreenRun | null> {

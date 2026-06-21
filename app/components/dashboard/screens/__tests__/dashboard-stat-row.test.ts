@@ -102,6 +102,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     integrations: [],
     consent: null,
     overview: null,
+    calibration: null,
     feed: [],
     liveOn: false,
     setLiveOn: () => {},

@@ -43,6 +43,7 @@ import {
   ShoppingBag,
   Sparkles,
   Sun,
+  Target,
   TriangleAlert,
   Undo2,
   X,
@@ -96,6 +97,7 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   assist: MessageSquareMore,
   more: MoreHorizontal,
   bug: Bug,
+  target: Target,
 };
 
 export function CDIcon({

@@ -71,6 +71,9 @@ export interface DashboardCtx {
   toast: (text: string, icon?: string, tone?: string) => void;
   relTime: (ts: number) => string;
 
+  /** Calibration headline; null until loaded or when no data yet. */
+  calibration: { pct: number | null; updated_at: string | null } | null;
+
   // --- data lifecycle ---
   refresh: () => void;
   loading: boolean;

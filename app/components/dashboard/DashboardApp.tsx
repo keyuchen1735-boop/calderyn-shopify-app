@@ -141,6 +141,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [integrations, setIntegrations] = useState<IntegrationVM[]>([]);
   const [consent, setConsent] = useState<boolean | null>(null);
   const [overview, setOverview] = useState<OverviewVM | null>(null);
+  const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
   const [loading, setLoading] = useState(true);
 
   // ----- live engine state -----
@@ -163,13 +164,14 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
       client.fetchGuardrails(),
       client.fetchIntegrations(),
       client.fetchConsent(),
+      client.fetchCalibration(),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -178,6 +180,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setGuardrails(gr);
     setIntegrations(integ);
     setConsent(co);
+    setCalibration(cal);
   }, []);
 
   useEffect(() => {
@@ -482,6 +485,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     integrations,
     consent,
     overview,
+    calibration,
     feed,
     liveOn,
     setLiveOn,
