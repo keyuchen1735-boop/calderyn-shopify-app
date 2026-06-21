@@ -33,7 +33,7 @@ vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
 vi.mock("../remediation-guard.server", () => ({ checkSkuGuardrails }));
-vi.mock("../remediation/enrich.server", () => ({ enrichRemediation }));
+vi.mock("../../remediation/enrich.server", () => ({ enrichRemediation }));
 vi.mock("../alert-action.server", () => ({ executeDiscontinueAlertAction }));
 vi.mock("../reallocate-sku.server", () => ({ executeReallocateSpendSku }));
 vi.mock("../../calderyn.server", () => ({ calderynClient }));
@@ -336,6 +336,53 @@ describe("runAutopilotForShop", () => {
     expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
     expect(r.blocked).toBe(1);
     expect(r.acted).toBe(0);
+  });
+
+  // ad_tax_overload WITH campaign + sku_id: rankMoves returns reallocate_to_winner
+  // (executor null from rank.ts). enrichRemediation.mockResolvedValueOnce flips
+  // the move's executor to "reallocate_spend_sku" → tryRemediation routes to the
+  // Phase-3 SKU gateway. The discontinue/legacy seams must NOT be called.
+  // NOTE: for ad_tax_overload fixtures WITHOUT evidence (the legacy tests above),
+  // enrichRemediation identity-mock keeps executor null → fell_through → legacy
+  // reduce/reallocate path. That is correct no-sku_id fallback; see Task 5 Step 3.
+  it("acts on a reallocate_to_winner recommendation via the SKU-realloc seam with a deterministic reason", async () => {
+    const reallocCandidate = {
+      alert_id: "al-realloc", detector_id: "ad_tax_overload", dollar_impact: 5305,
+      campaign_id: "camp-loser", campaign_spend_cents: 80000, daily_budget_cents: 20000,
+      evidence: { gross_unit_margin_usd: 3, ad_spend_7d_usd: 800 }, sku: "Tax Overload Tee", sku_id: "sku-3",
+    };
+    // rankMoves(ad_tax_overload, not-structurally-dead) → recommended="reallocate_to_winner",
+    // executor=null. Simulate enrichRemediation filling in the winner campaign:
+    enrichRemediation.mockResolvedValueOnce({
+      moves: [
+        { kind: "reallocate_to_winner", dollarImpactCents: 530500, executor: "reallocate_spend_sku",
+          label: "Move ad budget to a higher-margin product",
+          target: { loserCampaignId: "camp-loser", winnerCampaignId: "camp-winner", amountCents: 530500 } },
+        { kind: "cut_ads", dollarImpactCents: 530500, executor: "pause_campaign", label: "Cut the ad spend driving the loss" },
+        { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+      ],
+      recommended: "reallocate_to_winner",
+      structurallyDead: false,
+    });
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [reallocCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeReallocateSpendSku).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: SHOP,
+        alertId: "al-realloc",
+        actor: "autopilot",
+        idempotencyKey: "autopilot:al-realloc:reallocate_spend_sku",
+      }),
+    );
+    const [opts] = executeReallocateSpendSku.mock.calls[0] as unknown as [{ triggerReason: string }];
+    expect(opts.triggerReason).toContain("reallocate_to_winner");
+    expect(opts.triggerReason).toContain("$5,305");  // recommended 530500c
+    expect(opts.triggerReason).toContain("cut_ads");  // runner-up in reason
+    // Legacy campaign seam and discontinue seam must NOT be called.
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(1);
   });
 
   // Viable margin-erosion alert: plan.recommended == "review_pricing" (or
