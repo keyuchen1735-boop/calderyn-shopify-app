@@ -11,6 +11,7 @@ import { loadReallocationCandidates, pickReallocation } from "./reallocation-sug
 import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
 import { isGraduated } from "../calibration/graduation.server";
+import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -354,6 +355,43 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       if (!verdict.allowed) {
         decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
         continue;
+      }
+
+      // I4: Freshness + live precondition re-check — runs AFTER graduation + guardrails
+      // pass and BEFORE the executor fires. Fail-safe: a thrown check is ok:false,
+      // so a DB hiccup can never silently permit an autonomous action.
+      if (kind === "pause_campaign" || kind === "reduce_campaign_budget") {
+        const precheck = await preconditionFresh({ kind, candidate: c, sb, nowMs: Date.now() });
+        if (!precheck.ok) {
+          console.info(`[autopilot] precondition re-check failed for ${c.campaign_id}: ${precheck.reason}`);
+          decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
+          continue;
+        }
+      }
+
+      // I10: For sku_stockout_vs_spend → pause_campaign specifically, also require
+      // the stockout allowlist to clear. The detector is NOT in PAUSE_DETECTORS today
+      // (so it won't reach this path), but the gate is wired here so that IF it ever
+      // appears as an autonomous pause candidate the allowlist is enforced. The check
+      // ALWAYS returns ok:false in the current schema (inventory_policy not synced),
+      // which is the correct conservative default — it queues for human review.
+      if (kind === "pause_campaign" && c.detector_id === "sku_stockout_vs_spend") {
+        // Load the raw alert so stockoutPauseAllowed can read entity_ref.
+        const { data: alertRow } = await sb
+          .from("alerts")
+          .select("id, detector_id, entity_ref")
+          .eq("id", c.alert_id)
+          .maybeSingle();
+        if (!alertRow) {
+          decide(c, kind, "skipped", "stockout_allowlist: alert row not found");
+          continue;
+        }
+        const stockCheck = await stockoutPauseAllowed({ shopId, alert: alertRow, sb });
+        if (!stockCheck.ok) {
+          console.info(`[autopilot] stockout allowlist blocked ${c.campaign_id}: ${stockCheck.reason}`);
+          decide(c, kind, "skipped", stockCheck.reason ?? "stockout_precondition_not_met");
+          continue;
+        }
       }
 
       const res = await executeAction(
