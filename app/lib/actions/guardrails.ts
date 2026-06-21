@@ -13,7 +13,8 @@ export interface AutopilotGuardrails {
    * `enabled`). Action SIZE is unaffected — autopilot sizes changes from the
    * cut/increase dials regardless. */
   bypassGuardrails: boolean;
-  /** Max autopilot actions per UTC day; null = no daily cap (unlimited). */
+  /** Max autopilot actions per UTC day; null = no daily cap for merchant
+   * (non-autonomous) calls; for autonomous calls null is treated as 5. */
   dailyActionCap: number | null;
   minSpendCents: number;
   maxBudgetCutPct: number;
@@ -21,6 +22,8 @@ export interface AutopilotGuardrails {
   /** Hard per-campaign daily-budget ceiling; null = no ceiling. */
   maxDailyBudgetCents: number | null;
   dollarCapCents: number;
+  /** Aggregate dollar ceiling for autonomous actions today (cents); null = no ceiling. */
+  dailyActionBudgetCents?: number | null;
   cooldownMinutes: number;
   businessHoursOnly: boolean;
   businessHoursStartUtc: number; // 0-23
@@ -38,6 +41,12 @@ export interface GuardrailFacts {
   /** Reallocations cool down BOTH campaigns; null/absent for other kinds. */
   minutesSinceLastActionOnDestCampaign?: number | null;
   nowUtcHour: number; // 0-23
+  /** Sum of today's autonomous (autopilot) dollar impacts in cents; used for
+   * the aggregate daily-dollar ceiling check. Absent for merchant calls. */
+  todayAutopilotDollarsCents?: number;
+  /** True when the call is from the autopilot (autonomous) path. Affects the
+   * null-cap treatment: null = unlimited for merchant calls, 5 for autonomous. */
+  autonomous?: boolean;
 }
 
 export interface GuardrailResult {
@@ -56,12 +65,28 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
   if (!cfg.enabled) return { allowed: false, reason: "auto-pilot disabled" };
   // Bypass mode: enabled autopilot, but every safety/rate gate below is waived.
   if (cfg.bypassGuardrails) return { allowed: true };
-  // null cap = unlimited: skip the daily-cap check entirely.
-  if (cfg.dailyActionCap != null && facts.todayAutopilotCount >= cfg.dailyActionCap) {
+  // Daily action count cap. For autonomous (autopilot) calls, a null cap is
+  // treated as 5 — not unlimited. For merchant (non-autonomous) calls, null
+  // means unlimited (preserves existing behavior). This prevents an
+  // unconfigured autonomous path from acting without bound.
+  const effectiveDailyActionCap =
+    cfg.dailyActionCap == null && facts.autonomous ? 5 : cfg.dailyActionCap;
+  if (effectiveDailyActionCap != null && facts.todayAutopilotCount >= effectiveDailyActionCap) {
     return { allowed: false, reason: "daily action cap reached" };
   }
   if (facts.campaignSpendCents < cfg.minSpendCents) return { allowed: false, reason: "campaign spend below minimum" };
   if (facts.dollarImpactCents > cfg.dollarCapCents) return { allowed: false, reason: "dollar impact exceeds cap" };
+  // Aggregate daily-dollar ceiling (I2). Blocks when today's autonomous spend
+  // plus this action's impact would exceed the ceiling. Both sides must be
+  // present to check — missing either side leaves the check unenforced (safe
+  // default: the per-action dollar cap still applies).
+  if (
+    cfg.dailyActionBudgetCents != null &&
+    facts.todayAutopilotDollarsCents != null &&
+    facts.todayAutopilotDollarsCents + facts.dollarImpactCents > cfg.dailyActionBudgetCents
+  ) {
+    return { allowed: false, reason: "daily dollar ceiling reached" };
+  }
   if (facts.minutesSinceLastActionOnCampaign != null && facts.minutesSinceLastActionOnCampaign < cfg.cooldownMinutes) {
     return { allowed: false, reason: "campaign in cooldown" };
   }

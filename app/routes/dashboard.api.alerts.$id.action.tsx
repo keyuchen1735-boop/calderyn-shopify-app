@@ -18,6 +18,7 @@ import {
 import { executeReallocateSpendSku } from "~/lib/actions/reallocate-sku.server";
 import { getSupabase } from "~/lib/supabase.server";
 import type { ActionKind } from "~/lib/types";
+import { recordApproval } from "~/lib/calibration/approval.server";
 
 const INVENTORY_KINDS: InventoryAlertActionKind[] = ["reallocate_inventory", "snooze_alert"];
 const KINDS = [...INVENTORY_KINDS, "reallocate_spend_sku", "discontinue_sku"] as const satisfies readonly ActionKind[];
@@ -41,6 +42,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   const alertId = String(params.id);
   const client = calderynClient(session.shopDomain);
+  const sb = getSupabase();
 
   return dashboardJson(async () => {
     if (kind === "reallocate_spend_sku") {
@@ -72,13 +74,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const { auditId, outcome, acknowledged } = await executeInventoryAlertAction({
       client,
       admin,
-      sb: getSupabase(),
+      sb,
       shopId: session.shopId,
       alertId,
       kind: kind as InventoryAlertActionKind,
       idempotencyKey,
       signal: request.signal,
     });
+
+    // Calibration signal: bump approval confidence for the (detector, action) pair.
+    // Only for real executed actions (snooze is not an approval of a fix).
+    // Guarded: a signal failure must NEVER affect the action result.
+    if (kind !== "snooze_alert") {
+      const alert = await client.alerts.get(alertId).catch(() => null);
+      if (alert) {
+        recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
+      }
+    }
+
     return { audit_id: auditId, outcome, acknowledged };
   });
 }

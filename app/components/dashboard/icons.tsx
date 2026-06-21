@@ -47,6 +47,7 @@ import {
   Sparkles,
   Sun,
   Tag,
+  Target,
   TrendingUp,
   TriangleAlert,
   Undo2,
@@ -107,6 +108,7 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   tag: Tag,
   more: MoreHorizontal,
   bug: Bug,
+  target: Target,
 };
 
 export function CDIcon({

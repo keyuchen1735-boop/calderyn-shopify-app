@@ -167,3 +167,122 @@ describe("checkGuardrails", () => {
     expect(r).toEqual({ allowed: false, reason: "budget increase exceeds max" });
   });
 });
+
+describe("checkGuardrails · I1 forceBypassOff", () => {
+  beforeAll(() => vi.useFakeTimers().setSystemTime(new Date("2026-06-06T16:00:00Z")));
+  afterAll(() => vi.useRealTimers());
+
+  it("bypass-enabled shop is still blocked when forceBypassOff:true (autonomous path)", async () => {
+    // DB has autopilot_bypass_guardrails=true AND count over the configured cap.
+    // With forceBypassOff:true, bypass must be suppressed so the daily cap blocks.
+    const sb = fakeSb({
+      config: { ...config, autopilot_bypass_guardrails: true, autopilot_daily_action_cap: 3 },
+      todayCount: 3,
+    });
+    const r = await checkGuardrails(
+      SHOP,
+      { kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000 },
+      sb,
+      { forceBypassOff: true, autonomous: true },
+    );
+    expect(r).toEqual({ allowed: false, reason: "daily action cap reached" });
+  });
+
+  it("bypass-enabled shop still allowed when called WITHOUT opts (merchant path unchanged)", async () => {
+    // The merchant approve path does not pass opts — must keep today's behavior.
+    const sb = fakeSb({
+      config: { ...config, autopilot_bypass_guardrails: true, autopilot_daily_action_cap: 3 },
+      todayCount: 999,
+    });
+    const r = await checkGuardrails(
+      SHOP,
+      { kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000 },
+      sb,
+      // no opts — merchant behavior
+    );
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("checkGuardrails · I2 daily dollar ceiling", () => {
+  beforeAll(() => vi.useFakeTimers().setSystemTime(new Date("2026-06-06T16:00:00Z")));
+  afterAll(() => vi.useRealTimers());
+
+  /** Build a mock that returns specific dollar_impact_at_exec rows from action_audit. */
+  function fakeSbWithDollarRows(dollarRows: Array<{ dollar_impact_at_exec: number }>) {
+    let auditCallCount = 0;
+    function builder(table: string) {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.gte = vi.fn(() => chain);
+      chain.or = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.maybeSingle = vi.fn(async () => {
+        if (table === "guardrail_config")
+          return {
+            data: {
+              ...config,
+              // $250 = 25000 cents ceiling
+              daily_action_budget: 250,
+              autopilot_daily_action_cap: 10,
+            },
+            error: null,
+          };
+        // cooldown lookup: always null (not in cooldown)
+        return { data: null, error: null };
+      });
+      chain.then = (resolve: (r: { count: number; data: unknown; error: null }) => unknown) => {
+        auditCallCount += 1;
+        if (table === "action_audit") {
+          // First call = count query (head:true). Second call = dollar rows query.
+          if (auditCallCount === 1) return resolve({ count: 0, data: [], error: null });
+          return resolve({ count: dollarRows.length, data: dollarRows, error: null });
+        }
+        return resolve({ count: 0, data: [], error: null });
+      };
+      return chain;
+    }
+    return { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
+  }
+
+  it("blocks when today's autonomous dollar sum + this action > ceiling", async () => {
+    // $240 used today, $20 this action => $260 > $250 ceiling
+    const sb = fakeSbWithDollarRows([{ dollar_impact_at_exec: 240 }]);
+    const r = await checkGuardrails(
+      SHOP,
+      { kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 2000, campaignSpendCents: 50000 },
+      sb,
+      { forceBypassOff: true, autonomous: true },
+    );
+    expect(r).toEqual({ allowed: false, reason: "daily dollar ceiling reached" });
+  });
+
+  it("allows when today's autonomous dollar sum + this action <= ceiling", async () => {
+    // $100 used today, $20 this action => $120 <= $250 ceiling
+    const sb = fakeSbWithDollarRows([{ dollar_impact_at_exec: 100 }]);
+    const r = await checkGuardrails(
+      SHOP,
+      { kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 2000, campaignSpendCents: 50000 },
+      sb,
+      { forceBypassOff: true, autonomous: true },
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  it("merchant calls (no opts) skip the dollar-sum query entirely — behavior unchanged", async () => {
+    // A merchant call with no opts must still be allowed (same as today).
+    const sb = fakeSb({
+      config: { ...config, daily_action_budget: 250 },
+      todayCount: 0,
+    });
+    const r = await checkGuardrails(
+      SHOP,
+      { kind: "pause_campaign", campaignId: CAMP, dollarImpactCents: 5000, campaignSpendCents: 50000 },
+      sb,
+      // no opts
+    );
+    expect(r.allowed).toBe(true);
+  });
+});

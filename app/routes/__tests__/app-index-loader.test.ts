@@ -43,6 +43,7 @@ vi.mock("~/lib/calderyn.server", () => ({
     campaigns: { list: async () => [] },
     guardrails: { get: async () => null },
     onboarding: { getState: async () => ({ done: true }) },
+    calibration: { get: async () => ({ pct: null, updated_at: null }) },
   }),
 }));
 

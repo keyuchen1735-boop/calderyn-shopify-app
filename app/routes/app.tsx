@@ -1,4 +1,4 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
+﻿import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import {
   Link,
   Outlet,
@@ -66,6 +66,7 @@ export default function App() {
           Dashboard
         </Link>
         <Link to={withParams("/app/alerts")}>Alerts</Link>
+        <Link to={withParams("/app/queue")}>Action Queue</Link>
         <Link to={withParams("/app/analytics")}>Analytics</Link>
         <Link to={withParams("/app/audit")}>Action history</Link>
         <Link to={withParams("/app/campaigns")}>Campaigns</Link>

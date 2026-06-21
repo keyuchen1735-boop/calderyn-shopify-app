@@ -10,14 +10,19 @@ import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import { restoreProduct } from "../shopify/product.server";
 import { setDoNotReorder } from "./discontinue.server";
 
-// The undo guarantee is a *24-hour* window. Beyond it the recorded reversal is
-// stale — a campaign budget has drifted, or (worse) an inventory transfer's
-// fixed reverse delta would move stock that has since sold through, overdrawing
-// the location. v_audit_view.undo_eligible mirrors this so the UI hides the
-// button after 24h; the check below makes the API the real boundary (a stale
-// open tab or a direct call must not slip a late reversal past the UI gate).
-// Keep the two windows in sync (see the v_audit_view migration).
+// Undo windows: autonomous actions (actor_user_id='autopilot') get a 48-hour
+// window because the merchant never clicked a button — they need more time to
+// notice and reverse. Merchant-initiated actions keep the original 24-hour
+// window (pre_state staleness risk is the same, but the merchant just acted).
+// v_audit_view.undo_eligible mirrors the per-actor window via undo_expires_at
+// (see the 20260621_autonomous_undo migration). Keep the two windows in sync.
 export const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const AUTONOMOUS_UNDO_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** Pick the undo window for an action based on who initiated it. */
+export function undoWindowMs(actorUserId: string | null | undefined): number {
+  return actorUserId === "autopilot" ? AUTONOMOUS_UNDO_WINDOW_MS : UNDO_WINDOW_MS;
+}
 
 // Current available units of a Shopify inventory item at one location, read
 // FRESH from the latest inventory_level_fact snapshot. The audit params carry
@@ -68,7 +73,7 @@ export async function undoAction(
 ): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
-    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of, outcome, created_at")
+    .select("id, shop_id, alert_id, action_kind, params, pre_state, post_state, dollar_impact_at_exec, undo_of, outcome, created_at, actor_user_id")
     .eq("shop_id", shopId)
     .eq("id", auditId)
     .maybeSingle();
@@ -105,14 +110,17 @@ export async function undoAction(
     throw new Error(`audit ${auditId} was already undone (${existingUndo.id})`);
   }
 
-  // 24-hour window. action_audit.created_at is NOT NULL DEFAULT now(), so a
-  // real row always carries it and the select above always requests it; when
-  // present we enforce the window here so the API matches the undo_eligible the
-  // UI shows. (A row with no/unparseable created_at can only be malformed test
-  // data, never production — left unguarded rather than fail-closed.)
+  // Actor-dependent undo window: 48h for autopilot actions, 24h for merchant.
+  // action_audit.created_at is NOT NULL DEFAULT now(), so a real row always
+  // carries it; when present we enforce the window here so the API matches
+  // the undo_eligible the UI shows (via undo_expires_at in v_audit_view).
+  // (A row with no/unparseable created_at can only be malformed test data,
+  // never production — left unguarded rather than fail-closed.)
   const createdAtMs = orig.created_at ? Date.parse(String(orig.created_at)) : NaN;
-  if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs > UNDO_WINDOW_MS) {
-    throw new Error(`audit ${auditId} is outside the 24-hour undo window`);
+  const windowMs = undoWindowMs(String(orig.actor_user_id ?? ""));
+  if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs > windowMs) {
+    const hours = windowMs / (60 * 60 * 1000);
+    throw new Error(`audit ${auditId} is outside the ${hours}-hour undo window`);
   }
 
   const params = (orig.params ?? {}) as { external_id?: string; platform?: string };

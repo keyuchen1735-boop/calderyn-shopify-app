@@ -215,6 +215,58 @@ export async function executeAction(
         ? { status: "active", daily_budget_cents: camp.daily_budget_cents }
         : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
 
+  // I5: Outcome-idempotent budget guard for reduce_campaign_budget.
+  //
+  // Two overlapping autopilot ticks can both compute the same newBudgetCents from
+  // the v_autopilot_candidates snapshot (which is stale by the time the second
+  // tick reads it). Without this guard, both ticks would call setDailyBudget to
+  // the SAME target — a no-op on the platform but still a double-write that inflates
+  // audit rows. Worse, if the first tick's mirror update (step 5 below) already
+  // lowered ad_campaign_dim.daily_budget_cents below the target, the second tick
+  // is cutting from a STALE snapshot and may over-cut.
+  //
+  // Guard: re-read the live budget from ad_campaign_dim (already available in
+  // `camp` above — fresh from this request). If live budget is already <= target,
+  // record a succeeded no-op audit row and return immediately without touching
+  // the platform. This makes overlapping/replayed ticks idempotent on outcome.
+  //
+  // A budget re-read failure (null camp) was already handled above (ownership
+  // check). Here `camp.daily_budget_cents` is the freshest value we have (just
+  // read), so no additional DB call is needed.
+  if (input.kind === "reduce_campaign_budget" && input.dailyBudgetCents !== undefined) {
+    const liveBudget = camp.daily_budget_cents ?? 0;
+    const target = input.dailyBudgetCents;
+    if (liveBudget <= target) {
+      // Already at or below target — no-op. Record as succeeded so the
+      // idempotency key is consumed and a third tick won't try again.
+      console.info(
+        `[actions] reduce_campaign_budget no-op for ${input.campaignId}: live=${liveBudget}c <= target=${target}c (already at target)`,
+      );
+      return insertAuditWithIdempotency(
+        shopId,
+        input.idempotencyKey,
+        {
+          alert_id: input.alertId,
+          action_kind: input.kind,
+          params: {
+            campaign_id: input.campaignId,
+            external_id: externalId,
+            platform,
+            daily_budget_cents: target,
+            noop_reason: "already_at_target",
+          },
+          outcome: "succeeded",
+          pre_state: preState,
+          post_state: { status: camp.status, daily_budget_cents: liveBudget },
+          last_error: null,
+          actor_user_id: input.actor ?? "merchant",
+          trigger_reason: input.triggerReason ?? null,
+        },
+        sb,
+      );
+    }
+  }
+
   // 3. Resolve adapter + 4. call platform.
   let outcome: "succeeded" | "failed" | "retrying" = "succeeded";
   let lastError: string | null = null;

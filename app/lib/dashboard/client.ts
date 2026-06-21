@@ -15,6 +15,8 @@ import type {
   DailyRoasRow,
   GuardrailConfig,
   Integration,
+  LearnedRule,
+  RejectReason,
   SKU,
   SkuAffinityItem,
   SkuHistoryPoint,
@@ -27,7 +29,9 @@ import type {
   DailyRow,
   GuardrailVM,
   IntegrationVM,
+  LearnedRuleVM,
   OverviewVM,
+  QueueProposalVM,
   Scorecard,
   SkuVM,
   TopAd,
@@ -794,6 +798,46 @@ export async function sendAssistantMessage(
     conversationId: String(body.conversation_id),
     message: body.message as AssistantMessage,
   };
+}
+
+// --- calibration -------------------------------------------------------------
+
+export async function fetchCalibration(): Promise<{
+  pct: number | null;
+  updated_at: string | null;
+}> {
+  const data = await apiGet<{ pct: number | null; updated_at: string | null }>(
+    "/dashboard/api/calibration",
+  );
+  return { pct: data.pct, updated_at: data.updated_at };
+}
+
+export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
+  const data = await apiGet<{ proposals: QueueProposalVM[] }>("/dashboard/api/queue");
+  return data.proposals;
+}
+
+/** Reject a proposal for an alert with a plain-language reason.
+ *  Re-derives detector/action server-side from the trusted alert.
+ *  NEVER executes any action. Returns the server-generated reflection string. */
+export async function rejectProposal(input: {
+  alertId: string;
+  reason: RejectReason;
+  note?: string;
+}): Promise<{ reflection: string }> {
+  return apiSend<{ reflection: string }>("POST", "/dashboard/api/queue/reject", input);
+}
+
+/** Return all active learned calibration rules for the session's shop. */
+export async function fetchLearnedRules(): Promise<LearnedRuleVM[]> {
+  const data = await apiGet<{ rules: LearnedRule[] }>("/dashboard/api/calibration/rules");
+  // LearnedRule and LearnedRuleVM have the same shape; cast through directly.
+  return data.rules as LearnedRuleVM[];
+}
+
+/** Deactivate (undo) a learned calibration rule by id. */
+export async function undoRule(ruleId: string): Promise<void> {
+  await apiSend<{ ok: true }>("POST", "/dashboard/api/calibration/rules", { ruleId });
 }
 
 // --- creative screener (Predictor) ------------------------------------------

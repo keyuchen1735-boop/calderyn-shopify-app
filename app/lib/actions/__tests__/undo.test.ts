@@ -231,18 +231,18 @@ describe("undoAction · reallocate_budget", () => {
   });
 });
 
-describe("undoAction · 24-hour window", () => {
+describe("undoAction · actor-dependent undo window", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // The differentiator is a *24-hour* undo. Beyond that window the recorded
-  // pre_state (campaign budgets) and the fixed reverse delta (inventory) are
-  // stale — stock has sold through, budgets have drifted — so reversing does
-  // more harm than good. v_audit_view.undo_eligible hides the button after 24h;
-  // this asserts the API enforces the same window (the real boundary).
+  // Merchant actions: 24-hour window.
+  // Autopilot actions: 48-hour window (merchant needs time to notice).
+  // v_audit_view.undo_eligible mirrors these via undo_expires_at (computed in view);
+  // this asserts the API enforces the same windows (the real boundary).
   const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
 
-  it("refuses to undo an action older than 24 hours, without any platform call", async () => {
-    const stale = { ...pauseAudit, created_at: hoursAgo(25) };
+  // --- Merchant (24h) ---
+  it("refuses to undo a merchant action older than 24 hours, without any platform call", async () => {
+    const stale = { ...pauseAudit, actor_user_id: "merchant", created_at: hoursAgo(25) };
     const { sb, calls } = fakeSb(stale);
     await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/24-hour|undo window/i);
     expect(adapter.resume).not.toHaveBeenCalled();
@@ -250,12 +250,46 @@ describe("undoAction · 24-hour window", () => {
     expect(calls.inserts).toEqual([]);
   });
 
-  it("allows undo of an action within the last 24 hours", async () => {
-    const fresh = { ...pauseAudit, created_at: hoursAgo(1) };
+  it("allows undo of a merchant action within the last 24 hours", async () => {
+    const fresh = { ...pauseAudit, actor_user_id: "merchant", created_at: hoursAgo(1) };
     const { sb, calls } = fakeSb(fresh);
     await undoAction(SHOP, "aud1", sb);
     expect(adapter.resume).toHaveBeenCalledWith("c1");
     expect(calls.inserts.some((i) => i.table === "action_audit")).toBe(true);
+  });
+
+  // --- Autopilot (48h) ---
+  it("allows undo of an autopilot action at 36 hours (within 48h window)", async () => {
+    const fresh = { ...pauseAudit, actor_user_id: "autopilot", created_at: hoursAgo(36) };
+    const { sb, calls } = fakeSb(fresh);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.resume).toHaveBeenCalledWith("c1");
+    expect(calls.inserts.some((i) => i.table === "action_audit")).toBe(true);
+  });
+
+  it("refuses undo of an autopilot action at 49 hours (outside 48h window)", async () => {
+    const stale = { ...pauseAudit, actor_user_id: "autopilot", created_at: hoursAgo(49) };
+    const { sb, calls } = fakeSb(stale);
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/48-hour|undo window/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(adapter.pause).not.toHaveBeenCalled();
+    expect(calls.inserts).toEqual([]);
+  });
+
+  it("autopilot action at 23h is eligible (well within 48h window)", async () => {
+    const fresh = { ...pauseAudit, actor_user_id: "autopilot", created_at: hoursAgo(23) };
+    const { sb, calls } = fakeSb(fresh);
+    await undoAction(SHOP, "aud1", sb);
+    expect(adapter.resume).toHaveBeenCalledWith("c1");
+    expect(calls.inserts.some((i) => i.table === "action_audit")).toBe(true);
+  });
+
+  it("merchant action at 25h is ineligible (past 24h)", async () => {
+    const stale = { ...pauseAudit, actor_user_id: "merchant", created_at: hoursAgo(25) };
+    const { sb, calls } = fakeSb(stale);
+    await expect(undoAction(SHOP, "aud1", sb)).rejects.toThrow(/24-hour|undo window/i);
+    expect(adapter.resume).not.toHaveBeenCalled();
+    expect(calls.inserts).toEqual([]);
   });
 });
 

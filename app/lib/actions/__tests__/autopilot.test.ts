@@ -9,10 +9,24 @@ import type { GuardrailResult } from "../guardrails";
 // vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
 // the runAutopilotForShop import above.
 const {
-  checkGuardrails, executeAction, executeReallocation,
-  loadReallocationCandidates, pickReallocation,
-  checkSkuGuardrails, executeDiscontinueAlertAction, executeReallocateSpendSku,
-  enrichRemediation, calderynClient, unauthenticatedAdmin,
+  checkGuardrails,
+  executeAction,
+  executeReallocation,
+  loadReallocationCandidates,
+  pickReallocation,
+  checkSkuGuardrails,
+  executeDiscontinueAlertAction,
+  executeReallocateSpendSku,
+  enrichRemediation,
+  calderynClient,
+  unauthenticatedAdmin,
+  isGraduated,
+  preconditionFresh,
+  stockoutPauseAllowed,
+  loadAndApplyRules,
+  notifyAutonomousAction,
+  acquireAutopilotLock,
+  releaseAutopilotLock,
 } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
@@ -28,6 +42,25 @@ const {
   enrichRemediation: vi.fn(async (_alert: unknown, plan: unknown) => plan),
   calderynClient: vi.fn(() => ({})),
   unauthenticatedAdmin: vi.fn(async () => ({ admin: {} })),
+  // Default: true — existing tests that expect executeAction to be reached keep
+  // passing. New graduation-gate tests override this per-test. NOTE: this default
+  // also lets the merged remediation graduation gate pass, so the remediation
+  // routing tests (discontinue / reallocate_spend_sku) reach their executor seams.
+  isGraduated: vi.fn(async () => true),
+  // Default: ok:true — existing tests that expect executeAction to be reached keep
+  // passing. Precondition-gate tests override this per-test.
+  preconditionFresh: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
+  stockoutPauseAllowed: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: false, reason: "inventory_policy_not_available" })),
+  // Default: {} (no veto, no cap) — existing tests that expect executeAction to be
+  // reached keep passing. Rule-enforcement tests override this per-test.
+  loadAndApplyRules: vi.fn(async () => ({})),
+  // Default: resolves immediately — so notify tests can assert calls without
+  // needing real Resend credentials. Override per-test if needed.
+  notifyAutonomousAction: vi.fn(async () => {}),
+  // I6: Default: lock acquired — so all existing tests that reach executeAction
+  // continue to pass. Concurrency-lock tests override this per-test.
+  acquireAutopilotLock: vi.fn(async (): Promise<{ acquired: boolean; reason?: string; acquiredAt?: string }> => ({ acquired: true, acquiredAt: new Date().toISOString() })),
+  releaseAutopilotLock: vi.fn(async () => {}),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
@@ -47,35 +80,65 @@ vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolve
 vi.mock("../autopilot-targeting.server", async (importOriginal) => {
   return await importOriginal();
 });
+// Graduation gate mock (Slice 5 Task 2). Default = true (graduated) so existing
+// tests that reach executeAction continue to pass. Gate tests override below.
+vi.mock("../../calibration/graduation.server", () => ({ isGraduated }));
+// Precondition re-check mock (Slice 5 Task 4). Default = ok:true so existing
+// tests that reach executeAction continue to pass. Precondition tests override below.
+vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, stockoutPauseAllowed }));
+// Rule enforcement mock (Slice 5 Task 5). Default = {} (no veto, no cap) so
+// existing tests that reach executeAction continue to pass. Rule tests override below.
+vi.mock("../rule-enforce.server", () => ({ loadAndApplyRules }));
+// Notification mock (Slice 5 Task 6). Default = no-op so existing tests are unaffected.
+vi.mock("../../calibration/notify-autonomous.server", () => ({ notifyAutonomousAction }));
+// I6: Concurrency lock mock (Slice 5 Task 7). Default = acquired:true so all
+// existing tests that reach executeAction continue to pass. Lock tests override below.
+vi.mock("../autopilot-lock.server", () => ({ acquireAutopilotLock, releaseAutopilotLock }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
 // rows: guardrail_config (enabled), candidate alerts (with campaign + spend).
 // scopedAlerts: rows to return for the new `alerts` table query (defaults to []).
+// sessionEmail: optional email to return from shopify_sessions (simulates a shop
+//   with an account-owner online session that has an email populated).
 function fakeSb(opts: {
   enabled: boolean;
   alerts: Array<Record<string, unknown>>;
   scopedAlerts?: Array<Record<string, unknown>>;
+  sessionEmail?: string | null;
 }) {
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
     chain.in = vi.fn(() => chain);
+    chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({
-      data: {
-        autopilot_enabled: opts.enabled,
-        autopilot_max_budget_cut_pct: 50,
-        autopilot_max_budget_increase_pct: 20,
-        autopilot_max_daily_budget_cents: null,
-      },
-      error: null,
-    }));
+    chain.maybeSingle = vi.fn(async () => {
+      if (table === "shops") {
+        return { data: { shop_domain: "test-store.myshopify.com" }, error: null };
+      }
+      return {
+        data: {
+          autopilot_enabled: opts.enabled,
+          autopilot_max_budget_cut_pct: 50,
+          autopilot_max_budget_increase_pct: 20,
+          autopilot_max_daily_budget_cents: null,
+        },
+        error: null,
+      };
+    });
     chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) => {
       let data: unknown = [];
       if (table === "v_autopilot_candidates") data = opts.alerts;
       else if (table === "alerts") data = opts.scopedAlerts ?? [];
+      else if (table === "shopify_sessions") {
+        // Simulate online account-owner session rows (or empty if no sessionEmail).
+        data =
+          opts.sessionEmail != null
+            ? [{ email: opts.sessionEmail, isOnline: true, accountOwner: true }]
+            : [];
+      }
       return resolve({ data, error: null });
     };
     return chain;
@@ -103,6 +166,19 @@ describe("runAutopilotForShop", () => {
     // clearAllMocks resets calls but NOT implementations — restore the default
     // (no learned dial -> full cap) so a per-test mockImplementation can't leak.
     vi.mocked(getActionPolicy).mockReset().mockResolvedValue(null);
+    // Default: graduated=true so existing tests that reach executeAction keep passing.
+    isGraduated.mockReset().mockResolvedValue(true);
+    // Default: precondition ok:true so existing tests that reach executeAction keep passing.
+    preconditionFresh.mockReset().mockResolvedValue({ ok: true });
+    stockoutPauseAllowed.mockReset().mockResolvedValue({ ok: false, reason: "inventory_policy_not_available" });
+    // Default: {} (no veto, no cap) so existing tests that reach executeAction keep passing.
+    loadAndApplyRules.mockReset().mockResolvedValue({});
+    // Default: no-op so existing tests are unaffected by the notification path.
+    notifyAutonomousAction.mockReset().mockResolvedValue(undefined);
+    // Default: lock acquired (acquired:true) so existing tests that reach
+    // executeAction continue to pass. I6 tests override below.
+    acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true, acquiredAt: new Date().toISOString() });
+    releaseAutopilotLock.mockReset().mockResolvedValue(undefined);
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -199,6 +275,7 @@ describe("runAutopilotForShop", () => {
       SHOP,
       expect.objectContaining({ kind: "reallocate_budget", dollarImpactCents: 2500, newBudgetCents: 7500 }),
       sb,
+      { forceBypassOff: true, autonomous: true },
     );
   });
 
@@ -216,6 +293,7 @@ describe("runAutopilotForShop", () => {
         dollarImpactCents: 5000,
       }),
       sb,
+      { forceBypassOff: true, autonomous: true },
     );
   });
 
@@ -384,6 +462,42 @@ describe("runAutopilotForShop", () => {
     expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
     expect(r.blocked).toBe(1);
     expect(r.acted).toBe(0);
+  });
+
+  // MERGE (calibration × remediation): an executable remediation move is gated on
+  // calibration graduation, exactly like the legacy autonomous path. When the
+  // (detector, executor) pair is NOT graduated, tryRemediation must skip BEFORE
+  // touching the executor or any guardrail, bucket the skip as `skippedMoves`
+  // (not a guardrail `blocked`), and the candidate must be fully resolved — it
+  // does NOT fall through to a legacy action (no double-evaluation). This is the
+  // v1 default: nothing is graduated, so autopilot-remediation stays dormant.
+  it("skips a remediation move when the (detector, executor) pair is NOT graduated", async () => {
+    // discontinue_sku for negative_unit_economics is not graduated (v1 default).
+    isGraduated.mockResolvedValue(false);
+    checkSkuGuardrails.mockResolvedValue({ allowed: true }); // would allow if reached
+    const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    // The remediation executor must NOT fire, and its SKU guard must not even be
+    // consulted — the graduation gate precedes it.
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(checkSkuGuardrails).not.toHaveBeenCalled();
+    // No fall-through to a legacy campaign action either.
+    expect(executeAction).not.toHaveBeenCalled();
+    // Gate keys on the move's EXECUTOR kind (discontinue_sku), not the detector's
+    // legacy kind — same isGraduated check the legacy autonomous path applies.
+    expect(isGraduated).toHaveBeenCalledWith(
+      SHOP,
+      "negative_unit_economics",
+      "discontinue_sku",
+      sb,
+    );
+    // Bucketed as a skipped move, NOT a guardrail block: skippedMoves bumps,
+    // blocked stays 0, and the reason is surfaced (rule 12).
+    expect(r.acted).toBe(0);
+    expect(r.skippedMoves).toBe(1);
+    expect(r.blocked).toBe(0);
+    const dec = r.decisions.find((d) => d.alertId === "al-dead");
+    expect(dec).toMatchObject({ outcome: "skipped", reason: "remediation pair not graduated" });
   });
 
   // ad_tax_overload WITH campaign + sku_id: rankMoves returns reallocate_to_winner
@@ -760,5 +874,494 @@ describe("runAutopilotForShop", () => {
       sb,
     );
     expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+  });
+
+  // ─── Slice 5 Task 2: Graduation gate tests ────────────────────────────────
+
+  describe("graduation gate (Slice 5 Task 2)", () => {
+    it("skips a non-graduated candidate with reason 'pair not graduated' and does NOT call executeAction", async () => {
+      // Override: this specific pair is NOT graduated.
+      isGraduated.mockResolvedValue(false);
+      checkGuardrails.mockResolvedValue({ allowed: true }); // would allow if reached
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(checkGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      // A pre-flight skip lands in the blocked counter (same bucket as other skips).
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "pair not graduated": 1 });
+      const dec = r.decisions[0];
+      expect(dec).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        detectorId: "campaign_below_breakeven",
+        intendedKind: "pause_campaign",
+        outcome: "skipped",
+        reason: "pair not graduated",
+      });
+    });
+
+    it("a graduated candidate proceeds past the gate to the guardrail check", async () => {
+      // Default mock (true) — pair is graduated.
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(checkGuardrails).toHaveBeenCalled();
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("DEFAULT state: with no pair graduated, autopilot executes nothing (gate everything)", async () => {
+      // The default failure mode: isGraduated → false for all pairs.
+      isGraduated.mockResolvedValue(false);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+          { ...candidate, alert_id: "al3", campaign_id: "camp-uuid-3", detector_id: "ad_tax_overload" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(executeReallocation).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      // All 3 candidates skipped, none reached guardrails.
+      expect(r.considered).toBe(3);
+      expect(r.blocked).toBe(3);
+      expect(checkGuardrails).not.toHaveBeenCalled();
+    });
+
+    it("isGraduated is called with correct shopId, detector_id, kind, and sb", async () => {
+      isGraduated.mockResolvedValue(false); // stop after gate
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(isGraduated).toHaveBeenCalledWith(
+        SHOP,
+        "campaign_below_breakeven",
+        "pause_campaign",
+        sb,
+      );
+    });
+
+    it("graduated reduce + dest available + reallocate_budget NOT graduated → plain reduce fires, reallocation skipped", async () => {
+      // reduce_campaign_budget is graduated; reallocate_budget is not (v1 invariant).
+      // isGraduated is called twice: once for reduce (top-of-loop, must return true),
+      // once for reallocate_budget (sub-branch gate, must return false).
+      isGraduated
+        .mockResolvedValueOnce(true)  // top-of-loop: reduce_campaign_budget → graduated
+        .mockResolvedValueOnce(false); // sub-branch gate: reallocate_budget → NOT graduated
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+      const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // executeReallocation must NOT have been called — reallocate_budget is not graduated.
+      expect(executeReallocation).not.toHaveBeenCalled();
+      // The plain reduce must still fire so loss-prevention acts.
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 5000 }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("(optional) graduated reduce + dest + reallocate_budget graduated → reallocation proceeds", async () => {
+      // When reallocate_budget IS graduated (hypothetical, not possible in v1), the
+      // reallocation path executes normally.
+      isGraduated.mockResolvedValue(true); // all kinds graduated
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: destCandidate });
+      const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ sourceCampaignId: "camp-uuid", destCampaignId: "dest-uuid" }),
+        sb,
+      );
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(1);
+    });
+
+    it("mixed: graduated candidate acts, non-graduated is skipped; guardrails only called for graduated", async () => {
+      // First call: graduated (al1); second call: not graduated (al2).
+      isGraduated
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).toHaveBeenCalledTimes(1);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "pair not graduated": 1 });
+    });
+  });
+
+  // ─── Slice 5 Task 5: Rule enforcement tests ──────────────────────────────
+
+  describe("rule enforcement (Slice 5 Task 5)", () => {
+    it("skips (vetoes) a pause candidate with an active muted_pair rule", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "merchant handles this" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("merchant handles this");
+    });
+
+    it("skips a reduce candidate with a pair_blackout_hours veto", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "outside merchant-allowed hours" });
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload" };
+      const sb = fakeSb({ enabled: true, alerts: [reduceCand] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(executeReallocation).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toBe("rule: outside merchant-allowed hours");
+    });
+
+    it("skips a pause candidate that exceeds the pair_dollar_cap (cannot downsize a pause)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "exceeds merchant dollar cap" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("exceeds merchant dollar cap");
+    });
+
+    it("skips a candidate when rules unavailable (load failure = veto)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "rules unavailable" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("rules unavailable");
+    });
+
+    it("downsizes a reduce budget cut when pair_dollar_cap returns cappedDollarCents", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null });
+      // Cap: max cut = 2000c. Default newBudgetCents = 10000 - 5000 = 5000 (50% cut = 5000c cut).
+      // Clamp: newBudgetCents = max(5000, 10000 - 2000) = max(5000, 8000) = 8000.
+      loadAndApplyRules.mockResolvedValue({ cappedDollarCents: 2000 });
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: 10000 };
+      const sb = fakeSb({ enabled: true, alerts: [reduceCand] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // The cut must be clamped: budget goes to 8000c (only 2000c cut), not 5000c.
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 8000 }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("skips a min_spend veto and continues to the next candidate", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // First candidate: min_spend veto; second: no veto (executes).
+      loadAndApplyRules
+        .mockResolvedValueOnce({ veto: "below merchant min spend" })
+        .mockResolvedValueOnce({});
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(executeAction).toHaveBeenCalledTimes(1);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ alertId: "al2" }),
+        sb,
+      );
+    });
+
+    it("a candidate with no active rules passes through and executes normally", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({}); // default: no rules
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+  });
+
+  // ─── Slice 5 Task 6: Notify fix tests ────────────────────────────────────
+
+  describe("notify fix (Task 6): email from shopify_sessions + awaited notifies", () => {
+    it("resolves merchant email from shopify_sessions (not shops.email) and passes it to notifyAutonomousAction", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // sessionEmail simulates an online session row in shopify_sessions with a populated email.
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "merchant@example.com" });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP }),
+        "merchant@example.com",
+      );
+    });
+
+    it("passes null email to notifyAutonomousAction when no session has an email (graceful no-op)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // No sessionEmail → shopify_sessions returns [] → merchantEmail stays null.
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: null });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP }),
+        null,
+      );
+    });
+
+    it("awaits notifies before returning — a notify failure does NOT fail the run", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // Make notifyAutonomousAction reject; the run must still return acted=1.
+      notifyAutonomousAction.mockRejectedValue(new Error("Resend 503"));
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "m@ex.com" });
+      // Should not throw; Promise.allSettled absorbs the rejection.
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.failed).toBe(0);
+      // notifyAutonomousAction was still called (action landed).
+      expect(notifyAutonomousAction).toHaveBeenCalledTimes(1);
+    });
+
+    it("notifies on increase_campaign_budget success, using session email", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const scale = { ...candidate, detector_id: "campaign_scaling_opportunity", dollar_impact: 300 };
+      const sb = fakeSb({ enabled: true, alerts: [scale], sessionEmail: "scale@ex.com" });
+      await runAutopilotForShop(SHOP, sb);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ actionDescription: expect.stringContaining("Scaled up campaign budget") }),
+        "scale@ex.com",
+      );
+    });
+
+    it("does NOT call notifyAutonomousAction when executeAction fails", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      executeAction.mockResolvedValue({ id: "aud1", outcome: "failed" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "m@ex.com" });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(notifyAutonomousAction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Slice 5 Task 7: Concurrency lock (I6) tests ────────────────────────
+
+  describe("concurrency lock (Slice 5 Task 7, I6)", () => {
+    it("skips the tick (returns skipped:true) when lock is NOT acquired (concurrent tick)", async () => {
+      // Simulate: another tick holds the lock.
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "locked_by_concurrent_tick (age=5s)" });
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // The run must short-circuit before touching any candidates.
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(checkGuardrails).not.toHaveBeenCalled();
+      expect(r.skipped).toBe(true);
+      expect(r.acted).toBe(0);
+    });
+
+    it("executes nothing when lock acquisition fails due to a DB error (fail-safe)", async () => {
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "db_error: connection refused" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.skipped).toBe(true);
+    });
+
+    it("releases the lock after a successful run", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, expect.any(String), sb);
+    });
+
+    it("releases the lock even when the run throws (finally-block guarantee)", async () => {
+      // Simulate a thrown error after lock acquisition (e.g., v_autopilot_candidates read fails).
+      // To trigger this we'll have acquireAutopilotLock succeed but then have
+      // the first from() call after lock acquisition throw. We can't easily
+      // intercept that here since fakeSb doesn't throw; instead we verify the
+      // finally-block release by checking releaseAutopilotLock is still called
+      // when executeAction throws (which is caught per-candidate, not per-run).
+      // For a true outer-throw test: override the sb.from to throw on the shops table.
+      const throwingSb = {
+        from: vi.fn((table: string) => {
+          if (table === "guardrail_config") {
+            // Simulate the guardrail_config read returning enabled=true first,
+            // then everything else throws.
+            const chain: Record<string, unknown> = {};
+            chain.select = vi.fn(() => chain);
+            chain.eq = vi.fn(() => chain);
+            chain.maybeSingle = vi.fn(async () => ({
+              data: { autopilot_enabled: true, autopilot_max_budget_cut_pct: 50, autopilot_max_budget_increase_pct: 20, autopilot_max_daily_budget_cents: null },
+              error: null,
+            }));
+            return chain;
+          }
+          // All other table reads throw — simulates an unexpected DB error.
+          throw new Error("DB connection lost mid-run");
+        }),
+      } as unknown as SupabaseClient;
+
+      // acquireAutopilotLock itself is mocked (acquired:true) so the lock is held.
+      // The outer try block will throw, and finally must release.
+      await expect(runAutopilotForShop(SHOP, throwingSb)).rejects.toThrow("DB connection lost mid-run");
+      expect(releaseAutopilotLock).toHaveBeenCalledWith(SHOP, expect.any(String), throwingSb);
+    });
+
+    it("does NOT call releaseAutopilotLock when the lock was never acquired (early return)", async () => {
+      acquireAutopilotLock.mockResolvedValue({ acquired: false, reason: "locked_by_concurrent_tick (age=5s)" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      // The function returns before the try block, so releaseAutopilotLock is never called.
+      expect(releaseAutopilotLock).not.toHaveBeenCalled();
+    });
+
+    it("normal run calls acquireAutopilotLock with shopId and sb", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(acquireAutopilotLock).toHaveBeenCalledWith(SHOP, sb);
+    });
+  });
+
+  // ─── Slice 5 Task 4: Precondition re-check gate tests (I4) ───────────────
+
+  describe("precondition re-check gate (Slice 5 Task 4)", () => {
+    it("skips a pause candidate when preconditionFresh returns ok:false (campaign already paused)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      preconditionFresh.mockResolvedValue({ ok: false, reason: "precondition_stale: not active (status=PAUSED)" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // The precondition failed → must NOT execute
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      // Skipped (precondition) counts as blocked in the counter (same as graduation skip)
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toMatchObject({ "precondition_stale: not active (status=PAUSED)": 1 });
+      const dec = r.decisions[0];
+      expect(dec).toMatchObject({
+        alertId: "al1",
+        intendedKind: "pause_campaign",
+        outcome: "skipped",
+        reason: "precondition_stale: not active (status=PAUSED)",
+      });
+    });
+
+    it("skips a reduce candidate when preconditionFresh returns ok:false (budget already cut)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      preconditionFresh.mockResolvedValue({
+        ok: false,
+        reason: "precondition_stale: budget already at/below target (live=4000c < snapshot=10000c)",
+      });
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload" };
+      const sb = fakeSb({ enabled: true, alerts: [reduceCand] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(executeReallocation).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+    });
+
+    it("graduated+guardrails-passing candidate with preconditionFresh ok:false records 'skipped' and does NOT execute", async () => {
+      // Both graduation and guardrails pass — only precondition blocks it.
+      isGraduated.mockResolvedValue(true);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      preconditionFresh.mockResolvedValue({ ok: false, reason: "stale_facts: campaign last synced 30h ago" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // Graduated, guardrails clear, but precondition failed → no execute
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("stale_facts");
+    });
+
+    it("preconditionFresh is NOT called for increase_campaign_budget (only pause/reduce require re-check)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const scaleCand = { ...candidate, detector_id: "campaign_scaling_opportunity", dollar_impact: 300 };
+      const sb = fakeSb({ enabled: true, alerts: [scaleCand] });
+      await runAutopilotForShop(SHOP, sb);
+      // increase_campaign_budget does not go through preconditionFresh
+      expect(preconditionFresh).not.toHaveBeenCalled();
+      // But the action DID execute (guardrails passed)
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "increase_campaign_budget" }),
+        sb,
+      );
+    });
+
+    it("preconditionFresh throwing is treated as ok:false (fail-safe)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // preconditionFresh itself is mocked — simulate it returning ok:false (the
+      // real function wraps throws internally and returns ok:false; the autopilot
+      // also wraps in a try/catch). Either way, no execute.
+      preconditionFresh.mockResolvedValue({ ok: false, reason: "threw: unexpected db failure" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+    });
+
+    it("when preconditionFresh passes, the action still executes normally", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // Default from beforeEach: preconditionFresh returns ok:true
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(preconditionFresh).toHaveBeenCalled();
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
   });
 });
