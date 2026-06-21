@@ -9,6 +9,7 @@ import type {
   DailyRoasRow,
   GuardrailConfig,
   Integration,
+  QueueProposal,
   ShopLocation,
   SKU,
   SkuAffinityItem,
@@ -16,6 +17,7 @@ import type {
   SkuSource,
   TopAdRow,
 } from "./types";
+import { buildActionQueue } from "./calibration/queue.server";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
   affinityFromRow,
@@ -395,6 +397,20 @@ async function probeShipHeroToken(
 export function calderynClient(shop: string) {
   const supabase = getSupabase();
   const shopIdP = resolveShopId(shop);
+
+  // Shared helper: fetch all open alerts for a shop, ordered by claude_rank.
+  // Used by both alerts.list({status:"open"}) and queue.list — single source of
+  // truth so the open-alerts query is never duplicated.
+  async function fetchOpenAlerts(shopId: string): Promise<Alert[]> {
+    const { data, error } = await supabase
+      .from("v_alerts_view")
+      .select("*")
+      .eq("shop_id", shopId)
+      .eq("status", "open")
+      .order("claude_rank", { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(rowToAlert);
+  }
 
   // Dollars (in cents) the shop's actions have recovered since the start of the
   // UTC day — the "used" half of the daily action budget meter. Same inclusion
@@ -1274,6 +1290,36 @@ export function calderynClient(shop: string) {
           };
         } catch (err) {
           rethrow("calibration.get", err);
+        }
+      },
+    },
+
+    queue: {
+      /**
+       * Return the current action queue: open alerts that have a real recommended
+       * action, ranked by claude_rank and scored with calibrated confidence.
+       * peerP50 = null in this slice (no RPC call; peer baselines land in Slice 3).
+       */
+      async list(_signal?: AbortSignal): Promise<QueueProposal[]> {
+        try {
+          const shopId = await shopIdP;
+          // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
+          // so the open-alerts SQL is not duplicated.
+          const alerts = await fetchOpenAlerts(shopId);
+          const { data: pairs, error } = await supabase
+            .from("pair_calibration")
+            .select("detector_id, action_kind, alpha, beta")
+            .eq("shop_id", shopId);
+          if (error) throw error;
+          const map = new Map(
+            (pairs ?? []).map((r) => [
+              `${r.detector_id}:${r.action_kind}`,
+              { alpha: Number(r.alpha), beta: Number(r.beta) },
+            ]),
+          );
+          return buildActionQueue(alerts, map);
+        } catch (err) {
+          rethrow("queue.list", err);
         }
       },
     },

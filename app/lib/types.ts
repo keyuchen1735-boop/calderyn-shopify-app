@@ -273,3 +273,18 @@ export interface TopAdRow {
   saves: number;
   engagement: number;
 }
+
+/** One calibrated action proposal for the Action Queue (Calibration Slice 2).
+ *  Built from open alerts + pair_calibration Beta counters; returned by
+ *  `client.queue.list()`. Confidence is 0-100 (integer). */
+export interface QueueProposal {
+  alertId: string;
+  detector_id: DetectorId;
+  action_kind: ActionKind;
+  title: string;
+  dollar_impact: number;
+  /** Calibrated confidence score, 0-100 (integer). */
+  confidence: number;
+  /** One-line reasoning carried from the alert's narrative. */
+  reasoning: string;
+}
