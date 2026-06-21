@@ -50,11 +50,26 @@ function makeStubSb(opts: {
   detectorFires: Record<string, number>;
   prevPct: number | null;
   onShopUpdate: (patch: Record<string, unknown>) => void;
+  onPairUpdate?: (patch: Record<string, unknown>, detector: string, action: string) => void;
 }) {
   return {
     from(table: string) {
       if (table === "pair_calibration") {
-        return { select: () => ({ eq: () => Promise.resolve({ data: opts.pairRows, error: null }) }) };
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({ data: opts.pairRows, error: null }),
+          }),
+          update: (patch: Record<string, unknown>) => ({
+            eq: (_col1: string, _val1: string) => ({
+              eq: (_col2: string, detector: string) => ({
+                eq: (_col3: string, action: string) => {
+                  opts.onPairUpdate?.(patch, detector, action);
+                  return Promise.resolve({ error: null });
+                },
+              }),
+            }),
+          }),
+        };
       }
       if (table === "alerts") {
         // recompute reads recent alerts to count detector fires
@@ -78,3 +93,115 @@ function makeStubSb(opts: {
     rpc: () => Promise.resolve({ data: null, error: null }), // peer prior absent -> static seed
   } as unknown as SupabaseClient;
 }
+
+// ─── Slice 5 Task 2: graduated cache tests ───────────────────────────────────
+
+describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => {
+  it("writes graduated=false and last_conf for a sub-threshold pair (cold start alpha/beta)", async () => {
+    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+    // A pair with zero approvals (clean_approvals=0): should NOT graduate.
+    const pairRow = {
+      detector_id: "campaign_below_breakeven",
+      action_kind: "pause_campaign",
+      alpha: 0,
+      beta: 0,
+      clean_approvals: 0,
+      consecutive_undos: 0,
+      merchant_disabled: false,
+      graduation_threshold: 75,
+    };
+    const sb = makeStubSb({
+      pairRows: [pairRow],
+      detectorFires: { campaign_below_breakeven: 5 },
+      prevPct: null,
+      onShopUpdate: () => {},
+      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+    });
+    await recomputeShopCalibration("shop-grad-1", { sb });
+    // At least one pair update for campaign_below_breakeven:pause_campaign.
+    const targetUpdate = pairUpdates.find(
+      (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
+    );
+    expect(targetUpdate).toBeDefined();
+    // clean_approvals=0 < MIN_APPROVALS.reversible=3 → not graduated.
+    expect(targetUpdate!.patch.graduated).toBe(false);
+    // last_conf must be a non-negative integer.
+    expect(typeof targetUpdate!.patch.last_conf).toBe("number");
+    expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(targetUpdate!.patch.last_conf)).toBe(true);
+  });
+
+  it("writes graduated=true for a pair meeting ALL graduation gates", async () => {
+    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+    // A pair meeting all gates: high alpha (many approvals), clean_approvals>=3,
+    // zero consecutive_undos, not disabled, threshold=0 (always meets bar).
+    const pairRow = {
+      detector_id: "campaign_below_breakeven",
+      action_kind: "pause_campaign",
+      alpha: 50,  // high alpha → high conf
+      beta: 2,
+      clean_approvals: 5,       // >= MIN_APPROVALS.reversible (3)
+      consecutive_undos: 0,     // no recent undo
+      merchant_disabled: false, // not disabled
+      graduation_threshold: 0,  // conf always >= 0 → passes the bar
+    };
+    const sb = makeStubSb({
+      pairRows: [pairRow],
+      detectorFires: { campaign_below_breakeven: 5 },
+      prevPct: null,
+      onShopUpdate: () => {},
+      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+    });
+    await recomputeShopCalibration("shop-grad-2", { sb });
+    const targetUpdate = pairUpdates.find(
+      (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
+    );
+    expect(targetUpdate).toBeDefined();
+    // pause_campaign is in GRADUATABLE_V1, has undo branch, all gates pass → graduated.
+    expect(targetUpdate!.patch.graduated).toBe(true);
+    expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it("writes graduated=false for increase_campaign_budget (not in GRADUATABLE_V1)", async () => {
+    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+    // increase_campaign_budget cannot graduate (not in v1 set, spec I7).
+    const pairRow = {
+      detector_id: "campaign_scaling_opportunity",
+      action_kind: "increase_campaign_budget",
+      alpha: 50,
+      beta: 0,
+      clean_approvals: 10,
+      consecutive_undos: 0,
+      merchant_disabled: false,
+      graduation_threshold: 0,
+    };
+    const sb = makeStubSb({
+      pairRows: [pairRow],
+      detectorFires: { campaign_scaling_opportunity: 5 },
+      prevPct: null,
+      onShopUpdate: () => {},
+      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+    });
+    await recomputeShopCalibration("shop-grad-3", { sb });
+    const targetUpdate = pairUpdates.find(
+      (u) => u.detector === "campaign_scaling_opportunity" && u.action === "increase_campaign_budget",
+    );
+    expect(targetUpdate).toBeDefined();
+    // Not in GRADUATABLE_V1 → never graduated.
+    expect(targetUpdate!.patch.graduated).toBe(false);
+  });
+
+  it("does NOT write a pair update for pairs with no row (cold start, no ev)", async () => {
+    // No pair rows → pairMap is empty → no update calls should happen.
+    const pairUpdates: unknown[] = [];
+    const sb = makeStubSb({
+      pairRows: [],
+      detectorFires: {},
+      prevPct: null,
+      onShopUpdate: () => {},
+      onPairUpdate: () => pairUpdates.push(1),
+    });
+    await recomputeShopCalibration("shop-grad-4", { sb });
+    expect(pairUpdates).toHaveLength(0);
+  });
+});

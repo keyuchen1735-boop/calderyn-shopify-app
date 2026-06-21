@@ -7,13 +7,16 @@ import type { Platform } from "../../ads/adapter";
 
 // vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
 // the runAutopilotForShop import above.
-const { checkGuardrails, executeAction, executeReallocation, loadReallocationCandidates, pickReallocation } =
+const { checkGuardrails, executeAction, executeReallocation, loadReallocationCandidates, pickReallocation, isGraduated } =
   vi.hoisted(() => ({
     checkGuardrails: vi.fn(),
     executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
     executeReallocation: vi.fn(async () => ({ id: "aud2", outcome: "succeeded" })),
     loadReallocationCandidates: vi.fn(async (): Promise<ReallocationCandidate[]> => []),
     pickReallocation: vi.fn((): ReallocationSuggestion => ({ source: null, dest: null })),
+    // Default: true — existing tests that expect executeAction to be reached keep
+    // passing. New graduation-gate tests override this per-test.
+    isGraduated: vi.fn(async () => true),
   }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
@@ -27,6 +30,9 @@ vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolve
 vi.mock("../autopilot-targeting.server", async (importOriginal) => {
   return await importOriginal();
 });
+// Graduation gate mock (Slice 5 Task 2). Default = true (graduated) so existing
+// tests that reach executeAction continue to pass. Gate tests override below.
+vi.mock("../../calibration/graduation.server", () => ({ isGraduated }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
@@ -78,6 +84,8 @@ describe("runAutopilotForShop", () => {
     // clearAllMocks resets calls but NOT implementations — restore the default
     // (no learned dial -> full cap) so a per-test mockImplementation can't leak.
     vi.mocked(getActionPolicy).mockReset().mockResolvedValue(null);
+    // Default: graduated=true so existing tests that reach executeAction keep passing.
+    isGraduated.mockReset().mockResolvedValue(true);
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -521,5 +529,105 @@ describe("runAutopilotForShop", () => {
       sb,
     );
     expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, failed: 1 });
+  });
+
+  // ─── Slice 5 Task 2: Graduation gate tests ────────────────────────────────
+
+  describe("graduation gate (Slice 5 Task 2)", () => {
+    it("skips a non-graduated candidate with reason 'pair not graduated' and does NOT call executeAction", async () => {
+      // Override: this specific pair is NOT graduated.
+      isGraduated.mockResolvedValue(false);
+      checkGuardrails.mockResolvedValue({ allowed: true }); // would allow if reached
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(checkGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      // A pre-flight skip lands in the blocked counter (same bucket as other skips).
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "pair not graduated": 1 });
+      const dec = r.decisions[0];
+      expect(dec).toMatchObject({
+        alertId: "al1",
+        campaignId: "camp-uuid",
+        detectorId: "campaign_below_breakeven",
+        intendedKind: "pause_campaign",
+        outcome: "skipped",
+        reason: "pair not graduated",
+      });
+    });
+
+    it("a graduated candidate proceeds past the gate to the guardrail check", async () => {
+      // Default mock (true) — pair is graduated.
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(checkGuardrails).toHaveBeenCalled();
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("DEFAULT state: with no pair graduated, autopilot executes nothing (gate everything)", async () => {
+      // The default failure mode: isGraduated → false for all pairs.
+      isGraduated.mockResolvedValue(false);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+          { ...candidate, alert_id: "al3", campaign_id: "camp-uuid-3", detector_id: "ad_tax_overload" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(executeReallocation).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      // All 3 candidates skipped, none reached guardrails.
+      expect(r.considered).toBe(3);
+      expect(r.blocked).toBe(3);
+      expect(checkGuardrails).not.toHaveBeenCalled();
+    });
+
+    it("isGraduated is called with correct shopId, detector_id, kind, and sb", async () => {
+      isGraduated.mockResolvedValue(false); // stop after gate
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(isGraduated).toHaveBeenCalledWith(
+        SHOP,
+        "campaign_below_breakeven",
+        "pause_campaign",
+        sb,
+      );
+    });
+
+    it("mixed: graduated candidate acts, non-graduated is skipped; guardrails only called for graduated", async () => {
+      // First call: graduated (al1); second call: not graduated (al2).
+      isGraduated
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).toHaveBeenCalledTimes(1);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "pair not graduated": 1 });
+    });
   });
 });

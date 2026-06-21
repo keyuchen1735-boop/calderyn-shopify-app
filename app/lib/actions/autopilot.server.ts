@@ -10,6 +10,7 @@ import { executeReallocation } from "./reallocate.server";
 import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
 import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
+import { isGraduated } from "../calibration/graduation.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -164,6 +165,16 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
       if (!kind) {
         decide(c, null, "skipped", "detector not actionable by autopilot", "none");
+        continue;
+      }
+
+      // Graduation gate (Slice 5 Task 2, I3/I7): a (detector, action) pair MUST
+      // have earned calibration graduation before it may auto-execute. isGraduated
+      // is fail-safe (returns false on any read error), so a DB hiccup can never
+      // grant autonomy. With no pair graduated yet, autopilot skips everything —
+      // that is the intended "gate everything, re-earn trust" default.
+      if (!(await isGraduated(shopId, c.detector_id, kind, sb))) {
+        decide(c, kind, "skipped", "pair not graduated");
         continue;
       }
 
