@@ -17,6 +17,7 @@ const {
   preconditionFresh,
   stockoutPauseAllowed,
   loadAndApplyRules,
+  notifyAutonomousAction,
 } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
@@ -33,6 +34,9 @@ const {
   // Default: {} (no veto, no cap) — existing tests that expect executeAction to be
   // reached keep passing. Rule-enforcement tests override this per-test.
   loadAndApplyRules: vi.fn(async () => ({})),
+  // Default: resolves immediately — so notify tests can assert calls without
+  // needing real Resend credentials. Override per-test if needed.
+  notifyAutonomousAction: vi.fn(async () => {}),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
@@ -55,35 +59,53 @@ vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, st
 // Rule enforcement mock (Slice 5 Task 5). Default = {} (no veto, no cap) so
 // existing tests that reach executeAction continue to pass. Rule tests override below.
 vi.mock("../rule-enforce.server", () => ({ loadAndApplyRules }));
+// Notification mock (Slice 5 Task 6). Default = no-op so existing tests are unaffected.
+vi.mock("../../calibration/notify-autonomous.server", () => ({ notifyAutonomousAction }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
 // rows: guardrail_config (enabled), candidate alerts (with campaign + spend).
 // scopedAlerts: rows to return for the new `alerts` table query (defaults to []).
+// sessionEmail: optional email to return from shopify_sessions (simulates a shop
+//   with an account-owner online session that has an email populated).
 function fakeSb(opts: {
   enabled: boolean;
   alerts: Array<Record<string, unknown>>;
   scopedAlerts?: Array<Record<string, unknown>>;
+  sessionEmail?: string | null;
 }) {
   function builder(table: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
     chain.in = vi.fn(() => chain);
+    chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({
-      data: {
-        autopilot_enabled: opts.enabled,
-        autopilot_max_budget_cut_pct: 50,
-        autopilot_max_budget_increase_pct: 20,
-        autopilot_max_daily_budget_cents: null,
-      },
-      error: null,
-    }));
+    chain.maybeSingle = vi.fn(async () => {
+      if (table === "shops") {
+        return { data: { shop_domain: "test-store.myshopify.com" }, error: null };
+      }
+      return {
+        data: {
+          autopilot_enabled: opts.enabled,
+          autopilot_max_budget_cut_pct: 50,
+          autopilot_max_budget_increase_pct: 20,
+          autopilot_max_daily_budget_cents: null,
+        },
+        error: null,
+      };
+    });
     chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) => {
       let data: unknown = [];
       if (table === "v_autopilot_candidates") data = opts.alerts;
       else if (table === "alerts") data = opts.scopedAlerts ?? [];
+      else if (table === "shopify_sessions") {
+        // Simulate online account-owner session rows (or empty if no sessionEmail).
+        data =
+          opts.sessionEmail != null
+            ? [{ email: opts.sessionEmail, isOnline: true, accountOwner: true }]
+            : [];
+      }
       return resolve({ data, error: null });
     };
     return chain;
@@ -113,6 +135,8 @@ describe("runAutopilotForShop", () => {
     stockoutPauseAllowed.mockReset().mockResolvedValue({ ok: false, reason: "inventory_policy_not_available" });
     // Default: {} (no veto, no cap) so existing tests that reach executeAction keep passing.
     loadAndApplyRules.mockReset().mockResolvedValue({});
+    // Default: no-op so existing tests are unaffected by the notification path.
+    notifyAutonomousAction.mockReset().mockResolvedValue(undefined);
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -809,6 +833,67 @@ describe("runAutopilotForShop", () => {
         sb,
       );
       expect(r.acted).toBe(1);
+    });
+  });
+
+  // ─── Slice 5 Task 6: Notify fix tests ────────────────────────────────────
+
+  describe("notify fix (Task 6): email from shopify_sessions + awaited notifies", () => {
+    it("resolves merchant email from shopify_sessions (not shops.email) and passes it to notifyAutonomousAction", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // sessionEmail simulates an online session row in shopify_sessions with a populated email.
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "merchant@example.com" });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP }),
+        "merchant@example.com",
+      );
+    });
+
+    it("passes null email to notifyAutonomousAction when no session has an email (graceful no-op)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // No sessionEmail → shopify_sessions returns [] → merchantEmail stays null.
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: null });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP }),
+        null,
+      );
+    });
+
+    it("awaits notifies before returning — a notify failure does NOT fail the run", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // Make notifyAutonomousAction reject; the run must still return acted=1.
+      notifyAutonomousAction.mockRejectedValue(new Error("Resend 503"));
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "m@ex.com" });
+      // Should not throw; Promise.allSettled absorbs the rejection.
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.failed).toBe(0);
+      // notifyAutonomousAction was still called (action landed).
+      expect(notifyAutonomousAction).toHaveBeenCalledTimes(1);
+    });
+
+    it("notifies on increase_campaign_budget success, using session email", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const scale = { ...candidate, detector_id: "campaign_scaling_opportunity", dollar_impact: 300 };
+      const sb = fakeSb({ enabled: true, alerts: [scale], sessionEmail: "scale@ex.com" });
+      await runAutopilotForShop(SHOP, sb);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({ actionDescription: expect.stringContaining("Scaled up campaign budget") }),
+        "scale@ex.com",
+      );
+    });
+
+    it("does NOT call notifyAutonomousAction when executeAction fails", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      executeAction.mockResolvedValue({ id: "aud1", outcome: "failed" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate], sessionEmail: "m@ex.com" });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(0);
+      expect(notifyAutonomousAction).not.toHaveBeenCalled();
     });
   });
 

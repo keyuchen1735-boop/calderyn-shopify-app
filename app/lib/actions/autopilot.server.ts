@@ -73,16 +73,38 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
 
   // Load merchant contact email for autonomous-action notifications (best-effort;
   // a missing email row just means no notification fires — never a thrown error).
+  // Email lives in shopify_sessions (online sessions carry the account-owner email);
+  // join via shops.shop_domain → shopify_sessions.shop, preferring online sessions.
   let merchantEmail: string | null = null;
   try {
     const { data: shopRow } = await sb
       .from("shops")
-      .select("email")
+      .select("shop_domain")
       .eq("id", shopId)
       .maybeSingle();
-    merchantEmail = (shopRow as { email?: string | null } | null)?.email ?? null;
+    const shopDomain = (shopRow as { shop_domain?: string | null } | null)?.shop_domain ?? null;
+    if (shopDomain) {
+      const { data: sessions } = await sb
+        .from("shopify_sessions")
+        .select("email, isOnline, accountOwner")
+        .eq("shop", shopDomain)
+        .not("email", "is", null);
+      // Prefer: online + accountOwner first, then online, then offline accountOwner, then any.
+      const rows = (sessions ?? []) as Array<{
+        email: string | null;
+        isOnline: boolean;
+        accountOwner: boolean;
+      }>;
+      const best =
+        rows.find((r) => r.isOnline && r.accountOwner) ??
+        rows.find((r) => r.isOnline) ??
+        rows.find((r) => r.accountOwner) ??
+        rows[0] ??
+        null;
+      merchantEmail = best?.email ?? null;
+    }
   } catch {
-    // Non-fatal: if we can't read the shop email, we just skip the notification.
+    // Non-fatal: if we can't read the session email, we just skip the notification.
   }
 
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
@@ -131,6 +153,11 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   let blocked = 0;
   let failed = 0;
   const decisions: AutopilotDecision[] = [];
+  // Collect notify promises so they are awaited (via Promise.allSettled) before
+  // runAutopilotForShop returns. This prevents Vercel cron from abandoning them
+  // mid-flight when the response is sent. allSettled means a delivery failure
+  // never fails the run or affects the summary.
+  const notifyPromises: Promise<void>[] = [];
   // reason -> count for every candidate that landed in the `blocked` counter
   // (guardrail blocks AND pre-flight skips), so the histogram explains the
   // FULL blocked total and `sum(blockedReasons) === blocked` holds.
@@ -283,11 +310,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         );
         record(c, kind, res.outcome);
         if (res.outcome === "succeeded") {
-          // Fire-and-forget: notify merchant about autonomous action; failure is logged, not rethrown.
-          notifyAutonomousAction(
-            { shopId, actionDescription: `Scaled up campaign budget (campaign ${c.campaign_id})` },
-            merchantEmail,
-          ).catch((e) => console.error("[autopilot-notify] unexpected error (budget scale)", e));
+          // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
+          notifyPromises.push(
+            notifyAutonomousAction(
+              { shopId, actionDescription: `Scaled up campaign budget (campaign ${c.campaign_id})` },
+              merchantEmail,
+            ).catch((e) => console.error("[autopilot-notify] unexpected error (budget scale)", e)),
+          );
         }
         continue;
       }
@@ -411,11 +440,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
                 ? decide(c, kind, "acted", "reallocate_budget")
                 : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
               if (res.outcome === "succeeded") {
-                // Fire-and-forget: notify merchant about autonomous reallocation.
-                notifyAutonomousAction(
-                  { shopId, actionDescription: `Reallocated budget from campaign ${c.campaign_id}` },
-                  merchantEmail,
-                ).catch((e) => console.error("[autopilot-notify] unexpected error (realloc)", e));
+                // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
+                notifyPromises.push(
+                  notifyAutonomousAction(
+                    { shopId, actionDescription: `Reallocated budget from campaign ${c.campaign_id}` },
+                    merchantEmail,
+                  ).catch((e) => console.error("[autopilot-notify] unexpected error (realloc)", e)),
+                );
               }
               continue;
             }
@@ -497,19 +528,27 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       );
       record(c, kind, res.outcome);
       if (res.outcome === "succeeded") {
-        // Fire-and-forget: notify merchant about autonomous action (I7).
-        // A delivery failure is logged but never rethrown — the action landed.
+        // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
         const actionLabel = kind === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";
-        notifyAutonomousAction(
-          { shopId, actionDescription: `${actionLabel} ${c.campaign_id}` },
-          merchantEmail,
-        ).catch((e) => console.error("[autopilot-notify] unexpected error (pause/reduce)", e));
+        notifyPromises.push(
+          notifyAutonomousAction(
+            { shopId, actionDescription: `${actionLabel} ${c.campaign_id}` },
+            merchantEmail,
+          ).catch((e) => console.error("[autopilot-notify] unexpected error (pause/reduce)", e)),
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
       decide(c, null, "failed", `threw: ${msg}`);
     }
+  }
+
+  // Await all notification promises before returning so Vercel cron doesn't
+  // abandon them when the response is sent. allSettled: a delivery failure
+  // never affects the summary (the action already landed and was recorded).
+  if (notifyPromises.length > 0) {
+    await Promise.allSettled(notifyPromises);
   }
 
   return { skipped: false, acted, blocked, failed, considered: decisions.length, blockedReasons, decisions };
