@@ -90,10 +90,21 @@ describe("buildActionQueue", () => {
     expect(q[0].alertId).toBe("a1");
   });
 
-  it("drops a proposal whose detector:action pair is in mutedPairs", () => {
+  it("drops a proposal whose detector:action pair is in mutedPairs (non-no-brainer pair)", () => {
+    // reorder_timing:create_po_draft is NOT a NO_BRAINER pair → muting removes it entirely.
+    const a = alert({ id: "a1", detector_id: "reorder_timing", campaign_id: null, evidence: {} });
+    const muted = new Set(["reorder_timing:create_po_draft"]);
+    const q = buildActionQueue([a] as never, new Map(), new Set(), muted);
+    expect(q).toHaveLength(0);
+  });
+
+  it("a muted NO_BRAINER pair stays in the queue as always_ask=true (I8 mute-resistance)", () => {
+    // campaign_below_breakeven:pause_campaign IS a NO_BRAINER — muting downgrades
+    // it to "always ask" rather than silently removing it (I8).
     const muted = new Set(["campaign_below_breakeven:pause_campaign"]);
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), muted);
-    expect(q).toHaveLength(0);
+    expect(q).toHaveLength(1);
+    expect(q[0].always_ask).toBe(true);
   });
 
   it("keeps a proposal whose detector:action pair is NOT in mutedPairs", () => {
@@ -112,13 +123,14 @@ describe("buildActionQueue", () => {
   });
 
   it("drops proposal by mutedPairs but keeps another proposal with a different pair", () => {
-    // Two alerts with different detectors; mute only the first pair.
-    // reorder_timing -> create_po_draft (non-campaign action, works without campaign_id).
-    const a1 = alert({ id: "a1", detector_id: "campaign_below_breakeven", campaign_id: "c1" });
-    const a2 = alert({ id: "a2", detector_id: "reorder_timing", campaign_id: null, evidence: {} });
-    const muted = new Set(["campaign_below_breakeven:pause_campaign"]);
+    // Two alerts with different detectors; mute only the first (non-no-brainer) pair.
+    // reorder_timing:create_po_draft is NOT a NO_BRAINER → muted and excluded.
+    // negative_unit_economics:pause_campaign is also not a NO_BRAINER → used as the keeper.
+    const a1 = alert({ id: "a1", detector_id: "reorder_timing", campaign_id: null, evidence: {} });
+    const a2 = alert({ id: "a2", detector_id: "negative_unit_economics", campaign_id: "c2", evidence: { campaign_id: "c2" } });
+    const muted = new Set(["reorder_timing:create_po_draft"]);
     const q = buildActionQueue([a1, a2] as never, new Map(), new Set(), muted);
-    // a1's pair is muted; a2 (reorder_timing:create_po_draft) must survive
+    // a1's pair is muted (non-no-brainer) → excluded; a2 (negative_unit_economics:pause_campaign) survives
     expect(q.every((p) => p.alertId !== "a1")).toBe(true);
     expect(q.some((p) => p.alertId === "a2")).toBe(true);
   });

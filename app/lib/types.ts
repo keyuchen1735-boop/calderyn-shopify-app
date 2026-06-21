@@ -306,4 +306,10 @@ export interface QueueProposal {
   confidence: number;
   /** One-line reasoning carried from the alert's narrative. */
   reasoning: string;
+  /**
+   * I8: true when this is a no-brainer pair that has been muted — it appears
+   * in the queue as "always ask" rather than being silently suppressed like a
+   * normal muted pair. Absent (undefined) for un-muted proposals.
+   */
+  always_ask?: boolean;
 }

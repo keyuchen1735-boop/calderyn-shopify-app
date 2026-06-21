@@ -12,6 +12,18 @@ const K_PRIOR = 8;
 const NOBRAINER_BONUS = 1.3;
 const PRIOR_CLAMP_MAX = 0.95;
 
+/**
+ * I8: Minimum confidence (0-100) for a NO_BRAINER pair regardless of how many
+ * rejects have accumulated. This keeps no-brainers surfacing as "always ask"
+ * even after reject-spam, preventing permanent self-disable.
+ *
+ * A floor of 20 means: always surface with at least 20% confidence so the pair
+ * is never silently dropped from consideration. It does NOT prevent demotion
+ * from autonomous to "always ask" — graduation still requires conf >= gradThreshold
+ * (typically ~75). The floor only prevents the pair from reaching 0 (invisible).
+ */
+export const NO_BRAINER_CONF_FLOOR = 20;
+
 // Static seed prior per reversibility tier when no peer baseline exists.
 const REVERSIBILITY_BASE: Record<Tier, number> = {
   reversible: 0.55,
@@ -115,16 +127,24 @@ export function pairConfidence(
   ev: { alpha: number; beta: number },
   peerP50: number | null,
 ): number {
+  const pairKey = `${detectorId}:${actionKind}`;
+  const isNoBrainer = NO_BRAINER.has(pairKey);
   const tier = actionTier(actionKind);
   const veto: 0 | 1 = HAS_EXECUTOR.has(actionKind) ? 1 : 0;
-  const prior = pairPrior(tier, NO_BRAINER.has(`${detectorId}:${actionKind}`), peerP50);
+  const prior = pairPrior(tier, isNoBrainer, peerP50);
   const hist = historical(ev.alpha, ev.beta, prior);
-  return confidence({
+  const raw = confidence({
     guardrailVeto: veto,
     detection: DETECTION_COLD,
     historical: hist,
     reversibility: reversibilityFactor(tier),
   });
+  // I8: No-brainer pairs get a confidence floor so reject-spam can never drive
+  // them to conf=0 (permanent self-disable). The floor ONLY applies to NO_BRAINER
+  // pairs — normal pairs can reach 0 (correct behavior for probation/mute paths).
+  // This keeps no-brainers surfacing as "always ask" even after heavy rejects.
+  if (isNoBrainer && raw < NO_BRAINER_CONF_FLOOR) return NO_BRAINER_CONF_FLOOR;
+  return raw;
 }
 
 export function calibrationPct(pairs: { conf: number; weight: number }[]): number {
