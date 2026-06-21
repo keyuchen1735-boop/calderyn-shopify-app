@@ -1387,7 +1387,7 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
           // so the open-alerts SQL is not duplicated.
-          const [alerts, pairsRes, feedbackRes, rulesRes] = await Promise.all([
+          const [alerts, pairsRes, feedbackRes, rulesRes, graduatedRes] = await Promise.all([
             fetchOpenAlerts(shopId),
             supabase
               .from("pair_calibration")
@@ -1409,11 +1409,19 @@ export function calderynClient(shop: string) {
               .eq("shop_id", shopId)
               .eq("active", true)
               .eq("rule_kind", "muted_pair"),
+            // I5: graduated pairs auto-run via autopilot; exclude from the queue
+            // so merchant-approve and autopilot cannot both fire for the same alert.
+            supabase
+              .from("pair_calibration")
+              .select("detector_id, action_kind")
+              .eq("shop_id", shopId)
+              .eq("graduated", true),
           ]);
 
           if (pairsRes.error) throw pairsRes.error;
           if (feedbackRes.error) throw feedbackRes.error;
           if (rulesRes.error) throw rulesRes.error;
+          if (graduatedRes.error) throw graduatedRes.error;
 
           const map = new Map(
             (pairsRes.data ?? []).map((r) => [
@@ -1432,7 +1440,11 @@ export function calderynClient(shop: string) {
             (rulesRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
           );
 
-          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs);
+          const graduatedPairs = new Set(
+            (graduatedRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+          );
+
+          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs, graduatedPairs);
         } catch (err) {
           rethrow("queue.list", err);
         }

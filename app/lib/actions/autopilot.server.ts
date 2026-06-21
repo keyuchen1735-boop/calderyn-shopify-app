@@ -13,6 +13,7 @@ import { DETECTOR_LABELS } from "../labels";
 import { isGraduated } from "../calibration/graduation.server";
 import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
+import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -69,6 +70,20 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled)
     return { skipped: true, acted: 0, blocked: 0, failed: 0, considered: 0, blockedReasons: {}, decisions: [] };
+
+  // Load merchant contact email for autonomous-action notifications (best-effort;
+  // a missing email row just means no notification fires — never a thrown error).
+  let merchantEmail: string | null = null;
+  try {
+    const { data: shopRow } = await sb
+      .from("shops")
+      .select("email")
+      .eq("id", shopId)
+      .maybeSingle();
+    merchantEmail = (shopRow as { email?: string | null } | null)?.email ?? null;
+  } catch {
+    // Non-fatal: if we can't read the shop email, we just skip the notification.
+  }
 
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
   const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
@@ -267,6 +282,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
           sb,
         );
         record(c, kind, res.outcome);
+        if (res.outcome === "succeeded") {
+          // Fire-and-forget: notify merchant about autonomous action; failure is logged, not rethrown.
+          notifyAutonomousAction(
+            { shopId, actionDescription: `Scaled up campaign budget (campaign ${c.campaign_id})` },
+            merchantEmail,
+          ).catch((e) => console.error("[autopilot-notify] unexpected error (budget scale)", e));
+        }
         continue;
       }
 
@@ -388,6 +410,13 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
               res.outcome === "succeeded"
                 ? decide(c, kind, "acted", "reallocate_budget")
                 : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
+              if (res.outcome === "succeeded") {
+                // Fire-and-forget: notify merchant about autonomous reallocation.
+                notifyAutonomousAction(
+                  { shopId, actionDescription: `Reallocated budget from campaign ${c.campaign_id}` },
+                  merchantEmail,
+                ).catch((e) => console.error("[autopilot-notify] unexpected error (realloc)", e));
+              }
               continue;
             }
           }
@@ -467,6 +496,15 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         sb,
       );
       record(c, kind, res.outcome);
+      if (res.outcome === "succeeded") {
+        // Fire-and-forget: notify merchant about autonomous action (I7).
+        // A delivery failure is logged but never rethrown — the action landed.
+        const actionLabel = kind === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";
+        notifyAutonomousAction(
+          { shopId, actionDescription: `${actionLabel} ${c.campaign_id}` },
+          merchantEmail,
+        ).catch((e) => console.error("[autopilot-notify] unexpected error (pause/reduce)", e));
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);

@@ -16,10 +16,13 @@ import { pairConfidence } from "./confidence";
  *  4. Skip if null (no real action available — campaign-gated on a non-campaign alert,
  *     or the only option is to snooze/review).
  *  5. Skip if the `${detector}:${action}` pair is in `mutedPairs` (merchant learned rule).
- *  6. Look up the pair's Beta counters from `pairRows`; default to {alpha:0, beta:0} on
+ *  6. Skip if the `${detector}:${action}` pair is in `graduatedPairs` (I5 no-double-actor:
+ *     graduated pairs auto-run via autopilot; they must not also appear as approvable
+ *     proposals so merchant-approve and autopilot cannot both fire for the same alert).
+ *  7. Look up the pair's Beta counters from `pairRows`; default to {alpha:0, beta:0} on
  *     a cold-start pair (no calibration data yet).
- *  7. Compute confidence via `pairConfidence` with `peerP50=null` (no RPC in this slice).
- *  8. Carry `dollar_impact`, `title`, and `narrative` (as `reasoning`) from the alert.
+ *  8. Compute confidence via `pairConfidence` with `peerP50=null` (no RPC in this slice).
+ *  9. Carry `dollar_impact`, `title`, and `narrative` (as `reasoning`) from the alert.
  *
  * The caller (queue.list facade) is responsible for supplying only open alerts.
  */
@@ -28,6 +31,8 @@ export function buildActionQueue(
   pairRows: Map<string, { alpha: number; beta: number }>,
   rejectedAlertIds: Set<string> = new Set(),
   mutedPairs: Set<string> = new Set(),
+  /** I5: pairs where graduated=true must not appear in the queue (autopilot handles them). */
+  graduatedPairs: Set<string> = new Set(),
 ): QueueProposal[] {
   const out: QueueProposal[] = [];
   for (const a of alerts) {
@@ -36,6 +41,8 @@ export function buildActionQueue(
     const action = recommendedAction(a.detector_id, { hasCampaign });
     if (!action) continue;
     if (mutedPairs.has(`${a.detector_id}:${action}`)) continue;
+    // I5: graduated pairs are handled by autopilot; must not appear as proposals.
+    if (graduatedPairs.has(`${a.detector_id}:${action}`)) continue;
     const ev = pairRows.get(`${a.detector_id}:${action}`) ?? { alpha: 0, beta: 0 };
     out.push({
       alertId: a.id,

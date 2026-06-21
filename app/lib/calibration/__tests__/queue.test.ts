@@ -127,4 +127,34 @@ describe("buildActionQueue", () => {
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set());
     expect(q).toHaveLength(1);
   });
+
+  // I5 graduated pair exclusion
+  it("drops a proposal whose detector:action pair is in graduatedPairs (no double-actor)", () => {
+    const graduated = new Set(["campaign_below_breakeven:pause_campaign"]);
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), graduated);
+    expect(q).toHaveLength(0);
+  });
+
+  it("keeps a proposal whose pair is NOT in graduatedPairs", () => {
+    const graduated = new Set(["other_detector:pause_campaign"]);
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), graduated);
+    expect(q).toHaveLength(1);
+    expect(q[0].alertId).toBe("a1");
+  });
+
+  it("graduated exclusion is independent of mutedPairs (both can exclude)", () => {
+    const a1 = alert({ id: "a1", detector_id: "campaign_below_breakeven", campaign_id: "c1" });
+    const a2 = alert({ id: "a2", detector_id: "reorder_timing", campaign_id: null, evidence: {} });
+    // Graduate a1's pair; mute a2's pair
+    const graduated = new Set(["campaign_below_breakeven:pause_campaign"]);
+    const muted = new Set(["reorder_timing:create_po_draft"]);
+    const q = buildActionQueue([a1, a2] as never, new Map(), new Set(), muted, graduated);
+    expect(q).toHaveLength(0);
+  });
+
+  it("non-graduated pair with otherwise valid alert is kept", () => {
+    // Empty graduatedPairs — nothing is graduated
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set());
+    expect(q).toHaveLength(1);
+  });
 });
