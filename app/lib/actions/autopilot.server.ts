@@ -12,6 +12,7 @@ import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.s
 import { DETECTOR_LABELS } from "../labels";
 import { isGraduated } from "../calibration/graduation.server";
 import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
+import { loadAndApplyRules } from "./rule-enforce.server";
 
 const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
@@ -179,6 +180,41 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         continue;
       }
 
+      // Rule enforcement (Slice 5 Task 5): apply the merchant's learned
+      // calibration_rule rows for this (detector, action) pair BEFORE any
+      // execute path is reached. This single check dominates all execute paths
+      // for the three graduatable kinds (pause/reduce/increase).
+      // Fail-safe: a thrown load returns { veto: "rules unavailable" } —
+      // we must never execute when we can't verify the merchant's restrictions.
+      {
+        const nowUtc = new Date();
+        const ruleVerdict = await loadAndApplyRules(
+          shopId,
+          c.detector_id,
+          kind,
+          {
+            dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+            campaignSpendCents: c.campaign_spend_cents,
+            nowUtcHour: nowUtc.getUTCHours(),
+            nowIso: nowUtc.toISOString(),
+          },
+          sb,
+        );
+        if (ruleVerdict.veto) {
+          console.info(`[autopilot] rule veto for ${c.campaign_id} (${c.detector_id}/${kind}): ${ruleVerdict.veto}`);
+          decide(c, kind, "skipped", `rule: ${ruleVerdict.veto}`);
+          continue;
+        }
+        // pair_dollar_cap on reduce: cap the cut amount by storing into a
+        // candidate-local that the reduce path reads below.
+        if (ruleVerdict.cappedDollarCents !== undefined) {
+          // Stash the cap so the reduce path clamps newBudgetCents.
+          // We piggy-back on the existing Candidate shape via a local variable.
+          // The capped amount is resolved after currentBudgetCents is known, below.
+          (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents = ruleVerdict.cappedDollarCents;
+        }
+      }
+
       const currentBudgetCents = c.daily_budget_cents ?? null;
 
       if (kind === "increase_campaign_budget") {
@@ -253,10 +289,29 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         kind === "reduce_campaign_budget"
           ? (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1
           : 1;
-      const newBudgetCents =
+      let newBudgetCents =
         kind === "reduce_campaign_budget" && currentBudgetCents != null
           ? Math.round(currentBudgetCents * (1 - (maxCutPct * muCut) / 100))
           : undefined;
+
+      // pair_dollar_cap clamp for reduce: ensure the cut (currentBudgetCents -
+      // newBudgetCents) does not exceed the merchant's dollar cap. The cap was
+      // stashed by the rule-enforcement block above. This adjusts the target
+      // upward so the cut is smaller — never executes a bigger cut than allowed.
+      if (
+        kind === "reduce_campaign_budget" &&
+        currentBudgetCents != null &&
+        newBudgetCents !== undefined
+      ) {
+        const cappedCents = (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents;
+        if (cappedCents !== undefined) {
+          // Clamp: newBudgetCents >= currentBudgetCents - cappedCents
+          newBudgetCents = Math.max(newBudgetCents, currentBudgetCents - cappedCents);
+          console.info(
+            `[autopilot] pair_dollar_cap clamped reduce for ${c.campaign_id}: newBudget=${newBudgetCents}c (cap=${cappedCents}c)`,
+          );
+        }
+      }
 
       // Same refusal in executeAction: a cut that lands on $0 would zero the
       // live campaign budget (that's a pause, not a reduction) — blocked. Only

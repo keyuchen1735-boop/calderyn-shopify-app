@@ -16,6 +16,7 @@ const {
   isGraduated,
   preconditionFresh,
   stockoutPauseAllowed,
+  loadAndApplyRules,
 } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
@@ -29,6 +30,9 @@ const {
   // passing. Precondition-gate tests override this per-test.
   preconditionFresh: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
   stockoutPauseAllowed: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: false, reason: "inventory_policy_not_available" })),
+  // Default: {} (no veto, no cap) — existing tests that expect executeAction to be
+  // reached keep passing. Rule-enforcement tests override this per-test.
+  loadAndApplyRules: vi.fn(async () => ({})),
 }));
 vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
@@ -48,6 +52,9 @@ vi.mock("../../calibration/graduation.server", () => ({ isGraduated }));
 // Precondition re-check mock (Slice 5 Task 4). Default = ok:true so existing
 // tests that reach executeAction continue to pass. Precondition tests override below.
 vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, stockoutPauseAllowed }));
+// Rule enforcement mock (Slice 5 Task 5). Default = {} (no veto, no cap) so
+// existing tests that reach executeAction continue to pass. Rule tests override below.
+vi.mock("../rule-enforce.server", () => ({ loadAndApplyRules }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
@@ -104,6 +111,8 @@ describe("runAutopilotForShop", () => {
     // Default: precondition ok:true so existing tests that reach executeAction keep passing.
     preconditionFresh.mockReset().mockResolvedValue({ ok: true });
     stockoutPauseAllowed.mockReset().mockResolvedValue({ ok: false, reason: "inventory_policy_not_available" });
+    // Default: {} (no veto, no cap) so existing tests that reach executeAction keep passing.
+    loadAndApplyRules.mockReset().mockResolvedValue({});
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -687,6 +696,119 @@ describe("runAutopilotForShop", () => {
       expect(r.acted).toBe(1);
       expect(r.blocked).toBe(1);
       expect(r.blockedReasons).toEqual({ "pair not graduated": 1 });
+    });
+  });
+
+  // ─── Slice 5 Task 5: Rule enforcement tests ──────────────────────────────
+
+  describe("rule enforcement (Slice 5 Task 5)", () => {
+    it("skips (vetoes) a pause candidate with an active muted_pair rule", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "merchant handles this" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("merchant handles this");
+    });
+
+    it("skips a reduce candidate with a pair_blackout_hours veto", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "outside merchant-allowed hours" });
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload" };
+      const sb = fakeSb({ enabled: true, alerts: [reduceCand] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(executeReallocation).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toBe("rule: outside merchant-allowed hours");
+    });
+
+    it("skips a pause candidate that exceeds the pair_dollar_cap (cannot downsize a pause)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "exceeds merchant dollar cap" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("exceeds merchant dollar cap");
+    });
+
+    it("skips a candidate when rules unavailable (load failure = veto)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({ veto: "rules unavailable" });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions[0];
+      expect(dec.outcome).toBe("skipped");
+      expect(dec.reason).toContain("rules unavailable");
+    });
+
+    it("downsizes a reduce budget cut when pair_dollar_cap returns cappedDollarCents", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      pickReallocation.mockReturnValue({ source: null, dest: null });
+      // Cap: max cut = 2000c. Default newBudgetCents = 10000 - 5000 = 5000 (50% cut = 5000c cut).
+      // Clamp: newBudgetCents = max(5000, 10000 - 2000) = max(5000, 8000) = 8000.
+      loadAndApplyRules.mockResolvedValue({ cappedDollarCents: 2000 });
+      const reduceCand = { ...candidate, detector_id: "ad_tax_overload", daily_budget_cents: 10000 };
+      const sb = fakeSb({ enabled: true, alerts: [reduceCand] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      // The cut must be clamped: budget goes to 8000c (only 2000c cut), not 5000c.
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 8000 }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("skips a min_spend veto and continues to the next candidate", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // First candidate: min_spend veto; second: no veto (executes).
+      loadAndApplyRules
+        .mockResolvedValueOnce({ veto: "below merchant min spend" })
+        .mockResolvedValueOnce({});
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          candidate,
+          { ...candidate, alert_id: "al2", campaign_id: "camp-uuid-2" },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(1);
+      expect(executeAction).toHaveBeenCalledTimes(1);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ alertId: "al2" }),
+        sb,
+      );
+    });
+
+    it("a candidate with no active rules passes through and executes normally", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      loadAndApplyRules.mockResolvedValue({}); // default: no rules
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
     });
   });
 
