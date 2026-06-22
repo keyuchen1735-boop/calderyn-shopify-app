@@ -360,6 +360,16 @@ export const DASH_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set(
   [...CHAT_INLINE_ACTIONS].filter((k) => k !== "exclude_geo"),
 );
 
+// Which dashboard screen reviews a non-inline action's "Review & confirm"
+// deep-link. reallocate_budget has no control on the Alerts detail — its budget
+// edits live on the Campaigns screen (cut the loser / scale the winner) — so it
+// routes there. Every other kind reviews on the Alerts detail (its
+// evidence/confirm view, or the create_po_draft PO dialog). Keep in sync with
+// review() in app/components/dashboard/AssistantPanel.tsx.
+export function dashReviewScreen(kind: ActionKind): "campaigns" | "alerts" {
+  return kind === "reallocate_budget" ? "campaigns" : "alerts";
+}
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   free_shipping_leakage: ["raise_free_ship_threshold", "exclude_sku_free_ship", "snooze_alert"],

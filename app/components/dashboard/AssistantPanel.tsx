@@ -8,7 +8,7 @@ import { AssistantSendError } from "~/lib/dashboard/client";
 import type { ChatMessage, DraftedAction } from "~/lib/assistant/types";
 import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
 import { useThinkingPhrase } from "~/lib/assistant/thinking";
-import { DASH_INLINE_ACTIONS } from "~/lib/labels";
+import { DASH_INLINE_ACTIONS, dashReviewScreen } from "~/lib/labels";
 import { Markdown } from "~/components/Markdown";
 
 import { CDIcon } from "./icons";
@@ -40,8 +40,12 @@ function DraftActionCard({
   const executable = DASH_INLINE_ACTIONS.has(action.actionKind);
 
   const review = () => {
-    // The Alerts screen owns the full evidence/confirm view.
-    app.navigate("alerts", action.alertId);
+    // Route to the surface that can actually host this action so the deep-link
+    // isn't a dead end: reallocate_budget's budget edits live on the Campaigns
+    // screen; everything else reviews on the Alerts detail (evidence/confirm or
+    // the PO draft dialog).
+    const screen = dashReviewScreen(action.actionKind);
+    app.navigate(screen, screen === "alerts" ? action.alertId : null);
     onClose();
   };
 
