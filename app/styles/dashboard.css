@@ -485,6 +485,59 @@
     padding-top: 12px; border-top: 0.5px solid var(--hairline-strong);
   }
 
+  /* ============ action queue v2: calibration leveling header ============ */
+  .cd-cal2-top {
+    display: flex; align-items: center; gap: 24px;
+    padding: calc(20px * var(--density)) calc(24px * var(--density)) calc(18px * var(--density));
+  }
+  @media (max-width: 600px) { .cd-cal2-top { flex-direction: column; align-items: flex-start; gap: 16px; } }
+  .cd-cal2-ring { flex: none; position: relative; width: 104px; height: 104px; display: flex; align-items: center; justify-content: center; }
+  .cd-cal2-ring svg { transform: rotate(-90deg); }
+  .cd-cal2-ring-fill { transition: stroke-dashoffset 1s cubic-bezier(.22, 1, .36, 1); }
+  .cd-cal2-ring-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .cd-cal2-ring-pct { font-size: 28px; font-weight: 700; color: var(--text-1); letter-spacing: -.02em; line-height: 1; }
+  .cd-cal2-ring-pct span { font-size: 15px; font-weight: 600; color: var(--text-3); }
+  .cd-cal2-ring-cap { font-size: 10.5px; font-weight: 600; color: var(--accent); letter-spacing: .02em; margin-top: 1px; }
+  .cd-cal2-body { flex: 1; min-width: 0; }
+  .cd-cal2-track { position: relative; height: 30px; margin-top: 4px; }
+  .cd-cal2-track-base { position: absolute; top: 4px; left: 0; right: 0; height: 4px; border-radius: 3px; background: var(--gray-bg); }
+  .cd-cal2-track-fill { position: absolute; top: 4px; left: 0; height: 4px; border-radius: 3px; background: var(--accent); transition: width 1s cubic-bezier(.22, 1, .36, 1); }
+  .cd-cal2-ms { position: absolute; top: 0; display: flex; flex-direction: column; gap: 5px; }
+  .cd-cal2-dot { width: 10px; height: 10px; border-radius: 50%; border: 2.5px solid var(--text-3); background: var(--card-solid); box-shadow: 0 0 0 3px var(--card-solid); }
+  .cd-cal2-ms[data-reached="true"] .cd-cal2-dot { border-color: var(--accent); background: var(--accent); }
+  .cd-cal2-ms-label { font-size: 10.5px; font-weight: 600; color: var(--text-3); white-space: nowrap; }
+  .cd-cal2-ms[data-reached="true"] .cd-cal2-ms-label { color: var(--accent); }
+  .cd-cal2-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 11px calc(24px * var(--density)); background: var(--gray-bg); border-top: 0.5px solid var(--hairline-strong); }
+  .cd-cal2-legend { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); }
+  .cd-cal2-legend b { color: var(--text-1); font-weight: 600; }
+  .cd-cal2-legend-sq { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .cd-cal2-foot-grad { margin-left: auto; font-size: 12px; color: var(--text-3); }
+  @media (prefers-reduced-motion: reduce) { .cd-cal2-ring-fill, .cd-cal2-track-fill { transition: none; } }
+
+  /* ============ action queue v2: approve-confirm + reflection receipt ============ */
+  .cd-queue-confirm {
+    display: flex; align-items: center; gap: 10px;
+    margin-left: calc(28px * var(--density));
+    padding: 11px 13px; border-radius: 10px; background: var(--green-bg);
+  }
+  .cd-queue-confirm .cd-caption { color: var(--text-1); line-height: 1.45; }
+  .cd-rcpt {
+    display: flex; flex-direction: column; gap: 12px;
+    margin-left: calc(28px * var(--density));
+    padding: 13px; border-radius: 12px; background: var(--gray-bg);
+  }
+  .cd-rcpt-voice { display: flex; align-items: flex-start; gap: 11px; }
+  .cd-rcpt-eyebrow { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
+  .cd-rcpt-text { margin: 0; font-size: 13.5px; color: var(--text-1); line-height: 1.5; }
+  .cd-rcpt-box { border: 0.5px solid var(--hairline-strong); border-radius: 11px; overflow: hidden; background: var(--card-solid); }
+  .cd-rcpt-bhead { padding: 7px 13px; background: var(--gray-bg); border-bottom: 0.5px solid var(--hairline-strong); font-size: 10.5px; font-weight: 700; letter-spacing: .05em; color: var(--text-3); }
+  .cd-rcpt-row { display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px; border-bottom: 0.5px solid var(--hairline-strong); }
+  .cd-rcpt-row:last-child { border-bottom: none; }
+  .cd-rcpt-rmain { flex: 1; min-width: 0; }
+  .cd-rcpt-rtitle { font-size: 12.5px; font-weight: 600; color: var(--text-1); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cd-rcpt-rsub { font-size: 12px; color: var(--text-2); margin-top: 1px; line-height: 1.45; }
+  .cd-rcpt-saved { font-size: 10px; font-weight: 600; color: var(--accent); display: inline-flex; align-items: center; gap: 3px; }
+
   /* ============ chart bits ============ */
   .cd-tip {
     position: absolute; top: 8px; z-index: 10; pointer-events: none;
