@@ -195,7 +195,8 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
     campaign_id,
     actions,
     recommended,
-    rec_detail: "", // TODO(api): server-provided recommendation
+    rec_detail: a.rec_detail ?? "",
+    remediation: a.remediation ?? null,
   };
 }
 
@@ -323,6 +324,7 @@ export function adaptSku(s: SKU): SkuVM {
     ship_cost_source: s.ship_cost_source ?? null,
     ship_cost_confidence: s.ship_cost_confidence ?? null,
     ship_pnl_cents: s.ship_pnl_cents ?? null,
+    do_not_reorder: s.do_not_reorder ?? false,
   };
 }
 

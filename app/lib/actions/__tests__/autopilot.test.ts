@@ -4,6 +4,7 @@ import { runAutopilotForShop } from "../autopilot.server";
 import { getActionPolicy } from "../action-policy.server";
 import type { ReallocationCandidate, ReallocationSuggestion } from "../reallocation-suggest.server";
 import type { Platform } from "../../ads/adapter";
+import type { GuardrailResult } from "../guardrails";
 
 // vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
 // the runAutopilotForShop import above.
@@ -13,6 +14,12 @@ const {
   executeReallocation,
   loadReallocationCandidates,
   pickReallocation,
+  checkSkuGuardrails,
+  executeDiscontinueAlertAction,
+  executeReallocateSpendSku,
+  enrichRemediation,
+  calderynClient,
+  unauthenticatedAdmin,
   isGraduated,
   preconditionFresh,
   stockoutPauseAllowed,
@@ -26,8 +33,19 @@ const {
   executeReallocation: vi.fn(async () => ({ id: "aud2", outcome: "succeeded" })),
   loadReallocationCandidates: vi.fn(async (): Promise<ReallocationCandidate[]> => []),
   pickReallocation: vi.fn((): ReallocationSuggestion => ({ source: null, dest: null })),
+  checkSkuGuardrails: vi.fn(async (): Promise<GuardrailResult> => ({ allowed: true })),
+  // Both gateways take a single opts object and return { auditId, outcome, acknowledged }.
+  executeDiscontinueAlertAction: vi.fn(async () => ({ auditId: "aud3", outcome: "succeeded", acknowledged: true })),
+  executeReallocateSpendSku: vi.fn(async () => ({ auditId: "aud4", outcome: "succeeded", acknowledged: true })),
+  // Phase-3 resolver is mocked here to isolate routing from the DB read; it is
+  // exercised for-real in its own enrich.test.ts (Phase 3). Default = identity.
+  enrichRemediation: vi.fn(async (_alert: unknown, plan: unknown) => plan),
+  calderynClient: vi.fn(() => ({})),
+  unauthenticatedAdmin: vi.fn(async () => ({ admin: {} })),
   // Default: true — existing tests that expect executeAction to be reached keep
-  // passing. New graduation-gate tests override this per-test.
+  // passing. New graduation-gate tests override this per-test. NOTE: this default
+  // also lets the merged remediation graduation gate pass, so the remediation
+  // routing tests (discontinue / reallocate_spend_sku) reach their executor seams.
   isGraduated: vi.fn(async () => true),
   // Default: ok:true — existing tests that expect executeAction to be reached keep
   // passing. Precondition-gate tests override this per-test.
@@ -48,6 +66,12 @@ vi.mock("../guardrails.server", () => ({ checkGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
+vi.mock("../remediation-guard.server", () => ({ checkSkuGuardrails }));
+vi.mock("../../remediation/enrich.server", () => ({ enrichRemediation }));
+vi.mock("../alert-action.server", () => ({ executeDiscontinueAlertAction }));
+vi.mock("../reallocate-sku.server", () => ({ executeReallocateSpendSku }));
+vi.mock("../../calderyn.server", () => ({ calderynClient }));
+vi.mock("~/shopify.server", () => ({ unauthenticated: { admin: unauthenticatedAdmin } }));
 // Default: null → mu falls back to 1 → full-cap behavior (today's exact numbers).
 // Per-test override via vi.mocked(getActionPolicy).mockResolvedValueOnce(mu).
 vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolvedValue(null) }));
@@ -125,6 +149,7 @@ function fakeSb(opts: {
 const candidate = {
   alert_id: "al1", detector_id: "campaign_below_breakeven", dollar_impact: 80,
   campaign_id: "camp-uuid", campaign_spend_cents: 50000, daily_budget_cents: 10000,
+  evidence: null, sku: null, sku_id: null,
 };
 
 describe("runAutopilotForShop", () => {
@@ -134,6 +159,10 @@ describe("runAutopilotForShop", () => {
     executeReallocation.mockResolvedValue({ id: "aud2", outcome: "succeeded" });
     loadReallocationCandidates.mockResolvedValue([]);
     pickReallocation.mockReturnValue({ source: null, dest: null });
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    // enrichRemediation identity mock: returns the plan unchanged so executor
+    // stays null for most tests (no reallocate winner found).
+    enrichRemediation.mockImplementation(async (_alert: unknown, plan: unknown) => plan);
     // clearAllMocks resets calls but NOT implementations — restore the default
     // (no learned dial -> full cap) so a per-test mockImplementation can't leak.
     vi.mocked(getActionPolicy).mockReset().mockResolvedValue(null);
@@ -179,6 +208,15 @@ describe("runAutopilotForShop", () => {
     expect(r.blocked).toBe(1);
   });
 
+  // ad_tax_overload WITH a campaign but NO evidence: enrichRemediation (mocked
+  // as identity) leaves the reallocate_to_winner move with executor null →
+  // tryRemediation returns "fell_through" → legacy reduce/reallocate path runs.
+  // NOTE: This is the ⚠️ DECISION REQUIRED scenario. With Option A these
+  // assertions would instead point at executeReallocateSpendSku. For now
+  // (Task 4), the identity enrichRemediation mock keeps executor null so the
+  // legacy path still runs — preserving these assertions without change.
+  // The true Option-A collision only appears in the real engine (no mock);
+  // Task 5 will handle that.
   it("reduces budget for an ad_tax_overload alert", async () => {
     checkGuardrails.mockResolvedValue({ allowed: true });
     const sb = fakeSb({ enabled: true, alerts: [{ ...candidate, detector_id: "ad_tax_overload" }] });
@@ -281,7 +319,10 @@ describe("runAutopilotForShop", () => {
     const r = await runAutopilotForShop(SHOP, sb);
     expect(executeAction).not.toHaveBeenCalled();
     expect(executeReallocation).not.toHaveBeenCalled();
-    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 1, failed: 0 });
+    // Merged summary carries main's structured fields too (considered /
+    // blockedReasons / decisions), so an exhaustive toEqual no longer applies;
+    // toMatchObject still pins acted/blocked/failed AND our skippedMoves.
+    expect(r).toMatchObject({ skipped: false, acted: 0, blocked: 1, skippedMoves: 0, failed: 0 });
   });
 
   it("keeps draining the remaining candidates after a null-budget block", async () => {
@@ -299,7 +340,34 @@ describe("runAutopilotForShop", () => {
       expect.objectContaining({ kind: "pause_campaign", alertId: "al2" }),
       sb,
     );
-    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 1, failed: 0 });
+    // Merged summary has extra structured fields → toMatchObject, still pinning
+    // our skippedMoves alongside main's acted/blocked/failed.
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 1, skippedMoves: 0, failed: 0 });
+  });
+
+  it("keeps acting on remaining alerts after one action throws, counting the failure", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    // First candidate's execution throws (e.g. a DB/ownership error inside
+    // executeAction); the second must still be attempted, not skipped.
+    executeAction
+      .mockRejectedValueOnce(new Error("ownership check failed"))
+      .mockResolvedValue({ id: "aud1", outcome: "succeeded" });
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [
+        { ...candidate, alert_id: "al1", campaign_id: "camp-1" },
+        { ...candidate, alert_id: "al2", campaign_id: "camp-2" },
+      ],
+    });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    expect(executeAction).toHaveBeenNthCalledWith(
+      2,
+      SHOP,
+      expect.objectContaining({ alertId: "al2" }),
+      sb,
+    );
+    expect(r).toMatchObject({ skipped: false, acted: 1, blocked: 0, skippedMoves: 0, failed: 1 });
   });
 
   it("counts a guardrail-blocked reallocation as blocked (no fallback to reduce)", async () => {
@@ -348,6 +416,157 @@ describe("runAutopilotForShop", () => {
     await runAutopilotForShop(SHOP, sb);
     const kinds = executeAction.mock.calls.map((c) => ((c as unknown as [unknown, { kind: string }])[1]).kind);
     expect(kinds).toEqual(["pause_campaign", "increase_campaign_budget"]);
+  });
+
+  // ─── Task 4: remediation branch tests ────────────────────────────────────────
+  // rankMoves / toNumericEvidence / remediationReason are pure and NOT mocked —
+  // the test exercises real ranking + real reasoning (rule 9: checks behavior).
+  // enrichRemediation IS mocked (identity by default) so this suite tests routing,
+  // not the SKU→campaign DB resolution (Phase 3's enrich.test.ts owns that).
+
+  // Structurally-dead SKU economics alert (no campaign): plan.recommended ==
+  // "discontinue", executor "discontinue_sku" → executes via the SKU seam.
+  const deadSku = {
+    alert_id: "al-dead", detector_id: "negative_unit_economics", dollar_impact: 4000,
+    campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+    evidence: { gross_unit_margin_usd: -4, net_per_unit_usd: -34 }, sku: "Dead Tee — M", sku_id: "sku-1",
+  };
+
+  it("acts on a discontinue recommendation via the SKU seam with a deterministic reason", async () => {
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    // The Phase-2 gateway takes a SINGLE opts object (client + admin + sb + ids).
+    expect(executeDiscontinueAlertAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: SHOP,
+        alertId: "al-dead",
+        kind: "discontinue_sku",
+        actor: "autopilot",
+        idempotencyKey: "autopilot:al-dead:discontinue_sku",
+        sb,
+      }),
+    );
+    const [opts] = executeDiscontinueAlertAction.mock.calls[0] as unknown as [{ triggerReason: string }];
+    expect(opts.triggerReason).toContain("discontinue");
+    expect(opts.triggerReason).toContain("structurally dead");
+    expect(opts.triggerReason).toContain("$4,000");
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(1);
+  });
+
+  it("respects the daily action cap on a remediation move (blocked, no execution)", async () => {
+    checkSkuGuardrails.mockResolvedValue({ allowed: false, reason: "daily action cap reached" });
+    const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(r.blocked).toBe(1);
+    expect(r.acted).toBe(0);
+  });
+
+  // MERGE (calibration × remediation): an executable remediation move is gated on
+  // calibration graduation, exactly like the legacy autonomous path. When the
+  // (detector, executor) pair is NOT graduated, tryRemediation must skip BEFORE
+  // touching the executor or any guardrail, bucket the skip as `skippedMoves`
+  // (not a guardrail `blocked`), and the candidate must be fully resolved — it
+  // does NOT fall through to a legacy action (no double-evaluation). This is the
+  // v1 default: nothing is graduated, so autopilot-remediation stays dormant.
+  it("skips a remediation move when the (detector, executor) pair is NOT graduated", async () => {
+    // discontinue_sku for negative_unit_economics is not graduated (v1 default).
+    isGraduated.mockResolvedValue(false);
+    checkSkuGuardrails.mockResolvedValue({ allowed: true }); // would allow if reached
+    const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    // The remediation executor must NOT fire, and its SKU guard must not even be
+    // consulted — the graduation gate precedes it.
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(checkSkuGuardrails).not.toHaveBeenCalled();
+    // No fall-through to a legacy campaign action either.
+    expect(executeAction).not.toHaveBeenCalled();
+    // Gate keys on the move's EXECUTOR kind (discontinue_sku), not the detector's
+    // legacy kind — same isGraduated check the legacy autonomous path applies.
+    expect(isGraduated).toHaveBeenCalledWith(
+      SHOP,
+      "negative_unit_economics",
+      "discontinue_sku",
+      sb,
+    );
+    // Bucketed as a skipped move, NOT a guardrail block: skippedMoves bumps,
+    // blocked stays 0, and the reason is surfaced (rule 12).
+    expect(r.acted).toBe(0);
+    expect(r.skippedMoves).toBe(1);
+    expect(r.blocked).toBe(0);
+    const dec = r.decisions.find((d) => d.alertId === "al-dead");
+    expect(dec).toMatchObject({ outcome: "skipped", reason: "remediation pair not graduated" });
+  });
+
+  // ad_tax_overload WITH campaign + sku_id: rankMoves returns reallocate_to_winner
+  // (executor null from rank.ts). enrichRemediation.mockResolvedValueOnce flips
+  // the move's executor to "reallocate_spend_sku" → tryRemediation routes to the
+  // Phase-3 SKU gateway. The discontinue/legacy seams must NOT be called.
+  // NOTE: for ad_tax_overload fixtures WITHOUT evidence (the legacy tests above),
+  // enrichRemediation identity-mock keeps executor null → fell_through → legacy
+  // reduce/reallocate path. That is correct no-sku_id fallback; see Task 5 Step 3.
+  it("acts on a reallocate_to_winner recommendation via the SKU-realloc seam with a deterministic reason", async () => {
+    const reallocCandidate = {
+      alert_id: "al-realloc", detector_id: "ad_tax_overload", dollar_impact: 5305,
+      campaign_id: "camp-loser", campaign_spend_cents: 80000, daily_budget_cents: 20000,
+      evidence: { gross_unit_margin_usd: 3, ad_spend_7d_usd: 800 }, sku: "Tax Overload Tee", sku_id: "sku-3",
+    };
+    // rankMoves(ad_tax_overload, not-structurally-dead) → recommended="reallocate_to_winner",
+    // executor=null. Simulate enrichRemediation filling in the winner campaign:
+    enrichRemediation.mockResolvedValueOnce({
+      moves: [
+        { kind: "reallocate_to_winner", dollarImpactCents: 530500, executor: "reallocate_spend_sku",
+          label: "Move ad budget to a higher-margin product",
+          target: { loserCampaignId: "camp-loser", winnerCampaignId: "camp-winner", amountCents: 530500 } },
+        { kind: "cut_ads", dollarImpactCents: 530500, executor: "pause_campaign", label: "Cut the ad spend driving the loss" },
+        { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+      ],
+      recommended: "reallocate_to_winner",
+      structurallyDead: false,
+    });
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [reallocCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeReallocateSpendSku).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: SHOP,
+        alertId: "al-realloc",
+        actor: "autopilot",
+        idempotencyKey: "autopilot:al-realloc:reallocate_spend_sku",
+      }),
+    );
+    const [opts] = executeReallocateSpendSku.mock.calls[0] as unknown as [{ triggerReason: string }];
+    expect(opts.triggerReason).toContain("reallocate_to_winner");
+    expect(opts.triggerReason).toContain("$5,305");  // recommended 530500c
+    expect(opts.triggerReason).toContain("cut_ads");  // runner-up in reason
+    // Legacy campaign seam and discontinue seam must NOT be called.
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(1);
+  });
+
+  // Viable margin-erosion alert: plan.recommended == "review_pricing" (or
+  // "reallocate_to_winner" with null executor from identity enrichRemediation)
+  // → advisory, executor null → tryRemediation returns "fell_through".
+  // The legacy path finds no kind for margin_erosion → continues without action.
+  it("does NOT act on an advisory recommendation and surfaces it as a skip", async () => {
+    const advisory = {
+      alert_id: "al-adv", detector_id: "margin_erosion", dollar_impact: 200,
+      campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+      evidence: { baseline_unit_margin_usd: 18, current_unit_margin_usd: 7, drop_pct: 61 },
+      sku: "Slim Margin Tee", sku_id: "sku-2",
+    };
+    const sb = fakeSb({ enabled: true, alerts: [advisory] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+    expect(executeReallocateSpendSku).not.toHaveBeenCalled();
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(0);
+    // review_pricing is advisory → "fell_through" to legacy logic, which has no
+    // campaign action for a SKU-only margin_erosion alert, so nothing is done.
+    expect(r.skippedMoves + r.blocked).toBe(0);
   });
 
   describe("observability (rule 12: fail visibly)", () => {
@@ -532,6 +751,66 @@ describe("runAutopilotForShop", () => {
         }),
         sb,
       );
+      expect(r.acted).toBe(1);
+    });
+
+    // LIVE-MONEY double-processing regression: the v_autopilot_candidates view is
+    // a LEFT JOIN, so a campaign-less ad_tax_overload alert now appears in BOTH
+    // the view (evidence, campaign_id null, 0 budget) AND the scoped `alerts`
+    // query (resolveScopedCandidates resolves a campaign + budget). Before the
+    // merge, that one alert_id produced TWO candidates — the campaign-less view
+    // row fell through to a legacy reduce and BLOCKED ("requires a campaign_id"),
+    // while the scoped row reallocated/reduced and ACTED: two decisions for one
+    // alert and a corrupted audit (and, in the real engine, two budget writes on
+    // one alert). The per-alert_id merge backfills the resolved campaign_id +
+    // budget into the single view candidate, so the alert is processed ONCE.
+    it("processes a campaign-less ad_tax_overload alert present in BOTH sources exactly once (no double action)", async () => {
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      // resolveScopedCandidates picks the worst-graded source; the loop's
+      // reallocation branch then picks the winning dest.
+      pickReallocation
+        .mockReturnValueOnce({ source: scopedSource, dest: null }) // targeting: source
+        .mockReturnValueOnce({ source: null, dest: scopedDest });  // loop: dest
+      loadReallocationCandidates.mockResolvedValue([scopedSource, scopedDest]);
+
+      // SAME alert id "al-dup" on BOTH sides. View row: evidence present,
+      // campaign_id null, 0 budget (the LEFT-JOIN shape). Scoped row: the open
+      // ad_tax_overload alert the resolver turns into a campaign target.
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [
+          {
+            alert_id: "al-dup",
+            detector_id: "ad_tax_overload",
+            dollar_impact: 150,
+            campaign_id: null,
+            campaign_spend_cents: 0,
+            daily_budget_cents: null,
+            evidence: { gross_unit_margin_usd: 3, ad_spend_7d_usd: 800 },
+            sku: "Dup Tee",
+            sku_id: "sku-dup",
+          },
+        ],
+        scopedAlerts: [
+          { id: "al-dup", detector_id: "ad_tax_overload", dollar_impact: 150, entity_ref: {} },
+        ],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      // Exactly ONE decision for the alert — not a block + an act.
+      expect(r.decisions.filter((d) => d.alertId === "al-dup")).toHaveLength(1);
+      // At most one executor fired for it: a reallocation acted, and the legacy
+      // campaign executor (reduce/pause) must NOT have ALSO fired.
+      expect(executeReallocation).toHaveBeenCalledTimes(1);
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ sourceCampaignId: "source-uuid", alertId: "al-dup" }),
+        sb,
+      );
+      expect(executeAction).not.toHaveBeenCalled();
+      // No spurious "requires a campaign_id" block in the audit.
+      expect(r.blocked).toBe(0);
+      expect(r.blockedReasons).toEqual({});
       expect(r.acted).toBe(1);
     });
   });

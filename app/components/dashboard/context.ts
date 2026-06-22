@@ -40,6 +40,8 @@ export type ActionKind =
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
+  | "discontinue_sku"
+  | "reallocate_spend_sku"
   | "snooze_alert";
 
 export interface DashboardCtx {

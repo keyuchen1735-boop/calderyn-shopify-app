@@ -251,34 +251,96 @@ function AlertDetail({
                 <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
                 your audit history and can be reverted there.
               </p>
+            ) : alert.remediation ? (
+              <>
+                {alert.rec_detail && (
+                  <p className="cd-body" style={{ maxWidth: "52ch" }}>
+                    {alert.rec_detail}
+                  </p>
+                )}
+                <div className="flex flex-col gap-2 mt-1">
+                  {alert.remediation.moves.map((m) => {
+                    const rec = m.kind === alert.remediation!.recommended;
+                    const executable = m.executor !== null;
+                    if (executable) {
+                      // Executable move: render as a button. Danger styling for
+                      // destructive executors (discontinue). Phase 3 adds
+                      // reallocate_spend_sku, reduce_campaign_budget, pause_campaign.
+                      const isDiscontinue = m.executor === "discontinue_sku";
+                      return (
+                        <button
+                          key={m.kind}
+                          disabled={resolved || busy}
+                          aria-busy={busy && attempted === m.executor}
+                          className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
+                          onClick={() => run(m.executor as ActionKind)}
+                        >
+                          <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
+                          <span className="flex-1 text-left">{m.label}</span>
+                          {rec && <span className="cd-rec-tag">Recommended</span>}
+                        </button>
+                      );
+                    }
+                    // Advisory move (executor === null): show guidance row with
+                    // ineligibleReason when set (rule 12 — never a dead button).
+                    return (
+                      <div
+                        key={m.kind}
+                        className={"cd-move-row" + (rec ? " rec" : "")}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--border)",
+                          background: rec ? "var(--surface-2)" : "transparent",
+                        }}
+                      >
+                        <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
+                        <span className="flex-1 text-left">{m.label}</span>
+                        {rec && <span className="cd-rec-tag">Recommended</span>}
+                        {m.ineligibleReason && (
+                          <span className="cd-caption" style={{ color: "var(--text-3)", flexShrink: 0, maxWidth: "32ch", textAlign: "right" }}>
+                            {m.ineligibleReason}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                  logged. Advisory moves are guidance; the highlighted action runs with one click.
+                </p>
+              </>
             ) : (
-              alert.rec_detail && <p className="cd-caption">{alert.rec_detail}</p>
+              <>
+                {alert.rec_detail && <p className="cd-caption">{alert.rec_detail}</p>}
+                <div className="flex flex-col gap-2 mt-1">
+                  {alert.actions.map((kind) => {
+                    const rec = kind === alert.recommended;
+                    return (
+                      <button
+                        key={kind}
+                        disabled={resolved || busy}
+                        aria-busy={busy && attempted === kind}
+                        className={"cd-action-btn" + (rec ? " rec" : "")}
+                        onClick={() => run(kind as ActionKind)}
+                      >
+                        <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
+                        <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
+                        {rec && <span className="cd-rec-tag">Recommended</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                  logged.
+                </p>
+              </>
             )}
-            <div className="flex flex-col gap-2 mt-1">
-              {alert.actions.map((kind) => {
-                const rec = kind === alert.recommended;
-                return (
-                  <button
-                    key={kind}
-                    disabled={resolved || busy}
-                    aria-busy={busy && attempted === kind}
-                    className={"cd-action-btn" + (rec ? " rec" : "")}
-                    onClick={() => run(kind as ActionKind)}
-                  >
-                    <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
-                    <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
-                    {rec && <span className="cd-rec-tag">Recommended</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <p
-              className="cd-caption mt-1"
-              style={{ display: "flex", gap: 6, alignItems: "center" }}
-            >
-              <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-              logged.
-            </p>
           </Card>
         </div>
       </div>

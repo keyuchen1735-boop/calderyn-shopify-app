@@ -1,6 +1,7 @@
 // Type definitions for the Calderyn prototype.
 
 import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
+import type { RemediationPlan } from "./remediation/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
@@ -10,11 +11,13 @@ export type ActionKind =
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
   | "reallocate_budget"
+  | "reallocate_spend_sku"
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
   | "raise_free_ship_threshold"
   | "exclude_sku_free_ship"
+  | "discontinue_sku"
   | "snooze_alert";
 export type DetectorId =
   | "ad_tax_overload"
@@ -51,6 +54,12 @@ export interface Alert {
   campaign_external_id: string | null;
   sku: string | null;
   evidence: Record<string, any>;
+  /** Strategic remediation for product-economics detectors (computed on read in
+   *  rowToAlert). Null for other detectors. */
+  remediation: RemediationPlan | null;
+  /** One-to-two sentence plain-language synopsis derived from the remediation
+   *  plan. Empty string when there is no plan. */
+  rec_detail: string;
 }
 
 /** One input that fed an action's booked-margin figure, with its data source.
@@ -185,6 +194,9 @@ export interface SKU {
    * divide-by-zero) or no returns. `rate` is 0..1; `returned_units_30d` is the
    * absolute refunded-unit count. */
   returns?: { returned_units_30d: number; rate: number };
+  /** Internal "do not reorder" flag — set by discontinue_sku, blocks PO drafts.
+   *  Surfaced on the Inventory surface. */
+  do_not_reorder: boolean;
 }
 
 /** One day's total on-hand for a SKU (sum across locations), for the stock-trend

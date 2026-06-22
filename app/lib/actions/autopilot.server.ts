@@ -7,20 +7,47 @@ import { getActionPolicy } from "./action-policy.server";
 import { checkGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
-import { loadReallocationCandidates, pickReallocation } from "./reallocation-suggest.server";
-import { resolveScopedCandidates, type Candidate } from "./autopilot-targeting.server";
+import {
+  loadReallocationCandidates,
+  pickReallocation,
+} from "./reallocation-suggest.server";
+// Main's scoped resolver synthesises campaign targets for campaign-less
+// ad_tax_overload alerts. Its Candidate is ad_tax_overload-specific (no
+// evidence/sku/sku_id), so it is aliased — the merged `Candidate` below is the
+// one the loop and tryRemediation use.
+import { resolveScopedCandidates } from "./autopilot-targeting.server";
 import { DETECTOR_LABELS } from "../labels";
+import { rankMoves, toNumericEvidence } from "../remediation/rank";
+import { enrichRemediation } from "../remediation/enrich.server";
+import type { MoveKind, StrategicMove } from "../remediation/types";
+import { remediationReason } from "./remediation-reason";
+import { checkSkuGuardrails } from "./remediation-guard.server";
+import { executeDiscontinueAlertAction } from "./alert-action.server";
+import { executeReallocateSpendSku } from "./reallocate-sku.server";
+import { calderynClient } from "../calderyn.server";
+import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
 import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
 import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
 
-const PAUSE_DETECTORS = new Set(["campaign_below_breakeven", "negative_unit_economics"]);
+const PAUSE_DETECTORS = new Set([
+  "campaign_below_breakeven",
+  "negative_unit_economics",
+]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
 const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
+
+const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
+  "negative_unit_economics",
+  "ad_tax_overload",
+  "return_rate_hidden_loss",
+  "margin_erosion",
+  "cogs_drift",
+]);
 
 /** Per-candidate decision outcome. "skipped" = a pre-flight refusal (no
  *  guardrail call); "blocked" = a guardrail verdict refused it; "failed" = the
@@ -31,7 +58,8 @@ export type AutopilotOutcome = "acted" | "blocked" | "skipped" | "failed";
  *  auditable (rule 12: fail visibly). */
 export interface AutopilotDecision {
   alertId: string;
-  campaignId: string;
+  /** Null for SKU-only economics alerts that carry no campaign. */
+  campaignId: string | null;
   detectorId: string;
   intendedKind: ExecutableKind | null;
   outcome: AutopilotOutcome;
@@ -44,6 +72,9 @@ export interface AutopilotSummary {
   acted: number;
   /** Candidates a guardrail or pre-flight check refused (no budget written). */
   blocked: number;
+  /** Remediation recommendations that were advisory/non-executable and not acted
+   *  on (distinct from `blocked`, which is a guardrail/cap/precondition refusal). */
+  skippedMoves: number;
   /** Attempted but did not land: executor returned "failed"/"retrying", or threw. */
   failed: number;
   /** Total candidates evaluated this run (one decision recorded per candidate). */
@@ -56,21 +87,266 @@ export interface AutopilotSummary {
   decisions: AutopilotDecision[];
 }
 
-function autopilotReason(verb: string, detectorId: string, dollarImpact: number): string {
-  const label = DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId;
+interface Candidate {
+  alert_id: string;
+  detector_id: string;
+  dollar_impact: number; // dollars
+  campaign_id: string | null; // nullable: SKU-only economics alerts have no campaign
+  campaign_spend_cents: number;
+  daily_budget_cents: number | null;
+  // New (Task 3 view): for the remediation plan + SKU targeting. Optional so the
+  // synthetic scoped candidates (which lack them) still satisfy the type.
+  evidence?: Record<string, unknown> | null;
+  sku?: string | null;
+  sku_id?: string | null;
+}
+
+// Maps a plan move's executor to a guarded execution. The `outcome` is one of
+// "acted" | "blocked" | "skipped" | "fell_through"; "fell_through" means "not an
+// executable remediation move — let the legacy campaign logic handle it". The
+// `reason` is a plain-language line for the structured decision / blockedReasons
+// histogram (rule 12: every blocked/skipped path is explained).
+type RemediationOutcome = "acted" | "blocked" | "skipped" | "fell_through";
+interface RemediationResult {
+  outcome: RemediationOutcome;
+  reason: string;
+}
+
+/** Try to act on the candidate's stored remediation recommendation. Returns
+ *  whether it acted/blocked/skipped (with a reason), or "fell_through" to defer
+ *  to the legacy campaign logic. The decision is the Phase-1 plan + the Phase-3
+ *  enrichment — we never re-rank or re-resolve the winner/campaign here
+ *  (re-deriving would drift from the merchant path, which routes the *same*
+ *  enriched move). */
+async function tryRemediation(
+  shopId: string,
+  c: Candidate,
+  sb: SupabaseClient,
+): Promise<RemediationResult> {
+  if (!PRODUCT_ECON_DETECTORS.has(c.detector_id as DetectorId))
+    return { outcome: "fell_through", reason: "not a product-economics detector" };
+
+  // Reuse the Phase-1 engine on the candidate's own evidence — identical input
+  // to attachRemediation(), so autopilot and the UI agree on the recommendation.
+  const dollarImpactCentsAlert = Math.round(Number(c.dollar_impact) * 100);
+  const basePlan = rankMoves({
+    detectorId: c.detector_id as DetectorId,
+    dollarImpactCents: dollarImpactCentsAlert,
+    evidence: toNumericEvidence(c.evidence ?? {}),
+  });
+
+  // Phase-3 enrichment fills the executable target + flips executor null →
+  // "reallocate_spend_sku"/cut kinds. Phase 4 calls the SAME resolver the
+  // merchant detail paths call — it does NOT re-derive the winner/campaign
+  // itself (re-deriving here would drift from the merchant path). enrich takes
+  // an Alert-shaped object; the candidate row carries everything it reads
+  // (id, detector_id, dollar_impact, evidence with sku_id).
+  const alertForEnrich = {
+    id: c.alert_id,
+    detector_id: c.detector_id as DetectorId,
+    dollar_impact: dollarImpactCentsAlert,
+    evidence: { ...(c.evidence ?? {}), sku_id: c.sku_id ?? undefined },
+  } as unknown as Alert;
+  const plan = await enrichRemediation(alertForEnrich, basePlan, sb, shopId);
+
+  const recommended = plan.recommended;
+  if (!recommended) {
+    // Only snooze applies → nothing to automate. Surface, don't drop (rule 12).
+    console.info(`[autopilot] remediation skip on alert ${c.alert_id}: no recommended move`);
+    return { outcome: "skipped", reason: "remediation: no recommended move" };
+  }
+  const move: StrategicMove | undefined = plan.moves.find((m) => m.kind === recommended);
+
+  // Advisory / not-yet-executable recommendation (executor null, or snooze):
+  // autopilot does not auto-snooze and does not act on advisory moves. This
+  // includes a reallocate_to_winner that enrichRemediation left advisory
+  // (no dedicated campaign / no winner → executor stayed null). Fall through so
+  // the legacy campaign logic can still pause/reduce if applicable.
+  if (!move || move.executor == null || move.executor === "snooze_alert") {
+    console.info(
+      `[autopilot] remediation skip on alert ${c.alert_id}: recommended ${recommended} is advisory/non-executable`,
+    );
+    return {
+      outcome: "fell_through",
+      reason: `remediation: ${recommended} is advisory/non-executable`,
+    };
+  }
+
+  const dollarImpactCents = move.dollarImpactCents;
+  const reason = remediationReason(plan, recommended as MoveKind, c.detector_id as DetectorId);
+  const idempotencyKey = `autopilot:${c.alert_id}:${move.executor}`;
+
+  // REVIEW: autopilot-remediation is gated on calibration graduation (same as
+  // legacy autonomous actions); in v1 no pair is graduated so it stays dormant.
+  // Confirm which remediation pairs should become graduatable.
+  //
+  // Graduation gate (Slice 5 parity): an executable remediation move MUST NOT
+  // bypass calibration's safety model. Gate it on the SAME isGraduated check the
+  // legacy autonomous path applies — keyed on the move's executor kind (which is
+  // a valid ActionKind: discontinue_sku | reallocate_spend_sku | pause_campaign |
+  // reduce_campaign_budget). isGraduated is fail-safe (false on any read error),
+  // so a DB hiccup can never grant remediation autonomy. NOT graduated → record a
+  // structured skip (the caller buckets this as `skippedMoves`, not a guardrail
+  // block) and the candidate is fully resolved — it does NOT fall through, because
+  // the detector's legacy path is graduation-gated too and would also skip;
+  // falling through would double-evaluate the same alert. In v1 (nothing
+  // graduated) autopilot-remediation is therefore dormant, consistent with the
+  // rest of the autonomy system. Merchant-facing remediation (panels / manual
+  // execution) is UNAFFECTED — this gate is autopilot-only.
+  if (!(await isGraduated(shopId, c.detector_id, move.executor, sb))) {
+    console.info(
+      `[autopilot] remediation skip on alert ${c.alert_id}: pair (${c.detector_id}/${move.executor}) not graduated`,
+    );
+    return { outcome: "skipped", reason: "remediation pair not graduated" };
+  }
+
+  // SKU-scoped move (discontinue_sku): SKU guard, no campaign needed. The Phase-2
+  // gateway takes a single opts object with a `client` (slice of calderynClient)
+  // and a Shopify `admin` client; it re-derives the product GID from the alert's
+  // own SKU record (never request input). Autopilot passes the alert id + reason.
+  if (move.executor === "discontinue_sku") {
+    if (!c.sku_id) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: discontinue_sku has no sku_id`);
+      return { outcome: "blocked", reason: "remediation: discontinue_sku has no sku_id" };
+    }
+    const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
+    }
+    const client = calderynClient(shopId);
+    const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+    await executeDiscontinueAlertAction({
+      client,
+      admin,
+      sb,
+      shopId,
+      alertId: c.alert_id,
+      kind: "discontinue_sku",
+      idempotencyKey,
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    return { outcome: "acted", reason };
+  }
+
+  // Campaign-scoped remediation moves: reallocate_spend_sku, or a plain cut via
+  // pause/reduce. These need a campaign; without one, block (rule 12 — the
+  // engine should not have offered an executable campaign move with no campaign).
+  if (!c.campaign_id) {
+    console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${move.executor} needs a campaign`);
+    return { outcome: "blocked", reason: `remediation: ${move.executor} needs a campaign` };
+  }
+
+  // SKU budget shift: route to the Phase-3 SKU gateway. It re-runs
+  // enrichRemediation server-side to re-resolve the loser→winner pair from the
+  // trusted alert (it does NOT trust client-supplied campaign ids), then
+  // delegates to the shipped executeReallocation. Autopilot passes only the
+  // alert id + idempotency key + reason; the enriched `target` we read above is
+  // used solely to confirm executor === "reallocate_spend_sku" before routing.
+  if (move.executor === "reallocate_spend_sku") {
+    const verdict = await checkSkuGuardrails(shopId, { dollarImpactCents }, sb);
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
+    }
+    const client = calderynClient(shopId);
+    await executeReallocateSpendSku({
+      client,
+      sb,
+      shopId,
+      alertId: c.alert_id,
+      idempotencyKey,
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    return { outcome: "acted", reason };
+  }
+
+  // Plain cut: pause_campaign / reduce_campaign_budget through the existing
+  // campaign executor seam executeAction(shopId, ExecuteInput, sb) + the
+  // campaign guard. triggerReason flows through ExecuteInput.triggerReason.
+  if (move.executor === "pause_campaign" || move.executor === "reduce_campaign_budget") {
+    const currentBudgetCents = c.daily_budget_cents ?? null;
+    const newBudgetCents =
+      move.executor === "reduce_campaign_budget" && currentBudgetCents != null
+        ? Math.round(currentBudgetCents * 0.5) // mirror DEFAULT_MAX_CUT_PCT (guard enforces the live value)
+        : undefined;
+    if (move.executor === "reduce_campaign_budget" && !newBudgetCents) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: no current budget to cut`);
+      return { outcome: "blocked", reason: "remediation: no current budget to cut" };
+    }
+    const verdict = await checkGuardrails(
+      shopId,
+      {
+        kind: move.executor,
+        campaignId: c.campaign_id,
+        dollarImpactCents,
+        campaignSpendCents: c.campaign_spend_cents,
+        currentBudgetCents: currentBudgetCents ?? undefined,
+        newBudgetCents,
+      },
+      sb,
+    );
+    if (!verdict.allowed) {
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by guardrails" };
+    }
+    await executeAction(
+      shopId,
+      {
+        alertId: c.alert_id,
+        kind: move.executor,
+        campaignId: c.campaign_id,
+        idempotencyKey,
+        dailyBudgetCents: newBudgetCents,
+        actor: "autopilot",
+        triggerReason: reason,
+      },
+      sb,
+    );
+    return { outcome: "acted", reason };
+  }
+
+  // Unknown executor union member — fail visibly rather than silently dropping.
+  console.warn(`[autopilot] remediation skip on alert ${c.alert_id}: unhandled executor ${move.executor}`);
+  return { outcome: "skipped", reason: `remediation: unhandled executor ${move.executor}` };
+}
+
+function autopilotReason(
+  verb: string,
+  detectorId: string,
+  dollarImpact: number,
+): string {
+  const label =
+    DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId;
   const stake = Math.round(Number(dollarImpact) || 0).toLocaleString("en-US");
   return `${verb}: "${label}" — $${stake} at stake, within guardrails`;
 }
 
-export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): Promise<AutopilotSummary> {
+export async function runAutopilotForShop(
+  shopId: string,
+  sb: SupabaseClient,
+): Promise<AutopilotSummary> {
   const { data: cfg, error: cErr } = await sb
     .from("guardrail_config")
-    .select("autopilot_enabled, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents")
+    .select(
+      "autopilot_enabled, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents",
+    )
     .eq("shop_id", shopId)
     .maybeSingle();
   if (cErr) throw cErr;
   if (!cfg || !cfg.autopilot_enabled)
-    return { skipped: true, acted: 0, blocked: 0, failed: 0, considered: 0, blockedReasons: {}, decisions: [] };
+    return {
+      skipped: true,
+      acted: 0,
+      blocked: 0,
+      skippedMoves: 0,
+      failed: 0,
+      considered: 0,
+      blockedReasons: {},
+      decisions: [],
+    };
 
   // I6: Per-shop concurrency lock — prevents overlapping cron ticks from
   // double-acting on the same shop. Fail-safe: if the lock is NOT acquired
@@ -90,6 +366,7 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       skipped: true,
       acted: 0,
       blocked: 0,
+      skippedMoves: 0,
       failed: 0,
       considered: 0,
       blockedReasons: {},
@@ -140,11 +417,15 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
   const maxCutPct = Number(cfg.autopilot_max_budget_cut_pct ?? DEFAULT_MAX_CUT_PCT);
   const maxIncreasePct = Number(cfg.autopilot_max_budget_increase_pct ?? DEFAULT_MAX_INCREASE_PCT);
   const maxDailyBudgetCents =
-    cfg.autopilot_max_daily_budget_cents == null ? null : Number(cfg.autopilot_max_daily_budget_cents);
+    cfg.autopilot_max_daily_budget_cents == null
+      ? null
+      : Number(cfg.autopilot_max_daily_budget_cents);
 
   const { data: rows, error: aErr } = await sb
     .from("v_autopilot_candidates")
-    .select("alert_id, detector_id, dollar_impact, campaign_id, campaign_spend_cents, daily_budget_cents")
+    .select(
+      "alert_id, detector_id, dollar_impact, campaign_id, campaign_spend_cents, daily_budget_cents, evidence, sku, sku_id",
+    )
     .eq("shop_id", shopId)
     .order("dollar_impact", { ascending: false });
   if (aErr) throw aErr;
@@ -169,7 +450,39 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       : [];
 
   const scoped = await resolveScopedCandidates(shopId, (scopedRows ?? []) as never, gradedPool, sb);
-  const allCandidates = [...candidates, ...scoped];
+
+  // Merge per alert_id so EACH alert is exactly one candidate (rule 12: no
+  // double-processing of live money). A campaign-less ad_tax_overload alert now
+  // surfaces in BOTH sources: the view row (LEFT JOIN) carries evidence/sku with
+  // a null campaign_id; the scoped resolver carries an attribution-resolved
+  // campaign_id + budget but no evidence. Without this, that one alert would
+  // appear twice — tryRemediation could act on one copy while the other
+  // fell_through to a legacy reduce, and the campaign-less view copy would emit a
+  // spurious "requires a campaign_id" block, corrupting the audit.
+  //
+  // For each view candidate whose campaign_id is null with a matching scoped
+  // entry, backfill the resolved campaign_id + the budget/spend fields the legacy
+  // path reads (daily_budget_cents → currentBudgetCents, campaign_spend_cents →
+  // the guardrail check). Then append only scoped entries whose alert_id is not
+  // already covered by a view candidate. Result: one candidate per alert_id,
+  // carrying BOTH evidence (for tryRemediation) AND a campaign target (for a
+  // fell-through legacy reduce/reallocate). dollar_impact ordering is preserved:
+  // view candidates keep their position; scoped-only candidates append after.
+  const scopedByAlert = new Map(scoped.map((s) => [s.alert_id, s]));
+  const seenAlertIds = new Set(candidates.map((c) => c.alert_id));
+  const mergedViewCandidates = candidates.map((c) => {
+    if (c.campaign_id != null) return c;
+    const s = scopedByAlert.get(c.alert_id);
+    if (!s) return c;
+    return {
+      ...c,
+      campaign_id: s.campaign_id,
+      daily_budget_cents: s.daily_budget_cents,
+      campaign_spend_cents: s.campaign_spend_cents,
+    };
+  });
+  const scopedOnly = scoped.filter((s) => !seenAlertIds.has(s.alert_id));
+  const allCandidates = [...mergedViewCandidates, ...scopedOnly];
 
   // Defensive actions (pause/reduce/reallocate) take priority over offensive
   // scale-ups so loss-prevention is never starved of the daily action cap by a
@@ -181,6 +494,9 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
 
   let acted = 0;
   let blocked = 0;
+  // Remediation recommendations that were advisory/non-executable and not acted
+  // on (distinct from `blocked`, a guardrail/cap/precondition refusal).
+  let skippedMoves = 0;
   let failed = 0;
   const decisions: AutopilotDecision[] = [];
   // Collect notify promises so they are awaited (via Promise.allSettled) before
@@ -233,6 +549,38 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     // abort loss-prevention for the shop's OTHER money-losing campaigns, so
     // count it failed and keep draining.
     try {
+      // FIRST branch: route product-economics detectors through the engine's
+      // recommended remediation move (discontinue / reallocate / cut a SKU or
+      // campaign) within its OWN guardrails. tryRemediation bypasses
+      // getActionPolicy on purpose — these are SKU/structural moves, not the
+      // campaign-budget multipliers the learned dial scales. A candidate that
+      // ACTS or BLOCKS here is fully resolved (`continue`) so it can never also
+      // hit the legacy path below — no double execution on live money.
+      const rem = await tryRemediation(shopId, c, sb);
+      if (rem.outcome === "acted") {
+        decide(c, null, "acted", rem.reason);
+        continue;
+      }
+      if (rem.outcome === "blocked") {
+        decide(c, null, "blocked", rem.reason);
+        continue;
+      }
+      if (rem.outcome === "skipped") {
+        // A non-executing remediation outcome that is neither an act nor a
+        // guardrail block: an advisory/non-executable recommendation, an
+        // un-graduated remediation pair (calibration gate), or an unhandled
+        // executor. It is fully resolved (no fall-through — the legacy path is
+        // graduation-gated too and would also skip, so falling through would
+        // double-evaluate the alert). Count it separately and record a decision
+        // (rule 12), but keep it OUT of the `blocked` counter/histogram (bucket
+        // "none").
+        skippedMoves += 1;
+        decide(c, null, "skipped", rem.reason, "none");
+        continue;
+      }
+      // rem.outcome === "fell_through": defer to the legacy campaign logic so an
+      // overlapping detector (e.g. ad_tax_overload) still reduces/reallocates.
+
       let kind: ExecutableKind | null = null;
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
       else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
@@ -241,6 +589,23 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         decide(c, null, "skipped", "detector not actionable by autopilot", "none");
         continue;
       }
+
+      // Legacy campaign logic requires a non-null campaign_id. A fell-through
+      // candidate without one (data gap in the view) is blocked, not silently
+      // dropped (rule 12). Checked before the graduation gate because it is a
+      // structural precondition of the legacy executor seam.
+      if (!c.campaign_id) {
+        const reason = `${kind} requires a campaign_id`;
+        console.info(`[autopilot] blocked legacy action on alert ${c.alert_id}: ${reason}`);
+        decide(c, kind, "blocked", reason);
+        continue;
+      }
+      // Non-null campaign_id captured here so it survives the awaits/closures
+      // below (TS would otherwise re-widen c.campaign_id back to string | null).
+      // The merged Candidate keeps campaign_id nullable for SKU-only economics
+      // alerts; the legacy seam — and preconditionFresh's targeting Candidate —
+      // require it non-null, which the guard above guarantees.
+      const campaignId: string = c.campaign_id;
 
       // Graduation gate (Slice 5 Task 2, I3/I7): a (detector, action) pair MUST
       // have earned calibration graduation before it may auto-execute. isGraduated
@@ -506,7 +871,12 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
       // pass and BEFORE the executor fires. Fail-safe: a thrown check is ok:false,
       // so a DB hiccup can never silently permit an autonomous action.
       if (kind === "pause_campaign" || kind === "reduce_campaign_budget") {
-        const precheck = await preconditionFresh({ kind, candidate: c, sb, nowMs: Date.now() });
+        const precheck = await preconditionFresh({
+          kind,
+          candidate: { ...c, campaign_id: campaignId },
+          sb,
+          nowMs: Date.now(),
+        });
         if (!precheck.ok) {
           console.info(`[autopilot] precondition re-check failed for ${c.campaign_id}: ${precheck.reason}`);
           decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
@@ -568,6 +938,11 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
         );
       }
     } catch (err) {
+      // A throw here (DB/ownership/insert error in checkGuardrails or an
+      // executor) must not abort the run — log it, count it, and move to the
+      // next candidate. Retriable platform failures are already parked as
+      // `retrying` by executeAction for the action-retry cron, so there is
+      // nothing to retry inline; we just stop one bad alert from starving the rest.
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[autopilot] candidate ${c.campaign_id} (alert ${c.alert_id}) errored: ${msg}`);
       decide(c, null, "failed", `threw: ${msg}`);
@@ -581,7 +956,16 @@ export async function runAutopilotForShop(shopId: string, sb: SupabaseClient): P
     await Promise.allSettled(notifyPromises);
   }
 
-  return { skipped: false, acted, blocked, failed, considered: decisions.length, blockedReasons, decisions };
+  return {
+    skipped: false,
+    acted,
+    blocked,
+    skippedMoves,
+    failed,
+    considered: decisions.length,
+    blockedReasons,
+    decisions,
+  };
 
   } finally {
     // I6: Always release the per-shop lock on completion OR error. The TTL

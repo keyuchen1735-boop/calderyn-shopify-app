@@ -877,7 +877,6 @@
   border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--card);
 }
 
-
 /* ---- Customizable dashboard grid (react-grid-layout) ---- */
 .cd-dash-grid {
   position: relative;

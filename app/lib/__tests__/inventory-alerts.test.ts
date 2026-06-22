@@ -18,6 +18,8 @@ function makeAlert(overrides: Partial<Alert> = {}): Alert {
     campaign_external_id: null,
     sku: "PP-SUMMIT-LOGO-TEE-M",
     evidence: {},
+    remediation: null,
+    rec_detail: "",
     ...overrides,
   };
 }
