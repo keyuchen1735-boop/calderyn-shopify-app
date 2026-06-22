@@ -420,7 +420,7 @@ function AlertDetail({
                         disabled={busy}
                         aria-busy={busy}
                         onClick={runAdjustPrice}
-                        style={{ flex: "0 0 auto" }}
+                        style={{ flex: "0 0 auto", width: "auto" }}
                       >
                         <CDIcon name="tag" size={16} strokeWidth={1.9} />
                         <span>{busy ? "Updating…" : "Update price"}</span>
@@ -432,7 +432,7 @@ function AlertDetail({
                           setConfirmPrice(false);
                           setPriceInput("");
                         }}
-                        style={{ flex: "0 0 auto" }}
+                        style={{ flex: "0 0 auto", width: "auto" }}
                       >
                         <span>Cancel</span>
                       </button>
@@ -520,7 +520,7 @@ function AlertDetail({
                         disabled={busy}
                         aria-busy={busy}
                         onClick={runPo}
-                        style={{ flex: "0 0 auto" }}
+                        style={{ flex: "0 0 auto", width: "auto" }}
                       >
                         <CDIcon name="doc" size={16} strokeWidth={1.9} />
                         <span>{busy ? "Drafting…" : "Create PO draft"}</span>
@@ -529,7 +529,7 @@ function AlertDetail({
                         className="cd-action-btn"
                         disabled={busy}
                         onClick={() => setConfirmPo(false)}
-                        style={{ flex: "0 0 auto" }}
+                        style={{ flex: "0 0 auto", width: "auto" }}
                       >
                         <span>Cancel</span>
                       </button>
