@@ -20,103 +20,36 @@
 //
 // Every section is best-effort via Promise.allSettled: a failing read degrades
 // that one section to empty rather than breaking the page.
-import { calderynClient } from "../calderyn.server";
+import type { calderynClient } from "../calderyn.server";
 import type { ActionKind, AuditEntry } from "../types";
 import { pairConfidenceBreakdown } from "./confidence";
 import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
+import type {
+  LiveEnginePageData,
+  LiveEngineFeatureVM,
+  PipelineCallVM,
+  TraceEventVM,
+  TraceTag,
+  PredictionVM,
+} from "./live-engine-types";
+
+// Re-export the browser-safe VM contract so the embedded route can keep
+// importing it from here; the dashboard (browser) imports straight from
+// ./live-engine-types to avoid pulling in this .server module.
+export type {
+  LiveEnginePageData,
+  LiveEngineFeatureVM,
+  PipelineCallVM,
+  PipelineFactorVM,
+  TraceEventVM,
+  TraceTag,
+  PredictionVM,
+  PredictionTone,
+} from "./live-engine-types";
 
 type Client = ReturnType<typeof calderynClient>;
-
-const DAY_MS = 86_400_000;
-
-/* ---------- view-model contract (shared by both surfaces) ---------- */
-
-export type TraceTag = "AUTO" | "APPROVED" | "UNDONE" | "BLOCKED";
-export type PredictionTone = "warn" | "down" | "geo" | "up";
-
-export interface PipelineFactorVM {
-  key: string;
-  /** Plain-language factor label, e.g. "Your track record". */
-  label: string;
-  /** 0-100 strength. */
-  value: number;
-  /** 0-1 share of the blended confidence. */
-  weight: number;
-}
-
-export interface PipelineCallVM {
-  detectorId: string;
-  actionKind: ActionKind;
-  title: string;
-  context: string;
-  factors: PipelineFactorVM[];
-  /** Surfaced confidence, 0-100. */
-  confidence: number;
-  /** Real per-pair auto-act bar, 0-100. */
-  threshold: number;
-  /** confidence >= threshold — Calderyn handled (or would handle) it on its own. */
-  auto: boolean;
-}
-
-export interface TraceEventVM {
-  id: string;
-  tag: TraceTag;
-  detectorId: string;
-  actionKind: ActionKind;
-  /** Row headline, e.g. "Paused Summit Tee retarget". */
-  text: string;
-  /** Signed impact in cents (negative on reversals); 0 when none. */
-  moneyCents: number;
-  /** HH:MM clock for the row. */
-  time: string;
-  /** Relative age, e.g. "12 min ago". */
-  rel: string;
-  // ----- inspector detail -----
-  title: string;
-  signal: string;
-  evidence: string[];
-  /** Confidence breakdown for this pair, or null when there's no pair to weigh. */
-  factors: PipelineFactorVM[] | null;
-  confidence: number | null;
-  threshold: number;
-  decisionLabel: string;
-  decisionNote: string;
-}
-
-export interface PredictionVM {
-  kind: "stockout" | "alert" | "campaign";
-  text: string;
-  detail: string;
-  tone: PredictionTone;
-}
-
-export interface LiveEngineFeatureVM {
-  detectorId: string;
-  actionKind: ActionKind;
-  /** Action label, e.g. "Pause campaign". */
-  name: string;
-  /** Detector label, e.g. "Campaign is losing money". */
-  watching: string;
-  enabled: boolean;
-  moneyCents: number;
-  actions: number;
-  lastAt: string | null;
-  /** "last acted 12 min ago" | "no actions yet". */
-  lastText: string;
-}
-
-export interface LiveEnginePageData {
-  autopilotEnabled: boolean;
-  moneyProtectedWeekCents: number;
-  features: LiveEngineFeatureVM[];
-  pipeline: PipelineCallVM[];
-  trace: TraceEventVM[];
-  predictions: PredictionVM[];
-  calibrationPct: number | null;
-  nearGraduation: number;
-}
 
 const EMPTY: LiveEnginePageData = {
   autopilotEnabled: false,

@@ -36,6 +36,7 @@ import type {
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
+import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
@@ -845,6 +846,24 @@ export async function fetchLearnedRules(): Promise<LearnedRuleVM[]> {
 /** Deactivate (undo) a learned calibration rule by id. */
 export async function undoRule(ruleId: string): Promise<void> {
   await apiSend<{ ok: true }>("POST", "/dashboard/api/calibration/rules", { ruleId });
+}
+
+// --- live engine -------------------------------------------------------------
+
+/** Fetch the full Live Engine page bundle (autopilot features + money, engine
+ *  pipeline, live trace, predictions, calibration headline). */
+export async function fetchLiveEngine(): Promise<LiveEnginePageData> {
+  return apiGet<LiveEnginePageData>("/dashboard/api/live-engine");
+}
+
+/** Turn a graduated feature's unattended autonomy on/off. The shop is taken
+ *  from the session server-side; actionKind is validated there. */
+export async function toggleFeatureAutonomy(input: {
+  detectorId: string;
+  actionKind: string;
+  enabled: boolean;
+}): Promise<{ ok: boolean; enabled: boolean }> {
+  return apiSend<{ ok: boolean; enabled: boolean }>("POST", "/dashboard/api/live-engine/toggle", input);
 }
 
 // --- creative screener (Predictor) ------------------------------------------

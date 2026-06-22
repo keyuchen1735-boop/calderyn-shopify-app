@@ -1,6 +1,7 @@
 // Calderyn DashV2 — the shared `app` context shape passed to every screen.
 // DashboardApp builds this object; screens consume it as `{ app }: { app: DashboardCtx }`.
 import type { TweakValues } from "./tweaks-panel";
+import type { LiveEnginePageData } from "../../lib/calibration/live-engine-types";
 import type {
   AlertVM,
   AuditVM,
@@ -23,6 +24,7 @@ export type Screen =
   | "inventory"
   | "audit"
   | "action-queue"
+  | "live-engine"
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
@@ -82,6 +84,9 @@ export interface DashboardCtx {
 
   /** Learned calibration rules; empty until loaded. */
   learnedRules: LearnedRuleVM[];
+
+  /** Live Engine page data (autopilot + pipeline + trace + predictions); null until loaded. */
+  liveEngine: LiveEnginePageData | null;
 
   // --- data lifecycle ---
   refresh: () => void;
