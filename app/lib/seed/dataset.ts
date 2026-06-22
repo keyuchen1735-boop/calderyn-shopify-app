@@ -167,6 +167,7 @@ export const SANDBOX_CAMPAIGN_IDS = {
   metaProspecting: "120247426475170026",
   metaRetargeting: "120247426476070026",
   metaBleeder: "120247426477610026",
+  metaCapWinner: "120247426478000026",
   googleBrand: "20871450391",
   googlePmax: "20871450884",
   googleHydrationWest: "20871451307",
@@ -236,6 +237,15 @@ const CAMPAIGNS: CampaignSpec[] = [
       { fromDaysAgo: 44, toDaysAgo: 8, spendCents: 4000, roas: 2.3 },
       { fromDaysAgo: 7, toDaysAgo: 0, spendCents: 10000, roas: 2.3 },
     ], ctr: 0.011, cvr: 0.022, cpmCents: 800,
+  },
+  {
+    // Dedicated winner: a small, efficient Meta retargeting campaign on the
+    // higher-margin Switchback Cap — the product the bleeder's wasted budget
+    // can move to. Healthy ROAS + stock headroom makes it the reallocate
+    // destination the remediation engine resolves (reallocate_to_winner).
+    key: "metaCapWinner", platform: "meta", name: "Retargeting — Switchback Cap (Scaling)",
+    objective: "conversions", dailyBudgetCents: 3000, geoTargets: ALL_REGIONS,
+    phases: [{ fromDaysAgo: 60, toDaysAgo: 0, spendCents: 1400, roas: 4.6 }], ctr: 0.024, cvr: 0.05, cpmCents: 1700,
   },
 ];
 
@@ -317,6 +327,9 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     polesSkuId: mustSku("variant-granite-trekking-poles-one-size").id,
     shellMSkuId: mustSku("variant-cascade-rain-shell-M").id,
   };
+  // Switchback Cap: a healthy, in-stock, higher-margin SKU used as the
+  // dedicated reallocate destination (its own Meta campaign, below).
+  const capWinnerSkuId = mustSku("variant-switchback-cap-one-size").id;
 
   // --- Demand: per (day, region, sku) unit counts from velocity × seasonality.
   const specBySkuId = new Map<string, ProductSpec>();
@@ -680,7 +693,16 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
     const roll = rng();
     let key: CampaignSpec["key"] | null = null;
     if (has(scenario.heroTeeSkuId) && day >= addDays(config.today, -30)) {
-      key = roll < 0.32 ? "metaBleeder" : roll < 0.5 ? "metaProspecting" : null;
+      // Keep the same ~50% of hero-tee orders on Meta (platform-grain spend
+      // attribution unchanged), but send the SINGLE-SKU tee orders to the
+      // bleeder so it reads as dedicated to the tee (>=70% of its attributed
+      // revenue) — the lever cut_ads / reallocate_to_winner need (rule 12).
+      if (roll < 0.5) {
+        const teeOnly = lines.length === 1 && lines[0].sku_id === scenario.heroTeeSkuId;
+        key = teeOnly ? "metaBleeder" : "metaProspecting";
+      } else {
+        key = null;
+      }
     } else if (has(scenario.bottleSkuId)) {
       key =
         order.customer_region === "us-west" && day >= addDays(config.today, -45)
@@ -690,6 +712,11 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
       key = roll < 0.6 ? "tiktokSpark" : null;
     } else if (has(scenario.duffelSkuId)) {
       key = roll < 0.3 ? "googlePmax" : roll < 0.5 ? "metaProspecting" : null;
+    } else if (lines.length === 1 && lines[0].sku_id === capWinnerSkuId) {
+      // Concentrate single-SKU Switchback Cap orders on its own dedicated Meta
+      // campaign so the Cap reads as a winner (>=70% of an active campaign with
+      // stock + positive margin) — the destination reallocate_to_winner needs.
+      key = roll < 0.5 ? "metaCapWinner" : null;
     } else {
       key =
         roll < 0.16 ? "metaProspecting"
