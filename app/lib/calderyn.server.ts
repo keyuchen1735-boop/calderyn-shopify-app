@@ -23,6 +23,7 @@ import { recordApproval as _recordApproval } from "./calibration/approval.server
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
 import { countNearGraduation } from "./calibration/graduation.server";
+import { liveEngineSummary, setPairAutonomy as _setPairAutonomy, type LiveEngineSummary } from "./calibration/live-engine.server";
 import type { RecordRejectionInput } from "./calibration/reject.server";
 import type { ApproveReceipt, RejectReceipt } from "./calibration/delta";
 import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
@@ -1377,6 +1378,21 @@ export function calderynClient(shop: string) {
       async nearGraduation(): Promise<number> {
         const shopId = await shopIdP;
         return countNearGraduation(shopId, supabase);
+      },
+      // Live Engine: graduated features + their autonomous money/counts + the
+      // money protected this week. Never throws (returns empty on read error).
+      async liveEngine(): Promise<LiveEngineSummary> {
+        const shopId = await shopIdP;
+        return liveEngineSummary(shopId, supabase);
+      },
+      // Turn a graduated feature's unattended autonomy on/off (merchant_disabled).
+      async setFeatureAutonomy(
+        detectorId: string,
+        actionKind: ActionKind,
+        enabled: boolean,
+      ): Promise<{ ok: boolean }> {
+        const shopId = await shopIdP;
+        return _setPairAutonomy(shopId, detectorId, actionKind, enabled, supabase);
       },
       // Return all active learned rules for this shop, with plain-language summaries.
       async learnedRules(): Promise<LearnedRule[]> {

@@ -176,3 +176,53 @@ export function smooth(
   else if (delta < -maxStep) next = prevDisplay - maxStep;
   return clampInt(next, 0, 100);
 }
+
+/* ---------- confidence breakdown (Live Engine pipeline + inspector) ---------- */
+
+export interface ConfidenceFactor {
+  key: "detection" | "historical" | "reversibility";
+  /** Plain-language merchant-facing label. */
+  label: string;
+  /** Raw factor strength, 0-100. */
+  value: number;
+  /** Share of the blended confidence, 0-1. */
+  weight: number;
+}
+
+export interface ConfidenceBreakdown {
+  factors: ConfidenceFactor[];
+  /** Final blended confidence (identical to pairConfidence for the same inputs). */
+  confidence: number;
+}
+
+const FACTOR_LABELS: Record<ConfidenceFactor["key"], string> = {
+  detection: "Signal strength",
+  historical: "Your track record",
+  reversibility: "How easily undone",
+};
+
+/**
+ * Decompose a pair's confidence into its three weighted factors, for the
+ * "how it weighed this" pipeline + inspector on the Live Engine. Pure: same
+ * inputs/formula as pairConfidence, just surfaced per-factor.
+ */
+export function pairConfidenceBreakdown(
+  detectorId: string,
+  actionKind: ActionKind,
+  ev: { alpha: number; beta: number },
+  peerP50: number | null,
+): ConfidenceBreakdown {
+  const tier = actionTier(actionKind);
+  const isNoBrainer = NO_BRAINER.has(`${detectorId}:${actionKind}`);
+  const prior = pairPrior(tier, isNoBrainer, peerP50);
+  const hist = historical(ev.alpha, ev.beta, prior);
+  const rev = reversibilityFactor(tier);
+  return {
+    factors: [
+      { key: "detection", label: FACTOR_LABELS.detection, value: Math.round(DETECTION_COLD * 100), weight: WEIGHTS.detection },
+      { key: "historical", label: FACTOR_LABELS.historical, value: Math.round(clamp01(hist) * 100), weight: WEIGHTS.historical },
+      { key: "reversibility", label: FACTOR_LABELS.reversibility, value: Math.round(rev * 100), weight: WEIGHTS.reversibility },
+    ],
+    confidence: pairConfidence(detectorId, actionKind, ev, peerP50),
+  };
+}
