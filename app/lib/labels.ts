@@ -94,6 +94,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   raise_free_ship_threshold: "Raise free-shipping threshold",
   exclude_sku_free_ship: "Exclude SKU from free shipping",
   discontinue_sku: "Stop reordering & archive product",
+  adjust_price: "Raise price to restore margin",
   snooze_alert: "Snooze alert",
 };
 
@@ -110,6 +111,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   raise_free_ship_threshold: "Raised free-ship threshold",
   exclude_sku_free_ship: "Excluded SKU from free shipping",
   discontinue_sku: "Discontinued product",
+  adjust_price: "Raised price",
   snooze_alert: "Snoozed alert",
 };
 
@@ -364,9 +366,9 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],
   campaign_scaling_opportunity: ["increase_campaign_budget", "snooze_alert"],
   ad_tax_overload: ["reallocate_budget", "reallocate_spend_sku", "reduce_campaign_budget", "pause_campaign", "discontinue_sku", "snooze_alert"],
-  margin_erosion: ["discontinue_sku", "snooze_alert"],
+  margin_erosion: ["adjust_price", "discontinue_sku", "snooze_alert"],
   negative_unit_economics: ["reallocate_spend_sku", "pause_campaign", "reduce_campaign_budget", "discontinue_sku", "snooze_alert"],
-  cogs_drift: ["discontinue_sku", "snooze_alert"],
+  cogs_drift: ["adjust_price", "discontinue_sku", "snooze_alert"],
   regional_shortage_risk: ["reallocate_inventory", "create_po_draft", "snooze_alert"],
   regional_spend_starved_stock: ["exclude_geo", "reallocate_inventory", "snooze_alert"],
   reorder_timing: ["create_po_draft", "snooze_alert"],
@@ -391,6 +393,10 @@ const CAMPAIGN_ACTIONS: ReadonlySet<ActionKind> = new Set([
 const PLAN_ONLY_ACTIONS: ReadonlySet<ActionKind> = new Set([
   "reallocate_spend_sku",
   "discontinue_sku",
+  // adjust_price is confirm-only (never autopilot) and needs the live price +
+  // COGS to compute a target the coarse hint can't — surfaced only via the
+  // ranked remediation plan (review_pricing), never auto-queued.
+  "adjust_price",
 ]);
 
 /**

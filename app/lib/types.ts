@@ -18,6 +18,7 @@ export type ActionKind =
   | "raise_free_ship_threshold"
   | "exclude_sku_free_ship"
   | "discontinue_sku"
+  | "adjust_price"
   | "snooze_alert";
 export type DetectorId =
   | "ad_tax_overload"
@@ -247,6 +248,10 @@ export interface GuardrailConfig {
   autopilot_max_budget_increase_pct: number;
   /** Hard per-campaign daily-budget ceiling for autopilot scale-ups; null = none. */
   autopilot_max_daily_budget_cents: number | null;
+  /** Max single-step price change for the adjust_price action, whole percent.
+   *  Merchant-facing (adjust_price is confirm-only, never autopilot) — gates how
+   *  far one click may move a variant price. */
+  max_price_change_pct: number;
 }
 
 /** Why a merchant rejected a calibration proposal. Used by the feedback

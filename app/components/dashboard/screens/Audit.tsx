@@ -110,6 +110,20 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
               <span>Why this fired</span>
               <b>{entry.whyDetail ?? entry.why}</b>
             </div>
+            {entry.action_kind === "create_po_draft" && !failed && (
+              <div className="cd-kv">
+                <span>Purchase order</span>
+                <a
+                  href={`/dashboard/api/audit/${encodeURIComponent(entry.id)}/po.pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cd-link"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <CDIcon name="doc" size={14} strokeWidth={1.9} /> Download PDF
+                </a>
+              </div>
+            )}
             {entry.failure && (
               <div className="cd-kv">
                 <span>Failure reason</span>

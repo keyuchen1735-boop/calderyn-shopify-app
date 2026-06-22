@@ -37,6 +37,13 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ autopilot_max_budget_cut_pct: 37 })).toBeNull();
   });
 
+  it("bounds the adjust_price max_price_change_pct to a whole 1..100", () => {
+    expect(validateGuardrailPatch({ max_price_change_pct: 15 })).toBeNull();
+    expect(validateGuardrailPatch({ max_price_change_pct: 0 })).not.toBeNull();
+    expect(validateGuardrailPatch({ max_price_change_pct: 250 })).not.toBeNull();
+    expect(validateGuardrailPatch({ max_price_change_pct: 12.5 })).not.toBeNull();
+  });
+
   it("rejects a zero or non-integer budget-increase percentage (must be 1..100)", () => {
     expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 0 })).not.toBeNull();
     expect(validateGuardrailPatch({ autopilot_max_budget_increase_pct: 7.5 })).not.toBeNull();

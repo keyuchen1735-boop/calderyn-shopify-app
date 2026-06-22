@@ -318,7 +318,17 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   // ----- execute an action against an alert -----
   const executeAction = useCallback(
-    async (alert: AlertVM, kind: ActionKind) => {
+    async (
+      alert: AlertVM,
+      kind: ActionKind,
+      opts?: {
+        newPriceCents?: number;
+        campaignId?: string;
+        loserBudgetCents?: number;
+        poQuantity?: string;
+        poUnitCost?: string;
+      },
+    ) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
       const markResolved = () => {
@@ -348,20 +358,27 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         }
       }
 
-      // pause / reduce-budget: live endpoint when we have a campaign_id.
+      // pause / reduce-budget: live endpoint. The campaign is either the alert's
+      // own (campaign-level alerts) or the remediation move's loser campaign
+      // (cut_ads on a SKU-level alert, passed via opts.campaignId).
+      const campId = opts?.campaignId ?? alert.campaign_id;
       if (
         (kind === "pause_campaign" || kind === "reduce_campaign_budget") &&
-        alert.campaign_id
+        campId
       ) {
-        const campaign = campaigns.find((c) => c.id === alert.campaign_id);
+        // Reduced budget = 70% of the campaign's current daily budget. Prefer the
+        // live campaigns-list row; fall back to the move's carried budget for a
+        // SKU alert whose loser campaign isn't in this view's campaigns list.
+        const currentBudgetCents = campaigns.find((c) => c.id === campId)?.daily_budget_cents
+          ?? opts?.loserBudgetCents;
         const reducedBudget =
-          campaign && kind === "reduce_campaign_budget"
-            ? Math.round(campaign.daily_budget_cents * 0.7)
+          kind === "reduce_campaign_budget" && currentBudgetCents
+            ? Math.round(currentBudgetCents * 0.7)
             : undefined;
         let receipt: ApproveReceipt | null = null;
         let ok = false;
         try {
-          const { outcome, calibration } = await client.executeCampaignAction(alert.campaign_id, {
+          const { outcome, calibration } = await client.executeCampaignAction(campId, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
@@ -380,7 +397,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             markResolved();
             setCampaigns((cs) =>
               cs.map((c) => {
-                if (c.id !== alert.campaign_id) return c;
+                if (c.id !== campId) return c;
                 if (kind === "pause_campaign") return { ...c, status: "paused" };
                 return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
               }),
@@ -492,9 +509,63 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return { ok, receipt };
       }
 
-      // TODO(phase3-followup): dashboard cut_ads on SKU alerts needs the
-      // enriched target.loserCampaignId routed to executeCampaignAction; until
-      // then it stays advisory on the dashboard (embedded surface executes it).
+      // create_po_draft: live endpoint — builds a PO draft from the alert + the
+      // merchant's quantity/cost and records it (the PDF is downloadable from the
+      // action history). A local document; no external mutation.
+      if (kind === "create_po_draft") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, {
+            type: kind,
+            poQuantity: opts?.poQuantity,
+            poUnitCost: opts?.poUnitCost,
+          });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — drafted. Download the PDF from your action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+          return { ok: true, receipt: null };
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
+        }
+      }
+
+      // adjust_price: live endpoint — raises the SKU's selling price to restore
+      // its pre-erosion margin. The new price is the engine suggestion unless the
+      // merchant typed an override (opts.newPriceCents); the executor bounds it to
+      // the price cap and reads the authoritative live price. Reversible from
+      // history. A failure (no variant, out-of-cap, Shopify error) surfaces as an
+      // error toast, never a fake resolution.
+      if (kind === "adjust_price") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, {
+            type: kind,
+            newPriceCents: opts?.newPriceCents,
+          });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — price updated on Shopify. Logged to action history; reversible there.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+          return { ok: true, receipt: null };
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
+        }
+      }
 
       // No live dashboard endpoint for this kind. Two ways to land here:
       //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,

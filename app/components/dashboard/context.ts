@@ -45,6 +45,7 @@ export type ActionKind =
   | "create_po_draft"
   | "discontinue_sku"
   | "reallocate_spend_sku"
+  | "adjust_price"
   | "snooze_alert";
 
 export interface DashboardCtx {
@@ -76,8 +77,22 @@ export interface DashboardCtx {
    *  outcome — see app/lib/action-outcome.ts), so callers must gate their
    *  "Approved" UI on it; `receipt` is the approve trust receipt on a successful
    *  calibratable action (drives the approve receipt + graduation moment), else
-   *  null. The error toast is fired inside executeAction. */
-  executeAction: (alert: AlertVM, kind: ActionKind) => Promise<{ ok: boolean; receipt: ApproveReceipt | null }>;
+   *  null. The error toast is fired inside executeAction.
+   *  opts.newPriceCents is an adjust_price-only merchant override (omit → engine
+   *  suggestion); opts.campaignId/loserBudgetCents target the remediation move's
+   *  loser campaign for cut_ads on a SKU-level alert (no alert.campaign_id);
+   *  opts.poQuantity/poUnitCost carry create_po_draft inputs. Other kinds ignore them. */
+  executeAction: (
+    alert: AlertVM,
+    kind: ActionKind,
+    opts?: {
+      newPriceCents?: number;
+      campaignId?: string;
+      loserBudgetCents?: number;
+      poQuantity?: string;
+      poUnitCost?: string;
+    },
+  ) => Promise<{ ok: boolean; receipt: ApproveReceipt | null }>;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;
 

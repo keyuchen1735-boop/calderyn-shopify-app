@@ -313,6 +313,7 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     autopilot_max_budget_increase_pct: Number(r.autopilot_max_budget_increase_pct ?? 20),
     autopilot_max_daily_budget_cents:
       r.autopilot_max_daily_budget_cents == null ? null : Number(r.autopilot_max_daily_budget_cents),
+    max_price_change_pct: Number(r.max_price_change_pct ?? 15),
   };
 }
 
@@ -1317,6 +1318,7 @@ export function calderynClient(shop: string) {
           if (patch.autopilot_max_budget_increase_pct !== undefined) updates.autopilot_max_budget_increase_pct = patch.autopilot_max_budget_increase_pct;
           // null is meaningful (clear the ceiling), so test `!== undefined`.
           if (patch.autopilot_max_daily_budget_cents !== undefined) updates.autopilot_max_daily_budget_cents = patch.autopilot_max_daily_budget_cents;
+          if (patch.max_price_change_pct !== undefined) updates.max_price_change_pct = patch.max_price_change_pct;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase

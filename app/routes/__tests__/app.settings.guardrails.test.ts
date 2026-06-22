@@ -127,6 +127,7 @@ const CURRENT: GuardrailConfig = {
   autopilot_max_budget_cut_pct: 50,
   autopilot_max_budget_increase_pct: 20,
   autopilot_max_daily_budget_cents: null,
+  max_price_change_pct: 15,
 };
 
 describe("changedGuardrailFields", () => {
