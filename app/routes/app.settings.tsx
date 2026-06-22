@@ -198,6 +198,13 @@ export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
   num("autopilot_min_spend_cents", fd.get("autopilot_min_spend_cents"), (n) => Math.round(n * 100));
   num("autopilot_max_budget_cut_pct", fd.get("autopilot_max_budget_cut_pct"));
   num("autopilot_max_budget_increase_pct", fd.get("autopilot_max_budget_increase_pct"));
+  // Honour the price-change cap if a field ever submits it (the dashboard owns
+  // the editor today).
+  num("max_price_change_pct", fd.get("max_price_change_pct"));
+  // TODO(parity): add a visible "Max price change" control here to mirror the
+  // dashboard Settings field. adjust_price executes on BOTH surfaces and reads
+  // this cap; until the embedded editor exists it defaults to 15% on this
+  // surface (editable on /dashboard). Tracked as the one deferred parity item.
   // Daily ceiling: empty string clears it (null = no cap); otherwise dollars -> cents.
   const ceilRaw = fd.get("autopilot_max_daily_budget_cents");
   if (ceilRaw !== null) {

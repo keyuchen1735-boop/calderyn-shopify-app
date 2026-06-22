@@ -530,10 +530,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
-      // TODO(phase3-followup): dashboard cut_ads on SKU alerts needs the
-      // enriched target.loserCampaignId routed to executeCampaignAction; until
-      // then it stays advisory on the dashboard (embedded surface executes it).
-
       // No live dashboard endpoint for this kind. Two ways to land here:
       //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
       //       so the assistant renders "Review & confirm" (deep-link), not

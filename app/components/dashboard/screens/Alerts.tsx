@@ -559,7 +559,12 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
   const selected = app.nav.param ? app.alerts.find((a) => a.id === app.nav.param) : null;
   if (selected) {
     return (
-      <AlertDetail app={app} alert={selected} onBack={() => app.navigate("alerts")} />
+      <AlertDetail
+        key={selected.id}
+        app={app}
+        alert={selected}
+        onBack={() => app.navigate("alerts")}
+      />
     );
   }
 

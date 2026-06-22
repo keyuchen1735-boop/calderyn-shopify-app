@@ -152,6 +152,14 @@ describe("executeAdjustPriceAlertAction", () => {
     expect(setVariantPrice).not.toHaveBeenCalled();
   });
 
+  it("rejects a merchant override at/below unit cost — never sell at a loss (422)", async () => {
+    // Cost $14, current price $15, cap 15% → min $12.75. $13.00 is within the cap
+    // but below cost; the restore-margin action must refuse it.
+    getCurrentUnitCostCents.mockResolvedValue(1400);
+    await expect(run(alert({}), { newPriceCents: 1300 })).rejects.toMatchObject({ status: 422 });
+    expect(setVariantPrice).not.toHaveBeenCalled();
+  });
+
   it("rejects when no margin-restoring price is computable and none was provided (422)", async () => {
     await expect(run(alert({ evidence: {} }))).rejects.toMatchObject({ status: 422 });
     expect(setVariantPrice).not.toHaveBeenCalled();

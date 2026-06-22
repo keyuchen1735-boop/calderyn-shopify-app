@@ -119,6 +119,8 @@ export async function executeAdjustPriceAlertAction(opts: {
   }
 
   const capPct = guardrails.max_price_change_pct;
+  // Current COGS anchors the suggestion AND the below-cost floor on an override.
+  const currentCogsCents = await getCurrentUnitCostCents(sb, shopId, alert.sku);
   let finalPriceCents: number;
   let capped = false;
 
@@ -148,10 +150,27 @@ export async function executeAdjustPriceAlertAction(opts: {
         message: "That's the current price — nothing to change.",
       });
     }
+    // This action exists to RESTORE margin — never let an override price the SKU
+    // below its own cost (a guaranteed per-unit loss). Only enforced when COGS is
+    // known; an unknown cost can't prove a loss.
+    if (currentCogsCents != null && newPriceCents <= currentCogsCents) {
+      throw new CalderynError({
+        code: "price_below_cost",
+        status: 422,
+        message: `That price is at or below this product's unit cost (${fmtMoney(currentCogsCents)}) — it would sell at a loss.`,
+      });
+    }
     finalPriceCents = newPriceCents;
   } else {
     // Engine suggestion: restore the SKU's pre-erosion margin, clamped to capPct.
-    const currentCogsCents = await getCurrentUnitCostCents(sb, shopId, alert.sku);
+    // ponytail: the cogs_drift suggestion is target = live_price + cost_delta, so
+    // it is NOT idempotent — a re-run after the price already moved would compound.
+    // The status!=="open" guard above closes the realistic single-actor cases
+    // (double-click is also blocked by the UI busy flag; a client retry sees the
+    // now-acknowledged alert and 409s). A truly simultaneous two-request race
+    // remains theoretically possible — the same read-then-act ceiling the codebase
+    // accepts for undo (undo.server.ts). Airtight fix if it ever bites: an atomic
+    // open→acknowledged claim before the write, rolled back on failure.
     const suggestion = suggestAdjustPrice({
       detectorId: alert.detector_id,
       evidence: toNumericEvidence(alert.evidence ?? {}),
