@@ -9,6 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Alert } from "../types";
 import type { RemediationPlan, StrategicMove } from "./types";
+import { toNumericEvidence } from "./rank";
 
 interface SkuRemediationRow {
   sku_id: string;
@@ -44,6 +45,12 @@ export async function enrichRemediation(
   sb: SupabaseClient,
   shopId: string,
 ): Promise<RemediationPlan> {
+  // margin_erosion / cogs_drift plans carry review_pricing instead of the
+  // ad-driven moves — flip it to an executable adjust_price button when the SKU
+  // has a linked variant AND the evidence shows a raise is warranted.
+  const reviewIdx = plan.moves.findIndex((m) => m.kind === "review_pricing");
+  if (reviewIdx >= 0) return enrichReviewPricing(alert, plan, reviewIdx, sb, shopId);
+
   const reallocIdx = plan.moves.findIndex((m) => m.kind === "reallocate_to_winner");
   if (reallocIdx < 0) return plan; // nothing to enrich (e.g. discontinue/fix_returns plan)
 
@@ -141,6 +148,64 @@ export async function enrichRemediation(
   } catch (err) {
     console.error(`[remediation] enrich failed for alert ${alert.id} (advisory fallback)`, err);
     return advisory(plan, "couldn't resolve the campaign — review manually");
+  }
+}
+
+/**
+ * Flip the review_pricing move to an executable adjust_price button, or leave it
+ * advisory with a reason. Eligible when: the alert has a SKU with a linked
+ * Shopify variant AND the evidence shows a raise is warranted (margin_erosion
+ * carries a baseline margin to restore; cogs_drift shows cost rose). The exact
+ * new price is computed at execution time from the live price + COGS — here we
+ * only decide whether the button can exist (rule 12: never a dead button).
+ */
+async function enrichReviewPricing(
+  alert: Alert,
+  plan: RemediationPlan,
+  idx: number,
+  sb: SupabaseClient,
+  shopId: string,
+): Promise<RemediationPlan> {
+  const advisory = (reason: string): RemediationPlan =>
+    withMove(plan, idx, (m) => ({ ...m, executor: null, ineligibleReason: reason }));
+
+  if (!alert.sku) return advisory("no SKU linked to this alert");
+
+  // Raise-plausible check, pure from evidence — avoids a Shopify read when the
+  // margin already recovered or no cost increase needs passing through.
+  const ev = toNumericEvidence(alert.evidence ?? {});
+  const plausible =
+    alert.detector_id === "margin_erosion"
+      ? ev.baseline_unit_margin_usd != null
+      : alert.detector_id === "cogs_drift"
+        ? ev.prior_unit_cost_usd != null &&
+          ev.current_unit_cost_usd != null &&
+          ev.current_unit_cost_usd > ev.prior_unit_cost_usd
+        : false;
+  if (!plausible) return advisory("margin already at or above its prior level — no raise needed");
+
+  try {
+    const { data, error } = await sb
+      .from("sku_dim")
+      .select("id, external_id")
+      .eq("shop_id", shopId)
+      .eq("sku", alert.sku)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as { id?: string; external_id?: string | null } | null;
+    if (!row?.external_id) {
+      return advisory("no linked Shopify variant — set the price in Shopify directly");
+    }
+    return withMove(plan, idx, (m) => ({
+      ...m,
+      executor: "adjust_price",
+      ineligibleReason: undefined,
+      label: "Raise price to restore margin",
+      target: { skuId: row.id ? String(row.id) : undefined },
+    }));
+  } catch (err) {
+    console.error(`[remediation] review_pricing enrich failed for alert ${alert.id} (advisory)`, err);
+    return advisory("couldn't resolve the product — review manually");
   }
 }
 
