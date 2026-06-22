@@ -803,11 +803,12 @@ export async function sendAssistantMessage(
 export async function fetchCalibration(): Promise<{
   pct: number | null;
   updated_at: string | null;
+  nearGraduation: number;
 }> {
-  const data = await apiGet<{ pct: number | null; updated_at: string | null }>(
+  const data = await apiGet<{ pct: number | null; updated_at: string | null; nearGraduation?: number }>(
     "/dashboard/api/calibration",
   );
-  return { pct: data.pct, updated_at: data.updated_at };
+  return { pct: data.pct, updated_at: data.updated_at, nearGraduation: data.nearGraduation ?? 0 };
 }
 
 export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
@@ -815,15 +816,23 @@ export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
   return data.proposals;
 }
 
+export interface RejectResult {
+  reflection: string;
+  delta: number;
+  before: number;
+  after: number;
+  savedAsRule: boolean;
+}
+
 /** Reject a proposal for an alert with a plain-language reason.
  *  Re-derives detector/action server-side from the trusted alert.
- *  NEVER executes any action. Returns the server-generated reflection string. */
+ *  NEVER executes any action. Returns the reject receipt (reflection + trust delta). */
 export async function rejectProposal(input: {
   alertId: string;
   reason: RejectReason;
   note?: string;
-}): Promise<{ reflection: string }> {
-  return apiSend<{ reflection: string }>("POST", "/dashboard/api/queue/reject", input);
+}): Promise<RejectResult> {
+  return apiSend<RejectResult>("POST", "/dashboard/api/queue/reject", input);
 }
 
 /** Return all active learned calibration rules for the session's shop. */

@@ -75,7 +75,7 @@ export interface DashboardCtx {
   relTime: (ts: number) => string;
 
   /** Calibration headline; null until loaded or when no data yet. */
-  calibration: { pct: number | null; updated_at: string | null } | null;
+  calibration: { pct: number | null; updated_at: string | null; nearGraduation: number } | null;
 
   /** Action Queue proposals; empty until loaded. */
   actionQueue: QueueProposalVM[];
