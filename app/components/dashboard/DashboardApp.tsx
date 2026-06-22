@@ -172,6 +172,35 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setFeed((f) => [{ id: nextFeedId(), ts: ev.ts ?? Date.now(), ...ev }, ...f].slice(0, 30));
   }, []);
 
+  // Opening an alert detail: fetch the ENRICHED single alert and merge it into
+  // shared state. The list (fetchAlerts) carries only the BASE remediation plan,
+  // where the product-economics fixes (reallocate_spend_sku, cut_ads,
+  // adjust_price) still have a null executor and render as advisory text — not
+  // buttons. /dashboard/api/alerts/:id resolves those executors server-side
+  // (enrichRemediation), exactly as the embedded app enriches in its loader.
+  // Merging here fixes every surface that reads app.alerts (Alerts detail, etc.)
+  // so the new actions show as one-click buttons, at parity with the extension.
+  useEffect(() => {
+    const id = nav.screen === "alerts" ? nav.param : null;
+    if (!id) return;
+    let cancelled = false;
+    client
+      .fetchAlert(id, campaigns)
+      .then((enriched) => {
+        if (cancelled) return;
+        setAlerts((as) =>
+          as.map((a) =>
+            // Never resurrect an alert the user just resolved optimistically.
+            a.id === enriched.id && a.status === "open" ? enriched : a,
+          ),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [nav.screen, nav.param, campaigns]);
+
   // ----- initial load + refresh -----
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
