@@ -1202,3 +1202,9 @@
 @media (prefers-reduced-motion: reduce) {
   .aqx-grad-toggle, .aqx-grad-toggle-knob, .aqx-grad-prog-fill { transition: none; }
 }
+
+/* ===== Live Engine review fixes: off-badge + clickable calibration mini ===== */
+.engx-auto-badge--off { background: #f1f1f1; color: #6a6a6a; }
+/* engx-cal-top is now an <a> to the Action Queue (parity with the dashboard). */
+.engx-cal-top { text-decoration: none; color: inherit; cursor: pointer; }
+.engx-cal-top:hover .engx-cal-name { color: #173a4d; }

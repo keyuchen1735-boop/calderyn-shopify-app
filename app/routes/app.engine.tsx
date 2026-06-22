@@ -200,6 +200,7 @@ function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
 
 function AutopilotCard({ data }: { data: LiveEnginePageData }) {
   const live = data.features.filter((f) => f.enabled).length;
+  const running = live > 0;
   return (
     <div className="engx-auto">
       <div className="engx-auto-head">
@@ -208,20 +209,28 @@ function AutopilotCard({ data }: { data: LiveEnginePageData }) {
         </span>
         <div className="engx-auto-titles">
           <div className="engx-auto-h2row">
-            <h2 className="engx-auto-h2">Autopilot is running</h2>
-            <span className="engx-auto-badge">
-              <span className="engx-live-dot engx-live-dot--sm" />
-              {live} {live === 1 ? "feature live" : "features live"}
-            </span>
+            <h2 className="engx-auto-h2">{running ? "Autopilot is running" : "Autopilot"}</h2>
+            {running ? (
+              <span className="engx-auto-badge">
+                <span className="engx-live-dot engx-live-dot--sm" />
+                {live} {live === 1 ? "feature live" : "features live"}
+              </span>
+            ) : (
+              <span className="engx-auto-badge engx-auto-badge--off">No features yet</span>
+            )}
           </div>
           <p className="engx-auto-sub">
-            These graduated to run without you. Calderyn handles them on its own and logs every action below.
+            {running
+              ? "These graduated to run without you. Calderyn handles them on its own and logs every action below."
+              : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
           </p>
         </div>
-        <div className="engx-auto-money">
-          <div className="engx-auto-money-amt">{fmtMoney(data.moneyProtectedWeekCents)}</div>
-          <div className="engx-auto-money-cap">protected this week</div>
-        </div>
+        {running && (
+          <div className="engx-auto-money">
+            <div className="engx-auto-money-amt">{fmtMoney(data.moneyProtectedWeekCents)}</div>
+            <div className="engx-auto-money-cap">protected this week</div>
+          </div>
+        )}
       </div>
       {data.features.length === 0 ? (
         <div className="engx-auto-empty">
@@ -517,7 +526,7 @@ function CalibrationMini({ pct }: { pct: number | null }) {
   const offset = C * (1 - shown / 100);
   return (
     <div className="engx-cal">
-      <div className="engx-cal-top">
+      <a className="engx-cal-top" href="/app/queue">
         <div className="engx-cal-ring">
           <svg width="62" height="62" viewBox="0 0 62 62">
             <circle cx="31" cy="31" r={R} fill="none" stroke="#eef0f2" strokeWidth="6.5" />
@@ -537,7 +546,7 @@ function CalibrationMini({ pct }: { pct: number | null }) {
           </div>
           <p className="engx-cal-copy">More trust means more features graduate to autopilot.</p>
         </div>
-      </div>
+      </a>
       <div className="engx-cal-track">
         {band.milestones.map((m) => (
           <span key={m.label} className="engx-cal-seg" data-reached={m.reached} />

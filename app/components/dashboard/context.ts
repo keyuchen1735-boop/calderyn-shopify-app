@@ -69,10 +69,13 @@ export interface DashboardCtx {
   setLiveOn: (next: boolean) => void;
 
   // --- actions ---
-  /** Execute (approve) an action for an alert. Resolves to the approve trust
-   *  receipt on a successful, calibratable action (drives the Action Queue's
-   *  approve receipt + graduation moment), or null otherwise. */
-  executeAction: (alert: AlertVM, kind: ActionKind) => Promise<ApproveReceipt | null>;
+  /** Execute (approve) an action for an alert. Resolves to `{ ok, receipt }`:
+   *  `ok` is true ONLY on a real platform success (never on a retrying/failed
+   *  outcome — see app/lib/action-outcome.ts), so callers must gate their
+   *  "Approved" UI on it; `receipt` is the approve trust receipt on a successful
+   *  calibratable action (drives the approve receipt + graduation moment), else
+   *  null. The error toast is fired inside executeAction. */
+  executeAction: (alert: AlertVM, kind: ActionKind) => Promise<{ ok: boolean; receipt: ApproveReceipt | null }>;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;
 
@@ -94,5 +97,9 @@ export interface DashboardCtx {
 
   // --- data lifecycle ---
   refresh: () => void;
+  /** Re-pull only the Live Engine bundle (autopilot/trace/predictions) — much
+   *  lighter than refresh(), used for the Live Engine's gentle live poll and to
+   *  reconcile a single feature-autonomy toggle without refetching everything. */
+  refreshLiveEngine: () => void;
   loading: boolean;
 }

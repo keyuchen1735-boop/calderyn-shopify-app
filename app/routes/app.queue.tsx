@@ -7,6 +7,7 @@ import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { fmtMoney } from "~/lib/format";
+import { useActionToast } from "~/lib/toast";
 import { alertDetectorLabel, ACTION_LABELS, recommendedAction } from "~/lib/labels";
 import CalibrationLevelHeader from "~/components/calderyn/CalibrationLevelHeader";
 import { MIN_APPROVALS } from "~/lib/calibration/graduation";
@@ -442,8 +443,17 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
   const [receipt, setReceipt] = useState<ApproveReceipt | null>(null);
   const [idemKey] = useState(() => newIdempotencyKey());
 
-  const approveFetcher = useFetcher<{ ok?: boolean; calibration?: ApproveReceipt; toast?: { message?: string; isError?: boolean } }>();
+  const approveFetcher = useFetcher<{ ok?: boolean; calibration?: ApproveReceipt; toast?: { message: string; isError?: boolean } }>();
   const rejectFetcher = useFetcher<ActionPayload>();
+
+  // Surface the server's error toast when an approve does NOT succeed (failed or
+  // retrying) so a money action that didn't run gives feedback instead of the
+  // card silently resetting. Success shows the chip + receipt, no toast.
+  useActionToast(
+    approveFetcher.data && approveFetcher.data.ok === false
+      ? { ok: false, toast: approveFetcher.data.toast }
+      : undefined,
+  );
 
   const detector = alertDetectorLabel(p.detector_id, {});
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;

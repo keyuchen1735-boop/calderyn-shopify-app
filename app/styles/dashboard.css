@@ -1309,3 +1309,15 @@
 @media (prefers-reduced-motion: reduce) {
   .cd-grad-toggle, .cd-grad-toggle-knob, .cd-grad-prog-fill { transition: none; }
 }
+
+/* ===== Live Engine review fixes: off-badge, inspector CTA, reduced-motion ===== */
+.cd-le-auto-badge--off { background: var(--gray-bg); color: var(--text-2); }
+.cd-le-insp-cta { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 16px; height: 38px; border: none; border-radius: 9px; background: var(--accent); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.cd-le-insp-cta:hover { filter: brightness(0.94); }
+
+/* a11y: the shared live pulse dot must stop under reduced motion (the embedded
+   surface already gates its engx-live-dot; this matches it on the dashboard). */
+@media (prefers-reduced-motion: reduce) {
+  .cd-live-dot.on, .cd-pulse-dot { animation: none; }
+  .cd-le-insp-cta:hover { filter: none; }
+}

@@ -866,8 +866,9 @@ export async function fetchLiveEngine(): Promise<LiveEnginePageData> {
   return apiGet<LiveEnginePageData>("/dashboard/api/live-engine");
 }
 
-/** Turn a graduated feature's unattended autonomy on/off. The shop is taken
- *  from the session server-side; actionKind is validated there. */
+/** Turn a graduated feature's unattended autonomy on/off. The shop is taken from
+ *  the session server-side; the UPDATE is scoped by shop + detector + action, so
+ *  an unknown (detector, action) pair simply matches no row and is a no-op. */
 export async function toggleFeatureAutonomy(input: {
   detectorId: string;
   actionKind: string;

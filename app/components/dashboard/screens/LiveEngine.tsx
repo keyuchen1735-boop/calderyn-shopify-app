@@ -82,7 +82,7 @@ function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
     setBusy(true);
     try {
       await client.toggleFeatureAutonomy({ detectorId: f.detectorId, actionKind: f.actionKind, enabled: next });
-      app.refresh();
+      app.refreshLiveEngine();
     } catch (err) {
       setOn(!next); // revert
       const msg = err instanceof DashboardApiError ? err.message : "Could not update this feature.";
@@ -135,6 +135,7 @@ function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
 
 function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: DashboardCtx }) {
   const live = data.features.filter((f) => f.enabled).length;
+  const running = live > 0;
   return (
     <Card pad={false}>
       <div className="cd-le-auto-head">
@@ -144,21 +145,29 @@ function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: Dashboard
         <div className="min-w-0 flex-1">
           <div className="cd-le-auto-h2row">
             <h2 className="cd-h2" style={{ margin: 0 }}>
-              Autopilot is running
+              {running ? "Autopilot is running" : "Autopilot"}
             </h2>
-            <span className="cd-le-auto-badge">
-              <span className="cd-live-dot on" />
-              {live} {live === 1 ? "feature live" : "features live"}
-            </span>
+            {running ? (
+              <span className="cd-le-auto-badge">
+                <span className="cd-live-dot on" />
+                {live} {live === 1 ? "feature live" : "features live"}
+              </span>
+            ) : (
+              <span className="cd-le-auto-badge cd-le-auto-badge--off">No features yet</span>
+            )}
           </div>
           <p className="cd-caption" style={{ color: "var(--text-3)", marginTop: 3 }}>
-            These graduated to run without you. Calderyn handles them on its own and logs every action below.
+            {running
+              ? "These graduated to run without you. Calderyn handles them on its own and logs every action below."
+              : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
           </p>
         </div>
-        <div className="cd-le-auto-money">
-          <div className="cd-le-auto-money-amt tabular-nums">{money(data.moneyProtectedWeekCents)}</div>
-          <div className="cd-le-auto-money-cap">protected this week</div>
-        </div>
+        {running && (
+          <div className="cd-le-auto-money">
+            <div className="cd-le-auto-money-amt tabular-nums">{money(data.moneyProtectedWeekCents)}</div>
+            <div className="cd-le-auto-money-cap">protected this week</div>
+          </div>
+        )}
       </div>
       {data.features.length === 0 ? (
         <div className="cd-le-empty">
@@ -380,7 +389,7 @@ function TraceCard({
 }
 
 /* ---------- 3b. inspector ---------- */
-function Inspector({ t, onClose }: { t: TraceEventVM; onClose: () => void }) {
+function Inspector({ t, onClose, onViewHistory }: { t: TraceEventVM; onClose: () => void; onViewHistory: () => void }) {
   const pill = moneyPill(t);
   return (
     <Card pad={false}>
@@ -453,6 +462,11 @@ function Inspector({ t, onClose }: { t: TraceEventVM; onClose: () => void }) {
           </span>
           <p className="cd-le-insp-dec-note">{t.decisionNote}</p>
         </div>
+
+        <button type="button" className="cd-le-insp-cta" onClick={onViewHistory}>
+          View in action history
+          <CDIcon name="chevronRight" size={15} strokeWidth={2.2} />
+        </button>
       </div>
     </Card>
   );
@@ -570,6 +584,17 @@ export default function LiveEngine({ app }: { app: DashboardCtx }) {
 
   const selected = selectedId && data ? data.trace.find((t) => t.id === selectedId) ?? null : null;
 
+  // Gentle live poll (mirrors the embedded 45s revalidate): refresh only the
+  // Live Engine bundle while the tab is visible and no row is being inspected.
+  // refreshLiveEngine is a stable useCallback, so this resets at most once.
+  const refreshLiveEngine = app.refreshLiveEngine;
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && !selectedId) refreshLiveEngine();
+    }, 45000);
+    return () => clearInterval(id);
+  }, [selectedId, refreshLiveEngine]);
+
   if (!data) {
     return (
       <div className="cd-screen">
@@ -604,7 +629,7 @@ export default function LiveEngine({ app }: { app: DashboardCtx }) {
         <TraceCard trace={data.trace} selectedId={selectedId} onSelect={setSelectedId} />
         <div className="cd-le-rail">
           {selected ? (
-            <Inspector t={selected} onClose={() => setSelectedId(null)} />
+            <Inspector t={selected} onClose={() => setSelectedId(null)} onViewHistory={() => app.navigate("audit")} />
           ) : (
             <>
               <CalibrationMini pct={data.calibrationPct} app={app} />

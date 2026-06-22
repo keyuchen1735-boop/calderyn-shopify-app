@@ -371,12 +371,17 @@ function ProposalRow({
     }
     setBusy(true);
     try {
-      const receipt = await app.executeAction(alert, proposal.action_kind as ActionKind);
-      setView("approved");
-      if (receipt) {
-        setApproveReceipt(receipt);
-        if (receipt.justGraduated) {
-          onGraduated({ detectorId: proposal.detector_id, actionKind: proposal.action_kind as ActionKind, label: actionLabel });
+      // Only a real platform success flips the row to "Approved" (P0-1). A
+      // retrying/failed outcome returns ok:false (error toast already fired in
+      // executeAction); the row stays actionable so the merchant can retry.
+      const { ok, receipt } = await app.executeAction(alert, proposal.action_kind as ActionKind);
+      if (ok) {
+        setView("approved");
+        if (receipt) {
+          setApproveReceipt(receipt);
+          if (receipt.justGraduated) {
+            onGraduated({ detectorId: proposal.detector_id, actionKind: proposal.action_kind as ActionKind, label: actionLabel });
+          }
         }
       }
     } finally {

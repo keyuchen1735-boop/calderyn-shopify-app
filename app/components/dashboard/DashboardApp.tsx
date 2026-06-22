@@ -226,6 +226,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     });
   }, [load, toast]);
 
+  // Lighter than refresh(): only re-pulls /dashboard/api/live-engine. Used by the
+  // Live Engine's gentle poll and to reconcile a single autonomy toggle.
+  const refreshLiveEngine = useCallback(() => {
+    client.fetchLiveEngine().then(setLiveEngine).catch(() => {});
+  }, []);
+
   // Returning to the tab does an immediate refresh instead of waiting up to one
   // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
   // it respects the "Live sync" toggle — off means the screen stays put.
@@ -334,11 +340,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             .then((au) => setAudit(au))
             .catch(() => {});
           toast(`${label} — back tomorrow or at your next login.`, "snooze");
+          return { ok: true, receipt: null };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
         }
-        return null;
       }
 
       // pause / reduce-budget: live endpoint when we have a campaign_id.
@@ -352,6 +359,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             ? Math.round(campaign.daily_budget_cents * 0.7)
             : undefined;
         let receipt: ApproveReceipt | null = null;
+        let ok = false;
         try {
           const { outcome, calibration } = await client.executeCampaignAction(alert.campaign_id, {
             type: kind,
@@ -359,7 +367,10 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             alertId: alert.id,
           });
           const view = presentActionOutcome(outcome, label);
-          if (view.succeeded) receipt = calibration ?? null;
+          if (view.succeeded) {
+            ok = true;
+            receipt = calibration ?? null;
+          }
           // A non-succeeded outcome (retrying / failed) must NOT resolve the
           // alert or apply the optimistic paused/budget state — only a real
           // platform success does (P0-1). The terminal `failed` outcome arrives
@@ -387,7 +398,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return receipt;
+        return { ok, receipt };
       }
 
       // reallocate_inventory: live endpoint — the transfer plan is derived
@@ -396,12 +407,14 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // resolution.
       if (kind === "reallocate_inventory") {
         let receipt: ApproveReceipt | null = null;
+        let ok = false;
         try {
           const { outcome, acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
           const view = presentActionOutcome(outcome, label);
           // Only a real success resolves the alert (P0-1); a Shopify failure
           // arrives as an HTTP 502 → DashboardApiError (caught below).
           if (view.succeeded) {
+            ok = true;
             markResolved();
             receipt = calibration ?? null;
           }
@@ -421,7 +434,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return receipt;
+        return { ok, receipt };
       }
 
       // No live dashboard endpoint for this kind. Two ways to land here:
@@ -438,7 +451,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         "warn",
         "critical",
       );
-      return null;
+      return { ok: false, receipt: null };
     },
     [campaigns, toast],
   );
@@ -524,6 +537,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     toast,
     relTime,
     refresh,
+    refreshLiveEngine,
     loading,
   };
 
