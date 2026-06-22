@@ -1327,15 +1327,9 @@ In `DashboardApp.tsx` `executeAction`, add a branch routing `reallocate_spend_sk
       }
 ```
 
-(`executeAlertAction` already POSTs `{ type, idempotency_key }` to `/dashboard/api/alerts/:id/action` — Task 7 made that route accept `reallocate_spend_sku`. The `cut_ads` executor kinds (`pause_campaign`/`reduce_campaign_budget`) already route through the existing `campaign_id` branch — but a SKU alert has no `alert.campaign_id`; the enriched move's executor still dispatches, and for cut_ads the dashboard branch needs the loser campaign id. **Scope note (rule 12):** Phase 3 wires the dashboard *reallocate* button end-to-end; the dashboard *cut_ads* button reuses the existing campaign branch only when `alert.campaign_id` is set. For SKU alerts without `campaign_id`, cut_ads on the dashboard remains advisory this phase — the embedded surface (Task 8) carries the full cut_ads execution. Leave a TODO and surface it, do not fake it.)
+(`executeAlertAction` already POSTs `{ type, idempotency_key }` to `/dashboard/api/alerts/:id/action` — Task 7 made that route accept `reallocate_spend_sku`. The `cut_ads` executor kinds (`pause_campaign`/`reduce_campaign_budget`) route through the campaign branch — but a SKU alert has no `alert.campaign_id`, so the dashboard branch needs the loser campaign id from the enriched move.)
 
-Add at the cut_ads dashboard branch a guard + TODO:
-
-```typescript
-      // TODO(phase3-followup): dashboard cut_ads on SKU alerts needs the
-      // enriched target.loserCampaignId routed to executeCampaignAction; until
-      // then it stays advisory on the dashboard (embedded surface executes it).
-```
+**Resolved (post-merge correction — rule 12, no stale TODO):** this scope note originally deferred dashboard `cut_ads` on SKU alerts to a follow-up. It was actually completed in the PR #183 merge, so there is **no `TODO(phase3-followup)` in the code** and dashboard/embedded are at parity. As shipped: `enrichRemediation` sets `m.target.loserCampaignId` (+ budget) and flips the `cut_ads` executor to `pause_campaign`/`reduce_campaign_budget` whenever the SKU has a dedicated mutable Meta campaign (else it stays correctly advisory — never a dead button); `screens/Alerts.tsx` renders it as an executable button passing `{ campaignId: m.target.loserCampaignId, loserBudgetCents }`; `DashboardApp.tsx` consumes it via `const campId = opts?.campaignId ?? alert.campaign_id` → `executeCampaignAction(campId, …)`; the contract is documented in `context.ts`. No guard/TODO is added.
 
 - [ ] **Step 4: Typecheck + lint**
 
@@ -1390,8 +1384,8 @@ Run the `/code-review` slash command on the working tree; resolve every blocker,
 - **Spec §"Architecture (Approach A)" (one decision read by all consumers; engine pure):** `rankMoves` stays pure; `enrichRemediation` is the single shared async resolver both surfaces (and Phase 4 autopilot) call. ✓
 - **Spec §"Failure visibility" (no dedicated campaign / no winner / write fails):** advisory `ineligibleReason` (Task 3), `executeReallocation` compensation + `retrying` reused (Task 6), enrich best-effort catch. ✓
 - **Spec §"Components" (`v_sku_remediation_inputs` = contribution + returns + dedicated campaign + winner ranking; executors through existing audit/undo):** Task 1 view has all four; Task 6 delegates to `executeReallocation` → existing one-row audit + undo (`undo.server.ts` `reallocate_budget` branch) + retry drain. ✓
-- **Spec §"Dashboard parity":** Task 8 (embedded Polaris) + Task 9 (dashboard `cd-*`), same enriched plan, translated not copied. cut_ads dashboard gap stated as a TODO (rule 12, single-sided surfaced). ✓
+- **Spec §"Dashboard parity":** Task 8 (embedded Polaris) + Task 9 (dashboard `cd-*`), same enriched plan, translated not copied. The dashboard `cut_ads` gap was finished in the PR #183 merge (no follow-up TODO remains) — dashboard and embedded are at full parity. ✓
 - **Cross-phase contract:** `StrategicMove.executor` widened additively to `"snooze_alert" | "discontinue_sku" | "reallocate_spend_sku" | "pause_campaign" | "reduce_campaign_budget" | null` (Task 2, Phase 2's `discontinue_sku` preserved). `reallocate_spend_sku` added to `ActionKind` (Task 5). `target` shape `{ skuId, loserCampaignId, winnerSkuId, winnerCampaignId, winnerLabel, amountCents }` spelled identically in `types.ts` (Task 2), `enrich.server.ts` (Task 3), the gateway (Task 6), and both panels (Tasks 8–9). ✓
 - **Type consistency check:** `reallocate_spend_sku` appears identically in `ActionKind` (`types.ts`), `ACTION_LABELS`/`ACTION_VERBS`/`DETECTOR_TO_ACTIONS` (`labels.ts`), `StrategicMove.executor` (`remediation/types.ts`), the gateway, the routes, and `executeAction` dispatch. `executeReallocation` is called with the locked `ReallocateInput` shape (`sourceCampaignId`/`destCampaignId`/`amountCents`/`idempotencyKey`), unchanged from `reallocate.server.ts`. ✓
 - **No placeholders:** every code/SQL step is complete; the `rankMoves` eligibility backbone is exercised through `enrichRemediation`'s six-case matrix (Task 3) + cut_ads (Task 4). ✓
-- **Deferred (stated in Scope):** autopilot consuming `reallocate_spend_sku` → Phase 4; per-SKU control inside shared Advantage+/PMax → advisory only; cross-platform SKU shift → advisory; dashboard cut_ads on `campaign_id`-less SKU alerts → embedded-only this phase (TODO). ✓
+- **Deferred (stated in Scope):** autopilot consuming `reallocate_spend_sku` → Phase 4; per-SKU control inside shared Advantage+/PMax → advisory only; cross-platform SKU shift → advisory. (Dashboard cut_ads on `campaign_id`-less SKU alerts was originally deferred here but completed in the PR #183 merge — see the resolved scope note in Task 7.) ✓

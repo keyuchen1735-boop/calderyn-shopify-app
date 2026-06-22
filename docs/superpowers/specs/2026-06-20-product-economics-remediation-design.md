@@ -87,7 +87,7 @@ interface RemediationPlan {
 ## Data flow
 
 ```
-alert built / first open → rankMoves() → prose → persist {plan, synopsis} on alert (computed once, then cached)
+alert built / first open → rankMoves() → prose → {plan, synopsis} on alert (computed on read — see Non-goals: no jsonb cache)
   ├─ merchant: detail renders synopsis + ranked moves → click → action layer (audit + undo)
   └─ autopilot: reads plan.recommended → guardrail/cap check → execute → audit reasoning + ranked numbers
 ```
@@ -140,3 +140,4 @@ Both the dashboard (`app/routes/dashboard.*`, `app/components/dashboard/*`) and 
 - Back-linking alerts to their campaign (`campaign_id` resolution) — explicitly out of scope per the merchant's direction.
 - Per-SKU spend control *inside* shared Advantage+/PMax campaigns — not modeled; advisory only.
 - New detectors — this is remediation for existing ones.
+- **Persisted `remediation jsonb` cache — deliberately not shipped.** The design above assumed the plan would be "computed once, then cached" on the alert to amortize an expensive AI-prose recompute. That AI prose was dropped (Phase 1 ships a deterministic template; `enrich.server.ts` makes no model call), so the rationale for caching dissolved. As shipped: the pure rank runs on every alert read (`attachRemediation`, zero I/O), and `enrichRemediation` runs **only on single-alert detail open and the execute paths** (`app.alerts.$id.tsx`, `dashboard.api.alerts.$id.tsx`) — never across the alert list, so there is no N+1. That is 1–2 indexed Supabase reads on an explicit click. Persisting the plan would also serve **stale** campaign targets / shift amounts (the plan resolves live budgets, live winner ranking, live price) unless paired with invalidation — so compute-on-read is the *correct* behavior here, not a deficiency. Revisit only if AI prose returns or profiling shows the detail-open reads matter.
