@@ -8,12 +8,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const requireDashboardSession = vi.fn();
 const executeAdjustPriceAlertAction = vi.fn();
 const executeCreatePoDraft = vi.fn();
+const executeReallocateSpendSku = vi.fn();
 
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
 vi.mock("~/lib/actions/po-action.server", () => ({
   executeCreatePoDraft: (...a: unknown[]) => executeCreatePoDraft(...a),
+}));
+vi.mock("~/lib/actions/reallocate-sku.server", () => ({
+  executeReallocateSpendSku: (...a: unknown[]) => executeReallocateSpendSku(...a),
 }));
 vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
@@ -116,6 +120,31 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
         quantity: "40",
         unitCost: "12.50",
       }),
+    );
+  });
+});
+
+describe('POST /dashboard/api/alerts/:id/action — reallocate_spend_sku ("Move ad budget to a higher-margin product")', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    executeReallocateSpendSku.mockResolvedValue({
+      auditId: "audit-rs-1",
+      outcome: "succeeded",
+      acknowledged: true,
+    });
+  });
+
+  it("executes the SKU budget reallocation (the campaign pair is derived server-side)", async () => {
+    const res = await call({ type: "reallocate_spend_sku", idempotency_key: "krs" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      audit_id: "audit-rs-1",
+      outcome: "succeeded",
+      acknowledged: true,
+    });
+    expect(executeReallocateSpendSku).toHaveBeenCalledWith(
+      expect.objectContaining({ alertId: "a1", idempotencyKey: "krs", actor: "merchant:web-dashboard" }),
     );
   });
 });
