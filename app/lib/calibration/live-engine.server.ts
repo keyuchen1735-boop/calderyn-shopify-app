@@ -54,7 +54,7 @@ export interface AutopilotAuditRow {
 
 /**
  * Pure: fold graduated pairs + autonomous audit rows into the Live Engine view.
- * `auditRows` MUST already be filtered to actor=system, outcome=succeeded,
+ * `auditRows` MUST already be filtered to actor=autopilot, outcome=succeeded,
  * undo_of=null (the query does that); this just aggregates them per pair.
  */
 export function aggregateLiveEngine(
@@ -119,12 +119,19 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
       return { autopilotEnabled, moneyProtectedWeekCents: 0, features: [] };
     }
 
+    // Autonomous actions are read from v_audit_view, NOT the raw action_audit
+    // table: detector_id (LEFT JOIN alerts) and actor (= COALESCE(actor_user_id,
+    // 'system')) are view-only projections — the raw table has neither column.
+    // Autopilot writes actor_user_id='autopilot' (see autopilot.server.ts /
+    // execute.server.ts), which the same filter guardrails.server.ts uses to tally
+    // today's autonomous spend. dollar_impact_at_exec is in DOLLARS in the view;
+    // aggregateLiveEngine converts to cents. undo_of=null drops reversal rows.
     const sinceIso = new Date(Date.now() - WINDOW_DAYS * DAY_MS).toISOString();
     const { data: auditRows } = await sb
-      .from("action_audit")
+      .from("v_audit_view")
       .select("detector_id, action_kind, dollar_impact_at_exec, created_at")
       .eq("shop_id", shopId)
-      .eq("actor", "system")
+      .eq("actor", "autopilot")
       .eq("outcome", "succeeded")
       .is("undo_of", null)
       .gte("created_at", sinceIso);
