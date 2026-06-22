@@ -304,7 +304,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   // ----- execute an action against an alert -----
   const executeAction = useCallback(
-    async (alert: AlertVM, kind: ActionKind) => {
+    async (alert: AlertVM, kind: ActionKind, opts?: { newPriceCents?: number }) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
       const markResolved = () => {
@@ -447,6 +447,35 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             .catch(() => {});
           toast(
             `${label} — done. Logged to action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return;
+      }
+
+      // adjust_price: live endpoint — raises the SKU's selling price to restore
+      // its pre-erosion margin. The new price is the engine suggestion unless the
+      // merchant typed an override (opts.newPriceCents); the executor bounds it to
+      // the price cap and reads the authoritative live price. Reversible from
+      // history. A failure (no variant, out-of-cap, Shopify error) surfaces as an
+      // error toast, never a fake resolution.
+      if (kind === "adjust_price") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, {
+            type: kind,
+            newPriceCents: opts?.newPriceCents,
+          });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — price updated on Shopify. Logged to action history; reversible there.` +
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );

@@ -42,6 +42,7 @@ export type ActionKind =
   | "create_po_draft"
   | "discontinue_sku"
   | "reallocate_spend_sku"
+  | "adjust_price"
   | "snooze_alert";
 
 export interface DashboardCtx {
@@ -68,7 +69,9 @@ export interface DashboardCtx {
   setLiveOn: (next: boolean) => void;
 
   // --- actions ---
-  executeAction: (alert: AlertVM, kind: ActionKind) => void;
+  // opts.newPriceCents is an adjust_price-only merchant override (omit → engine
+  // suggestion). Other kinds ignore it.
+  executeAction: (alert: AlertVM, kind: ActionKind, opts?: { newPriceCents?: number }) => void;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;
 

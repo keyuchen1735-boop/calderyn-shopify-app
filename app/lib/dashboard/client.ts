@@ -672,12 +672,15 @@ export async function executeCampaignAction(
 
 export async function executeAlertAction(
   alertId: string,
-  input: { type: string },
+  input: { type: string; newPriceCents?: number },
 ): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
+  const body: Record<string, unknown> = { type: input.type, idempotency_key: crypto.randomUUID() };
+  // adjust_price only: optional merchant override; omitted → engine suggestion.
+  if (input.newPriceCents !== undefined) body.new_price_cents = input.newPriceCents;
   const data = await apiSend<{ audit_id: string; outcome: string; acknowledged: boolean }>(
     "POST",
     `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,
-    { type: input.type, idempotency_key: crypto.randomUUID() },
+    body,
   );
   return { auditId: data.audit_id, outcome: data.outcome, acknowledged: data.acknowledged };
 }

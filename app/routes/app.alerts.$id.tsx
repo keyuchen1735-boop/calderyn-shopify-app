@@ -53,6 +53,7 @@ import { resolveActionParam } from "~/lib/assistant/action-param";
 import { resolveSkuForDiscontinue } from "~/lib/actions/discontinue.server";
 import { executeDiscontinueAlertAction } from "~/lib/actions/alert-action.server";
 import { executeReallocateSpendSku } from "~/lib/actions/reallocate-sku.server";
+import { executeAdjustPriceAlertAction } from "~/lib/actions/adjust-price.server";
 import { enrichRemediation } from "~/lib/remediation/enrich.server";
 import {
   DetectorTag,
@@ -365,6 +366,47 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             outcome === "succeeded"
               ? `Product discontinued — archived on Shopify and marked Do Not Reorder.${acknowledged ? "" : " Alert couldn't be acknowledged."}`
               : "Discontinue recorded as failed — check the audit log.",
+          isError: outcome !== "succeeded",
+        },
+      });
+    }
+
+    if (kind === "adjust_price") {
+      const shopId = await resolveShopId(session.shop);
+      // Optional merchant override (dollars). Blank → engine restore-to-margin
+      // price. Strictly validated; the executor re-bounds it to the price cap.
+      const priceRaw = String(formData.get("new_price") ?? "").trim();
+      let newPriceCents: number | undefined;
+      if (priceRaw !== "") {
+        const dollars = Number(priceRaw);
+        if (!Number.isFinite(dollars) || dollars <= 0) {
+          throw new CalderynError({
+            code: "INVALID_PRICE",
+            status: 422,
+            message: "Price must be a positive dollar amount, or blank to use the suggested price.",
+          });
+        }
+        newPriceCents = Math.round(dollars * 100);
+      }
+      const { outcome, acknowledged } = await executeAdjustPriceAlertAction({
+        client,
+        admin,
+        sb: getSupabase(),
+        shopId,
+        alertId,
+        kind: "adjust_price",
+        idempotencyKey,
+        newPriceCents,
+        actor: "merchant",
+        signal: request.signal,
+      });
+      return json<ActionPayload>({
+        ok: outcome === "succeeded",
+        toast: {
+          message:
+            outcome === "succeeded"
+              ? `Price updated on Shopify to restore margin — logged to action history; reversible there.${acknowledged ? "" : " Alert couldn't be acknowledged."}`
+              : "Price update recorded as failed — check the audit log.",
           isError: outcome !== "succeeded",
         },
       });
@@ -860,6 +902,8 @@ function ExecuteActionModal({
       ? (poDefaults.unit_cost_cents / 100).toFixed(2)
       : "",
   );
+  // adjust_price: optional override (dollars). Blank → engine restore-to-margin price.
+  const [newPrice, setNewPrice] = useState("");
   const { smDown } = useBreakpoints();
 
   const inventoryHints =
@@ -933,6 +977,20 @@ function ExecuteActionModal({
                 <InlineStack gap="200" wrap={false}>{poFields}</InlineStack>
               );
             })()}
+            {kind === "adjust_price" && (
+              <TextField
+                label="New price"
+                name="new_price"
+                type="number"
+                min={0}
+                step={0.01}
+                prefix="$"
+                value={newPrice}
+                onChange={setNewPrice}
+                autoComplete="off"
+                helpText="Leave blank to use the suggested price that restores this product's margin. Bounded by your price-change guardrail."
+              />
+            )}
             {missingInventoryFields ? (
               <Banner tone="critical">
                 Alert evidence is missing the inventory item, source location, destination, or
@@ -1017,6 +1075,8 @@ function actionDescription(kind: ActionKind) {
       return "Shifts half of this product's daily ad budget to your top-ranked winner product. Fully reversible via Undo. Meta only — both campaigns must be active and dedicated to their SKU.";
     case "discontinue_sku":
       return "Archives this product on Shopify and marks it Do Not Reorder, blocking future PO drafts. Fully reversible — undo re-activates the product and clears the flag.";
+    case "adjust_price":
+      return "Raises this product's selling price on Shopify to restore its pre-erosion margin. Leave the field blank to use the suggested price, or set your own within your price-change guardrail. Fully reversible via Undo.";
     case "snooze_alert":
       return "Suppresses this alert until the condition resolves. Calderyn re-evaluates on the next detection pass.";
   }

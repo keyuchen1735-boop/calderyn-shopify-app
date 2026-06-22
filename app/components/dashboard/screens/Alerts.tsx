@@ -133,6 +133,10 @@ function AlertDetail({
   // (AlertVM has no `resolved_with` field; the shell only flips status to "resolved".)
   const [attempted, setAttempted] = useState<ActionKind | null>(null);
   const [busy, setBusy] = useState(false);
+  // adjust_price confirms in a dialog (customer-visible price change). priceInput
+  // is an optional override (blank → engine's restore-to-margin price).
+  const [confirmPrice, setConfirmPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState("");
 
   const resolved = alert.status !== "open";
   const resolvedLabel =
@@ -160,6 +164,31 @@ function AlertDetail({
   const evidenceCells = Object.entries(alert.evidence).filter(
     ([k, v]) => !isInternalEvidenceKey(k) && v != null && v !== "",
   );
+
+  // adjust_price: parse the optional override (dollars → cents; blank → engine
+  // suggestion) and execute. The executor bounds the price to the guardrail cap
+  // and surfaces success/failure toasts via the shell.
+  const runAdjustPrice = async () => {
+    if (busy || resolved) return;
+    const raw = priceInput.trim();
+    let newPriceCents: number | undefined;
+    if (raw !== "") {
+      const dollars = Number(raw.replace(/^\$/, ""));
+      if (!Number.isFinite(dollars) || dollars <= 0) {
+        app.toast("Enter a valid price, or leave it blank for the suggested price.", "warn", "critical");
+        return;
+      }
+      newPriceCents = Math.round(dollars * 100);
+    }
+    setConfirmPrice(false);
+    setAttempted("adjust_price");
+    setBusy(true);
+    try {
+      await app.executeAction(alert, "adjust_price", { newPriceCents });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (kind: ActionKind) => {
     if (busy || resolved) return;
@@ -273,7 +302,11 @@ function AlertDetail({
                           disabled={resolved || busy}
                           aria-busy={busy && attempted === m.executor}
                           className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
-                          onClick={() => run(m.executor as ActionKind)}
+                          onClick={() =>
+                            m.executor === "adjust_price"
+                              ? setConfirmPrice(true)
+                              : run(m.executor as ActionKind)
+                          }
                         >
                           <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
                           <span className="flex-1 text-left">{m.label}</span>
@@ -309,6 +342,63 @@ function AlertDetail({
                     );
                   })}
                 </div>
+                {confirmPrice && (
+                  <div
+                    className="cd-move-row"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      padding: "12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                    }}
+                  >
+                    <span className="cd-caption">
+                      This changes the live selling price on Shopify to restore this product&apos;s
+                      margin. Leave the field blank to use the suggested price, or set your own
+                      (within your price-change guardrail). Reversible from your action history.
+                    </span>
+                    <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <span className="cd-caption">New price</span>
+                      <input
+                        className="cd-input tabular-nums"
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        inputMode="decimal"
+                        placeholder="Suggested"
+                        value={priceInput}
+                        disabled={busy}
+                        onChange={(e) => setPriceInput(e.target.value)}
+                      />
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="cd-action-btn rec"
+                        disabled={busy}
+                        aria-busy={busy}
+                        onClick={runAdjustPrice}
+                        style={{ flex: "0 0 auto" }}
+                      >
+                        <CDIcon name="tag" size={16} strokeWidth={1.9} />
+                        <span>{busy ? "Updating…" : "Update price"}</span>
+                      </button>
+                      <button
+                        className="cd-action-btn"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmPrice(false);
+                          setPriceInput("");
+                        }}
+                        style={{ flex: "0 0 auto" }}
+                      >
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
                   logged. Advisory moves are guidance; the highlighted action runs with one click.
