@@ -118,3 +118,45 @@ describe("graduationVerdict — boundary conditions", () => {
     expect(v.graduated).toBe(true);
   });
 });
+
+describe("graduationVerdict — discontinue_sku (hard_to_reverse: 10-approval floor)", () => {
+  // discontinue_sku is graduatable (it has a working undo branch) but is more
+  // consequential than a campaign tweak, so it sits in the hard_to_reverse tier
+  // and the gate demands MIN_APPROVALS.hard_to_reverse (10), not the reversible 3.
+  const DISCONTINUE: Parameters<typeof graduationVerdict>[0] = {
+    ...PASSING,
+    actionKind: "discontinue_sku",
+    cleanApprovals: 10,
+  };
+
+  it("is in the graduatable set", () => {
+    expect(GRADUATABLE_V1.has("discontinue_sku")).toBe(true);
+  });
+
+  it("graduates with 10 clean approvals + all other gates passing", () => {
+    const v = graduationVerdict(DISCONTINUE);
+    expect(v.graduated).toBe(true);
+    expect(v.reason).toBe("all gates passed");
+  });
+
+  it("the gate is tier-aware: 9 approvals fails, 10 passes (hard_to_reverse floor)", () => {
+    expect(graduationVerdict({ ...DISCONTINUE, cleanApprovals: 9 }).graduated).toBe(false);
+    expect(graduationVerdict({ ...DISCONTINUE, cleanApprovals: 9 }).reason).toBe(
+      "needs more approvals",
+    );
+    expect(graduationVerdict({ ...DISCONTINUE, cleanApprovals: 10 }).graduated).toBe(true);
+  });
+
+  it("does NOT graduate at the reversible floor (3) — a campaign pair would", () => {
+    // Same 3 approvals: a reversible pause graduates, but a hard_to_reverse
+    // discontinue does not — proving the floor follows the action's tier.
+    expect(graduationVerdict({ ...PASSING, cleanApprovals: 3 }).graduated).toBe(true);
+    expect(graduationVerdict({ ...DISCONTINUE, cleanApprovals: 3 }).graduated).toBe(false);
+  });
+
+  it("still requires a working undo branch", () => {
+    const v = graduationVerdict({ ...DISCONTINUE, hasUndoBranch: false });
+    expect(v.graduated).toBe(false);
+    expect(v.reason).toBe("no undo branch");
+  });
+});
