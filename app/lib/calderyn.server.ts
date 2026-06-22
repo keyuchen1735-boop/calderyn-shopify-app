@@ -23,7 +23,7 @@ import { recordApproval as _recordApproval } from "./calibration/approval.server
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
 import { countNearGraduation } from "./calibration/graduation.server";
-import { liveEngineSummary, setPairAutonomy as _setPairAutonomy, type LiveEngineSummary } from "./calibration/live-engine.server";
+import { liveEngineSummary, setPairAutonomy as _setPairAutonomy, type LiveEngineSummary, type PairEvidence } from "./calibration/live-engine.server";
 import type { RecordRejectionInput } from "./calibration/reject.server";
 import type { ApproveReceipt, RejectReceipt } from "./calibration/delta";
 import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
@@ -1393,6 +1393,30 @@ export function calderynClient(shop: string) {
       ): Promise<{ ok: boolean }> {
         const shopId = await shopIdP;
         return _setPairAutonomy(shopId, detectorId, actionKind, enabled, supabase);
+      },
+      // Per-pair Beta evidence + graduation gate for the Live Engine pipeline +
+      // inspector confidence breakdowns. Covers ALL pairs (a pair shows in the
+      // pipeline while still being learned). Never throws (returns [] on error).
+      async pairEvidence(): Promise<PairEvidence[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("pair_calibration")
+            .select("detector_id, action_kind, alpha, beta, graduation_threshold, graduated")
+            .eq("shop_id", shopId);
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            detectorId: String(r.detector_id),
+            actionKind: r.action_kind as ActionKind,
+            alpha: Number(r.alpha ?? 0),
+            beta: Number(r.beta ?? 0),
+            graduationThreshold: Number(r.graduation_threshold ?? 80),
+            graduated: Boolean(r.graduated),
+          }));
+        } catch (err) {
+          console.error("[calibration.pairEvidence] read failed", err);
+          return [];
+        }
       },
       // Return all active learned rules for this shop, with plain-language summaries.
       async learnedRules(): Promise<LearnedRule[]> {

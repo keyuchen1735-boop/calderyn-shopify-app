@@ -44,6 +44,21 @@ export interface PairRow {
   merchant_disabled?: boolean | null;
 }
 
+/**
+ * A single (detector, action) pair's Beta evidence + graduation gate, used to
+ * compute confidence breakdowns for the Live Engine pipeline + inspector. Covers
+ * ALL pairs (not just graduated), since the pipeline shows pairs still being
+ * learned. graduationThreshold is the real per-pair auto-act bar (not a hardcode).
+ */
+export interface PairEvidence {
+  detectorId: string;
+  actionKind: ActionKind;
+  alpha: number;
+  beta: number;
+  graduationThreshold: number;
+  graduated: boolean;
+}
+
 export interface AutopilotAuditRow {
   detector_id: string;
   action_kind: string;
