@@ -12,6 +12,9 @@ import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, ACTION_LABELS, alertDetectorLabel } from "../format";
 import CalibrationLevelHeader from "../CalibrationLevelHeader";
+import { MIN_APPROVALS } from "~/lib/calibration/graduation";
+import { actionTier } from "~/lib/calibration/confidence";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { LearnedRuleVM, QueueProposalVM } from "../view-models";
 import * as client from "~/lib/dashboard/client";
@@ -203,14 +206,156 @@ function ReflectionReceipt({ result, reason }: { result: RejectResult; reason: R
   );
 }
 
+/* ---------- Graduation moment (celebratory, screen-level) ---------- */
+type GraduatedInfo = { detectorId: string; actionKind: ActionKind; label: string };
+
+function GraduationMoment({ info, app, onDismiss }: { info: GraduatedInfo; app: DashboardCtx; onDismiss: () => void }) {
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const min = MIN_APPROVALS[actionTier(info.actionKind)];
+
+  const toggle = async () => {
+    if (busy) return;
+    const next = !on;
+    setOn(next); // optimistic
+    setBusy(true);
+    try {
+      await client.toggleFeatureAutonomy({ detectorId: info.detectorId, actionKind: info.actionKind, enabled: next });
+    } catch (err) {
+      setOn(!next); // revert
+      app.toast(err instanceof DashboardApiError ? err.message : "Could not update autopilot.", "warn", "critical");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cd-grad">
+      <button type="button" className="cd-grad-x" aria-label="Dismiss" onClick={onDismiss}>
+        <CDIcon name="x" size={15} strokeWidth={2.2} />
+      </button>
+      <div className="cd-grad-eyebrow">
+        <CDIcon name="bolt" size={13} strokeWidth={2} /> Autopilot unlocked
+      </div>
+      <h3 className="cd-grad-title">
+        You can now let Calderyn <b>{info.label.toLowerCase()}</b> on autopilot
+      </h3>
+      <div className="cd-grad-check">
+        <CDIcon name="check" size={13} strokeWidth={2.8} /> Approved {min} times in a row
+      </div>
+      <div className="cd-grad-actions">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={`${on ? "Turn off" : "Turn on"} autopilot for this fix`}
+          className="cd-grad-toggle"
+          data-on={on}
+          disabled={busy}
+          onClick={toggle}
+        >
+          <span className="cd-grad-toggle-knob" />
+        </button>
+        <span className="cd-grad-toggle-lab">{on ? "Autopilot is on for this fix" : "Turn on autopilot"}</span>
+      </div>
+      <div className="cd-grad-foot">
+        You stay in control. Manage every autopilot fix from the{" "}
+        <button type="button" className="cd-grad-link" onClick={() => app.navigate("live-engine")}>
+          Live Engine
+        </button>
+        .
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Approve receipt (post-approve) ---------- */
+function ApproveReceiptPanel({
+  receipt,
+  actionKind,
+  actionLabel,
+}: {
+  receipt: ApproveReceipt;
+  actionKind: ActionKind;
+  actionLabel: string;
+}) {
+  const delta = receipt.delta;
+  const deltaTone: "success" | "critical" | "neutral" = delta < 0 ? "critical" : delta > 0 ? "success" : "neutral";
+  const deltaLabel = delta === 0 ? "no change" : delta > 0 ? `+${delta}%` : `${delta}%`;
+  const min = MIN_APPROVALS[actionTier(actionKind)];
+  const remaining = Math.max(0, min - receipt.cleanApprovals);
+  const showProgress = receipt.graduatable && !receipt.justGraduated;
+  const cleanPct = Math.min(100, Math.round((receipt.cleanApprovals / Math.max(1, min)) * 100));
+
+  return (
+    <div className="cd-rcpt">
+      <div className="cd-rcpt-voice">
+        <span className="cd-feed-icon" data-tone="success">
+          <CDIcon name="check" size={15} strokeWidth={2.2} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="cd-rcpt-eyebrow">Calderyn learned something</div>
+          <p className="cd-rcpt-text">
+            Approved. Calderyn is now about {receipt.after}% sure about this fix and will lean toward doing it for you.
+          </p>
+        </div>
+      </div>
+      <div className="cd-rcpt-box">
+        <div className="cd-rcpt-row">
+          <span className="cd-feed-icon" data-tone="success">
+            <CDIcon name="check" size={14} strokeWidth={2.2} />
+          </span>
+          <div className="cd-rcpt-rmain">
+            <div className="cd-rcpt-rtitle">Trust in this fix</div>
+            <div className="cd-rcpt-rsub">You taught Calderyn to {actionLabel.toLowerCase()} here.</div>
+          </div>
+          <Pill tone={deltaTone}>{deltaLabel}</Pill>
+        </div>
+        {showProgress && (
+          <div className="cd-grad-prog">
+            <div className="cd-grad-prog-top">
+              <span>Toward autopilot</span>
+              <span>
+                {receipt.cleanApprovals} of {min}
+              </span>
+            </div>
+            <div className="cd-grad-prog-bar">
+              <div className="cd-grad-prog-fill" style={{ width: `${cleanPct}%` }} />
+            </div>
+            <div className="cd-grad-prog-cap">
+              {remaining === 0
+                ? "Ready to graduate on its next clean approval."
+                : `Approve this fix ${remaining} more time${remaining === 1 ? "" : "s"} in a row to let Calderyn run it on autopilot.`}
+            </div>
+          </div>
+        )}
+        {receipt.justGraduated && (
+          <div className="cd-grad-inline">
+            <CDIcon name="bolt" size={14} strokeWidth={2} /> Autopilot unlocked for this fix. Turn it on at the top of the queue.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Single proposal row ---------- */
 type RowView = "idle" | "confirm" | "reject" | "approved" | "rejected";
 
-function ProposalRow({ proposal, app }: { proposal: QueueProposalVM; app: DashboardCtx }) {
+function ProposalRow({
+  proposal,
+  app,
+  onGraduated,
+}: {
+  proposal: QueueProposalVM;
+  app: DashboardCtx;
+  onGraduated: (info: GraduatedInfo) => void;
+}) {
   const [view, setView] = useState<RowView>("idle");
   const [busy, setBusy] = useState(false);
   const [rejectResult, setRejectResult] = useState<RejectResult | null>(null);
   const [rejectReason, setRejectReason] = useState<RejectReason | null>(null);
+  const [approveReceipt, setApproveReceipt] = useState<ApproveReceipt | null>(null);
 
   const alert = app.alerts.find((a) => a.id === proposal.alertId);
   const detectorLabel = alertDetectorLabel(proposal.detector_id, alert?.evidence ?? {});
@@ -226,8 +371,14 @@ function ProposalRow({ proposal, app }: { proposal: QueueProposalVM; app: Dashbo
     }
     setBusy(true);
     try {
-      await app.executeAction(alert, proposal.action_kind as ActionKind);
+      const receipt = await app.executeAction(alert, proposal.action_kind as ActionKind);
       setView("approved");
+      if (receipt) {
+        setApproveReceipt(receipt);
+        if (receipt.justGraduated) {
+          onGraduated({ detectorId: proposal.detector_id, actionKind: proposal.action_kind as ActionKind, label: actionLabel });
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -327,6 +478,10 @@ function ProposalRow({ proposal, app }: { proposal: QueueProposalVM; app: Dashbo
         />
       )}
 
+      {view === "approved" && approveReceipt && (
+        <ApproveReceiptPanel receipt={approveReceipt} actionKind={proposal.action_kind as ActionKind} actionLabel={actionLabel} />
+      )}
+
       {view === "rejected" && rejectResult && rejectReason && (
         <ReflectionReceipt result={rejectResult} reason={rejectReason} />
       )}
@@ -410,6 +565,9 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
 
   const sorted = [...proposals].sort((a, b) => b.confidence - a.confidence);
   const loading = app.loading && sorted.length === 0;
+  // The most recent pair to cross into graduated this session drives the
+  // celebratory "autopilot unlocked" moment at the top of the queue.
+  const [graduated, setGraduated] = useState<GraduatedInfo | null>(null);
 
   return (
     <div className="cd-screen">
@@ -419,6 +577,8 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
         pct={app.calibration?.pct ?? null}
         nearGraduation={app.calibration?.nearGraduation ?? 0}
       />
+
+      {graduated && <GraduationMoment info={graduated} app={app} onDismiss={() => setGraduated(null)} />}
 
       {loading ? (
         <Card>
@@ -445,7 +605,7 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
           <Card pad={false}>
             <div className="cd-rows">
               {sorted.map((p) => (
-                <ProposalRow key={`${p.alertId}:${p.action_kind}`} proposal={p} app={app} />
+                <ProposalRow key={`${p.alertId}:${p.action_kind}`} proposal={p} app={app} onGraduated={setGraduated} />
               ))}
             </div>
           </Card>

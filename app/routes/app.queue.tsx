@@ -9,7 +9,10 @@ import { newIdempotencyKey } from "~/lib/ids";
 import { fmtMoney } from "~/lib/format";
 import { alertDetectorLabel, ACTION_LABELS, recommendedAction } from "~/lib/labels";
 import CalibrationLevelHeader from "~/components/calderyn/CalibrationLevelHeader";
-import type { LearnedRule, QueueProposal, RejectReason } from "~/lib/types";
+import { MIN_APPROVALS } from "~/lib/calibration/graduation";
+import { actionTier } from "~/lib/calibration/confidence";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
+import type { ActionKind, LearnedRule, QueueProposal, RejectReason } from "~/lib/types";
 
 // The 5 valid reject reasons (mirrors types.ts RejectReason union).
 const REJECT_REASONS: RejectReason[] = [
@@ -299,16 +302,147 @@ function ReflectionReceipt({ data, reason }: { data: RejectResult; reason: Rejec
   );
 }
 
+/* ---------- graduation moment (celebratory, screen-level) ---------- */
+type GraduatedInfo = { detectorId: string; actionKind: ActionKind; label: string };
+
+function GraduationMoment({ info, onDismiss }: { info: GraduatedInfo; onDismiss: () => void }) {
+  const toggleFetcher = useFetcher<{ ok?: boolean; enabled?: boolean } | { error: string }>();
+  const [on, setOn] = useState(false);
+  const min = MIN_APPROVALS[actionTier(info.actionKind)];
+
+  // Reconcile to the server's echo: success returns { enabled }, error doesn't.
+  useEffect(() => {
+    if (toggleFetcher.state !== "idle" || !toggleFetcher.data) return;
+    const d = toggleFetcher.data as { enabled?: boolean };
+    setOn(Boolean(d.enabled));
+  }, [toggleFetcher.state, toggleFetcher.data]);
+
+  const toggle = () => {
+    const next = !on;
+    setOn(next); // optimistic
+    toggleFetcher.submit(
+      { intent: "toggle-feature", detectorId: info.detectorId, actionKind: info.actionKind, enabled: String(next) },
+      { method: "post", action: "/app/engine" },
+    );
+  };
+
+  return (
+    <div className="aqx-grad">
+      <button type="button" className="aqx-grad-x" aria-label="Dismiss" onClick={onDismiss}>
+        <IX s={15} w={2.2} />
+      </button>
+      <div className="aqx-grad-eyebrow">
+        <IBolt /> Autopilot unlocked
+      </div>
+      <h3 className="aqx-grad-title">
+        You can now let Calderyn <b>{info.label.toLowerCase()}</b> on autopilot
+      </h3>
+      <div className="aqx-grad-check">
+        <ICheck s={13} w={2.8} /> Approved {min} times in a row
+      </div>
+      <div className="aqx-grad-actions">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={`${on ? "Turn off" : "Turn on"} autopilot for this fix`}
+          className="aqx-grad-toggle"
+          data-on={on}
+          disabled={toggleFetcher.state !== "idle"}
+          onClick={toggle}
+        >
+          <span className="aqx-grad-toggle-knob" />
+        </button>
+        <span className="aqx-grad-toggle-lab">{on ? "Autopilot is on for this fix" : "Turn on autopilot"}</span>
+      </div>
+      <div className="aqx-grad-foot">
+        You stay in control. Manage every autopilot fix from the <a href="/app/engine">Live Engine</a>.
+      </div>
+    </div>
+  );
+}
+
+/* ---------- approve receipt (post-approve) ---------- */
+function ApproveReceiptPanel({
+  receipt,
+  actionKind,
+  actionLabel,
+}: {
+  receipt: ApproveReceipt;
+  actionKind: ActionKind;
+  actionLabel: string;
+}) {
+  const delta = receipt.delta;
+  const deltaTone = delta < 0 ? "down" : delta > 0 ? "up" : "flat";
+  const deltaLabel = delta === 0 ? "no change" : delta > 0 ? `+${delta}%` : `${delta}%`;
+  const min = MIN_APPROVALS[actionTier(actionKind)];
+  const remaining = Math.max(0, min - receipt.cleanApprovals);
+  const showProgress = receipt.graduatable && !receipt.justGraduated;
+  const cleanPct = Math.min(100, Math.round((receipt.cleanApprovals / Math.max(1, min)) * 100));
+
+  return (
+    <div className="aqx-receipt">
+      <div className="aqx-voice">
+        <span className="aqx-voice-ico">
+          <IHex />
+        </span>
+        <div className="aqx-voice-body">
+          <div className="aqx-voice-eyebrow">Calderyn learned something</div>
+          <p className="aqx-voice-text">
+            Approved. Calderyn is now about {receipt.after}% sure about this fix and will lean toward doing it for you.
+          </p>
+        </div>
+      </div>
+      <div className="aqx-learned">
+        <div className="aqx-learned-row aqx-learned-row--trust">
+          <span className="aqx-learned-ico aqx-learned-ico--did">
+            <ICheck />
+          </span>
+          <div className="aqx-learned-main">
+            <div className="aqx-learned-title">Trust in this fix</div>
+            <div className="aqx-learned-sub">You taught Calderyn to {actionLabel.toLowerCase()} here.</div>
+          </div>
+          <span className={`aqx-delta aqx-delta--${deltaTone}`}>{deltaLabel}</span>
+        </div>
+        {showProgress && (
+          <div className="aqx-grad-prog">
+            <div className="aqx-grad-prog-top">
+              <span>Toward autopilot</span>
+              <span>
+                {receipt.cleanApprovals} of {min}
+              </span>
+            </div>
+            <div className="aqx-grad-prog-bar">
+              <div className="aqx-grad-prog-fill" style={{ width: `${cleanPct}%` }} />
+            </div>
+            <div className="aqx-grad-prog-cap">
+              {remaining === 0
+                ? "Ready to graduate on its next clean approval."
+                : `Approve this fix ${remaining} more time${remaining === 1 ? "" : "s"} in a row to let Calderyn run it on autopilot.`}
+            </div>
+          </div>
+        )}
+        {receipt.justGraduated && (
+          <div className="aqx-grad-inline">
+            <IBolt /> Autopilot unlocked for this fix. Turn it on at the top of the queue.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- one proposal card ---------- */
 type CardView = "idle" | "confirm" | "reject" | "approved" | "rejected";
 
-function ProposalCard({ p }: { p: QueueProposal }) {
+function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info: GraduatedInfo) => void }) {
   const [view, setView] = useState<CardView>("idle");
   const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");
+  const [receipt, setReceipt] = useState<ApproveReceipt | null>(null);
   const [idemKey] = useState(() => newIdempotencyKey());
 
-  const approveFetcher = useFetcher<{ ok?: boolean; toast?: { message?: string; isError?: boolean } }>();
+  const approveFetcher = useFetcher<{ ok?: boolean; calibration?: ApproveReceipt; toast?: { message?: string; isError?: boolean } }>();
   const rejectFetcher = useFetcher<ActionPayload>();
 
   const detector = alertDetectorLabel(p.detector_id, {});
@@ -318,10 +452,20 @@ function ProposalCard({ p }: { p: QueueProposal }) {
   const approving = approveFetcher.state !== "idle";
   const rejecting = rejectFetcher.state !== "idle";
 
-  // Transition to the done state once a submission resolves.
+  // Transition to the done state once a submission resolves; capture the approve
+  // receipt and bubble a graduation up to the screen-level moment.
   useEffect(() => {
-    if (approveFetcher.state === "idle" && approveFetcher.data?.ok) setView("approved");
-  }, [approveFetcher.state, approveFetcher.data]);
+    if (approveFetcher.state === "idle" && approveFetcher.data?.ok) {
+      setView("approved");
+      const cal = approveFetcher.data.calibration;
+      if (cal) {
+        setReceipt(cal);
+        if (cal.justGraduated) {
+          onGraduated({ detectorId: p.detector_id, actionKind: p.action_kind, label: actionLabel });
+        }
+      }
+    }
+  }, [approveFetcher.state, approveFetcher.data, onGraduated, p.detector_id, p.action_kind, actionLabel]);
   useEffect(() => {
     if (rejectFetcher.state === "idle" && rejectFetcher.data && "reflection" in rejectFetcher.data) {
       setView("rejected");
@@ -458,6 +602,10 @@ function ProposalCard({ p }: { p: QueueProposal }) {
         </div>
       )}
 
+      {view === "approved" && receipt && (
+        <ApproveReceiptPanel receipt={receipt} actionKind={p.action_kind} actionLabel={actionLabel} />
+      )}
+
       {view === "rejected" && rejectFetcher.data && "reflection" in rejectFetcher.data && reason && (
         <ReflectionReceipt data={rejectFetcher.data} reason={reason} />
       )}
@@ -511,11 +659,16 @@ export default function ActionQueue() {
   // wiped by the loader revalidation that fires after each approve/reject.
   // Highest confidence first (matches the design's ranking note).
   const [items] = useState(() => [...proposals].sort((a, b) => b.confidence - a.confidence));
+  // The most recent pair to cross into graduated this session drives the
+  // celebratory "autopilot unlocked" moment at the top of the queue.
+  const [graduated, setGraduated] = useState<GraduatedInfo | null>(null);
 
   return (
     <Page title="Action Queue">
       <Stack>
         <CalibrationLevelHeader pct={calibrationPct} nearGraduation={nearGraduation} />
+
+        {graduated && <GraduationMoment info={graduated} onDismiss={() => setGraduated(null)} />}
 
         {error && (
           <Banner tone="critical" title="Couldn't load the queue">
@@ -544,7 +697,7 @@ export default function ActionQueue() {
             </div>
             <div className="aqx-list">
               {items.map((p) => (
-                <ProposalCard key={`${p.alertId}:${p.action_kind}`} p={p} />
+                <ProposalCard key={`${p.alertId}:${p.action_kind}`} p={p} onGraduated={setGraduated} />
               ))}
             </div>
           </div>

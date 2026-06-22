@@ -60,7 +60,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     feed: [],
     liveOn: false,
     setLiveOn: () => {},
-    executeAction: () => {},
+    executeAction: async () => null,
     undoAction: () => {},
     pushAdDraft: () => {},
     toast: () => {},

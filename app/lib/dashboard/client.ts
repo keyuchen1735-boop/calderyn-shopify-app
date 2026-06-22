@@ -37,6 +37,7 @@ import type {
   TopAd,
 } from "~/components/dashboard/view-models";
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
@@ -651,7 +652,7 @@ interface CampaignActionInput {
 export async function executeCampaignAction(
   campaignId: string,
   input: CampaignActionInput,
-): Promise<{ auditId: string; outcome: string }> {
+): Promise<{ auditId: string; outcome: string; calibration?: ApproveReceipt }> {
   const body: Record<string, unknown> = {
     type: input.type,
     idempotency_key: crypto.randomUUID(),
@@ -659,26 +660,35 @@ export async function executeCampaignAction(
   if (input.dailyBudgetCents !== undefined) body.daily_budget_cents = input.dailyBudgetCents;
   if (input.alertId !== undefined) body.alert_id = input.alertId;
 
-  const data = await apiSend<{ audit_id: string; outcome: string }>(
+  const data = await apiSend<{ audit_id: string; outcome: string; calibration?: ApproveReceipt }>(
     "POST",
     `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/action`,
     body,
   );
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
-  return { auditId: data.audit_id, outcome: data.outcome };
+  return { auditId: data.audit_id, outcome: data.outcome, calibration: data.calibration };
 }
 
 export async function executeAlertAction(
   alertId: string,
   input: { type: string },
-): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
-  const data = await apiSend<{ audit_id: string; outcome: string; acknowledged: boolean }>(
-    "POST",
-    `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,
-    { type: input.type, idempotency_key: crypto.randomUUID() },
-  );
-  return { auditId: data.audit_id, outcome: data.outcome, acknowledged: data.acknowledged };
+): Promise<{ auditId: string; outcome: string; acknowledged: boolean; calibration?: ApproveReceipt }> {
+  const data = await apiSend<{
+    audit_id: string;
+    outcome: string;
+    acknowledged: boolean;
+    calibration?: ApproveReceipt;
+  }>("POST", `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`, {
+    type: input.type,
+    idempotency_key: crypto.randomUUID(),
+  });
+  return {
+    auditId: data.audit_id,
+    outcome: data.outcome,
+    acknowledged: data.acknowledged,
+    calibration: data.calibration,
+  };
 }
 
 export async function relocateSku(

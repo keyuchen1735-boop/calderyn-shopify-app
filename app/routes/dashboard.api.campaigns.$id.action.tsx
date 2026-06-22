@@ -7,6 +7,7 @@ import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 
 const KINDS: ExecutableKind[] = [
   "pause_campaign",
@@ -75,11 +76,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   // Only when a real alert drove this action (alertId present + outcome succeeded).
   // AWAITED before return so the promise is not abandoned on serverless cold-flush.
   // Guarded: a signal failure must NEVER affect the action result.
+  // Capture the receipt so the Action Queue can render the approve confirmation
+  // + graduation moment (drives "autopilot unlocked"). Still guarded: a signal
+  // failure never affects the action result.
+  let calibration: ApproveReceipt | undefined;
   if (result.outcome === "succeeded" && alertId) {
     const client = calderynClient(session.shopDomain);
     const alert = await client.alerts.get(alertId).catch(() => null);
-    if (alert) recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
+    if (alert) {
+      calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb).catch(
+        () => ZERO_APPROVE_RECEIPT,
+      );
+    }
   }
 
-  return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
+  return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome, calibration }));
 }

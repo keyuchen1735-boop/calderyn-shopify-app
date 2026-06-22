@@ -35,7 +35,7 @@ const ctx: DashboardCtx = {
   feed: [],
   liveOn: true,
   setLiveOn: () => {},
-  executeAction: () => {},
+  executeAction: async () => null,
   undoAction: () => {},
   pushAdDraft: () => {},
   toast: () => {},

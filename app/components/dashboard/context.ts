@@ -2,6 +2,7 @@
 // DashboardApp builds this object; screens consume it as `{ app }: { app: DashboardCtx }`.
 import type { TweakValues } from "./tweaks-panel";
 import type { LiveEnginePageData } from "../../lib/calibration/live-engine-types";
+import type { ApproveReceipt } from "../../lib/calibration/delta";
 import type {
   AlertVM,
   AuditVM,
@@ -68,7 +69,10 @@ export interface DashboardCtx {
   setLiveOn: (next: boolean) => void;
 
   // --- actions ---
-  executeAction: (alert: AlertVM, kind: ActionKind) => void;
+  /** Execute (approve) an action for an alert. Resolves to the approve trust
+   *  receipt on a successful, calibratable action (drives the Action Queue's
+   *  approve receipt + graduation moment), or null otherwise. */
+  executeAction: (alert: AlertVM, kind: ActionKind) => Promise<ApproveReceipt | null>;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;
 

@@ -23,6 +23,7 @@ import {
 } from "./tweaks-panel";
 import { useLiveFeed } from "./live";
 import { applyUndo } from "./undo";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
 import type {
   ActionKind,
   DashboardCtx,
@@ -337,7 +338,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return null;
       }
 
       // pause / reduce-budget: live endpoint when we have a campaign_id.
@@ -350,13 +351,15 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           campaign && kind === "reduce_campaign_budget"
             ? Math.round(campaign.daily_budget_cents * 0.7)
             : undefined;
+        let receipt: ApproveReceipt | null = null;
         try {
-          const { outcome } = await client.executeCampaignAction(alert.campaign_id, {
+          const { outcome, calibration } = await client.executeCampaignAction(alert.campaign_id, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
           });
           const view = presentActionOutcome(outcome, label);
+          if (view.succeeded) receipt = calibration ?? null;
           // A non-succeeded outcome (retrying / failed) must NOT resolve the
           // alert or apply the optimistic paused/budget state — only a real
           // platform success does (P0-1). The terminal `failed` outcome arrives
@@ -384,7 +387,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return receipt;
       }
 
       // reallocate_inventory: live endpoint — the transfer plan is derived
@@ -392,12 +395,16 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // without a concrete move) surface as an error toast, never a fake
       // resolution.
       if (kind === "reallocate_inventory") {
+        let receipt: ApproveReceipt | null = null;
         try {
-          const { outcome, acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const { outcome, acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
           const view = presentActionOutcome(outcome, label);
           // Only a real success resolves the alert (P0-1); a Shopify failure
           // arrives as an HTTP 502 → DashboardApiError (caught below).
-          if (view.succeeded) markResolved();
+          if (view.succeeded) {
+            markResolved();
+            receipt = calibration ?? null;
+          }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
@@ -414,7 +421,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return receipt;
       }
 
       // No live dashboard endpoint for this kind. Two ways to land here:
@@ -431,6 +438,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         "warn",
         "critical",
       );
+      return null;
     },
     [campaigns, toast],
   );

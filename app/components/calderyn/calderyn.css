@@ -1170,3 +1170,35 @@
   .engx-live-dot { animation: none; }
   .engx-factor-fill, .engx-toggle, .engx-toggle-knob, .engx-out, .engx-dot, .engx-cal-ring-fill { transition: none; }
 }
+
+/* ===== Action Queue graduation moment + approve receipt (aqx-grad-*) ===== */
+.aqx-grad { position: relative; border-radius: 16px; padding: 18px 20px; color: #fff; background: linear-gradient(135deg, #173a4d 0%, #1a7f4f 130%); box-shadow: 0 4px 18px rgba(23, 58, 77, .22); overflow: hidden; }
+.aqx-grad-x { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 7px; border: 1px solid rgba(255, 255, 255, .28); background: transparent; color: rgba(255, 255, 255, .85); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.aqx-grad-x:hover { background: rgba(255, 255, 255, .12); }
+.aqx-grad-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .07em; color: rgba(255, 255, 255, .82); }
+.aqx-grad-title { margin: 7px 0 0; font-size: 16px; font-weight: 700; color: #fff; letter-spacing: -.01em; line-height: 1.35; max-width: 90%; }
+.aqx-grad-title b { font-weight: 700; border-bottom: 2px solid rgba(255, 255, 255, .45); padding-bottom: 1px; }
+.aqx-grad-check { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: #eaf5ef; }
+.aqx-grad-check svg { color: #8fe3b6; flex: none; }
+.aqx-grad-actions { display: flex; align-items: center; gap: 11px; margin-top: 14px; }
+.aqx-grad-toggle { flex: none; position: relative; width: 40px; height: 23px; border-radius: 12px; border: none; cursor: pointer; padding: 0; background: rgba(255, 255, 255, .28); transition: background .2s ease; }
+.aqx-grad-toggle[data-on="true"] { background: #8fe3b6; }
+.aqx-grad-toggle:disabled { opacity: .6; cursor: default; }
+.aqx-grad-toggle-knob { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: left .2s ease; }
+.aqx-grad-toggle[data-on="true"] .aqx-grad-toggle-knob { left: 20px; }
+.aqx-grad-toggle-lab { font-size: 13px; font-weight: 600; color: #fff; }
+.aqx-grad-foot { margin-top: 13px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .18); font-size: 12px; color: rgba(255, 255, 255, .82); }
+.aqx-grad-foot a { color: #fff; font-weight: 600; text-decoration: underline; }
+
+/* approve receipt progress (inside the light receipt panel) */
+.aqx-grad-prog { margin-top: 4px; }
+.aqx-grad-prog-top { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; color: #6a6a6a; margin-bottom: 5px; }
+.aqx-grad-prog-bar { height: 6px; border-radius: 4px; background: #eef0f2; overflow: hidden; }
+.aqx-grad-prog-fill { height: 100%; border-radius: 4px; background: #23556e; transition: width .4s ease; }
+.aqx-grad-prog-cap { font-size: 11px; color: #8a8a8a; margin-top: 6px; line-height: 1.4; }
+.aqx-grad-inline { display: flex; align-items: center; gap: 7px; margin-top: 4px; font-size: 12.5px; font-weight: 600; color: #1a7f4f; }
+.aqx-grad-inline svg { flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aqx-grad-toggle, .aqx-grad-toggle-knob, .aqx-grad-prog-fill { transition: none; }
+}
