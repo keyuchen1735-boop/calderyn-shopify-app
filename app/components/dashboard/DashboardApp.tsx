@@ -307,7 +307,13 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     async (
       alert: AlertVM,
       kind: ActionKind,
-      opts?: { newPriceCents?: number; campaignId?: string; loserBudgetCents?: number },
+      opts?: {
+        newPriceCents?: number;
+        campaignId?: string;
+        loserBudgetCents?: number;
+        poQuantity?: string;
+        poUnitCost?: string;
+      },
     ) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
@@ -458,6 +464,33 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             .catch(() => {});
           toast(
             `${label} — done. Logged to action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return;
+      }
+
+      // create_po_draft: live endpoint — builds a PO draft from the alert + the
+      // merchant's quantity/cost and records it (the PDF is downloadable from the
+      // action history). A local document; no external mutation.
+      if (kind === "create_po_draft") {
+        try {
+          const { acknowledged } = await client.executeAlertAction(alert.id, {
+            type: kind,
+            poQuantity: opts?.poQuantity,
+            poUnitCost: opts?.poUnitCost,
+          });
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — drafted. Download the PDF from your action history.` +
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );

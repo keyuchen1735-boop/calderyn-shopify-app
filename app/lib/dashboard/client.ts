@@ -160,11 +160,12 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // Only live-executable kinds render as buttons: campaign kinds go through
   // /dashboard/api/campaigns/:id/action, reallocate_inventory through
   // /dashboard/api/alerts/:id/action. Detector kinds without a dashboard
-  // endpoint (exclude_geo, create_po_draft) stay hidden until wired.
+  // endpoint (exclude_geo) stay hidden until wired.
   const detectorActions = DETECTOR_TO_ACTIONS[a.detector_id] ?? [];
   const actions: string[] = [
     ...(campaign_id ? ["pause_campaign", "reduce_campaign_budget"] : []),
     ...(detectorActions.includes("reallocate_inventory") ? ["reallocate_inventory"] : []),
+    ...(detectorActions.includes("create_po_draft") ? ["create_po_draft"] : []),
     "snooze_alert",
   ];
 
@@ -672,11 +673,14 @@ export async function executeCampaignAction(
 
 export async function executeAlertAction(
   alertId: string,
-  input: { type: string; newPriceCents?: number },
+  input: { type: string; newPriceCents?: number; poQuantity?: string; poUnitCost?: string },
 ): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
   const body: Record<string, unknown> = { type: input.type, idempotency_key: crypto.randomUUID() };
   // adjust_price only: optional merchant override; omitted → engine suggestion.
   if (input.newPriceCents !== undefined) body.new_price_cents = input.newPriceCents;
+  // create_po_draft only: quantity + optional unit cost (blank → TBD).
+  if (input.poQuantity !== undefined) body.po_quantity = input.poQuantity;
+  if (input.poUnitCost !== undefined) body.po_unit_cost = input.poUnitCost;
   const data = await apiSend<{ audit_id: string; outcome: string; acknowledged: boolean }>(
     "POST",
     `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,

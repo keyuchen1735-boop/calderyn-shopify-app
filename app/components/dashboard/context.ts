@@ -76,7 +76,14 @@ export interface DashboardCtx {
   executeAction: (
     alert: AlertVM,
     kind: ActionKind,
-    opts?: { newPriceCents?: number; campaignId?: string; loserBudgetCents?: number },
+    opts?: {
+      newPriceCents?: number;
+      campaignId?: string;
+      loserBudgetCents?: number;
+      // create_po_draft only: merchant quantity + optional unit cost (blank → TBD).
+      poQuantity?: string;
+      poUnitCost?: string;
+    },
   ) => void;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;

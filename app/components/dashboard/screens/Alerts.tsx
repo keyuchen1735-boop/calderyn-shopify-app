@@ -137,6 +137,14 @@ function AlertDetail({
   // is an optional override (blank → engine's restore-to-margin price).
   const [confirmPrice, setConfirmPrice] = useState(false);
   const [priceInput, setPriceInput] = useState("");
+  // create_po_draft confirms in a dialog collecting quantity (+ optional cost).
+  // Quantity defaults to the alert's shortfall when the evidence carries one.
+  const [confirmPo, setConfirmPo] = useState(false);
+  const [poQty, setPoQty] = useState(() => {
+    const shortfall = Number(alert.evidence?.shortfall_units);
+    return Number.isFinite(shortfall) && shortfall > 0 ? String(Math.ceil(shortfall)) : "";
+  });
+  const [poCost, setPoCost] = useState("");
 
   const resolved = alert.status !== "open";
   const resolvedLabel =
@@ -185,6 +193,30 @@ function AlertDetail({
     setBusy(true);
     try {
       await app.executeAction(alert, "adjust_price", { newPriceCents });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // create_po_draft: validate quantity (digits, 1..1,000,000) and run with the
+  // optional unit cost (blank → TBD). The server re-validates + builds the PO.
+  const runPo = async () => {
+    if (busy || resolved) return;
+    const qty = poQty.trim();
+    if (!/^\d+$/.test(qty) || Number(qty) <= 0 || Number(qty) > 1_000_000) {
+      app.toast("Order quantity must be a positive whole number.", "warn", "critical");
+      return;
+    }
+    const cost = poCost.trim().replace(/^\$/, "");
+    if (cost !== "" && (!Number.isFinite(Number(cost)) || Number(cost) < 0)) {
+      app.toast("Unit cost must be a non-negative amount, or blank for TBD.", "warn", "critical");
+      return;
+    }
+    setConfirmPo(false);
+    setAttempted("create_po_draft");
+    setBusy(true);
+    try {
+      await app.executeAction(alert, "create_po_draft", { poQuantity: qty, poUnitCost: cost });
     } finally {
       setBusy(false);
     }
@@ -424,7 +456,11 @@ function AlertDetail({
                         disabled={resolved || busy}
                         aria-busy={busy && attempted === kind}
                         className={"cd-action-btn" + (rec ? " rec" : "")}
-                        onClick={() => run(kind as ActionKind)}
+                        onClick={() =>
+                          kind === "create_po_draft"
+                            ? setConfirmPo(true)
+                            : run(kind as ActionKind)
+                        }
                       >
                         <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
                         <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
@@ -433,6 +469,73 @@ function AlertDetail({
                     );
                   })}
                 </div>
+                {confirmPo && (
+                  <div
+                    className="cd-move-row"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      padding: "12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                    }}
+                  >
+                    <span className="cd-caption">
+                      Drafts a purchase order for this product and records it in your action
+                      history, where the PDF can be downloaded. Review and send to your supplier
+                      manually — nothing is ordered automatically.
+                    </span>
+                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                      <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <span className="cd-caption">Quantity</span>
+                        <input
+                          className="cd-input tabular-nums"
+                          type="number"
+                          min={1}
+                          max={1_000_000}
+                          value={poQty}
+                          disabled={busy}
+                          onChange={(e) => setPoQty(e.target.value)}
+                        />
+                      </label>
+                      <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <span className="cd-caption">Unit cost</span>
+                        <input
+                          className="cd-input tabular-nums"
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          placeholder="TBD"
+                          value={poCost}
+                          disabled={busy}
+                          onChange={(e) => setPoCost(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="cd-action-btn rec"
+                        disabled={busy}
+                        aria-busy={busy}
+                        onClick={runPo}
+                        style={{ flex: "0 0 auto" }}
+                      >
+                        <CDIcon name="doc" size={16} strokeWidth={1.9} />
+                        <span>{busy ? "Drafting…" : "Create PO draft"}</span>
+                      </button>
+                      <button
+                        className="cd-action-btn"
+                        disabled={busy}
+                        onClick={() => setConfirmPo(false)}
+                        style={{ flex: "0 0 auto" }}
+                      >
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
                   logged.

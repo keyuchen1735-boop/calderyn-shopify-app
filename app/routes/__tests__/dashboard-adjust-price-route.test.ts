@@ -7,9 +7,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const requireDashboardSession = vi.fn();
 const executeAdjustPriceAlertAction = vi.fn();
+const executeCreatePoDraft = vi.fn();
 
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
+}));
+vi.mock("~/lib/actions/po-action.server", () => ({
+  executeCreatePoDraft: (...a: unknown[]) => executeCreatePoDraft(...a),
 }));
 vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
@@ -76,5 +80,42 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
     const res = await call({ type: "delete_everything", idempotency_key: "k3" });
     expect(res.status).toBe(422);
     expect(executeAdjustPriceAlertAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    executeCreatePoDraft.mockResolvedValue({
+      auditId: "audit-po-1",
+      outcome: "succeeded",
+      acknowledged: true,
+    });
+  });
+
+  it("passes the merchant quantity + unit cost through to the PO executor", async () => {
+    const res = await call({
+      type: "create_po_draft",
+      idempotency_key: "kpo",
+      po_quantity: "40",
+      po_unit_cost: "12.50",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      audit_id: "audit-po-1",
+      outcome: "succeeded",
+      acknowledged: true,
+    });
+    expect(executeCreatePoDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: "shop-1",
+        shopDomain: "x.myshopify.com",
+        alertId: "a1",
+        idempotencyKey: "kpo",
+        quantity: "40",
+        unitCost: "12.50",
+      }),
+    );
   });
 });
