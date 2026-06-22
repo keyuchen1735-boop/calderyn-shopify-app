@@ -422,15 +422,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // last_error set — no silent swallowing.
     const executableKinds: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget"];
     const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
+    // cut_ads on a SKU alert submits the loser campaign from the remediation move
+    // (the evidence has no campaign_id). executeAction validates shop ownership,
+    // so a submitted id can't reach another shop's campaign.
+    const moveCampaignId = stringOrEmpty(formData.get("move_campaign_id"));
+    const campaignId = moveCampaignId || evidenceCampaignId;
 
-    if (executableKinds.includes(kind as ExecutableKind) && evidenceCampaignId) {
-      // resolve_campaign_budget: compute the new budget as 70 % of the campaign's
-      // current daily_budget_cents recorded in evidence (30 % reduction).
+    if (executableKinds.includes(kind as ExecutableKind) && campaignId) {
+      // reduce_campaign_budget: the new budget is 70% of the current daily budget.
+      // Prefer the move's pre-computed reduced budget (SKU alert), else derive it
+      // from the campaign budget recorded in the alert evidence (campaign alert).
       const ev = alert.evidence ?? {};
       let dailyBudgetCents: number | undefined;
       if (kind === "reduce_campaign_budget") {
-        const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
-        dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
+        const moveReduced = Number(formData.get("move_reduced_budget_cents") ?? 0);
+        if (moveReduced > 0) {
+          dailyBudgetCents = Math.round(moveReduced);
+        } else {
+          const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
+          dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
+        }
       }
 
       const shopId = await resolveShopId(session.shop);
@@ -439,7 +450,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         {
           alertId: alertId || null,
           kind: kind as ExecutableKind,
-          campaignId: evidenceCampaignId,
+          campaignId,
           idempotencyKey,
           dailyBudgetCents,
         },
@@ -539,6 +550,12 @@ export default function AlertDetail() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
+  // cut_ads on a SKU alert: the loser campaign + its budget come from the
+  // remediation move's target (the alert evidence has no campaign_id). Stashed
+  // when the move is clicked so the modal can submit them.
+  const [moveTarget, setMoveTarget] = useState<{ campaignId?: string; budgetCents?: number } | null>(
+    null,
+  );
   const [searchParams] = useSearchParams();
 
   useActionToast(actionData);
@@ -737,7 +754,17 @@ export default function AlertDetail() {
                                 variant={rec ? "primary" : "secondary"}
                                 tone={isDestructive ? "critical" : undefined}
                                 loading={navigation.state !== "idle" && actionKind === m.executor}
-                                onClick={() => setActionKind(m.executor as ActionKind)}
+                                onClick={() => {
+                                  setActionKind(m.executor as ActionKind);
+                                  setMoveTarget(
+                                    m.target?.loserCampaignId
+                                      ? {
+                                          campaignId: m.target.loserCampaignId,
+                                          budgetCents: m.target.loserCampaignBudgetCents,
+                                        }
+                                      : null,
+                                  );
+                                }}
                               >
                                 {m.label}
                               </Button>
@@ -865,8 +892,12 @@ export default function AlertDetail() {
           kind={actionKind}
           poDefaults={poDefaults}
           existingPoDraft={existingPoDraft}
+          moveTarget={moveTarget}
           submitting={submitting}
-          onClose={() => setActionKind(null)}
+          onClose={() => {
+            setActionKind(null);
+            setMoveTarget(null);
+          }}
         />
       )}
     </Page>
@@ -878,6 +909,7 @@ function ExecuteActionModal({
   kind,
   poDefaults,
   existingPoDraft,
+  moveTarget,
   submitting,
   onClose,
 }: {
@@ -885,6 +917,7 @@ function ExecuteActionModal({
   kind: ActionKind;
   poDefaults: PoDefaults | null;
   existingPoDraft: boolean;
+  moveTarget: { campaignId?: string; budgetCents?: number } | null;
   submitting: boolean;
   onClose: () => void;
 }) {
@@ -934,6 +967,21 @@ function ExecuteActionModal({
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="alertId" value={alert.id} />
           <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+          {/* cut_ads on a SKU alert: target the loser campaign from the move (the
+              evidence carries no campaign_id). The server validates ownership. */}
+          {moveTarget?.campaignId &&
+            (kind === "pause_campaign" || kind === "reduce_campaign_budget") && (
+              <>
+                <input type="hidden" name="move_campaign_id" value={moveTarget.campaignId} />
+                {kind === "reduce_campaign_budget" && moveTarget.budgetCents != null && (
+                  <input
+                    type="hidden"
+                    name="move_reduced_budget_cents"
+                    value={String(Math.round(moveTarget.budgetCents * 0.7))}
+                  />
+                )}
+              </>
+            )}
           <BlockStack gap="300">
             <Text as="p" variant="bodyMd" tone="subdued">
               {actionDescription(kind)}

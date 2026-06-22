@@ -304,7 +304,11 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   // ----- execute an action against an alert -----
   const executeAction = useCallback(
-    async (alert: AlertVM, kind: ActionKind, opts?: { newPriceCents?: number }) => {
+    async (
+      alert: AlertVM,
+      kind: ActionKind,
+      opts?: { newPriceCents?: number; campaignId?: string; loserBudgetCents?: number },
+    ) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
       const markResolved = () => {
@@ -333,18 +337,25 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
-      // pause / reduce-budget: live endpoint when we have a campaign_id.
+      // pause / reduce-budget: live endpoint. The campaign is either the alert's
+      // own (campaign-level alerts) or the remediation move's loser campaign
+      // (cut_ads on a SKU-level alert, passed via opts.campaignId).
+      const campId = opts?.campaignId ?? alert.campaign_id;
       if (
         (kind === "pause_campaign" || kind === "reduce_campaign_budget") &&
-        alert.campaign_id
+        campId
       ) {
-        const campaign = campaigns.find((c) => c.id === alert.campaign_id);
+        // Reduced budget = 70% of the campaign's current daily budget. Prefer the
+        // live campaigns-list row; fall back to the move's carried budget for a
+        // SKU alert whose loser campaign isn't in this view's campaigns list.
+        const currentBudgetCents = campaigns.find((c) => c.id === campId)?.daily_budget_cents
+          ?? opts?.loserBudgetCents;
         const reducedBudget =
-          campaign && kind === "reduce_campaign_budget"
-            ? Math.round(campaign.daily_budget_cents * 0.7)
+          kind === "reduce_campaign_budget" && currentBudgetCents
+            ? Math.round(currentBudgetCents * 0.7)
             : undefined;
         try {
-          const { outcome } = await client.executeCampaignAction(alert.campaign_id, {
+          const { outcome } = await client.executeCampaignAction(campId, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
@@ -359,7 +370,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             markResolved();
             setCampaigns((cs) =>
               cs.map((c) => {
-                if (c.id !== alert.campaign_id) return c;
+                if (c.id !== campId) return c;
                 if (kind === "pause_campaign") return { ...c, status: "paused" };
                 return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
               }),

@@ -70,8 +70,14 @@ export interface DashboardCtx {
 
   // --- actions ---
   // opts.newPriceCents is an adjust_price-only merchant override (omit → engine
-  // suggestion). Other kinds ignore it.
-  executeAction: (alert: AlertVM, kind: ActionKind, opts?: { newPriceCents?: number }) => void;
+  // suggestion). opts.campaignId targets a campaign action at the remediation
+  // move's loser campaign on a SKU-level alert (no alert.campaign_id). Other
+  // kinds ignore them.
+  executeAction: (
+    alert: AlertVM,
+    kind: ActionKind,
+    opts?: { newPriceCents?: number; campaignId?: string; loserBudgetCents?: number },
+  ) => void;
   undoAction: (entry: AuditVM) => void;
   pushAdDraft: (name: string) => void;
 

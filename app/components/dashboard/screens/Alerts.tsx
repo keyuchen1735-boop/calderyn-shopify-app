@@ -190,7 +190,7 @@ function AlertDetail({
     }
   };
 
-  const run = async (kind: ActionKind) => {
+  const run = async (kind: ActionKind, opts?: { campaignId?: string; loserBudgetCents?: number }) => {
     if (busy || resolved) return;
     setAttempted(kind);
     setBusy(true);
@@ -199,7 +199,7 @@ function AlertDetail({
       // internally (it does not re-throw). On success it flips alert.status to
       // "resolved" via app.alerts, which re-renders this detail. On failure the
       // status stays "open", so the buttons simply re-enable below.
-      await app.executeAction(alert, kind);
+      await app.executeAction(alert, kind, opts);
     } finally {
       setBusy(false);
     }
@@ -305,7 +305,15 @@ function AlertDetail({
                           onClick={() =>
                             m.executor === "adjust_price"
                               ? setConfirmPrice(true)
-                              : run(m.executor as ActionKind)
+                              : run(
+                                  m.executor as ActionKind,
+                                  m.target?.loserCampaignId
+                                    ? {
+                                        campaignId: m.target.loserCampaignId,
+                                        loserBudgetCents: m.target.loserCampaignBudgetCents,
+                                      }
+                                    : undefined,
+                                )
                           }
                         >
                           <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />

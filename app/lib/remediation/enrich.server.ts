@@ -106,7 +106,11 @@ export async function enrichRemediation(
         ...m,
         executor: cutKind,
         ineligibleReason: undefined,
-        target: { skuId, loserCampaignId: loserRow.dedicated_campaign_id! },
+        target: {
+          skuId,
+          loserCampaignId: loserRow.dedicated_campaign_id!,
+          loserCampaignBudgetCents: loserRow.dedicated_campaign_budget_cents ?? undefined,
+        },
       }));
     }
 

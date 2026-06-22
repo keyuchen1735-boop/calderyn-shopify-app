@@ -183,6 +183,9 @@ describe("enrichRemediation — cut_ads", () => {
     const cut = out.moves.find((m) => m.kind === "cut_ads")!;
     expect(cut.executor).toBe("reduce_campaign_budget");
     expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+    // Carries the loser's current budget so cut_ads can compute the reduced
+    // budget on a SKU alert whose campaign isn't in the surface's campaign list.
+    expect(cut.target?.loserCampaignBudgetCents).toBe(45000);
   });
 
   it("no dedicated loser campaign → cut_ads stays advisory too", async () => {
