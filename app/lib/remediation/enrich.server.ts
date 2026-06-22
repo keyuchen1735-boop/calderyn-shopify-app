@@ -56,7 +56,12 @@ export async function enrichRemediation(
 
   const cutIdx = plan.moves.findIndex((m) => m.kind === "cut_ads");
 
+  // The loser's SKU: v_alerts_view evidence carries sku_id for some detectors,
+  // but others (e.g. negative_unit_economics) expose only margins — fall back to
+  // the SKU code, which v_sku_remediation_inputs also keys on. Without either we
+  // can't resolve the SKU; leave the moves advisory (rule 12).
   const skuId = typeof alert.evidence?.sku_id === "string" ? alert.evidence.sku_id : null;
+  const skuCode = typeof alert.sku === "string" && alert.sku ? alert.sku : null;
 
   // advisory patches reallocate on the given base plan, leaving cut_ads as-is on
   // that base. Callers pass `plan` when cut_ads is also ineligible, or `enriched`
@@ -68,17 +73,18 @@ export async function enrichRemediation(
       ineligibleReason: reason,
     }));
 
-  if (!skuId) return plan; // no sku_id → no DB read possible; return plan unchanged
+  if (!skuId && !skuCode) return plan; // no key to resolve the SKU
 
   try {
-    const { data: loser, error: lErr } = await sb
+    const loserSel = sb
       .from("v_sku_remediation_inputs")
       .select(
         "sku_id, contribution_per_unit_cents, dedicated_campaign_id, dedicated_campaign_platform, dedicated_campaign_budget_cents",
       )
-      .eq("shop_id", shopId)
-      .eq("sku_id", skuId)
-      .maybeSingle();
+      .eq("shop_id", shopId);
+    const { data: loser, error: lErr } = await (
+      skuId ? loserSel.eq("sku_id", skuId) : loserSel.eq("sku", skuCode!)
+    ).maybeSingle();
     if (lErr) throw lErr;
 
     const loserRow = loser as SkuRemediationRow | null;
@@ -107,7 +113,7 @@ export async function enrichRemediation(
         executor: cutKind,
         ineligibleReason: undefined,
         target: {
-          skuId,
+          skuId: loserRow.sku_id,
           loserCampaignId: loserRow.dedicated_campaign_id!,
           loserCampaignBudgetCents: loserRow.dedicated_campaign_budget_cents ?? undefined,
         },
@@ -126,7 +132,7 @@ export async function enrichRemediation(
     if (wErr) throw wErr;
 
     const winner = ((winners ?? []) as SkuRemediationRow[]).find(
-      (w) => w.sku_id !== skuId && w.dedicated_campaign_id,
+      (w) => w.sku_id !== loserRow.sku_id && w.dedicated_campaign_id,
     );
     if (!winner) return advisory(enriched, "no qualifying winner — no higher-margin product with stock headroom and a scalable campaign");
     if (winner.dedicated_campaign_platform !== "meta") {
@@ -141,7 +147,7 @@ export async function enrichRemediation(
       ineligibleReason: undefined,
       label: `Move ad budget to ${winner.title ?? "your top product"}`,
       target: {
-        skuId,
+        skuId: loserRow.sku_id,
         loserCampaignId: loserRow.dedicated_campaign_id!,
         winnerSkuId: winner.sku_id,
         winnerCampaignId: winner.dedicated_campaign_id!,

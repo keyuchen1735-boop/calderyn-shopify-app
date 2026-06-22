@@ -126,9 +126,9 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(out.moves.find((m) => m.kind === "discontinue")?.executor).toBe("discontinue_sku");
   });
 
-  it("alert with no sku_id on evidence → returns the plan unchanged (no DB read possible)", async () => {
+  it("alert with neither sku_id on evidence nor a sku code → returns the plan unchanged (no DB read possible)", async () => {
     const sb = fakeSb({ loser: null, winners: [] });
-    const out = await enrichRemediation(alert({ evidence: {} }), plan(), sb, "shop-1");
+    const out = await enrichRemediation(alert({ evidence: {}, sku: null }), plan(), sb, "shop-1");
     const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
     expect(realloc.executor).toBeNull();
     expect(realloc.ineligibleReason).toBeUndefined();
@@ -195,5 +195,31 @@ describe("enrichRemediation — cut_ads", () => {
     });
     const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
     expect(out.moves.find((m) => m.kind === "cut_ads")?.executor).toBeNull();
+  });
+
+  it("enriches via alert.sku when v_alerts_view evidence omits sku_id (real negative_unit_economics shape)", async () => {
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2169,
+        dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winners: [
+        { sku_id: WINNER_SKU, title: "Switchback Cap", winner_rank: 1,
+          dedicated_campaign_id: WINNER_CAMP, dedicated_campaign_platform: "meta",
+          dedicated_campaign_budget_cents: 3000, contribution_per_unit_cents: 1900 },
+      ],
+    });
+    // v_alerts_view evidence for this detector carries only margins — no sku_id.
+    // The SKU is still identified by alert.sku; enrich must resolve the loser
+    // from it, or the ad-budget moves stay (wrongly) advisory.
+    const out = await enrichRemediation(
+      alert({ evidence: { gross_unit_margin_usd: 21.69, cac_per_unit_usd: 200 } }),
+      plan(),
+      sb,
+      "shop-1",
+    );
+    expect(out.moves.find((m) => m.kind === "cut_ads")!.executor).not.toBeNull();
+    expect(out.moves.find((m) => m.kind === "reallocate_to_winner")!.executor).toBe("reallocate_spend_sku");
   });
 });
