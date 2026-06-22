@@ -355,20 +355,20 @@ function ProposalDetails({
     <div className="cd-queue-details">
       <div className="cd-queue-details-grid">
         <div>
-          <span className="cd-queue-details-label">Why this showed up</span>
+          <span className="cd-queue-details-label">Why</span>
           <p>{proposal.reasoning || detectorLabel}</p>
         </div>
         <div>
-          <span className="cd-queue-details-label">What approving does</span>
-          <p>Runs "{actionLabel}" for this alert, then records it in Action history.</p>
+          <span className="cd-queue-details-label">Action</span>
+          <p>{actionLabel}</p>
         </div>
         <div>
-          <span className="cd-queue-details-label">Why it asks first</span>
-          <p>Calderyn is {proposal.confidence}% confident. It waits for your approval until this fix earns enough clean wins.</p>
+          <span className="cd-queue-details-label">Trust</span>
+          <p>{proposal.confidence}% confident. Approval required.</p>
         </div>
         <div>
-          <span className="cd-queue-details-label">Money at stake</span>
-          <p>{money(proposal.dollar_impact)} estimated impact if handled.</p>
+          <span className="cd-queue-details-label">Impact</span>
+          <p>{money(proposal.dollar_impact)} at stake.</p>
         </div>
       </div>
     </div>
@@ -379,10 +379,12 @@ function ProposalRow({
   proposal,
   app,
   onGraduated,
+  compact = false,
 }: {
   proposal: QueueProposalVM;
   app: DashboardCtx;
   onGraduated: (info: GraduatedInfo) => void;
+  compact?: boolean;
 }) {
   const [view, setView] = useState<RowView>("idle");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -424,7 +426,7 @@ function ProposalRow({
   };
 
   return (
-    <div className="cd-queue-item" data-conf={conf.tone}>
+    <div className="cd-queue-item" data-conf={conf.tone} data-compact={compact ? "true" : "false"}>
       <div className="cd-queue-main">
         <span className="cd-feed-icon" data-tone="accent">
           <CDIcon name="bolt" size={14} strokeWidth={1.9} />
@@ -432,7 +434,7 @@ function ProposalRow({
 
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
           <span className="cd-row-title">{detectorLabel}</span>
-          {proposal.reasoning && (
+          {!compact && proposal.reasoning && (
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>
               {proposal.reasoning}
             </span>
@@ -543,19 +545,46 @@ function ProposalRow({
 
 type ProposalGroup = {
   key: string;
+  title: string;
   items: QueueProposalVM[];
   representative: QueueProposalVM;
   totalImpact: number;
 };
 
+function proposalSectionTitle(p: Pick<QueueProposalVM, "action_kind" | "detector_id">): string {
+  switch (p.action_kind) {
+    case "increase_campaign_budget":
+      return "Campaign Scales";
+    case "reallocate_budget":
+      return "Campaign Budget Moves";
+    case "pause_campaign":
+      return "Campaign Pauses";
+    case "reduce_campaign_budget":
+      return "Campaign Budget Cuts";
+    case "exclude_geo":
+      return "Geo Exclusions";
+    case "reallocate_inventory":
+      return "Inventory Moves";
+    case "create_po_draft":
+      return "Purchase Orders";
+    case "reallocate_spend_sku":
+      return "SKU Budget Moves";
+    case "adjust_price":
+      return "Price Changes";
+    case "discontinue_sku":
+      return "Product Retirements";
+    case "raise_free_ship_threshold":
+    case "exclude_sku_free_ship":
+      return "Shipping Fixes";
+    case "snooze_alert":
+      return "Snoozes";
+    default:
+      return alertDetectorLabel(p.detector_id, {});
+  }
+}
+
 function proposalGroupKey(p: QueueProposalVM): string {
-  return [
-    p.detector_id,
-    p.action_kind,
-    p.title.trim().toLowerCase(),
-    p.reasoning.trim().toLowerCase(),
-    p.confidence,
-  ].join("|");
+  return proposalSectionTitle(p);
 }
 
 function groupProposals(proposals: QueueProposalVM[]): ProposalGroup[] {
@@ -569,6 +598,7 @@ function groupProposals(proposals: QueueProposalVM[]): ProposalGroup[] {
     const items = [...values].sort((a, b) => b.dollar_impact - a.dollar_impact);
     return {
       key,
+      title: proposalSectionTitle(items[0]),
       items,
       representative: items[0],
       totalImpact: items.reduce((sum, item) => sum + item.dollar_impact, 0),
@@ -587,8 +617,6 @@ function ProposalGroupRow({
 }) {
   const [open, setOpen] = useState(false);
   const p = group.representative;
-  const alert = app.alerts.find((a) => a.id === p.alertId);
-  const detectorLabel = alertDetectorLabel(p.detector_id, alert?.evidence ?? {});
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
   const conf = confidenceMeta(Math.min(100, Math.max(0, p.confidence)));
 
@@ -604,15 +632,15 @@ function ProposalGroupRow({
         </span>
         <div className="min-w-0 flex-1">
           <div className="cd-queue-group-title">
-            <span>{detectorLabel}</span>
+            <span>{group.title}</span>
             <Pill tone={conf.tone}>{p.confidence}% confident</Pill>
-            <Pill tone="neutral">{group.items.length} similar alerts</Pill>
+            <Pill tone="neutral">{group.items.length} alerts</Pill>
           </div>
           <div className="cd-caption" style={{ color: "var(--text-3)", marginTop: 4 }}>
-            {p.reasoning}
+            {actionLabel} across {group.items.length} opportunities.
           </div>
           <div className="cd-queue-group-action">
-            Will {actionLabel.toLowerCase()} <span>{open ? "Hide each alert" : "Show each alert"}</span>
+            Will {actionLabel.toLowerCase()} <span>{open ? "Hide alerts" : "View alerts"}</span>
             <CDIcon name="chevronDown" size={14} strokeWidth={2} />
           </div>
         </div>
@@ -624,11 +652,11 @@ function ProposalGroupRow({
 
       <div className="cd-queue-group-body" data-open={open}>
         <div className="cd-queue-group-note">
-          These are separate alerts with the same recommendation. Approve or reject each one below.
+          Review the individual opportunities below.
         </div>
         <div className="cd-queue-group-list">
           {group.items.map((item) => (
-            <ProposalRow key={`${item.alertId}:${item.action_kind}`} proposal={item} app={app} onGraduated={onGraduated} />
+            <ProposalRow key={`${item.alertId}:${item.action_kind}`} proposal={item} app={app} onGraduated={onGraduated} compact />
           ))}
         </div>
       </div>

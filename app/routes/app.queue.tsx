@@ -456,27 +456,35 @@ function ProposalDetails({
     <div className="aqx-details">
       <div className="aqx-details-grid">
         <div>
-          <span className="aqx-details-label">Why this showed up</span>
+          <span className="aqx-details-label">Why</span>
           <p>{p.reasoning || detector}</p>
         </div>
         <div>
-          <span className="aqx-details-label">What approving does</span>
-          <p>Runs "{actionLabel}" for this alert, then records it in Action history.</p>
+          <span className="aqx-details-label">Action</span>
+          <p>{actionLabel}</p>
         </div>
         <div>
-          <span className="aqx-details-label">Why it asks first</span>
-          <p>Calderyn is {p.confidence}% confident. It waits for your approval until this fix earns enough clean wins.</p>
+          <span className="aqx-details-label">Trust</span>
+          <p>{p.confidence}% confident. Approval required.</p>
         </div>
         <div>
-          <span className="aqx-details-label">Money at stake</span>
-          <p>{fmtMoney(p.dollar_impact)} estimated impact if handled.</p>
+          <span className="aqx-details-label">Impact</span>
+          <p>{fmtMoney(p.dollar_impact)} at stake.</p>
         </div>
       </div>
     </div>
   );
 }
 
-function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info: GraduatedInfo) => void }) {
+function ProposalCard({
+  p,
+  onGraduated,
+  compact = false,
+}: {
+  p: QueueProposal;
+  onGraduated: (info: GraduatedInfo) => void;
+  compact?: boolean;
+}) {
   const [view, setView] = useState<CardView>("idle");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reason, setReason] = useState<RejectReason | null>(null);
@@ -538,7 +546,7 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
   };
 
   return (
-    <div className="aqx-card" data-conf={band}>
+    <div className="aqx-card" data-conf={band} data-compact={compact ? "true" : "false"}>
       <div className="aqx-row">
         <div className="aqx-rail" />
         <div className="aqx-main">
@@ -551,7 +559,7 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
                 <span className="aqx-detector">{detector}</span>
                 <span className="aqx-conf">{p.confidence}% confident</span>
               </div>
-              <div className="aqx-reason">{p.reasoning}</div>
+              {!compact && <div className="aqx-reason">{p.reasoning}</div>}
               <div className="aqx-will">
                 <span className="aqx-will-lab">Will</span>
                 <span className="aqx-will-act">{actionLabel}</span>
@@ -678,19 +686,46 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
 
 type ProposalGroup = {
   key: string;
+  title: string;
   items: QueueProposal[];
   representative: QueueProposal;
   totalImpact: number;
 };
 
+function proposalSectionTitle(p: Pick<QueueProposal, "action_kind" | "detector_id">): string {
+  switch (p.action_kind) {
+    case "increase_campaign_budget":
+      return "Campaign Scales";
+    case "reallocate_budget":
+      return "Campaign Budget Moves";
+    case "pause_campaign":
+      return "Campaign Pauses";
+    case "reduce_campaign_budget":
+      return "Campaign Budget Cuts";
+    case "exclude_geo":
+      return "Geo Exclusions";
+    case "reallocate_inventory":
+      return "Inventory Moves";
+    case "create_po_draft":
+      return "Purchase Orders";
+    case "reallocate_spend_sku":
+      return "SKU Budget Moves";
+    case "adjust_price":
+      return "Price Changes";
+    case "discontinue_sku":
+      return "Product Retirements";
+    case "raise_free_ship_threshold":
+    case "exclude_sku_free_ship":
+      return "Shipping Fixes";
+    case "snooze_alert":
+      return "Snoozes";
+    default:
+      return alertDetectorLabel(p.detector_id, {});
+  }
+}
+
 function proposalGroupKey(p: QueueProposal): string {
-  return [
-    p.detector_id,
-    p.action_kind,
-    p.title.trim().toLowerCase(),
-    p.reasoning.trim().toLowerCase(),
-    p.confidence,
-  ].join("|");
+  return proposalSectionTitle(p);
 }
 
 function groupProposals(proposals: QueueProposal[]): ProposalGroup[] {
@@ -704,6 +739,7 @@ function groupProposals(proposals: QueueProposal[]): ProposalGroup[] {
     const items = [...values].sort((a, b) => b.dollar_impact - a.dollar_impact);
     return {
       key,
+      title: proposalSectionTitle(items[0]),
       items,
       representative: items[0],
       totalImpact: items.reduce((sum, item) => sum + item.dollar_impact, 0),
@@ -720,7 +756,6 @@ function ProposalGroupCard({
 }) {
   const [open, setOpen] = useState(false);
   const p = group.representative;
-  const detector = alertDetectorLabel(p.detector_id, {});
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
   const count = group.items.length;
   const band = confidenceBand(p.confidence);
@@ -738,15 +773,15 @@ function ProposalGroupCard({
         </span>
         <div className="aqx-group-main">
           <div className="aqx-titlerow">
-            <span className="aqx-detector">{detector}</span>
+            <span className="aqx-detector">{group.title}</span>
             <span className="aqx-conf">{p.confidence}% confident</span>
-            <span className="aqx-count">{count} similar alerts</span>
+            <span className="aqx-count">{count} alerts</span>
           </div>
-          <div className="aqx-reason">{p.reasoning}</div>
+          <div className="aqx-reason">{actionLabel} across {count} opportunities.</div>
           <div className="aqx-will">
             <span className="aqx-will-lab">Will</span>
             <span className="aqx-will-act">{actionLabel}</span>
-            <span className="aqx-group-hint">{open ? "Hide each alert" : "Show each alert"}</span>
+            <span className="aqx-group-hint">{open ? "Hide alerts" : "View alerts"}</span>
             <span className="aqx-group-chev">
               <IChevron />
             </span>
@@ -760,11 +795,11 @@ function ProposalGroupCard({
 
       <div className="aqx-group-body" data-open={open}>
         <div className="aqx-group-note">
-          These are separate alerts with the same recommendation. Approve or reject each one below.
+          Review the individual opportunities below.
         </div>
         <div className="aqx-group-list">
           {group.items.map((item) => (
-            <ProposalCard key={`${item.alertId}:${item.action_kind}`} p={item} onGraduated={onGraduated} />
+            <ProposalCard key={`${item.alertId}:${item.action_kind}`} p={item} onGraduated={onGraduated} compact />
           ))}
         </div>
       </div>
