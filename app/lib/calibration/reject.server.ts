@@ -10,6 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, RejectReason } from "../types";
 import { rejectEffect, reflection } from "./feedback";
+import { trustDelta, type RejectReceipt } from "./delta";
 
 export interface RecordRejectionInput {
   alertId: string | null;
@@ -20,12 +21,46 @@ export interface RecordRejectionInput {
   dollarImpactCents: number;
 }
 
+// Best-effort single-pair read for the confidence diff (mirrors the local
+// reader in approval.server.ts — kept local on purpose so this money-path file
+// has no cross-.server import surface). Returns null on a cold-start pair.
+async function readPairEv(
+  sb: SupabaseClient,
+  shopId: string,
+  detectorId: string,
+  actionKind: ActionKind,
+): Promise<{ alpha: number; beta: number }> {
+  const { data, error } = await sb
+    .from("pair_calibration")
+    .select("alpha, beta")
+    .eq("shop_id", shopId)
+    .eq("detector_id", detectorId)
+    .eq("action_kind", actionKind)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const row = (data as Record<string, unknown> | null) ?? null;
+  const num = (v: unknown): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return { alpha: num(row?.alpha), beta: num(row?.beta) };
+}
+
 export async function recordRejection(
   shopId: string,
   input: RecordRejectionInput,
   sb: SupabaseClient,
-): Promise<{ reflection: string }> {
+): Promise<{ reflection: string } & RejectReceipt> {
   const eff = rejectEffect(input.reason);
+
+  // Read the pair's Beta counters BEFORE the bump (best-effort, so the
+  // confidence diff for the receipt can never fail the rejection itself).
+  let before = { alpha: 0, beta: 0 };
+  try {
+    before = await readPairEv(sb, shopId, input.detectorId, input.actionKind);
+  } catch (err) {
+    console.error(`[calibration] recordRejection pair read (before) failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Build the jsonb rule value for this reason.
   let appliedRule: Record<string, unknown> | null = null;
@@ -73,6 +108,16 @@ export async function recordRejection(
     }
   } catch (err) {
     console.error(`[calibration] recordRejection rpc threw: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Read the pair's Beta counters AFTER the bump for the confidence diff.
+  // A reject raises beta, so the delta is <= 0. Best-effort: on a read failure
+  // we fall back to `before`, yielding delta 0 rather than failing the reject.
+  let after = before;
+  try {
+    after = await readPairEv(sb, shopId, input.detectorId, input.actionKind);
+  } catch (err) {
+    console.error(`[calibration] recordRejection pair read (after) failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 3. Write calibration_rule if the effect produces one.
@@ -139,5 +184,19 @@ export async function recordRejection(
     }
   }
 
-  return { reflection: reflection(input.reason, input.detectorId, input.actionKind) };
+  const { before: confBefore, after: confAfter, delta } = trustDelta(
+    input.detectorId,
+    input.actionKind,
+    before,
+    after,
+  );
+
+  return {
+    reflection: reflection(input.reason, input.detectorId, input.actionKind),
+    delta,
+    before: confBefore,
+    after: confAfter,
+    savedAsRule: eff.ruleKind !== null,
+    ruleKind: eff.ruleKind,
+  };
 }

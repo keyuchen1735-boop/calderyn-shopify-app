@@ -5,7 +5,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { graduationVerdict } from "./graduation";
+import { graduationVerdict, GRADUATABLE_V1 } from "./graduation";
+import { pairConfidence } from "./confidence";
 
 /**
  * Action kinds that have a working undo branch.
@@ -108,5 +109,87 @@ export async function isGraduated(
       `[calibration] isGraduated threw: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
+  }
+}
+
+// A pair counts as "near graduation" when its confidence is within this many
+// points BELOW its graduation threshold (every other gate already cleared).
+const NEAR_GRAD_WINDOW = 15;
+
+/**
+ * Count (detector, action) pairs that are close to graduating to autopilot:
+ * graduatable in v1, not yet graduated, clearing every non-confidence gate
+ * (no mute, no live probation, no consecutive undos, at least one clean
+ * approval), and whose current confidence sits within NEAR_GRAD_WINDOW points
+ * below the pair's graduation threshold. Drives the "N pairs near graduation"
+ * header stat. NEVER throws — returns 0 on any read error (it is cosmetic).
+ */
+export async function countNearGraduation(
+  shopId: string,
+  sb: SupabaseClient,
+): Promise<number> {
+  try {
+    const [pairsRes, rulesRes] = await Promise.all([
+      sb
+        .from("pair_calibration")
+        .select(
+          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated",
+        )
+        .eq("shop_id", shopId),
+      sb
+        .from("calibration_rule")
+        .select("detector_id, action_kind, rule_kind, rule_value")
+        .eq("shop_id", shopId)
+        .eq("active", true),
+    ]);
+    if (pairsRes.error) {
+      console.error(`[calibration] countNearGraduation pair read failed: ${pairsRes.error.message}`);
+      return 0;
+    }
+    if (rulesRes.error) {
+      console.error(`[calibration] countNearGraduation rule read failed: ${rulesRes.error.message}`);
+      return 0;
+    }
+
+    const nowIso = new Date().toISOString();
+    const rules = rulesRes.data ?? [];
+    const muted = (d: string, a: string): boolean =>
+      rules.some((r) => r.detector_id === d && r.action_kind === a && r.rule_kind === "muted_pair");
+    const onProbation = (d: string, a: string): boolean =>
+      rules.some(
+        (r) =>
+          r.detector_id === d &&
+          r.action_kind === a &&
+          r.rule_kind === "pair_probation_until" &&
+          typeof (r.rule_value as Record<string, unknown> | null)?.until === "string" &&
+          (r.rule_value as Record<string, string>).until > nowIso,
+      );
+
+    let count = 0;
+    for (const row of pairsRes.data ?? []) {
+      const action = row.action_kind as ActionKind;
+      if (!GRADUATABLE_V1.has(action)) continue;
+      if (row.graduated) continue;
+      if (Number(row.clean_approvals ?? 0) < 1) continue;
+      if (Number(row.consecutive_undos ?? 0) > 0) continue;
+      if (Boolean(row.merchant_disabled)) continue;
+      const detector = String(row.detector_id);
+      if (muted(detector, action)) continue;
+      if (onProbation(detector, action)) continue;
+      const threshold = Number(row.graduation_threshold ?? 100) || 100;
+      const conf = pairConfidence(
+        detector,
+        action,
+        { alpha: Number(row.alpha ?? 0), beta: Number(row.beta ?? 0) },
+        null,
+      );
+      if (conf >= threshold - NEAR_GRAD_WINDOW && conf < threshold) count++;
+    }
+    return count;
+  } catch (err) {
+    console.error(
+      `[calibration] countNearGraduation threw: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
   }
 }

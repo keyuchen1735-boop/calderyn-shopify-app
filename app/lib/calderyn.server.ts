@@ -22,7 +22,9 @@ import { buildActionQueue } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
+import { countNearGraduation } from "./calibration/graduation.server";
 import type { RecordRejectionInput } from "./calibration/reject.server";
+import type { ApproveReceipt, RejectReceipt } from "./calibration/delta";
 import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
@@ -1356,14 +1358,25 @@ export function calderynClient(shop: string) {
       // Positive calibration signal. Resolves shopId internally so call sites
       // need only the (detectorId, actionKind) pair. Never throws -- a bump
       // failure must not surface as an action failure (see approval.server.ts).
-      async recordApproval(detectorId: string, actionKind: ActionKind): Promise<void> {
+      async recordApproval(
+        detectorId: string,
+        actionKind: ActionKind,
+      ): Promise<ApproveReceipt> {
         const shopId = await shopIdP;
-        await _recordApproval(shopId, detectorId, actionKind, supabase);
+        return _recordApproval(shopId, detectorId, actionKind, supabase);
       },
       // Negative calibration signal. Never throws (pure UX bookkeeping).
-      async recordRejection(input: RecordRejectionInput): Promise<{ reflection: string }> {
+      async recordRejection(
+        input: RecordRejectionInput,
+      ): Promise<{ reflection: string } & RejectReceipt> {
         const shopId = await shopIdP;
         return _recordRejection(shopId, input, supabase);
+      },
+      // Cosmetic header stat: how many (detector, action) pairs are close to
+      // graduating to autopilot. Never throws (returns 0 on any read error).
+      async nearGraduation(): Promise<number> {
+        const shopId = await shopIdP;
+        return countNearGraduation(shopId, supabase);
       },
       // Return all active learned rules for this shop, with plain-language summaries.
       async learnedRules(): Promise<LearnedRule[]> {
