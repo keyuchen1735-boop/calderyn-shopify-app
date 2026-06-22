@@ -26,6 +26,7 @@ export interface StrategicMove {
    *    P1: "snooze_alert"
    *    P2: "discontinue_sku"
    *    P3: "reallocate_spend_sku" | "pause_campaign" | "reduce_campaign_budget"
+   *    P4: "adjust_price"
    */
   executor:
     | "snooze_alert"
@@ -33,6 +34,7 @@ export interface StrategicMove {
     | "reallocate_spend_sku"
     | "pause_campaign"
     | "reduce_campaign_budget"
+    | "adjust_price"
     | null;
   /** Why this move is advisory instead of executable, when known. Surfaced in
    *  the panel (rule 12), e.g. "served by a shared campaign". */

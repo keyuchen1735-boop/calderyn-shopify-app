@@ -164,6 +164,8 @@ export interface GuardrailVM {
   autopilot_max_budget_cut_pct: number;
   autopilot_max_budget_increase_pct: number;
   autopilot_max_daily_budget_cents: number | null;
+  /** Max single-step price change for the adjust_price action, whole percent. */
+  max_price_change_pct: number;
 }
 
 export interface DailyRow {

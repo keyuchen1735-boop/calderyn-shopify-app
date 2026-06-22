@@ -141,6 +141,7 @@ export const CD_ACTION_ICON: Record<string, string> = {
   snooze_alert: "snooze",
   discontinue: "ban",
   discontinue_sku: "archive",
+  adjust_price: "tag",
   cut_ads: "scissors",
   reallocate_to_winner: "trendingUp",
   fix_returns: "rotateCcw",

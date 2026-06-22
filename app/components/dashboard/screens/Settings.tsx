@@ -365,6 +365,28 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                 />
               </SettingRow>
               <SettingRow
+                label="Max price change"
+                sub="Adjust-price never moves a product price by more than this in one step."
+              >
+                <GuardrailField
+                  value={g.max_price_change_pct}
+                  presets={[
+                    { value: 10, label: "10%" },
+                    { value: 15, label: "15%" },
+                    { value: 25, label: "25%" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                  }}
+                  suffix="%"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("max_price_change_pct", v);
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
                 label="Max budget increase"
                 sub="Autopilot never raises a campaign budget by more than this in one step."
               >

@@ -8,6 +8,7 @@ import { actionAdapterForShop } from "../ads/action-registry.server";
 import { type AdminGraphqlClient } from "../shopify/inventory.server";
 import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import { restoreProduct } from "../shopify/product.server";
+import { setVariantPrice } from "../shopify/price.server";
 import { setDoNotReorder } from "./discontinue.server";
 
 // Undo windows: autonomous actions (actor_user_id='autopilot') get a 48-hour
@@ -265,6 +266,26 @@ export async function undoAction(
     // visible default rather than staying archived).
     await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
     await setDoNotReorder(sb, shopId, dp.sku_id, false);
+  } else if (orig.action_kind === "adjust_price") {
+    // Reverse a price change: write the recorded prior price back to the
+    // variant. Absolute-state (like the campaign reversals), so a retry is
+    // safe. Refuse loudly without an admin client rather than fake a success.
+    if (!deps.admin) {
+      throw new Error("Shopify admin client unavailable; cannot undo a price change");
+    }
+    const pp = (orig.params ?? {}) as {
+      variant_id?: string;
+      product_id?: string;
+      prior_price_cents?: number;
+    };
+    if (!pp.variant_id || !pp.product_id || pp.prior_price_cents == null) {
+      throw new Error(`audit ${auditId} lacks the variant/prior price to restore; cannot undo`);
+    }
+    await setVariantPrice(deps.admin, {
+      productGid: pp.product_id,
+      variantId: pp.variant_id,
+      newPriceCents: Number(pp.prior_price_cents),
+    });
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).

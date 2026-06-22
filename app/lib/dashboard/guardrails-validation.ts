@@ -91,6 +91,15 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     }
   }
 
+  if ("max_price_change_pct" in patch) {
+    const v = patch.max_price_change_pct;
+    // Whole-percent 1..100 — a 0% change is a no-op rule. Gates the merchant
+    // adjust_price action (confirm-only), so a fat-finger 999% is rejected here.
+    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 100) {
+      return "invalid_max_price_change_pct";
+    }
+  }
+
   if ("business_hours_only" in patch && typeof patch.business_hours_only !== "boolean") {
     return "invalid_business_hours_only";
   }
