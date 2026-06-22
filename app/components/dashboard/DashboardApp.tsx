@@ -83,15 +83,6 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   settings: ScreenSettings,
 };
 
-const ACTION_VERBS: Record<string, string> = {
-  pause_campaign: "Paused campaign",
-  reduce_campaign_budget: "Reduced budget",
-  exclude_geo: "Excluded geo",
-  reallocate_inventory: "Reallocated inventory",
-  create_po_draft: "Created PO draft",
-  snooze_alert: "Snoozed alert",
-};
-
 function relTime(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 8) return "just now";
@@ -233,41 +224,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     async (alert: AlertVM, kind: ActionKind) => {
       const label = ACTION_LABELS[kind] ?? kind;
 
-      const logAudit = (impact: number) => {
-        const entry: AuditVM = {
-          id: "au-live-" + Date.now(),
-          action_kind: kind,
-          verb: ACTION_VERBS[kind] ?? kind,
-          target: alert.campaign ?? alert.sku ?? alert.title,
-          detail: alert.rec_detail || alert.title,
-          dollar_impact_at_exec: impact,
-          outcome: "succeeded",
-          actor: "You",
-          when: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          undo_eligible: kind !== "snooze_alert",
-          undo_of: null,
-          pre: "—",
-          post: "—",
-          mode: "manual",
-          actorDisplay: "You",
-          marginBasis: "none",
-          marginBasisLabel: "No booked margin",
-          costLineage: [],
-          why: "Manual — dashboard",
-          stateDiff: [],
-        };
-        setAudit((au) => [entry, ...au]);
-        pushFeed({
-          kind: "action",
-          icon: kind === "snooze_alert" ? "snooze" : "bolt",
-          text: `${entry.verb} — ${entry.target}`,
-          sub: "Triggered from dashboard",
-          tone: "accent",
-          cents: impact,
-        });
-      };
-
       const markResolved = () => {
         setAlerts((as) =>
           as.map((a) => (a.id === alert.id ? { ...a, status: "resolved" } : a)),
@@ -356,13 +312,22 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return;
       }
 
-      // exclude_geo / create_po_draft: no live endpoint yet.
-      // TODO(api): wire these to real mutations once the endpoints exist.
-      markResolved();
-      logAudit(alert.dollar_impact);
-      toast(`${label} — logged.`, "check");
+      // No live dashboard endpoint for this kind. Two ways to land here:
+      //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
+      //       so the assistant renders "Review & confirm" (deep-link), not
+      //       "Run now"; only a direct executeAction caller reaches this.
+      //   (2) pause_campaign / reduce_campaign_budget on a (malformed) alert
+      //       with no campaign_id — the live branch above is skipped.
+      // Either way NEVER fake a success (rule 12): leave the alert unresolved
+      // and surface a visible toast, no phantom audit row.
+      // TODO(api): wire real mutations + acknowledge for (1).
+      toast(
+        `${label} isn't available on the dashboard yet — open it on the alert to review.`,
+        "warn",
+        "critical",
+      );
     },
-    [campaigns, pushFeed, toast],
+    [campaigns, toast],
   );
 
   const undoAction = useCallback(

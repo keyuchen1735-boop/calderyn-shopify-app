@@ -301,6 +301,27 @@ export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
   "reallocate_inventory",
 ]);
 
+// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD can actually execute inline
+// today — the kinds DashboardApp.executeAction has a live endpoint for (campaign
+// pause/reduce, snooze, reallocate_inventory). exclude_geo has no dashboard
+// endpoint yet, so the dashboard assistant deep-links it to the Alerts review
+// screen instead of faking a run. Keep in sync with executeAction in
+// app/components/dashboard/DashboardApp.tsx. (create_po_draft is not chat-inline
+// on any surface — it collects quantity/cost on a review surface.)
+export const DASH_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set(
+  [...CHAT_INLINE_ACTIONS].filter((k) => k !== "exclude_geo"),
+);
+
+// Which dashboard screen reviews a non-inline action's "Review & confirm"
+// deep-link. reallocate_budget has no control on the Alerts detail — its budget
+// edits live on the Campaigns screen (cut the loser / scale the winner) — so it
+// routes there. Every other kind reviews on the Alerts detail (its
+// evidence/confirm view, or the create_po_draft PO dialog). Keep in sync with
+// review() in app/components/dashboard/AssistantPanel.tsx.
+export function dashReviewScreen(kind: ActionKind): "campaigns" | "alerts" {
+  return kind === "reallocate_budget" ? "campaigns" : "alerts";
+}
+
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
   free_shipping_leakage: ["raise_free_ship_threshold", "exclude_sku_free_ship", "snooze_alert"],
