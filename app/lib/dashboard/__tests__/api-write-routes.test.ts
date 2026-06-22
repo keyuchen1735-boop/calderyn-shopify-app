@@ -5,6 +5,7 @@ import { action as alertAction } from "../../../routes/dashboard.api.alerts.$id.
 import { action as undoRoute } from "../../../routes/dashboard.api.audit.$id.undo";
 import { action as guardrailsAction } from "../../../routes/dashboard.api.guardrails";
 import { action as consentAction } from "../../../routes/dashboard.api.consent";
+import { action as liveEngineToggleAction } from "../../../routes/dashboard.api.live-engine.toggle";
 import { action as logoutAction } from "../../../routes/dashboard.api.logout";
 
 const requireDashboardSession = vi.fn();
@@ -14,6 +15,7 @@ const undoAction = vi.fn();
 const guardrailsGet = vi.fn();
 const guardrailsUpdate = vi.fn();
 const consentSet = vi.fn();
+const setFeatureAutonomy = vi.fn();
 const revokeSession = vi.fn();
 const alertsGet = vi.fn();
 const actionsExecute = vi.fn();
@@ -52,6 +54,9 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
       },
       consent: {
         set: (...a: unknown[]) => consentSet(...a),
+      },
+      calibration: {
+        setFeatureAutonomy: (...a: unknown[]) => setFeatureAutonomy(...a),
       },
       alerts: {
         get: (...a: unknown[]) => alertsGet(...a),
@@ -471,6 +476,50 @@ describe("PUT /dashboard/api/guardrails", () => {
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_guardrails");
     expect(guardrailsUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /dashboard/api/live-engine/toggle", () => {
+  const url = "https://calderyncompany.com/dashboard/api/live-engine/toggle";
+
+  beforeEach(() => {
+    setFeatureAutonomy.mockResolvedValue({ ok: true });
+  });
+
+  it("toggles feature autonomy through the shop-scoped calibration client", async () => {
+    const res = (await liveEngineToggleAction({
+      request: post(url, {
+        detectorId: "campaign_below_breakeven",
+        actionKind: "pause_campaign",
+        enabled: false,
+      }),
+      params: {},
+      context: {},
+    })) as Response;
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, enabled: false });
+    expect(setFeatureAutonomy).toHaveBeenCalledWith(
+      "campaign_below_breakeven",
+      "pause_campaign",
+      false,
+    );
+  });
+
+  it("returns an error when the autonomy update does not persist", async () => {
+    setFeatureAutonomy.mockResolvedValueOnce({ ok: false });
+    const res = (await liveEngineToggleAction({
+      request: post(url, {
+        detectorId: "campaign_below_breakeven",
+        actionKind: "pause_campaign",
+        enabled: true,
+      }),
+      params: {},
+      context: {},
+    })) as Response;
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("feature_autonomy_update_failed");
   });
 });
 

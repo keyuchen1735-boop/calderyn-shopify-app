@@ -125,6 +125,13 @@ function IShield() {
     </svg>
   );
 }
+function IChevron({ s = 15, w = 2 }: { s?: number; w?: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} style={sx}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
 
 /* ---------- loader ---------- */
 type LoaderPayload = {
@@ -436,8 +443,42 @@ function ApproveReceiptPanel({
 /* ---------- one proposal card ---------- */
 type CardView = "idle" | "confirm" | "reject" | "approved" | "rejected";
 
+function ProposalDetails({
+  p,
+  detector,
+  actionLabel,
+}: {
+  p: QueueProposal;
+  detector: string;
+  actionLabel: string;
+}) {
+  return (
+    <div className="aqx-details">
+      <div className="aqx-details-grid">
+        <div>
+          <span className="aqx-details-label">Why this showed up</span>
+          <p>{p.reasoning || detector}</p>
+        </div>
+        <div>
+          <span className="aqx-details-label">What approving does</span>
+          <p>Runs "{actionLabel}" for this alert, then records it in Action history.</p>
+        </div>
+        <div>
+          <span className="aqx-details-label">Why it asks first</span>
+          <p>Calderyn is {p.confidence}% confident. It waits for your approval until this fix earns enough clean wins.</p>
+        </div>
+        <div>
+          <span className="aqx-details-label">Money at stake</span>
+          <p>{fmtMoney(p.dollar_impact)} estimated impact if handled.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info: GraduatedInfo) => void }) {
   const [view, setView] = useState<CardView>("idle");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");
   const [receipt, setReceipt] = useState<ApproveReceipt | null>(null);
@@ -514,6 +555,14 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
               <div className="aqx-will">
                 <span className="aqx-will-lab">Will</span>
                 <span className="aqx-will-act">{actionLabel}</span>
+                <button
+                  type="button"
+                  className="aqx-details-toggle"
+                  data-open={detailsOpen}
+                  onClick={() => setDetailsOpen((open) => !open)}
+                >
+                  Details <IChevron s={13} />
+                </button>
               </div>
             </div>
             <div className="aqx-side">
@@ -562,6 +611,10 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="aqx-details-wrap" data-open={detailsOpen}>
+        <ProposalDetails p={p} detector={detector} actionLabel={actionLabel} />
       </div>
 
       {view === "confirm" && (
@@ -623,6 +676,102 @@ function ProposalCard({ p, onGraduated }: { p: QueueProposal; onGraduated: (info
   );
 }
 
+type ProposalGroup = {
+  key: string;
+  items: QueueProposal[];
+  representative: QueueProposal;
+  totalImpact: number;
+};
+
+function proposalGroupKey(p: QueueProposal): string {
+  return [
+    p.detector_id,
+    p.action_kind,
+    p.title.trim().toLowerCase(),
+    p.reasoning.trim().toLowerCase(),
+    p.confidence,
+  ].join("|");
+}
+
+function groupProposals(proposals: QueueProposal[]): ProposalGroup[] {
+  const byKey = new Map<string, QueueProposal[]>();
+  for (const p of proposals) {
+    const key = proposalGroupKey(p);
+    byKey.set(key, [...(byKey.get(key) ?? []), p]);
+  }
+
+  return [...byKey.entries()].map(([key, values]) => {
+    const items = [...values].sort((a, b) => b.dollar_impact - a.dollar_impact);
+    return {
+      key,
+      items,
+      representative: items[0],
+      totalImpact: items.reduce((sum, item) => sum + item.dollar_impact, 0),
+    };
+  });
+}
+
+function ProposalGroupCard({
+  group,
+  onGraduated,
+}: {
+  group: ProposalGroup;
+  onGraduated: (info: GraduatedInfo) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const p = group.representative;
+  const detector = alertDetectorLabel(p.detector_id, {});
+  const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
+  const count = group.items.length;
+  const band = confidenceBand(p.confidence);
+
+  if (count === 1) {
+    return <ProposalCard p={p} onGraduated={onGraduated} />;
+  }
+
+  return (
+    <div className="aqx-card aqx-group" data-conf={band}>
+      <button type="button" className="aqx-group-head" data-open={open} onClick={() => setOpen((v) => !v)}>
+        <div className="aqx-rail" />
+        <span className="aqx-ico">
+          <IBolt />
+        </span>
+        <div className="aqx-group-main">
+          <div className="aqx-titlerow">
+            <span className="aqx-detector">{detector}</span>
+            <span className="aqx-conf">{p.confidence}% confident</span>
+            <span className="aqx-count">{count} similar alerts</span>
+          </div>
+          <div className="aqx-reason">{p.reasoning}</div>
+          <div className="aqx-will">
+            <span className="aqx-will-lab">Will</span>
+            <span className="aqx-will-act">{actionLabel}</span>
+            <span className="aqx-group-hint">{open ? "Hide each alert" : "Show each alert"}</span>
+            <span className="aqx-group-chev">
+              <IChevron />
+            </span>
+          </div>
+        </div>
+        <div className="aqx-impact">
+          <div className="aqx-impact-amt">{fmtMoney(group.totalImpact)}</div>
+          <div className="aqx-impact-cap">total at stake</div>
+        </div>
+      </button>
+
+      <div className="aqx-group-body" data-open={open}>
+        <div className="aqx-group-note">
+          These are separate alerts with the same recommendation. Approve or reject each one below.
+        </div>
+        <div className="aqx-group-list">
+          {group.items.map((item) => (
+            <ProposalCard key={`${item.alertId}:${item.action_kind}`} p={item} onGraduated={onGraduated} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- learned rules (v2) ---------- */
 function LearnedRules({ rules }: { rules: LearnedRule[] }) {
   const undoFetcher = useFetcher();
@@ -669,6 +818,9 @@ export default function ActionQueue() {
   // wiped by the loader revalidation that fires after each approve/reject.
   // Highest confidence first (matches the design's ranking note).
   const [items] = useState(() => [...proposals].sort((a, b) => b.confidence - a.confidence));
+  const groups = groupProposals(items).sort(
+    (a, b) => b.representative.confidence - a.representative.confidence || b.totalImpact - a.totalImpact,
+  );
   // The most recent pair to cross into graduated this session drives the
   // celebratory "autopilot unlocked" moment at the top of the queue.
   const [graduated, setGraduated] = useState<GraduatedInfo | null>(null);
@@ -700,14 +852,16 @@ export default function ActionQueue() {
           <div>
             <div className="aqx-head">
               <div className="aqx-head-title">
-                <h2>{items.length} waiting</h2>
+                <h2>
+                  {groups.length} grouped {groups.length === 1 ? "action" : "actions"}
+                </h2>
                 <span className="aqx-head-sub">need your OK</span>
               </div>
-              <span className="aqx-head-rank">Highest confidence first</span>
+              <span className="aqx-head-rank">{items.length} total alerts &middot; highest confidence first</span>
             </div>
             <div className="aqx-list">
-              {items.map((p) => (
-                <ProposalCard key={`${p.alertId}:${p.action_kind}`} p={p} onGraduated={setGraduated} />
+              {groups.map((g) => (
+                <ProposalGroupCard key={g.key} group={g} onGraduated={setGraduated} />
               ))}
             </div>
           </div>

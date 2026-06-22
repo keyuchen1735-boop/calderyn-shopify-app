@@ -823,6 +823,28 @@
 .aqx-will { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
 .aqx-will-lab { font-size: 11.5px; color: #8a8a8a; }
 .aqx-will-act { font-size: 11.5px; font-weight: 600; color: #173a4d; }
+.aqx-details-toggle {
+  display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 7px;
+  border: none; border-radius: 6px; background: #f1f4f6; color: #23556e;
+  font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: background .14s ease;
+}
+.aqx-details-toggle:hover { background: #e4ebef; }
+.aqx-details-toggle svg { transition: transform .18s ease; }
+.aqx-details-toggle[data-open="true"] svg { transform: rotate(180deg); }
+.aqx-details-wrap {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows .24s cubic-bezier(.22, 1, .36, 1);
+}
+.aqx-details-wrap[data-open="true"] { grid-template-rows: 1fr; }
+.aqx-details { overflow: hidden; border-top: 1px solid #f0f0f0; background: #fbfcfd; }
+.aqx-details-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px; padding: 14px 18px 15px 58px;
+}
+.aqx-details-label { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: #8a8a8a; text-transform: uppercase; margin-bottom: 4px; }
+.aqx-details p { margin: 0; font-size: 12.5px; line-height: 1.45; color: #4a4a4a; }
+.aqx-count { font-size: 11px; font-weight: 650; color: #173a4d; background: #e9eef3; padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
 .aqx-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; min-width: 150px; }
 .aqx-impact { text-align: right; }
 .aqx-impact-amt { font-size: 16px; font-weight: 700; color: #1a1a1a; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -846,6 +868,27 @@
 .aqx-confirm svg { flex: none; color: #1a7f4f; }
 .aqx-confirm-text { font-size: 12.5px; color: #26392f; line-height: 1.45; }
 .aqx-confirm-text strong { font-weight: 600; }
+
+/* grouped duplicate proposal wrapper */
+.aqx-group-head {
+  display: flex; align-items: stretch; gap: 0; width: 100%;
+  border: none; background: #fff; padding: 0; text-align: left; font: inherit; cursor: pointer;
+}
+.aqx-group-head:hover { background: #fbfbfb; }
+.aqx-group-head .aqx-ico { margin: 14px 0 0 18px; }
+.aqx-group-main { flex: 1; min-width: 0; padding: 14px 18px; }
+.aqx-group-head .aqx-impact { flex: none; min-width: 150px; padding: 17px 18px 0 0; }
+.aqx-group-hint { margin-left: 6px; font-size: 11.5px; font-weight: 600; color: #23556e; }
+.aqx-group-chev { display: inline-flex; color: #23556e; transition: transform .18s ease; }
+.aqx-group-head[data-open="true"] .aqx-group-chev { transform: rotate(180deg); }
+.aqx-group-body {
+  max-height: 0; overflow: hidden;
+  transition: max-height .28s cubic-bezier(.22, 1, .36, 1);
+}
+.aqx-group-body[data-open="true"] { max-height: 2200px; }
+.aqx-group-note { padding: 12px 18px 0 24px; font-size: 12.5px; color: #6a6a6a; background: #fafafa; border-top: 1px solid #f0f0f0; }
+.aqx-group-list { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; background: #fafafa; }
+.aqx-group-list .aqx-card { box-shadow: none; }
 
 /* reject panel */
 .aqx-reject { border-top: 1px solid #f0f0f0; padding: 14px 18px 16px 24px; background: #fafafa; }
@@ -1200,7 +1243,8 @@
 .aqx-grad-inline svg { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .aqx-grad-toggle, .aqx-grad-toggle-knob, .aqx-grad-prog-fill { transition: none; }
+  .aqx-grad-toggle, .aqx-grad-toggle-knob, .aqx-grad-prog-fill,
+  .aqx-details-wrap, .aqx-details-toggle svg, .aqx-group-body, .aqx-group-chev { transition: none; }
 }
 
 /* ===== Live Engine review fixes: off-badge + clickable calibration mini ===== */

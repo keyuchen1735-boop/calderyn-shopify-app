@@ -9,7 +9,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { calderynClient } from "~/lib/calderyn.server";
+import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import type { ActionKind } from "~/lib/types";
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -32,6 +32,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const client = calderynClient(session.shopDomain);
   return dashboardJson(async () => {
     const r = await client.calibration.setFeatureAutonomy(detectorId, actionKind, enabled);
+    if (!r.ok) {
+      throw new CalderynError({
+        code: "feature_autonomy_update_failed",
+        status: 500,
+        message: "Could not update this feature.",
+      });
+    }
     return { ok: r.ok, enabled };
   });
 }

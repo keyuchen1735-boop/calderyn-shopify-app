@@ -4,6 +4,7 @@
 // the cap + live-price validation). Thin dispatcher — mock the executor and the
 // auth boundary; assert the wiring.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { action as alertAction } from "../dashboard.api.alerts.$id.action";
 
 const requireDashboardSession = vi.fn();
 const executeAdjustPriceAlertAction = vi.fn();
@@ -34,8 +35,6 @@ vi.mock("~/shopify.server", () => ({
   unauthenticated: { admin: vi.fn(async () => ({ admin: { graphql: vi.fn() } })) },
 }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ mocked: true }) }));
-
-import { action as alertAction } from "../dashboard.api.alerts.$id.action";
 
 function post(body: unknown): Request {
   return new Request("https://calderyncompany.com/dashboard/api/alerts/a1/action", {

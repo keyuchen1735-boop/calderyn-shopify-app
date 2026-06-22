@@ -342,6 +342,39 @@ function ApproveReceiptPanel({
 /* ---------- Single proposal row ---------- */
 type RowView = "idle" | "confirm" | "reject" | "approved" | "rejected";
 
+function ProposalDetails({
+  proposal,
+  detectorLabel,
+  actionLabel,
+}: {
+  proposal: QueueProposalVM;
+  detectorLabel: string;
+  actionLabel: string;
+}) {
+  return (
+    <div className="cd-queue-details">
+      <div className="cd-queue-details-grid">
+        <div>
+          <span className="cd-queue-details-label">Why this showed up</span>
+          <p>{proposal.reasoning || detectorLabel}</p>
+        </div>
+        <div>
+          <span className="cd-queue-details-label">What approving does</span>
+          <p>Runs "{actionLabel}" for this alert, then records it in Action history.</p>
+        </div>
+        <div>
+          <span className="cd-queue-details-label">Why it asks first</span>
+          <p>Calderyn is {proposal.confidence}% confident. It waits for your approval until this fix earns enough clean wins.</p>
+        </div>
+        <div>
+          <span className="cd-queue-details-label">Money at stake</span>
+          <p>{money(proposal.dollar_impact)} estimated impact if handled.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProposalRow({
   proposal,
   app,
@@ -352,6 +385,7 @@ function ProposalRow({
   onGraduated: (info: GraduatedInfo) => void;
 }) {
   const [view, setView] = useState<RowView>("idle");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rejectResult, setRejectResult] = useState<RejectResult | null>(null);
   const [rejectReason, setRejectReason] = useState<RejectReason | null>(null);
@@ -405,11 +439,20 @@ function ProposalRow({
           )}
           <div className="flex items-center gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
             <Pill tone={conf.tone} icon="bolt">
-              {conf.label} confidence · {confPct}%
+              {conf.label} confidence - {confPct}%
             </Pill>
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>
               Will {actionLabel.toLowerCase()}
             </span>
+            <button
+              type="button"
+              className="cd-queue-details-toggle"
+              data-open={detailsOpen}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
+              Details
+              <CDIcon name="chevronDown" size={13} strokeWidth={2} />
+            </button>
           </div>
         </div>
 
@@ -460,6 +503,10 @@ function ProposalRow({
         </div>
       </div>
 
+      <div className="cd-queue-details-wrap" data-open={detailsOpen}>
+        <ProposalDetails proposal={proposal} detectorLabel={detectorLabel} actionLabel={actionLabel} />
+      </div>
+
       {view === "confirm" && (
         <div className="cd-queue-confirm">
           <CDIcon name="shield" size={15} strokeWidth={1.9} style={{ color: "var(--green)", flexShrink: 0 }} />
@@ -490,6 +537,101 @@ function ProposalRow({
       {view === "rejected" && rejectResult && rejectReason && (
         <ReflectionReceipt result={rejectResult} reason={rejectReason} />
       )}
+    </div>
+  );
+}
+
+type ProposalGroup = {
+  key: string;
+  items: QueueProposalVM[];
+  representative: QueueProposalVM;
+  totalImpact: number;
+};
+
+function proposalGroupKey(p: QueueProposalVM): string {
+  return [
+    p.detector_id,
+    p.action_kind,
+    p.title.trim().toLowerCase(),
+    p.reasoning.trim().toLowerCase(),
+    p.confidence,
+  ].join("|");
+}
+
+function groupProposals(proposals: QueueProposalVM[]): ProposalGroup[] {
+  const byKey = new Map<string, QueueProposalVM[]>();
+  for (const p of proposals) {
+    const key = proposalGroupKey(p);
+    byKey.set(key, [...(byKey.get(key) ?? []), p]);
+  }
+
+  return [...byKey.entries()].map(([key, values]) => {
+    const items = [...values].sort((a, b) => b.dollar_impact - a.dollar_impact);
+    return {
+      key,
+      items,
+      representative: items[0],
+      totalImpact: items.reduce((sum, item) => sum + item.dollar_impact, 0),
+    };
+  });
+}
+
+function ProposalGroupRow({
+  group,
+  app,
+  onGraduated,
+}: {
+  group: ProposalGroup;
+  app: DashboardCtx;
+  onGraduated: (info: GraduatedInfo) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const p = group.representative;
+  const alert = app.alerts.find((a) => a.id === p.alertId);
+  const detectorLabel = alertDetectorLabel(p.detector_id, alert?.evidence ?? {});
+  const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
+  const conf = confidenceMeta(Math.min(100, Math.max(0, p.confidence)));
+
+  if (group.items.length === 1) {
+    return <ProposalRow proposal={p} app={app} onGraduated={onGraduated} />;
+  }
+
+  return (
+    <div className="cd-queue-group" data-conf={conf.tone}>
+      <button type="button" className="cd-queue-group-head" data-open={open} onClick={() => setOpen((v) => !v)}>
+        <span className="cd-feed-icon" data-tone="accent">
+          <CDIcon name="bolt" size={14} strokeWidth={1.9} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="cd-queue-group-title">
+            <span>{detectorLabel}</span>
+            <Pill tone={conf.tone}>{p.confidence}% confident</Pill>
+            <Pill tone="neutral">{group.items.length} similar alerts</Pill>
+          </div>
+          <div className="cd-caption" style={{ color: "var(--text-3)", marginTop: 4 }}>
+            {p.reasoning}
+          </div>
+          <div className="cd-queue-group-action">
+            Will {actionLabel.toLowerCase()} <span>{open ? "Hide each alert" : "Show each alert"}</span>
+            <CDIcon name="chevronDown" size={14} strokeWidth={2} />
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="cd-row-num tabular-nums">{money(group.totalImpact)}</div>
+          <div className="cd-caption">total at stake</div>
+        </div>
+      </button>
+
+      <div className="cd-queue-group-body" data-open={open}>
+        <div className="cd-queue-group-note">
+          These are separate alerts with the same recommendation. Approve or reject each one below.
+        </div>
+        <div className="cd-queue-group-list">
+          {group.items.map((item) => (
+            <ProposalRow key={`${item.alertId}:${item.action_kind}`} proposal={item} app={app} onGraduated={onGraduated} />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -569,6 +711,9 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
   }, [app.actionQueue]);
 
   const sorted = [...proposals].sort((a, b) => b.confidence - a.confidence);
+  const groups = groupProposals(sorted).sort(
+    (a, b) => b.representative.confidence - a.representative.confidence || b.totalImpact - a.totalImpact,
+  );
   const loading = app.loading && sorted.length === 0;
   // The most recent pair to cross into graduated this session drives the
   // celebratory "autopilot unlocked" moment at the top of the queue.
@@ -601,16 +746,17 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
         <div>
           <div className="cd-row-between" style={{ marginBottom: 10, padding: "0 2px" }}>
             <h2 className="cd-h2" style={{ margin: 0 }}>
-              {sorted.length} waiting <span style={{ color: "var(--text-3)", fontWeight: 400 }}>need your OK</span>
+              {groups.length} grouped {groups.length === 1 ? "action" : "actions"}{" "}
+              <span style={{ color: "var(--text-3)", fontWeight: 400 }}>need your OK</span>
             </h2>
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>
-              Highest confidence first
+              {sorted.length} total alerts - highest confidence first
             </span>
           </div>
           <Card pad={false}>
             <div className="cd-rows">
-              {sorted.map((p) => (
-                <ProposalRow key={`${p.alertId}:${p.action_kind}`} proposal={p} app={app} onGraduated={setGraduated} />
+              {groups.map((g) => (
+                <ProposalGroupRow key={g.key} group={g} app={app} onGraduated={setGraduated} />
               ))}
             </div>
           </Card>
