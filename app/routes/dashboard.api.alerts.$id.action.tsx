@@ -25,6 +25,7 @@ import { executeCreatePoDraft } from "~/lib/actions/po-action.server";
 import { getSupabase } from "~/lib/supabase.server";
 import type { ActionKind } from "~/lib/types";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 
 const INVENTORY_KINDS: InventoryAlertActionKind[] = ["reallocate_inventory", "snooze_alert"];
 const KINDS = [...INVENTORY_KINDS, "reallocate_spend_sku", "discontinue_sku", "adjust_price", "create_po_draft"] as const satisfies readonly ActionKind[];
@@ -127,13 +128,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Calibration signal: bump approval confidence for the (detector, action) pair.
     // Only for real executed actions (snooze is not an approval of a fix).
     // Guarded: a signal failure must NEVER affect the action result.
+    let calibration: ApproveReceipt | undefined;
     if (kind !== "snooze_alert") {
       const alert = await client.alerts.get(alertId).catch(() => null);
       if (alert) {
-        recordApproval(session.shopId, alert.detector_id, kind, sb).catch(() => {});
+        calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb).catch(
+          () => ZERO_APPROVE_RECEIPT,
+        );
       }
     }
 
-    return { audit_id: auditId, outcome, acknowledged };
+    return { audit_id: auditId, outcome, acknowledged, calibration };
   });
 }

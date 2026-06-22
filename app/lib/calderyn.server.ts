@@ -26,7 +26,10 @@ import { buildActionQueue } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
+import { countNearGraduation } from "./calibration/graduation.server";
+import { liveEngineSummary, setPairAutonomy as _setPairAutonomy, type LiveEngineSummary, type PairEvidence } from "./calibration/live-engine.server";
 import type { RecordRejectionInput } from "./calibration/reject.server";
+import type { ApproveReceipt, RejectReceipt } from "./calibration/delta";
 import { DETECTOR_LABELS, ACTION_LABELS } from "./labels";
 import { AD_SPEND_ACTIONS, MARGIN_ACTIONS } from "./audit-legibility";
 import {
@@ -1390,14 +1393,64 @@ export function calderynClient(shop: string) {
       // Positive calibration signal. Resolves shopId internally so call sites
       // need only the (detectorId, actionKind) pair. Never throws -- a bump
       // failure must not surface as an action failure (see approval.server.ts).
-      async recordApproval(detectorId: string, actionKind: ActionKind): Promise<void> {
+      async recordApproval(
+        detectorId: string,
+        actionKind: ActionKind,
+      ): Promise<ApproveReceipt> {
         const shopId = await shopIdP;
-        await _recordApproval(shopId, detectorId, actionKind, supabase);
+        return _recordApproval(shopId, detectorId, actionKind, supabase);
       },
       // Negative calibration signal. Never throws (pure UX bookkeeping).
-      async recordRejection(input: RecordRejectionInput): Promise<{ reflection: string }> {
+      async recordRejection(
+        input: RecordRejectionInput,
+      ): Promise<{ reflection: string } & RejectReceipt> {
         const shopId = await shopIdP;
         return _recordRejection(shopId, input, supabase);
+      },
+      // Cosmetic header stat: how many (detector, action) pairs are close to
+      // graduating to autopilot. Never throws (returns 0 on any read error).
+      async nearGraduation(): Promise<number> {
+        const shopId = await shopIdP;
+        return countNearGraduation(shopId, supabase);
+      },
+      // Live Engine: graduated features + their autonomous money/counts + the
+      // money protected this week. Never throws (returns empty on read error).
+      async liveEngine(): Promise<LiveEngineSummary> {
+        const shopId = await shopIdP;
+        return liveEngineSummary(shopId, supabase);
+      },
+      // Turn a graduated feature's unattended autonomy on/off (merchant_disabled).
+      async setFeatureAutonomy(
+        detectorId: string,
+        actionKind: ActionKind,
+        enabled: boolean,
+      ): Promise<{ ok: boolean }> {
+        const shopId = await shopIdP;
+        return _setPairAutonomy(shopId, detectorId, actionKind, enabled, supabase);
+      },
+      // Per-pair Beta evidence + graduation gate for the Live Engine pipeline +
+      // inspector confidence breakdowns. Covers ALL pairs (a pair shows in the
+      // pipeline while still being learned). Never throws (returns [] on error).
+      async pairEvidence(): Promise<PairEvidence[]> {
+        try {
+          const shopId = await shopIdP;
+          const { data, error } = await supabase
+            .from("pair_calibration")
+            .select("detector_id, action_kind, alpha, beta, graduation_threshold, graduated")
+            .eq("shop_id", shopId);
+          if (error) throw error;
+          return (data ?? []).map((r) => ({
+            detectorId: String(r.detector_id),
+            actionKind: r.action_kind as ActionKind,
+            alpha: Number(r.alpha ?? 0),
+            beta: Number(r.beta ?? 0),
+            graduationThreshold: Number(r.graduation_threshold ?? 80),
+            graduated: Boolean(r.graduated),
+          }));
+        } catch (err) {
+          console.error("[calibration.pairEvidence] read failed", err);
+          return [];
+        }
       },
       // Return all active learned rules for this shop, with plain-language summaries.
       async learnedRules(): Promise<LearnedRule[]> {

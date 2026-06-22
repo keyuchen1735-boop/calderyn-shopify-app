@@ -56,6 +56,8 @@ vi.mock("~/lib/calderyn.server", () => ({
       learnedRules: (...a: unknown[]) => learnedRulesSpy(...a),
       recordRejection: (...a: unknown[]) => recordRejectionSpy(...a),
       undoRule: (...a: unknown[]) => undoRuleSpy(...a),
+      get: async () => ({ pct: 24, updated_at: null }),
+      nearGraduation: async () => 0,
     },
     alerts: { get: (...a: unknown[]) => alertsGetSpy(...a) },
     // Expose an actions.execute spy to prove reject never calls it.

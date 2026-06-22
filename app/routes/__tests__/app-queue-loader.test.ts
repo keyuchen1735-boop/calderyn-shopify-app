@@ -32,6 +32,7 @@ vi.mock("~/lib/calderyn.server", () => ({
     calibration: {
       get: async () => ({ pct: null, updated_at: null }),
       learnedRules: async () => [],
+      nearGraduation: async () => 0,
     },
   }),
 }));

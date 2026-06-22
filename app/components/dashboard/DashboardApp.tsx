@@ -23,6 +23,7 @@ import {
 } from "./tweaks-panel";
 import { useLiveFeed } from "./live";
 import { applyUndo } from "./undo";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
 import type {
   ActionKind,
   DashboardCtx,
@@ -53,6 +54,7 @@ import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenActionQueue from "./screens/ActionQueue";
+import ScreenLiveEngine from "./screens/LiveEngine";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
 
@@ -67,6 +69,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
   { id: "action-queue", label: "Action Queue", icon: "target" },
+  { id: "live-engine", label: "Live Engine", icon: "bolt" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -93,6 +96,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   inventory: ScreenInventory,
   audit: ScreenAudit,
   "action-queue": ScreenActionQueue,
+  "live-engine": ScreenLiveEngine,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,
@@ -149,6 +153,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
   const [actionQueue, setActionQueue] = useState<QueueProposalVM[]>([]);
   const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[]>([]);
+  const [liveEngine, setLiveEngine] = useState<DashboardCtx["liveEngine"]>(null);
   const [loading, setLoading] = useState(true);
 
   // ----- live engine state -----
@@ -171,7 +176,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal, aq, lr] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal, aq, lr, le] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
@@ -181,6 +186,8 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       client.fetchCalibration(),
       client.fetchActionQueue(),
       client.fetchLearnedRules(),
+      // New screen: a Live Engine failure must not blank the whole dashboard.
+      client.fetchLiveEngine().catch(() => null),
     ]);
     setCampaigns(camps);
     setOverview(ov);
@@ -192,6 +199,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setCalibration(cal);
     setActionQueue(aq);
     setLearnedRules(lr);
+    setLiveEngine(le);
   }, []);
 
   useEffect(() => {
@@ -217,6 +225,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       toast(msg, "warn", "critical");
     });
   }, [load, toast]);
+
+  // Lighter than refresh(): only re-pulls /dashboard/api/live-engine. Used by the
+  // Live Engine's gentle poll and to reconcile a single autonomy toggle.
+  const refreshLiveEngine = useCallback(() => {
+    client.fetchLiveEngine().then(setLiveEngine).catch(() => {});
+  }, []);
 
   // Returning to the tab does an immediate refresh instead of waiting up to one
   // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
@@ -336,11 +350,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             .then((au) => setAudit(au))
             .catch(() => {});
           toast(`${label} — back tomorrow or at your next login.`, "snooze");
+          return { ok: true, receipt: null };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
         }
-        return;
       }
 
       // pause / reduce-budget: live endpoint. The campaign is either the alert's
@@ -360,13 +375,19 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           kind === "reduce_campaign_budget" && currentBudgetCents
             ? Math.round(currentBudgetCents * 0.7)
             : undefined;
+        let receipt: ApproveReceipt | null = null;
+        let ok = false;
         try {
-          const { outcome } = await client.executeCampaignAction(campId, {
+          const { outcome, calibration } = await client.executeCampaignAction(campId, {
             type: kind,
             dailyBudgetCents: reducedBudget,
             alertId: alert.id,
           });
           const view = presentActionOutcome(outcome, label);
+          if (view.succeeded) {
+            ok = true;
+            receipt = calibration ?? null;
+          }
           // A non-succeeded outcome (retrying / failed) must NOT resolve the
           // alert or apply the optimistic paused/budget state — only a real
           // platform success does (P0-1). The terminal `failed` outcome arrives
@@ -394,7 +415,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return { ok, receipt };
       }
 
       // discontinue_sku: live endpoint — archives the product on Shopify and
@@ -402,8 +423,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // alert. A failure (e.g. SKU with no Shopify product) surfaces as an error
       // toast, never a fake resolution.
       if (kind === "discontinue_sku") {
+        let ok = false;
+        let receipt: ApproveReceipt | null = null;
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
+          ok = true;
+          receipt = calibration ?? null;
           markResolved();
           client
             .fetchAudit()
@@ -418,7 +443,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return { ok, receipt };
       }
 
       // reallocate_inventory: live endpoint — the transfer plan is derived
@@ -426,12 +451,18 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // without a concrete move) surface as an error toast, never a fake
       // resolution.
       if (kind === "reallocate_inventory") {
+        let receipt: ApproveReceipt | null = null;
+        let ok = false;
         try {
-          const { outcome, acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const { outcome, acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
           const view = presentActionOutcome(outcome, label);
           // Only a real success resolves the alert (P0-1); a Shopify failure
           // arrives as an HTTP 502 → DashboardApiError (caught below).
-          if (view.succeeded) markResolved();
+          if (view.succeeded) {
+            ok = true;
+            markResolved();
+            receipt = calibration ?? null;
+          }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
             .fetchAudit()
@@ -448,15 +479,19 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return { ok, receipt };
       }
 
       // reallocate_spend_sku: live endpoint — the campaign pair and shift amount
       // are derived server-side by enrichRemediation (Task 7 route + Task 6
       // gateway). The client sends only the action kind; no campaign ids.
       if (kind === "reallocate_spend_sku") {
+        let ok = false;
+        let receipt: ApproveReceipt | null = null;
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, { type: kind });
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
+          ok = true;
+          receipt = calibration ?? null;
           markResolved();
           client
             .fetchAudit()
@@ -471,7 +506,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
         }
-        return;
+        return { ok, receipt };
       }
 
       // create_po_draft: live endpoint — builds a PO draft from the alert + the
@@ -494,11 +529,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );
+          return { ok: true, receipt: null };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
         }
-        return;
       }
 
       // adjust_price: live endpoint — raises the SKU's selling price to restore
@@ -523,11 +559,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );
+          return { ok: true, receipt: null };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
+          return { ok: false, receipt: null };
         }
-        return;
       }
 
       // No live dashboard endpoint for this kind. Two ways to land here:
@@ -544,6 +581,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         "warn",
         "critical",
       );
+      return { ok: false, receipt: null };
     },
     [campaigns, toast],
   );
@@ -619,6 +657,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     calibration,
     actionQueue,
     learnedRules,
+    liveEngine,
     feed,
     liveOn,
     setLiveOn,
@@ -628,6 +667,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     toast,
     relTime,
     refresh,
+    refreshLiveEngine,
     loading,
   };
 

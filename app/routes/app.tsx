@@ -67,6 +67,7 @@ export default function App() {
         </Link>
         <Link to={withParams("/app/alerts")}>Alerts</Link>
         <Link to={withParams("/app/queue")}>Action Queue</Link>
+        <Link to={withParams("/app/engine")}>Live Engine</Link>
         <Link to={withParams("/app/analytics")}>Analytics</Link>
         <Link to={withParams("/app/audit")}>Action history</Link>
         <Link to={withParams("/app/campaigns")}>Campaigns</Link>

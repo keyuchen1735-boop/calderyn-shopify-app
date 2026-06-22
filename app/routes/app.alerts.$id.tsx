@@ -32,6 +32,7 @@ import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
 // the UI surfaces the error toast — no silent swallowing.
@@ -80,6 +81,9 @@ type ActionPayload = {
   ok: boolean;
   toast?: { message: string; isError?: boolean };
   error?: { code: string; message: string };
+  /** Trust receipt from a successful approve (drives the Action Queue's approve
+   *  receipt + graduation moment). Absent for snooze/failed/deep-link. */
+  calibration?: ApproveReceipt;
 };
 
 // Per-kind execution surface. Most kinds confirm + execute inline on this page;
@@ -465,14 +469,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         successMessage += " — alert couldn't be acknowledged";
       }
       // Positive calibration signal on success only.
-      // Never blocks the response (recordApproval never throws).
+      // Never blocks the response (recordApproval never throws). Capture the
+      // receipt so the Action Queue can render the approve confirmation +
+      // graduation moment.
+      let calibration: ApproveReceipt | undefined;
       if (result.outcome === "succeeded") {
         const sb1 = getSupabase();
-        await recordApproval(shopId, alert.detector_id, kind, sb1).catch(() => {});
+        calibration = await recordApproval(shopId, alert.detector_id, kind, sb1).catch(
+          () => ZERO_APPROVE_RECEIPT,
+        );
       }
 
       return json<ActionPayload>({
         ok: result.outcome === "succeeded",
+        calibration,
         toast: {
           message:
             result.outcome === "succeeded"
@@ -509,11 +519,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Positive calibration signal: merchant approved this (detector, action).
     // snooze_alert is excluded -- it defers rather than approves the action.
     // Never blocks the action result (recordApproval never throws).
+    let calibration: ApproveReceipt | undefined;
     if (kind !== "snooze_alert") {
-      await recordApproval(shopId, alert.detector_id, kind, sb).catch(() => {});
+      calibration = await recordApproval(shopId, alert.detector_id, kind, sb).catch(
+        () => ZERO_APPROVE_RECEIPT,
+      );
     }
     return json<ActionPayload>({
       ok: true,
+      calibration,
       toast: {
         message: `${ACTION_VERBS[kind] ?? "Action"} executed${
           acknowledged ? "" : " — alert couldn't be acknowledged"

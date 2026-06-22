@@ -36,6 +36,8 @@ import type {
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
+import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
+import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
@@ -653,7 +655,7 @@ interface CampaignActionInput {
 export async function executeCampaignAction(
   campaignId: string,
   input: CampaignActionInput,
-): Promise<{ auditId: string; outcome: string }> {
+): Promise<{ auditId: string; outcome: string; calibration?: ApproveReceipt }> {
   const body: Record<string, unknown> = {
     type: input.type,
     idempotency_key: crypto.randomUUID(),
@@ -661,32 +663,38 @@ export async function executeCampaignAction(
   if (input.dailyBudgetCents !== undefined) body.daily_budget_cents = input.dailyBudgetCents;
   if (input.alertId !== undefined) body.alert_id = input.alertId;
 
-  const data = await apiSend<{ audit_id: string; outcome: string }>(
+  const data = await apiSend<{ audit_id: string; outcome: string; calibration?: ApproveReceipt }>(
     "POST",
     `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/action`,
     body,
   );
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
-  return { auditId: data.audit_id, outcome: data.outcome };
+  return { auditId: data.audit_id, outcome: data.outcome, calibration: data.calibration };
 }
 
 export async function executeAlertAction(
   alertId: string,
   input: { type: string; newPriceCents?: number; poQuantity?: string; poUnitCost?: string },
-): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
+): Promise<{ auditId: string; outcome: string; acknowledged: boolean; calibration?: ApproveReceipt }> {
   const body: Record<string, unknown> = { type: input.type, idempotency_key: crypto.randomUUID() };
   // adjust_price only: optional merchant override; omitted → engine suggestion.
   if (input.newPriceCents !== undefined) body.new_price_cents = input.newPriceCents;
   // create_po_draft only: quantity + optional unit cost (blank → TBD).
   if (input.poQuantity !== undefined) body.po_quantity = input.poQuantity;
   if (input.poUnitCost !== undefined) body.po_unit_cost = input.poUnitCost;
-  const data = await apiSend<{ audit_id: string; outcome: string; acknowledged: boolean }>(
-    "POST",
-    `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,
-    body,
-  );
-  return { auditId: data.audit_id, outcome: data.outcome, acknowledged: data.acknowledged };
+  const data = await apiSend<{
+    audit_id: string;
+    outcome: string;
+    acknowledged: boolean;
+    calibration?: ApproveReceipt;
+  }>("POST", `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`, body);
+  return {
+    auditId: data.audit_id,
+    outcome: data.outcome,
+    acknowledged: data.acknowledged,
+    calibration: data.calibration,
+  };
 }
 
 export async function relocateSku(
@@ -812,11 +820,12 @@ export async function sendAssistantMessage(
 export async function fetchCalibration(): Promise<{
   pct: number | null;
   updated_at: string | null;
+  nearGraduation: number;
 }> {
-  const data = await apiGet<{ pct: number | null; updated_at: string | null }>(
+  const data = await apiGet<{ pct: number | null; updated_at: string | null; nearGraduation?: number }>(
     "/dashboard/api/calibration",
   );
-  return { pct: data.pct, updated_at: data.updated_at };
+  return { pct: data.pct, updated_at: data.updated_at, nearGraduation: data.nearGraduation ?? 0 };
 }
 
 export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
@@ -824,15 +833,23 @@ export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
   return data.proposals;
 }
 
+export interface RejectResult {
+  reflection: string;
+  delta: number;
+  before: number;
+  after: number;
+  savedAsRule: boolean;
+}
+
 /** Reject a proposal for an alert with a plain-language reason.
  *  Re-derives detector/action server-side from the trusted alert.
- *  NEVER executes any action. Returns the server-generated reflection string. */
+ *  NEVER executes any action. Returns the reject receipt (reflection + trust delta). */
 export async function rejectProposal(input: {
   alertId: string;
   reason: RejectReason;
   note?: string;
-}): Promise<{ reflection: string }> {
-  return apiSend<{ reflection: string }>("POST", "/dashboard/api/queue/reject", input);
+}): Promise<RejectResult> {
+  return apiSend<RejectResult>("POST", "/dashboard/api/queue/reject", input);
 }
 
 /** Return all active learned calibration rules for the session's shop. */
@@ -845,6 +862,25 @@ export async function fetchLearnedRules(): Promise<LearnedRuleVM[]> {
 /** Deactivate (undo) a learned calibration rule by id. */
 export async function undoRule(ruleId: string): Promise<void> {
   await apiSend<{ ok: true }>("POST", "/dashboard/api/calibration/rules", { ruleId });
+}
+
+// --- live engine -------------------------------------------------------------
+
+/** Fetch the full Live Engine page bundle (autopilot features + money, engine
+ *  pipeline, live trace, predictions, calibration headline). */
+export async function fetchLiveEngine(): Promise<LiveEnginePageData> {
+  return apiGet<LiveEnginePageData>("/dashboard/api/live-engine");
+}
+
+/** Turn a graduated feature's unattended autonomy on/off. The shop is taken from
+ *  the session server-side; the UPDATE is scoped by shop + detector + action, so
+ *  an unknown (detector, action) pair simply matches no row and is a no-op. */
+export async function toggleFeatureAutonomy(input: {
+  detectorId: string;
+  actionKind: string;
+  enabled: boolean;
+}): Promise<{ ok: boolean; enabled: boolean }> {
+  return apiSend<{ ok: boolean; enabled: boolean }>("POST", "/dashboard/api/live-engine/toggle", input);
 }
 
 // --- creative screener (Predictor) ------------------------------------------

@@ -1,4 +1,4 @@
-// POST { alertId, reason, note? } → { reflection }
+// POST { alertId, reason, note? } → { reflection, delta, before, after, savedAsRule }
 //
 // Dashboard-side reject endpoint — mirrors the embedded app.queue.tsx action,
 // but uses the dashboard session + JSON body (not FormData). Security contract:
@@ -57,7 +57,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // Record rejection — executes NOTHING; purely calibration bookkeeping.
-    const { reflection } = await client.calibration.recordRejection({
+    const r = await client.calibration.recordRejection({
       alertId,
       detectorId,
       actionKind,
@@ -66,6 +66,14 @@ export async function action({ request }: ActionFunctionArgs) {
       dollarImpactCents: alert.dollar_impact,
     });
 
-    return { reflection };
+    // The full reject receipt drives the dashboard's "what Calderyn learned"
+    // reflection card (mirrors the embedded surface).
+    return {
+      reflection: r.reflection,
+      delta: r.delta,
+      before: r.before,
+      after: r.after,
+      savedAsRule: r.savedAsRule,
+    };
   });
 }

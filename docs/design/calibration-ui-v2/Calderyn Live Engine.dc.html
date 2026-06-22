@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:'Inter',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;background:#1a1a1a}
+  .scroll-y{scrollbar-width:thin;scrollbar-color:#c4c4c4 transparent}
+  .scroll-y::-webkit-scrollbar{width:10px;height:10px}
+  .scroll-y::-webkit-scrollbar-thumb{background:#cdcdcd;border-radius:6px;border:3px solid transparent;background-clip:content-box}
+  .trace-scroll{scrollbar-width:thin;scrollbar-color:#d2d6da transparent}
+  .trace-scroll::-webkit-scrollbar{width:8px}
+  .trace-scroll::-webkit-scrollbar-thumb{background:#d2d6da;border-radius:5px;border:2px solid transparent;background-clip:content-box}
+  @keyframes streamIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+  @keyframes nodePulse{0%,100%{box-shadow:0 0 0 0 rgba(35,85,110,0)}50%{box-shadow:0 0 0 7px rgba(35,85,110,.1)}}
+  @keyframes flowDash{to{stroke-dashoffset:-18}}
+  @keyframes sweep{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes ping{0%{transform:scale(.35);opacity:.5}100%{transform:scale(1);opacity:0}}
+  @keyframes scanSwap{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:translateX(0)}}
+  @keyframes flowArrow{0%,100%{opacity:.3;transform:translateX(-2px)}50%{opacity:1;transform:translateX(2px)}}
+</style>
+</helmet>
+
+<div style="--accent: {{ accent }}; --accent-tint: color-mix(in srgb, {{ accent }} 8%, #ffffff); --accent-soft: color-mix(in srgb, {{ accent }} 15%, #ffffff); --accent-dark: color-mix(in srgb, {{ accent }} 80%, #000000); height:100vh; display:flex; flex-direction:column; background:#1a1a1a; overflow:hidden; font-family:'Inter',sans-serif">
+
+  <!-- ===== TOP BAR ===== -->
+  <sc-if value="{{ showShell }}" hint-placeholder-val="{{ true }}">
+  <header style="flex:none; height:56px; background:#1a1a1a; display:flex; align-items:center; padding:0 16px; gap:16px; color:#e3e3e3">
+    <div style="display:flex; align-items:center; gap:10px; min-width:230px">
+      <div style="width:30px; height:30px; border-radius:7px; background:#95bf47; display:flex; align-items:center; justify-content:center">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M14.5 4.2c-.2 0-.4.1-.6.2-.1-.4-.4-.9-1-1-.7 0-1.4.6-1.9 1.6-.7.2-1.2.4-1.3.4-.4.1-.4.1-.5.5-.1.3-1.6 12.1-1.6 12.1l8.2 1.5V4.3c-.1 0-.2-.1-.3-.1h-1ZM12.8 5.2c-.4.1-.8.2-1.2.4 0-.6.3-1.3.8-1.4.2.2.3.6.4 1Z"/></svg>
+      </div>
+      <span style="font-weight:600; font-size:15px; color:#f5f5f5; letter-spacing:-.01em">shopify</span>
+      <span style="font-size:12px; color:#b5b5b5; background:#303030; padding:3px 8px; border-radius:6px">Spring '26</span>
+    </div>
+    <div style="flex:1; max-width:640px; margin:0 auto; height:34px; background:#303030; border:1px solid #444; border-radius:8px; display:flex; align-items:center; padding:0 12px; gap:8px; color:#a8a8a8">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span style="font-size:13px; flex:1">Search</span>
+      <span style="font-size:11px; background:#1f1f1f; border:1px solid #4a4a4a; border-radius:5px; padding:2px 6px">Ctrl K</span>
+    </div>
+    <div style="min-width:230px; display:flex; align-items:center; justify-content:flex-end; gap:10px">
+      <button style="width:34px; height:34px; border-radius:8px; border:none; background:transparent; color:#cfcfcf; display:flex; align-items:center; justify-content:center; cursor:pointer" style-hover="background:#303030">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      </button>
+      <button style="width:34px; height:34px; border-radius:8px; border:none; background:transparent; color:#cfcfcf; display:flex; align-items:center; justify-content:center; cursor:pointer" style-hover="background:#303030">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+      </button>
+      <div style="display:flex; align-items:center; gap:8px; background:#303030; border-radius:8px; padding:4px 10px 4px 4px; cursor:pointer">
+        <span style="width:26px; height:26px; border-radius:6px; background:#5c6ac4; color:#fff; font-size:11px; font-weight:600; display:flex; align-items:center; justify-content:center">CRS</span>
+        <span style="font-size:13px; color:#f0f0f0; font-weight:500">Calderyn Review Store</span>
+        <span style="font-size:10px; font-weight:700; color:#1a1a1a; background:#ffc453; padding:2px 5px; border-radius:4px; letter-spacing:.02em">dev</span>
+      </div>
+    </div>
+  </header>
+  </sc-if>
+
+  <!-- ===== BODY ===== -->
+  <div style="flex:1; min-height:0; display:flex; background:#1a1a1a">
+
+    <!-- ===== LEFT NAV ===== -->
+    <sc-if value="{{ showShell }}" hint-placeholder-val="{{ true }}">
+    <nav class="scroll-y" style="flex:none; width:232px; background:#fbfbfb; border-right:1px solid #e1e1e1; padding:12px 12px 24px; overflow-y:auto; font-size:13.5px">
+      <div style="display:flex; flex-direction:column; gap:1px">
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/></svg>Home</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 7h12l1 13H5L6 7Z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg>Orders</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 13 11 6h7v7l-7 7-7-7Z"/><circle cx="15" cy="9" r="1.2"/></svg>Products</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.5 3.1-6 7-6s7 2.5 7 6"/></svg>Customers</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 16l5-5 3 3 6-7"/><path d="M16 7h4v4"/></svg>Growth</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6h7l5 5-7 7-5-5V6Z"/><circle cx="10" cy="10" r="1.3"/></svg>Discounts</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>Content</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9 12 4l8 5"/><path d="M6 9v8M18 9v8M4 20h16"/></svg>Finance</div>
+        <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 19V5M5 19h14"/><rect x="8" y="11" width="2.6" height="5"/><rect x="13.5" y="8" width="2.6" height="8"/></svg>Analytics</div>
+      </div>
+
+      <div style="font-size:12px; font-weight:600; color:#8a8a8a; padding:16px 9px 6px">Apps</div>
+      <div style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; background:#ececec; color:#1a1a1a; font-weight:600; cursor:pointer">
+        <span style="width:18px; height:18px; display:flex; align-items:center; justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--accent,#23556e)"><path d="M12 2.5 20 7v10l-8 4.5L4 17V7l8-4.5Z"/><path d="M12 6 16.5 8.6v5.2L12 16.4 7.5 13.8V8.6L12 6Z" fill="#fff"/></svg></span>
+        CalderynExtension
+        <span style="margin-left:auto; width:7px; height:7px; border-radius:50%; background:#d72c0d"></span>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:1px; padding-left:8px; margin-top:1px; border-left:1px solid #e6e6e6; margin-left:17px">
+        <a href="Calderyn Dashboard.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Overview</a>
+        <a href="Calderyn Alerts.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Alerts</a>
+        <a href="Calderyn Action Queue v2.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Action Queue</a>
+        <a href="Calderyn Live Engine.dc.html" style="display:block; padding:6px 11px; border-radius:8px; background:var(--accent-tint,#e9eef3); color:var(--accent-dark,#173a4d); font-weight:600; text-decoration:none; cursor:pointer">Live Engine</a>
+        <a href="Calderyn Analytics.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Analytics</a>
+        <a href="Calderyn Audit Log.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Audit log</a>
+        <a href="Calderyn Campaigns.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Campaigns</a>
+        <a href="Calderyn Inventory.dc.html" style="display:block; padding:6px 11px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0">Inventory</a>
+      </div>
+
+      <div style="margin-top:18px; padding-top:12px; border-top:1px solid #ececec">
+        <a href="Calderyn Settings.dc.html" style="display:flex; align-items:center; gap:11px; padding:7px 9px; border-radius:8px; color:#4a4a4a; text-decoration:none; cursor:pointer" style-hover="background:#f0f0f0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6 6l1.5 1.5M16.5 16.5 18 18M18 6l-1.5 1.5M7.5 16.5 6 18"/></svg>Settings</a>
+      </div>
+    </nav>
+    </sc-if>
+
+    <!-- ===== CONTENT ===== -->
+    <main class="scroll-y" style="flex:1; min-width:0; background:#f1f1f1; overflow-y:auto">
+
+      <!-- breadcrumb bar -->
+      <div style="display:flex; align-items:center; gap:9px; padding:11px 28px; border-bottom:1px solid #e3e3e3; background:#f7f7f7; position:sticky; top:0; z-index:5">
+        <span style="width:20px; height:20px; display:flex; align-items:center; justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="var(--accent,#23556e)"><path d="M12 2.5 20 7v10l-8 4.5L4 17V7l8-4.5Z"/><path d="M12 6 16.5 8.6v5.2L12 16.4 7.5 13.8V8.6L12 6Z" fill="#f7f7f7"/></svg></span>
+        <a href="Calderyn Dashboard.dc.html" style="font-size:13px; font-weight:500; color:#6a6a6a; text-decoration:none" style-hover="color:#303030">CalderynExtension</a>
+        <span style="color:#b0b0b0">/</span>
+        <span style="font-size:13px; font-weight:600; color:#303030">Live Engine</span>
+      </div>
+
+      <div style="max-width:1120px; margin:0 auto; padding:24px 32px 80px">
+
+        <!-- page header -->
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:18px">
+          <div>
+            <h1 style="margin:0; font-size:21px; font-weight:700; color:#1a1a1a; letter-spacing:-.02em">Live Engine</h1>
+            <p style="margin:4px 0 0; font-size:13.5px; color:#8a8a8a">Your autopilot features running on their own, in real time &mdash; what they're doing and why.</p>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border-radius:8px; background:#fff; border:1px solid #e3e3e3">
+            <span style="width:8px; height:8px; border-radius:50%; background:#1a7f4f; animation:livePulse 1.4s ease-in-out infinite"></span>
+            <span style="font-size:12.5px; font-weight:600; color:#1a7f4f">Live</span>
+            <span style="font-size:12px; color:#b0b0b0">·</span>
+            <span style="font-size:12px; color:#8a8a8a; font-variant-numeric:tabular-nums">cycle {{ cycleNo }}</span>
+          </div>
+        </div>
+
+        <!-- ===== AUTOPILOT — enabled features running on their own ===== -->
+        <div style="background:#fff; border:1px solid #e3e3e3; border-radius:16px; box-shadow:0 1px 2px rgba(26,26,26,.04); overflow:hidden; margin-bottom:18px">
+          <!-- header -->
+          <div style="display:flex; align-items:center; gap:13px; padding:16px 20px; border-bottom:1px solid #f0f0f0; background:linear-gradient(180deg,#f7fbf9,#fff)">
+            <div style="flex:none; width:40px; height:40px; border-radius:11px; background:#e4f3e6; display:flex; align-items:center; justify-content:center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1a7f4f" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            </div>
+            <div style="flex:1; min-width:0">
+              <div style="display:flex; align-items:center; gap:9px">
+                <h2 style="margin:0; font-size:16px; font-weight:700; color:#1a1a1a; letter-spacing:-.01em">Autopilot is running</h2>
+                <span style="display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px; border-radius:7px; background:#e4f3e6"><span style="width:6px; height:6px; border-radius:50%; background:#1a7f4f; animation:livePulse 1.4s ease-in-out infinite"></span><span style="font-size:11px; font-weight:700; color:#1a7f4f">{{ featuresLiveLabel }}</span></span>
+              </div>
+              <p style="margin:3px 0 0; font-size:12.5px; color:#7a7a7a">These graduated to run without you. Calderyn handles them on its own and logs every action below.</p>
+            </div>
+            <div style="flex:none; text-align:right">
+              <div style="font-size:21px; font-weight:700; color:#1a7f4f; font-variant-numeric:tabular-nums; letter-spacing:-.01em">{{ moneyProtected }}</div>
+              <div style="font-size:11px; color:#9a9a9a">protected this week</div>
+            </div>
+          </div>
+          <!-- feature rows -->
+          <div style="display:flex; flex-direction:column">
+            <sc-for list="{{ features }}" as="f" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:14px; padding:15px 20px; border-bottom:1px solid #f4f4f4; background:{{ f.rowBg }}">
+                <div style="flex:none; width:38px; height:38px; border-radius:10px; background:var(--accent-tint,#eef3f6); display:flex; align-items:center; justify-content:center">{{ f.iconEl }}</div>
+                <div style="flex:1; min-width:0">
+                  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                    <span style="font-size:14px; font-weight:600; color:#1a1a1a">{{ f.name }}</span>
+                    <sc-if value="{{ f.showActive }}" hint-placeholder-val="{{ true }}">
+                      <span style="display:inline-flex; align-items:center; gap:5px; height:19px; padding:0 8px; border-radius:6px; background:#e4f3e6"><span style="width:5px; height:5px; border-radius:50%; background:#1a7f4f; animation:livePulse 1.3s ease-in-out infinite"></span><span style="font-size:10px; font-weight:700; color:#1a7f4f">ACTIVE</span></span>
+                    </sc-if>
+                    <sc-if value="{{ f.showNewBadge }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size:10px; font-weight:700; color:var(--accent-dark,#173a4d); background:var(--accent-tint,#eef3f6); padding:2px 8px; border-radius:6px">NEWLY UNLOCKED</span>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{ f.showWorking }}" hint-placeholder-val="{{ true }}">
+                    <div style="font-size:12px; color:#8a8a8a; margin-top:4px">{{ f.watching }} &middot; {{ f.lastText }}</div>
+                  </sc-if>
+                  <sc-if value="{{ f.showUnlock }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:12px; color:#8a8a8a; margin-top:4px">{{ f.unlock }}</div>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ f.showMoney }}" hint-placeholder-val="{{ true }}">
+                  <div style="flex:none; text-align:right; margin-right:4px">
+                    <div style="font-size:14px; font-weight:700; color:#1a7f4f; font-variant-numeric:tabular-nums">{{ f.money }}</div>
+                    <div style="font-size:10.5px; color:#9a9a9a">{{ f.actions }}</div>
+                  </div>
+                </sc-if>
+                <button onClick="{{ f.toggle }}" style="flex:none; position:relative; width:40px; height:23px; border-radius:12px; border:none; cursor:pointer; padding:0; background:{{ f.trackBg }}; transition:background .2s">
+                  <span style="position:absolute; top:3px; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:left .2s; left:{{ f.knobLeft }}"></span>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- ===== ENGINE PIPELINE (light) ===== -->
+        <div style="position:relative; background:#fff; border:1px solid #e3e3e3; border-radius:16px; box-shadow:0 1px 2px rgba(26,26,26,.04); overflow:hidden; margin-bottom:18px">
+          <div style="padding:18px 24px 22px">
+            <!-- plain intro -->
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:6px">
+              <div>
+                <h2 style="margin:0; font-size:15px; font-weight:700; color:#1a1a1a; letter-spacing:-.01em">Watch Calderyn work</h2>
+                <p style="margin:3px 0 0; font-size:13px; color:#7a7a7a; line-height:1.5">Follow a real call as it moves through the engine, live.</p>
+              </div>
+              <div style="flex:none; display:flex; align-items:center; gap:7px; height:28px; padding:0 11px; border-radius:8px; background:#f3faf5">
+                <span style="width:7px; height:7px; border-radius:50%; background:#1a7f4f; animation:livePulse 1.4s ease-in-out infinite"></span>
+                <span style="font-size:12px; font-weight:600; color:#1a7f4f">Running now</span>
+              </div>
+            </div>
+
+            <!-- WORKFLOW: the path Calderyn takes for one call (n8n-style node graph) -->
+            <div style="display:flex; align-items:center; gap:0; margin:16px 0 14px; padding:20px 18px; border:1px solid #eef0f2; border-radius:13px; background-color:#fbfcfd; background-image:radial-gradient(#e4e9ed 1px, transparent 1px); background-size:15px 15px; overflow-x:auto">
+
+              <!-- TRIGGER -->
+              <div style="flex:none; width:166px; background:#fff; border:1px solid #f0e2c0; border-left:3px solid #e0a93a; border-radius:11px; box-shadow:0 1px 3px rgba(0,0,0,.06); padding:11px 12px">
+                <div style="display:flex; align-items:center; gap:7px; margin-bottom:7px">
+                  <span style="flex:none; width:24px; height:24px; border-radius:7px; background:#fdf3da; display:flex; align-items:center; justify-content:center">{{ weighSpotIcon }}</span>
+                  <span style="font-size:9.5px; font-weight:700; letter-spacing:.05em; color:#8a5a00">SPOTTED</span>
+                </div>
+                <div style="font-size:12.5px; font-weight:600; color:#1a1a1a; line-height:1.3">{{ weighTitle }}</div>
+                <div style="font-size:10.5px; color:#9a9a9a; margin-top:2px; line-height:1.35">{{ weighCtx }}</div>
+              </div>
+
+              <!-- arrow -->
+              <div style="flex:none; width:26px; display:flex; align-items:center; justify-content:center"><svg width="26" height="12" viewBox="0 0 26 12" fill="none"><path d="M0 6H20M15 1l6 5-6 5" stroke="#c4ccd2" stroke-width="2"></path></svg></div>
+
+              <!-- CHECKS -->
+              <div style="flex:none; width:184px; background:#fff; border:1px solid #e3e9ee; border-left:3px solid var(--accent,#23556e); border-radius:11px; box-shadow:0 1px 3px rgba(0,0,0,.06); padding:11px 12px">
+                <div style="display:flex; align-items:center; gap:7px; margin-bottom:8px">
+                  <span style="flex:none; width:24px; height:24px; border-radius:7px; background:var(--accent-tint,#eef3f6); display:flex; align-items:center; justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></span>
+                  <span style="font-size:9.5px; font-weight:700; letter-spacing:.05em; color:var(--accent-dark,#173a4d)">CHECKS 3 THINGS</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:5px">
+                  <sc-for list="{{ weighFactors }}" as="wf" hint-placeholder-count="3">
+                    <div style="display:flex; align-items:center; gap:7px">
+                      <span style="flex:none; width:72px; font-size:10px; color:#6a6a6a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ wf.label }}</span>
+                      <div style="flex:1; height:4px; border-radius:3px; background:#eef0f2; overflow:hidden"><div style="height:100%; border-radius:3px; background:var(--accent,#23556e); width:{{ wf.width }}; transition:width .5s ease"></div></div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <!-- arrow -->
+              <div style="flex:none; width:26px; display:flex; align-items:center; justify-content:center"><svg width="26" height="12" viewBox="0 0 26 12" fill="none"><path d="M0 6H20M15 1l6 5-6 5" stroke="#c4ccd2" stroke-width="2"></path></svg></div>
+
+              <!-- GATE / IF -->
+              <div style="flex:none; width:120px; background:#fff; border:1px solid #d7e3ea; border-left:3px solid var(--accent-dark,#173a4d); border-radius:11px; box-shadow:0 1px 3px rgba(0,0,0,.06); padding:11px 12px; text-align:center">
+                <div style="font-size:9.5px; font-weight:700; letter-spacing:.05em; color:var(--accent-dark,#173a4d); margin-bottom:5px">SURE ENOUGH?</div>
+                <div style="font-size:22px; font-weight:700; color:{{ weighConfFg }}; font-variant-numeric:tabular-nums; letter-spacing:-.02em; line-height:1">{{ weighConf }}%</div>
+                <div style="font-size:10px; color:#9a9a9a; margin-top:3px">needs 80%</div>
+              </div>
+
+              <!-- BRANCH connector -->
+              <div style="flex:none; width:44px; display:flex; align-items:center"><svg width="44" height="150" viewBox="0 0 44 150" fill="none"><path d="M0 75C22 75 22 36 44 36" stroke="{{ autoPathColor }}" stroke-width="2.5"></path><path d="M0 75C22 75 22 114 44 114" stroke="{{ askPathColor }}" stroke-width="2.5"></path></svg></div>
+
+              <!-- OUTPUTS -->
+              <div style="flex:none; width:162px; height:150px; display:flex; flex-direction:column; justify-content:space-between">
+                <div style="background:{{ autoNodeBg }}; border:1px solid {{ autoNodeBorder }}; border-radius:11px; box-shadow:0 1px 3px rgba(0,0,0,.05); padding:11px 12px; opacity:{{ autoNodeOpacity }}; transition:opacity .3s">
+                  <div style="display:flex; align-items:center; gap:8px">
+                    <span style="flex:none; width:24px; height:24px; border-radius:7px; background:#e4f3e6; display:flex; align-items:center; justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a7f4f" stroke-width="2.6"><path d="M20 6 9 17l-5-5"/></svg></span>
+                    <div><div style="font-size:12.5px; font-weight:700; color:#1a7f4f">Handle it</div><div style="font-size:10px; color:#7a9a86">on its own</div></div>
+                  </div>
+                </div>
+                <div style="background:{{ askNodeBg }}; border:1px solid {{ askNodeBorder }}; border-radius:11px; box-shadow:0 1px 3px rgba(0,0,0,.05); padding:11px 12px; opacity:{{ askNodeOpacity }}; transition:opacity .3s">
+                  <div style="display:flex; align-items:center; gap:8px">
+                    <span style="flex:none; width:24px; height:24px; border-radius:7px; background:var(--accent-tint,#eef3f6); display:flex; align-items:center; justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dark,#173a4d)" stroke-width="2.2"><path d="M5 12h14M5 7h14M5 17h9"/></svg></span>
+                    <div><div style="font-size:12.5px; font-weight:700; color:var(--accent-dark,#173a4d)">Ask you first</div><div style="font-size:10px; color:#8a9aa5">you decide</div></div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- rotation dots -->
+            <div style="display:flex; align-items:center; justify-content:center; gap:6px">
+              <sc-for list="{{ weighDots }}" as="d" hint-placeholder-count="3">
+                <span style="width:6px; height:6px; border-radius:50%; background:{{ d.color }}; transition:background .3s"></span>
+              </sc-for>
+              <span style="font-size:11px; color:#a8a8a8; margin-left:6px">updates live</span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ===== TWO COLUMNS: trace centerpiece + inspector/predictions ===== -->
+        <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:18px; align-items:start">
+
+          <!-- LEFT: engine trace (centerpiece, clickable) -->
+          <div style="background:#fff; border:1px solid #e3e3e3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(26,26,26,.04)">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #f0f0f0">
+              <div style="min-width:0">
+                <div style="display:flex; align-items:center; gap:9px">
+                  <span style="width:7px; height:7px; border-radius:50%; background:#1a7f4f; animation:livePulse 1.4s ease-in-out infinite"></span>
+                  <h2 style="margin:0; font-size:14.5px; font-weight:700; color:#1a1a1a">What Calderyn just did</h2>
+                </div>
+                <p style="margin:4px 0 0 16px; font-size:11.5px; color:#a0a0a0">Newest first · hover to pause · click any row to see why</p>
+              </div>
+            </div>
+            <div class="trace-scroll" onMouseEnter="{{ pauseTrace }}" onMouseLeave="{{ resumeTrace }}" style="height:486px; overflow-y:auto">
+              <sc-for list="{{ stream }}" as="e" hint-placeholder-count="8">
+                <div onClick="{{ e.select }}" style="display:flex; gap:12px; padding:13px 16px 13px 13px; border-bottom:1px solid #f4f4f4; border-left:3px solid {{ e.railColor }}; background:{{ e.rowBg }}; cursor:pointer; animation:streamIn .3s ease both; transition:background .12s" style-hover="background:#f8fafb">
+                  <span style="flex:none; width:28px; height:28px; border-radius:8px; background:{{ e.chipBg }}; display:flex; align-items:center; justify-content:center; margin-top:1px">{{ e.icon }}</span>
+                  <div style="flex:1; min-width:0">
+                    <div style="display:flex; align-items:center; gap:8px">
+                      <span style="font-size:9.5px; font-weight:700; letter-spacing:.05em; color:{{ e.tagColor }}; background:{{ e.chipBg }}; padding:2px 7px; border-radius:5px">{{ e.tag }}</span>
+                      <span style="font-size:10.5px; color:#a8a8a8; font-family:'JetBrains Mono',monospace; margin-left:auto">{{ e.time }}</span>
+                    </div>
+                    <div style="font-size:13px; color:#2a2a2a; line-height:1.45; margin-top:5px; font-weight:450">{{ e.text }}</div>
+                    <sc-if value="{{ e.hasMoney }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:inline-flex; align-items:center; gap:5px; margin-top:6px; font-size:11.5px; font-weight:600; color:{{ e.moneyFg }}; background:{{ e.moneyBg }}; padding:2px 8px; border-radius:6px">{{ e.moneyText }}</div>
+                    </sc-if>
+                  </div>
+                  <span style="flex:none; align-self:center; color:#c4c8cc">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- RIGHT: inspector (when selected) OR predictions + calibration -->
+          <div style="display:flex; flex-direction:column; gap:18px">
+
+            <!-- ===== INSPECTOR ===== -->
+            <sc-if value="{{ hasInspector }}" hint-placeholder-val="{{ false }}">
+              <div style="background:#fff; border:1px solid #e3e3e3; border-radius:16px; overflow:hidden; box-shadow:0 4px 16px rgba(26,26,26,.08); animation:fadeUp .25s ease both">
+                <!-- inspector header -->
+                <div style="padding:13px 18px; border-bottom:1px solid #f0f0f0; display:flex; align-items:center; gap:10px">
+                  <button onClick="{{ clearSelection }}" style="flex:none; width:28px; height:28px; border-radius:7px; border:1px solid #e3e3e3; background:#fff; color:#6a6a6a; cursor:pointer; display:flex; align-items:center; justify-content:center; font-family:inherit" style-hover="background:#f5f5f5">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 6l-6 6 6 6"/></svg>
+                  </button>
+                  <span style="font-size:9.5px; font-weight:700; letter-spacing:.05em; color:{{ insp.tagColor }}; background:{{ insp.chipBg }}; padding:3px 8px; border-radius:5px">{{ insp.tag }}</span>
+                  <span style="font-size:11px; color:#a8a8a8; font-family:'JetBrains Mono',monospace; margin-left:auto">{{ insp.time }}</span>
+                </div>
+
+                <div style="padding:16px 18px 18px">
+                  <h3 style="margin:0 0 4px; font-size:15px; font-weight:700; color:#1a1a1a; letter-spacing:-.01em; line-height:1.35">{{ insp.title }}</h3>
+
+                  <!-- money banner -->
+                  <sc-if value="{{ insp.hasMoney }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex; align-items:center; gap:8px; margin-top:10px; padding:9px 12px; border-radius:9px; background:{{ insp.moneyBg }}">
+                      <span style="font-size:12px; color:{{ insp.moneyFg }}; font-weight:500">{{ insp.moneyLabel }}</span>
+                      <span style="font-size:15px; font-weight:700; color:{{ insp.moneyFg }}; margin-left:auto; font-variant-numeric:tabular-nums">{{ insp.moneyValue }}</span>
+                    </div>
+                  </sc-if>
+
+                  <!-- the signal -->
+                  <sc-if value="{{ insp.hasSignal }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top:16px">
+                      <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; color:#9a9a9a; margin-bottom:8px">WHAT IT SAW</div>
+                      <p style="margin:0 0 9px; font-size:13px; color:#3a3a3a; line-height:1.5">{{ insp.signal }}</p>
+                      <div style="display:flex; flex-direction:column; gap:6px">
+                        <sc-for list="{{ insp.evidence }}" as="ev" hint-placeholder-count="3">
+                          <div style="display:flex; align-items:flex-start; gap:8px; font-size:12.5px; color:#5a5a5a; line-height:1.4">
+                            <span style="flex:none; width:5px; height:5px; border-radius:50%; background:var(--accent,#23556e); margin-top:6px"></span>
+                            <span>{{ ev.text }}</span>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <!-- how it scored -->
+                  <sc-if value="{{ insp.hasScore }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top:18px">
+                      <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; color:#9a9a9a; margin-bottom:10px">HOW IT WEIGHED THIS</div>
+                      <div style="display:flex; flex-direction:column; gap:11px">
+                        <sc-for list="{{ insp.scores }}" as="sc" hint-placeholder-count="3">
+                          <div>
+                            <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:4px">
+                              <span style="font-size:12.5px; color:#4a4a4a">{{ sc.label }}</span>
+                              <span style="font-size:12px; font-weight:600; color:#1a1a1a; font-variant-numeric:tabular-nums">{{ sc.valLabel }}</span>
+                            </div>
+                            <div style="height:6px; border-radius:4px; background:#eef0f2; overflow:hidden"><div style="height:100%; border-radius:4px; background:var(--accent,#23556e); width:{{ sc.width }}"></div></div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <!-- confidence result -->
+                      <div style="margin-top:14px; padding:12px 14px; border-radius:10px; background:{{ insp.confBg }}; display:flex; align-items:center; gap:12px">
+                        <div style="flex:none; font-size:22px; font-weight:700; color:{{ insp.confFg }}; font-variant-numeric:tabular-nums; letter-spacing:-.01em">{{ insp.confidence }}%</div>
+                        <div style="flex:1; min-width:0">
+                          <div style="font-size:12px; font-weight:600; color:{{ insp.confFg }}">{{ insp.confTitle }}</div>
+                          <div style="font-size:11.5px; color:#6a6a6a; margin-top:1px; line-height:1.4">{{ insp.threshold }}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <!-- decision -->
+                  <sc-if value="{{ insp.hasDecision }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top:18px">
+                      <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; color:#9a9a9a; margin-bottom:8px">DECISION</div>
+                      <div style="display:flex; align-items:center; gap:9px; margin-bottom:7px">
+                        <span style="font-size:12.5px; font-weight:700; color:{{ insp.decFg }}; background:{{ insp.decBg }}; padding:4px 11px; border-radius:7px">{{ insp.decLabel }}</span>
+                      </div>
+                      <p style="margin:0; font-size:12.5px; color:#5a5a5a; line-height:1.5">{{ insp.decNote }}</p>
+                    </div>
+                  </sc-if>
+
+                  <!-- cta -->
+                  <sc-if value="{{ insp.hasCta }}" hint-placeholder-val="{{ false }}">
+                    <a href="{{ insp.ctaHref }}" style="display:flex; align-items:center; justify-content:center; gap:7px; margin-top:16px; height:38px; border-radius:9px; background:var(--accent,#23556e); color:#fff; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer" style-hover="background:var(--accent-dark,#173a4d)">{{ insp.ctaLabel }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg></a>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ===== DEFAULT: calibration + predictions ===== -->
+            <sc-if value="{{ showDefault }}" hint-placeholder-val="{{ true }}">
+
+              <!-- calibration mini -->
+              <div style="background:#fff; border:1px solid #e3e3e3; border-radius:16px; padding:16px 18px; box-shadow:0 1px 2px rgba(26,26,26,.04)">
+                <div style="display:flex; align-items:center; gap:14px">
+                  <div style="flex:none; position:relative; width:62px; height:62px; display:flex; align-items:center; justify-content:center">
+                    <svg width="62" height="62" viewBox="0 0 62 62" style="transform:rotate(-90deg)">
+                      <circle cx="31" cy="31" r="26" fill="none" stroke="#eef0f2" stroke-width="6.5"></circle>
+                      <circle cx="31" cy="31" r="26" fill="none" stroke="var(--accent,#23556e)" stroke-width="6.5" stroke-linecap="round" stroke-dasharray="163.4" stroke-dashoffset="124.2"></circle>
+                    </svg>
+                    <span style="position:absolute; font-size:16px; font-weight:700; color:#1a1a1a">{{ calPct }}<span style="font-size:9px; color:#9a9a9a">%</span></span>
+                  </div>
+                  <div style="flex:1; min-width:0">
+                    <div style="display:flex; align-items:center; gap:7px">
+                      <span style="font-size:13.5px; font-weight:700; color:#1a1a1a">Calibration</span>
+                      <span style="font-size:10.5px; font-weight:600; color:var(--accent-dark,#173a4d); background:var(--accent-tint,#eef3f6); padding:2px 7px; border-radius:5px">Level 1 of 4</span>
+                    </div>
+                    <div style="font-size:12px; color:#8a8a8a; margin-top:3px; line-height:1.4">More trust = more features graduate to autopilot.</div>
+                  </div>
+                </div>
+                <!-- climb track -->
+                <div style="display:flex; gap:4px; margin-top:14px">
+                  <div style="flex:1; height:6px; border-radius:4px; background:var(--accent,#23556e)"></div>
+                  <div style="flex:1; height:6px; border-radius:4px; background:#eef0f2"></div>
+                  <div style="flex:1; height:6px; border-radius:4px; background:#eef0f2"></div>
+                  <div style="flex:1; height:6px; border-radius:4px; background:#eef0f2"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-top:6px; font-size:10px; color:#a8a8a8; font-weight:500">
+                  <span style="color:var(--accent-dark,#173a4d); font-weight:600">Getting started</span>
+                  <span>Learning</span>
+                  <span>Trusted</span>
+                  <span>Hands-off</span>
+                </div>
+              </div>
+
+              <!-- predictions -->
+              <div style="background:#fff; border:1px solid #e3e3e3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(26,26,26,.04)">
+                <div style="padding:15px 18px 12px; border-bottom:1px solid #f2f2f2">
+                  <div style="display:flex; align-items:center; gap:8px">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="1.9"><path d="M3 12a9 9 0 0 1 18 0"/><path d="M12 12l4-2.5"/><circle cx="12" cy="12" r="1.4" fill="var(--accent,#23556e)" stroke="none"/></svg>
+                    <h2 style="margin:0; font-size:14.5px; font-weight:700; color:#1a1a1a">What Calderyn sees coming</h2>
+                  </div>
+                  <p style="margin:5px 0 0; font-size:12px; color:#9a9a9a">Forecasts from the same signals, before they become problems.</p>
+                </div>
+                <div style="padding:6px 18px 14px">
+                  <sc-for list="{{ predictions }}" as="p" hint-placeholder-count="4">
+                    <div style="padding:12px 0; border-top:1px solid #f4f4f4">
+                      <div style="display:flex; align-items:flex-start; gap:10px">
+                        <span style="flex:none; width:26px; height:26px; border-radius:7px; background:{{ p.iconBg }}; display:flex; align-items:center; justify-content:center; margin-top:1px">{{ p.icon }}</span>
+                        <div style="flex:1; min-width:0">
+                          <div style="font-size:13px; font-weight:500; color:#2a2a2a; line-height:1.4">{{ p.text }}</div>
+                          <div style="display:flex; align-items:center; gap:8px; margin-top:6px">
+                            <div style="flex:1; height:4px; border-radius:3px; background:#eef0f2; overflow:hidden; max-width:120px"><div style="height:100%; border-radius:3px; background:{{ p.barColor }}; width:{{ p.confWidth }}"></div></div>
+                            <span style="font-size:11px; font-weight:600; color:#8a8a8a; font-variant-numeric:tabular-nums">{{ p.confidence }}% likely</span>
+                          </div>
+                        </div>
+                        <span style="flex:none; font-size:11px; font-weight:600; color:{{ p.etaColor }}; background:{{ p.etaBg }}; padding:3px 8px; border-radius:6px; white-space:nowrap">{{ p.eta }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+            </sc-if>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:920},&quot;brandColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#23556e&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showShell&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+
+class Component extends DCLogic {
+  state = { tick: 0, cycleNo: 4127, elapsed: 0, activeStage: 0, stream: [], selectedId: null, money: 12840, scanIdx: 0, scanned: 902, issuesFound: 19, featuresOn: { f1: true, f2: true, f3: false }, weighIdx: 0 };
+
+  componentDidMount() {
+    this._seed();
+    this._stageTimer = setInterval(() => {
+      if (this._paused) return;
+      this.setState(s => {
+        const next = (s.activeStage + 1) % 4;
+        const cycleBumped = next === 0;
+        return {
+          activeStage: next,
+          tick: s.tick + 1,
+          cycleNo: cycleBumped ? s.cycleNo + 1 : s.cycleNo,
+          elapsed: cycleBumped ? 0 : s.elapsed + 1,
+          weighIdx: s.weighIdx + 1,
+        };
+      });
+      this._emitForStage();
+    }, 4200);
+
+    // fast "scanning your shop" ticker — the present-tense wow
+    // scanned loops to show the live sweep; issuesFound is today's cumulative
+    // "problems found" — it climbs to 23 and holds, so the funnel below always matches.
+    this._scanTimer = setInterval(() => {
+      this.setState(s => {
+        const idx = s.scanIdx + 1;
+        let scanned = s.scanned + (4 + Math.floor(Math.random() * 8));
+        let issues = Math.min(23, s.issuesFound + (idx % 6 === 0 ? 1 : 0));
+        if (scanned >= 1247) { scanned = 360 + Math.floor(Math.random() * 50); }
+        return { scanIdx: idx, scanned, issuesFound: issues };
+      });
+    }, 780);
+  }
+
+  componentWillUnmount() { clearInterval(this._stageTimer); clearInterval(this._scanTimer); }
+
+  _now() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  // ---- event pools, each carrying rich `detail` for the inspector ----
+  _pool() {
+    return {
+      watch: [
+        {
+          text: 'Pulling Meta + Google ad spend from the last 60 minutes',
+          detail: {
+            signal: 'A routine read of your live ad spend across every connected channel — the raw material every decision is built on.',
+            evidence: [
+              { text: '6 sources connected · Meta, Google, TikTok' },
+              { text: '1,247 SKUs and 18 active campaigns scanned' },
+              { text: 'Data freshness: under 4 minutes old' },
+            ],
+          },
+        },
+        {
+          text: 'Reading live inventory across 3 warehouse locations',
+          detail: {
+            signal: 'Calderyn checks stock levels against the ads pointing at each product, location by location.',
+            evidence: [
+              { text: 'shopify.inventory_levels · 3 locations' },
+              { text: 'Cross-checked against 18 running campaigns' },
+              { text: 'Looking for ads aimed at empty shelves' },
+            ],
+          },
+        },
+      ],
+      detect: [
+        {
+          text: 'Trailhead 5-Panel Cap is out of stock, but $94/day keeps spending',
+          money: { text: '$3,940 at risk', fg: '#b3300f', bg: '#fdece7' },
+          detail: {
+            title: 'Sold-out product still running ads',
+            signal: 'A detector flagged that you are paying to advertise a product nobody can buy right now.',
+            evidence: [
+              { text: 'Out of stock for 3 days (since Jun 18)' },
+              { text: '$94/day still spending on Meta + Google' },
+              { text: '$282 spent since it went out of stock' },
+              { text: 'Detector: sku_stockout_vs_spend · severity high' },
+            ],
+            money: { label: 'Ad spend at risk', value: '$3,940', fg: '#b3300f', bg: '#fdece7' },
+          },
+        },
+        {
+          text: 'Summit Logo Tee has run at 0.7 ROAS for 5 days straight',
+          money: { text: '$6,216 bleeding', fg: '#b3300f', bg: '#fdece7' },
+          detail: {
+            title: 'Campaign is losing money on every sale',
+            signal: 'The Summit Logo Tee campaign is spending more to win a sale than the sale is worth.',
+            evidence: [
+              { text: 'ROAS stuck at 0.7 for 5 consecutive days' },
+              { text: 'Every sale loses $3.12 after ad spend + returns' },
+              { text: 'Detector: campaign_below_breakeven · severity high' },
+            ],
+            money: { label: 'Projected 30-day loss', value: '$6,216', fg: '#b3300f', bg: '#fdece7' },
+          },
+        },
+        {
+          text: 'Cascade Rain Shell demand is shifting West while stock sits East',
+          detail: {
+            title: 'Inventory in the wrong place',
+            signal: 'Orders are accelerating in western regions, but the stock is concentrated in your eastern warehouse.',
+            evidence: [
+              { text: 'West-region orders up 41% week over week' },
+              { text: '78% of stock sits in the NJ warehouse' },
+              { text: 'Detector: inventory_geo_mismatch · severity medium' },
+            ],
+          },
+        },
+      ],
+      score: [
+        {
+          text: 'Weighed pausing Trailhead Cap — reversible, strong track record',
+          detail: {
+            title: 'Scoring: pause the Trailhead Cap campaign',
+            scores: [
+              { label: 'Detection strength', val: 60 },
+              { label: 'Your past approvals (8 of 8 stuck)', val: 72 },
+              { label: 'Reversibility', val: 100 },
+            ],
+            confidence: 74,
+            confTitle: 'Confident, but not certain',
+            threshold: 'Auto-act bar is 80%. This landed at 74%, so it came to you instead.',
+          },
+        },
+        {
+          text: 'Weighed raising Spring Tee budget — promising, but thin history',
+          detail: {
+            title: 'Scoring: increase Spring Tee Launch budget 20%',
+            scores: [
+              { label: 'Detection strength', val: 55 },
+              { label: 'Your past approvals (limited data)', val: 50 },
+              { label: 'Reversibility', val: 90 },
+            ],
+            confidence: 52,
+            confTitle: 'Still learning this one',
+            threshold: 'Below the 80% bar — Calderyn will keep asking you until its track record grows.',
+          },
+        },
+      ],
+      decide: [
+        {
+          kind: 'queue',
+          text: 'Queued for your OK: pause the Trailhead Cap campaign',
+          money: { text: '$3,940 at stake', fg: 'var(--accent-dark,#173a4d)', bg: 'var(--accent-tint,#eef3f6)' },
+          detail: {
+            title: 'Sent to your Action Queue',
+            signal: 'Calderyn is confident enough to recommend this, but not confident enough to do it without you.',
+            evidence: [
+              { text: 'Scored 74% — under the 80% auto-act bar' },
+              { text: 'Reversible action, so low risk to approve' },
+            ],
+            money: { label: 'Ad spend at stake', value: '$3,940', fg: 'var(--accent-dark,#173a4d)', bg: 'var(--accent-tint,#eef3f6)' },
+            decision: { label: 'QUEUED FOR YOU', tone: 'queue', note: 'Waiting on your approval. Each time you approve a call like this, the bar to do it automatically gets closer.' },
+            cta: { href: 'Calderyn Action Queue v2.dc.html', label: 'Open in Action Queue' },
+          },
+        },
+        {
+          kind: 'auto',
+          text: 'Auto-paused the Alpine Crew Sock ad — a graduated pair',
+          money: { text: '$1,210 protected', fg: '#1a7f4f', bg: '#e4f3e6' },
+          detail: {
+            title: 'Handled automatically',
+            signal: 'This product–action pair graduated to autopilot, so Calderyn acted on its own and logged it for you.',
+            evidence: [
+              { text: 'Scored 94% — above the 80% auto-act bar' },
+              { text: 'Pair graduated after 3 clean approvals' },
+              { text: 'You have 48 hours to undo if you disagree' },
+            ],
+            money: { label: 'Ad spend protected', value: '$1,210', fg: '#1a7f4f', bg: '#e4f3e6' },
+            decision: { label: 'DONE AUTOMATICALLY', tone: 'auto', note: 'Calderyn paused the ad the moment it spotted the problem. The full action is in your Audit log with a 48-hour undo.' },
+            cta: { href: 'Calderyn Audit Log.dc.html', label: 'View in Audit log' },
+          },
+        },
+        {
+          kind: 'held',
+          text: 'Held back — daily action budget 86% used, waiting for headroom',
+          detail: {
+            title: 'Deliberately held back',
+            signal: 'Calderyn wanted to act, but a guardrail you set is nearly maxed out for today.',
+            evidence: [
+              { text: 'Daily action budget 86% used' },
+              { text: 'Guardrail: daily_action_budget_cents' },
+              { text: 'Will retry automatically when headroom returns' },
+            ],
+            decision: { label: 'HELD BY GUARDRAIL', tone: 'held', note: 'Your guardrails always win. Calderyn will pick this back up once the daily limit resets, rather than pushing past a line you drew.' },
+            cta: { href: 'Calderyn Settings.dc.html', label: 'Review guardrails' },
+          },
+        },
+      ],
+    };
+  }
+
+  _meta() {
+    return {
+      watch:  { tag: 'WATCH',  tagColor: 'var(--accent-dark,#173a4d)', chipBg: 'var(--accent-tint,#eef3f6)', rail: 'var(--accent,#23556e)' },
+      detect: { tag: 'DETECT', tagColor: '#8a5a00', chipBg: '#fdf3da', rail: '#e0a93a' },
+      score:  { tag: 'SCORE',  tagColor: '#4350a8', chipBg: '#eaecfb', rail: '#7e8fe0' },
+      queue:  { tag: 'QUEUED', tagColor: 'var(--accent-dark,#173a4d)', chipBg: 'var(--accent-tint,#eef3f6)', rail: 'var(--accent,#23556e)' },
+      auto:   { tag: 'AUTO',   tagColor: '#1a7f4f', chipBg: '#e4f3e6', rail: '#1a7f4f' },
+      held:   { tag: 'HELD',   tagColor: '#8a5a00', chipBg: '#fdf3da', rail: '#d9a400' },
+    };
+  }
+
+  _iconHtml(kind) {
+    const I = {
+      watch: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>',
+      detect: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#c08a2a" stroke-width="2"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/></svg>',
+      score: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5b6ed6" stroke-width="2"><path d="M5 19a7 7 0 1 1 14 0"/><path d="M12 19l4-5" stroke-linecap="round"/></svg>',
+      queue: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="2"><path d="M5 12h14M5 7h14M5 17h9"/></svg>',
+      auto: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1a7f4f" stroke-width="2.3"><path d="M20 6 9 17l-5-5"/></svg>',
+      held: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#c08a2a" stroke-width="2"><rect x="7" y="5" width="3" height="14" rx="1"/><rect x="14" y="5" width="3" height="14" rx="1"/></svg>',
+    };
+    return I[kind] || I.watch;
+  }
+
+  _mk(kind, payload) {
+    return {
+      id: Math.random().toString(36).slice(2),
+      kind,
+      text: payload.text,
+      money: payload.money || null,
+      detail: payload.detail || null,
+      time: this._now(),
+    };
+  }
+
+  _seed() {
+    const p = this._pool();
+    const seq = [
+      this._mk('queue', p.decide[0]),
+      this._mk('score', p.score[0]),
+      this._mk('detect', p.detect[0]),
+      this._mk('auto', p.decide[1]),
+      this._mk('watch', p.watch[0]),
+      this._mk('detect', p.detect[1]),
+      this._mk('held', p.decide[2]),
+      this._mk('watch', p.watch[1]),
+    ];
+    this.setState({ stream: seq });
+  }
+
+  _emitForStage() {
+    const p = this._pool();
+    const st = this.state.activeStage;
+    const t = this.state.tick;
+    let ev, bump = 0;
+    if (st === 0) ev = this._mk('watch', p.watch[t % p.watch.length]);
+    else if (st === 1) ev = this._mk('detect', p.detect[t % p.detect.length]);
+    else if (st === 2) ev = this._mk('score', p.score[t % p.score.length]);
+    else {
+      const d = p.decide[t % p.decide.length];
+      ev = this._mk(d.kind, d);
+      if (d.kind === 'auto') bump = 1210;
+    }
+    this.setState(s => ({ stream: [ev, ...s.stream].slice(0, 9), money: s.money + bump }));
+  }
+
+  renderVals() {
+    const accent = this.props.brandColor ?? '#23556e';
+    const showShell = this.props.showShell ?? true;
+    const calPct = 24;
+    const active = this.state.activeStage;
+    const mt = this._meta();
+
+    const svgEl = (html, extra) => React.createElement('span', { style: Object.assign({ display: 'flex', alignItems: 'center', justifyContent: 'center' }, extra || {}), dangerouslySetInnerHTML: { __html: html } });
+
+    // ---- pipeline ----
+    const STAGE_ICON = [
+      '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="STK" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>',
+      '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="STK" stroke-width="1.9"><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="STK" stroke="none"/></svg>',
+      '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="STK" stroke-width="1.9"><path d="M4 20a8 8 0 1 1 16 0"/><path d="M12 20l5-6" stroke-linecap="round"/></svg>',
+      '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="STK" stroke-width="1.9"><path d="M12 4v6M12 10l-5 5M12 10l5 5"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
+    ];
+    const STAGE_DEF = [
+      { label: '1. Watch', count: 'Reads your data' },
+      { label: '2. Detect', count: 'Finds problems' },
+      { label: '3. Score', count: 'Weighs each fix' },
+      { label: '4. Decide', count: 'Acts or asks you' },
+    ];
+    const stages = STAGE_DEF.map((s, i) => {
+      const isActive = i === active;
+      const stroke = isActive ? 'var(--accent,#23556e)' : '#aab2b8';
+      return {
+        label: s.label,
+        count: s.count,
+        icon: svgEl(STAGE_ICON[i].replaceAll('STK', stroke)),
+        hasNext: i < 3,
+        connColor: (active === i && i < 3) ? 'var(--accent,#23556e)' : '#e3e6e9',
+        connAnim: (active === i && i < 3) ? 'animation:flowDash .6s linear infinite' : '',
+        nodeBg: isActive ? 'var(--accent-tint,#eef3f6)' : '#fbfcfd',
+        nodeBorder: isActive ? 'var(--accent,#23556e)' : '#e3e6e9',
+        nodeGlow: isActive ? 'animation:nodePulse 1.6s ease-in-out infinite' : '',
+        labelColor: isActive ? '#1a1a1a' : '#9aa3a9',
+      };
+    });
+
+    const STATUS = [
+      'Reading your shop — ad spend, inventory and orders',
+      'Scanning for problems across 23 built-in checks',
+      'Weighing how much it trusts each possible fix',
+      'Deciding whether to ask you or handle it itself',
+    ];
+    const STEP_NAME = ['WATCH', 'DETECT', 'SCORE', 'DECIDE'];
+    const stepEyebrow = 'STEP ' + (active + 1) + ' OF 4 · ' + STEP_NAME[active];
+
+    // ---- trace rows ----
+    const stream = this.state.stream.map(e => {
+      const m = mt[e.kind];
+      const selected = e.id === this.state.selectedId;
+      return {
+        ...e,
+        icon: svgEl(this._iconHtml(e.kind)),
+        tag: m.tag, tagColor: m.tagColor, chipBg: m.chipBg, railColor: m.rail,
+        rowBg: selected ? 'var(--accent-tint,#eef3f6)' : '#fff',
+        hasMoney: !!e.money,
+        moneyText: e.money ? e.money.text : '',
+        moneyFg: e.money ? e.money.fg : '#6a6a6a',
+        moneyBg: e.money ? e.money.bg : '#f4f4f4',
+        select: () => this.setState({ selectedId: e.id }),
+      };
+    });
+
+    // ---- inspector vm ----
+    const sel = this.state.stream.find(e => e.id === this.state.selectedId);
+    let insp = null;
+    if (sel) {
+      const m = mt[sel.kind];
+      const d = sel.detail || {};
+      const decToneMap = {
+        queue: { fg: 'var(--accent-dark,#173a4d)', bg: 'var(--accent-tint,#eef3f6)' },
+        auto: { fg: '#1a7f4f', bg: '#e4f3e6' },
+        held: { fg: '#8a5a00', bg: '#fdf3da' },
+      };
+      const dt = d.decision ? (decToneMap[d.decision.tone] || decToneMap.queue) : null;
+      const confBand = d.confidence == null ? null : (d.confidence >= 80 ? { fg: '#1a7f4f', bg: '#f1f9f4' } : d.confidence >= 60 ? { fg: 'var(--accent-dark,#173a4d)', bg: 'var(--accent-tint,#f3f6f8)' } : { fg: '#8a5a00', bg: '#fdf9ef' });
+      insp = {
+        tag: m.tag, tagColor: m.tagColor, chipBg: m.chipBg, time: sel.time,
+        title: d.title || sel.text,
+        hasMoney: !!d.money,
+        moneyLabel: d.money ? d.money.label : '',
+        moneyValue: d.money ? d.money.value : '',
+        moneyFg: d.money ? d.money.fg : '#1a1a1a',
+        moneyBg: d.money ? d.money.bg : '#f4f4f4',
+        hasSignal: !!d.signal,
+        signal: d.signal || '',
+        evidence: d.evidence || [],
+        hasScore: !!d.scores,
+        scores: (d.scores || []).map(s => ({ label: s.label, valLabel: s.val + '%', width: s.val + '%' })),
+        confidence: d.confidence == null ? '' : d.confidence,
+        confTitle: d.confTitle || '',
+        threshold: d.threshold || '',
+        confFg: confBand ? confBand.fg : '#1a1a1a',
+        confBg: confBand ? confBand.bg : '#f4f4f4',
+        hasDecision: !!d.decision,
+        decLabel: d.decision ? d.decision.label : '',
+        decNote: d.decision ? d.decision.note : '',
+        decFg: dt ? dt.fg : '#1a1a1a',
+        decBg: dt ? dt.bg : '#f4f4f4',
+        hasCta: !!d.cta,
+        ctaHref: d.cta ? d.cta.href : '',
+        ctaLabel: d.cta ? d.cta.label : '',
+      };
+    }
+
+    // ---- predictions ----
+    const pIcon = {
+      box: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7a5800" stroke-width="2"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8Z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
+      up: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a7f4f" stroke-width="2"><path d="M5 16l5-5 3 3 6-7"/><path d="M16 7h4v4"/></svg>',
+      geo: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2c5ba8" stroke-width="2"><circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5 8 12 8 12s8-7 8-12a8 8 0 0 0-8-8Z"/></svg>',
+      down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b3300f" stroke-width="2"><path d="M5 8l5 5 3-3 6 7"/><path d="M16 17h4v-4"/></svg>',
+    };
+    const predictions = [
+      { text: 'Basecamp Water Bottle will sell out in about 9 days', confidence: 88, eta: '~9 days', icon: svgEl(pIcon.box), iconBg:'#fdf3da', barColor:'#d9a400', etaColor:'#7a5800', etaBg:'#fdf3da' },
+      { text: 'Spring Tee Launch should cross breakeven Thursday', confidence: 76, eta: 'Thu', icon: svgEl(pIcon.up), iconBg:'#e4f3e6', barColor:'#1a7f4f', etaColor:'#1a7f4f', etaBg:'#e4f3e6' },
+      { text: 'Cascade Rain Shell demand is moving West this week', confidence: 81, eta: '~5 days', icon: svgEl(pIcon.geo), iconBg:'#eaf1fb', barColor:'#2c5ba8', etaColor:'#2c5ba8', etaBg:'#eaf1fb' },
+      { text: '3 campaigns trending below breakeven', confidence: 69, eta: 'watching', icon: svgEl(pIcon.down), iconBg:'#fdece7', barColor:'#d72c0d', etaColor:'#b3300f', etaBg:'#fdece7' },
+    ].map(p => ({ ...p, confWidth: p.confidence + '%' }));
+
+    // ---- live scanner (present-tense "watch it work") ----
+    const SCAN_ITEMS = ['Trailhead 5-Panel Cap', 'Summit Logo Tee', 'Cascade Rain Shell', 'Basecamp Water Bottle', 'Alpine Crew Sock', 'Ridgeline Beanie', 'Switchback 22L Daypack', 'Timberline Flannel', 'Drifter Polarized Sunglasses', 'Canyon Hip Pack', 'Vista Merino Hoodie', 'Meta · Retargeting campaign', 'Google · Brand PMax campaign'];
+    const SCAN_ASPECTS = ['stock against ad spend', 'ROAS over the last 7 days', 'return rate for a spike', 'inventory by region', 'daily budget pacing', 'sell-through vs forecast'];
+    const sIdx = this.state.scanIdx;
+    const scanFlash = sIdx % 5 === 3;
+    const scanName = SCAN_ITEMS[sIdx % SCAN_ITEMS.length];
+    const scanAspect = SCAN_ASPECTS[sIdx % SCAN_ASPECTS.length];
+    const flagged = this.state.issuesFound;
+
+    // ---- enabled autopilot features (the cockpit centerpiece) ----
+    const featIcon = {
+      pause: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="2"><rect x="7" y="5" width="3" height="14" rx="1"/><rect x="14" y="5" width="3" height="14" rx="1"/></svg>',
+      up: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#23556e)" stroke-width="2"><path d="M5 16l5-5 3 3 6-7"/><path d="M16 7h4v4"/></svg>',
+    };
+    const FEATURES_DEF = [
+      { id: 'f1', icon: 'pause', name: 'Pause sold-out product ads', watching: 'Watching 1,247 SKUs', last: 'paused Alpine Crew Sock ad · 12 min ago', money: '$1,210', actions: '3 today' },
+      { id: 'f2', icon: 'pause', name: 'Pause money-losing campaigns', watching: 'Watching 18 campaigns', last: 'paused Summit Tee retarget · 2 hrs ago', money: '$2,030', actions: '2 today' },
+      { id: 'f3', icon: 'up', name: 'Scale up winning campaigns', watching: 'Watching 12 campaigns', last: 'enabled — first action pending', money: '', actions: 'new', newlyUnlocked: true, unlock: 'You approved this 3 times in a row \u2014 turn it on to let Calderyn run it for you.' },
+    ];
+    const fon = this.state.featuresOn;
+    const features = FEATURES_DEF.map(f => {
+      const on = !!fon[f.id];
+      return {
+        id: f.id, name: f.name,
+        iconEl: svgEl(featIcon[f.icon]),
+        newlyUnlocked: !!f.newlyUnlocked,
+        showNewBadge: !!f.newlyUnlocked && !on,
+        showActive: on,
+        showWorking: on,
+        watching: f.watching,
+        lastText: 'Last ' + f.last,
+        showMoney: on && !!f.money,
+        money: f.money,
+        actions: f.actions,
+        rowMuted: !on,
+        rowBg: on ? '#fff' : '#fbfcfd',
+        unlock: f.unlock || '',
+        showUnlock: !on && !!f.unlock,
+        trackBg: on ? '#1a7f4f' : '#d2d6da',
+        knobLeft: on ? '21px' : '3px',
+        toggle: () => this.setState(s => ({ featuresOn: { ...s.featuresOn, [f.id]: !s.featuresOn[f.id] } })),
+      };
+    });
+    const featuresLiveCount = features.filter(f => f.showActive).length;
+
+    // ---- "how it weighs a call" rotating demo ----
+    const wSpotIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c08a2a" stroke-width="2"><path d="M12 9v4M12 16.5h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>';
+    const WEIGH = [
+      { title: 'Pause Trailhead Cap ads', ctx: 'Sold out 3 days, still spending $94/day', factors: [['Clear signal', 60], ['Worked before', 72], ['Easy to undo', 100]], conf: 74 },
+      { title: 'Pause Alpine Crew Sock ad', ctx: 'Losing money on every sale', factors: [['Clear signal', 82], ['Worked before', 96], ['Easy to undo', 100]], conf: 94 },
+      { title: 'Raise Spring Tee budget', ctx: 'Doing great, room to grow', factors: [['Clear signal', 55], ['Worked before', 50], ['Easy to undo', 90]], conf: 52 },
+    ];
+    const wI = this.state.weighIdx % WEIGH.length;
+    const w = WEIGH[wI];
+    const wAuto = w.conf >= 80;
+    const weighFactors = w.factors.map(f => ({ label: f[0], valLabel: f[1] + '%', width: f[1] + '%' }));
+    const weighDots = WEIGH.map((_, i) => ({ color: i === wI ? 'var(--accent,#23556e)' : '#dfe4e8' }));
+
+    const miniR = 24, miniCirc = 2 * Math.PI * miniR;
+    const sec = String(this.state.elapsed % 60).padStart(2, '0');
+
+    return {
+      accent, showShell, calPct,
+      cycleNo: this.state.cycleNo.toLocaleString('en-US'),
+      cycleElapsed: '0:' + sec + 's',
+      statusNow: STATUS[active],
+      stepEyebrow,
+      stepNum: active + 1,
+      scanKey: 'k' + sIdx,
+      scanName,
+      scanSub: scanFlash ? '\u26a0 Issue found \u2014 adding it to your review' : 'Checking ' + scanAspect,
+      scanSubColor: scanFlash ? '#b3300f' : '#6a7a82',
+      scanBg: scanFlash ? '#fdf6ec' : 'var(--accent-tint,#eef3f6)',
+      scanBorder: scanFlash ? '#f0d6a4' : '#e0eaf0',
+      scanCount: this.state.scanned.toLocaleString('en-US'),
+      scanPct: Math.round(this.state.scanned / 1247 * 100) + '%',
+      scanFlaggedLabel: flagged > 0 ? '\u00b7 ' + flagged + ' flagged today' : '',
+      scanFlaggedNum: flagged,
+      // funnel reads the SAME live counters as the scanner, so they always match
+      flaggedNum: flagged,
+      decAuto: Math.min(3, Math.round(flagged * 3 / 23)),
+      decAsk: flagged - Math.min(3, Math.round(flagged * 3 / 23)),
+      decCaption: (flagged - Math.min(3, Math.round(flagged * 3 / 23))) + ' asked you \u00b7 ' + Math.min(3, Math.round(flagged * 3 / 23)) + ' auto',
+      pauseTrace: () => { this._paused = true; },
+      resumeTrace: () => { this._paused = false; },
+      moneyProtected: '$' + this.state.money.toLocaleString('en-US'),
+      weighTitle: w.title,
+      weighCtx: w.ctx,
+      weighSpotIcon: svgEl(wSpotIcon),
+      weighFactors,
+      weighConf: w.conf,
+      weighConfWidth: w.conf + '%',
+      weighConfFg: wAuto ? '#1a7f4f' : 'var(--accent-dark,#173a4d)',
+      weighVerdictBg: wAuto ? '#f3faf5' : '#f7fafb',
+      weighVerdictFg: wAuto ? '#1a7f4f' : 'var(--accent-dark,#173a4d)',
+      weighVerdictBorder: wAuto ? '#bfe3c9' : '#cfdce4',
+      weighVerdictLabel: wAuto ? 'Handled it itself' : 'Asked you first',
+      weighVerdictIcon: svgEl(wAuto ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a7f4f" stroke-width="2.6"><path d="M20 6 9 17l-5-5"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dark,#173a4d)" stroke-width="2.2"><path d="M5 12h14M5 7h14M5 17h9"/></svg>'),
+      weighDots,
+      autoNodeOpacity: wAuto ? '1' : '.4',
+      askNodeOpacity: wAuto ? '.4' : '1',
+      autoNodeBorder: wAuto ? '#bfe3c9' : '#e8ebed',
+      askNodeBorder: wAuto ? '#e8ebed' : '#cddde6',
+      autoNodeBg: wAuto ? '#f3faf5' : '#fff',
+      askNodeBg: wAuto ? '#fff' : 'var(--accent-tint,#f4f7f9)',
+      autoPathColor: wAuto ? '#1a7f4f' : '#dfe4e8',
+      askPathColor: wAuto ? '#dfe4e8' : 'var(--accent,#23556e)',
+      features,
+      featuresLiveCount,
+      featuresLiveLabel: featuresLiveCount + (featuresLiveCount === 1 ? ' feature live' : ' features live'),
+      stages,
+      stream,
+      hasInspector: !!insp,
+      showDefault: !insp,
+      insp: insp || {},
+      clearSelection: () => this.setState({ selectedId: null }),
+      predictions,
+      miniCirc,
+      miniOffset: miniCirc * (1 - calPct / 100),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

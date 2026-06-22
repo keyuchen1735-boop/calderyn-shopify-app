@@ -31,15 +31,17 @@ const ctx: DashboardCtx = {
   calibration: null,
   actionQueue: [],
   learnedRules: [],
+  liveEngine: null,
   feed: [],
   liveOn: true,
   setLiveOn: () => {},
-  executeAction: () => {},
+  executeAction: async () => ({ ok: true, receipt: null }),
   undoAction: () => {},
   pushAdDraft: () => {},
   toast: () => {},
   relTime: () => "",
   refresh: () => {},
+  refreshLiveEngine: () => {},
   loading: true,
 };
 

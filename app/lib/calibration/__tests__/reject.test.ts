@@ -1,8 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordRejection } from "../reject.server";
+import { confFromEv } from "../delta";
 
-/** Build a stub SupabaseClient that satisfies the call pattern used in reject.server.ts. */
+/**
+ * Build a stub SupabaseClient that satisfies the call pattern used in reject.server.ts.
+ *
+ * Tables touched:
+ *   - pair_calibration: select(...).eq().eq().eq().maybeSingle()   [before + after reads]
+ *   - action_feedback:  insert(...)
+ *   - calibration_rule: update(...)/select(...)/insert(...)
+ *   - rpc("calibration_record_rejection", ...)
+ *
+ * `pairRows` serves the two pair_calibration reads in order (rows[0]=before, rows[1]=after).
+ */
 function makeStub(overrides?: {
   fbError?: { message: string };
   rpcError?: { message: string };
@@ -10,8 +21,8 @@ function makeStub(overrides?: {
   selData?: { id: string }[];
   selError?: { message: string };
   insError?: { message: string };
+  pairRows?: Array<Record<string, unknown> | null>;
 }) {
-  // Tracks calls so we can assert on them.
   const fbInsert = vi.fn().mockResolvedValue({ error: overrides?.fbError ?? null });
   const rpc = vi.fn().mockResolvedValue({ error: overrides?.rpcError ?? null });
   const ruleInsert = vi.fn().mockResolvedValue({ error: overrides?.insError ?? null });
@@ -21,10 +32,9 @@ function makeStub(overrides?: {
   const selEqAction = vi.fn().mockReturnValue({ eq: selEqKind });
   const selEqDetector = vi.fn().mockReturnValue({ eq: selEqAction });
   const selEqShop = vi.fn().mockReturnValue({ eq: selEqDetector });
-  const selSelect = vi.fn().mockReturnValue({ eq: selEqShop });
+  const ruleSelect = vi.fn().mockReturnValue({ eq: selEqShop });
 
-  // update chain for supersede (pair_dollar_cap)
-  // update chain: .update().eq().eq().eq().eq().eq() — 5 eqs for (shop_id, detector_id, action_kind, rule_kind, active)
+  // calibration_rule update chain: .update().eq().eq().eq().eq().eq()
   const upEqFinal = vi.fn().mockResolvedValue({ error: overrides?.supError ?? null });
   const upUpdate = vi.fn().mockReturnValue({
     eq: vi.fn().mockReturnValue({
@@ -36,21 +46,29 @@ function makeStub(overrides?: {
     }),
   });
 
-  // We need `from` to return different shapes depending on whether it's used for
-  // insert (action_feedback), update (supersede), or select (dup-check) + insert (rule).
-  // Track call count on from() and dispatch accordingly.
-  let fromCallCount = 0;
-  const from = vi.fn().mockImplementation((_table: string) => {
-    fromCallCount++;
-    return {
-      insert: fromCallCount === 1 ? fbInsert : ruleInsert,
-      update: upUpdate,
-      select: selSelect,
-    };
+  // pair_calibration read chain: select().eq().eq().eq().maybeSingle()
+  const pairRows = overrides?.pairRows ?? [null, null];
+  let pairIdx = 0;
+  const pairMaybeSingle = vi.fn().mockImplementation(async () => {
+    const data = pairRows[Math.min(pairIdx, pairRows.length - 1)] ?? null;
+    pairIdx++;
+    return { data, error: null };
+  });
+  const pairEq3 = vi.fn().mockReturnValue({ maybeSingle: pairMaybeSingle });
+  const pairEq2 = vi.fn().mockReturnValue({ eq: pairEq3 });
+  const pairEq1 = vi.fn().mockReturnValue({ eq: pairEq2 });
+  const pairSelect = vi.fn().mockReturnValue({ eq: pairEq1 });
+
+  // Dispatch by table so reads/inserts land on the right mock.
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === "pair_calibration") return { select: pairSelect };
+    if (table === "action_feedback") return { insert: fbInsert };
+    // calibration_rule
+    return { update: upUpdate, select: ruleSelect, insert: ruleInsert };
   });
 
   const sb = { from, rpc } as unknown as SupabaseClient;
-  return { sb, from, fbInsert, rpc, upUpdate, ruleInsert, selSelect, selLimit };
+  return { sb, from, fbInsert, rpc, upUpdate, ruleInsert, ruleSelect, selLimit, pairMaybeSingle };
 }
 
 const BASE = {
@@ -69,7 +87,6 @@ describe("recordRejection", () => {
     expect(row.decision).toBe("reject");
     expect(row.reject_reason).toBe("too_aggressive");
     expect(row.note).toBe("too big");
-    // pair_dollar_cap: 75% of 4000 = 3000
     expect((row.applied_rule as Record<string, unknown>).cents).toBe(3000);
   });
 
@@ -89,13 +106,11 @@ describe("recordRejection", () => {
   it("too_aggressive writes a pair_dollar_cap rule with cents = round(0.75 * dollarImpactCents)", async () => {
     const { sb, ruleInsert, upUpdate } = makeStub();
     await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 8000 }, sb);
-    // supersede ran
     expect(upUpdate).toHaveBeenCalledWith({ active: false });
-    // rule insert called
     expect(ruleInsert).toHaveBeenCalledTimes(1);
     const ruleRow = ruleInsert.mock.calls[0][0] as Record<string, unknown>;
     expect(ruleRow.rule_kind).toBe("pair_dollar_cap");
-    expect((ruleRow.rule_value as Record<string, unknown>).cents).toBe(6000); // 0.75 * 8000
+    expect((ruleRow.rule_value as Record<string, unknown>).cents).toBe(6000);
     expect(ruleRow.active).toBe(true);
   });
 
@@ -159,15 +174,59 @@ describe("recordRejection", () => {
   });
 
   it("other reason produces no calibration_rule insert (ruleKind=null)", async () => {
-    const { sb, from } = makeStub();
+    const { sb, ruleInsert } = makeStub();
     await recordRejection("shop-1", { ...BASE, reason: "other" }, sb);
-    // from() is called only for action_feedback (1 call) + rpc; no rule table call
-    // We can verify ruleInsert was never invoked by counting from calls for rule table
-    // action_feedback = 1 call, no rule calls = from called exactly once for insert
-    const insertCalls = (from.mock.results as Array<{ value: { insert?: ReturnType<typeof vi.fn> } }>)
-      .map((r) => r.value)
-      .filter((v) => v.insert);
-    // Only 1 from() call with insert (the action_feedback one)
-    expect(insertCalls).toHaveLength(1);
+    expect(ruleInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordRejection — reject receipt (savedAsRule / ruleKind / delta)", () => {
+  it("savedAsRule=true and ruleKind set for a reason that writes a rule (too_aggressive)", async () => {
+    const { sb } = makeStub();
+    const r = await recordRejection("shop-1", { ...BASE, reason: "too_aggressive" }, sb);
+    expect(r.savedAsRule).toBe(true);
+    expect(r.ruleKind).toBe("pair_dollar_cap");
+  });
+
+  it("savedAsRule=false and ruleKind=null for a reason with no rule (wrong_timing)", async () => {
+    const { sb } = makeStub();
+    const r = await recordRejection("shop-1", { ...BASE, reason: "wrong_timing" }, sb);
+    expect(r.savedAsRule).toBe(false);
+    expect(r.ruleKind).toBe(null);
+  });
+
+  it("muted_pair ruleKind reported for i_handle_this", async () => {
+    const { sb } = makeStub();
+    const r = await recordRejection("shop-1", { ...BASE, reason: "i_handle_this" }, sb);
+    expect(r.savedAsRule).toBe(true);
+    expect(r.ruleKind).toBe("muted_pair");
+  });
+
+  it("delta = round(after - before) and is ≤ 0 (a reject lowers confidence)", async () => {
+    // before alpha=2,beta=0 ; after alpha=2,beta=1 (a reject bumped beta)
+    const before = { alpha: 2, beta: 0 };
+    const after = { alpha: 2, beta: 1 };
+    const { sb } = makeStub({
+      pairRows: [
+        { alpha: before.alpha, beta: before.beta },
+        { alpha: after.alpha, beta: after.beta },
+      ],
+    });
+    const r = await recordRejection("shop-1", { ...BASE, reason: "other" }, sb);
+    const expBefore = confFromEv(BASE.detectorId, BASE.actionKind, before);
+    const expAfter = confFromEv(BASE.detectorId, BASE.actionKind, after);
+    expect(r.before).toBe(expBefore);
+    expect(r.after).toBe(expAfter);
+    expect(r.delta).toBe(Math.round(expAfter - expBefore));
+    expect(r.delta).toBeLessThanOrEqual(0);
+  });
+
+  it("returns zero delta (best-effort) but still the reflection + rule fields when reads are cold", async () => {
+    const { sb } = makeStub({ pairRows: [null, null] });
+    const r = await recordRejection("shop-1", { ...BASE, reason: "too_aggressive" }, sb);
+    expect(r.reflection.length).toBeGreaterThan(0);
+    expect(r.savedAsRule).toBe(true);
+    // cold pair → before==after==same conf → delta 0
+    expect(r.delta).toBe(0);
   });
 });

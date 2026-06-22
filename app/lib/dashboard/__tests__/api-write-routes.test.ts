@@ -199,7 +199,9 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    // toMatchObject (not toEqual): the approve path now also returns an additive
+    // `calibration` receipt that drives the Action Queue's approve confirmation.
+    expect(await res.json()).toMatchObject({
       audit_id: "audit-inv-1",
       outcome: "succeeded",
       acknowledged: true,
