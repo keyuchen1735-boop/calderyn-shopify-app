@@ -492,6 +492,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <ShipCostPill source={s.ship_cost_source} />
                     </span>
+                    {s.do_not_reorder && (
+                      <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
+                        <Pill tone="critical">Won&apos;t reorder</Pill>
+                      </span>
+                    )}
                     <span style={{ width: 92, display: "flex", justifyContent: "flex-end" }}>
                       <Pill tone={st.tone}>{st.label}</Pill>
                     </span>

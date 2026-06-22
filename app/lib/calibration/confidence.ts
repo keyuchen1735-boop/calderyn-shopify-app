@@ -61,6 +61,9 @@ const ACTION_TIER: Partial<Record<ActionKind, Tier>> = {
   snooze_alert: "reversible",
   increase_campaign_budget: "hard_to_reverse",
   create_po_draft: "hard_to_reverse",
+  // Reversible via its undo branch (re-publish + clear flag, 48h auto-undo) but
+  // archiving a product is more consequential than a budget tweak.
+  discontinue_sku: "hard_to_reverse",
   reallocate_inventory: "irreversible",
   exclude_sku_free_ship: "irreversible",
   raise_free_ship_threshold: "irreversible",

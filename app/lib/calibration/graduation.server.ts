@@ -18,6 +18,7 @@ const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "reduce_campaign_budget",
   "reallocate_budget",
   "reallocate_inventory",
+  "discontinue_sku",
 ]);
 
 /**

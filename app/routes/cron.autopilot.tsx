@@ -15,6 +15,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const summary = {
     acted: 0,
     blocked: 0,
+    skippedMoves: 0,
     failed: 0,
     considered: 0,
     shops: 0,
@@ -41,6 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.shops += 1;
       summary.acted += r.value.acted;
       summary.blocked += r.value.blocked;
+      summary.skippedMoves += r.value.skippedMoves ?? 0;
       summary.failed += r.value.failed;
       summary.considered += r.value.considered ?? 0;
       for (const [reason, n] of Object.entries(r.value.blockedReasons ?? {})) {

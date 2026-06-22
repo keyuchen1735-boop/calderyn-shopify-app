@@ -308,9 +308,18 @@ describe("Reallocation tripwire — reallocate_budget NOT in GRADUATABLE_V1", ()
     expect(GRADUATABLE_V1.has("reallocate_budget")).toBe(false);
   });
 
-  it("GRADUATABLE_V1 contains exactly the two approved v1 kinds", () => {
+  it("GRADUATABLE_V1 contains exactly the three approved kinds", () => {
     expect(GRADUATABLE_V1.has("pause_campaign")).toBe(true);
     expect(GRADUATABLE_V1.has("reduce_campaign_budget")).toBe(true);
-    expect(GRADUATABLE_V1.size).toBe(2);
+    // Deliberate expansion: discontinue_sku is reversible via its undo branch
+    // (re-publish, 48h auto-undo) and gated at the hard_to_reverse approval floor
+    // (10) — see graduation.ts. Autopilot-remediation only acts once a pair
+    // graduates, so this stays dormant until a merchant earns it.
+    expect(GRADUATABLE_V1.has("discontinue_sku")).toBe(true);
+    // Reallocation tripwire holds: reallocate_spend_sku records as
+    // reallocate_budget, which v1 never auto-runs — neither may graduate.
+    expect(GRADUATABLE_V1.has("reallocate_budget")).toBe(false);
+    expect(GRADUATABLE_V1.has("reallocate_spend_sku")).toBe(false);
+    expect(GRADUATABLE_V1.size).toBe(3);
   });
 });

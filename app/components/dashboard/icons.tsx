@@ -11,10 +11,12 @@
 // Do not import Lucide there.
 import type { CSSProperties } from "react";
 import {
+  Archive,
   ArrowDown,
   ArrowLeftRight,
   ArrowRight,
   ArrowUpRight,
+  Ban,
   Bell,
   BellOff,
   Box,
@@ -40,12 +42,14 @@ import {
   Play,
   Radar,
   RotateCcw,
+  Scissors,
   Search,
   Settings,
   ShieldCheck,
   ShoppingBag,
   Sparkles,
   Sun,
+  Tag,
   Target,
   TrendingDown,
   TrendingUp,
@@ -66,6 +70,7 @@ export interface CDIconProps {
 
 // name -> Lucide component. Names are stable so the 14 call sites never change.
 export const CD_ICONS: Record<string, LucideIcon> = {
+  archive: Archive,
   gauge: Gauge,
   bell: Bell,
   megaphone: Megaphone,
@@ -100,6 +105,11 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   arrowUpRight: ArrowUpRight,
   warn: TriangleAlert,
   assist: MessageSquareMore,
+  ban: Ban,
+  scissors: Scissors,
+  trendingUp: TrendingUp,
+  rotateCcw: RotateCcw,
+  tag: Tag,
   more: MoreHorizontal,
   bug: Bug,
   target: Target,
@@ -133,8 +143,15 @@ export const CD_ACTION_ICON: Record<string, string> = {
   pause_campaign: "pause",
   reduce_campaign_budget: "reduce",
   reallocate_budget: "swap",
+  reallocate_spend_sku: "trendingUp",
   exclude_geo: "globe",
   reallocate_inventory: "swap",
   create_po_draft: "doc",
   snooze_alert: "snooze",
+  discontinue: "ban",
+  discontinue_sku: "archive",
+  cut_ads: "scissors",
+  reallocate_to_winner: "trendingUp",
+  fix_returns: "rotateCcw",
+  review_pricing: "tag",
 };

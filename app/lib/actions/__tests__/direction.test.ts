@@ -85,6 +85,7 @@ const alert = (over: Partial<Alert>): Alert => ({
   id: "a1", detector_id: "campaign_below_breakeven", severity: "high", status: "open",
   dollar_impact: 100, claude_rank: 1, created_at: "", title: "", narrative: "",
   campaign: null, campaign_id: "cmp-1", campaign_external_id: null, sku: null, evidence: {},
+  remediation: null, rec_detail: "",
   ...over,
 });
 

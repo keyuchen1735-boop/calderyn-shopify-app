@@ -51,6 +51,10 @@ import {
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
+import { resolveSkuForDiscontinue } from "~/lib/actions/discontinue.server";
+import { executeDiscontinueAlertAction } from "~/lib/actions/alert-action.server";
+import { executeReallocateSpendSku } from "~/lib/actions/reallocate-sku.server";
+import { enrichRemediation } from "~/lib/remediation/enrich.server";
 import {
   DetectorTag,
   EvidencePanel,
@@ -104,6 +108,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       client.alerts.get(id, request.signal),
       client.guardrails.get(request.signal),
     ]);
+
+    // Async enrichment: fill winner/campaign target + flip reallocate_to_winner
+    // from advisory to executable when eligible (Phase 3). Best-effort: enrich
+    // already falls back to advisory on any DB error so the page never breaks.
+    if (alert.remediation) {
+      const shopId = await resolveShopId(session.shop);
+      alert.remediation = await enrichRemediation(alert, alert.remediation, getSupabase(), shopId);
+    }
 
     // Pre-fill the PO modal from the alert's evidence and the current COGS
     // row; both may be unknown (null) — the modal renders those blank/TBD.
@@ -282,6 +294,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
+      // A discontinued SKU must never be re-orderable (rule 12). Resolve the
+      // flag shop-scoped from sku_dim and refuse loudly if set.
+      {
+        const sbCheck = getSupabase();
+        const shopIdCheck = await resolveShopId(session.shop);
+        const target = await resolveSkuForDiscontinue(sbCheck, shopIdCheck, alert.sku);
+        if (target?.alreadyFlagged) {
+          throw new CalderynError({
+            code: "SKU_DISCONTINUED",
+            status: 409,
+            message:
+              "This product is marked Do Not Reorder. Restore it (undo the discontinue) before drafting a purchase order.",
+          });
+        }
+      }
+
       const ev = alert.evidence ?? {};
       const title = stringOrEmpty(ev.title) || stringOrEmpty(ev.sku_title) || alert.sku;
 
@@ -294,6 +322,55 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         quantity,
         unitCostCents,
         now: new Date(),
+      });
+    }
+
+    if (kind === "reallocate_spend_sku") {
+      const shopId = await resolveShopId(session.shop);
+      const { outcome } = await executeReallocateSpendSku({
+        client,
+        sb: getSupabase(),
+        shopId,
+        alertId,
+        idempotencyKey,
+        actor: "merchant",
+        signal: request.signal,
+      });
+      return json<ActionPayload>({
+        ok: outcome === "succeeded",
+        toast: {
+          message:
+            outcome === "succeeded"
+              ? "Moved ad budget to your top product — logged to action history"
+              : outcome === "retrying"
+                ? "Couldn't reach Meta — queued, will retry automatically"
+                : "Action recorded as failed — check the audit log",
+          isError: outcome === "failed",
+        },
+      });
+    }
+
+    if (kind === "discontinue_sku") {
+      const shopId = await resolveShopId(session.shop);
+      const { outcome, acknowledged } = await executeDiscontinueAlertAction({
+        client,
+        admin,
+        sb: getSupabase(),
+        shopId,
+        alertId,
+        kind: "discontinue_sku",
+        idempotencyKey,
+        signal: request.signal,
+      });
+      return json<ActionPayload>({
+        ok: outcome === "succeeded",
+        toast: {
+          message:
+            outcome === "succeeded"
+              ? `Product discontinued — archived on Shopify and marked Do Not Reorder.${acknowledged ? "" : " Alert couldn't be acknowledged."}`
+              : "Discontinue recorded as failed — check the audit log.",
+          isError: outcome !== "succeeded",
+        },
       });
     }
 
@@ -496,6 +573,23 @@ export default function AlertDetail() {
   }
 
   const allowedActions = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
+
+  // When a remediation block is present, its executable moves (m.executor truthy,
+  // m.kind !== "snooze") are the canonical surface for those action kinds. Remove
+  // those executor kinds from allowedActions so they don't render a second time
+  // below. snooze_alert is always kept here — the moves block excludes snooze
+  // intentionally, so it must still appear once via allowedActions.
+  const remediationExecutorKinds: Set<ActionKind> = alert.remediation
+    ? new Set(
+        alert.remediation.moves
+          .filter((m) => m.kind !== "snooze" && !!m.executor)
+          .map((m) => m.executor as ActionKind),
+      )
+    : new Set();
+  const dedupedAllowedActions = allowedActions.filter(
+    (k) => k === "snooze_alert" || !remediationExecutorKinds.has(k),
+  );
+
   const submitting = navigation.state !== "idle";
   const evidence = alert.evidence ?? {};
 
@@ -591,7 +685,59 @@ export default function AlertDetail() {
               </Tooltip>
               <div className="alx-loss-val">{fmtMoney(alert.dollar_impact)}</div>
               <BlockStack gap="300">
-                {allowedActions.map((kind, i) => {
+                {alert.remediation && (
+                  <BlockStack gap="200">
+                    {alert.rec_detail && (
+                      <Text as="p" variant="bodyMd">
+                        {alert.rec_detail}
+                      </Text>
+                    )}
+                    {alert.remediation.moves
+                      .filter((m) => m.kind !== "snooze")
+                      .map((m) => {
+                        const rec = m.kind === alert.remediation!.recommended;
+                        if (m.executor) {
+                          // Executable move. The kind submitted is the EXECUTOR,
+                          // which the action handler + DETECTOR_TO_ACTIONS gate on.
+                          // Tone: critical for destructive kinds (discontinue); primary
+                          // for value-recovering kinds (reallocate, cut_ads, etc.).
+                          const isDestructive = m.executor === "discontinue_sku";
+                          return (
+                            <InlineStack key={m.kind} gap="200" blockAlign="center" wrap={false}>
+                              {rec && <Badge tone="success">Recommended</Badge>}
+                              <Button
+                                variant={rec ? "primary" : "secondary"}
+                                tone={isDestructive ? "critical" : undefined}
+                                loading={navigation.state !== "idle" && actionKind === m.executor}
+                                onClick={() => setActionKind(m.executor as ActionKind)}
+                              >
+                                {m.label}
+                              </Button>
+                            </InlineStack>
+                          );
+                        }
+                        // Advisory move (cut_ads / reallocate_to_winner / fix_returns
+                        // / review_pricing) — guidance text with optional ineligibleReason.
+                        return (
+                          <InlineStack key={m.kind} gap="150" blockAlign="center" wrap={false}>
+                            {rec && <Badge tone="success">Recommended</Badge>}
+                            <Text as="span" variant="bodyMd" fontWeight={rec ? "semibold" : "regular"}>
+                              {m.label}
+                            </Text>
+                            {m.ineligibleReason && (
+                              <Text as="span" variant="bodyXs" tone="subdued">
+                                — {m.ineligibleReason}
+                              </Text>
+                            )}
+                          </InlineStack>
+                        );
+                      })}
+                    <Text as="p" variant="bodyXs" tone="subdued">
+                      Advisory moves are guidance; the highlighted action runs with one click.
+                    </Text>
+                  </BlockStack>
+                )}
+                {dedupedAllowedActions.map((kind, i) => {
                   const deepLink = DEEP_LINK_ACTIONS[kind];
                   const button = deepLink ? (
                     <Button fullWidth onClick={() => navigate(deepLink.path)}>
@@ -599,14 +745,17 @@ export default function AlertDetail() {
                     </Button>
                   ) : (
                     <Button
-                      variant={i === 0 ? "primary" : undefined}
+                      variant={i === 0 && !alert.remediation?.recommended ? "primary" : undefined}
                       onClick={() => setActionKind(kind)}
                       fullWidth
                     >
                       {ACTION_LABELS[kind]}
                     </Button>
                   );
-                  return i === 0 ? (
+                  // When a remediation plan already emphasises its recommended
+                  // move above, don't also stamp "Recommended" on the first
+                  // legacy action (would show two recommendations).
+                  return i === 0 && !alert.remediation?.recommended ? (
                     <BlockStack key={kind} gap="100">
                       {button}
                       <InlineStack gap="150" blockAlign="center">
@@ -878,6 +1027,10 @@ function actionDescription(kind: ActionKind) {
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":
       return "Drafts a purchase order and records it in the action audit log, where the PDF can be downloaded. Review and send to your supplier manually.";
+    case "reallocate_spend_sku":
+      return "Shifts half of this product's daily ad budget to your top-ranked winner product. Fully reversible via Undo. Meta only — both campaigns must be active and dedicated to their SKU.";
+    case "discontinue_sku":
+      return "Archives this product on Shopify and marks it Do Not Reorder, blocking future PO drafts. Fully reversible — undo re-activates the product and clears the flag.";
     case "snooze_alert":
       return "Suppresses this alert until the condition resolves. Calderyn re-evaluates on the next detection pass.";
   }

@@ -96,6 +96,7 @@ function alertEntry(id: string): AlertVM {
     actions: ["pause_campaign", "snooze_alert"],
     recommended: "pause_campaign",
     rec_detail: "",
+    remediation: null,
   };
 }
 

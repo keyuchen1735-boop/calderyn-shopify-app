@@ -80,4 +80,3 @@ export function useRefreshOnFocus(
     };
   }, [enabled, minIntervalMs]);
 }
-

@@ -10,6 +10,7 @@ import type {
   ShipCostSource,
   ShipCostConfidence,
 } from "~/lib/ship-cost/types";
+import type { RemediationPlan } from "~/lib/remediation/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -50,6 +51,7 @@ export interface AlertVM {
   actions: string[];
   recommended: string | null;
   rec_detail: string;
+  remediation: RemediationPlan | null;
 }
 
 export interface AuditVM {
@@ -139,6 +141,9 @@ export interface SkuVM {
    * 30d), in cents. Negative = free shipping is bleeding. null = no shipped
    * orders in-window. */
   ship_pnl_cents: number | null;
+  /** Internal "do not reorder" flag — set by discontinue_sku, blocks PO drafts.
+   *  Surfaced on the Inventory surface as a "Won't reorder" pill. */
+  do_not_reorder: boolean;
 }
 
 export interface GuardrailVM {

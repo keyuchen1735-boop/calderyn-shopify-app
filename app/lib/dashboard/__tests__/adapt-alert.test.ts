@@ -66,3 +66,41 @@ describe("adaptAlert action list", () => {
     expect(vm.recommended).toBeNull();
   });
 });
+
+describe("adaptAlert remediation passthrough", () => {
+  it("passes remediation + rec_detail through to the view model", () => {
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "negative_unit_economics",
+        sku: "Summit Logo Tee — M",
+        evidence: { gross_unit_margin_usd: 23, cac_per_unit_usd: 170 },
+        remediation: {
+          moves: [
+            { kind: "reallocate_to_winner", dollarImpactCents: 530449, executor: null, label: "x" },
+            { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+          ],
+          recommended: "reallocate_to_winner",
+          structurallyDead: false,
+        },
+        rec_detail: "synopsis here",
+      }),
+      [],
+    );
+    expect(vm.remediation?.recommended).toBe("reallocate_to_winner");
+    expect(vm.rec_detail).toBe("synopsis here");
+  });
+
+  it("non-product alerts keep the legacy campaign-gated actions, remediation null", () => {
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "sku_stockout_vs_spend",
+        remediation: null,
+        rec_detail: "",
+        campaign_id: "c1",
+      }),
+      CAMPAIGNS,
+    );
+    expect(vm.remediation).toBeNull();
+    expect(vm.actions).toContain("pause_campaign");
+  });
+});

@@ -401,6 +401,34 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return { ok, receipt };
       }
 
+      // discontinue_sku: live endpoint — archives the product on Shopify and
+      // sets the internal Do-Not-Reorder flag, both derived server-side from the
+      // alert. A failure (e.g. SKU with no Shopify product) surfaces as an error
+      // toast, never a fake resolution.
+      if (kind === "discontinue_sku") {
+        let ok = false;
+        let receipt: ApproveReceipt | null = null;
+        try {
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
+          ok = true;
+          receipt = calibration ?? null;
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — product archived and marked Do Not Reorder.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return { ok, receipt };
+      }
+
       // reallocate_inventory: live endpoint — the transfer plan is derived
       // server-side from the alert's evidence, so failures (e.g. evidence
       // without a concrete move) surface as an error toast, never a fake
@@ -436,6 +464,37 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         }
         return { ok, receipt };
       }
+
+      // reallocate_spend_sku: live endpoint — the campaign pair and shift amount
+      // are derived server-side by enrichRemediation (Task 7 route + Task 6
+      // gateway). The client sends only the action kind; no campaign ids.
+      if (kind === "reallocate_spend_sku") {
+        let ok = false;
+        let receipt: ApproveReceipt | null = null;
+        try {
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
+          ok = true;
+          receipt = calibration ?? null;
+          markResolved();
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          toast(
+            `${label} — done. Logged to action history.` +
+              (acknowledged ? "" : " Alert couldn't be acknowledged."),
+            "check",
+          );
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return { ok, receipt };
+      }
+
+      // TODO(phase3-followup): dashboard cut_ads on SKU alerts needs the
+      // enriched target.loserCampaignId routed to executeCampaignAction; until
+      // then it stays advisory on the dashboard (embedded surface executes it).
 
       // No live dashboard endpoint for this kind. Two ways to land here:
       //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
