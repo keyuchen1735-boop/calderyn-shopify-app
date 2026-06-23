@@ -7,7 +7,7 @@
 // (client.rejectProposal -> /dashboard/api/queue/reject) and executes NOTHING;
 // it returns the reject receipt (reflection + trust delta + savedAsRule) that
 // drives the receipt card. Learned rules section + undo unchanged.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, ACTION_LABELS, alertDetectorLabel } from "../format";
@@ -380,11 +380,15 @@ function ProposalRow({
   app,
   onGraduated,
   compact = false,
+  compactTitle,
+  compactMeta,
 }: {
   proposal: QueueProposalVM;
   app: DashboardCtx;
   onGraduated: (info: GraduatedInfo) => void;
   compact?: boolean;
+  compactTitle?: string;
+  compactMeta?: string | null;
 }) {
   const [view, setView] = useState<RowView>("idle");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -396,6 +400,7 @@ function ProposalRow({
   const alert = app.alerts.find((a) => a.id === proposal.alertId);
   const detectorLabel = alertDetectorLabel(proposal.detector_id, alert?.evidence ?? {});
   const actionLabel = ACTION_LABELS[proposal.action_kind] ?? proposal.action_kind;
+  const displayTitle = compactTitle ?? detectorLabel;
   const confPct = Math.min(100, Math.max(0, proposal.confidence));
   const conf = confidenceMeta(confPct);
 
@@ -424,33 +429,58 @@ function ProposalRow({
       setBusy(false);
     }
   };
+  const toggleDetails = () => setDetailsOpen((open) => !open);
+  const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleDetails();
+  };
 
   return (
     <div className="cd-queue-item" data-conf={conf.tone} data-compact={compact ? "true" : "false"}>
-      <div className="cd-queue-main">
+      <div
+        className="cd-queue-main"
+        role="button"
+        tabIndex={0}
+        aria-expanded={detailsOpen}
+        aria-label={`Toggle details for ${displayTitle}`}
+        onClick={toggleDetails}
+        onKeyDown={onRowKeyDown}
+      >
         <span className="cd-feed-icon" data-tone="accent">
           <CDIcon name="bolt" size={14} strokeWidth={1.9} />
         </span>
 
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
-          <span className="cd-row-title">{detectorLabel}</span>
+          <span className="cd-row-title">{displayTitle}</span>
+          {compact && compactMeta && (
+            <span className="cd-caption" style={{ color: "var(--text-3)" }}>
+              {compactMeta}
+            </span>
+          )}
           {!compact && proposal.reasoning && (
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>
               {proposal.reasoning}
             </span>
           )}
           <div className="flex items-center gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
-            <Pill tone={conf.tone} icon="bolt">
-              {conf.label} confidence - {confPct}%
-            </Pill>
+            {!compact && (
+              <Pill tone={conf.tone} icon="bolt">
+                {conf.label} confidence - {confPct}%
+              </Pill>
+            )}
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>
-              Will {actionLabel.toLowerCase()}
+              {compact ? "Needs approval" : `Will ${actionLabel.toLowerCase()}`}
             </span>
             <button
               type="button"
               className="cd-queue-details-toggle"
               data-open={detailsOpen}
-              onClick={() => setDetailsOpen((open) => !open)}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleDetails();
+              }}
             >
               Details
               <CDIcon name="chevronDown" size={13} strokeWidth={2} />
@@ -458,7 +488,7 @@ function ProposalRow({
           </div>
         </div>
 
-        <div className="cd-queue-side">
+        <div className="cd-queue-side" onClick={(event) => event.stopPropagation()}>
           <div className="text-right">
             <div className="cd-row-num tabular-nums">{money(proposal.dollar_impact)}</div>
             <div className="cd-caption">at stake</div>
@@ -554,7 +584,7 @@ type ProposalGroup = {
 function proposalSectionTitle(p: Pick<QueueProposalVM, "action_kind" | "detector_id">): string {
   switch (p.action_kind) {
     case "increase_campaign_budget":
-      return "Campaign Scales";
+      return "Campaign Scaling";
     case "reallocate_budget":
       return "Campaign Budget Moves";
     case "pause_campaign":
@@ -581,6 +611,16 @@ function proposalSectionTitle(p: Pick<QueueProposalVM, "action_kind" | "detector
     default:
       return alertDetectorLabel(p.detector_id, {});
   }
+}
+
+function opportunityLabel(index: number): string {
+  return index === 0 ? "Highest impact opportunity" : `Opportunity ${index + 1}`;
+}
+
+function compactMetaForGroupItem(item: QueueProposalVM, titleCounts: Map<string, number>): string | null {
+  const cleanTitle = item.title.trim();
+  if (!cleanTitle || (titleCounts.get(cleanTitle) ?? 0) > 1) return null;
+  return cleanTitle;
 }
 
 function proposalGroupKey(p: QueueProposalVM): string {
@@ -619,6 +659,11 @@ function ProposalGroupRow({
   const p = group.representative;
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
   const conf = confidenceMeta(Math.min(100, Math.max(0, p.confidence)));
+  const titleCounts = new Map<string, number>();
+  for (const item of group.items) {
+    const cleanTitle = item.title.trim();
+    if (cleanTitle) titleCounts.set(cleanTitle, (titleCounts.get(cleanTitle) ?? 0) + 1);
+  }
 
   if (group.items.length === 1) {
     return <ProposalRow proposal={p} app={app} onGraduated={onGraduated} />;
@@ -633,11 +678,11 @@ function ProposalGroupRow({
         <div className="min-w-0 flex-1">
           <div className="cd-queue-group-title">
             <span>{group.title}</span>
-            <Pill tone={conf.tone}>{p.confidence}% confident</Pill>
             <Pill tone="neutral">{group.items.length} alerts</Pill>
+            <Pill tone={conf.tone}>{p.confidence}% confident</Pill>
           </div>
           <div className="cd-caption" style={{ color: "var(--text-3)", marginTop: 4 }}>
-            {actionLabel} across {group.items.length} opportunities.
+            {group.items.length} alerts need {actionLabel.toLowerCase()}.
           </div>
           <div className="cd-queue-group-action">
             Will {actionLabel.toLowerCase()} <span>{open ? "Hide alerts" : "View alerts"}</span>
@@ -652,11 +697,19 @@ function ProposalGroupRow({
 
       <div className="cd-queue-group-body" data-open={open}>
         <div className="cd-queue-group-note">
-          Review the individual opportunities below.
+          Same recommendation, sorted by impact. Open Details only when you need the why.
         </div>
         <div className="cd-queue-group-list">
-          {group.items.map((item) => (
-            <ProposalRow key={`${item.alertId}:${item.action_kind}`} proposal={item} app={app} onGraduated={onGraduated} compact />
+          {group.items.map((item, index) => (
+            <ProposalRow
+              key={`${item.alertId}:${item.action_kind}`}
+              proposal={item}
+              app={app}
+              onGraduated={onGraduated}
+              compact
+              compactTitle={opportunityLabel(index)}
+              compactMeta={compactMetaForGroupItem(item, titleCounts)}
+            />
           ))}
         </div>
       </div>
@@ -774,7 +827,7 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
         <div>
           <div className="cd-row-between" style={{ marginBottom: 10, padding: "0 2px" }}>
             <h2 className="cd-h2" style={{ margin: 0 }}>
-              {groups.length} grouped {groups.length === 1 ? "action" : "actions"}{" "}
+              {groups.length} action {groups.length === 1 ? "section" : "sections"}{" "}
               <span style={{ color: "var(--text-3)", fontWeight: 400 }}>need your OK</span>
             </h2>
             <span className="cd-caption" style={{ color: "var(--text-3)" }}>

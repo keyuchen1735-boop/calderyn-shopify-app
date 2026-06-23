@@ -1,7 +1,7 @@
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Banner, Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -480,10 +480,14 @@ function ProposalCard({
   p,
   onGraduated,
   compact = false,
+  compactTitle,
+  compactMeta,
 }: {
   p: QueueProposal;
   onGraduated: (info: GraduatedInfo) => void;
   compact?: boolean;
+  compactTitle?: string;
+  compactMeta?: string | null;
 }) {
   const [view, setView] = useState<CardView>("idle");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -506,6 +510,7 @@ function ProposalCard({
 
   const detector = alertDetectorLabel(p.detector_id, {});
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
+  const displayTitle = compactTitle ?? detector;
   const band = confidenceBand(p.confidence);
 
   const approving = approveFetcher.state !== "idle";
@@ -544,10 +549,25 @@ function ProposalCard({
       { method: "post" },
     );
   };
+  const toggleDetails = () => setDetailsOpen((open) => !open);
+  const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleDetails();
+  };
 
   return (
     <div className="aqx-card" data-conf={band} data-compact={compact ? "true" : "false"}>
-      <div className="aqx-row">
+      <div
+        className="aqx-row"
+        role="button"
+        tabIndex={0}
+        aria-expanded={detailsOpen}
+        aria-label={`Toggle details for ${displayTitle}`}
+        onClick={toggleDetails}
+        onKeyDown={onRowKeyDown}
+      >
         <div className="aqx-rail" />
         <div className="aqx-main">
           <div className="aqx-grid">
@@ -556,24 +576,28 @@ function ProposalCard({
             </span>
             <div className="aqx-body">
               <div className="aqx-titlerow">
-                <span className="aqx-detector">{detector}</span>
-                <span className="aqx-conf">{p.confidence}% confident</span>
+                <span className="aqx-detector">{displayTitle}</span>
+                {!compact && <span className="aqx-conf">{p.confidence}% confident</span>}
+                {compact && compactMeta && <span className="aqx-compact-meta">{compactMeta}</span>}
               </div>
               {!compact && <div className="aqx-reason">{p.reasoning}</div>}
               <div className="aqx-will">
-                <span className="aqx-will-lab">Will</span>
-                <span className="aqx-will-act">{actionLabel}</span>
+                <span className="aqx-will-lab">{compact ? "Status" : "Will"}</span>
+                <span className="aqx-will-act">{compact ? "Needs approval" : actionLabel}</span>
                 <button
                   type="button"
                   className="aqx-details-toggle"
                   data-open={detailsOpen}
-                  onClick={() => setDetailsOpen((open) => !open)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleDetails();
+                  }}
                 >
                   Details <IChevron s={13} />
                 </button>
               </div>
             </div>
-            <div className="aqx-side">
+            <div className="aqx-side" onClick={(event) => event.stopPropagation()}>
               <div className="aqx-impact">
                 <div className="aqx-impact-amt">{fmtMoney(p.dollar_impact)}</div>
                 <div className="aqx-impact-cap">at stake</div>
@@ -695,7 +719,7 @@ type ProposalGroup = {
 function proposalSectionTitle(p: Pick<QueueProposal, "action_kind" | "detector_id">): string {
   switch (p.action_kind) {
     case "increase_campaign_budget":
-      return "Campaign Scales";
+      return "Campaign Scaling";
     case "reallocate_budget":
       return "Campaign Budget Moves";
     case "pause_campaign":
@@ -722,6 +746,16 @@ function proposalSectionTitle(p: Pick<QueueProposal, "action_kind" | "detector_i
     default:
       return alertDetectorLabel(p.detector_id, {});
   }
+}
+
+function opportunityLabel(index: number): string {
+  return index === 0 ? "Highest impact opportunity" : `Opportunity ${index + 1}`;
+}
+
+function compactMetaForGroupItem(item: QueueProposal, titleCounts: Map<string, number>): string | null {
+  const cleanTitle = item.title.trim();
+  if (!cleanTitle || (titleCounts.get(cleanTitle) ?? 0) > 1) return null;
+  return cleanTitle;
 }
 
 function proposalGroupKey(p: QueueProposal): string {
@@ -759,6 +793,11 @@ function ProposalGroupCard({
   const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
   const count = group.items.length;
   const band = confidenceBand(p.confidence);
+  const titleCounts = new Map<string, number>();
+  for (const item of group.items) {
+    const cleanTitle = item.title.trim();
+    if (cleanTitle) titleCounts.set(cleanTitle, (titleCounts.get(cleanTitle) ?? 0) + 1);
+  }
 
   if (count === 1) {
     return <ProposalCard p={p} onGraduated={onGraduated} />;
@@ -774,10 +813,10 @@ function ProposalGroupCard({
         <div className="aqx-group-main">
           <div className="aqx-titlerow">
             <span className="aqx-detector">{group.title}</span>
-            <span className="aqx-conf">{p.confidence}% confident</span>
             <span className="aqx-count">{count} alerts</span>
+            <span className="aqx-conf">{p.confidence}% confident</span>
           </div>
-          <div className="aqx-reason">{actionLabel} across {count} opportunities.</div>
+          <div className="aqx-reason">{count} alerts need {actionLabel.toLowerCase()}.</div>
           <div className="aqx-will">
             <span className="aqx-will-lab">Will</span>
             <span className="aqx-will-act">{actionLabel}</span>
@@ -795,11 +834,18 @@ function ProposalGroupCard({
 
       <div className="aqx-group-body" data-open={open}>
         <div className="aqx-group-note">
-          Review the individual opportunities below.
+          Same recommendation, sorted by impact. Open Details only when you need the why.
         </div>
         <div className="aqx-group-list">
-          {group.items.map((item) => (
-            <ProposalCard key={`${item.alertId}:${item.action_kind}`} p={item} onGraduated={onGraduated} compact />
+          {group.items.map((item, index) => (
+            <ProposalCard
+              key={`${item.alertId}:${item.action_kind}`}
+              p={item}
+              onGraduated={onGraduated}
+              compact
+              compactTitle={opportunityLabel(index)}
+              compactMeta={compactMetaForGroupItem(item, titleCounts)}
+            />
           ))}
         </div>
       </div>
@@ -888,7 +934,7 @@ export default function ActionQueue() {
             <div className="aqx-head">
               <div className="aqx-head-title">
                 <h2>
-                  {groups.length} grouped {groups.length === 1 ? "action" : "actions"}
+                  {groups.length} action {groups.length === 1 ? "section" : "sections"}
                 </h2>
                 <span className="aqx-head-sub">need your OK</span>
               </div>

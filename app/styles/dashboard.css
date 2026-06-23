@@ -479,6 +479,8 @@
     padding: calc(11px * var(--density)) calc(14px * var(--density));
   }
   .cd-queue-main { display: flex; align-items: flex-start; gap: 14px; width: 100%; }
+  .cd-queue-main[role="button"] { cursor: pointer; outline: none; }
+  .cd-queue-main[role="button"]:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 10px; }
   .cd-queue-item[data-compact="true"] .cd-queue-main { gap: 10px; }
   .cd-queue-item[data-compact="true"] .cd-feed-icon { width: 28px; height: 28px; }
   .cd-queue-item[data-compact="true"] .cd-row-title { font-size: calc(13px * var(--type-scale)); }
