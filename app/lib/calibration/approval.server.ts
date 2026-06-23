@@ -58,7 +58,7 @@ async function refreshShopCalibrationHeadline(
   sb: SupabaseClient,
 ): Promise<void> {
   try {
-    await recomputeShopCalibration(shopId, { sb }, { skipPeerPrior: true });
+    await recomputeShopCalibration(shopId, { sb }, { skipPeerPrior: true, forceVisibleStep: true });
   } catch (err) {
     console.error(
       `[calibration] approval headline recompute failed: ${err instanceof Error ? err.message : String(err)}`,

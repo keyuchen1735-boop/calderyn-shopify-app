@@ -69,6 +69,7 @@ export interface RecomputeOpts {
    * baselines are not yet populated — avoids N+1 RPCs at request time. The
    * nightly cron leaves this unset to keep peer-prior enrichment intact. */
   skipPeerPrior?: boolean;
+  forceVisibleStep?: boolean;
 }
 
 export async function recomputeShopCalibration(
@@ -183,7 +184,10 @@ export async function recomputeShopCalibration(
     .maybeSingle();
   if (shopErr) throw shopErr;
   const prev = shopRow?.calibration_pct == null ? null : Number(shopRow.calibration_pct);
-  const display = smooth(raw, prev);
+  let display = smooth(raw, prev);
+  if (opts?.forceVisibleStep && prev != null && display === prev && raw !== prev) {
+    display = raw > prev ? Math.min(100, prev + 1) : Math.max(0, prev - 1);
+  }
 
   const { error: updErr } = await sb
     .from("shops")

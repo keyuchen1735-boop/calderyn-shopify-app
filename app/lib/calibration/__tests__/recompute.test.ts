@@ -42,6 +42,47 @@ describe("recomputeShopCalibration", () => {
     // Cold start with null prev: smooth is a no-op, so display must equal raw:
     expect(res.display).toBe(res.raw);
   });
+
+  it("can force a visible one-point display move after an interactive signal", async () => {
+    const normalUpdates: Record<string, unknown>[] = [];
+    const forcedUpdates: Record<string, unknown>[] = [];
+    const pairRows = [
+      {
+        detector_id: "campaign_scaling_opportunity",
+        action_kind: "increase_campaign_budget",
+        alpha: 0,
+        beta: 0,
+        clean_approvals: 0,
+        consecutive_undos: 0,
+        merchant_disabled: false,
+        graduation_threshold: 75,
+      },
+    ];
+
+    const normal = await recomputeShopCalibration("shop-visible-1", {
+      sb: makeStubSb({
+        pairRows,
+        detectorFires: { campaign_scaling_opportunity: 5 },
+        prevPct: 30,
+        onShopUpdate: (patch) => normalUpdates.push(patch),
+      }),
+    }, { skipPeerPrior: true });
+
+    const forced = await recomputeShopCalibration("shop-visible-2", {
+      sb: makeStubSb({
+        pairRows,
+        detectorFires: { campaign_scaling_opportunity: 5 },
+        prevPct: 30,
+        onShopUpdate: (patch) => forcedUpdates.push(patch),
+      }),
+    }, { skipPeerPrior: true, forceVisibleStep: true });
+
+    expect(normal.raw).toBe(31);
+    expect(normal.display).toBe(30);
+    expect(forced.raw).toBe(31);
+    expect(forced.display).toBe(31);
+    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 31);
+  });
 });
 
 // Minimal Supabase stub: supports the exact call chain recompute uses.

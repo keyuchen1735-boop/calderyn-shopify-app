@@ -62,7 +62,7 @@ describe("recordApproval — trust receipt", () => {
   it("refreshes the shop calibration headline after a successful approval signal", async () => {
     const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
     await recordApproval("shop-1", DETECTOR, ACTION, sb);
-    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true });
+    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true, forceVisibleStep: true });
   });
 
   it("still returns the receipt when headline recompute fails", async () => {

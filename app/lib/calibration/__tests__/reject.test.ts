@@ -194,7 +194,7 @@ describe("recordRejection — reject receipt (savedAsRule / ruleKind / delta)", 
       ],
     });
     await recordRejection("shop-1", { ...BASE, reason: "other" }, sb);
-    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true });
+    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true, forceVisibleStep: true });
   });
 
   it("still returns the reflection when headline recompute fails", async () => {

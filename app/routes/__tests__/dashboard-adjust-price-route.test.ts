@@ -10,6 +10,8 @@ const requireDashboardSession = vi.fn();
 const executeAdjustPriceAlertAction = vi.fn();
 const executeCreatePoDraft = vi.fn();
 const executeReallocateSpendSku = vi.fn();
+const alertsGetSpy = vi.fn();
+const recordApprovalSpy = vi.fn();
 
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
@@ -29,7 +31,10 @@ vi.mock("~/lib/actions/adjust-price.server", () => ({
 }));
 vi.mock("~/lib/calderyn.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/lib/calderyn.server")>()),
-  calderynClient: () => ({ alerts: { get: vi.fn() } }),
+  calderynClient: () => ({ alerts: { get: (...a: unknown[]) => alertsGetSpy(...a) } }),
+}));
+vi.mock("~/lib/calibration/approval.server", () => ({
+  recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
 }));
 vi.mock("~/shopify.server", () => ({
   unauthenticated: { admin: vi.fn(async () => ({ admin: { graphql: vi.fn() } })) },
@@ -51,6 +56,8 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "margin_erosion" });
+    recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeAdjustPriceAlertAction.mockResolvedValue({
       auditId: "audit-px-1",
       outcome: "succeeded",
@@ -61,7 +68,12 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
   it("passes a merchant override (new_price_cents) through to the executor", async () => {
     const res = await call({ type: "adjust_price", idempotency_key: "k1", new_price_cents: 1725 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ audit_id: "audit-px-1", outcome: "succeeded", acknowledged: true });
+    expect(await res.json()).toEqual({
+      audit_id: "audit-px-1",
+      outcome: "succeeded",
+      acknowledged: true,
+      calibration: { delta: 1, before: 22, after: 23 },
+    });
     expect(executeAdjustPriceAlertAction).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "adjust_price",
@@ -70,6 +82,12 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
         newPriceCents: 1725,
         actor: "merchant:web-dashboard",
       }),
+    );
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-1",
+      "margin_erosion",
+      "adjust_price",
+      expect.anything(),
     );
   });
 
@@ -90,6 +108,8 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "reorder_timing" });
+    recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeCreatePoDraft.mockResolvedValue({
       auditId: "audit-po-1",
       outcome: "succeeded",
@@ -109,6 +129,7 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
       audit_id: "audit-po-1",
       outcome: "succeeded",
       acknowledged: true,
+      calibration: { delta: 1, before: 22, after: 23 },
     });
     expect(executeCreatePoDraft).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -120,6 +141,12 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
         unitCost: "12.50",
       }),
     );
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-1",
+      "reorder_timing",
+      "create_po_draft",
+      expect.anything(),
+    );
   });
 });
 
@@ -127,6 +154,8 @@ describe('POST /dashboard/api/alerts/:id/action — reallocate_spend_sku ("Move 
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "ad_tax_overload" });
+    recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeReallocateSpendSku.mockResolvedValue({
       auditId: "audit-rs-1",
       outcome: "succeeded",
@@ -141,9 +170,16 @@ describe('POST /dashboard/api/alerts/:id/action — reallocate_spend_sku ("Move 
       audit_id: "audit-rs-1",
       outcome: "succeeded",
       acknowledged: true,
+      calibration: { delta: 1, before: 22, after: 23 },
     });
     expect(executeReallocateSpendSku).toHaveBeenCalledWith(
       expect.objectContaining({ alertId: "a1", idempotencyKey: "krs", actor: "merchant:web-dashboard" }),
+    );
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-1",
+      "ad_tax_overload",
+      "reallocate_spend_sku",
+      expect.anything(),
     );
   });
 });

@@ -551,11 +551,13 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // action history). A local document; no external mutation.
       if (kind === "create_po_draft") {
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, {
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, {
             type: kind,
             poQuantity: opts?.poQuantity,
             poUnitCost: opts?.poUnitCost,
           });
+          const receipt = calibration ?? null;
+          if (receipt) refreshCalibration();
           markResolved();
           client
             .fetchAudit()
@@ -566,7 +568,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );
-          return { ok: true, receipt: null };
+          return { ok: true, receipt };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");
@@ -582,10 +584,12 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // error toast, never a fake resolution.
       if (kind === "adjust_price") {
         try {
-          const { acknowledged } = await client.executeAlertAction(alert.id, {
+          const { acknowledged, calibration } = await client.executeAlertAction(alert.id, {
             type: kind,
             newPriceCents: opts?.newPriceCents,
           });
+          const receipt = calibration ?? null;
+          if (receipt) refreshCalibration();
           markResolved();
           client
             .fetchAudit()
@@ -596,7 +600,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );
-          return { ok: true, receipt: null };
+          return { ok: true, receipt };
         } catch (err) {
           const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
           toast(msg, "warn", "critical");

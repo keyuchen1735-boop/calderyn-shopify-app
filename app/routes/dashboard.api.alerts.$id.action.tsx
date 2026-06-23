@@ -52,6 +52,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const sb = getSupabase();
 
   return dashboardJson(async () => {
+    const recordCalibration = async (kindToRecord: ActionKind, outcome: string): Promise<ApproveReceipt | undefined> => {
+      if (kindToRecord === "snooze_alert" || outcome !== "succeeded") return undefined;
+      const alert = await client.alerts.get(alertId).catch(() => null);
+      if (!alert) return undefined;
+      return recordApproval(session.shopId, alert.detector_id, kindToRecord, sb).catch(
+        () => ZERO_APPROVE_RECEIPT,
+      );
+    };
+
     if (kind === "create_po_draft") {
       // Local document only (no external mutation) — qty/cost are the validated
       // exception to "inputs come from evidence". The SKU + title come from the
@@ -67,7 +76,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         unitCost: String(body.po_unit_cost ?? ""),
         signal: request.signal,
       });
-      return { audit_id: auditId, outcome, acknowledged };
+      const calibration = await recordCalibration(kind, outcome);
+      return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "reallocate_spend_sku") {
       const { auditId, outcome, acknowledged } = await executeReallocateSpendSku({
@@ -79,7 +89,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         actor: "merchant:web-dashboard",
         signal: request.signal,
       });
-      return { audit_id: auditId, outcome, acknowledged };
+      const calibration = await recordCalibration(kind, outcome);
+      return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     const { admin } = await unauthenticated.admin(session.shopDomain);
     if (kind === "adjust_price") {
@@ -99,7 +110,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         actor: "merchant:web-dashboard",
         signal: request.signal,
       });
-      return { audit_id: auditId, outcome, acknowledged };
+      const calibration = await recordCalibration(kind, outcome);
+      return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "discontinue_sku") {
       const { auditId, outcome, acknowledged } = await executeDiscontinueAlertAction({
@@ -112,7 +124,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         idempotencyKey,
         signal: request.signal,
       });
-      return { audit_id: auditId, outcome, acknowledged };
+      const calibration = await recordCalibration(kind, outcome);
+      return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     const { auditId, outcome, acknowledged } = await executeInventoryAlertAction({
       client,
@@ -128,15 +141,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Calibration signal: bump approval confidence for the (detector, action) pair.
     // Only for real executed actions (snooze is not an approval of a fix).
     // Guarded: a signal failure must NEVER affect the action result.
-    let calibration: ApproveReceipt | undefined;
-    if (kind !== "snooze_alert") {
-      const alert = await client.alerts.get(alertId).catch(() => null);
-      if (alert) {
-        calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb).catch(
-          () => ZERO_APPROVE_RECEIPT,
-        );
-      }
-    }
+    const calibration = await recordCalibration(kind, outcome);
 
     return { audit_id: auditId, outcome, acknowledged, calibration };
   });

@@ -3,13 +3,14 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { action } from "../app.alerts.$id";
 
 // Hoisted spies
-const { recordApprovalSpy, alertsGetSpy, guardrailsGetSpy, executeSpy, clientExecuteSpy } =
+const { recordApprovalSpy, alertsGetSpy, guardrailsGetSpy, executeSpy, clientExecuteSpy, executeReallocateSpendSkuSpy } =
   vi.hoisted(() => ({
     recordApprovalSpy: vi.fn(),
     alertsGetSpy: vi.fn(),
     guardrailsGetSpy: vi.fn(),
     executeSpy: vi.fn(),     // executeAction (gateway)
     clientExecuteSpy: vi.fn(), // calderynClient.actions.execute (legacy)
+    executeReallocateSpendSkuSpy: vi.fn(),
   }));
 
 // UI stubs
@@ -77,6 +78,9 @@ vi.mock("~/lib/calibration/approval.server", () => ({
 
 vi.mock("~/lib/actions/execute.server", () => ({
   executeAction: (...a: unknown[]) => executeSpy(...a),
+}));
+vi.mock("~/lib/actions/reallocate-sku.server", () => ({
+  executeReallocateSpendSku: (...a: unknown[]) => executeReallocateSpendSkuSpy(...a),
 }));
 
 vi.mock("~/lib/alerts.server", () => ({
@@ -151,6 +155,8 @@ beforeEach(() => {
   clientExecuteSpy.mockResolvedValue({ id: "aud-1", outcome: "succeeded" });
   executeSpy.mockReset();
   executeSpy.mockResolvedValue({ outcome: "succeeded" });
+  executeReallocateSpendSkuSpy.mockReset();
+  executeReallocateSpendSkuSpy.mockResolvedValue({ auditId: "aud-rs-1", outcome: "succeeded", acknowledged: true });
 });
 
 describe("alert action — calibration signal fires on approval", () => {
@@ -212,5 +218,28 @@ describe("alert action — calibration signal fires on approval", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls recordApproval on the reallocate_spend_sku early-return path", async () => {
+    const alertWithSkuBudgetMove = {
+      ...ALERT,
+      detector_id: "ad_tax_overload",
+      campaign_id: null,
+      campaign_external_id: null,
+      evidence: {},
+    };
+    alertsGetSpy.mockResolvedValue(alertWithSkuBudgetMove);
+
+    const res = await call(makeRequest("reallocate_spend_sku"));
+    const body = (await res.json()) as { ok: boolean };
+
+    expect(body.ok).toBe(true);
+    expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "ad_tax_overload",
+      "reallocate_spend_sku",
+      expect.anything(),
+    );
   });
 });

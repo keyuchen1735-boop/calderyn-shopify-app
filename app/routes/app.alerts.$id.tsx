@@ -337,8 +337,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         actor: "merchant",
         signal: request.signal,
       });
+      const calibration =
+        outcome === "succeeded"
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
+              () => ZERO_APPROVE_RECEIPT,
+            )
+          : undefined;
       return json<ActionPayload>({
         ok: outcome === "succeeded",
+        calibration,
         toast: {
           message:
             outcome === "succeeded"
@@ -363,8 +370,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         idempotencyKey,
         signal: request.signal,
       });
+      const calibration =
+        outcome === "succeeded"
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
+              () => ZERO_APPROVE_RECEIPT,
+            )
+          : undefined;
       return json<ActionPayload>({
         ok: outcome === "succeeded",
+        calibration,
         toast: {
           message:
             outcome === "succeeded"
@@ -404,8 +418,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         actor: "merchant",
         signal: request.signal,
       });
+      const calibration =
+        outcome === "succeeded"
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
+              () => ZERO_APPROVE_RECEIPT,
+            )
+          : undefined;
       return json<ActionPayload>({
         ok: outcome === "succeeded",
+        calibration,
         toast: {
           message:
             outcome === "succeeded"

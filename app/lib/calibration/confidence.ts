@@ -47,6 +47,10 @@ export const HAS_EXECUTOR: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "increase_campaign_budget",
   "reallocate_budget",
   "reallocate_inventory",
+  "reallocate_spend_sku",
+  "discontinue_sku",
+  "adjust_price",
+  "create_po_draft",
 ]);
 
 // Per-action reversibility tier. increase_campaign_budget is hard_to_reverse
