@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
 import { GRADUATABLE_V1, graduationVerdict } from "./graduation";
 import { trustDelta, ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "./delta";
+import { recomputeShopCalibration } from "./recompute.server";
 
 /**
  * Action kinds with a working undo branch (mirror of the set in
@@ -51,6 +52,19 @@ const num = (v: unknown, fallback = 0): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
+
+async function refreshShopCalibrationHeadline(
+  shopId: string,
+  sb: SupabaseClient,
+): Promise<void> {
+  try {
+    await recomputeShopCalibration(shopId, { sb }, { skipPeerPrior: true });
+  } catch (err) {
+    console.error(
+      `[calibration] approval headline recompute failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 export async function recordApproval(
   shopId: string,
@@ -107,6 +121,8 @@ export async function recordApproval(
       hasUndoBranch: HAS_UNDO_BRANCH.has(actionKind),
     });
     const justGraduated = verdict.graduated && !wasGraduatedBefore;
+
+    await refreshShopCalibrationHeadline(shopId, sb);
 
     return {
       delta,

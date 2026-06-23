@@ -41,6 +41,7 @@ const ctx: DashboardCtx = {
   toast: () => {},
   relTime: () => "",
   refresh: () => {},
+  refreshCalibration: () => {},
   refreshLiveEngine: () => {},
   loading: true,
 };

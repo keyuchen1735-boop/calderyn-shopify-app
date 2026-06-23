@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordRejection } from "../reject.server";
 import { confFromEv } from "../delta";
+import { recomputeShopCalibration } from "../recompute.server";
+
+vi.mock("../recompute.server", () => ({
+  recomputeShopCalibration: vi.fn().mockResolvedValue({ shopId: "shop-1", pairs: 1, raw: 25, display: 25 }),
+}));
 
 /**
  * Build a stub SupabaseClient that satisfies the call pattern used in reject.server.ts.
@@ -181,6 +186,24 @@ describe("recordRejection", () => {
 });
 
 describe("recordRejection — reject receipt (savedAsRule / ruleKind / delta)", () => {
+  it("refreshes the shop calibration headline after a rejection signal", async () => {
+    const { sb } = makeStub({
+      pairRows: [
+        { alpha: 2, beta: 0 },
+        { alpha: 2, beta: 1 },
+      ],
+    });
+    await recordRejection("shop-1", { ...BASE, reason: "other" }, sb);
+    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true });
+  });
+
+  it("still returns the reflection when headline recompute fails", async () => {
+    vi.mocked(recomputeShopCalibration).mockRejectedValueOnce(new Error("recompute failed"));
+    const { sb } = makeStub();
+    const r = await recordRejection("shop-1", { ...BASE, reason: "other" }, sb);
+    expect(r.reflection).toBeTruthy();
+  });
+
   it("savedAsRule=true and ruleKind set for a reason that writes a rule (too_aggressive)", async () => {
     const { sb } = makeStub();
     const r = await recordRejection("shop-1", { ...BASE, reason: "too_aggressive" }, sb);

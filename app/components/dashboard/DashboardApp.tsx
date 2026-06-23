@@ -261,6 +261,10 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     client.fetchLiveEngine().then(setLiveEngine).catch(() => {});
   }, []);
 
+  const refreshCalibration = useCallback(() => {
+    client.fetchCalibration().then(setCalibration).catch(() => {});
+  }, []);
+
   // Returning to the tab does an immediate refresh instead of waiting up to one
   // poll interval (browsers throttle the timer while hidden). Gated on liveOn so
   // it respects the "Live sync" toggle — off means the screen stays put.
@@ -416,6 +420,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           if (view.succeeded) {
             ok = true;
             receipt = calibration ?? null;
+            if (receipt) refreshCalibration();
           }
           // A non-succeeded outcome (retrying / failed) must NOT resolve the
           // alert or apply the optimistic paused/budget state — only a real
@@ -458,6 +463,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
           ok = true;
           receipt = calibration ?? null;
+          if (receipt) refreshCalibration();
           markResolved();
           client
             .fetchAudit()
@@ -491,6 +497,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             ok = true;
             markResolved();
             receipt = calibration ?? null;
+            if (receipt) refreshCalibration();
           }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
@@ -521,6 +528,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           const { acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
           ok = true;
           receipt = calibration ?? null;
+          if (receipt) refreshCalibration();
           markResolved();
           client
             .fetchAudit()
@@ -612,7 +620,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       );
       return { ok: false, receipt: null };
     },
-    [campaigns, toast],
+    [campaigns, refreshCalibration, toast],
   );
 
   const undoAction = useCallback(
@@ -684,6 +692,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     consent,
     overview,
     calibration,
+    refreshCalibration,
     actionQueue,
     learnedRules,
     liveEngine,

@@ -11,6 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, RejectReason } from "../types";
 import { rejectEffect, reflection } from "./feedback";
 import { trustDelta, type RejectReceipt } from "./delta";
+import { recomputeShopCalibration } from "./recompute.server";
 
 export interface RecordRejectionInput {
   alertId: string | null;
@@ -44,6 +45,19 @@ async function readPairEv(
     return Number.isFinite(n) ? n : 0;
   };
   return { alpha: num(row?.alpha), beta: num(row?.beta) };
+}
+
+async function refreshShopCalibrationHeadline(
+  shopId: string,
+  sb: SupabaseClient,
+): Promise<void> {
+  try {
+    await recomputeShopCalibration(shopId, { sb }, { skipPeerPrior: true });
+  } catch (err) {
+    console.error(
+      `[calibration] rejection headline recompute failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export async function recordRejection(
@@ -190,6 +204,8 @@ export async function recordRejection(
     before,
     after,
   );
+
+  await refreshShopCalibrationHeadline(shopId, sb);
 
   return {
     reflection: reflection(input.reason, input.detectorId, input.actionKind),

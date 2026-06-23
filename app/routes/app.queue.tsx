@@ -1,4 +1,4 @@
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -540,6 +540,7 @@ function ProposalCard({
   p,
   onGraduated,
   onResolved,
+  onCalibrationChanged,
   compact = false,
   compactTitle,
   compactMeta,
@@ -547,6 +548,7 @@ function ProposalCard({
   p: QueueProposal;
   onGraduated: (info: GraduatedInfo) => void;
   onResolved: (alertId: string, learning: RecentLearning) => void;
+  onCalibrationChanged: () => void;
   compact?: boolean;
   compactTitle?: string;
   compactMeta?: string | null;
@@ -559,6 +561,8 @@ function ProposalCard({
   const [leaving, setLeaving] = useState(false);
   const [idemKey] = useState(() => newIdempotencyKey());
   const resolveStarted = useRef(false);
+  const approveProcessed = useRef(false);
+  const rejectProcessed = useRef(false);
 
   const approveFetcher = useFetcher<{ ok?: boolean; calibration?: ApproveReceipt; toast?: { message: string; isError?: boolean } }>();
   const rejectFetcher = useFetcher<ActionPayload>();
@@ -583,22 +587,28 @@ function ProposalCard({
   // Transition to the done state once a submission resolves; capture the approve
   // receipt and bubble a graduation up to the screen-level moment.
   useEffect(() => {
+    if (approveProcessed.current) return;
     if (approveFetcher.state === "idle" && approveFetcher.data?.ok) {
+      approveProcessed.current = true;
       setView("approved");
       const cal = approveFetcher.data.calibration;
       if (cal) {
         setReceipt(cal);
+        onCalibrationChanged();
         if (cal.justGraduated) {
           onGraduated({ detectorId: p.detector_id, actionKind: p.action_kind, label: actionLabel });
         }
       }
     }
-  }, [approveFetcher.state, approveFetcher.data, onGraduated, p.detector_id, p.action_kind, actionLabel]);
+  }, [approveFetcher.state, approveFetcher.data, onCalibrationChanged, onGraduated, p.detector_id, p.action_kind, actionLabel]);
   useEffect(() => {
+    if (rejectProcessed.current) return;
     if (rejectFetcher.state === "idle" && rejectFetcher.data && "reflection" in rejectFetcher.data) {
+      rejectProcessed.current = true;
+      onCalibrationChanged();
       setView("rejected");
     }
-  }, [rejectFetcher.state, rejectFetcher.data]);
+  }, [onCalibrationChanged, rejectFetcher.state, rejectFetcher.data]);
 
   const doApprove = () => {
     approveFetcher.submit(
@@ -924,10 +934,12 @@ function ProposalGroupCard({
   group,
   onGraduated,
   onResolved,
+  onCalibrationChanged,
 }: {
   group: ProposalGroup;
   onGraduated: (info: GraduatedInfo) => void;
   onResolved: (alertId: string, learning: RecentLearning) => void;
+  onCalibrationChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const p = group.representative;
@@ -941,7 +953,7 @@ function ProposalGroupCard({
   }
 
   if (count === 1) {
-    return <ProposalCard p={p} onGraduated={onGraduated} onResolved={onResolved} />;
+    return <ProposalCard p={p} onGraduated={onGraduated} onResolved={onResolved} onCalibrationChanged={onCalibrationChanged} />;
   }
 
   return (
@@ -984,6 +996,7 @@ function ProposalGroupCard({
               p={item}
               onGraduated={onGraduated}
               onResolved={onResolved}
+              onCalibrationChanged={onCalibrationChanged}
               compact
               compactTitle={opportunityLabel(index)}
               compactMeta={compactMetaForGroupItem(item, titleCounts)}
@@ -1085,6 +1098,7 @@ function Stack({ children }: { children: ReactNode }) {
 
 export default function ActionQueue() {
   const { proposals, learnedRules, calibrationPct, nearGraduation, error } = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
   // Hold the worked-through list stable so a card's reflection receipt isn't
   // wiped by the loader revalidation that fires after each approve/reject.
   // Highest confidence first (matches the design's ranking note).
@@ -1137,7 +1151,13 @@ export default function ActionQueue() {
             </div>
             <div className="aqx-list">
               {groups.map((g) => (
-                <ProposalGroupCard key={g.key} group={g} onGraduated={setGraduated} onResolved={onResolved} />
+                <ProposalGroupCard
+                  key={g.key}
+                  group={g}
+                  onGraduated={setGraduated}
+                  onResolved={onResolved}
+                  onCalibrationChanged={revalidator.revalidate}
+                />
               ))}
             </div>
           </div>

@@ -102,6 +102,8 @@ export interface DashboardCtx {
 
   /** Calibration headline; null until loaded or when no data yet. */
   calibration: { pct: number | null; updated_at: string | null; nearGraduation: number } | null;
+  /** Re-pull the calibration headline after a teaching signal lands. */
+  refreshCalibration: () => void;
 
   /** Action Queue proposals; empty until loaded. */
   actionQueue: QueueProposalVM[];

@@ -682,6 +682,7 @@ function ProposalRow({
           onResult={(result, reason) => {
             setRejectResult(result);
             setRejectReason(reason);
+            app.refreshCalibration();
             setView("rejected");
           }}
           onCancel={() => setView("idle")}

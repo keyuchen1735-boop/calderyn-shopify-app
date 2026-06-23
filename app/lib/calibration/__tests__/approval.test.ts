@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordApproval } from "../approval.server";
 import { confFromEv } from "../delta";
+import { recomputeShopCalibration } from "../recompute.server";
+
+vi.mock("../recompute.server", () => ({
+  recomputeShopCalibration: vi.fn().mockResolvedValue({ shopId: "shop-1", pairs: 1, raw: 25, display: 25 }),
+}));
 
 /**
  * Stub a SupabaseClient for recordApproval. recordApproval now:
@@ -54,6 +59,19 @@ describe("recordApproval — RPC call (unchanged write behavior)", () => {
 });
 
 describe("recordApproval — trust receipt", () => {
+  it("refreshes the shop calibration headline after a successful approval signal", async () => {
+    const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
+    await recordApproval("shop-1", DETECTOR, ACTION, sb);
+    expect(recomputeShopCalibration).toHaveBeenCalledWith("shop-1", { sb }, { skipPeerPrior: true });
+  });
+
+  it("still returns the receipt when headline recompute fails", async () => {
+    vi.mocked(recomputeShopCalibration).mockRejectedValueOnce(new Error("recompute failed"));
+    const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
+    const r = await recordApproval("shop-1", DETECTOR, ACTION, sb);
+    expect(r.after).toBeGreaterThan(0);
+  });
+
   it("computes delta = round(after - before) from the two reads", async () => {
     const before = { alpha: 0, beta: 0 };
     const after = { alpha: 1, beta: 0, clean_approvals: 1, graduation_threshold: 75, graduated: false };
