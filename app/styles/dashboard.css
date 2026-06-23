@@ -474,6 +474,10 @@
     display: flex; flex-direction: column; gap: 12px;
     padding: calc(15px * var(--density)) calc(22px * var(--density));
   }
+  .cd-queue-item[data-leaving="true"] {
+    transform: translateY(-6px); opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0;
+    pointer-events: none; transition: transform .24s ease, opacity .2s ease, max-height .26s ease, padding .26s ease;
+  }
   .cd-queue-item[data-compact="true"] {
     gap: 8px;
     padding: calc(11px * var(--density)) calc(14px * var(--density));
@@ -618,6 +622,17 @@
   .cd-rcpt-rtitle { font-size: 12.5px; font-weight: 600; color: var(--text-1); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .cd-rcpt-rsub { font-size: 12px; color: var(--text-2); margin-top: 1px; line-height: 1.45; }
   .cd-rcpt-saved { font-size: 10px; font-weight: 600; color: var(--accent); display: inline-flex; align-items: center; gap: 3px; }
+  .cd-resolve { display: flex; align-items: center; gap: 10px; padding: 10px 14px 13px calc(42px * var(--density)); border-top: 0.5px solid var(--hairline); background: rgba(120, 120, 128, 0.04); }
+  .cd-resolve-ring { width: 38px; height: 38px; border-radius: 999px; display: grid; place-items: center; flex: none; }
+  .cd-resolve-ring span { width: 29px; height: 29px; border-radius: 999px; background: var(--card-solid); display: grid; place-items: center; font-size: calc(11px * var(--type-scale)); font-weight: 700; color: var(--text-1); }
+  .cd-resolve-copy div { font-size: calc(12.5px * var(--type-scale)); font-weight: 650; color: var(--text-1); }
+  .cd-resolve-copy span { display: block; font-size: calc(12px * var(--type-scale)); color: var(--text-2); margin-top: 1px; }
+  .cd-recent-learned { border-top: 0.5px solid var(--hairline); }
+  .cd-recent-group + .cd-recent-group { border-top: 0.5px solid var(--hairline); }
+  .cd-recent-head, .cd-persisted-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px calc(22px * var(--density)); background: var(--gray-bg); color: var(--text-3); font-size: calc(11.5px * var(--type-scale)); font-weight: 700; letter-spacing: .01em; }
+  .cd-recent-head span:first-child, .cd-persisted-head { color: var(--text-1); }
+  .cd-recent-learned .cd-caption b { display: block; color: var(--text-1); margin-bottom: 1px; }
+  .cd-recent-learned .cd-caption small { display: block; color: var(--text-2); line-height: 1.35; }
 
   /* ============ chart bits ============ */
   .cd-tip {

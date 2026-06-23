@@ -7,7 +7,7 @@
 // (client.rejectProposal -> /dashboard/api/queue/reject) and executes NOTHING;
 // it returns the reject receipt (reflection + trust delta + savedAsRule) that
 // drives the receipt card. Learned rules section + undo unchanged.
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, ACTION_LABELS, alertDetectorLabel } from "../format";
@@ -45,6 +45,9 @@ const LEARNED_TEXT: Record<RejectReason, string> = {
   i_handle_this: "leave this kind of call to you from now on.",
   other: "take your note into account next time.",
 };
+
+const RESOLVE_DISMISS_MS = 12_000;
+const RESOLVE_EXIT_MS = 260;
 
 /* ---------- Header ---------- */
 function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
@@ -375,10 +378,67 @@ function ProposalDetails({
   );
 }
 
+type RecentLearning = {
+  id: string;
+  alertId: string;
+  detectorId: string;
+  actionKind: string;
+  detectorLabel: string;
+  actionLabel: string;
+  outcome: "approved" | "rejected";
+  title: string;
+  summary: string;
+  detail: string;
+  impact: number;
+  deltaLabel: string;
+  deltaTone: "success" | "critical" | "neutral";
+};
+
+function deltaMeta(delta: number): { label: string; tone: "success" | "critical" | "neutral" } {
+  return {
+    label: delta === 0 ? "no change" : delta > 0 ? `+${delta}%` : `${delta}%`,
+    tone: delta < 0 ? "critical" : delta > 0 ? "success" : "neutral",
+  };
+}
+
+function ResolveCountdown({ outcome }: { outcome: "approved" | "rejected" }) {
+  const [remainingMs, setRemainingMs] = useState(RESOLVE_DISMISS_MS);
+
+  useEffect(() => {
+    const started = Date.now();
+    const interval = window.setInterval(() => {
+      const elapsed = Date.now() - started;
+      setRemainingMs(Math.max(0, RESOLVE_DISMISS_MS - elapsed));
+    }, 120);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const progress = Math.max(0, Math.min(1, remainingMs / RESOLVE_DISMISS_MS));
+  const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const color = outcome === "approved" ? "var(--green)" : "var(--red)";
+
+  return (
+    <div className="cd-resolve">
+      <div
+        className="cd-resolve-ring"
+        style={{ background: `conic-gradient(${color} ${progress * 360}deg, var(--gray-bg) 0deg)` }}
+        aria-label={`Moving to learned section in ${seconds} seconds`}
+      >
+        <span>{seconds}</span>
+      </div>
+      <div className="cd-resolve-copy">
+        <div>{outcome === "approved" ? "Approval saved" : "Rejection saved"}</div>
+        <span>Moving this into what Calderyn learned.</span>
+      </div>
+    </div>
+  );
+}
+
 function ProposalRow({
   proposal,
   app,
   onGraduated,
+  onResolved,
   compact = false,
   compactTitle,
   compactMeta,
@@ -386,6 +446,7 @@ function ProposalRow({
   proposal: QueueProposalVM;
   app: DashboardCtx;
   onGraduated: (info: GraduatedInfo) => void;
+  onResolved: (alertId: string, learning: RecentLearning) => void;
   compact?: boolean;
   compactTitle?: string;
   compactMeta?: string | null;
@@ -396,6 +457,8 @@ function ProposalRow({
   const [rejectResult, setRejectResult] = useState<RejectResult | null>(null);
   const [rejectReason, setRejectReason] = useState<RejectReason | null>(null);
   const [approveReceipt, setApproveReceipt] = useState<ApproveReceipt | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const resolveStarted = useRef(false);
 
   const alert = app.alerts.find((a) => a.id === proposal.alertId);
   const detectorLabel = alertDetectorLabel(proposal.detector_id, alert?.evidence ?? {});
@@ -429,6 +492,64 @@ function ProposalRow({
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (resolveStarted.current) return;
+    if (view !== "approved" && view !== "rejected") return;
+
+    resolveStarted.current = true;
+    let outcome: RecentLearning["outcome"];
+    let delta: number;
+    let summary: string;
+    let detail: string;
+
+    if (view === "approved") {
+      if (!approveReceipt) {
+        resolveStarted.current = false;
+        return;
+      }
+      outcome = "approved";
+      delta = approveReceipt.delta;
+      summary = `Approved ${actionLabel.toLowerCase()}`;
+      detail = `Trust is now about ${approveReceipt.after}% for this fix.`;
+    } else {
+      if (!rejectResult || !rejectReason) {
+        resolveStarted.current = false;
+        return;
+      }
+      outcome = "rejected";
+      delta = rejectResult.delta;
+      summary = `Rejected ${actionLabel.toLowerCase()} because ${REJECT_REASON_LABELS[rejectReason]}.`;
+      detail = LEARNED_TEXT[rejectReason];
+    }
+
+    const { label: deltaLabel, tone: deltaTone } = deltaMeta(delta);
+    const learning: RecentLearning = {
+      id: `${proposal.alertId}:${outcome}:${Date.now()}`,
+      alertId: proposal.alertId,
+      detectorId: proposal.detector_id,
+      actionKind: proposal.action_kind,
+      detectorLabel,
+      actionLabel,
+      outcome,
+      title: proposal.title,
+      summary,
+      detail,
+      impact: proposal.dollar_impact,
+      deltaLabel,
+      deltaTone,
+    };
+
+    let removeTimer: number | undefined;
+    const timer = window.setTimeout(() => {
+      setLeaving(true);
+      removeTimer = window.setTimeout(() => onResolved(proposal.alertId, learning), RESOLVE_EXIT_MS);
+    }, RESOLVE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (removeTimer) window.clearTimeout(removeTimer);
+    };
+  }, [actionLabel, approveReceipt, detectorLabel, onResolved, proposal, rejectReason, rejectResult, view]);
   const toggleDetails = () => setDetailsOpen((open) => !open);
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -438,7 +559,12 @@ function ProposalRow({
   };
 
   return (
-    <div className="cd-queue-item" data-conf={conf.tone} data-compact={compact ? "true" : "false"}>
+    <div
+      className="cd-queue-item"
+      data-conf={conf.tone}
+      data-compact={compact ? "true" : "false"}
+      data-leaving={leaving ? "true" : "false"}
+    >
       <div
         className="cd-queue-main"
         role="button"
@@ -563,11 +689,17 @@ function ProposalRow({
       )}
 
       {view === "approved" && approveReceipt && (
-        <ApproveReceiptPanel receipt={approveReceipt} actionKind={proposal.action_kind as ActionKind} actionLabel={actionLabel} />
+        <>
+          <ApproveReceiptPanel receipt={approveReceipt} actionKind={proposal.action_kind as ActionKind} actionLabel={actionLabel} />
+          <ResolveCountdown outcome="approved" />
+        </>
       )}
 
       {view === "rejected" && rejectResult && rejectReason && (
-        <ReflectionReceipt result={rejectResult} reason={rejectReason} />
+        <>
+          <ReflectionReceipt result={rejectResult} reason={rejectReason} />
+          <ResolveCountdown outcome="rejected" />
+        </>
       )}
     </div>
   );
@@ -650,10 +782,12 @@ function ProposalGroupRow({
   group,
   app,
   onGraduated,
+  onResolved,
 }: {
   group: ProposalGroup;
   app: DashboardCtx;
   onGraduated: (info: GraduatedInfo) => void;
+  onResolved: (alertId: string, learning: RecentLearning) => void;
 }) {
   const [open, setOpen] = useState(false);
   const p = group.representative;
@@ -666,7 +800,7 @@ function ProposalGroupRow({
   }
 
   if (group.items.length === 1) {
-    return <ProposalRow proposal={p} app={app} onGraduated={onGraduated} />;
+    return <ProposalRow proposal={p} app={app} onGraduated={onGraduated} onResolved={onResolved} />;
   }
 
   return (
@@ -706,6 +840,7 @@ function ProposalGroupRow({
               proposal={item}
               app={app}
               onGraduated={onGraduated}
+              onResolved={onResolved}
               compact
               compactTitle={opportunityLabel(index)}
               compactMeta={compactMetaForGroupItem(item, titleCounts)}
@@ -718,8 +853,26 @@ function ProposalGroupRow({
 }
 
 /* ---------- Learned rules section ---------- */
-function LearnedRulesSection({ rules, app }: { rules: LearnedRuleVM[]; app: DashboardCtx }) {
+function groupRecentLearnings(events: RecentLearning[]) {
+  const groups = new Map<string, { key: string; label: string; events: RecentLearning[]; totalImpact: number }>();
+  for (const event of events) {
+    const key = `${event.outcome}:${event.detectorId}:${event.actionKind}`;
+    const existing = groups.get(key) ?? {
+      key,
+      label: `${event.actionLabel} ${event.outcome === "approved" ? "approvals" : "rejections"}`,
+      events: [],
+      totalImpact: 0,
+    };
+    existing.events.push(event);
+    existing.totalImpact += event.impact;
+    groups.set(key, existing);
+  }
+  return [...groups.values()];
+}
+
+function LearnedRulesSection({ rules, recent, app }: { rules: LearnedRuleVM[]; recent: RecentLearning[]; app: DashboardCtx }) {
   const [undoingId, setUndoingId] = useState<string | null>(null);
+  const recentGroups = groupRecentLearnings(recent);
 
   const onUndo = async (rule: LearnedRuleVM) => {
     if (undoingId) return;
@@ -741,37 +894,66 @@ function LearnedRulesSection({ rules, app }: { rules: LearnedRuleVM[]; app: Dash
       <div className="cd-pad-x cd-pad-t">
         <h2 className="cd-h2">What Calderyn has learned</h2>
         <p className="cd-caption" style={{ color: "var(--text-3)", marginTop: 2 }}>
-          Rules picked up from your rejections. Undo any rule to let Calderyn reconsider it.
+          Latest approvals and rejections from this session, grouped by what the engine adjusted.
         </p>
       </div>
-      {rules.length === 0 ? (
-        <Placeholder
-          icon="scan"
-          title="Nothing learned yet"
-          sub="As you reject suggestions, the rules Calderyn picks up about how you run your shop will appear here."
-        />
-      ) : (
-        <div className="cd-rows">
-          {rules.map((rule) => (
-            <div key={rule.id} className="cd-row" style={{ cursor: "default" }}>
-              <span className="cd-feed-icon" data-tone="neutral">
-                <CDIcon name="shield" size={14} strokeWidth={1.9} />
-              </span>
-              <span className="min-w-0 flex-1 cd-caption" style={{ color: "var(--text-2)" }}>
-                {rule.summary}
-              </span>
-              <Btn
-                kind="secondary"
-                small
-                icon={undoingId === rule.id ? "rotate" : "undo"}
-                disabled={undoingId === rule.id}
-                onClick={() => onUndo(rule)}
-              >
-                Undo
-              </Btn>
+      {recentGroups.length > 0 && (
+        <div className="cd-recent-learned">
+          {recentGroups.map((group) => (
+            <div key={group.key} className="cd-recent-group">
+              <div className="cd-recent-head">
+                <span>{group.label}</span>
+                <span>
+                  {group.events.length} {group.events.length === 1 ? "alert" : "alerts"} - {money(group.totalImpact)}
+                </span>
+              </div>
+              {group.events.map((event) => (
+                <div key={event.id} className="cd-row" style={{ cursor: "default" }}>
+                  <span className="cd-feed-icon" data-tone={event.outcome === "approved" ? "success" : "critical"}>
+                    <CDIcon name={event.outcome === "approved" ? "check" : "x"} size={14} strokeWidth={2.1} />
+                  </span>
+                  <span className="min-w-0 flex-1 cd-caption" style={{ color: "var(--text-2)" }}>
+                    <b>{event.summary}</b>
+                    <small>{event.detail}</small>
+                  </span>
+                  <Pill tone={event.deltaTone}>{event.deltaLabel}</Pill>
+                </div>
+              ))}
             </div>
           ))}
         </div>
+      )}
+      {rules.length === 0 && recentGroups.length === 0 ? (
+        <Placeholder
+          icon="scan"
+          title="Nothing learned yet"
+          sub="Approve or reject suggestions and Calderyn will summarize what changed here."
+        />
+      ) : (
+        rules.length > 0 && (
+          <div className="cd-rows">
+            <div className="cd-persisted-head">Standing rules from prior rejections</div>
+            {rules.map((rule) => (
+              <div key={rule.id} className="cd-row" style={{ cursor: "default" }}>
+                <span className="cd-feed-icon" data-tone="neutral">
+                  <CDIcon name="shield" size={14} strokeWidth={1.9} />
+                </span>
+                <span className="min-w-0 flex-1 cd-caption" style={{ color: "var(--text-2)" }}>
+                  {rule.summary}
+                </span>
+                <Btn
+                  kind="secondary"
+                  small
+                  icon={undoingId === rule.id ? "rotate" : "undo"}
+                  disabled={undoingId === rule.id}
+                  onClick={() => onUndo(rule)}
+                >
+                  Undo
+                </Btn>
+              </div>
+            ))}
+          </div>
+        )
       )}
     </Card>
   );
@@ -782,6 +964,7 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
   // Local copy so a worked-through card (showing its reflection receipt) isn't
   // wiped before the next ctx refresh. Track the ctx reference to detect reloads.
   const [proposals, setProposals] = useState<QueueProposalVM[]>(app.actionQueue);
+  const [recentLearnings, setRecentLearnings] = useState<RecentLearning[]>([]);
   const ctxQueueRef = useRef(app.actionQueue);
 
   useEffect(() => {
@@ -799,6 +982,10 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
   // The most recent pair to cross into graduated this session drives the
   // celebratory "autopilot unlocked" moment at the top of the queue.
   const [graduated, setGraduated] = useState<GraduatedInfo | null>(null);
+  const onResolved = useCallback((alertId: string, learning: RecentLearning) => {
+    setProposals((current) => current.filter((item) => item.alertId !== alertId));
+    setRecentLearnings((current) => [learning, ...current.filter((item) => item.alertId !== alertId)].slice(0, 12));
+  }, []);
 
   return (
     <div className="cd-screen">
@@ -837,14 +1024,14 @@ export default function ActionQueue({ app }: { app: DashboardCtx }) {
           <Card pad={false}>
             <div className="cd-rows">
               {groups.map((g) => (
-                <ProposalGroupRow key={g.key} group={g} app={app} onGraduated={setGraduated} />
+                <ProposalGroupRow key={g.key} group={g} app={app} onGraduated={setGraduated} onResolved={onResolved} />
               ))}
             </div>
           </Card>
         </div>
       )}
 
-      <LearnedRulesSection rules={app.learnedRules} app={app} />
+      <LearnedRulesSection rules={app.learnedRules} recent={recentLearnings} app={app} />
     </div>
   );
 }

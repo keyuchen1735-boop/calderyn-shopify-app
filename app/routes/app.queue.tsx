@@ -1,7 +1,7 @@
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Banner, Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -476,15 +476,77 @@ function ProposalDetails({
   );
 }
 
+type RecentLearning = {
+  id: string;
+  alertId: string;
+  detectorId: string;
+  actionKind: ActionKind;
+  detectorLabel: string;
+  actionLabel: string;
+  outcome: "approved" | "rejected";
+  title: string;
+  summary: string;
+  detail: string;
+  impact: number;
+  deltaLabel: string;
+  deltaTone: "up" | "down" | "flat";
+};
+
+function isRejectResult(data: ActionPayload | undefined): data is RejectResult {
+  return Boolean(data && "reflection" in data);
+}
+
+function deltaMeta(delta: number): { label: string; tone: "up" | "down" | "flat" } {
+  return {
+    label: delta === 0 ? "no change" : delta > 0 ? `+${delta}%` : `${delta}%`,
+    tone: delta < 0 ? "down" : delta > 0 ? "up" : "flat",
+  };
+}
+
+function ResolveCountdown({ outcome }: { outcome: "approved" | "rejected" }) {
+  const [remainingMs, setRemainingMs] = useState(RESOLVE_DISMISS_MS);
+
+  useEffect(() => {
+    const started = Date.now();
+    const interval = window.setInterval(() => {
+      const elapsed = Date.now() - started;
+      setRemainingMs(Math.max(0, RESOLVE_DISMISS_MS - elapsed));
+    }, 120);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const progress = Math.max(0, Math.min(1, remainingMs / RESOLVE_DISMISS_MS));
+  const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const color = outcome === "approved" ? "#1a7f4f" : "#b3300f";
+
+  return (
+    <div className="aqx-resolve">
+      <div
+        className="aqx-resolve-ring"
+        style={{ background: `conic-gradient(${color} ${progress * 360}deg, #e7ecef 0deg)` }}
+        aria-label={`Moving to learned section in ${seconds} seconds`}
+      >
+        <span>{seconds}</span>
+      </div>
+      <div className="aqx-resolve-copy">
+        <div>{outcome === "approved" ? "Approval saved" : "Rejection saved"}</div>
+        <span>Moving this into what Calderyn learned.</span>
+      </div>
+    </div>
+  );
+}
+
 function ProposalCard({
   p,
   onGraduated,
+  onResolved,
   compact = false,
   compactTitle,
   compactMeta,
 }: {
   p: QueueProposal;
   onGraduated: (info: GraduatedInfo) => void;
+  onResolved: (alertId: string, learning: RecentLearning) => void;
   compact?: boolean;
   compactTitle?: string;
   compactMeta?: string | null;
@@ -494,7 +556,9 @@ function ProposalCard({
   const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");
   const [receipt, setReceipt] = useState<ApproveReceipt | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const [idemKey] = useState(() => newIdempotencyKey());
+  const resolveStarted = useRef(false);
 
   const approveFetcher = useFetcher<{ ok?: boolean; calibration?: ApproveReceipt; toast?: { message: string; isError?: boolean } }>();
   const rejectFetcher = useFetcher<ActionPayload>();
@@ -549,6 +613,67 @@ function ProposalCard({
       { method: "post" },
     );
   };
+
+  useEffect(() => {
+    const rejectedData = isRejectResult(rejectFetcher.data) ? rejectFetcher.data : null;
+    if (resolveStarted.current) return;
+    if (view !== "approved" && view !== "rejected") return;
+
+    resolveStarted.current = true;
+    let outcome: RecentLearning["outcome"];
+    let delta: number;
+    let summary: string;
+    let detail: string;
+
+    if (view === "approved") {
+      if (!receipt) {
+        resolveStarted.current = false;
+        return;
+      }
+      outcome = "approved";
+      delta = receipt.delta;
+      summary = `Approved ${actionLabel.toLowerCase()}`;
+      detail = `Trust is now about ${receipt.after}% for this fix.`;
+    } else {
+      if (!rejectedData || !reason) {
+        resolveStarted.current = false;
+        return;
+      }
+      outcome = "rejected";
+      delta = rejectedData.delta;
+      summary = `Rejected ${actionLabel.toLowerCase()} because ${REJECT_REASON_LABELS[reason]}.`;
+      detail = LEARNED_TEXT[reason];
+    }
+
+    const { label: deltaLabel, tone: deltaTone } = deltaMeta(delta);
+    const learning: RecentLearning = {
+      id: `${p.alertId}:${outcome}:${Date.now()}`,
+      alertId: p.alertId,
+      detectorId: p.detector_id,
+      actionKind: p.action_kind,
+      detectorLabel: detector,
+      actionLabel,
+      outcome,
+      title: p.title,
+      summary,
+      detail,
+      impact: p.dollar_impact,
+      deltaLabel,
+      deltaTone,
+    };
+
+    let removeTimer: number | undefined;
+    const timer = window.setTimeout(() => {
+      setLeaving(true);
+      removeTimer = window.setTimeout(() => onResolved(p.alertId, learning), RESOLVE_EXIT_MS);
+    }, RESOLVE_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (removeTimer) window.clearTimeout(removeTimer);
+    };
+  }, [actionLabel, detector, onResolved, p, reason, receipt, rejectFetcher.data, view]);
+
   const toggleDetails = () => setDetailsOpen((open) => !open);
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -558,7 +683,12 @@ function ProposalCard({
   };
 
   return (
-    <div className="aqx-card" data-conf={band} data-compact={compact ? "true" : "false"}>
+    <div
+      className="aqx-card"
+      data-conf={band}
+      data-compact={compact ? "true" : "false"}
+      data-leaving={leaving ? "true" : "false"}
+    >
       <div
         className="aqx-row"
         role="button"
@@ -698,11 +828,17 @@ function ProposalCard({
       )}
 
       {view === "approved" && receipt && (
-        <ApproveReceiptPanel receipt={receipt} actionKind={p.action_kind} actionLabel={actionLabel} />
+        <>
+          <ApproveReceiptPanel receipt={receipt} actionKind={p.action_kind} actionLabel={actionLabel} />
+          <ResolveCountdown outcome="approved" />
+        </>
       )}
 
       {view === "rejected" && rejectFetcher.data && "reflection" in rejectFetcher.data && reason && (
-        <ReflectionReceipt data={rejectFetcher.data} reason={reason} />
+        <>
+          <ReflectionReceipt data={rejectFetcher.data} reason={reason} />
+          <ResolveCountdown outcome="rejected" />
+        </>
       )}
     </div>
   );
@@ -715,6 +851,9 @@ type ProposalGroup = {
   representative: QueueProposal;
   totalImpact: number;
 };
+
+const RESOLVE_DISMISS_MS = 12_000;
+const RESOLVE_EXIT_MS = 260;
 
 function proposalSectionTitle(p: Pick<QueueProposal, "action_kind" | "detector_id">): string {
   switch (p.action_kind) {
@@ -784,9 +923,11 @@ function groupProposals(proposals: QueueProposal[]): ProposalGroup[] {
 function ProposalGroupCard({
   group,
   onGraduated,
+  onResolved,
 }: {
   group: ProposalGroup;
   onGraduated: (info: GraduatedInfo) => void;
+  onResolved: (alertId: string, learning: RecentLearning) => void;
 }) {
   const [open, setOpen] = useState(false);
   const p = group.representative;
@@ -800,7 +941,7 @@ function ProposalGroupCard({
   }
 
   if (count === 1) {
-    return <ProposalCard p={p} onGraduated={onGraduated} />;
+    return <ProposalCard p={p} onGraduated={onGraduated} onResolved={onResolved} />;
   }
 
   return (
@@ -842,6 +983,7 @@ function ProposalGroupCard({
               key={`${item.alertId}:${item.action_kind}`}
               p={item}
               onGraduated={onGraduated}
+              onResolved={onResolved}
               compact
               compactTitle={opportunityLabel(index)}
               compactMeta={compactMetaForGroupItem(item, titleCounts)}
@@ -854,35 +996,83 @@ function ProposalGroupCard({
 }
 
 /* ---------- learned rules (v2) ---------- */
-function LearnedRules({ rules }: { rules: LearnedRule[] }) {
+function groupRecentLearnings(events: RecentLearning[]) {
+  const groups = new Map<string, { key: string; label: string; events: RecentLearning[]; totalImpact: number }>();
+  for (const event of events) {
+    const key = `${event.outcome}:${event.detectorId}:${event.actionKind}`;
+    const existing = groups.get(key) ?? {
+      key,
+      label: `${event.actionLabel} ${event.outcome === "approved" ? "approvals" : "rejections"}`,
+      events: [],
+      totalImpact: 0,
+    };
+    existing.events.push(event);
+    existing.totalImpact += event.impact;
+    groups.set(key, existing);
+  }
+  return [...groups.values()];
+}
+
+function LearnedRules({ rules, recent }: { rules: LearnedRule[]; recent: RecentLearning[] }) {
   const undoFetcher = useFetcher();
+  const recentGroups = groupRecentLearnings(recent);
   return (
     <div className="aqx-rules">
       <div className="aqx-rules-head">
         <h2>What Calderyn has learned</h2>
-        <p>Rules picked up from your rejections. Undo any rule to let Calderyn reconsider it.</p>
+        <p>Latest approvals and rejections from this session, grouped by what the engine adjusted.</p>
       </div>
-      {rules.length === 0 ? (
+      {recentGroups.length > 0 && (
+        <div className="aqx-recent">
+          {recentGroups.map((group) => (
+            <div key={group.key} className="aqx-recent-group">
+              <div className="aqx-recent-head">
+                <span>{group.label}</span>
+                <span>
+                  {group.events.length} {group.events.length === 1 ? "alert" : "alerts"} · {fmtMoney(group.totalImpact)}
+                </span>
+              </div>
+              {group.events.map((event) => (
+                <div key={event.id} className="aqx-rule aqx-rule--recent">
+                  <span className="aqx-rule-ico" data-outcome={event.outcome}>
+                    {event.outcome === "approved" ? <ICheck /> : <IX s={14} />}
+                  </span>
+                  <span className="aqx-rule-text">
+                    <b>{event.summary}</b>
+                    <small>{event.detail}</small>
+                  </span>
+                  <span className={`aqx-delta aqx-delta--${event.deltaTone}`}>{event.deltaLabel}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      {rules.length === 0 && recentGroups.length === 0 ? (
         <div className="aqx-rules-empty">
-          Nothing learned yet. As you reject suggestions, the rules Calderyn picks up about how you run your shop will
-          show here.
+          Nothing learned yet. Approve or reject suggestions and Calderyn will summarize what changed here.
         </div>
       ) : (
-        rules.map((rule) => (
-          <div key={rule.id} className="aqx-rule">
-            <span className="aqx-rule-ico">
-              <IShield />
-            </span>
-            <span className="aqx-rule-text">{rule.summary}</span>
-            <undoFetcher.Form method="post">
-              <input type="hidden" name="intent" value="undo-rule" />
-              <input type="hidden" name="ruleId" value={rule.id} />
-              <button type="submit" className="aqx-rule-undo">
-                <IUndo /> Undo
-              </button>
-            </undoFetcher.Form>
+        rules.length > 0 && (
+          <div className="aqx-persisted">
+            <div className="aqx-persisted-head">Standing rules from prior rejections</div>
+            {rules.map((rule) => (
+              <div key={rule.id} className="aqx-rule">
+                <span className="aqx-rule-ico">
+                  <IShield />
+                </span>
+                <span className="aqx-rule-text">{rule.summary}</span>
+                <undoFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="undo-rule" />
+                  <input type="hidden" name="ruleId" value={rule.id} />
+                  <button type="submit" className="aqx-rule-undo">
+                    <IUndo /> Undo
+                  </button>
+                </undoFetcher.Form>
+              </div>
+            ))}
           </div>
-        ))
+        )
       )}
     </div>
   );
@@ -898,13 +1088,18 @@ export default function ActionQueue() {
   // Hold the worked-through list stable so a card's reflection receipt isn't
   // wiped by the loader revalidation that fires after each approve/reject.
   // Highest confidence first (matches the design's ranking note).
-  const [items] = useState(() => [...proposals].sort((a, b) => b.confidence - a.confidence));
+  const [items, setItems] = useState(() => [...proposals].sort((a, b) => b.confidence - a.confidence));
+  const [recentLearnings, setRecentLearnings] = useState<RecentLearning[]>([]);
   const groups = groupProposals(items).sort(
     (a, b) => b.representative.confidence - a.representative.confidence || b.totalImpact - a.totalImpact,
   );
   // The most recent pair to cross into graduated this session drives the
   // celebratory "autopilot unlocked" moment at the top of the queue.
   const [graduated, setGraduated] = useState<GraduatedInfo | null>(null);
+  const onResolved = useCallback((alertId: string, learning: RecentLearning) => {
+    setItems((current) => current.filter((item) => item.alertId !== alertId));
+    setRecentLearnings((current) => [learning, ...current.filter((item) => item.alertId !== alertId)].slice(0, 12));
+  }, []);
 
   return (
     <Page title="Action Queue">
@@ -942,13 +1137,13 @@ export default function ActionQueue() {
             </div>
             <div className="aqx-list">
               {groups.map((g) => (
-                <ProposalGroupCard key={g.key} group={g} onGraduated={setGraduated} />
+                <ProposalGroupCard key={g.key} group={g} onGraduated={setGraduated} onResolved={onResolved} />
               ))}
             </div>
           </div>
         )}
 
-        <LearnedRules rules={learnedRules} />
+        <LearnedRules rules={learnedRules} recent={recentLearnings} />
       </Stack>
     </Page>
   );
