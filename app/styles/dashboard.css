@@ -1082,13 +1082,6 @@
   border-radius: 12px;
 }
 
-/* ============ Calderyn Labs — "Autopilot replay" (hidden demo) ============ */
-/* Reached only via the secret hexagon dot in Settings. Ported from the
-   "Secret button feature request" Claude Design; light mode is pixel-identical.
-   The design's hardcoded #fff fills are mapped to var(--card-solid) (which is
-   #FFFFFF in light, #2C2C2E in dark) so the demo also reads correctly in dark
-   mode without changing a single light-mode pixel. */
-
 /* ---- secret trigger (Settings footer) ---- */
 .cd-secret-foot {
   display: flex; align-items: center; justify-content: center; gap: 8px;

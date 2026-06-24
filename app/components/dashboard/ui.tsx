@@ -1,6 +1,3 @@
-// Calderyn DashV2 — shared UI primitives + animated charts.
-// Ported from the prototype's ui.jsx. CD.money/CD.moneyK → imports from ./format;
-// global CDIcon → import from ./icons. All animation/timing/SVG logic preserved.
 import {
   useState,
   useEffect,

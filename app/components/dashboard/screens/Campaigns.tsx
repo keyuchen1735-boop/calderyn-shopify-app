@@ -1,9 +1,3 @@
-// Calderyn DashV2 — Campaigns screen (LIVE).
-// Ported from the prototype's screen-campaigns.jsx, wired to the live DashboardCtx.
-// List (from app.campaigns, grade-joined from fetchAnalytics) + detail (stats,
-// break-even sparkline, guardrailed pause / resume / cut-budget actions).
-// CD.* globals → live imports: money (format), CDIcon (icons),
-// Card/GradePill/PlatformMark/Sparkline/Pill/Btn/Segmented/Placeholder/CountMoney (ui).
 import { useEffect, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { trueRoas } from "~/lib/roas";
@@ -38,7 +32,7 @@ const DIR_PILL: Record<string, { label: string; tone: "success" | "warn" | "crit
   pause: { label: "Pause", tone: "critical", icon: "pause" },
 };
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({
   title,
   sub,

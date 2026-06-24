@@ -1,21 +1,15 @@
-// Calderyn DashV2 — Creative Predictor screen.
 // Scores an ad creative before spend: mandatory media drop box (the actual
 // image/video) → live /dashboard/api/screener run → composite RingGauge →
 // 13-dimension scorecard → predicted ROAS band + outcomes → tips.
 //
-// The manual form scores LIVE. The "pick a live ad" list and the generated-
-// variants demo remain simulated (SCORECARD from demo.ts) —
-// TODO(other-agent): wire those to the live predictor/generator API too.
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, RingGauge, ScoreBar, Btn, Pill, GradePill } from "../ui";
 import { CDIcon } from "../icons";
 import { TipIcon, categorizeTip } from "../tip-icons";
 import { money } from "../format";
 import { SCORECARD, GROUP_LABELS } from "../demo";
-// Side-effect import: registers the <image-slot> custom element on the client.
-// Self-guards SSR (typeof window) so this is import-safe under Remix SSR.
-import "../image-slot";
 import MediaDrop from "../MediaDrop";
+import CreativePreviewPlaceholder from "../CreativePreviewPlaceholder";
 import type { DashboardCtx } from "../context";
 import type { Scorecard, ScorecardMetric } from "../view-models";
 import {
@@ -26,7 +20,7 @@ import {
 import type { ProcessedCreativeMedia } from "~/lib/creative-media";
 import { normalizeTip, type CreativeScreenRun, type Tip } from "~/lib/screener/types";
 
-// Staged scoring run copy (matches the prototype's SCORE_STEPS).
+// Staged scoring run copy.
 const SCORE_STEPS = [
   "Reading creative…",
   "Calibrating against your account history (38 ads)…",
@@ -37,7 +31,7 @@ const SCORE_STEPS = [
 
 type Phase = "form" | "running" | "result";
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({
   title,
   sub,
@@ -184,7 +178,7 @@ function OutcomePanel({ o }: { o: Scorecard["outcomes"] }) {
 }
 
 export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
-  // Default to the scored result (matches the prototype's initial "result" phase).
+  // Default to the scored result.
   const [phase, setPhase] = useState<Phase>("result");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
@@ -438,14 +432,10 @@ export default function ScreenPredictor({ app }: { app: DashboardCtx }) {
                 }}
               />
             ) : (
-              <image-slot
-                id="original-ad"
-                shape="rounded"
-                radius="14"
-                fit="cover"
-                placeholder="Drop the original ad"
+              <CreativePreviewPlaceholder
+                label="No creative preview"
                 style={{ width: 120, height: 120, flexShrink: 0 }}
-              ></image-slot>
+              />
             )}
             <RingGauge value={sc.composite} size={120} label="composite" />
             <div className="min-w-0 flex-1" style={{ minWidth: 240 }}>

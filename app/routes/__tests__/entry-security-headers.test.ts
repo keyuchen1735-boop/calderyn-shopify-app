@@ -33,6 +33,8 @@ describe("applySecurityHeaders", () => {
     const csp = headers.get("Content-Security-Policy") ?? "";
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'self'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("upgrade-insecure-requests");
   });
 
   it("sets the non-CSP defense-in-depth headers", () => {
@@ -46,6 +48,10 @@ describe("applySecurityHeaders", () => {
       "camera=(), microphone=(), geolocation=(), browsing-topics=()",
     );
     expect(headers.get("X-Permitted-Cross-Domain-Policies")).toBe("none");
+    expect(headers.get("X-DNS-Prefetch-Control")).toBe("off");
+    expect(headers.get("Strict-Transport-Security")).toBe(
+      "max-age=63072000; includeSubDomains; preload",
+    );
   });
 
   it("does not add a CSP when Shopify set none (non-embedded edge: leave as-is)", () => {
@@ -63,5 +69,14 @@ describe("applySecurityHeaders", () => {
     const csp = headers.get("Content-Security-Policy") ?? "";
     expect(csp.match(/object-src 'none'/g)?.length).toBe(1);
     expect(csp.match(/base-uri 'self'/g)?.length).toBe(1);
+    expect(csp.match(/form-action 'self'/g)?.length).toBe(1);
+    expect(csp.match(/upgrade-insecure-requests/g)?.length).toBe(1);
+  });
+
+  it("removes common framework disclosure headers", () => {
+    const headers = new Headers({ Server: "example", "X-Powered-By": "Express" });
+    applySecurityHeaders(headers);
+    expect(headers.get("Server")).toBeNull();
+    expect(headers.get("X-Powered-By")).toBeNull();
   });
 });

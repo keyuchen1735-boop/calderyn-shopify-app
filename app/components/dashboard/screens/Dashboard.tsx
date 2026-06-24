@@ -1,7 +1,3 @@
-// Calderyn DashV2 — Overview screen (LIVE).
-// Ported from the prototype's screen-dashboard.jsx, wired to the live DashboardCtx.
-// CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
-// CDIcon/CD_ACTION_ICON (icons), RingGauge/GradePill/etc. (ui). Charts/cards reuse ui.tsx.
 import type { ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { useState, useEffect, useRef } from "react";
@@ -206,9 +202,6 @@ function ActivityFeed({ app, limit = 8, tall }: { app: DashboardCtx; limit?: num
 }
 
 /* ---------- Predictor teaser ---------- */
-// NOTE: the Predictor screen is simulated/owned by another agent — there is no live
-// scorecard in DashboardCtx yet, so this card keeps the prototype's static teaser copy
-// and simply links into the predictor route.
 // TODO(api): wire to a live `app.overview.predictor` / scorecard summary when available.
 function PredictorCard({ app }: { app: DashboardCtx }) {
   return (

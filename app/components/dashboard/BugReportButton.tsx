@@ -1,6 +1,3 @@
-// Calderyn DashV2 — "Report a bug": floating launcher + modal, rendered with the
-// dashboard's own cd-* design system. POSTs multipart form-data to
-// /dashboard/api/bug-report (same shared brain as the embedded app).
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CDIcon } from "./icons";

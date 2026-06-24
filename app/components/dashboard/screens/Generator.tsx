@@ -1,25 +1,14 @@
-// Calderyn DashV2 — Ad Generator screen (SIMULATED).
-// Faithful port of the prototype's screen-generator.jsx. Turns the predictor's
-// critique into a remake brief (weakest dims → fix instructions), renders via a
-// simulated Higgsfield pipeline (animated 5-step run), and shows two Meta-style
-// output previews — each re-scored, with before→after chips and a "Push to Meta
-// as draft" action. Source data = GENERATOR (demo.ts).
-//
-// TODO(other-agent): replace with live predictor/generator API. This screen runs
-// entirely on demo data + a simulated pipeline; pushAdDraft is a local sim.
 import { useState, type ReactNode } from "react";
 import { Card, Btn, Pill, Segmented } from "../ui";
 import { CDIcon } from "../icons";
 import { GENERATOR } from "../demo";
-// Side-effect import: registers the <image-slot> custom element on the client.
-// Self-guards SSR (typeof window) so this is import-safe under Remix SSR.
-import "../image-slot";
+import CreativePreviewPlaceholder from "../CreativePreviewPlaceholder";
 import type { DashboardCtx } from "../context";
 import type { GeneratorFix, GeneratorOutput } from "../view-models";
 
 type Phase = "brief" | "running" | "result";
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({
   title,
   sub,
@@ -60,12 +49,10 @@ function GenAdCard({
   app,
   out,
   aspect,
-  slotKey,
 }: {
   app: DashboardCtx;
   out: GeneratorOutput;
   aspect: string;
-  slotKey: string;
 }) {
   const [pushed, setPushed] = useState(false);
   const ratio = ({ "1:1": "1 / 1", "4:5": "4 / 5", "9:16": "9 / 16" } as Record<string, string>)[
@@ -86,15 +73,10 @@ function GenAdCard({
         )}
       </div>
       <div className="cd-gen-media" style={{ aspectRatio: ratio }}>
-        <image-slot
-          id={slotKey}
-          shape="rect"
-          fit="cover"
-          placeholder={
-            out.format === "video" ? "Drop Higgsfield render (first frame)" : "Drop Higgsfield render"
-          }
+        <CreativePreviewPlaceholder
+          label={out.format === "video" ? "Video preview unavailable" : "Image preview unavailable"}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
-        ></image-slot>
+        />
         {out.format === "video" && (
           <span className="cd-gen-play">
             <CDIcon name="play" size={14} strokeWidth={2} />
@@ -143,7 +125,6 @@ function GenAdCard({
         </div>
         <div className="flex items-center gap-2">
           {/* pushAdDraft is a local-only sim (action history + feed + toast). */}
-          {/* TODO(other-agent): replace with live ad-draft push. */}
           <Btn
             kind="primary"
             small
@@ -178,7 +159,7 @@ export default function ScreenGenerator({ app }: { app: DashboardCtx }) {
   const [aspect, setAspect] = useState("4:5");
   const [direction, setDirection] = useState("");
 
-  // Simulated Higgsfield render pipeline — TODO(other-agent): replace with live generator API.
+  // Simulated Higgsfield render pipeline.
   const run = () => {
     setPhase("running");
     setStep(0);
@@ -218,14 +199,10 @@ export default function ScreenGenerator({ app }: { app: DashboardCtx }) {
           <div className="flex flex-col gap-4 min-w-0">
             <Card pad={false}>
               <div className="cd-pad flex items-center gap-4" style={{ paddingBottom: 12 }}>
-                <image-slot
-                  id="original-ad"
-                  shape="rounded"
-                  radius="12"
-                  fit="cover"
-                  placeholder="Original ad"
+                <CreativePreviewPlaceholder
+                  label="Original creative"
                   style={{ width: 84, height: 84, flexShrink: 0 }}
-                ></image-slot>
+                />
                 <div className="min-w-0 flex-1">
                   <h2 className="cd-h2">Brief from critique</h2>
                   <p className="cd-caption mt-1">
@@ -327,7 +304,6 @@ export default function ScreenGenerator({ app }: { app: DashboardCtx }) {
                 app={app}
                 out={out}
                 aspect={aspect}
-                slotKey={"higgsfield-" + out.id}
               />
             ))}
           </div>

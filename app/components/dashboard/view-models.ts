@@ -1,6 +1,3 @@
-// Calderyn DashV2 — view-model types mirroring the prototype's data.js shapes.
-// These are the shapes screens consume; field names/types match data.js exactly.
-
 // Tips are shared with the screener engine; reuse its (string | {title,detail})
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";

@@ -1,6 +1,3 @@
-// Calderyn DashV2 — app shell: sidebar nav, live data engine, tweaks, router.
-// Ported from the prototype's app.jsx, rewired to the real /dashboard/api/*
-// data layer (app/lib/dashboard/client.ts) instead of the static CD.* fixtures.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";
@@ -12,15 +9,6 @@ import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
 import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
-import {
-  TweaksPanel,
-  TweakSection,
-  TweakToggle,
-  TweakColor,
-  TweakRadio,
-  TweakSlider,
-  useTweaks,
-} from "./tweaks-panel";
 import { useLiveFeed } from "./live";
 import { applyUndo } from "./undo";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
@@ -77,7 +65,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
 // (matching the mobile design); everything else in NAV_ITEMS lives behind "More".
 const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory"];
 
-const TWEAK_DEFAULTS = {
+const DASHBOARD_THEME = {
   dark: false,
   accent: "#24556E",
   density: "balanced",
@@ -117,7 +105,7 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const t = DASHBOARD_THEME;
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
   // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
   const [moreOpen, setMoreOpen] = useState(false);
@@ -643,8 +631,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     [toast],
   );
 
-  // Generator is simulated locally (no live endpoint). TODO(other-agent): wire to
-  // the real ad-draft push once the generator backend lands.
   const pushAdDraft = useCallback(
     (name: string) => {
       const entry: AuditVM = {
@@ -910,49 +896,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       )}
 
       <ToastHost toasts={toasts} />
-
-      <TweaksPanel>
-        <TweakSection label="Theme" />
-        <TweakToggle label="Dark mode" value={!!t.dark} onChange={(v) => setTweak("dark", v)} />
-        <TweakColor
-          label="Accent"
-          value={String(t.accent)}
-          options={["#24556E", "#0A84FF", "#1F8A5B", "#5E5CE6"]}
-          onChange={(v) => setTweak("accent", v)}
-        />
-        <TweakSection label="Layout" />
-        <TweakRadio
-          label="Density"
-          value={String(t.density)}
-          options={["compact", "balanced", "comfy"]}
-          onChange={(v) => setTweak("density", v)}
-        />
-        <TweakSlider
-          label="Corner radius"
-          value={Number(t.radius)}
-          min={6}
-          max={22}
-          unit="px"
-          onChange={(v) => setTweak("radius", v)}
-        />
-        <TweakSlider
-          label="Glass intensity"
-          value={Number(t.glass)}
-          min={0}
-          max={1}
-          step={0.05}
-          onChange={(v) => setTweak("glass", v)}
-        />
-        <TweakSection label="Type" />
-        <TweakSlider
-          label="Type scale"
-          value={Number(t.typeScale)}
-          min={0.85}
-          max={1.2}
-          step={0.05}
-          onChange={(v) => setTweak("typeScale", v)}
-        />
-      </TweaksPanel>
     </div>
   );
 }

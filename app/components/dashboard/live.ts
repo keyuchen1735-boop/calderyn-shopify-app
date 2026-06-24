@@ -1,6 +1,4 @@
-// Calderyn DashV2 — the live engine.
-//
-// Drives the dashboard's "live sync" without the prototype's fabricated
+// Drives the dashboard's live sync using real API data.
 // order/spend ticks. While `liveOn`, it polls the real /dashboard/api/*
 // endpoints every POLL_MS and surfaces changes:
 //   - overview   → onOverview(overview)

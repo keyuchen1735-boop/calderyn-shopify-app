@@ -1,7 +1,7 @@
 /*
  * Calderyn shared UI components.
  *
- * These recreate the bespoke pieces from the Claude Design handoff (StatTile,
+ * Shared presentation components for the embedded application (StatTile,
  * AlertCard, GuardrailMeter, EvidencePanel, NarrativeCard, the ambient critical
  * banner, MoneyDelta) on top of real Shopify Polaris primitives. Layout and
  * color come from Polaris; only the meter bar, sparkline, and per-side accent

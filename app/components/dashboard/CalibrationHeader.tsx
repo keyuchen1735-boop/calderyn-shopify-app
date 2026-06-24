@@ -1,6 +1,3 @@
-// Calderyn DashV2 - read-only Calibration header.
-// Shows shops.calibration_pct (fetched via /dashboard/api/calibration).
-// READ-ONLY: no mutation buttons. Parity with the embedded Polaris version.
 import { Card, Meter } from "./ui";
 import { CDIcon } from "./icons";
 import type { DashboardCtx } from "./context";

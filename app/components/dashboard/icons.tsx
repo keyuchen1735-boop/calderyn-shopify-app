@@ -1,14 +1,3 @@
-// Calderyn DashV2 — icon set. STANDARD: Lucide (https://lucide.dev) via
-// `lucide-react`, wrapped behind the <CDIcon name="..."/> registry below.
-// Monochrome (currentColor), default 20px / 1.7 stroke to match the dashboard's
-// line-icon look. Lucide is the single approved icon source for the dashboard.
-//
-// To add an icon: import the component from "lucide-react" and add one line to
-// CD_ICONS. Only registered icons ship (tree-shaken) — keep this registry curated.
-//
-// NOTE: the embedded admin (app/routes/app.*) uses @shopify/polaris-icons, NOT
-// Lucide — that is the Shopify Polaris convention and an App Store expectation.
-// Do not import Lucide there.
 import type { CSSProperties } from "react";
 import {
   Archive,

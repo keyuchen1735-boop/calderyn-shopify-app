@@ -16,6 +16,8 @@ export const streamTimeout = 5000;
 // set by Shopify, is preserved verbatim and never replaced. We never invent a
 // document-wide script-src/default-src here: that would break App Bridge.
 export function applySecurityHeaders(headers: Headers): void {
+  headers.delete("Server");
+  headers.delete("X-Powered-By");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set(
@@ -23,6 +25,8 @@ export function applySecurityHeaders(headers: Headers): void {
     "camera=(), microphone=(), geolocation=(), browsing-topics=()",
   );
   headers.set("X-Permitted-Cross-Domain-Policies", "none");
+  headers.set("X-DNS-Prefetch-Control", "off");
+  headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
 
   // Only augment an existing (Shopify-set) CSP; do not create one from scratch.
   const csp = headers.get("Content-Security-Policy");
@@ -30,6 +34,10 @@ export function applySecurityHeaders(headers: Headers): void {
     const extras: string[] = [];
     if (!/(^|;)\s*object-src\b/.test(csp)) extras.push("object-src 'none'");
     if (!/(^|;)\s*base-uri\b/.test(csp)) extras.push("base-uri 'self'");
+    if (!/(^|;)\s*form-action\b/.test(csp)) extras.push("form-action 'self'");
+    if (!/(^|;)\s*upgrade-insecure-requests\b/.test(csp)) {
+      extras.push("upgrade-insecure-requests");
+    }
     if (extras.length) {
       const sep = csp.trimEnd().endsWith(";") ? " " : "; ";
       headers.set("Content-Security-Policy", `${csp.trimEnd()}${sep}${extras.join("; ")};`);

@@ -1,8 +1,3 @@
-// Calderyn DashV2 — mandatory creative media drop box for the Predictor form.
-// Controlled form input: drag-drop or click-to-browse → processCreativeMedia
-// (image downscale / video frame extraction, all client-side) → onChange.
-// Not <image-slot> — that's a sidecar-persisting deck widget; this carries its
-// value only through the parent's submit.
 import { useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   MEDIA_ACCEPT,

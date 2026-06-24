@@ -1,9 +1,3 @@
-// Calderyn DashV2 — Analytics screen (LIVE).
-// Ported from the prototype's screen-analytics.jsx, wired to the live data layer.
-// Self-fetches blended spend/revenue, campaign grades, and top ads via
-// fetchAnalytics() (there is no analytics slice on DashboardCtx). Renders the
-// blended revenue-vs-spend AreaChart, the campaign-grades list, and the
-// most-engaging-ads list. CD.* globals → live imports.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Card,
@@ -28,7 +22,7 @@ interface AnalyticsData {
   topAds: TopAd[];
 }
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({
   title,
   sub,

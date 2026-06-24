@@ -1,8 +1,3 @@
-// Calderyn DashV2 — Alerts screen (LIVE).
-// Ported from the prototype's screen-alerts.jsx, wired to the live DashboardCtx.
-// List (ranked, filterable) + detail (narrative, evidence, guardrailed actions).
-// CD.* globals → live imports: money/DETECTOR_TERMS/ACTION_LABELS (format),
-// CDIcon/CD_ACTION_ICON (icons), Card/SevBadge/Pill/Segmented/Placeholder/etc. (ui).
 import { useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
@@ -27,7 +22,7 @@ import { CDIcon, CD_ACTION_ICON } from "../icons";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM, CampaignVM } from "../view-models";
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({
   title,
   sub,

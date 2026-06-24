@@ -1,10 +1,3 @@
-// Calderyn DashV2 — Action history screen (LIVE).
-// Ported from the "Action history" section of the prototype's screen-ops.jsx,
-// wired to the live DashboardCtx. Renders every action Calderyn or the merchant
-// took (from app.audit) with an action icon, verb/target, detail, actor + when,
-// a dollar-impact figure, outcome pills (Blocked / Undone), and an Undo button
-// when the entry is undo-eligible. Undo goes through app.undoAction(); the shell
-// handles the toast + refresh, so the row flips to "Undone" on the next refresh.
 import { useState, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
@@ -14,7 +7,7 @@ import { COST_SOURCE_LABELS } from "~/lib/labels";
 import type { DashboardCtx } from "../context";
 import type { AuditVM } from "../view-models";
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   return (
     <header className="cd-screen-head" data-screen-label={title}>

@@ -1,13 +1,3 @@
-// Calderyn DashV2 — Settings screen (LIVE).
-// Ported from the "Settings" section of the prototype's screen-ops.jsx, wired to
-// the live data layer. Two sections:
-//   • Guardrails (editable) — autopilot toggle + caps, daily action budget,
-//     dollar cap, cooldown, autopilot daily cap, min spend, max budget-cut %,
-//     and business-hours display. Edits call putGuardrails({ ...changedFields })
-//     with ONLY the changed field, then app.refresh() + a success toast. On a
-//     DashboardApiError the optimistic local value reverts and an error toast
-//     shows.
-//   • Connections (read-only) — from app.integrations. No OAuth flow here.
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { money } from "../format";
@@ -29,7 +19,7 @@ import { BusinessHoursEditor } from "../BusinessHoursEditor";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   return (
     <header className="cd-screen-head" data-screen-label={title}>
@@ -41,7 +31,7 @@ function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   );
 }
 
-/* ---------- Setting row (mirrors the prototype's SettingRow) ---------- */
+/* ---------- Setting row ---------- */
 function SettingRow({
   label,
   sub,

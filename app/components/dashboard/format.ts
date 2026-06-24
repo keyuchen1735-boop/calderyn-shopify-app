@@ -1,5 +1,3 @@
-// Calderyn DashV2 — pure formatters + label maps.
-// Ported verbatim from the prototype's data.js (money/moneyK) and ui.jsx (SEV_STYLE).
 // Evidence label/value formatting delegates to app/lib/labels.ts (the single
 // source of truth shared with the embedded app) so both surfaces show identical
 // plain-language labels instead of raw keys like "cac_per_unit_usd".

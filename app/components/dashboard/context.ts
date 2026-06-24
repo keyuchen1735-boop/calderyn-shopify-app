@@ -1,6 +1,3 @@
-// Calderyn DashV2 — the shared `app` context shape passed to every screen.
-// DashboardApp builds this object; screens consume it as `{ app }: { app: DashboardCtx }`.
-import type { TweakValues } from "./tweaks-panel";
 import type { LiveEnginePageData } from "../../lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "../../lib/calibration/delta";
 import type {
@@ -36,6 +33,15 @@ export interface NavState {
   param: string | null;
 }
 
+export interface DashboardTheme {
+  dark?: boolean;
+  accent?: string;
+  density?: string;
+  radius?: number;
+  glass?: number;
+  typeScale?: number;
+}
+
 /** Action kinds an alert can be resolved with (mirrors the prototype). */
 export type ActionKind =
   | "pause_campaign"
@@ -49,8 +55,7 @@ export type ActionKind =
   | "snooze_alert";
 
 export interface DashboardCtx {
-  /** Resolved tweak values (theme/layout/type). */
-  t: TweakValues;
+  t: DashboardTheme;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; scrolls main to top. */

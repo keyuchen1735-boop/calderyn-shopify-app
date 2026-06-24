@@ -1,7 +1,3 @@
-// SIMULATED demo data — TODO(other-agent): replace with live predictor/generator API.
-// Ported verbatim from the prototype's data.js (SCORECARD / GENERATOR / GROUP_LABELS).
-// These feed the Creative Predictor and Ad Generator screens, which are simulated
-// locally; their real backend is owned by another agent.
 import type { Scorecard, Generator } from "./view-models";
 
 // Ad creative predictor — sample scorecard (Summit Tee static ad).

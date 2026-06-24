@@ -1,16 +1,3 @@
-// Calderyn DashV2 — Calderyn Labs "Autopilot replay" (HIDDEN / demo).
-// Reached only via the secret hexagon dot in Settings (see Settings.tsx) and kept
-// out of the nav rail (like `generator`). Masked as the Campaigns screen — same
-// header + the sidebar keeps "Campaigns" lit (DashboardApp maps labs→campaigns
-// for highlighting) — it replays a scripted autopilot save on a 4.25s timeline:
-//   inventory hits zero → detector fires → guardrails clear → campaign paused,
-// with a count-up of wasted spend prevented and an honest, reversible footer.
-// Pure local animation, no live data: this is a showcase, so the toast on
-// "Undo & resume" is explicit that nothing in the live account was touched (rule 12).
-//
-// Ported pixel-for-pixel from the "Secret button feature request" Claude Design
-// (Calderyn Dashboard.dc.html). Light mode is pixel-identical to the design;
-// hardcoded #fff fills are themed via --card-solid so dark mode stays coherent.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CDIcon } from "../icons";
 import type { DashboardCtx } from "../context";

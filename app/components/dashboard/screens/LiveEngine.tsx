@@ -1,10 +1,3 @@
-// Calderyn DashV2 — Live Engine screen (dashboard mirror of the embedded
-// app.engine.tsx). Same data contract (LiveEnginePageData from the shared
-// buildLiveEnginePageData), translated into the dashboard's cd-* primitives +
-// Lucide/CDIcon. Sections: autopilot features (per-feature autonomy toggle),
-// the engine pipeline ("watch Calderyn work"), the live trace ("what Calderyn
-// just did") with a click-through inspector, and a calibration-mini + real
-// predictions rail.
 import { useEffect, useState, type ReactNode } from "react";
 import { Card, Placeholder } from "../ui";
 import { CDIcon } from "../icons";

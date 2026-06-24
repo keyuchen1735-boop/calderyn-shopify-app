@@ -1,6 +1,3 @@
-// app/lib/pilot-invite/landing.server.ts
-// Renders the hosted "view in browser" twin of the onboarding email. Ported from
-// docs/superpowers/specs/handoff-pilot/calderyn-pilot-web.html.
 import { escapeHtml, DEFAULT_FIRST_NAME, DEFAULT_STORE_NAME, markUrls } from "./content";
 
 export interface RenderLandingOpts { firstName: string; storeName: string; baseUrl: string; }

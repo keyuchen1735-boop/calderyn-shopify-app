@@ -1,9 +1,3 @@
-// Calderyn DashV2 — Inventory screen (LIVE).
-// Ported from the inventory section of the prototype's screen-ops.jsx, wired to
-// the live data layer. Self-fetches SKUs via fetchSkus() (there is no app.skus).
-// Renders the prototype's inventory table: title, sku code, on-hand, days of
-// cover, velocity, ship P&L, and a status pill. Rows that map
-// to an open alert are clickable through to that alert.
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder, Sparkline } from "../ui";
 import { CDIcon } from "../icons";
@@ -227,9 +221,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         ? sortSkusByUrgency(filtered)
         : filtered;
 
-  // Alerts reference SKUs by their sku code — exact match (the prototype's
-  // title-prefix heuristic never matched real sku codes). One O(alerts) pass,
-  // same helper the extension page uses.
+  // Alerts reference SKUs by their exact sku code.
   const alertsBySku = useMemo(() => openAlertsBySku(app.alerts), [app.alerts]);
   const openAlertsFor = (sku: SkuVM): AlertVM[] => alertsBySku.get(sku.sku) ?? [];
 
@@ -1060,7 +1052,7 @@ function RelocateDialog({
   );
 }
 
-/* ---------- Header (mirrors the prototype's ScreenHeader) ---------- */
+/* ---------- Header ---------- */
 /** A single inventory facet filter (dashboard native select). Renders nothing
  * when the facet has no values, so empty facets don't show dead filters. */
 function DashFacet({

@@ -1,6 +1,3 @@
-// Calderyn DashV2 — "Ask Calderyn" chat panel: floating launcher + glass
-// slide-over. Same assistant brain as the embedded slideout, rendered with
-// the dashboard's own cd-* design system (no Polaris here).
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as client from "~/lib/dashboard/client";

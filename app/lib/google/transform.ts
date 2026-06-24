@@ -3,7 +3,6 @@
 // Google Ads API returns money fields in *micros* (1/1,000,000 of a unit),
 // while our store keeps everything in cents. Convert via micros / 10_000.
 //
-// Ported verbatim (logic) from the monorepo worker; types are local (./types).
 
 import type {
   AdCampaignDim,

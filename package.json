@@ -2,7 +2,7 @@
   "name": "calderyn",
   "private": true,
   "scripts": {
-    "build": "remix vite:build",
+    "build": "remix vite:build && npm run verify:client-bundle",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
@@ -18,27 +18,25 @@
     "graphql-codegen": "graphql-codegen",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:client-bundle": "node scripts/verify-client-bundle.mjs"
   },
   "type": "module",
   "engines": {
-    "node": "^18.20 || ^20.10 || >=21.0.0"
+    "node": ">=20.10.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@prisma/client": "^6.19.3",
-    "@remix-run/dev": "^2.16.1",
-    "@remix-run/fs-routes": "^2.16.1",
-    "@remix-run/node": "^2.16.1",
-    "@remix-run/react": "^2.16.1",
-    "@remix-run/serve": "^2.16.1",
+    "@remix-run/node": "^2.17.5",
+    "@remix-run/react": "^2.17.5",
+    "@remix-run/serve": "^2.17.5",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^12.27.0",
     "@shopify/shopify-app-remix": "^4.2.0",
     "@shopify/shopify-app-session-storage-prisma": "^9.0.0",
     "@sparticuz/chromium": "^149.0.0",
     "@supabase/supabase-js": "^2.106.1",
-    "@vercel/remix": "^2.16.7",
     "isbot": "^5.1.0",
     "jose": "^5.10.0",
     "lucide-react": "^1.18.0",
@@ -51,9 +49,11 @@
     "vite-tsconfig-paths": "^5.0.1"
   },
   "devDependencies": {
+    "@remix-run/dev": "^2.17.5",
     "@remix-run/eslint-config": "^2.16.1",
+    "@remix-run/fs-routes": "^2.17.5",
     "@remix-run/route-config": "^2.16.1",
-    "@shopify/api-codegen-preset": "^1.1.6",
+    "@shopify/api-codegen-preset": "^2.0.0",
     "@types/eslint": "^9.6.1",
     "@types/node": "^22.10.5",
     "@types/react": "^18.2.31",
@@ -65,8 +65,36 @@
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3",
-    "vite": "^6.0.7",
+    "@vercel/remix": "^2.16.7",
+    "vite": "^6.4.3",
     "vitest": "^4.1.7"
+  },
+  "overrides": {
+    "@remix-run/server-runtime": "2.17.5",
+    "react-router": "6.30.4",
+    "react-router-dom": "6.30.4",
+    "turbo-stream": "3.2.0",
+    "undici": "6.27.0",
+    "@remix-run/dev": {
+      "esbuild": "0.25.12",
+      "@vanilla-extract/integration": "8.0.10"
+    },
+    "qs": "6.15.2",
+    "cacache": {
+      "tar": "7.5.16"
+    },
+    "@vercel/static-config": {
+      "ajv": "8.18.0"
+    },
+    "@vanilla-extract/integration": {
+      "vite": "6.4.3",
+      "vite-node": "3.2.4",
+      "esbuild": "0.25.12"
+    },
+    "shell-quote": "1.8.4",
+    "js-yaml": "4.2.0",
+    "lodash": "4.18.1",
+    "ws": "8.21.0"
   },
   "workspaces": {
     "packages": [],

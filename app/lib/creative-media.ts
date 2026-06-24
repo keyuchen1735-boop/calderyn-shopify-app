@@ -1,10 +1,8 @@
-// app/lib/creative-media.ts
 // Client-side processing for the predictor's mandatory creative drop box,
 // shared by the extension screener and the dashboard Predictor.
 //
-// Images are downscaled to a ≤MAX_DIM WebP data URL (same canvas approach as
-// app/components/dashboard/image-slot.tsx) so the form post and the persisted
-// creative_input stay small. Videos never leave the browser: we extract
+// Images are downscaled to a ≤MAX_DIM WebP data URL so the form post and the
+// persisted creative_input stay small. Videos never leave the browser: we extract
 // VIDEO_FRAME_POSITIONS key frames as data URLs and ship those — Claude scores
 // frames, not the file, and the payload stays far under the 4.5MB function
 // body limit. Browser-only APIs are confined to function bodies so the module

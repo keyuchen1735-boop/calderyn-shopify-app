@@ -1,12 +1,3 @@
-// Calderyn DashV2 — Action Queue v2 screen (dashboard mirror of the embedded
-// app.queue.tsx). Leveling header + calibration-ranked proposal cards with a
-// one-click Approve (confirm guard, runs the existing executeAction path) and a
-// reject -> reason chips -> "what Calderyn learned" reflection receipt.
-//
-// Reject re-derives detector/action/impact from the TRUSTED alert server-side
-// (client.rejectProposal -> /dashboard/api/queue/reject) and executes NOTHING;
-// it returns the reject receipt (reflection + trust delta + savedAsRule) that
-// drives the receipt card. Learned rules section + undo unchanged.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Card, Pill, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";

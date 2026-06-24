@@ -1,6 +1,3 @@
-// Calderyn DashV2 — per-tip icons for the Creative Predictor "How to improve it"
-// card. Each improvement tip is routed to a category, and each category renders
-// one icon from the in-house CDIcon set (drawn in the SF-symbol spirit).
 import { CDIcon } from "./icons";
 import { normalizeTip, type Tip } from "~/lib/screener/types";
 
