@@ -10,6 +10,8 @@ export type SkuRow = {
   external_id: string;
   product_id: string;
   inventory_item_id: string | null;
+  inventory_policy: "deny" | "continue" | null;
+  inventory_tracked: boolean;
   sku: string | null;
   title: string;
   unit_cost_cents: number | null;

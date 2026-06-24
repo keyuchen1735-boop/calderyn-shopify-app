@@ -14,6 +14,23 @@ export type BackfillResult = {
   orders: number;
 };
 
+/** Refresh product/variant settings without replaying orders or inventory facts. */
+export async function syncProductInventorySettings(shopDomain: string): Promise<number> {
+  const sb = getSupabase();
+  const shopId = await resolveShopId(shopDomain);
+  let synced = 0;
+  for await (const product of fetchProducts(shopDomain)) {
+    const rows = product.variants.nodes.map((variant) => mapVariantToSku(shopId, product, variant));
+    if (!rows.length) continue;
+    const { error } = await sb
+      .from("sku_dim")
+      .upsert(rows, { onConflict: "shop_id,external_id" });
+    if (error) throw error;
+    synced += rows.length;
+  }
+  return synced;
+}
+
 export async function backfillShop(shopDomain: string): Promise<BackfillResult> {
   const sb = getSupabase();
   const shopId = await resolveShopId(shopDomain);

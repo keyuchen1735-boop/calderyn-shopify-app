@@ -150,6 +150,44 @@ describe("transformPendingWebhooks — order write ordering", () => {
   });
 });
 
+describe("transformPendingWebhooks — product inventory settings", () => {
+  it("updates sku_dim from a PRODUCTS_UPDATE webhook", async () => {
+    store["raw_shopify_webhook"] = [{
+      id: "wh-product",
+      shop_id: SHOP_ID,
+      topic: "PRODUCTS_UPDATE",
+      payload: {
+        id: 100,
+        admin_graphql_api_id: "gid://shopify/Product/100",
+        title: "Widget",
+        variants: [{
+          id: 200,
+          admin_graphql_api_id: "gid://shopify/ProductVariant/200",
+          inventory_item_id: 300,
+          sku: "WID-1",
+          title: "Small",
+          inventory_policy: "deny",
+          inventory_management: "shopify",
+        }],
+      },
+    }];
+
+    const result = await transformPendingWebhooks();
+
+    const skuUpsert = upserts.find((u) => u.table === "sku_dim");
+    expect(skuUpsert).toBeDefined();
+    expect(skuUpsert?.rows).toEqual([
+      expect.objectContaining({
+        shop_id: SHOP_ID,
+        external_id: "gid://shopify/ProductVariant/200",
+        inventory_policy: "deny",
+        inventory_tracked: true,
+      }),
+    ]);
+    expect(result.facts).toBe(1);
+  });
+});
+
 describe("transformPendingWebhooks — attribution", () => {
   it("writes attribution_fact when an order carries a matching utm_campaign", async () => {
     // Arrange: one pending ORDERS_CREATE webhook with a matching landing_site.

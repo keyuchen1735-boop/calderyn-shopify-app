@@ -4,9 +4,9 @@ import { isGraduated } from "../graduation.server";
 
 /** A pair_calibration row where all graduation gates pass. */
 const PASSING_ROW = {
-  last_conf: 80,
+  last_conf: 74,
   graduation_threshold: 75,
-  clean_approvals: 3,
+  clean_approvals: 0,
   consecutive_undos: 0,
   merchant_disabled: false,
 };
@@ -60,7 +60,7 @@ function makeStub(opts: {
 }
 
 describe("isGraduated — happy path", () => {
-  it("returns true when all gates pass and no blocking rules", async () => {
+  it("returns true for a shipped no-brainer without approval history", async () => {
     const { sb } = makeStub({ pairRow: PASSING_ROW, rules: [] });
     const result = await isGraduated("shop-1", "campaign_below_breakeven", "pause_campaign", sb);
     expect(result).toBe(true);

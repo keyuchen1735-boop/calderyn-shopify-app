@@ -62,11 +62,12 @@ function moneyPill(t: TraceEventVM): { text: string; tone: "good" | "muted" } | 
 }
 
 /* ---------- 1. autopilot features ---------- */
-function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
+function FeatureRow({ f, app, autopilotEnabled }: { f: LiveEngineFeatureVM; app: DashboardCtx; autopilotEnabled: boolean }) {
   const [on, setOn] = useState(f.enabled);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setOn(f.enabled), [f.enabled]);
+  const active = autopilotEnabled && on;
 
   const toggle = async () => {
     if (busy) return;
@@ -86,14 +87,14 @@ function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
   };
 
   return (
-    <div className="cd-le-feat" data-on={on}>
+    <div className="cd-le-feat" data-on={active}>
       <span className="cd-le-feat-ico">
         <CDIcon name={featureIconName(f.actionKind)} size={18} strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="cd-le-feat-namerow">
           <span className="cd-le-feat-name">{f.name}</span>
-          {on && (
+          {active && (
             <span className="cd-le-feat-active">
               <span className="cd-live-dot on" />
               ACTIVE
@@ -104,7 +105,7 @@ function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
           {f.watching} &middot; {f.lastText}
         </div>
       </div>
-      {on && f.moneyCents > 0 && (
+      {active && f.moneyCents > 0 && (
         <div className="cd-le-feat-money">
           <div className="cd-le-feat-money-amt tabular-nums">{money(f.moneyCents)}</div>
           <div className="cd-le-feat-money-cap">{f.actions} in 90 days</div>
@@ -127,7 +128,8 @@ function FeatureRow({ f, app }: { f: LiveEngineFeatureVM; app: DashboardCtx }) {
 }
 
 function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: DashboardCtx }) {
-  const live = data.features.filter((f) => f.enabled).length;
+  const unlocked = data.features.filter((f) => f.enabled).length;
+  const live = data.autopilotEnabled ? unlocked : 0;
   const running = live > 0;
   return (
     <Card pad={false}>
@@ -146,13 +148,17 @@ function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: Dashboard
                 {live} {live === 1 ? "feature live" : "features live"}
               </span>
             ) : (
-              <span className="cd-le-auto-badge cd-le-auto-badge--off">No features yet</span>
+              <span className="cd-le-auto-badge cd-le-auto-badge--off">
+                {unlocked > 0 ? `${unlocked} ${unlocked === 1 ? "feature unlocked" : "features unlocked"}` : "No features yet"}
+              </span>
             )}
           </div>
           <p className="cd-caption" style={{ color: "var(--text-3)", marginTop: 3 }}>
             {running
               ? "These graduated to run without you. Calderyn handles them on its own and logs every action below."
-              : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
+              : unlocked > 0
+                ? "These no-brainer features ship unlocked. Turn on shop-level Autopilot in Settings when you want Calderyn to run them."
+                : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
           </p>
         </div>
         {running && (
@@ -173,7 +179,12 @@ function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: Dashboard
       ) : (
         <div className="cd-le-feat-list">
           {data.features.map((f) => (
-            <FeatureRow key={`${f.detectorId}:${f.actionKind}`} f={f} app={app} />
+            <FeatureRow
+              key={`${f.detectorId}:${f.actionKind}`}
+              f={f}
+              app={app}
+              autopilotEnabled={data.autopilotEnabled}
+            />
           ))}
         </div>
       )}

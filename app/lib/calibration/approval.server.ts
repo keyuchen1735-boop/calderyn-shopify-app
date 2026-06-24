@@ -111,6 +111,7 @@ export async function recordApproval(
     //    pair was NOT already graduated before this approval. Uses the same
     //    graduationVerdict the live isGraduated check uses, so the answer agrees.
     const verdict = graduationVerdict({
+      detectorId,
       actionKind,
       lastConf: confAfter,
       gradThreshold: graduationThreshold || 100,

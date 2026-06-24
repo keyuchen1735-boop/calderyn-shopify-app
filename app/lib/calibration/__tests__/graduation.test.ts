@@ -3,6 +3,7 @@ import { graduationVerdict, GRADUATABLE_V1, MIN_APPROVALS } from "../graduation"
 
 /** A fully-qualifying reversible pair (all gates pass). */
 const PASSING: Parameters<typeof graduationVerdict>[0] = {
+  detectorId: "regional_spend_starved_stock",
   actionKind: "pause_campaign",
   lastConf: 80,
   gradThreshold: 75,
@@ -18,6 +19,36 @@ describe("graduationVerdict — passing case", () => {
     const v = graduationVerdict(PASSING);
     expect(v.graduated).toBe(true);
     expect(v.reason).toBe("all gates passed");
+  });
+});
+
+describe("graduationVerdict — shipped no-brainers", () => {
+  it.each([
+    ["sku_stockout_vs_spend", "pause_campaign"],
+    ["campaign_below_breakeven", "pause_campaign"],
+    ["negative_unit_economics", "pause_campaign"],
+  ] as const)("%s:%s is auto-unlocked without approval history", (detectorId, actionKind) => {
+    const v = graduationVerdict({
+      ...PASSING,
+      detectorId,
+      actionKind,
+      lastConf: 74,
+      cleanApprovals: 0,
+    });
+    expect(v.graduated).toBe(true);
+    expect(v.reason).toBe("shipped no-brainer");
+  });
+
+  it("still respects the merchant off switch", () => {
+    const v = graduationVerdict({
+      ...PASSING,
+      detectorId: "campaign_below_breakeven",
+      cleanApprovals: 0,
+      lastConf: 74,
+      merchantDisabled: true,
+    });
+    expect(v.graduated).toBe(false);
+    expect(v.reason).toBe("merchant disabled");
   });
 });
 

@@ -139,7 +139,7 @@ function moneyPill(t: TraceEventVM): { text: string; tone: "good" | "muted" } | 
 }
 
 /* ---------- 1. autopilot features ---------- */
-function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
+function FeatureRow({ f, autopilotEnabled }: { f: LiveEngineFeatureVM; autopilotEnabled: boolean }) {
   const fetcher = useFetcher<ActionPayload>();
   const [on, setOn] = useState(f.enabled);
 
@@ -150,6 +150,7 @@ function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
   }, [fetcher.state, fetcher.data, f.enabled]);
 
   const pending = fetcher.state !== "idle";
+  const active = autopilotEnabled && on;
   const toggle = () => {
     const next = !on;
     setOn(next);
@@ -160,12 +161,12 @@ function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
   };
 
   return (
-    <div className="engx-feat" data-on={on}>
+    <div className="engx-feat" data-on={active}>
       <span className="engx-feat-ico">{featureIcon(f.actionKind)}</span>
       <div className="engx-feat-body">
         <div className="engx-feat-namerow">
           <span className="engx-feat-name">{f.name}</span>
-          {on && (
+          {active && (
             <span className="engx-feat-active">
               <span className="engx-live-dot engx-live-dot--sm" />
               ACTIVE
@@ -176,7 +177,7 @@ function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
           {f.watching} &middot; {f.lastText}
         </div>
       </div>
-      {on && f.moneyCents > 0 && (
+      {active && f.moneyCents > 0 && (
         <div className="engx-feat-money">
           <div className="engx-feat-money-amt">{fmtMoney(f.moneyCents)}</div>
           <div className="engx-feat-money-cap">{f.actions} in 90 days</div>
@@ -199,7 +200,8 @@ function FeatureRow({ f }: { f: LiveEngineFeatureVM }) {
 }
 
 function AutopilotCard({ data }: { data: LiveEnginePageData }) {
-  const live = data.features.filter((f) => f.enabled).length;
+  const unlocked = data.features.filter((f) => f.enabled).length;
+  const live = data.autopilotEnabled ? unlocked : 0;
   const running = live > 0;
   return (
     <div className="engx-auto">
@@ -216,13 +218,17 @@ function AutopilotCard({ data }: { data: LiveEnginePageData }) {
                 {live} {live === 1 ? "feature live" : "features live"}
               </span>
             ) : (
-              <span className="engx-auto-badge engx-auto-badge--off">No features yet</span>
+              <span className="engx-auto-badge engx-auto-badge--off">
+                {unlocked > 0 ? `${unlocked} ${unlocked === 1 ? "feature unlocked" : "features unlocked"}` : "No features yet"}
+              </span>
             )}
           </div>
           <p className="engx-auto-sub">
             {running
               ? "These graduated to run without you. Calderyn handles them on its own and logs every action below."
-              : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
+              : unlocked > 0
+                ? "These no-brainer features ship unlocked. Turn on shop-level Autopilot in Settings when you want Calderyn to run them."
+                : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
           </p>
         </div>
         {running && (
@@ -240,7 +246,11 @@ function AutopilotCard({ data }: { data: LiveEnginePageData }) {
       ) : (
         <div className="engx-feat-list">
           {data.features.map((f) => (
-            <FeatureRow key={`${f.detectorId}:${f.actionKind}`} f={f} />
+            <FeatureRow
+              key={`${f.detectorId}:${f.actionKind}`}
+              f={f}
+              autopilotEnabled={data.autopilotEnabled}
+            />
           ))}
         </div>
       )}

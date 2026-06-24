@@ -2,7 +2,7 @@
 // No I/O — imports only types. The 7 gates from spec I3/I7 + the v1 set.
 
 import type { ActionKind } from "../types";
-import { actionTier } from "./confidence";
+import { actionTier, NO_BRAINER } from "./confidence";
 
 /** The action kinds that may graduate. v1: two reversible campaign actions, plus
  *  discontinue_sku — a product archive that is reversible via its undo branch
@@ -23,6 +23,7 @@ export const MIN_APPROVALS = {
 } as const;
 
 export interface GraduationVerdictInput {
+  detectorId: string;
   actionKind: ActionKind;
   lastConf: number;
   gradThreshold: number;
@@ -70,6 +71,13 @@ export function graduationVerdict(
   }
   if (input.consecutiveUndos !== 0) {
     return { graduated: false, reason: "recent undo" };
+  }
+  // These three conservative pause pairs ship with Calderyn. They are
+  // auto-unlocked from day one, but still sit behind the shop-level Autopilot
+  // switch, per-feature merchant switch, live rules, undo support, guardrails,
+  // freshness checks, and detector-specific execution preconditions.
+  if (NO_BRAINER.has(`${input.detectorId}:${input.actionKind}`)) {
+    return { graduated: true, reason: "shipped no-brainer" };
   }
   if (input.cleanApprovals < MIN_APPROVALS[actionTier(input.actionKind)]) {
     return { graduated: false, reason: "needs more approvals" };

@@ -118,6 +118,9 @@ function fakeSb(opts: {
       if (table === "shops") {
         return { data: { shop_domain: "test-store.myshopify.com" }, error: null };
       }
+      if (table === "alerts") {
+        return { data: opts.scopedAlerts?.[0] ?? null, error: null };
+      }
       return {
         data: {
           autopilot_enabled: opts.enabled,
@@ -198,6 +201,38 @@ describe("runAutopilotForShop", () => {
       sb,
     );
     expect(r.acted).toBe(1);
+  });
+
+  it("pauses a dedicated sold-out-product campaign after the stockout allowlist passes", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    stockoutPauseAllowed.mockResolvedValue({ ok: true });
+    const stockout = {
+      ...candidate,
+      detector_id: "sku_stockout_vs_spend",
+      sku_id: "sku-1",
+      sku: "WID-1",
+    };
+    const sb = fakeSb({
+      enabled: true,
+      alerts: [stockout],
+      scopedAlerts: [{
+        id: "al1",
+        detector_id: "sku_stockout_vs_spend",
+        entity_ref: { sku_id: "sku-1" },
+      }],
+    });
+
+    await runAutopilotForShop(SHOP, sb);
+
+    expect(stockoutPauseAllowed).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: SHOP,
+      campaignId: "camp-uuid",
+    }));
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "pause_campaign", campaignId: "camp-uuid" }),
+      sb,
+    );
   });
 
   it("does not act when guardrails block", async () => {
@@ -470,7 +505,7 @@ describe("runAutopilotForShop", () => {
   // touching the executor or any guardrail, bucket the skip as `skippedMoves`
   // (not a guardrail `blocked`), and the candidate must be fully resolved — it
   // does NOT fall through to a legacy action (no double-evaluation). This is the
-  // v1 default: nothing is graduated, so autopilot-remediation stays dormant.
+  // This fixture has no graduated remediation pair, so that path stays dormant.
   it("skips a remediation move when the (detector, executor) pair is NOT graduated", async () => {
     // discontinue_sku for negative_unit_economics is not graduated (v1 default).
     isGraduated.mockResolvedValue(false);
@@ -916,7 +951,7 @@ describe("runAutopilotForShop", () => {
       expect(r.acted).toBe(1);
     });
 
-    it("DEFAULT state: with no pair graduated, autopilot executes nothing (gate everything)", async () => {
+    it("executes nothing when no candidate pair is graduated", async () => {
       // The default failure mode: isGraduated → false for all pairs.
       isGraduated.mockResolvedValue(false);
       checkGuardrails.mockResolvedValue({ allowed: true });

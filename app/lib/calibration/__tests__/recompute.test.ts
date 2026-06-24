@@ -186,7 +186,7 @@ describe("recomputeShopCalibration — skipPeerPrior option", () => {
 // ─── Slice 5 Task 2: graduated cache tests ───────────────────────────────────
 
 describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => {
-  it("writes graduated=false and last_conf for a sub-threshold pair (cold start alpha/beta)", async () => {
+  it("keeps a shipped no-brainer graduated at cold start", async () => {
     const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
     // A pair with zero approvals (clean_approvals=0): should NOT graduate.
     const pairRow = {
@@ -212,8 +212,7 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
     );
     expect(targetUpdate).toBeDefined();
-    // clean_approvals=0 < MIN_APPROVALS.reversible=3 → not graduated.
-    expect(targetUpdate!.patch.graduated).toBe(false);
+    expect(targetUpdate!.patch.graduated).toBe(true);
     // last_conf must be a non-negative integer.
     expect(typeof targetUpdate!.patch.last_conf).toBe("number");
     expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);

@@ -73,11 +73,13 @@ const ACTION_TIER: Partial<Record<ActionKind, Tier>> = {
   raise_free_ship_threshold: "irreversible",
 };
 
-// Pairs that ship pre-trusted (still shadow-gated before any autonomy in later
-// slices). Keys are "<detector>:<action>". A test asserts each is a legal pair.
+// Pairs that ship unlocked. They still require shop-level Autopilot, per-feature
+// enablement, guardrails, freshness, undo support, and live preconditions.
+// Keys are "<detector>:<action>". A test asserts each is a legal pair.
 export const NO_BRAINER: ReadonlySet<string> = new Set<string>([
   "sku_stockout_vs_spend:pause_campaign",
   "campaign_below_breakeven:pause_campaign",
+  "negative_unit_economics:pause_campaign",
 ]);
 
 const clamp01 = (n: number): number => (n < 0 ? 0 : n > 1 ? 1 : n);

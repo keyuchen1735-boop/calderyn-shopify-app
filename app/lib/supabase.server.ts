@@ -1,4 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { ActionKind } from "./types";
+import { NO_BRAINER, pairConfidence } from "./calibration/confidence";
 
 let _client: SupabaseClient | null = null;
 
@@ -62,6 +64,47 @@ export async function provisionShop(shopDomain: string): Promise<void> {
     .eq("shop_domain", shopDomain)
     .not("uninstalled_at", "is", null);
   if (react.error) throw react.error;
+
+  const { data: shop, error: shopError } = await sb
+    .from("shops")
+    .select("id")
+    .eq("shop_domain", shopDomain)
+    .maybeSingle();
+  if (shopError) throw shopError;
+  if (!shop?.id) throw new Error(`Provisioned shop row could not be resolved: ${shopDomain}`);
+
+  shopIdCache.set(shopDomain, shop.id);
+  await seedShippedAutopilotFeatures(shop.id, sb);
+}
+
+/**
+ * Ensure Calderyn's three baseline no-brainer features exist for a shop.
+ * Existing rows are left untouched so merchant off-switches and learned state
+ * survive re-authentication. A migration performs the corresponding backfill
+ * for shops that already existed when this behavior shipped.
+ */
+export async function seedShippedAutopilotFeatures(
+  shopId: string,
+  sb: SupabaseClient,
+): Promise<void> {
+  const rows = [...NO_BRAINER].map((key) => {
+    const [detectorId, rawActionKind] = key.split(":");
+    const actionKind = rawActionKind as ActionKind;
+    return {
+      shop_id: shopId,
+      detector_id: detectorId,
+      action_kind: actionKind,
+      graduated: true,
+      last_conf: pairConfidence(detectorId, actionKind, { alpha: 0, beta: 0 }, null),
+    };
+  });
+  const { error } = await sb
+    .from("pair_calibration")
+    .upsert(rows, {
+      onConflict: "shop_id,detector_id,action_kind",
+      ignoreDuplicates: true,
+    });
+  if (error) throw error;
 }
 
 /** Soft-mark a shop uninstalled (inverse of provisionShop's reactivation). */

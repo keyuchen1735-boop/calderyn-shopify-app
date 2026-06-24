@@ -90,6 +90,7 @@ describe("setPairAutonomy", () => {
     const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", false, mockSb(cap));
     expect(r.ok).toBe(true);
     expect(cap.payload?.merchant_disabled).toBe(true);
+    expect(cap.payload?.graduated).toBe(false);
   });
 
   it("enabling sets merchant_disabled=false", async () => {
@@ -97,6 +98,7 @@ describe("setPairAutonomy", () => {
     const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", true, mockSb(cap));
     expect(r.ok).toBe(true);
     expect(cap.payload?.merchant_disabled).toBe(false);
+    expect(cap.payload?.graduated).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@ import {
   mapOrder,
   mapOrderLines,
   parseInventoryWebhook,
+  parseProductWebhook,
   parseOrderWebhook,
   parseRefundWebhook,
   minimizeOrderWebhook,
@@ -50,6 +51,7 @@ describe("mapVariantToSku", () => {
       sku: "WID-1",
       title: "Small",
       inventoryItem: { id: "gid://shopify/InventoryItem/300", unitCost: { amount: "4.50" } },
+      inventoryPolicy: "DENY",
     };
     expect(mapVariantToSku(SHOP, product, variant)).toEqual({
       shop_id: SHOP,
@@ -64,7 +66,27 @@ describe("mapVariantToSku", () => {
       vendor: null,
       tags: [],
       collections: [],
+      inventory_policy: "deny",
+      inventory_tracked: false,
     });
+  });
+
+  it("maps Shopify inventory policy and tracking state", () => {
+    const row = mapVariantToSku(
+      SHOP,
+      { id: "gid://shopify/Product/100", title: "Widget" },
+      {
+        id: "gid://shopify/ProductVariant/200",
+        inventoryPolicy: "CONTINUE",
+        inventoryItem: {
+          id: "gid://shopify/InventoryItem/300",
+          tracked: true,
+          unitCost: null,
+        },
+      },
+    );
+    expect(row.inventory_policy).toBe("continue");
+    expect(row.inventory_tracked).toBe(true);
   });
 
   it("maps product facets: productType→category, vendor, tags, collections (trimmed)", () => {
@@ -312,6 +334,40 @@ describe("parseInventoryWebhook", () => {
       observed_at: "2026-05-10T00:00:00Z",
       source_version: Date.parse("2026-05-10T00:00:00Z"),
     });
+  });
+});
+
+describe("parseProductWebhook", () => {
+  it("normalizes variant inventory settings from products/update", () => {
+    expect(
+      parseProductWebhook({
+        id: 100,
+        admin_graphql_api_id: "gid://shopify/Product/100",
+        title: "Widget",
+        vendor: "Acme",
+        product_type: "Gadgets",
+        tags: "new, sale",
+        variants: [
+          {
+            id: 200,
+            admin_graphql_api_id: "gid://shopify/ProductVariant/200",
+            inventory_item_id: 300,
+            sku: "WID-1",
+            title: "Small",
+            inventory_policy: "continue",
+            inventory_management: "shopify",
+          },
+        ],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        external_id: "gid://shopify/ProductVariant/200",
+        product_id: "gid://shopify/Product/100",
+        inventory_item_id: "gid://shopify/InventoryItem/300",
+        inventory_policy: "continue",
+        inventory_tracked: true,
+      }),
+    ]);
   });
 });
 

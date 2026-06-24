@@ -97,6 +97,14 @@ describe("structural sets are internally consistent", () => {
       expect(actions).toContain(act);
     }
   });
+
+  it("ships exactly the three baseline autopilot features", () => {
+    expect([...NO_BRAINER].sort()).toEqual([
+      "campaign_below_breakeven:pause_campaign",
+      "negative_unit_economics:pause_campaign",
+      "sku_stockout_vs_spend:pause_campaign",
+    ]);
+  });
   it("every executor kind has a tier", () => {
     for (const k of HAS_EXECUTOR) expect(["reversible","hard_to_reverse","irreversible"]).toContain(actionTier(k));
   });

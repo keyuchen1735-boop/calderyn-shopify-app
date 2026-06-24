@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
-import { backfillShop } from "~/lib/ingest/backfill.server";
+import { backfillShop, syncProductInventorySettings } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
@@ -38,6 +38,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const summary = {
     backfilled: [] as string[],
     backfillErrors: [] as string[],
+    inventorySettingsSynced: [] as string[],
+    inventorySettingsErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
     attributionErrors: [] as string[],
@@ -61,6 +63,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
+  // Existing shops predate the inventory-policy columns. Incrementally refresh
+  // up to five catalogs per tick until every SKU has Shopify's safety settings.
+  const { data: activeIntegrations } = await sb
+    .from("shop_integrations")
+    .select("shop_id, shops!inner(shop_domain)")
+    .eq("kind", "shopify")
+    .in("sync_status", ["ready", "live"]);
+  for (const row of (activeIntegrations ?? []).slice(0, MAX_BACKFILL_SHOPS)) {
+    const shopId = String(row.shop_id);
+    const domain = (row as unknown as { shops?: { shop_domain?: string } }).shops?.shop_domain;
+    if (!domain) continue;
+    const { data: missing, error: missingErr } = await sb
+      .from("sku_dim")
+      .select("id")
+      .eq("shop_id", shopId)
+      .is("inventory_policy", null)
+      .limit(1);
+    if (missingErr) {
+      summary.inventorySettingsErrors.push(`${domain}: ${missingErr.message}`);
+      continue;
+    }
+    if (!missing?.length) continue;
+    try {
+      await syncProductInventorySettings(domain);
+      summary.inventorySettingsSynced.push(domain);
+    } catch (err) {
+      summary.inventorySettingsErrors.push(`${domain}: ${stringifyError(err)}`);
+    }
+  }
+
   // Phase 2: transform queued webhooks (isolated so a transform-query failure
   // doesn't abort the response).
   try {
@@ -77,11 +109,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // sets it; nothing promotes a Shopify integration to "live"), so gating on
   // "live" alone matched zero real shops and silently skipped BOTH attribution
   // reconcile (Phase 3) and ship-cost resolution (Phase 4). Include "ready".
-  const { data: activeShops } = await sb
-    .from("shop_integrations")
-    .select("shop_id")
-    .eq("kind", "shopify")
-    .in("sync_status", ["ready", "live"]);
+  const activeShops = (activeIntegrations ?? []).map((row) => ({ shop_id: row.shop_id }));
   for (const row of activeShops ?? []) {
     const shopId = (row as { shop_id: string }).shop_id;
     try {

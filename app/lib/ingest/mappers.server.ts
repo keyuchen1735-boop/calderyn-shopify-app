@@ -26,7 +26,12 @@ type VariantNode = {
   id: string;
   sku?: string | null;
   title?: string | null;
-  inventoryItem?: { id?: string | null; unitCost?: { amount?: string | null } | null } | null;
+  inventoryPolicy?: string | null;
+  inventoryItem?: {
+    id?: string | null;
+    tracked?: boolean | null;
+    unitCost?: { amount?: string | null } | null;
+  } | null;
 };
 type Money = { shopMoney?: { amount?: string | null; currencyCode?: string | null } | null };
 type OrderNode = {
@@ -85,6 +90,7 @@ export function mapLocation(shopId: string, n: LocationNode): LocationRow {
 
 export function mapVariantToSku(shopId: string, product: ProductNode, variant: VariantNode): SkuRow {
   const unitCost = variant.inventoryItem?.unitCost?.amount;
+  const inventoryPolicy = variant.inventoryPolicy?.toLowerCase();
   // Product facets for inventory slicing. `category` carries Shopify's
   // productType (the inventory page's "type" facet); empty strings are nulled so
   // a blank Shopify field doesn't render a dead facet.
@@ -98,6 +104,9 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
     external_id: variant.id,
     product_id: product.id,
     inventory_item_id: variant.inventoryItem?.id ?? null,
+    inventory_policy:
+      inventoryPolicy === "deny" || inventoryPolicy === "continue" ? inventoryPolicy : null,
+    inventory_tracked: variant.inventoryItem?.tracked === true,
     sku: variant.sku ?? null,
     // "<product> — <variant>" with any repeated product name stripped from the
     // variant (Shopify sample options often repeat it); see buildSkuTitle.
@@ -159,6 +168,61 @@ export function mapOrderLines(o: OrderNode): OrderLineRow[] {
 // Webhook parsers — normalize REST-shaped Shopify webhook payloads into
 // intermediate shapes the transform worker can resolve to fact rows.
 // ---------------------------------------------------------------------------
+
+type RawProductVariant = {
+  id?: string | number;
+  admin_graphql_api_id?: string;
+  inventory_item_id?: string | number | null;
+  sku?: string | null;
+  title?: string | null;
+  inventory_policy?: string | null;
+  inventory_management?: string | null;
+};
+type RawProductWebhook = {
+  id?: string | number;
+  admin_graphql_api_id?: string;
+  title?: string;
+  vendor?: string | null;
+  product_type?: string | null;
+  tags?: string | null;
+  variants?: RawProductVariant[];
+};
+
+/** Normalize products/update into sku_dim rows (shop_id is supplied by worker). */
+export function parseProductWebhook(
+  p: RawProductWebhook,
+): Array<Omit<SkuRow, "shop_id" | "unit_cost_cents" | "collections">> {
+  const productId = p.admin_graphql_api_id ??
+    (p.id != null ? `gid://shopify/Product/${p.id}` : null);
+  if (!productId) throw new Error("products webhook missing product id");
+  const tags = String(p.tags ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
+  return (p.variants ?? []).map((variant) => {
+    const externalId = variant.admin_graphql_api_id ??
+      (variant.id != null ? `gid://shopify/ProductVariant/${variant.id}` : null);
+    if (!externalId) throw new Error("products webhook variant missing id");
+    const policy = variant.inventory_policy?.toLowerCase();
+    return {
+      external_id: externalId,
+      product_id: productId,
+      inventory_item_id:
+        variant.inventory_item_id == null
+          ? null
+          : `gid://shopify/InventoryItem/${variant.inventory_item_id}`,
+      inventory_policy: policy === "continue" ? "continue" : policy === "deny" ? "deny" : null,
+      inventory_tracked: variant.inventory_management != null,
+      sku: variant.sku ?? null,
+      title: buildSkuTitle(String(p.title ?? ""), variant.title),
+      currency: "USD",
+      category: p.product_type?.trim() || null,
+      vendor: p.vendor?.trim() || null,
+      tags,
+    };
+  });
+}
 
 export type ParsedInventory = {
   inventory_item_external_id: string;

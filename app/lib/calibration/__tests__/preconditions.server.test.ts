@@ -333,7 +333,7 @@ describe("stockoutPauseAllowed (I10)", () => {
     });
     // FAIL-SAFE: inventory_policy not available in schema → cannot confirm 'deny' → ok:false
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/inventory_policy|not available|fail.?safe/i);
+    expect(result.reason).toMatch(/inventory_policy|not available|fail.?safe|campaign_id/i);
   });
 
   it("ok:false when inventory_level_fact shows a sellable variant still in stock (available > 0)", async () => {

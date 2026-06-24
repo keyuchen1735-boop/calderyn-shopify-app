@@ -152,6 +152,7 @@ export async function recomputeShopCalibration(
     // a probation rule installed mid-day will be caught by the live gate.
     if (ev) {
       const verdict = graduationVerdict({
+        detectorId: detector,
         actionKind: action as ActionKind,
         lastConf: conf,
         gradThreshold: ev.graduation_threshold,

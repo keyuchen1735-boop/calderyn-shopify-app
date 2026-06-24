@@ -56,7 +56,7 @@ conf = 100 * (0.30*0.6 + 0.50*0.715 + 0.20*1.0)
      = 100 * 0.7375  =  ~74
 ```
 
-So a pre-trusted no-brainer shows ~74% confidence at install. Note: that display number does NOT license an unattended action on day one. Auto-execute requires real evidence (the shadow gate, Section 4 and Section 9, I3).
+So a shipped no-brainer shows ~74% confidence at install and is unlocked immediately. It may act only when the merchant has enabled shop-level Autopilot, the feature itself is enabled, and every live guardrail, freshness check, undo requirement, and detector-specific precondition passes.
 
 **The headline Calibration %** is the frequency-weighted average of `conf` across the pairs this shop actually encounters:
 
@@ -96,7 +96,7 @@ A pair **graduates to autonomous** (autopilot may fire it without queueing) only
 5. has_executor(action)    = true                        (a real platform executor exists)
 6. has_undo_branch(action) = true                        (undoAction supports the kind)
 7. checkGuardrails(live)   = allowed, with bypass forced OFF (Section 9, I1)
-8. passed the mandatory shadow gate (first 3 real instances queued + approved)
+8. passed the mandatory shadow gate (first 3 real instances queued + approved), unless it is one of the three explicitly shipped no-brainer pairs in Section 4
 ```
 
 **Reversible vs irreversible sets a HIGHER BAR, never a permanent ceiling.** With enough clean approvals, `historical -> ~1.0` and the reversibility factor can itself be earned up (every 10 consecutive clean approvals adds +0.10 to the reversibility factor, capping at 1.0), so even an irreversible pair can reach 100. A single undo resets the consecutive-clean counter to 0 (but keeps alpha/beta history).
@@ -127,17 +127,17 @@ A pair **graduates to autonomous** (autopilot may fire it without queueing) only
    execute -> insertAuditWithIdempotency -> AGENT ACTIVITY (undo within window)
 ```
 
-## 4. The baseline ~25% set (no-brainers that ship pre-trusted)
+## 4. The baseline ~25% set (no-brainers that ship unlocked)
 
 These are the only pairs seeded above neutral at install. Each has a static `p_prior = REVERSIBILITY_BASE[tier] x NOBRAINER_BONUS(1.30)`, clamped <= 0.95.
 
 | Pair | Why it is a "no-brainer" | Ships at |
 |---|---|---|
-| sku_stockout_vs_spend, pause_campaign | Out of stock -> stop paying for ads | conf ~74, shadow-gated |
-| campaign_below_breakeven, pause_campaign | ROAS below break-even -> pause | conf ~74, shadow-gated |
-| negative_unit_economics, pause_campaign | Losing money on every sale -> pause | conf ~74, shadow-gated |
+| sku_stockout_vs_spend, pause_campaign | Out of stock -> stop paying for ads | conf ~74, unlocked |
+| campaign_below_breakeven, pause_campaign | ROAS below break-even -> pause | conf ~74, unlocked |
+| negative_unit_economics, pause_campaign | Losing money on every sale -> pause | conf ~74, unlocked |
 
-**Critical: the display seed does NOT auto-run on install.** Every pair, including no-brainers, must pass a mandatory shadow gate (the first 3 real instances on this shop are queued, you approve them, then it graduates). The ~25% headline is a belief, not evidence (Section 9, I3).
+**The three listed pairs are the explicit exception to the shadow gate.** They appear in Live Engine immediately and are eligible for unattended execution when shop-level Autopilot is on. This does not bypass safety: the per-feature switch, learned rules, undo support, guardrails, freshness checks, and detector-specific execution preconditions remain mandatory.
 
 **The flagship action `(sku_stockout_vs_spend, pause_campaign)` is NOT always safe.** "Out of stock -> pause ad" is wrong in many common shops. It auto-fires only when ALL of these hold (otherwise it queues):
 
@@ -293,7 +293,7 @@ An autonomous (auto-executed, no human) action is permitted ONLY if every one of
 
 **I2 - Daily aggregate dollar ceiling AND finite action count.** Reuse the EXISTING `daily_action_budget_cents` guardrail (default $2,500/day, already shown in Settings / onboarding / dashboard with "used today" tracking) but actually ENFORCE it. It is currently displayed and tracked but NOT checked in `evaluateGuardrails` ([guardrails.ts:55-105](app/lib/actions/guardrails.ts#L55-L105) gates the per-action `dollar_cap_cents` and per-campaign `maxDailyBudgetCents`, never the daily aggregate). Add a `todayAutopilotDollarsCents` fact and gate `SUM(today autonomous impact) + this <= daily_action_budget_cents`. The daily action COUNT cap (`dailyActionCap`) may not be unlimited for autonomous actions: a NULL cap is treated as a conservative default of 5, not infinity. (This is a PRE-EXISTING enforcement gap in current autopilot, not just a Calibration concern; Calibration must close it because it broadens the action set. The per-action cap alone is insufficient.)
 
-**I3 - Graduation requires evidence, not belief.** `clean_approvals >= K AND conf >= threshold AND consecutive_undos = 0 AND not on probation AND not muted`, where K = 3 (reversible) / 10 (hard_to_reverse) / 25 (irreversible), and "clean approval" = merchant-approved-and-not-undone (no install-time seed counts). Every pair, including no-brainers, passes a mandatory shadow gate of the first 3 real instances before its first graduation.
+**I3 - Graduation normally requires evidence; the shipped baseline set is explicit.** For learned pairs: `clean_approvals >= K AND conf >= threshold AND consecutive_undos = 0 AND not on probation AND not muted`, where K = 3 (reversible) / 10 (hard_to_reverse) / 25 (irreversible), and "clean approval" = merchant-approved-and-not-undone. The three no-brainer pairs in Section 4 ship graduated with zero synthetic approval counts. They still require the shop-level Autopilot switch, per-feature enablement, undo support, live rules, guardrails, freshness, and detector-specific execution preconditions.
 
 **I4 - Freshness gate + live precondition re-check at execution time.** Decision facts must be <= T_fresh old (stock <= 60 min, spend <= 24h). The executor re-reads live entity state and aborts (records `skipped: precondition_stale`) if the precondition no longer holds (in stock now, already paused, live budget already <= target).
 

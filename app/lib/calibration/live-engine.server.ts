@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
 import { DETECTOR_LABELS, ACTION_LABELS } from "../labels";
+import { NO_BRAINER } from "./confidence";
 
 const DAY_MS = 86_400_000;
 const WINDOW_DAYS = 90;
@@ -42,6 +43,7 @@ export interface PairRow {
   detector_id: string;
   action_kind: string;
   merchant_disabled?: boolean | null;
+  graduated?: boolean | null;
 }
 
 /**
@@ -127,10 +129,14 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
 
     const { data: pairRows, error: pairErr } = await sb
       .from("pair_calibration")
-      .select("detector_id, action_kind, merchant_disabled")
-      .eq("shop_id", shopId)
-      .eq("graduated", true);
-    if (pairErr || !pairRows || pairRows.length === 0) {
+      .select("detector_id, action_kind, merchant_disabled, graduated")
+      .eq("shop_id", shopId);
+    const visiblePairs = ((pairRows ?? []) as PairRow[]).filter(
+      (row) =>
+        Boolean(row.graduated) ||
+        NO_BRAINER.has(`${row.detector_id}:${row.action_kind}`),
+    );
+    if (pairErr || visiblePairs.length === 0) {
       return { autopilotEnabled, moneyProtectedWeekCents: 0, features: [] };
     }
 
@@ -152,7 +158,7 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
       .gte("created_at", sinceIso);
 
     const { moneyProtectedWeekCents, features } = aggregateLiveEngine(
-      pairRows as PairRow[],
+      visiblePairs,
       (auditRows ?? []) as AutopilotAuditRow[],
       Date.now(),
     );
@@ -178,9 +184,14 @@ export async function setPairAutonomy(
   sb: SupabaseClient,
 ): Promise<{ ok: boolean }> {
   try {
+    const shipped = NO_BRAINER.has(`${detectorId}:${actionKind}`);
     const { error } = await sb
       .from("pair_calibration")
-      .update({ merchant_disabled: !enabled, updated_at: new Date().toISOString() })
+      .update({
+        merchant_disabled: !enabled,
+        ...(shipped ? { graduated: enabled } : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq("shop_id", shopId)
       .eq("detector_id", detectorId)
       .eq("action_kind", actionKind);

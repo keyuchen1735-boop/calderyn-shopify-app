@@ -33,8 +33,10 @@ export type AdminVariant = {
   id: string;
   sku: string | null;
   title: string | null;
+  inventoryPolicy: "DENY" | "CONTINUE";
   inventoryItem: {
     id: string | null;
+    tracked: boolean;
     unitCost: { amount: string } | null;
     inventoryLevels: {
       nodes: Array<{ location: { id: string }; quantities: Array<{ name: string; quantity: number }> }>;
@@ -76,9 +78,9 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
             # >20 locations, are truncated; revisit if real catalogs exceed this.
             variants(first: 40) {
               nodes {
-                id sku title
+                id sku title inventoryPolicy
                 inventoryItem {
-                  id
+                  id tracked
                   unitCost { amount }
                   inventoryLevels(first: 20) {
                     nodes { location { id } quantities(names: ["available"]) { name quantity } }

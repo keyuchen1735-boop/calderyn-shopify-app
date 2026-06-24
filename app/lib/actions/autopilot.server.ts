@@ -35,6 +35,7 @@ import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.ser
 const PAUSE_DETECTORS = new Set([
   "campaign_below_breakeven",
   "negative_unit_economics",
+  "sku_stockout_vs_spend",
 ]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
 const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
@@ -607,11 +608,9 @@ export async function runAutopilotForShop(
       // require it non-null, which the guard above guarantees.
       const campaignId: string = c.campaign_id;
 
-      // Graduation gate (Slice 5 Task 2, I3/I7): a (detector, action) pair MUST
-      // have earned calibration graduation before it may auto-execute. isGraduated
-      // is fail-safe (returns false on any read error), so a DB hiccup can never
-      // grant autonomy. With no pair graduated yet, autopilot skips everything —
-      // that is the intended "gate everything, re-earn trust" default.
+      // Learned pairs must earn graduation; the three shipped no-brainers start
+      // unlocked. isGraduated remains fail-safe, so a DB hiccup can never grant
+      // autonomy.
       if (!(await isGraduated(shopId, c.detector_id, kind, sb))) {
         decide(c, kind, "skipped", "pair not graduated");
         continue;
@@ -885,11 +884,8 @@ export async function runAutopilotForShop(
       }
 
       // I10: For sku_stockout_vs_spend → pause_campaign specifically, also require
-      // the stockout allowlist to clear. The detector is NOT in PAUSE_DETECTORS today
-      // (so it won't reach this path), but the gate is wired here so that IF it ever
-      // appears as an autonomous pause candidate the allowlist is enforced. The check
-      // ALWAYS returns ok:false in the current schema (inventory_policy not synced),
-      // which is the correct conservative default — it queues for human review.
+      // the full product-level stockout allowlist to clear. Candidate selection
+      // only supplies a dedicated campaign; shared/catalog campaigns remain manual.
       if (kind === "pause_campaign" && c.detector_id === "sku_stockout_vs_spend") {
         // Load the raw alert so stockoutPauseAllowed can read entity_ref.
         const { data: alertRow } = await sb
@@ -901,7 +897,12 @@ export async function runAutopilotForShop(
           decide(c, kind, "skipped", "stockout_allowlist: alert row not found");
           continue;
         }
-        const stockCheck = await stockoutPauseAllowed({ shopId, alert: alertRow, sb });
+        const stockCheck = await stockoutPauseAllowed({
+          shopId,
+          alert: alertRow,
+          campaignId,
+          sb,
+        });
         if (!stockCheck.ok) {
           console.info(`[autopilot] stockout allowlist blocked ${c.campaign_id}: ${stockCheck.reason}`);
           decide(c, kind, "skipped", stockCheck.reason ?? "stockout_precondition_not_met");

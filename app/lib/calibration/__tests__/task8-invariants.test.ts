@@ -210,20 +210,15 @@ describe("Confidence floor — no-brainer pairs (I8)", () => {
 // 3. Opt-in default invariant
 // ---------------------------------------------------------------------------
 
-describe("Opt-in default invariant — fresh shop executes nothing autonomously", () => {
+describe("Default autonomy invariant — only shipped no-brainers start unlocked", () => {
   /**
-   * A fresh shop has no pair calibration history.
-   * graduationVerdict with cold-start inputs (cleanApprovals=0, lastConf=cold)
-   * must return graduated=false for every kind in GRADUATABLE_V1 — meaning
-   * autopilot never fires even if somehow enabled.
-   *
-   * This locks in the "gate everything; re-earn trust" decision: even if
-   * autopilot_enabled were accidentally true, no pair graduates without
-   * evidence, so runAutopilotForShop skips all candidates (every isGraduated
-   * call returns false → "skipped: pair not graduated").
+   * Ordinary pairs still need evidence at cold start. The three explicit
+   * no-brainer detector/action pairs are tested separately as unlocked defaults.
+   * The shop-level Autopilot setting remains the outer execution switch.
    */
 
   const FRESH_INPUT = {
+    detectorId: "regional_spend_starved_stock",
     lastConf: 74,          // highest cold-start conf (no-brainer level)
     gradThreshold: 75,     // typical graduation threshold
     cleanApprovals: 0,     // fresh shop: zero approvals
@@ -233,7 +228,7 @@ describe("Opt-in default invariant — fresh shop executes nothing autonomously"
     hasUndoBranch: true,
   };
 
-  it("pause_campaign does NOT graduate for a fresh shop (zero approvals)", () => {
+  it("a normal pause pair does NOT graduate for a fresh shop", () => {
     const v = graduationVerdict({ ...FRESH_INPUT, actionKind: "pause_campaign" });
     expect(v.graduated).toBe(false);
     expect(v.reason).toBe("needs more approvals");
@@ -245,7 +240,7 @@ describe("Opt-in default invariant — fresh shop executes nothing autonomously"
     expect(v.reason).toBe("needs more approvals");
   });
 
-  it("no kind in GRADUATABLE_V1 graduates with zero approvals", () => {
+  it("no non-no-brainer kind in GRADUATABLE_V1 graduates with zero approvals", () => {
     for (const kind of GRADUATABLE_V1) {
       const v = graduationVerdict({ ...FRESH_INPUT, actionKind: kind });
       expect(v.graduated).toBe(false);
@@ -265,7 +260,7 @@ describe("Opt-in default invariant — fresh shop executes nothing autonomously"
     expect(v.reason).toBe("needs more approvals");
   });
 
-  it("autopilot_enabled=false (opt-in default) + zero graduated pairs = no autonomous execution", () => {
+  it("the shop-level autopilot switch remains the outer opt-in gate", () => {
     // Two-layer wall:
     //  (a) autopilot_enabled=false → runAutopilotForShop returns {skipped:true} immediately.
     //  (b) Zero approved pairs → no pair graduates → isGraduated=false for all candidates.

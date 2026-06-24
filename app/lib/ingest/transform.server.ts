@@ -1,6 +1,11 @@
 import { getSupabase } from "../supabase.server";
 import { writeDlq } from "./dlq.server";
-import { parseInventoryWebhook, parseOrderWebhook, parseRefundWebhook } from "./mappers.server";
+import {
+  parseInventoryWebhook,
+  parseOrderWebhook,
+  parseProductWebhook,
+  parseRefundWebhook,
+} from "./mappers.server";
 import { applyAttribution } from "../attribution/apply.server";
 
 const BATCH = 200;
@@ -41,8 +46,9 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
         res.facts += await applyOrder(row.shop_id, row.payload as Record<string, unknown>);
       } else if (topic === TOPIC_REFUNDS_CREATE) {
         res.facts += await applyRefund(row.shop_id, row.payload as Record<string, unknown>);
-      } else if (topic !== TOPIC_PRODUCTS_UPDATE) {
-        // products/update is intentionally handled by backfill upserts in Slice 1.
+      } else if (topic === TOPIC_PRODUCTS_UPDATE) {
+        res.facts += await applyProduct(row.shop_id, row.payload as Record<string, unknown>);
+      } else {
         // Any other topic is unexpected — stamp it so it doesn't loop, but stay
         // visible (rule 12) rather than silently dropping it.
         console.warn(`[ingest] transform: skipping unhandled webhook topic ${row.topic}`);
@@ -69,6 +75,16 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
     }
   }
   return res;
+}
+
+async function applyProduct(shopId: string, payload: Record<string, unknown>): Promise<number> {
+  const rows = parseProductWebhook(payload).map((row) => ({ shop_id: shopId, ...row }));
+  if (!rows.length) return 0;
+  const { error } = await getSupabase()
+    .from("sku_dim")
+    .upsert(rows, { onConflict: "shop_id,external_id" });
+  if (error) throw error;
+  return rows.length;
 }
 
 async function applyInventory(shopId: string, payload: Record<string, unknown>): Promise<number> {

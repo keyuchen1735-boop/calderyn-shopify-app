@@ -93,6 +93,7 @@ export async function isGraduated(
 
     // 7. Compute verdict.
     const verdict = graduationVerdict({
+      detectorId,
       actionKind,
       lastConf: Number(row.last_conf ?? 0),
       gradThreshold: Number(row.graduation_threshold ?? 100),
@@ -173,7 +174,7 @@ export async function countNearGraduation(
       if (row.graduated) continue;
       if (Number(row.clean_approvals ?? 0) < 1) continue;
       if (Number(row.consecutive_undos ?? 0) > 0) continue;
-      if (Boolean(row.merchant_disabled)) continue;
+      if (row.merchant_disabled) continue;
       const detector = String(row.detector_id);
       if (muted(detector, action)) continue;
       if (onProbation(detector, action)) continue;
