@@ -1,5 +1,4 @@
 // TDD coverage for the Google Ads connector transforms.
-// Ported verbatim from the monorepo worker (import path adjusted to ../transform).
 
 import { describe, it, expect } from "vitest";
 import { transformCampaign, transformReportRow } from "../transform";
