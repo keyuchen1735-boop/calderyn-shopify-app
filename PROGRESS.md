@@ -53,7 +53,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   `ineligibleReason`. _Invariant test: no StrategicMove renders `executor===null && !ineligibleReason`._
 
 ### WS2 — Wire executors that already exist (both surfaces)
-- [ ] 2a — `increase_campaign_budget` executable on alert surface: add to `executableKinds`
+- [x] 2a — `increase_campaign_budget` executable on alert surface: add to `executableKinds`
   (`app/routes/app.alerts.$id.tsx` ~448) + compute `dailyBudgetCents` from evidence; dashboard
   allowlist (`app/lib/dashboard/client.ts` ~166-172) + `executeAction` branch (`DashboardApp.tsx`).
   _Test: scale alert → real `executeAction(increase_campaign_budget)`, not phantom; both surfaces._
@@ -103,3 +103,4 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 1a — app.alerts.$id action: unwired kinds (exclude_geo / free-ship / increase_budget) now throw 422 instead of phantom "succeeded"; snooze/reallocate_inventory/create_po_draft still record real work. Verified by alert-action-calibration test "does NOT phantom-succeed for a kind with no wired executor (rule 12)". 62 related tests green.
 - 1b — e40ea6a — enrich: winner-query failure no longer discards an already-enriched cut_ads button (catch falls back to `enriched`, not `plan`).
 - 1c — enrich.advisory() now patches cut_ads too + no_sku_key returns advisory; rank fix_returns carries a standing reason. Invariant verified: no move renders executor===null with empty ineligibleReason. Full suite 2555 passed / 0 failed.
+- 2a — increase_campaign_budget now a real button on BOTH surfaces: embedded executableKinds + scaled-budget compute (current*(1+pct/100)); dashboard allowlist detector-gated (scaling alert recommends increase, not pause) + DashboardApp executeAction increase branch + dashboard ActionKind union. Verified embedded (alert-action-calibration) + dashboard availability (adapt-alert). Full suite 2557 / 0 failed, tsc clean. Note: DashboardApp.executeAction has no render harness; budget formula is the tested embedded one mirrored.

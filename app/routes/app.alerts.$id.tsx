@@ -445,7 +445,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Google/TikTok execute live only once OAuth has stored credentials; if the
     // adapter resolves to null, executeAction records a failed audit with
     // last_error set — no silent swallowing.
-    const executableKinds: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget"];
+    const executableKinds: ExecutableKind[] = [
+      "pause_campaign",
+      "reduce_campaign_budget",
+      "increase_campaign_budget",
+    ];
     const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
     // cut_ads on a SKU alert submits the loser campaign from the remediation move
     // (the evidence has no campaign_id). executeAction validates shop ownership,
@@ -467,6 +471,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
           dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
         }
+      } else if (kind === "increase_campaign_budget") {
+        // Scale up by the engine's suggested percent (evidence.increase_pct),
+        // mirroring the Campaigns detail "Proposed (+X%)" card. Default +20% when
+        // evidence omits it. No current budget → leave undefined so executeAction
+        // fails visibly rather than guessing a budget (rule 12).
+        const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
+        const pct = Number(ev.increase_pct) || 20;
+        dailyBudgetCents = current > 0 ? Math.round(current * (1 + pct / 100)) : undefined;
       }
 
       const shopId = await resolveShopId(session.shop);

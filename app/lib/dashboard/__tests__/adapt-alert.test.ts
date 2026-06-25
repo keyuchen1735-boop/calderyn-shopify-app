@@ -60,6 +60,24 @@ describe("adaptAlert action list", () => {
     expect(vm.campaign_id).toBe("c2");
   });
 
+  it("offers increase_campaign_budget (and recommends it) for a campaign_scaling_opportunity alert", () => {
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "campaign_scaling_opportunity",
+        campaign: "Summer Sale",
+        sku: null,
+        evidence: { daily_budget_cents: "10000", increase_pct: "25" },
+      }),
+      CAMPAIGNS,
+    );
+    expect(vm.actions).toContain("increase_campaign_budget");
+    expect(vm.recommended).toBe("increase_campaign_budget");
+    // A winning campaign must not offer pause/reduce (wrong direction) — parity
+    // with the embedded surface, whose recommended action is the scale-up.
+    expect(vm.actions).not.toContain("pause_campaign");
+    expect(vm.actions).not.toContain("reduce_campaign_budget");
+  });
+
   it("stays snooze-only with no recommendation for snooze-only detectors", () => {
     const vm = adaptAlert(makeAlert({ detector_id: "margin_erosion" }), CAMPAIGNS);
     expect(vm.actions).toEqual(["snooze_alert"]);

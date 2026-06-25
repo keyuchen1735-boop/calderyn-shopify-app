@@ -164,8 +164,12 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // /dashboard/api/alerts/:id/action. Detector kinds without a dashboard
   // endpoint (exclude_geo) stay hidden until wired.
   const detectorActions = DETECTOR_TO_ACTIONS[a.detector_id] ?? [];
+  // Campaign kinds need a resolved campaign AND must be valid for the detector —
+  // a winning-campaign (scaling) alert offers increase, never pause/reduce.
   const actions: string[] = [
-    ...(campaign_id ? ["pause_campaign", "reduce_campaign_budget"] : []),
+    ...(campaign_id && detectorActions.includes("pause_campaign") ? ["pause_campaign"] : []),
+    ...(campaign_id && detectorActions.includes("reduce_campaign_budget") ? ["reduce_campaign_budget"] : []),
+    ...(campaign_id && detectorActions.includes("increase_campaign_budget") ? ["increase_campaign_budget"] : []),
     ...(detectorActions.includes("reallocate_inventory") ? ["reallocate_inventory"] : []),
     ...(detectorActions.includes("create_po_draft") ? ["create_po_draft"] : []),
     "snooze_alert",

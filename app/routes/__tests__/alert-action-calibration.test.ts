@@ -202,6 +202,32 @@ describe("alert action — calibration signal fires on approval", () => {
     expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
 
+  it("scales budget through executeAction (not the legacy recorder) for increase_campaign_budget", async () => {
+    // campaign_scaling_opportunity allows increase_campaign_budget; evidence carries
+    // the current daily budget + the engine's suggested increase percent.
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "campaign_scaling_opportunity",
+      campaign_id: "camp-dim-uuid",
+      evidence: { campaign_id: "camp-dim-uuid", daily_budget_cents: 10000, increase_pct: 25 },
+    });
+    const res = await call(makeRequest("increase_campaign_budget"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      expect.objectContaining({
+        kind: "increase_campaign_budget",
+        campaignId: "camp-dim-uuid",
+        dailyBudgetCents: 12500, // 10000 * (1 + 25/100)
+      }),
+      expect.anything(),
+    );
+    // Must NOT fall to the phantom recorder.
+    expect(clientExecuteSpy).not.toHaveBeenCalled();
+  });
+
   it("does NOT call recordApproval for snooze_alert", async () => {
     // snooze_alert is in DETECTOR_TO_ACTIONS for every detector; allow it here.
     const alertWithSnooze = {
