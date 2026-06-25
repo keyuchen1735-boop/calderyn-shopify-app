@@ -245,6 +245,27 @@ describe("enrichRemediation — cut_ads", () => {
     expect(cut.target?.loserCampaignBudgetCents).toBe(45000);
   });
 
+  it("non-Meta dedicated loser campaign → cut_ads stays executable (platform-blind); only reallocate is Meta-gated", async () => {
+    // cut_ads is just pause/reduce of the loser's OWN campaign — executeAction
+    // resolves the Google/TikTok adapter, so it must remain a button. Only the
+    // cross-campaign reallocate leg is Meta-only.
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "google",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).toBe("reduce_campaign_budget"); // 45000 ≥ REDUCE_FLOOR
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.executor).toBeNull();
+    expect(realloc.ineligibleReason).toMatch(/Meta/i);
+  });
+
   it("no dedicated loser campaign → cut_ads stays advisory too", async () => {
     const sb = fakeSb({
       loser: { sku_id: LOSER_SKU, contribution_per_unit_cents: 2300, dedicated_campaign_id: null, dedicated_campaign_platform: null, dedicated_campaign_budget_cents: null },

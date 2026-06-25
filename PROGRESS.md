@@ -57,7 +57,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   (`app/routes/app.alerts.$id.tsx` ~448) + compute `dailyBudgetCents` from evidence; dashboard
   allowlist (`app/lib/dashboard/client.ts` ~166-172) + `executeAction` branch (`DashboardApp.tsx`).
   _Test: scale alert → real `executeAction(increase_campaign_budget)`, not phantom; both surfaces._
-- [ ] 2b — `cut_ads` cross-platform: loosen Meta-only gate (`enrich.server.ts` ~97) so pause/reduce
+- [x] 2b — `cut_ads` cross-platform: loosen Meta-only gate (`enrich.server.ts` ~97) so pause/reduce
   enriches for any platform with a live adapter; keep reallocate Meta-only. _Test: Google/TikTok loser → executable cut button._
 - [ ] 2c — Scale-opportunity card (`app/routes/app.campaigns.$campaignId.tsx` ~606-626): text →
   real `apply_direction` button (parity with dashboard `Campaigns.tsx`). _Test: card posts `increase_campaign_budget`._

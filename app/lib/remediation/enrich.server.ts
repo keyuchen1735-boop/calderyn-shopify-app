@@ -114,13 +114,11 @@ export async function enrichRemediation(
     if (!loserRow.dedicated_campaign_id || loserRow.dedicated_campaign_budget_cents == null) {
       return advisory(plan, "served by a shared campaign — exclude this SKU inside Advantage+ instead");
     }
-    if (loserRow.dedicated_campaign_platform !== "meta") {
-      return advisory(plan, "budget shift is Meta-only — adjust this campaign in its platform");
-    }
-
-    // The loser has a dedicated mutable Meta campaign. Enrich cut_ads now — it
-    // is executable regardless of whether a winner exists. Both moves are patched
-    // on the same in-progress plan object; no closure clobbering.
+    // The loser has a dedicated mutable campaign. cut_ads (pause / reduce of the
+    // loser's OWN campaign) is platform-blind — executeAction resolves the
+    // Meta/Google/TikTok adapter and fails visibly if none is connected — so
+    // enrich it for ANY platform, with or without a winner. Only the
+    // cross-campaign reallocate leg below stays Meta-only.
     const cutKind: StrategicMove["executor"] =
       loserRow.dedicated_campaign_budget_cents < REDUCE_FLOOR_CENTS
         ? "pause_campaign"
@@ -137,6 +135,16 @@ export async function enrichRemediation(
           loserCampaignBudgetCents: loserRow.dedicated_campaign_budget_cents ?? undefined,
         },
       }));
+    }
+
+    // Reallocation (cross-campaign budget shift) is Meta-only: executeReallocation
+    // and the winner pairing assume a single platform. cut_ads above already gives
+    // any-platform losers a working lever, so it survives this fallback.
+    if (loserRow.dedicated_campaign_platform !== "meta") {
+      return advisory(
+        enriched,
+        "moving budget to a winner is Meta-only — cut this campaign instead, or adjust the winner in its platform",
+      );
     }
 
     // Top catalog winner with its own dedicated mutable campaign, excluding the
