@@ -60,6 +60,7 @@ from calderyn_engine.detectors import (  # noqa: E402, F401
     margin_erosion,
     negative_unit_economics,
     out_of_stock_live,
+    priced_below_cost,
     regional_shortage_risk,
     regional_spend_starved_stock,
     reorder_timing,
