@@ -63,17 +63,32 @@ export async function enrichRemediation(
   const skuId = typeof alert.evidence?.sku_id === "string" ? alert.evidence.sku_id : null;
   const skuCode = typeof alert.sku === "string" && alert.sku ? alert.sku : null;
 
-  // advisory patches reallocate on the given base plan, leaving cut_ads as-is on
-  // that base. Callers pass `plan` when cut_ads is also ineligible, or `enriched`
-  // (with cut_ads already patched) when cut_ads is executable but reallocate is not.
-  const advisory = (base: RemediationPlan, reason: string): RemediationPlan =>
-    withMove(base, reallocIdx, (m) => ({
+  // advisory patches reallocate on the given base plan. cut_ads shares the
+  // loser's fate, so when it is NOT already an executable button it gets the same
+  // reason — never a bare label (rule 12). The executor==null guard preserves an
+  // already-enriched cut_ads (e.g. the winner-query-failure fallback, where the
+  // loser campaign is mutable but the winner couldn't be resolved).
+  const advisory = (base: RemediationPlan, reason: string): RemediationPlan => {
+    let next = withMove(base, reallocIdx, (m) => ({
       ...m,
       executor: null,
       ineligibleReason: reason,
     }));
+    if (cutIdx >= 0 && base.moves[cutIdx]?.executor == null) {
+      next = withMove(next, cutIdx, (m) => ({
+        ...m,
+        executor: null,
+        ineligibleReason: reason,
+      }));
+    }
+    return next;
+  };
 
-  if (!skuId && !skuCode) return plan; // no key to resolve the SKU
+  // No SKU key to resolve the campaign — surface the reason instead of a bare
+  // label (rule 12).
+  if (!skuId && !skuCode) {
+    return advisory(plan, "couldn't link this alert to a SKU — review manually");
+  }
 
   // Hoisted above the try so the catch can fall back to the partially-enriched
   // plan: if the winner query fails AFTER cut_ads was made executable, we must

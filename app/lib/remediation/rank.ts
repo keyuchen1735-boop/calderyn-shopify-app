@@ -83,6 +83,13 @@ function move(kind: MoveKind, dollarImpactCents: number): StrategicMove {
         : kind === "discontinue"
           ? "discontinue_sku"
           : null,
+    // fix_returns has no automatable executor (returns are a product / listing /
+    // QA fix) and is never enriched — give it a standing reason so it never
+    // renders as a bare label (rule 12). WS4 turns this into an advisory deep-link.
+    ineligibleReason:
+      kind === "fix_returns"
+        ? "returns need a product or listing change — no one-click fix"
+        : undefined,
     label: MOVE_LABELS[kind],
   };
 }

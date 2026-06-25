@@ -69,6 +69,10 @@ describe("rankMoves — returns, margin, cogs", () => {
     expect(plan.recommended).toBe("fix_returns");
     const fix = plan.moves.find((m) => m.kind === "fix_returns")!;
     expect(fix.dollarImpactCents).toBe(180000); // 1800 USD → cents
+    // fix_returns has no executor and is never enriched — it must still carry a
+    // reason so it never renders as a bare label (rule 12).
+    expect(fix.executor).toBeNull();
+    expect(fix.ineligibleReason).toBeTruthy();
   });
 
   it("ad_tax_overload with positive 7d gross profit → ad moves (reallocate recommended)", () => {

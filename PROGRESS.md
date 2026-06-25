@@ -49,7 +49,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   (`reallocate_inventory`, `create_po_draft`) unaffected. _Test: those kinds write no succeeded row, no ack._
 - [x] 1b — `enrich.server.ts` ~158-161 catch falls back to `enriched`, not `plan` (preserve an
   already-built `cut_ads` button when the winner query throws). _Test: winner throw after cut_ads enriched → cut_ads stays executable._
-- [ ] 1c — `advisory()` patches BOTH moves; `fix_returns` + `no_sku_key` always carry an
+- [x] 1c — `advisory()` patches BOTH moves; `fix_returns` + `no_sku_key` always carry an
   `ineligibleReason`. _Invariant test: no StrategicMove renders `executor===null && !ineligibleReason`._
 
 ### WS2 — Wire executors that already exist (both surfaces)
@@ -101,3 +101,5 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 ## Iteration log
 (append one line per completed slice: `<slice id> — <commit sha> — <one-line behavior verified>`)
 - 1a — app.alerts.$id action: unwired kinds (exclude_geo / free-ship / increase_budget) now throw 422 instead of phantom "succeeded"; snooze/reallocate_inventory/create_po_draft still record real work. Verified by alert-action-calibration test "does NOT phantom-succeed for a kind with no wired executor (rule 12)". 62 related tests green.
+- 1b — e40ea6a — enrich: winner-query failure no longer discards an already-enriched cut_ads button (catch falls back to `enriched`, not `plan`).
+- 1c — enrich.advisory() now patches cut_ads too + no_sku_key returns advisory; rank fix_returns carries a standing reason. Invariant verified: no move renders executor===null with empty ineligibleReason. Full suite 2555 passed / 0 failed.

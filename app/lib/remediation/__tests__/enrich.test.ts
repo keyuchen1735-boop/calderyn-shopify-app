@@ -132,12 +132,37 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(out.moves.find((m) => m.kind === "discontinue")?.executor).toBe("discontinue_sku");
   });
 
-  it("alert with neither sku_id on evidence nor a sku code → returns the plan unchanged (no DB read possible)", async () => {
+  it("alert with neither sku_id on evidence nor a sku code → both ad moves advisory with a reason (rule 12)", async () => {
     const sb = fakeSb({ loser: null, winners: [] });
     const out = await enrichRemediation(alert({ evidence: {}, sku: null }), plan(), sb, "shop-1");
     const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
     expect(realloc.executor).toBeNull();
-    expect(realloc.ineligibleReason).toBeUndefined();
+    expect(realloc.ineligibleReason).toMatch(/SKU|review manually/i);
+    // cut_ads must not be a bare label either.
+    expect(cut.executor).toBeNull();
+    expect(cut.ineligibleReason).toBeTruthy();
+  });
+});
+
+describe("enrichRemediation — no bare labels (rule 12)", () => {
+  const bareNullMoves = (p: RemediationPlan) =>
+    p.moves.filter((m) => m.executor == null && !m.ineligibleReason);
+
+  it("shared Advantage+ loser → cut_ads carries a reason too, and no move is a bare null label", async () => {
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: null, dedicated_campaign_platform: null,
+        dedicated_campaign_budget_cents: null,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).toBeNull();
+    expect(cut.ineligibleReason).toBeTruthy();
+    expect(bareNullMoves(out)).toHaveLength(0);
   });
 });
 
