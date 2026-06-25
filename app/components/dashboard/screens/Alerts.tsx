@@ -373,6 +373,18 @@ function AlertDetail({
                             {m.ineligibleReason}
                           </span>
                         )}
+                        {m.deepLink && (
+                          <a
+                            href={m.deepLink.href}
+                            target={m.deepLink.external ? "_blank" : undefined}
+                            rel={m.deepLink.external ? "noopener noreferrer" : undefined}
+                            className="cd-move-link"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0, color: "var(--accent)" }}
+                          >
+                            {m.deepLink.label}
+                            <CDIcon name="arrowUpRight" size={14} strokeWidth={1.9} />
+                          </a>
+                        )}
                       </div>
                     );
                   })}

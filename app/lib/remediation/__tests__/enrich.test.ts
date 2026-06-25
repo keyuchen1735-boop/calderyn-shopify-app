@@ -103,6 +103,27 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(realloc.ineligibleReason).toMatch(/shared campaign|Advantage/i);
   });
 
+  it("shared Advantage+ loser → advisory rows carry a Meta Ads Manager deep-link (4a/4b)", async () => {
+    // No one-click executor exists for shared-campaign exclusion, so the row must
+    // still be actionable: a real deep-link into Meta Ads Manager (rule 12).
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: null, dedicated_campaign_platform: null,
+        dedicated_campaign_budget_cents: null,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.deepLink?.href).toMatch(/adsmanager\.facebook\.com/);
+    expect(realloc.deepLink?.external).toBe(true);
+    expect(realloc.deepLink?.label).toBeTruthy();
+    // cut_ads is advisory in the shared case too — same actionable link.
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.deepLink?.href).toMatch(/adsmanager\.facebook\.com/);
+  });
+
   it("dedicated loser campaign but NO qualifying winner → reallocate stays advisory", async () => {
     const sb = fakeSb({
       loser: { sku_id: LOSER_SKU, contribution_per_unit_cents: 2300, dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta", dedicated_campaign_budget_cents: 45000 },

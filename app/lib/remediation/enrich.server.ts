@@ -29,6 +29,17 @@ const SHIFT_FRACTION = 0.5;
 // Below this daily budget, a percentage cut is pointless → pause outright.
 const REDUCE_FLOOR_CENTS = 1000;
 
+// Shared Advantage+ campaigns expose no per-SKU exclusion API, so the honest,
+// actionable treatment is a deep-link into Ads Manager where the merchant excludes
+// the SKU manually (rule 12: a real link, not dead text). Account-level link — the
+// merchant lands in their own Ads Manager; act-scoping is a follow-up once the
+// shared campaign id is exposed by the engine.
+const META_ADS_MANAGER_DEEPLINK: StrategicMove["deepLink"] = {
+  label: "Open in Meta Ads Manager",
+  href: "https://adsmanager.facebook.com/adsmanager/manage/campaigns",
+  external: true,
+};
+
 /**
  * Enrich a remediation plan with live SKU->campaign resolution. Returns a NEW
  * plan (does not mutate the input). A missing sku_id, missing view row, no
@@ -68,17 +79,23 @@ export async function enrichRemediation(
   // reason — never a bare label (rule 12). The executor==null guard preserves an
   // already-enriched cut_ads (e.g. the winner-query-failure fallback, where the
   // loser campaign is mutable but the winner couldn't be resolved).
-  const advisory = (base: RemediationPlan, reason: string): RemediationPlan => {
+  const advisory = (
+    base: RemediationPlan,
+    reason: string,
+    deepLink?: StrategicMove["deepLink"],
+  ): RemediationPlan => {
     let next = withMove(base, reallocIdx, (m) => ({
       ...m,
       executor: null,
       ineligibleReason: reason,
+      deepLink: deepLink ?? m.deepLink,
     }));
     if (cutIdx >= 0 && base.moves[cutIdx]?.executor == null) {
       next = withMove(next, cutIdx, (m) => ({
         ...m,
         executor: null,
         ineligibleReason: reason,
+        deepLink: deepLink ?? m.deepLink,
       }));
     }
     return next;
@@ -112,7 +129,11 @@ export async function enrichRemediation(
       return advisory(plan, "campaign data unavailable — no attribution found for this SKU");
     }
     if (!loserRow.dedicated_campaign_id || loserRow.dedicated_campaign_budget_cents == null) {
-      return advisory(plan, "served by a shared campaign — exclude this SKU inside Advantage+ instead");
+      return advisory(
+        plan,
+        "served by a shared campaign — exclude this SKU inside Advantage+ instead",
+        META_ADS_MANAGER_DEEPLINK,
+      );
     }
     // The loser has a dedicated mutable campaign. cut_ads (pause / reduce of the
     // loser's OWN campaign) is platform-blind — executeAction resolves the

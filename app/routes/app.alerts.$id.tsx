@@ -847,6 +847,20 @@ export default function AlertDetail() {
                                 — {m.ineligibleReason}
                               </Text>
                             )}
+                            {m.deepLink && (
+                              <Button
+                                variant="plain"
+                                url={m.deepLink.external ? m.deepLink.href : undefined}
+                                external={m.deepLink.external || undefined}
+                                onClick={
+                                  m.deepLink.external
+                                    ? undefined
+                                    : () => navigate(m.deepLink!.href)
+                                }
+                              >
+                                {m.deepLink.label}
+                              </Button>
+                            )}
                           </InlineStack>
                         );
                       })}

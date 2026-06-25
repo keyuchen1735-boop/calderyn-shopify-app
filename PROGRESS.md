@@ -72,7 +72,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   Real executor scope captured under "Deferred follow-ups" below.
 
 ### WS4 — Advisory + deep-link (no-API rows) — foundation + screenshot fix; DO THESE NEXT
-- [ ] 4a — Add a deep-link treatment to advisory rows on both surfaces: a move/row may carry a
+- [x] 4a — Add a deep-link treatment to advisory rows on both surfaces: a move/row may carry a
   `deepLink` (label + href/target); embedded uses App Bridge nav (or external `<a>` for Meta/Shopify
   admin URLs), dashboard uses its link primitive + `CDIcon`. _Test: a row with a deepLink renders an
   anchor/nav control, not bare text._
@@ -119,3 +119,4 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 2a — increase_campaign_budget now a real button on BOTH surfaces: embedded executableKinds + scaled-budget compute (current*(1+pct/100)); dashboard allowlist detector-gated (scaling alert recommends increase, not pause) + DashboardApp executeAction increase branch + dashboard ActionKind union. Verified embedded (alert-action-calibration) + dashboard availability (adapt-alert). Full suite 2557 / 0 failed, tsc clean. Note: DashboardApp.executeAction has no render harness; budget formula is the tested embedded one mirrored.
 - 2b — e18b6a6 — enrich: non-Meta dedicated loser keeps an executable cut_ads (pause/reduce, platform-blind via executeAction); only reallocate stays Meta-gated.
 - 2c — campaigns scale-opportunity card: plain-text "scale from the list" → real apply_direction Form button posting increase_campaign_budget + scale.newBudgetCents (own fetcher + banner), parity with dashboard Campaigns scale button. apply_direction+increase contract already covered by campaign-direction-action.test.ts (no brittle JSX render test, rule 9). tsc clean, full suite 2558/0.
+- 4a — deep-link infra: StrategicMove.deepLink field (server-set, like ineligibleReason) rendered as a link on BOTH surfaces (embedded Polaris Button url/external; dashboard <a> + CDIcon arrowUpRight). Shared-Advantage+ branch (the screenshot) now carries a real Meta Ads Manager deep-link → advisory rows are actionable, not dead text. Behavior-tested in enrich.test.ts (deepLink.href matches adsmanager.facebook.com). tsc clean, full suite 2559/0. NOTE: this already delivers 4b's shared-Advantage+ item.
