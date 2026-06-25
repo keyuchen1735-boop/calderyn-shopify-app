@@ -7,7 +7,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server";
-import { enqueueShopifyBackfill } from "./lib/ingest/enqueue.server";
+import { enqueueShopifyBackfill, shopifyNeverSynced } from "./lib/ingest/enqueue.server";
 import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
 
 const shopify = shopifyApp({
@@ -22,7 +22,26 @@ const shopify = shopifyApp({
     afterAuth: async ({ session }) => {
       try {
         await provisionShop(session.shop);
+        // Snapshot first-install state BEFORE enqueue resets sync_status.
+        const firstInstall = await shopifyNeverSynced(session.shop);
         await enqueueShopifyBackfill(session.shop);
+        // On first install, pull the catalog + last 30 days of orders inline so the
+        // merchant sees their data immediately instead of waiting up to 30 min for
+        // the /cron/ingest tick. Routine re-auths skip this; the cron keeps data
+        // fresh after the initial sync. Dynamic import avoids a static import cycle
+        // (backfill -> shopify-admin -> this module).
+        if (firstInstall) {
+          try {
+            const { backfillShop } = await import("./lib/ingest/backfill.server");
+            await backfillShop(session.shop);
+          } catch (err) {
+            // Best-effort: backfillShop marks sync_status='error' on failure, which
+            // the cron skips. Reset to 'pending' so /cron/ingest still recovers the
+            // data, then swallow — a backfill failure must not block install.
+            console.error(`[afterAuth] inline backfill failed for ${session.shop}`, err);
+            await enqueueShopifyBackfill(session.shop);
+          }
+        }
         // A fresh login re-surfaces alerts snoozed in a prior session (snooze
         // hides until +1 day or next login, whichever first). Kept last so it
         // can never disrupt provisioning/backfill.
