@@ -59,7 +59,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   _Test: scale alert → real `executeAction(increase_campaign_budget)`, not phantom; both surfaces._
 - [x] 2b — `cut_ads` cross-platform: loosen Meta-only gate (`enrich.server.ts` ~97) so pause/reduce
   enriches for any platform with a live adapter; keep reallocate Meta-only. _Test: Google/TikTok loser → executable cut button._
-- [ ] 2c — Scale-opportunity card (`app/routes/app.campaigns.$campaignId.tsx` ~606-626): text →
+- [x] 2c — Scale-opportunity card (`app/routes/app.campaigns.$campaignId.tsx` ~606-626): text →
   real `apply_direction` button (parity with dashboard `Campaigns.tsx`). _Test: card posts `increase_campaign_budget`._
 
 ### WS3 — New executors (Tier 3)
@@ -104,3 +104,5 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 1b — e40ea6a — enrich: winner-query failure no longer discards an already-enriched cut_ads button (catch falls back to `enriched`, not `plan`).
 - 1c — enrich.advisory() now patches cut_ads too + no_sku_key returns advisory; rank fix_returns carries a standing reason. Invariant verified: no move renders executor===null with empty ineligibleReason. Full suite 2555 passed / 0 failed.
 - 2a — increase_campaign_budget now a real button on BOTH surfaces: embedded executableKinds + scaled-budget compute (current*(1+pct/100)); dashboard allowlist detector-gated (scaling alert recommends increase, not pause) + DashboardApp executeAction increase branch + dashboard ActionKind union. Verified embedded (alert-action-calibration) + dashboard availability (adapt-alert). Full suite 2557 / 0 failed, tsc clean. Note: DashboardApp.executeAction has no render harness; budget formula is the tested embedded one mirrored.
+- 2b — e18b6a6 — enrich: non-Meta dedicated loser keeps an executable cut_ads (pause/reduce, platform-blind via executeAction); only reallocate stays Meta-gated.
+- 2c — campaigns scale-opportunity card: plain-text "scale from the list" → real apply_direction Form button posting increase_campaign_budget + scale.newBudgetCents (own fetcher + banner), parity with dashboard Campaigns scale button. apply_direction+increase contract already covered by campaign-direction-action.test.ts (no brittle JSX render test, rule 9). tsc clean, full suite 2558/0.

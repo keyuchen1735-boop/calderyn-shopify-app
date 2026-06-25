@@ -537,6 +537,7 @@ export default function CampaignDetailPage() {
     direction,
   } = useLoaderData<typeof loader>();
   const directionFetcher = useFetcher<typeof action>();
+  const scaleFetcher = useFetcher<typeof action>();
 
   if (!detail) {
     return (
@@ -618,9 +619,24 @@ export default function CampaignDetailPage() {
                 <Stat label={`Proposed (+${scale.pct}%)`} value={fmtMoney(scale.newBudgetCents)} />
                 <Stat label="Projected upside" value={`+${fmtMoney(scale.upsideCents)}/mo`} />
               </InlineGrid>
+              <scaleFetcher.Form method="post">
+                <input type="hidden" name="intent" value="apply_direction" />
+                <input type="hidden" name="campaign_id" value={detail.id} />
+                <input type="hidden" name="action_kind" value="increase_campaign_budget" />
+                <input type="hidden" name="daily_budget_cents" value={String(scale.newBudgetCents)} />
+                <Button variant="primary" submit loading={scaleFetcher.state !== "idle"}>
+                  {`Scale budget +${scale.pct}%`}
+                </Button>
+              </scaleFetcher.Form>
+              {scaleFetcher.data && (
+                <Banner tone={scaleFetcher.data.ok ? "success" : "critical"}>
+                  {scaleFetcher.data.ok
+                    ? "Budget scaled — live and reversible from the Campaigns list."
+                    : "Couldn't scale the budget. Please try again."}
+                </Banner>
+              )}
               <Text as="p" tone="subdued" variant="bodySm">
-                Scale it from the Campaigns list (row actions → “Scale budget”). Every change is
-                guardrailed and reversible.
+                Guardrailed and reversible.
               </Text>
             </BlockStack>
           </Card>
