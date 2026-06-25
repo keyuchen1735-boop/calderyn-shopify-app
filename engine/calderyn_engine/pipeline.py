@@ -56,6 +56,7 @@ from calderyn_engine.detectors import (  # noqa: E402, F401
     campaign_below_breakeven,
     campaign_scaling_opportunity,
     cogs_drift,
+    inventory_untracked,
     margin_erosion,
     negative_unit_economics,
     out_of_stock_live,
