@@ -98,6 +98,21 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   snooze_alert: "Snooze alert",
 };
 
+// Plain-language name for a (detector, action) autopilot feature. Several
+// detectors can resolve to the same action (e.g. three different problems all
+// pause a campaign), so naming a feature by its action alone makes those rows
+// indistinguishable. This disambiguates the colliding pairs; anything not listed
+// falls back to the plain action label.
+const FEATURE_LABELS: Record<string, string> = {
+  "campaign_below_breakeven:pause_campaign": "Pause money-losing campaigns",
+  "negative_unit_economics:pause_campaign": "Pause ads losing money on every sale",
+  "sku_stockout_vs_spend:pause_campaign": "Pause ads for sold-out products",
+};
+
+export function featureLabel(detectorId: string, actionKind: ActionKind): string {
+  return FEATURE_LABELS[`${detectorId}:${actionKind}`] ?? ACTION_LABELS[actionKind] ?? actionKind;
+}
+
 export const ACTION_VERBS: Record<ActionKind, string> = {
   pause_campaign: "Paused campaign",
   resume_campaign: "Resumed campaign",

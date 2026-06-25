@@ -10,7 +10,7 @@
 // converted to cents here.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { DETECTOR_LABELS, ACTION_LABELS } from "../labels";
+import { DETECTOR_LABELS, featureLabel } from "../labels";
 import { NO_BRAINER } from "./confidence";
 
 const DAY_MS = 86_400_000;
@@ -102,7 +102,7 @@ export function aggregateLiveEngine(
     return {
       detectorId,
       actionKind,
-      name: ACTION_LABELS[actionKind] ?? actionKind,
+      name: featureLabel(detectorId, actionKind),
       watching: DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId,
       enabled: !p.merchant_disabled,
       moneyCents: a.money,

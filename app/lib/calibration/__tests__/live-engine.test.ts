@@ -64,6 +64,22 @@ describe("aggregateLiveEngine", () => {
       expect(f.watching).not.toMatch(/[—–]/);
     }
   });
+
+  it("gives each detector that shares an action a distinct name", () => {
+    // All three no-brainer pairs resolve to pause_campaign; naming by action
+    // alone made every row read "Pause campaign". Names must disambiguate.
+    const out = aggregateLiveEngine(
+      [
+        { detector_id: "campaign_below_breakeven", action_kind: "pause_campaign", merchant_disabled: false },
+        { detector_id: "negative_unit_economics", action_kind: "pause_campaign", merchant_disabled: false },
+        { detector_id: "sku_stockout_vs_spend", action_kind: "pause_campaign", merchant_disabled: false },
+      ],
+      [],
+      NOW,
+    );
+    const names = out.features.map((f) => f.name);
+    expect(new Set(names).size).toBe(3); // all distinct, no collisions
+  });
 });
 
 /* Minimal Supabase mock: captures the update payload, resolves { error: null }. */
