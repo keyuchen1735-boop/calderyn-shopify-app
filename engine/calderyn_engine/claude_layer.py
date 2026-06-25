@@ -196,6 +196,20 @@ async def rank_and_narrate(
             detections=len(detections),
         )
         return _fallback(detections)
+    except Exception as exc:  # noqa: BLE001 — deliberate broad catch
+        # A Claude API failure (network, rate limit, billing/credit exhaustion,
+        # provider outage) must NEVER take down the alerts engine. The
+        # deterministic fallback is the source of truth when Claude is
+        # unavailable, so every shop still gets its alerts persisted. Logged at
+        # error level because, unlike a parse mismatch, it usually signals an
+        # operational problem (e.g. an empty Anthropic credit balance).
+        logger.error(
+            "claude_rank_api_error",
+            reason=type(exc).__name__,
+            detail=str(exc),
+            detections=len(detections),
+        )
+        return _fallback(detections)
 
 
 # ---------------------------------------------------------------------------
