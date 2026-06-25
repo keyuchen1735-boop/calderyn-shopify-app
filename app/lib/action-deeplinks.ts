@@ -8,6 +8,11 @@ export function shopifyAdminUrl(shop: string, path: string): string {
   return `https://${shop}/admin/${path.replace(/^\/+/, "")}`;
 }
 
+// Account-level Ads Manager — the merchant lands in their own account to adjust
+// campaign targeting. Meta is the dominant platform; this is the honest interim
+// for region exclusion, which has no clean per-region API on a shared campaign.
+const META_ADS_MANAGER_URL = "https://adsmanager.facebook.com/adsmanager/manage/campaigns";
+
 /**
  * The manual destination for an action kind with no executor, or null when the
  * kind has a real one-click executor (so callers fall back to the button). Free
@@ -22,6 +27,10 @@ export function actionDeepLink(
     case "raise_free_ship_threshold":
     case "exclude_sku_free_ship":
       return { label: "Open Shipping settings", href: shopifyAdminUrl(shop, "settings/shipping") };
+    case "exclude_geo":
+      // No per-region exclusion API for a shared campaign; the merchant adjusts
+      // location targeting in Ads Manager. Honest interim (rule 12 — not a dead button).
+      return { label: "Adjust region targeting in Ads Manager", href: META_ADS_MANAGER_URL };
     default:
       return null;
   }

@@ -94,6 +94,14 @@ describe("adaptAlert action list", () => {
     expect(vm.deepLinkKinds).toContain("exclude_sku_free_ship");
   });
 
+  it("surfaces exclude_geo as a deep-link kind (no per-region exclusion executor)", () => {
+    // regional_spend_starved_stock lists exclude_geo; it has no executor, so it
+    // must surface as a deep-link, never an execute button.
+    const vm = adaptAlert(makeAlert({ detector_id: "regional_spend_starved_stock" }), CAMPAIGNS);
+    expect(vm.actions).not.toContain("exclude_geo");
+    expect(vm.deepLinkKinds).toContain("exclude_geo");
+  });
+
   it("has no deep-link kinds for a detector whose actions are all executable", () => {
     const vm = adaptAlert(
       makeAlert({ detector_id: "campaign_below_breakeven", campaign: "Summer Sale", sku: null }),

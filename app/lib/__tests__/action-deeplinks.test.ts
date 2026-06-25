@@ -23,6 +23,12 @@ describe("actionDeepLink", () => {
       /\/admin\/settings\/shipping$/,
     );
   });
+  it("maps exclude_geo to Meta Ads Manager (no per-region exclusion API; merchant adjusts targeting)", () => {
+    const geo = actionDeepLink("exclude_geo", "acme.myshopify.com");
+    expect(geo?.href).toMatch(/adsmanager\.facebook\.com/);
+    expect(geo?.label).toBeTruthy();
+  });
+
   it("returns null for kinds that have a real one-click executor", () => {
     expect(actionDeepLink("pause_campaign", "acme.myshopify.com")).toBeNull();
     expect(actionDeepLink("snooze_alert", "acme.myshopify.com")).toBeNull();
