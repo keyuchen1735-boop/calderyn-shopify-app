@@ -128,8 +128,11 @@ function FeatureRow({ f, app, autopilotEnabled }: { f: LiveEngineFeatureVM; app:
 }
 
 function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: DashboardCtx }) {
-  const unlocked = data.features.filter((f) => f.enabled).length;
-  const live = data.autopilotEnabled ? unlocked : 0;
+  // "Unlocked" = how many features are available (graduated / shipped). That is
+  // stable; turning an individual feature off must not change it. "Live" counts
+  // the ones actually running, which only happens with shop-level autopilot on.
+  const unlocked = data.features.length;
+  const live = data.autopilotEnabled ? data.features.filter((f) => f.enabled).length : 0;
   const running = live > 0;
   return (
     <Card pad={false}>

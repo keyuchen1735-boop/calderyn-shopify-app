@@ -80,6 +80,20 @@ describe("aggregateLiveEngine", () => {
     const names = out.features.map((f) => f.name);
     expect(new Set(names).size).toBe(3); // all distinct, no collisions
   });
+
+  it("orders identically regardless of input order when money/lastAt tie", () => {
+    // Freshly shipped pairs all have moneyCents 0 / lastAt null; without a stable
+    // tiebreak the row order follows the (non-deterministic) DB order, so the
+    // list reshuffles every time a pair is toggled. Same pairs, different input
+    // order, must yield the same output order.
+    const pairs = [
+      { detector_id: "campaign_below_breakeven", action_kind: "pause_campaign", merchant_disabled: false },
+      { detector_id: "negative_unit_economics", action_kind: "pause_campaign", merchant_disabled: false },
+      { detector_id: "sku_stockout_vs_spend", action_kind: "pause_campaign", merchant_disabled: false },
+    ];
+    const order = (ps: typeof pairs) => aggregateLiveEngine(ps, [], NOW).features.map((f) => f.detectorId);
+    expect(order(pairs)).toEqual(order([...pairs].reverse()));
+  });
 });
 
 /* Minimal Supabase mock: captures the update payload, resolves { error: null }. */

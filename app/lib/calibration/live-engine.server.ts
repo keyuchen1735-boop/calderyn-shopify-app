@@ -111,8 +111,16 @@ export function aggregateLiveEngine(
     };
   });
 
-  // Most active first, then most recently acted.
-  features.sort((x, y) => y.moneyCents - x.moneyCents || (y.lastAt ?? "").localeCompare(x.lastAt ?? ""));
+  // Most active first, then most recently acted, then a stable key. The final
+  // tiebreak is essential: freshly shipped pairs all have moneyCents 0 / lastAt
+  // null, so without it the order falls back to the DB's (non-deterministic)
+  // row order and the list reshuffles every time a pair is toggled.
+  features.sort(
+    (x, y) =>
+      y.moneyCents - x.moneyCents ||
+      (y.lastAt ?? "").localeCompare(x.lastAt ?? "") ||
+      `${x.detectorId}:${x.actionKind}`.localeCompare(`${y.detectorId}:${y.actionKind}`),
+  );
 
   return { moneyProtectedWeekCents: moneyWeek, features };
 }
