@@ -63,26 +63,31 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   real `apply_direction` button (parity with dashboard `Campaigns.tsx`). _Test: card posts `increase_campaign_budget`._
 
 ### WS3 — New executors (Tier 3)
-- [ ] 3a — `exclude_sku_from_campaign` (marquee / the screenshot). New ActionKind (`app/lib/types.ts`)
-  + executor-union member (`app/lib/remediation/types.ts`) + gateway executor
-  `app/lib/actions/exclude-sku-campaign.server.ts` mirroring `reallocate-sku.server.ts`
-  (re-derive from trusted alert via enrich, ownership, idempotency, ONE `action_audit` row) +
-  `excludeProduct()` on `ActionAdapter` (`app/lib/ads/actions.ts`) + Meta impl
-  (`app/lib/meta/actions.server.ts`, see Decision locked) + flip `enrich.server.ts:94-96` shared
-  branch to this executor + dispatch in `dashboard.api.alerts.$id.action.tsx` and
-  `app.alerts.$id.tsx` + dashboard parity. _Test: shared-Advantage+ alert → executable button →
-  adapter call → audit row; unsupported platform/creds → ActionError, no phantom._
-- [ ] 3b — `exclude_geo` executor: Meta `excluded_geo_locations` (adset) + Google geo-criteria
-  adapter method; route via `executeAction`; replace the phantom; both surfaces.
-- [ ] 3c — `reallocate_budget` one-click: endpoint reusing `executeReallocation` + enrich-resolved
-  loser/winner; both surfaces.
+- [x] 3a — DEFERRED by decision (2026-06-25, "deep-link now, executor later"). VERIFIED data gap:
+  this repo's schema has NO shared-campaign external id and NO Meta catalog/retailer mapping
+  (grep across `supabase/migrations` + `engine`; `v_sku_remediation_inputs.dedicated_campaign_id`
+  is null for the shared case). A one-click exclude executor cannot function until the engine
+  exposes that data, so building it now would be a dead button (rule 12). **Treatment instead:**
+  shared-Advantage+ → advisory + real deep-link to Meta Ads Manager, delivered in **4b**.
+  Real executor scope captured under "Deferred follow-ups" below.
 
-### WS4 — Advisory + deep-link (no-API rows)
-- [ ] 4a — Add a deep-link treatment to advisory rows on both surfaces (embedded: App Bridge nav;
-  dashboard: link primitive + `CDIcon`). _Test: a deep-link row renders an anchor/nav control, not bare text._
-- [ ] 4b — `fix_returns` → reason + deep-link (product returns/analytics); free-ship pair → reason +
-  deep-link (Shopify shipping settings); remaining ineligible branches (no winner / no variant /
-  no sku) → reason + appropriate deep-link.
+### WS4 — Advisory + deep-link (no-API rows) — foundation + screenshot fix; DO THESE NEXT
+- [ ] 4a — Add a deep-link treatment to advisory rows on both surfaces: a move/row may carry a
+  `deepLink` (label + href/target); embedded uses App Bridge nav (or external `<a>` for Meta/Shopify
+  admin URLs), dashboard uses its link primitive + `CDIcon`. _Test: a row with a deepLink renders an
+  anchor/nav control, not bare text._
+- [ ] 4b — Apply deep-links: **shared-Advantage+ (the screenshot, 3a's treatment) → deep-link to Meta
+  Ads Manager** (`adsmanager.facebook.com/.../campaigns?act=<external_account_id>`); `fix_returns` →
+  product returns/analytics; free-ship pair → Shopify shipping settings; remaining ineligible
+  branches (no winner / no variant / no sku) → appropriate deep-link or honest reason.
+
+### WS3 remaining — buildable executors (after deep-links)
+- [ ] 3c — `reallocate_budget` one-click: endpoint reusing `executeReallocation` + enrich-resolved
+  loser/winner (data EXISTS — dedicated campaigns); both surfaces. Genuinely buildable now.
+- [ ] 3b — `exclude_geo`: FIRST verify data (adset external id + current geo targeting). If present,
+  build the Meta `excluded_geo_locations` (update_adset) executor + both surfaces. If absent
+  (same gap class as 3a), apply the deep-link treatment (4b pattern) + a deferred follow-up — do
+  NOT build a dead button.
 
 ---
 
@@ -97,6 +102,14 @@ Then, and only if all green, output exactly:
 `<promise>REMEDIATION ACTIONS ALL EXECUTABLE OR HONEST</promise>`
 
 If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the promise.
+
+## Deferred follow-ups (NOT in this PR — documented, not silently skipped per rule 12)
+- **exclude_sku_from_campaign executor (real 3a).** Build once the engine/view exposes the
+  shared campaign external id + the SKU→Meta-catalog `retailer_id` mapping. Then: add ActionKind +
+  executor-union member, `excludeProduct()` on `ActionAdapter` + Meta Graph impl (product-set /
+  catalog exclusion, fail-visible via `ActionError`), gateway `exclude-sku-campaign.server.ts`
+  mirroring `reallocate-sku.server.ts`, flip the `enrich.server.ts` shared branch from deep-link
+  to the executor, dispatch on both surfaces. Interim treatment (deep-link) ships in 4b.
 
 ## Iteration log
 (append one line per completed slice: `<slice id> — <commit sha> — <one-line behavior verified>`)
