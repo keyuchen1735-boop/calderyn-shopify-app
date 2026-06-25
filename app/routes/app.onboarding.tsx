@@ -33,6 +33,7 @@ import { provisionShop } from "~/lib/supabase.server";
 import { useActionToast } from "~/lib/toast";
 import { providerPaired } from "~/lib/integrations";
 import { DEFAULT_GUARDRAILS } from "~/lib/guardrail-defaults";
+import { digitsOnly, fmtGroup } from "~/lib/format";
 import { Icon } from "~/components/calderyn";
 import { BrandGlyph, type BrandName } from "~/components/calderyn/brand-icons";
 import type { GuardrailConfig } from "~/lib/types";
@@ -479,11 +480,11 @@ function GuardrailRow({
           <TextField
             label={label}
             labelHidden
-            type="number"
-            min={0}
+            type="text"
+            inputMode="numeric"
             prefix="$"
-            value={value}
-            onChange={onChange}
+            value={fmtGroup(value)}
+            onChange={(v) => onChange(digitsOnly(v))}
             autoComplete="off"
           />
         </div>
