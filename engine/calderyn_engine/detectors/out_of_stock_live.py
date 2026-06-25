@@ -22,10 +22,13 @@ DETECTOR_ID = "out_of_stock_live"
 
 _QUERY = """
 WITH latest AS (
+    -- Latest snapshot per (sku, location). Tiebreak on source_version so two
+    -- observations that share observed_at (same-second backfill/sync) resolve
+    -- deterministically — matches the repo's inventory views.
     SELECT DISTINCT ON (sku_id, location_id) sku_id, available
     FROM public.inventory_level_fact
     WHERE shop_id = $1
-    ORDER BY sku_id, location_id, observed_at DESC
+    ORDER BY sku_id, location_id, observed_at DESC, source_version DESC
 ),
 totals AS (
     SELECT sku_id, sum(available)::numeric AS qty
