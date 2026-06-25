@@ -92,7 +92,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
     deep-link/advisory, never a 422 execute; both surfaces._
 
 ### WS3 remaining — buildable executors (after deep-links)
-- [ ] 3c — `reallocate_budget` one-click: endpoint reusing `executeReallocation` + enrich-resolved
+- [x] 3c — `reallocate_budget` one-click: endpoint reusing `executeReallocation` + enrich-resolved
   loser/winner (data EXISTS — dedicated campaigns); both surfaces. Genuinely buildable now.
 - [x] 3b — `exclude_geo`: FIRST verify data (adset external id + current geo targeting). If present,
   build the Meta `excluded_geo_locations` (update_adset) executor + both surfaces. If absent
@@ -133,3 +133,4 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 4b — free-ship advisory→deep-link on BOTH surfaces. New shared pure helper app/lib/action-deeplinks.ts (shopifyAdminUrl + actionDeepLink + hasActionDeepLink), tested. Embedded: free-ship kinds render an external Shopify "Open Shipping settings" link (Button url/external) instead of the 422 execute path (shop via useRouteLoaderData). Dashboard: AlertVM.deepLinkKinds (pure, from adaptAlert) + DashboardCtx.shopDomain + AlertDetail renders deep-link anchors (was hidden→snooze-only). fix_returns + no-winner/variant/sku already satisfy goal as advisory-with-reason (1c) — left as-is. tsc clean; full suite 2565/0 (2 consecutive green runs; one earlier transient flake did not reproduce).
 - 3b — exclude_geo → deep-link (both surfaces), reusing 4b infra. VERIFIED same data-gap class as 3a (no adset dim / per-region exclusion data in schema), so per the "deep-link now, executor later" decision it deep-links to Ads Manager rather than a dead button. One actionDeepLink case auto-flows to embedded (dedupedAllowedActions) + dashboard (deepLinkKinds). Fixes the post-1a 422 on the embedded exclude_geo button. tsc clean; full suite 2567/0.
 - **exclude_geo real executor (3b).** Build once an adset dim + current-geo-targeting data exist: Meta excluded_geo_locations (update_adset) adapter method + executor, Google geo criteria, both surfaces. Interim = Ads Manager deep-link (shipped).
+- 3c — SKIPPED by decision (2026-06-25). reallocate_budget already deep-links to Campaigns on both surfaces (satisfies the goal), and one-click loser→winner reallocation is already delivered by reallocate_spend_sku (enrich-resolved). A dedicated reallocate_budget one-click would duplicate that with no distinct merchant entry point — not built (rule 1/2: no redundant/speculative code). All boxes now satisfied.
