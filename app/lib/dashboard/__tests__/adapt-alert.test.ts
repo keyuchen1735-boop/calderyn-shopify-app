@@ -83,6 +83,24 @@ describe("adaptAlert action list", () => {
     expect(vm.actions).toEqual(["snooze_alert"]);
     expect(vm.recommended).toBeNull();
   });
+
+  it("surfaces free-shipping kinds as deep-link kinds (no executor → manual deep-link, not a dead button)", () => {
+    const vm = adaptAlert(makeAlert({ detector_id: "free_shipping_leakage", sku: "SKU-1" }), CAMPAIGNS);
+    // No executor exists, so they must NOT be execute buttons...
+    expect(vm.actions).not.toContain("raise_free_ship_threshold");
+    expect(vm.actions).not.toContain("exclude_sku_free_ship");
+    // ...but the UI gets them as deep-link kinds so it can link to Shipping settings.
+    expect(vm.deepLinkKinds).toContain("raise_free_ship_threshold");
+    expect(vm.deepLinkKinds).toContain("exclude_sku_free_ship");
+  });
+
+  it("has no deep-link kinds for a detector whose actions are all executable", () => {
+    const vm = adaptAlert(
+      makeAlert({ detector_id: "campaign_below_breakeven", campaign: "Summer Sale", sku: null }),
+      CAMPAIGNS,
+    );
+    expect(vm.deepLinkKinds ?? []).toHaveLength(0);
+  });
 });
 
 describe("adaptAlert remediation passthrough", () => {

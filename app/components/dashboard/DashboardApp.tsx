@@ -678,6 +678,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   const app: DashboardCtx = {
     t,
+    shopDomain,
     nav,
     navigate,
     alerts,

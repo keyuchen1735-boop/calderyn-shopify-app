@@ -39,6 +39,7 @@ import type {
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { hasActionDeepLink } from "~/lib/action-deeplinks";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
@@ -179,6 +180,10 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // is no recommendation to surface.
   const recommended = actions.length > 1 ? actions[0] : null;
 
+  // Detector kinds with no executor but a manual destination (e.g. free-shipping
+  // → Shopify Shipping settings) surface as deep-links, not dead buttons (rule 12).
+  const deepLinkKinds = detectorActions.filter(hasActionDeepLink);
+
   // Evidence values may arrive as non-strings; coerce so AlertVM's
   // Record<string,string> contract holds.
   const evidence: Record<string, string> = {};
@@ -201,6 +206,7 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
     evidence,
     campaign_id,
     actions,
+    deepLinkKinds,
     recommended,
     rec_detail: a.rec_detail ?? "",
     remediation: a.remediation ?? null,

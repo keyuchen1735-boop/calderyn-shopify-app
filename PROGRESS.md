@@ -76,10 +76,20 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   `deepLink` (label + href/target); embedded uses App Bridge nav (or external `<a>` for Meta/Shopify
   admin URLs), dashboard uses its link primitive + `CDIcon`. _Test: a row with a deepLink renders an
   anchor/nav control, not bare text._
-- [ ] 4b — Apply deep-links: **shared-Advantage+ (the screenshot, 3a's treatment) → deep-link to Meta
-  Ads Manager** (`adsmanager.facebook.com/.../campaigns?act=<external_account_id>`); `fix_returns` →
-  product returns/analytics; free-ship pair → Shopify shipping settings; remaining ineligible
-  branches (no winner / no variant / no sku) → appropriate deep-link or honest reason.
+- [x] 4b — Apply remaining deep-links. SCOPED (2026-06-25):
+  - DONE in 4a: shared-Advantage+ → Meta Ads Manager deep-link.
+  - ALREADY satisfy the goal (honest advisory-with-reason from 1c): `fix_returns`, no-winner,
+    no-variant, no-sku branches. Deep-links optional polish — NOT required; skip unless cheap.
+  - REAL remaining violation = **free-ship** (`raise_free_ship_threshold` / `exclude_sku_free_ship`
+    on `free_shipping_leakage`): embedded renders execute buttons that now 422 (post-1a); dashboard
+    drops them (snooze-only) — rule-7 inconsistency. FIX both surfaces: render as advisory + a real
+    deep-link to Shopify shipping settings. Mechanism: `useEmbeddedNavigate` only handles in-app
+    paths, so use a FULL external URL `https://admin.shopify.com/store/<handle>/settings/shipping`
+    (new tab), thread the shop handle (handle = session.shop minus ".myshopify.com") to both
+    components. Embedded: extend `DEEP_LINK_ACTIONS` to allow external URLs + render `<Button url
+    external>`; remove free-ship from the execute path. Dashboard: surface free-ship as advisory +
+    deep-link (currently filtered out in `adaptAlert`). _Test: free-ship action resolves to a
+    deep-link/advisory, never a 422 execute; both surfaces._
 
 ### WS3 remaining — buildable executors (after deep-links)
 - [ ] 3c — `reallocate_budget` one-click: endpoint reusing `executeReallocation` + enrich-resolved
@@ -120,3 +130,4 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 2b — e18b6a6 — enrich: non-Meta dedicated loser keeps an executable cut_ads (pause/reduce, platform-blind via executeAction); only reallocate stays Meta-gated.
 - 2c — campaigns scale-opportunity card: plain-text "scale from the list" → real apply_direction Form button posting increase_campaign_budget + scale.newBudgetCents (own fetcher + banner), parity with dashboard Campaigns scale button. apply_direction+increase contract already covered by campaign-direction-action.test.ts (no brittle JSX render test, rule 9). tsc clean, full suite 2558/0.
 - 4a — deep-link infra: StrategicMove.deepLink field (server-set, like ineligibleReason) rendered as a link on BOTH surfaces (embedded Polaris Button url/external; dashboard <a> + CDIcon arrowUpRight). Shared-Advantage+ branch (the screenshot) now carries a real Meta Ads Manager deep-link → advisory rows are actionable, not dead text. Behavior-tested in enrich.test.ts (deepLink.href matches adsmanager.facebook.com). tsc clean, full suite 2559/0. NOTE: this already delivers 4b's shared-Advantage+ item.
+- 4b — free-ship advisory→deep-link on BOTH surfaces. New shared pure helper app/lib/action-deeplinks.ts (shopifyAdminUrl + actionDeepLink + hasActionDeepLink), tested. Embedded: free-ship kinds render an external Shopify "Open Shipping settings" link (Button url/external) instead of the 422 execute path (shop via useRouteLoaderData). Dashboard: AlertVM.deepLinkKinds (pure, from adaptAlert) + DashboardCtx.shopDomain + AlertDetail renders deep-link anchors (was hidden→snooze-only). fix_returns + no-winner/variant/sku already satisfy goal as advisory-with-reason (1c) — left as-is. tsc clean; full suite 2565/0 (2 consecutive green runs; one earlier transient flake did not reproduce).

@@ -94,6 +94,7 @@ function auditEntry(
 function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
   return {
     t: {},
+    shopDomain: "test.myshopify.com",
     nav: { screen: "dashboard", param: null },
     navigate: () => {},
     alerts: [],

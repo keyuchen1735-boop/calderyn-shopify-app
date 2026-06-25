@@ -57,6 +57,8 @@ export type ActionKind =
 
 export interface DashboardCtx {
   t: DashboardTheme;
+  /** Shop myshopify domain — for building Shopify admin deep-links. */
+  shopDomain: string;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; scrolls main to top. */

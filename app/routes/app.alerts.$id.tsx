@@ -4,9 +4,11 @@ import {
   useActionData,
   useLoaderData,
   useNavigation,
+  useRouteLoaderData,
   useSearchParams,
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
+import { actionDeepLink } from "~/lib/action-deeplinks";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -608,6 +610,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function AlertDetail() {
   const navigate = useEmbeddedNavigate();
+  // Shop domain for building Shopify admin deep-links (same source embedded-nav reads).
+  const shop = (useRouteLoaderData("routes/app") as { shop?: string } | undefined)?.shop ?? "";
   const { alert, guardrails, poDefaults, existingPoDraft, error } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -871,7 +875,15 @@ export default function AlertDetail() {
                 )}
                 {dedupedAllowedActions.map((kind, i) => {
                   const deepLink = DEEP_LINK_ACTIONS[kind];
-                  const button = deepLink ? (
+                  // Kinds with no one-click executor (free-ship) deep-link to where
+                  // the merchant does it manually in Shopify admin — an external
+                  // link, never the execute path (which would 422). rule 12.
+                  const adminDeepLink = shop ? actionDeepLink(kind, shop) : null;
+                  const button = adminDeepLink ? (
+                    <Button fullWidth url={adminDeepLink.href} external>
+                      {ACTION_LABELS[kind]} →
+                    </Button>
+                  ) : deepLink ? (
                     <Button fullWidth onClick={() => navigate(deepLink.path)}>
                       {ACTION_LABELS[kind]} →
                     </Button>

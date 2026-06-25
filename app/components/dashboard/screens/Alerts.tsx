@@ -19,6 +19,7 @@ import {
   isInternalEvidenceKey,
 } from "../format";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
+import { actionDeepLink } from "~/lib/action-deeplinks";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM, CampaignVM } from "../view-models";
 
@@ -476,6 +477,27 @@ function AlertDetail({
                     );
                   })}
                 </div>
+                {(alert.deepLinkKinds ?? []).length > 0 && (
+                  <div className="flex flex-col gap-2 mt-1">
+                    {alert.deepLinkKinds!.map((kind) => {
+                      const dl = actionDeepLink(kind, app.shopDomain);
+                      if (!dl) return null;
+                      return (
+                        <a
+                          key={kind}
+                          href={dl.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="cd-action-btn"
+                          style={{ textDecoration: "none" }}
+                        >
+                          <CDIcon name="arrowUpRight" size={16} strokeWidth={1.9} />
+                          <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
                 {confirmPo && (
                   <div
                     className="cd-move-row"
