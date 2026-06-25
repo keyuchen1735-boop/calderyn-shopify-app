@@ -33,6 +33,7 @@ export type AdminVariant = {
   id: string;
   sku: string | null;
   title: string | null;
+  price: string | null;
   inventoryPolicy: "DENY" | "CONTINUE";
   inventoryItem: {
     id: string | null;
@@ -46,6 +47,7 @@ export type AdminVariant = {
 export type AdminProduct = {
   id: string;
   title: string;
+  status: string | null;
   vendor: string | null;
   productType: string | null;
   tags: string[];
@@ -66,7 +68,7 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
         products(first: 25, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           nodes {
-            id title vendor productType tags
+            id title status vendor productType tags
             # Collection membership for the inventory facet filters; first page
             # only (a product in >20 collections is truncated — acceptable for
             # facet slicing).
@@ -78,7 +80,7 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
             # >20 locations, are truncated; revisit if real catalogs exceed this.
             variants(first: 40) {
               nodes {
-                id sku title inventoryPolicy
+                id sku title inventoryPolicy price
                 inventoryItem {
                   id tracked
                   unitCost { amount }

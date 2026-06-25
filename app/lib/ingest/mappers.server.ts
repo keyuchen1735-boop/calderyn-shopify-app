@@ -17,6 +17,7 @@ type LocationNode = { id: string; name: string; isActive?: boolean };
 type ProductNode = {
   id: string;
   title: string;
+  status?: string | null;
   vendor?: string | null;
   productType?: string | null;
   tags?: string[] | null;
@@ -26,6 +27,7 @@ type VariantNode = {
   id: string;
   sku?: string | null;
   title?: string | null;
+  price?: string | null;
   inventoryPolicy?: string | null;
   inventoryItem?: {
     id?: string | null;
@@ -112,6 +114,8 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
     // variant (Shopify sample options often repeat it); see buildSkuTitle.
     title: buildSkuTitle(product.title, variant.title),
     unit_cost_cents: unitCost != null ? moneyToCents(unitCost) : null,
+    retail_price_cents: variant.price != null ? moneyToCents(variant.price) : null,
+    product_status: product.status?.toLowerCase() ?? null,
     currency: "USD",
     category: productType,
     vendor,
@@ -175,6 +179,7 @@ type RawProductVariant = {
   inventory_item_id?: string | number | null;
   sku?: string | null;
   title?: string | null;
+  price?: string | null;
   inventory_policy?: string | null;
   inventory_management?: string | null;
 };
@@ -182,6 +187,7 @@ type RawProductWebhook = {
   id?: string | number;
   admin_graphql_api_id?: string;
   title?: string;
+  status?: string | null;
   vendor?: string | null;
   product_type?: string | null;
   tags?: string | null;
@@ -216,6 +222,8 @@ export function parseProductWebhook(
       inventory_tracked: variant.inventory_management != null,
       sku: variant.sku ?? null,
       title: buildSkuTitle(String(p.title ?? ""), variant.title),
+      retail_price_cents: variant.price != null ? moneyToCents(variant.price) : null,
+      product_status: p.status?.toLowerCase() ?? null,
       currency: "USD",
       category: p.product_type?.trim() || null,
       vendor: p.vendor?.trim() || null,
