@@ -35,7 +35,7 @@ from typing import Any
 
 import structlog
 
-from calderyn_engine.alerts_repo import upsert_alert
+from calderyn_engine.alerts_repo import load_active_narratives, upsert_alert
 from calderyn_engine.campaign_grade_repo import grade_campaigns_for_shop
 from calderyn_engine.claude_layer import rank_and_narrate
 from calderyn_engine.config import Config, load_config
@@ -184,8 +184,11 @@ async def run_for_shop(
                     )
                     return upserted
 
+                # Reuse stored narratives for ongoing conditions so Claude is
+                # only called for genuinely new complex findings.
+                cached = await load_active_narratives(conn, shop_id)
                 ranked = await rank_and_narrate(
-                    all_detections, cfg, client=claude_client
+                    all_detections, cfg, client=claude_client, cached=cached
                 )
                 rank_map = _rank_map(ranked)
 

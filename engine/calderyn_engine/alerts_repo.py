@@ -28,6 +28,7 @@ from datetime import date
 
 import asyncpg
 
+from calderyn_engine.claude_layer import entity_key
 from calderyn_engine.schemas import AlertRow
 
 UPSERT_SQL = """
@@ -88,3 +89,32 @@ async def upsert_alert(conn: asyncpg.Connection, row: AlertRow) -> str:
         UPSERT_CTX_SQL, alert_id, row.shop_id, json.dumps(row.evidence)
     )
     return str(alert_id)
+
+
+_ACTIVE_NARRATIVES_SQL = """
+SELECT detector_id, entity_ref, claude_narrative
+FROM alerts
+WHERE shop_id = $1::uuid
+  AND status IN ('open', 'acknowledged', 'snoozed')
+  AND claude_narrative IS NOT NULL
+"""
+
+
+async def load_active_narratives(
+    conn: asyncpg.Connection, shop_id: str
+) -> dict[tuple[str, str], str]:
+    """Map each active alert's (detector_id, entity_key) to its stored narrative.
+
+    The pipeline passes this to ``rank_and_narrate`` so an ongoing condition
+    reuses its narrative instead of re-asking Claude. Only active statuses (the
+    ones the upsert refreshes) are considered, and only rows that already have
+    a narrative.
+    """
+    rows = await conn.fetch(_ACTIVE_NARRATIVES_SQL, shop_id)
+    out: dict[tuple[str, str], str] = {}
+    for r in rows:
+        ref = r["entity_ref"]
+        if isinstance(ref, str):
+            ref = json.loads(ref)
+        out[(r["detector_id"], entity_key(ref))] = r["claude_narrative"]
+    return out
