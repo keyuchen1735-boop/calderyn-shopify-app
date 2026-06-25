@@ -75,6 +75,11 @@ export async function enrichRemediation(
 
   if (!skuId && !skuCode) return plan; // no key to resolve the SKU
 
+  // Hoisted above the try so the catch can fall back to the partially-enriched
+  // plan: if the winner query fails AFTER cut_ads was made executable, we must
+  // not discard that already-valid button (rule 12).
+  let enriched = plan;
+
   try {
     const loserSel = sb
       .from("v_sku_remediation_inputs")
@@ -106,7 +111,6 @@ export async function enrichRemediation(
         ? "pause_campaign"
         : "reduce_campaign_budget";
 
-    let enriched = plan;
     if (cutIdx >= 0) {
       enriched = withMove(enriched, cutIdx, (m) => ({
         ...m,
@@ -157,7 +161,7 @@ export async function enrichRemediation(
     }));
   } catch (err) {
     console.error(`[remediation] enrich failed for alert ${alert.id} (advisory fallback)`, err);
-    return advisory(plan, "couldn't resolve the campaign — review manually");
+    return advisory(enriched, "couldn't resolve the campaign — review manually");
   }
 }
 

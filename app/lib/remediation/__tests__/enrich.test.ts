@@ -44,7 +44,13 @@ function alert(over: Partial<Alert> = {}): Alert {
 }
 
 // Fake supabase: returns the loser row, then the winner-pool rows, per .from() table.
-function fakeSb(rows: { loser?: Record<string, unknown> | null; winners?: Record<string, unknown>[] }) {
+// loserError/winnersError simulate a DB failure on the respective query.
+function fakeSb(rows: {
+  loser?: Record<string, unknown> | null;
+  winners?: Record<string, unknown>[];
+  loserError?: Error | null;
+  winnersError?: Error | null;
+}) {
   function builder() {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
@@ -52,10 +58,10 @@ function fakeSb(rows: { loser?: Record<string, unknown> | null; winners?: Record
     chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.limit = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({ data: rows.loser ?? null, error: null }));
+    chain.maybeSingle = vi.fn(async () => ({ data: rows.loser ?? null, error: rows.loserError ?? null }));
     // winner pool fetch resolves the awaited builder to { data, error }
-    chain.then = (res: (v: { data: unknown; error: null }) => void) =>
-      res({ data: rows.winners ?? [], error: null });
+    chain.then = (res: (v: { data: unknown; error: Error | null }) => void) =>
+      res({ data: rows.winners ?? [], error: rows.winnersError ?? null });
     return chain;
   }
   return { from: vi.fn(() => builder()) } as unknown as SupabaseClient;
@@ -170,6 +176,32 @@ describe("enrichRemediation — both moves enriched in one pass (no-clobber inva
     expect(realloc.target?.winnerLabel).toBe("Hydration Bottle");
     expect(realloc.target?.winnerSkuId).toBe(WINNER_SKU);
     expect(realloc.target?.amountCents).toBeGreaterThan(0);
+  });
+});
+
+describe("enrichRemediation — winner-query failure preserves cut_ads (rule 12)", () => {
+  it("keeps cut_ads executable when the winner query throws after cut_ads was enriched", async () => {
+    // Loser has a dedicated mutable Meta campaign → cut_ads is enriched first.
+    // The winner-pool query then fails. The catch must fall back to the ENRICHED
+    // plan (cut_ads button preserved), not the base plan (which would discard it).
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winnersError: new Error("winner pool query failed"),
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).not.toBeNull(); // survived the winner-query failure
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+
+    // reallocate could not resolve a winner → advisory with the DB-error reason.
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.executor).toBeNull();
+    expect(realloc.ineligibleReason).toMatch(/review manually/i);
   });
 });
 

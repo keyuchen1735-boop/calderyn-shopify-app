@@ -47,7 +47,7 @@ must fail visibly if a shop's campaign type doesn't support per-SKU exclusion.
   (`exclude_geo`, `raise_free_ship_threshold`, `exclude_sku_free_ship`, `increase_campaign_budget`)
   must NOT write `succeeded`/ack — throw visible error / route to deep-link. Real-work kinds
   (`reallocate_inventory`, `create_po_draft`) unaffected. _Test: those kinds write no succeeded row, no ack._
-- [ ] 1b — `enrich.server.ts` ~158-161 catch falls back to `enriched`, not `plan` (preserve an
+- [x] 1b — `enrich.server.ts` ~158-161 catch falls back to `enriched`, not `plan` (preserve an
   already-built `cut_ads` button when the winner query throws). _Test: winner throw after cut_ads enriched → cut_ads stays executable._
 - [ ] 1c — `advisory()` patches BOTH moves; `fix_returns` + `no_sku_key` always carry an
   `ineligibleReason`. _Invariant test: no StrategicMove renders `executor===null && !ineligibleReason`._
