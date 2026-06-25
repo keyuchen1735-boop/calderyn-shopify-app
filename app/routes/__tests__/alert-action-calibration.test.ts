@@ -182,27 +182,24 @@ describe("alert action — calibration signal fires on approval", () => {
     expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
 
-  it("calls recordApproval on the legacy path (client.actions.execute)", async () => {
-    // exclude_geo is NOT in executableKinds so it always takes the legacy path.
-    // sku_stockout_vs_spend allows exclude_geo (DETECTOR_TO_ACTIONS).
-    const alertWithGeo = {
+  it("does NOT phantom-succeed for a kind with no wired executor (rule 12)", async () => {
+    // raise_free_ship_threshold has no executor. The legacy recorder must NOT
+    // write outcome:"succeeded" or acknowledge the alert for it — that would be a
+    // phantom success. free_shipping_leakage allows the kind (DETECTOR_TO_ACTIONS).
+    alertsGetSpy.mockResolvedValue({
       ...ALERT,
-      detector_id: "sku_stockout_vs_spend",
-      evidence: {}, // no campaign_id -> legacy path for exclude_geo
+      detector_id: "free_shipping_leakage",
       campaign_id: null,
       campaign_external_id: null,
-    };
-    alertsGetSpy.mockResolvedValue(alertWithGeo);
-    const res = await call(makeRequest("exclude_geo"));
-    const body = (await res.json()) as { ok: boolean };
-    expect(body.ok).toBe(true);
-    expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
-    expect(recordApprovalSpy).toHaveBeenCalledWith(
-      "shop-uuid-1",
-      "sku_stockout_vs_spend",
-      "exclude_geo",
-      expect.anything(),
-    );
+      evidence: {},
+    });
+    const res = await call(makeRequest("raise_free_ship_threshold"));
+    const body = (await res.json()) as { ok: boolean; error?: { code: string } };
+    expect(res.status).toBe(422);
+    expect(body.ok).toBe(false);
+    // No fake audit row written, no approval signal recorded.
+    expect(clientExecuteSpy).not.toHaveBeenCalled();
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
 
   it("does NOT call recordApproval for snooze_alert", async () => {

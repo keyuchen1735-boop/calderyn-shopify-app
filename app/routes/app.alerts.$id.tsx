@@ -517,9 +517,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    // All other intents (snooze_alert, exclude_geo, reallocate_inventory,
-    // create_po_draft) and pause/budget actions without a campaign_id UUID
-    // in evidence stay on the legacy client path.
+    // The legacy recorder writes outcome:"succeeded" and acknowledges the alert
+    // WITHOUT any platform mutation. Only three kinds may legitimately reach it:
+    // snooze_alert (its real defer runs below) and reallocate_inventory /
+    // create_po_draft (which performed their real work above and only need the
+    // audit row written). Any other kind here has no wired executor — recording
+    // success would be a phantom (rule 12). Fail visibly instead.
+    const LEGACY_RECORDED_KINDS = new Set<ActionKind>([
+      "snooze_alert",
+      "reallocate_inventory",
+      "create_po_draft",
+    ]);
+    if (!LEGACY_RECORDED_KINDS.has(kind as ActionKind)) {
+      throw new CalderynError({
+        code: "UNSUPPORTED_ACTION",
+        status: 422,
+        message: "This action can't be run automatically yet.",
+      });
+    }
+
     await client.actions.execute({
       alertId,
       kind,
