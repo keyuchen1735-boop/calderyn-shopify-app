@@ -29,7 +29,7 @@ const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
 ]);
 
 const PAIR_COLS =
-  "alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated";
+  "alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign";
 
 async function readPairRow(
   sb: SupabaseClient,
