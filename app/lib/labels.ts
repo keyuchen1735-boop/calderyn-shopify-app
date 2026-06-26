@@ -18,6 +18,11 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
   scaling_sku_fulfillment_risk: "Best-seller may sell out",
   sku_stockout_vs_spend: "Running ads for a sold-out product",
   wrong_location_concentration: "Stock in the wrong warehouse",
+  out_of_stock_live: "Live product is out of stock",
+  inventory_untracked: "Stock not being tracked",
+  priced_below_cost: "Selling below cost",
+  thin_margin: "Barely making a profit",
+  missing_cost: "Add product costs to track profit",
 };
 
 // The technical term for each detector — shown as a tooltip/subtitle next to the
@@ -37,6 +42,11 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   scaling_sku_fulfillment_risk: "Scaling SKU fulfillment risk",
   sku_stockout_vs_spend: "SKU stockout vs spend",
   wrong_location_concentration: "Wrong location concentration",
+  out_of_stock_live: "Out-of-stock live SKU",
+  inventory_untracked: "Untracked inventory",
+  priced_below_cost: "Priced below cost",
+  thin_margin: "Thin margin",
+  missing_cost: "Missing cost coverage",
 };
 
 // Title-case a raw detector id (e.g. "campaign_scaling_opportunity" → "Campaign
@@ -400,6 +410,13 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   return_rate_hidden_loss: ["pause_campaign", "reduce_campaign_budget", "discontinue_sku", "snooze_alert"],
   scaling_sku_fulfillment_risk: ["create_po_draft", "reallocate_inventory", "snooze_alert"],
   wrong_location_concentration: ["reallocate_inventory", "snooze_alert"],
+  // Baseline (catalog/inventory) detectors are informational nudges with no
+  // autopilot action — the merchant can only snooze them.
+  out_of_stock_live: ["snooze_alert"],
+  inventory_untracked: ["snooze_alert"],
+  priced_below_cost: ["snooze_alert"],
+  thin_margin: ["snooze_alert"],
+  missing_cost: ["snooze_alert"],
 };
 
 // Campaign-scoped actions are meaningless on an alert with no campaign attached

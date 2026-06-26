@@ -61,6 +61,8 @@ describe("mapVariantToSku", () => {
       sku: "WID-1",
       title: "Widget — Small",
       unit_cost_cents: 450,
+      retail_price_cents: null,
+      product_status: null,
       currency: "USD",
       category: null,
       vendor: null,
@@ -112,6 +114,28 @@ describe("mapVariantToSku", () => {
     expect(row.unit_cost_cents).toBeNull();
     expect(row.sku).toBeNull();
     expect(row.title).toBe("Widget");
+  });
+
+  it("captures retail price in cents and lowercased product status", () => {
+    const product = { id: "gid://shopify/Product/1", title: "Tee", status: "ACTIVE" };
+    const variant = {
+      id: "gid://shopify/ProductVariant/9",
+      sku: "TEE-1",
+      title: "S",
+      price: "24.00",
+      inventoryPolicy: "DENY",
+      inventoryItem: { id: "gid://shopify/InventoryItem/3", tracked: true, unitCost: { amount: "9.00" } },
+    };
+    const row = mapVariantToSku(SHOP, product, variant);
+    expect(row.retail_price_cents).toBe(2400);
+    expect(row.product_status).toBe("active");
+  });
+
+  it("nulls retail price when absent", () => {
+    const product = { id: "gid://shopify/Product/1", title: "Tee", status: "ACTIVE" };
+    const variant = { id: "gid://shopify/ProductVariant/9", title: "S", inventoryItem: { id: null } };
+    const row = mapVariantToSku(SHOP, product, variant);
+    expect(row.retail_price_cents).toBeNull();
   });
 });
 
@@ -368,6 +392,19 @@ describe("parseProductWebhook", () => {
         inventory_tracked: true,
       }),
     ]);
+  });
+
+  it("captures variant price and product status from products/update", () => {
+    const [row] = parseProductWebhook({
+      admin_graphql_api_id: "gid://shopify/Product/100",
+      title: "Widget",
+      status: "active",
+      variants: [
+        { admin_graphql_api_id: "gid://shopify/ProductVariant/200", price: "24.00" },
+      ],
+    });
+    expect(row.retail_price_cents).toBe(2400);
+    expect(row.product_status).toBe("active");
   });
 });
 

@@ -44,7 +44,13 @@ function alert(over: Partial<Alert> = {}): Alert {
 }
 
 // Fake supabase: returns the loser row, then the winner-pool rows, per .from() table.
-function fakeSb(rows: { loser?: Record<string, unknown> | null; winners?: Record<string, unknown>[] }) {
+// loserError/winnersError simulate a DB failure on the respective query.
+function fakeSb(rows: {
+  loser?: Record<string, unknown> | null;
+  winners?: Record<string, unknown>[];
+  loserError?: Error | null;
+  winnersError?: Error | null;
+}) {
   function builder() {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
@@ -52,10 +58,10 @@ function fakeSb(rows: { loser?: Record<string, unknown> | null; winners?: Record
     chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.limit = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(async () => ({ data: rows.loser ?? null, error: null }));
+    chain.maybeSingle = vi.fn(async () => ({ data: rows.loser ?? null, error: rows.loserError ?? null }));
     // winner pool fetch resolves the awaited builder to { data, error }
-    chain.then = (res: (v: { data: unknown; error: null }) => void) =>
-      res({ data: rows.winners ?? [], error: null });
+    chain.then = (res: (v: { data: unknown; error: Error | null }) => void) =>
+      res({ data: rows.winners ?? [], error: rows.winnersError ?? null });
     return chain;
   }
   return { from: vi.fn(() => builder()) } as unknown as SupabaseClient;
@@ -97,6 +103,27 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(realloc.ineligibleReason).toMatch(/shared campaign|Advantage/i);
   });
 
+  it("shared Advantage+ loser → advisory rows carry a Meta Ads Manager deep-link (4a/4b)", async () => {
+    // No one-click executor exists for shared-campaign exclusion, so the row must
+    // still be actionable: a real deep-link into Meta Ads Manager (rule 12).
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: null, dedicated_campaign_platform: null,
+        dedicated_campaign_budget_cents: null,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.deepLink?.href).toMatch(/adsmanager\.facebook\.com/);
+    expect(realloc.deepLink?.external).toBe(true);
+    expect(realloc.deepLink?.label).toBeTruthy();
+    // cut_ads is advisory in the shared case too — same actionable link.
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.deepLink?.href).toMatch(/adsmanager\.facebook\.com/);
+  });
+
   it("dedicated loser campaign but NO qualifying winner → reallocate stays advisory", async () => {
     const sb = fakeSb({
       loser: { sku_id: LOSER_SKU, contribution_per_unit_cents: 2300, dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta", dedicated_campaign_budget_cents: 45000 },
@@ -126,12 +153,37 @@ describe("enrichRemediation — reallocate eligibility", () => {
     expect(out.moves.find((m) => m.kind === "discontinue")?.executor).toBe("discontinue_sku");
   });
 
-  it("alert with neither sku_id on evidence nor a sku code → returns the plan unchanged (no DB read possible)", async () => {
+  it("alert with neither sku_id on evidence nor a sku code → both ad moves advisory with a reason (rule 12)", async () => {
     const sb = fakeSb({ loser: null, winners: [] });
     const out = await enrichRemediation(alert({ evidence: {}, sku: null }), plan(), sb, "shop-1");
     const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
     expect(realloc.executor).toBeNull();
-    expect(realloc.ineligibleReason).toBeUndefined();
+    expect(realloc.ineligibleReason).toMatch(/SKU|review manually/i);
+    // cut_ads must not be a bare label either.
+    expect(cut.executor).toBeNull();
+    expect(cut.ineligibleReason).toBeTruthy();
+  });
+});
+
+describe("enrichRemediation — no bare labels (rule 12)", () => {
+  const bareNullMoves = (p: RemediationPlan) =>
+    p.moves.filter((m) => m.executor == null && !m.ineligibleReason);
+
+  it("shared Advantage+ loser → cut_ads carries a reason too, and no move is a bare null label", async () => {
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: null, dedicated_campaign_platform: null,
+        dedicated_campaign_budget_cents: null,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).toBeNull();
+    expect(cut.ineligibleReason).toBeTruthy();
+    expect(bareNullMoves(out)).toHaveLength(0);
   });
 });
 
@@ -173,6 +225,32 @@ describe("enrichRemediation — both moves enriched in one pass (no-clobber inva
   });
 });
 
+describe("enrichRemediation — winner-query failure preserves cut_ads (rule 12)", () => {
+  it("keeps cut_ads executable when the winner query throws after cut_ads was enriched", async () => {
+    // Loser has a dedicated mutable Meta campaign → cut_ads is enriched first.
+    // The winner-pool query then fails. The catch must fall back to the ENRICHED
+    // plan (cut_ads button preserved), not the base plan (which would discard it).
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "meta",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winnersError: new Error("winner pool query failed"),
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).not.toBeNull(); // survived the winner-query failure
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+
+    // reallocate could not resolve a winner → advisory with the DB-error reason.
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.executor).toBeNull();
+    expect(realloc.ineligibleReason).toMatch(/review manually/i);
+  });
+});
+
 describe("enrichRemediation — cut_ads", () => {
   it("dedicated loser campaign → cut_ads becomes reduce_campaign_budget with loserCampaignId, even with no winner", async () => {
     const sb = fakeSb({
@@ -186,6 +264,27 @@ describe("enrichRemediation — cut_ads", () => {
     // Carries the loser's current budget so cut_ads can compute the reduced
     // budget on a SKU alert whose campaign isn't in the surface's campaign list.
     expect(cut.target?.loserCampaignBudgetCents).toBe(45000);
+  });
+
+  it("non-Meta dedicated loser campaign → cut_ads stays executable (platform-blind); only reallocate is Meta-gated", async () => {
+    // cut_ads is just pause/reduce of the loser's OWN campaign — executeAction
+    // resolves the Google/TikTok adapter, so it must remain a button. Only the
+    // cross-campaign reallocate leg is Meta-only.
+    const sb = fakeSb({
+      loser: {
+        sku_id: LOSER_SKU, contribution_per_unit_cents: 2300,
+        dedicated_campaign_id: LOSER_CAMP, dedicated_campaign_platform: "google",
+        dedicated_campaign_budget_cents: 45000,
+      },
+      winners: [],
+    });
+    const out = await enrichRemediation(alert(), plan(), sb, "shop-1");
+    const cut = out.moves.find((m) => m.kind === "cut_ads")!;
+    expect(cut.executor).toBe("reduce_campaign_budget"); // 45000 ≥ REDUCE_FLOOR
+    expect(cut.target?.loserCampaignId).toBe(LOSER_CAMP);
+    const realloc = out.moves.find((m) => m.kind === "reallocate_to_winner")!;
+    expect(realloc.executor).toBeNull();
+    expect(realloc.ineligibleReason).toMatch(/Meta/i);
   });
 
   it("no dedicated loser campaign → cut_ads stays advisory too", async () => {

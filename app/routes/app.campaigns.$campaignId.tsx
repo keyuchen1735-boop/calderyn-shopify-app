@@ -234,7 +234,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         alertId: null,
         kind,
         campaignId,
-        idempotencyKey: `direction:${campaignId}:${kind}:${new Date().toISOString().slice(0, 10)}`,
+        // Include the target budget: the Recommended-direction card and the
+        // Scale-opportunity card both POST increase_campaign_budget for this
+        // campaign but with DIFFERENT budgets. Without the budget in the key they
+        // collide on the same day and the second (distinct) budget silently
+        // no-ops via priorExecutionForKey — a phantom success (rule 12). With it,
+        // distinct budgets get distinct keys (both apply) while an identical
+        // double-submit still dedups.
+        idempotencyKey: `direction:${campaignId}:${kind}:${dailyBudgetCents ?? "none"}:${new Date().toISOString().slice(0, 10)}`,
         dailyBudgetCents,
         actor: "merchant:admin-detail",
       },
@@ -537,6 +544,7 @@ export default function CampaignDetailPage() {
     direction,
   } = useLoaderData<typeof loader>();
   const directionFetcher = useFetcher<typeof action>();
+  const scaleFetcher = useFetcher<typeof action>();
 
   if (!detail) {
     return (
@@ -618,9 +626,38 @@ export default function CampaignDetailPage() {
                 <Stat label={`Proposed (+${scale.pct}%)`} value={fmtMoney(scale.newBudgetCents)} />
                 <Stat label="Projected upside" value={`+${fmtMoney(scale.upsideCents)}/mo`} />
               </InlineGrid>
+              <scaleFetcher.Form method="post">
+                <input type="hidden" name="intent" value="apply_direction" />
+                <input type="hidden" name="campaign_id" value={detail.id} />
+                <input type="hidden" name="action_kind" value="increase_campaign_budget" />
+                <input type="hidden" name="daily_budget_cents" value={String(scale.newBudgetCents)} />
+                <Button variant="primary" submit loading={scaleFetcher.state !== "idle"}>
+                  {`Scale budget +${scale.pct}%`}
+                </Button>
+              </scaleFetcher.Form>
+              {scaleFetcher.data &&
+                (() => {
+                  // Gate on outcome, not ok: a `retrying` outcome is queued, NOT
+                  // applied — showing "scaled" for it is a phantom success (rule 12).
+                  const outcome = (scaleFetcher.data as { outcome?: string }).outcome;
+                  if (outcome === "succeeded") {
+                    return (
+                      <Banner tone="success">
+                        Budget scaled — live and reversible from the Campaigns list.
+                      </Banner>
+                    );
+                  }
+                  if (outcome === "retrying") {
+                    return (
+                      <Banner tone="warning">
+                        Couldn&apos;t reach the ad platform — queued, will retry automatically.
+                      </Banner>
+                    );
+                  }
+                  return <Banner tone="critical">Couldn&apos;t scale the budget. Please try again.</Banner>;
+                })()}
               <Text as="p" tone="subdued" variant="bodySm">
-                Scale it from the Campaigns list (row actions → “Scale budget”). Every change is
-                guardrailed and reversible.
+                Reversible from the Campaigns list.
               </Text>
             </BlockStack>
           </Card>

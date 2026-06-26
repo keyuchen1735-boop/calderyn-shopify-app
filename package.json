@@ -28,9 +28,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@prisma/client": "^6.19.3",
-    "@remix-run/node": "^2.17.5",
-    "@remix-run/react": "^2.17.5",
-    "@remix-run/serve": "^2.17.5",
+    "@remix-run/node": "2.16.7",
+    "@remix-run/react": "2.16.7",
+    "@remix-run/serve": "2.16.7",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^12.27.0",
     "@shopify/shopify-app-remix": "^4.2.0",
@@ -49,10 +49,10 @@
     "vite-tsconfig-paths": "^5.0.1"
   },
   "devDependencies": {
-    "@remix-run/dev": "^2.17.5",
-    "@remix-run/eslint-config": "^2.16.1",
-    "@remix-run/fs-routes": "^2.17.5",
-    "@remix-run/route-config": "^2.16.1",
+    "@remix-run/dev": "2.16.7",
+    "@remix-run/eslint-config": "2.16.7",
+    "@remix-run/fs-routes": "2.16.7",
+    "@remix-run/route-config": "2.16.7",
     "@shopify/api-codegen-preset": "^2.0.0",
     "@types/eslint": "^9.6.1",
     "@types/node": "^22.10.5",
@@ -70,9 +70,7 @@
     "vitest": "^4.1.7"
   },
   "overrides": {
-    "@remix-run/server-runtime": "2.17.5",
-    "react-router": "6.30.4",
-    "react-router-dom": "6.30.4",
+    "@remix-run/server-runtime": "2.16.7",
     "undici": "6.27.0",
     "@remix-run/dev": {
       "esbuild": "0.25.12",

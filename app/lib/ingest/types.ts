@@ -15,6 +15,8 @@ export type SkuRow = {
   sku: string | null;
   title: string;
   unit_cost_cents: number | null;
+  retail_price_cents: number | null;
+  product_status: string | null;
   currency: string;
   // Product facets (inventory slicing). `category` carries Shopify productType.
   category: string | null;

@@ -182,27 +182,68 @@ describe("alert action — calibration signal fires on approval", () => {
     expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
 
-  it("calls recordApproval on the legacy path (client.actions.execute)", async () => {
-    // exclude_geo is NOT in executableKinds so it always takes the legacy path.
-    // sku_stockout_vs_spend allows exclude_geo (DETECTOR_TO_ACTIONS).
-    const alertWithGeo = {
+  it("does NOT phantom-succeed for a kind with no wired executor (rule 12)", async () => {
+    // raise_free_ship_threshold has no executor. The legacy recorder must NOT
+    // write outcome:"succeeded" or acknowledge the alert for it — that would be a
+    // phantom success. free_shipping_leakage allows the kind (DETECTOR_TO_ACTIONS).
+    alertsGetSpy.mockResolvedValue({
       ...ALERT,
-      detector_id: "sku_stockout_vs_spend",
-      evidence: {}, // no campaign_id -> legacy path for exclude_geo
+      detector_id: "free_shipping_leakage",
       campaign_id: null,
       campaign_external_id: null,
-    };
-    alertsGetSpy.mockResolvedValue(alertWithGeo);
-    const res = await call(makeRequest("exclude_geo"));
+      evidence: {},
+    });
+    const res = await call(makeRequest("raise_free_ship_threshold"));
+    const body = (await res.json()) as { ok: boolean; error?: { code: string } };
+    expect(res.status).toBe(422);
+    expect(body.ok).toBe(false);
+    // No fake audit row written, no approval signal recorded.
+    expect(clientExecuteSpy).not.toHaveBeenCalled();
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+
+  it("scales budget through executeAction (not the legacy recorder) for increase_campaign_budget", async () => {
+    // campaign_scaling_opportunity allows increase_campaign_budget; evidence carries
+    // the current daily budget + the engine's suggested increase percent.
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "campaign_scaling_opportunity",
+      campaign_id: "camp-dim-uuid",
+      // REAL evidence shape: campaign_scaling_opportunity carries the budget as
+      // daily_budget_usd (dollars), matching loadScaleOpportunity — NOT *_cents.
+      evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 25 },
+    });
+    const res = await call(makeRequest("increase_campaign_budget"));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
-    expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
-    expect(recordApprovalSpy).toHaveBeenCalledWith(
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy).toHaveBeenCalledWith(
       "shop-uuid-1",
-      "sku_stockout_vs_spend",
-      "exclude_geo",
+      expect.objectContaining({
+        kind: "increase_campaign_budget",
+        campaignId: "camp-dim-uuid",
+        dailyBudgetCents: 12500, // $100 → 10000c → * (1 + 25/100)
+      }),
       expect.anything(),
     );
+    // Must NOT fall to the phantom recorder.
+    expect(clientExecuteSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT apply the per-action dollar cap to increase_campaign_budget (upside, not risk)", async () => {
+    // dollar_impact is the projected UPSIDE for a scaling alert, not downside
+    // risk; an upside well above the cap must still execute, not 403.
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "campaign_scaling_opportunity",
+      campaign_id: "camp-dim-uuid",
+      dollar_impact: 500_000_00, // $500k upside, far above the $100k cap
+      evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 20 },
+    });
+    const res = await call(makeRequest("increase_campaign_budget"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true); // not GUARDRAIL_DOLLAR_CAP 403
+    expect(executeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT call recordApproval for snooze_alert", async () => {

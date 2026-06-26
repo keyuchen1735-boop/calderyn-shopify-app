@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Alert } from "../types";
 import type { RemediationPlan, StrategicMove } from "./types";
 import { toNumericEvidence } from "./rank";
+import { META_ADS_MANAGER_URL } from "../action-deeplinks";
 
 interface SkuRemediationRow {
   sku_id: string;
@@ -28,6 +29,17 @@ const SHIFT_FRACTION = 0.5;
 
 // Below this daily budget, a percentage cut is pointless → pause outright.
 const REDUCE_FLOOR_CENTS = 1000;
+
+// Shared Advantage+ campaigns expose no per-SKU exclusion API, so the honest,
+// actionable treatment is a deep-link into Ads Manager where the merchant excludes
+// the SKU manually (rule 12: a real link, not dead text). Account-level link — the
+// merchant lands in their own Ads Manager; act-scoping is a follow-up once the
+// shared campaign id is exposed by the engine.
+const META_ADS_MANAGER_DEEPLINK: StrategicMove["deepLink"] = {
+  label: "Open in Meta Ads Manager",
+  href: META_ADS_MANAGER_URL,
+  external: true,
+};
 
 /**
  * Enrich a remediation plan with live SKU->campaign resolution. Returns a NEW
@@ -63,17 +75,43 @@ export async function enrichRemediation(
   const skuId = typeof alert.evidence?.sku_id === "string" ? alert.evidence.sku_id : null;
   const skuCode = typeof alert.sku === "string" && alert.sku ? alert.sku : null;
 
-  // advisory patches reallocate on the given base plan, leaving cut_ads as-is on
-  // that base. Callers pass `plan` when cut_ads is also ineligible, or `enriched`
-  // (with cut_ads already patched) when cut_ads is executable but reallocate is not.
-  const advisory = (base: RemediationPlan, reason: string): RemediationPlan =>
-    withMove(base, reallocIdx, (m) => ({
+  // advisory patches reallocate on the given base plan. cut_ads shares the
+  // loser's fate, so when it is NOT already an executable button it gets the same
+  // reason — never a bare label (rule 12). The executor==null guard preserves an
+  // already-enriched cut_ads (e.g. the winner-query-failure fallback, where the
+  // loser campaign is mutable but the winner couldn't be resolved).
+  const advisory = (
+    base: RemediationPlan,
+    reason: string,
+    deepLink?: StrategicMove["deepLink"],
+  ): RemediationPlan => {
+    let next = withMove(base, reallocIdx, (m) => ({
       ...m,
       executor: null,
       ineligibleReason: reason,
+      deepLink: deepLink ?? m.deepLink,
     }));
+    if (cutIdx >= 0 && base.moves[cutIdx]?.executor == null) {
+      next = withMove(next, cutIdx, (m) => ({
+        ...m,
+        executor: null,
+        ineligibleReason: reason,
+        deepLink: deepLink ?? m.deepLink,
+      }));
+    }
+    return next;
+  };
 
-  if (!skuId && !skuCode) return plan; // no key to resolve the SKU
+  // No SKU key to resolve the campaign — surface the reason instead of a bare
+  // label (rule 12).
+  if (!skuId && !skuCode) {
+    return advisory(plan, "couldn't link this alert to a SKU — review manually");
+  }
+
+  // Hoisted above the try so the catch can fall back to the partially-enriched
+  // plan: if the winner query fails AFTER cut_ads was made executable, we must
+  // not discard that already-valid button (rule 12).
+  let enriched = plan;
 
   try {
     const loserSel = sb
@@ -92,21 +130,22 @@ export async function enrichRemediation(
       return advisory(plan, "campaign data unavailable — no attribution found for this SKU");
     }
     if (!loserRow.dedicated_campaign_id || loserRow.dedicated_campaign_budget_cents == null) {
-      return advisory(plan, "served by a shared campaign — exclude this SKU inside Advantage+ instead");
+      return advisory(
+        plan,
+        "served by a shared campaign — exclude this SKU inside Advantage+ instead",
+        META_ADS_MANAGER_DEEPLINK,
+      );
     }
-    if (loserRow.dedicated_campaign_platform !== "meta") {
-      return advisory(plan, "budget shift is Meta-only — adjust this campaign in its platform");
-    }
-
-    // The loser has a dedicated mutable Meta campaign. Enrich cut_ads now — it
-    // is executable regardless of whether a winner exists. Both moves are patched
-    // on the same in-progress plan object; no closure clobbering.
+    // The loser has a dedicated mutable campaign. cut_ads (pause / reduce of the
+    // loser's OWN campaign) is platform-blind — executeAction resolves the
+    // Meta/Google/TikTok adapter and fails visibly if none is connected — so
+    // enrich it for ANY platform, with or without a winner. Only the
+    // cross-campaign reallocate leg below stays Meta-only.
     const cutKind: StrategicMove["executor"] =
       loserRow.dedicated_campaign_budget_cents < REDUCE_FLOOR_CENTS
         ? "pause_campaign"
         : "reduce_campaign_budget";
 
-    let enriched = plan;
     if (cutIdx >= 0) {
       enriched = withMove(enriched, cutIdx, (m) => ({
         ...m,
@@ -118,6 +157,16 @@ export async function enrichRemediation(
           loserCampaignBudgetCents: loserRow.dedicated_campaign_budget_cents ?? undefined,
         },
       }));
+    }
+
+    // Reallocation (cross-campaign budget shift) is Meta-only: executeReallocation
+    // and the winner pairing assume a single platform. cut_ads above already gives
+    // any-platform losers a working lever, so it survives this fallback.
+    if (loserRow.dedicated_campaign_platform !== "meta") {
+      return advisory(
+        enriched,
+        "moving budget to a winner is Meta-only — cut this campaign instead, or adjust the winner in its platform",
+      );
     }
 
     // Top catalog winner with its own dedicated mutable campaign, excluding the
@@ -157,7 +206,7 @@ export async function enrichRemediation(
     }));
   } catch (err) {
     console.error(`[remediation] enrich failed for alert ${alert.id} (advisory fallback)`, err);
-    return advisory(plan, "couldn't resolve the campaign — review manually");
+    return advisory(enriched, "couldn't resolve the campaign — review manually");
   }
 }
 

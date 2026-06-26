@@ -23,3 +23,24 @@ export async function enqueueShopifyBackfill(shopDomain: string): Promise<void> 
   );
   if (error) throw error;
 }
+
+/**
+ * True when this shop has never completed a Shopify backfill — i.e. a first
+ * install (or a prior install whose backfill never finished). `last_sync_at` is
+ * only stamped by a successful backfillShop, so a null/absent value is the
+ * signal. afterAuth uses this to run the first backfill inline (instead of
+ * waiting for the /cron/ingest tick) without repeating a full sync on every
+ * routine re-auth/token-exchange.
+ */
+export async function shopifyNeverSynced(shopDomain: string): Promise<boolean> {
+  const shopId = await resolveShopId(shopDomain);
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shop_integrations")
+    .select("last_sync_at")
+    .eq("shop_id", shopId)
+    .eq("kind", "shopify")
+    .maybeSingle();
+  if (error) throw error;
+  return !data || data.last_sync_at == null;
+}

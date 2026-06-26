@@ -39,6 +39,15 @@ export interface StrategicMove {
   /** Why this move is advisory instead of executable, when known. Surfaced in
    *  the panel (rule 12), e.g. "served by a shared campaign". */
   ineligibleReason?: string;
+  /** Where the merchant performs this manually when there is no one-click
+   *  executor — keeps an advisory row actionable instead of dead text (rule 12).
+   *  Set by enrich/rank; rendered as a link on both surfaces. */
+  deepLink?: {
+    label: string;
+    href: string;
+    /** true → external URL opened in a new tab; false/absent → in-app nav. */
+    external?: boolean;
+  };
   /** Concrete refs the executor needs, filled by enrichRemediation (Phase 3).
    *  Absent on advisory moves and on plans that were never enriched. */
   target?: {

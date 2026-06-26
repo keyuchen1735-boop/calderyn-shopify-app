@@ -38,7 +38,13 @@ export function computeWeights(
   detectorFires: Record<string, number>,
 ): { detector: string; action: ActionKind; weight: number }[] {
   const out: { detector: string; action: ActionKind; weight: number }[] = [];
-  const detectors = Object.keys(DETECTOR_TO_ACTIONS) as DetectorId[];
+  // Only detectors with a real, calibratable action participate in the weight
+  // universe. Baseline catalog/inventory detectors offer just "snooze_alert"
+  // (informational, never graduates to autopilot), so they must not dilute the
+  // shop's calibration percentage.
+  const detectors = (Object.keys(DETECTOR_TO_ACTIONS) as DetectorId[]).filter((d) =>
+    DETECTOR_TO_ACTIONS[d].some((a) => a !== "snooze_alert"),
+  );
   let totalDetectorWeight = 0;
   const detWeight: Record<string, number> = {};
   for (const d of detectors) {
