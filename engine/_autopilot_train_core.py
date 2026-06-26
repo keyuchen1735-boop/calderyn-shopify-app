@@ -36,6 +36,7 @@ from calderyn_engine.config import load_config  # noqa: E402
 from calderyn_engine.db import make_pool  # noqa: E402
 from calderyn_engine.moat.action_peer_etl import run_action_peer_etl  # noqa: E402
 from calderyn_engine.moat.action_trainer import train_action_policies  # noqa: E402
+from calderyn_engine.moat.persist_action_rewards import persist_action_rewards  # noqa: E402
 
 
 def _authorized(authorization: str | None) -> bool:
@@ -90,6 +91,26 @@ async def handle(
             summary = await train_action_policies(
                 conn, pepper=pepper, run_date=run_date
             )
+
+            # Persist closed-window reward signs back to action_audit for every
+            # shop in the cohort. Uses the same shop enumeration query as
+            # train_action_policies (shops with consent OR autopilot history).
+            # Fail-visible per shop; errors are appended to the returned list
+            # and never abort the run (rule 12 / idempotent CRON contract).
+            persist_errors: list[str] = []
+            rewards_persisted = 0
+            shop_rows = await conn.fetch(
+                "SELECT DISTINCT s.id::text AS shop_id FROM public.shops s "
+                "LEFT JOIN public.action_audit a ON a.shop_id = s.id AND a.actor_user_id='autopilot' "
+                "WHERE s.peer_data_consent = true OR a.shop_id IS NOT NULL"
+            )
+            for sr in shop_rows:
+                shop_id = sr["shop_id"]
+                try:
+                    rewards_persisted += await persist_action_rewards(conn, shop_id, run_date)
+                except Exception as exc:  # noqa: BLE001
+                    persist_errors.append(f"persist_rewards {shop_id}: {exc}")
+
     finally:
         await pool.close()
 
@@ -101,5 +122,6 @@ async def handle(
         "shops_trained": summary["shops_trained"],
         "models_written": summary["models_written"],
         "skipped": summary["skipped"],
-        "errors": summary["errors"],
+        "errors": summary["errors"] + persist_errors,
+        "rewards_persisted": rewards_persisted,
     }
