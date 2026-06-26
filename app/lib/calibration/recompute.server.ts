@@ -17,6 +17,7 @@ import {
 } from "./confidence";
 import { graduationVerdict } from "./graduation";
 import { loadPairOutcomeTallies } from "./outcomes.server";
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 export interface RecomputeDeps {
   sb: SupabaseClient;
@@ -25,15 +26,6 @@ export interface RecomputeDeps {
 const RANK_DECAY = 0.6; // first action gets 60% of a detector's weight; rest split the remainder
 const SEED_FIRES = 1; // every legal detector gets a baseline fire so new shops show a stable %
 const WINDOW_DAYS = 90;
-
-/** Action kinds with a working undo branch (mirrors graduation.server.ts HAS_UNDO_BRANCH). */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-]);
 
 export function computeWeights(
   detectorFires: Record<string, number>,

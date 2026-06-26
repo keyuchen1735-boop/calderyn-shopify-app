@@ -7,19 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
 import { graduationVerdict, GRADUATABLE_V1, MIN_OUTCOMES } from "./graduation";
 import { pairConfidence, actionTier } from "./confidence";
-
-/**
- * Action kinds that have a working undo branch.
- * Mirror of GATEWAY_UNDO_KINDS restricted to reversible actions only (spec I7).
- */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-  "discontinue_sku",
-]);
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 /**
  * Live graduation check for a (shop, detector, action) pair.
