@@ -178,7 +178,7 @@ function FeatureRow({ f, autopilotEnabled }: { f: LiveEngineFeatureVM; autopilot
         </div>
         {!f.proven && (
           <Text as="p" variant="bodySm" tone="subdued">
-            Approved {f.approvals}/{f.approvalsNeeded} &middot; made money {f.outcomes}/{f.outcomesNeeded} and a few more good results and it can run on its own
+            Approved {f.approvals}/{f.approvalsNeeded} &middot; made money {f.outcomes}/{f.outcomesNeeded}. A few more good results and it can run on its own.
           </Text>
         )}
       </div>
