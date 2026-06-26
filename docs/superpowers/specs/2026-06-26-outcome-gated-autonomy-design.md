@@ -59,9 +59,10 @@ today's approval count; the second is new and reads the existing outcome reward.
 | irreversible | reallocate_inventory | 25 | 8 |
 
 - A "measured outcome" is the sign of `compute_action_reward` for an executed
-  action of this pair once its 14-day post-window has elapsed (see §4). Positive =
-  it helped. The count is **net-positive outcomes** (positives minus negatives),
-  floored at 0.
+  action of this pair once its per-kind confirmation window has elapsed (§4.2 —
+  3 days for defensive actions, 7 for growth/demand ones, never the old 14).
+  Positive = it helped. The count is **net-positive outcomes** (positives minus
+  negatives), floored at 0.
 - Outcomes accrue from **every executed action of the pair**, including the ones
   the merchant approved while the pair was still in "ask first" mode. So the
   outcome track record is being built in parallel with the approval count — the
@@ -154,8 +155,9 @@ No new reward math. Graduation/demotion read the **existing**
 - Inputs per executed action (from `action_audit`): `action_kind`, target
   campaign/SKU, exec time `T`, and whether a later row has `undo_of = this.id`.
 - Outcome metric (from `ad_spend_fact` / grades): ROAS and profit over the
-  post-window `[T, T+14d]` vs the pre-window `[T−14d, T)`; break-even reference
-  from `campaign_grade_fact.break_even_roas`.
+  post-window `[T, T+W]` vs the pre-window `[T−14d, T)`, where `W` is the
+  **per-action confirmation window** from §4.2 (not a flat 14 days); break-even
+  reference from `campaign_grade_fact.break_even_roas`.
 - Sign convention: positive = the action helped; undo = hard negative override.
 
 **New plumbing (not new math):** a per-pair tally of net-positive measured
@@ -164,15 +166,38 @@ approval counters. The plan pins where this tally lives (a column on
 `pair_calibration` vs a small view over `action_audit` joined to the reward) and
 how it is recomputed (the nightly calibration recompute job is the natural host).
 
-### 4.1 Data-reality caveat (honest)
+### 4.2 Confirmation window matched to signal speed (fast graduation)
 
-Outcome data is **slow and currently sparse**. The post-window is 14 days, and as
-of the action-learning design (2026-06-19) prod had **zero** `actor_user_id =
-'autopilot'` rows. Implications the plan must handle gracefully:
+The single biggest source of graduation lag is the wait before an action's outcome
+can be counted. A flat 14-day window is wrong: a defensive action's benefit is
+visible almost immediately, while a growth action genuinely needs time to convert.
+So the confirmation window `W` is **per action kind**, set to how fast that action's
+signal actually appears:
 
-- The outcome bar can only be met after actions have executed *and* their 14-day
-  window has closed. For brand-new pairs this means graduation is genuinely gated
-  on a couple of weeks of real results — which is the intended behavior, not a bug.
+| Action kind | Window `W` | Why |
+|---|---|---|
+| `pause_campaign`, `reduce_campaign_budget` | **3 days** | Loss-averted is near-instant: the bleed stops the moment spend stops; 3 days confirms it held. |
+| `resume_campaign`, `reallocate_budget`, `discontinue_sku` | **7 days** | Mixed: a loss-stop side is fast, but the "did the winner / catalog actually do better" side needs a week of conversions. |
+| `adjust_price`, `reallocate_inventory` | **7 days** | Demand response to a new price / restocked region takes about a week of orders to read. |
+
+No action waits the old 14 days. The pre-window stays `[T−14d, T)` (a stable
+baseline of how things were before); only the *post*-window (how long we watch the
+result) is shortened per kind. An outcome counts toward graduation as soon as its
+window `W` has elapsed, not on a fixed two-week clock.
+
+The exact day counts are fixed constants in v1 (tunable later); the plan pins them
+in one shared table read by both the tally and any UI countdown copy.
+
+### 4.3 Data-reality caveat (honest)
+
+Outcome data is **slower than clicks and currently sparse**. As of the
+action-learning design (2026-06-19) prod had **zero** `actor_user_id = 'autopilot'`
+rows. Implications the plan must handle gracefully:
+
+- The outcome bar can only be met after actions have executed *and* their
+  per-kind window `W` (§4.2) has closed — days, not the old two weeks, but still
+  not instant. For brand-new pairs graduation is genuinely gated on a few days of
+  real results, which is the intended behavior.
 - Until a pair has any measured outcomes, its net-positive count is 0, so it cannot
   graduate on clicks alone. This is the desired "both bars" semantics.
 - The system must be correct-and-dormant: no measured outcomes ⇒ no graduation and
