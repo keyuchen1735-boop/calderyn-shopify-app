@@ -114,6 +114,55 @@ describe("buildUserContent media handling", () => {
   });
 });
 
+describe("buildUserContent caching breakpoint", () => {
+  it("image case: marks the image block ephemeral and leaves the trailing copy text uncached", () => {
+    const content = buildUserContent(
+      { ...input, mediaKind: "image", imageUrl: "data:image/webp;base64,QUJD" },
+      [],
+    );
+    const blocks = content as Array<{ type: string; cache_control?: unknown }>;
+    const image = blocks.find((b) => b.type === "image");
+    const text = blocks[blocks.length - 1];
+    // Breakpoint on the media → cached prefix is tools + system + image.
+    expect(image?.cache_control).toEqual({ type: "ephemeral" });
+    // Trailing creative-copy text varies per re-score → must stay after the breakpoint.
+    expect(text?.type).toBe("text");
+    expect(text?.cache_control).toBeUndefined();
+  });
+
+  it("video case: only the last frame is ephemeral; earlier frames and trailing text are not", () => {
+    const content = buildUserContent(
+      {
+        ...input,
+        mediaKind: "video",
+        imageUrl: "data:image/webp;base64,QUJD",
+        videoFrameUrls: [
+          "data:image/webp;base64,QUJD",
+          "data:image/webp;base64,REVG",
+          "data:image/webp;base64,R0hJ",
+        ],
+        videoDurationSec: 8,
+      },
+      [],
+    );
+    const blocks = content as Array<{ type: string; cache_control?: unknown }>;
+    const images = blocks.filter((b) => b.type === "image");
+    expect(images).toHaveLength(3);
+    // Caches intro + all frames: only the LAST frame carries the breakpoint.
+    expect(images[0].cache_control).toBeUndefined();
+    expect(images[1].cache_control).toBeUndefined();
+    expect(images[2].cache_control).toEqual({ type: "ephemeral" });
+    const last = blocks[blocks.length - 1];
+    expect(last.type).toBe("text");
+    expect(last.cache_control).toBeUndefined();
+  });
+
+  it("text-only fallback: returns a plain string (no block to carry a breakpoint)", () => {
+    const content = buildUserContent({ ...input, imageUrl: null }, ["Ad A"]);
+    expect(typeof content).toBe("string");
+  });
+});
+
 describe("parseTips", () => {
   it("keeps structured {title, detail} tips, trimming whitespace", () => {
     expect(parseTips([{ title: "  Add a headline ", detail: " do it " }])).toEqual([
