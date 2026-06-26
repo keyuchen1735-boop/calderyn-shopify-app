@@ -43,7 +43,7 @@ SELECT s.id, s.action_kind, s.created_at,
   FROM public.action_audit s
   LEFT JOIN public.alerts al ON al.id = s.alert_id
  WHERE s.shop_id = $1 AND s.actor_user_id = 'autopilot' AND s.outcome = 'succeeded'
-   AND s.action_kind = ANY($2)
+   AND s.action_kind::text = ANY($2)
 """
 
 # Per-SKU unit economics + units over a window (mirrors negative_unit_economics).

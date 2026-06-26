@@ -48,7 +48,7 @@ SELECT a.id, a.action_kind,
   FROM public.action_audit a
   LEFT JOIN public.alerts al ON al.id = a.alert_id
  WHERE a.shop_id = $1 AND a.actor_user_id = 'autopilot' AND a.outcome = 'succeeded'
-   AND a.action_kind <> ALL($2)
+   AND a.action_kind::text <> ALL($2)  -- ::text: action_kind is an enum; compare as text against the bound string[]
 """
 
 _SPEND_SQL = """
