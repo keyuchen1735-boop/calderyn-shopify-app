@@ -192,4 +192,51 @@ describe("executeAdjustPriceAlertAction", () => {
     setVariantPrice.mockRejectedValue(new Error("throttled by Shopify"));
     await expect(run(alert({}))).rejects.toMatchObject({ status: 502 });
   });
+
+  // ── Task 18b: actor / triggerReason wiring ─────────────────────────────────
+
+  it("persists actor='autopilot' to the audit row's actor field", async () => {
+    const a = alert({});
+    const c = client(a);
+    await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: ADMIN,
+      sb: okSb(),
+      actor: "autopilot",
+    });
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: "autopilot" }),
+    );
+  });
+
+  it("persists triggerReason to the audit row when passed", async () => {
+    const a = alert({});
+    const c = client(a);
+    const reason = "Auto-price: Margin erosion — $50.00 at stake";
+    await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: ADMIN,
+      sb: okSb(),
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerReason: reason }),
+    );
+  });
+
+  it("omitting actor/triggerReason leaves them absent — manual path unchanged", async () => {
+    const a = alert({});
+    const c = client(a);
+    await executeAdjustPriceAlertAction({ ...base, client: c as never, admin: ADMIN, sb: okSb() });
+    // Use expect.not.objectContaining to assert absence without relying on mock.calls typing
+    expect(c.actions.execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ actor: expect.anything() }),
+    );
+    expect(c.actions.execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ triggerReason: expect.anything() }),
+    );
+  });
 });

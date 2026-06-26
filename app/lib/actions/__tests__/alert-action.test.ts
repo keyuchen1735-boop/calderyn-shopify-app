@@ -51,7 +51,23 @@ const client = {
 } as never;
 
 const ADMIN = { graphql: vi.fn() };
-const SB = { mocked: true } as never;
+
+// sb stub that handles the sku_dim lookup added in Task 18b (sku_id resolution).
+// All other tables return null so existing test assertions are unaffected.
+function makeSb(skuDimId: string | null = null) {
+  function builder(table: string) {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn(async () => ({
+      data: table === "sku_dim" && skuDimId ? { id: skuDimId } : null,
+      error: null,
+    }));
+    return chain;
+  }
+  return { from: vi.fn((t: string) => builder(t)) } as never;
+}
+const SB = makeSb();
 
 function run(kind: "reallocate_inventory" | "snooze_alert", over: Record<string, unknown> = {}) {
   return executeInventoryAlertAction({
@@ -216,5 +232,112 @@ describe("error propagation", () => {
     );
     await expect(run("snooze_alert")).rejects.toMatchObject({ code: "ALERT_NOT_FOUND" });
     expect(actionsExecute).not.toHaveBeenCalled();
+  });
+});
+
+// ── Task 18b: actor / triggerReason / sku_id wiring ──────────────────────────
+
+describe("executeInventoryAlertAction — Task 18b actor/triggerReason/sku_id", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    alertsGet.mockResolvedValue(makeAlert());
+    guardrailsGet.mockResolvedValue({ dollar_cap_cents: 2_000_000 });
+    inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
+    actionsExecute.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
+    acknowledgeAlert.mockResolvedValue(true);
+    snoozeAlert.mockResolvedValue(true);
+  });
+
+  it("passes actor='autopilot' to actions.execute", async () => {
+    const sbSku = makeSb("sku-dim-1");
+    await executeInventoryAlertAction({
+      client,
+      admin: ADMIN,
+      sb: sbSku,
+      shopId: "shop-1",
+      alertId: "al-1",
+      kind: "reallocate_inventory",
+      idempotencyKey: "idem-1",
+      actor: "autopilot",
+    });
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: "autopilot" }),
+    );
+  });
+
+  it("passes triggerReason to actions.execute when provided", async () => {
+    const sbSku = makeSb("sku-dim-1");
+    const reason = "Auto-reallocate: Regional shortage — $12,000.00 at stake";
+    await executeInventoryAlertAction({
+      client,
+      admin: ADMIN,
+      sb: sbSku,
+      shopId: "shop-1",
+      alertId: "al-1",
+      kind: "reallocate_inventory",
+      idempotencyKey: "idem-1",
+      actor: "autopilot",
+      triggerReason: reason,
+    });
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerReason: reason }),
+    );
+  });
+
+  it("includes sku_id in audit params when sku_dim resolves the alert's sku", async () => {
+    const sbSku = makeSb("sku-dim-1");
+    await executeInventoryAlertAction({
+      client,
+      admin: ADMIN,
+      sb: sbSku,
+      shopId: "shop-1",
+      alertId: "al-1",
+      kind: "reallocate_inventory",
+      idempotencyKey: "idem-1",
+      actor: "autopilot",
+    });
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          sku_id: "sku-dim-1",
+          // existing fields must still be present
+          inventory_item_id: "gid://shopify/InventoryItem/1",
+          delta: 21,
+        }),
+      }),
+    );
+  });
+
+  it("omits sku_id when sku_dim returns no row (no partial failure)", async () => {
+    const sbNoSku = makeSb(null);
+    const res = await executeInventoryAlertAction({
+      client,
+      admin: ADMIN,
+      sb: sbNoSku,
+      shopId: "shop-1",
+      alertId: "al-1",
+      kind: "reallocate_inventory",
+      idempotencyKey: "idem-1",
+    });
+    expect(res.outcome).toBe("succeeded");
+    const call = actionsExecute.mock.calls[0][0] as Record<string, unknown>;
+    const params = call.params as Record<string, unknown>;
+    expect(params.sku_id).toBeUndefined();
+  });
+
+  it("omits actor/triggerReason when not passed — manual call path unchanged", async () => {
+    const sbSku = makeSb("sku-dim-1");
+    await executeInventoryAlertAction({
+      client,
+      admin: ADMIN,
+      sb: sbSku,
+      shopId: "shop-1",
+      alertId: "al-1",
+      kind: "reallocate_inventory",
+      idempotencyKey: "idem-1",
+    });
+    const call = actionsExecute.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.actor).toBeUndefined();
+    expect(call.triggerReason).toBeUndefined();
   });
 });

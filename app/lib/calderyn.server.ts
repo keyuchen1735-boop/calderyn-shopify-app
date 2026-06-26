@@ -85,6 +85,11 @@ export type ExecuteActionOpts = {
   idempotencyKey: string;
   preState?: unknown;
   postState?: unknown;
+  /** Who triggered this action. Defaults to "merchant" when absent. */
+  actor?: string;
+  /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
+   *  sets it; manual paths leave it undefined. */
+  triggerReason?: string | null;
 };
 
 // OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
@@ -820,7 +825,8 @@ export function calderynClient(shop: string) {
               dollar_impact_at_exec: dollarImpactAtExec,
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
-              actor_user_id: "merchant",
+              actor_user_id: opts.actor ?? "merchant",
+              trigger_reason: opts.triggerReason ?? null,
               completed_at: new Date().toISOString(),
             })
             .select()

@@ -31,6 +31,8 @@ export interface AlertActionClient {
       kind: ActionKind;
       params: Record<string, unknown>;
       idempotencyKey: string;
+      actor?: string;
+      triggerReason?: string | null;
     }): Promise<AuditEntry>;
   };
 }
@@ -43,9 +45,11 @@ export async function executeInventoryAlertAction(opts: {
   alertId: string;
   kind: InventoryAlertActionKind;
   idempotencyKey: string;
+  actor?: string;
+  triggerReason?: string | null;
   signal?: AbortSignal;
 }): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
-  const { client, admin, sb, shopId, alertId, kind, idempotencyKey, signal } = opts;
+  const { client, admin, sb, shopId, alertId, kind, idempotencyKey, actor, triggerReason, signal } = opts;
 
   const alert = await client.alerts.get(alertId, signal);
 
@@ -115,9 +119,23 @@ export async function executeInventoryAlertAction(opts: {
     params.to_location_id = plan.toLocationId;
     params.delta = plan.delta;
     params.shopify_operation_id = operationId;
+
+    // sku_id is load-bearing for the engine SKU reward loop (reads params->>'sku_id').
+    // Resolve from alert.sku → sku_dim, mirroring inventory-relocate.server.ts.
+    if (alert.sku) {
+      const { data: skuRow } = await sb
+        .from("sku_dim")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("sku", alert.sku)
+        .maybeSingle();
+      if (skuRow?.id) {
+        params.sku_id = String(skuRow.id);
+      }
+    }
   }
 
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey });
+  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
 
   // Snooze defers (hide for 1 day / until next login) rather than resolving;
   // every other kind closes the alert by acknowledging it.
@@ -235,10 +253,8 @@ export async function executeDiscontinueAlertAction(opts: {
     estimate_cents: alert.dollar_impact,
     archived_status: archivedStatus,
   };
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey });
+  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);
-  void actor;
-  void triggerReason;
   return { auditId: audit.id, outcome: audit.outcome ?? "succeeded", acknowledged };
 }
