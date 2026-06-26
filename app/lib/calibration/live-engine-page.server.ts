@@ -26,6 +26,7 @@ import { pairConfidenceBreakdown } from "./confidence";
 import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
+import { graduationProgress } from "./progress";
 import type {
   LiveEnginePageData,
   LiveEngineFeatureVM,
@@ -163,17 +164,21 @@ export async function buildLiveEnginePageData(
     };
 
     /* features */
-    const features: LiveEngineFeatureVM[] = (summary?.features ?? []).map((f) => ({
-      detectorId: f.detectorId,
-      actionKind: f.actionKind,
-      name: f.name,
-      watching: f.watching,
-      enabled: f.enabled,
-      moneyCents: f.moneyCents,
-      actions: f.actions,
-      lastAt: f.lastAt,
-      lastText: f.lastAt ? `last acted ${relTime(f.lastAt, now)}` : "no actions yet",
-    }));
+    const features: LiveEngineFeatureVM[] = (summary?.features ?? []).map((f) => {
+      const prog = graduationProgress(f.actionKind, f.cleanApprovals, f.netPositiveOutcomes);
+      return {
+        detectorId: f.detectorId,
+        actionKind: f.actionKind,
+        name: f.name,
+        watching: f.watching,
+        enabled: f.enabled,
+        moneyCents: f.moneyCents,
+        actions: f.actions,
+        lastAt: f.lastAt,
+        lastText: f.lastAt ? `last acted ${relTime(f.lastAt, now)}` : "no actions yet",
+        ...prog,
+      };
+    });
 
     /* pipeline: blend the live "ask you" branch (open proposals, below their bar)
        with the "handle it" branch (recent autopilot actions, above their bar), so
