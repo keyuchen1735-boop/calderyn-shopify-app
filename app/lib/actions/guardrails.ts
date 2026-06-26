@@ -73,6 +73,19 @@ export function withinBusinessHours(startUtc: number, endUtc: number, hour: numb
   return hour >= startUtc || hour < endUtc;
 }
 
+/** Returns true for campaign-centric action kinds. The min-spend gate applies
+ * only to campaign kinds — price and inventory actions have no campaign spend
+ * concept, so a non-zero minSpendCents must not block them. */
+export function isCampaignKind(kind: GuardedKind): boolean {
+  return (
+    kind === "pause_campaign" ||
+    kind === "resume_campaign" ||
+    kind === "reduce_campaign_budget" ||
+    kind === "increase_campaign_budget" ||
+    kind === "reallocate_budget"
+  );
+}
+
 export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFacts): GuardrailResult {
   if (!cfg.enabled) return { allowed: false, reason: "auto-pilot disabled" };
   // Bypass mode: enabled autopilot, but every safety/rate gate below is waived.
@@ -86,7 +99,12 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
   if (effectiveDailyActionCap != null && facts.todayAutopilotCount >= effectiveDailyActionCap) {
     return { allowed: false, reason: "daily action cap reached" };
   }
-  if (facts.campaignSpendCents < cfg.minSpendCents) return { allowed: false, reason: "campaign spend below minimum" };
+  // Min-spend gate applies only to campaign-centric actions. Price and inventory
+  // actions have no associated campaign spend, so zero campaignSpendCents must
+  // not spuriously block them when the merchant has a minSpendCents threshold.
+  if (isCampaignKind(facts.kind) && facts.campaignSpendCents < cfg.minSpendCents) {
+    return { allowed: false, reason: "campaign spend below minimum" };
+  }
   if (facts.dollarImpactCents > cfg.dollarCapCents) return { allowed: false, reason: "dollar impact exceeds cap" };
   // Aggregate daily-dollar ceiling (I2). Blocks when today's autonomous spend
   // plus this action's impact would exceed the ceiling. Both sides must be

@@ -26,3 +26,34 @@ describe("price/inventory caps", () => {
     expect(r).toEqual({ allowed: false, reason: "inventory move exceeds max units" });
   });
 });
+
+// ---- isCampaignKind gate: min-spend must not apply to non-campaign actions ----
+
+const cfgWithMinSpend: AutopilotGuardrails = {
+  ...cfg,
+  minSpendCents: 5000,
+};
+
+describe("evaluateGuardrails – isCampaignKind min-spend gate", () => {
+  it("adjust_price: min-spend does NOT apply even when campaignSpendCents is 0", () => {
+    // minSpendCents = 5000, campaignSpendCents = 0 → would block if gate absent.
+    const r = evaluateGuardrails(cfgWithMinSpend, facts({ kind: "adjust_price", priceChangePct: 5 }));
+    expect(r.allowed).toBe(true);
+  });
+
+  it("reallocate_inventory: min-spend does NOT apply even when campaignSpendCents is 0", () => {
+    const r = evaluateGuardrails(cfgWithMinSpend, facts({ kind: "reallocate_inventory", inventoryUnitsMoved: 10 }));
+    expect(r.allowed).toBe(true);
+  });
+
+  it("reduce_campaign_budget: min-spend still blocks when campaignSpendCents is 0", () => {
+    // This is a campaign kind — min-spend MUST still apply.
+    const r = evaluateGuardrails(cfgWithMinSpend, facts({
+      kind: "reduce_campaign_budget",
+      campaignSpendCents: 0,
+      currentBudgetCents: 10000,
+      newBudgetCents: 9000,
+    }));
+    expect(r).toEqual({ allowed: false, reason: "campaign spend below minimum" });
+  });
+});
