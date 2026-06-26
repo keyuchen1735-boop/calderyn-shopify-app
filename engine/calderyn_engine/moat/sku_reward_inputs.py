@@ -19,7 +19,11 @@ the campaign-scoped persist test from re-routing campaign rows through here.
 from __future__ import annotations
 from datetime import date, datetime, timedelta
 
-from calderyn_engine.moat.action_reward_inputs import ActionRewardInput, WINDOW_DAYS
+from calderyn_engine.moat.action_reward_inputs import (
+    ActionRewardInput,
+    SKU_ACTION_KINDS,
+    WINDOW_DAYS,
+)
 from calderyn_engine.moat.action_reward_windows import confirmation_window_days
 from calderyn_engine.moat.sku_action_rewards import (
     compute_sku_action_reward,
@@ -27,6 +31,8 @@ from calderyn_engine.moat.sku_action_rewards import (
 )
 
 # SKU autopilot actions: sku_id from params, detector from the joined alert.
+# $2 is bound to list(SKU_ACTION_KINDS) so this set always agrees with the
+# exclusion in the campaign path's _ACTIONS_SQL.
 _SKU_ACTIONS_SQL = """
 SELECT s.id, s.action_kind, s.created_at,
        (s.params->>'sku_id')         AS sku_id,
@@ -37,7 +43,7 @@ SELECT s.id, s.action_kind, s.created_at,
   FROM public.action_audit s
   LEFT JOIN public.alerts al ON al.id = s.alert_id
  WHERE s.shop_id = $1 AND s.actor_user_id = 'autopilot' AND s.outcome = 'succeeded'
-   AND s.action_kind IN ('discontinue_sku','adjust_price','reallocate_inventory')
+   AND s.action_kind = ANY($2)
 """
 
 # Per-SKU unit economics + units over a window (mirrors negative_unit_economics).
@@ -64,7 +70,7 @@ async def derive_sku_action_reward_inputs(
     kinds have no campaign) and window_closed gated on the per-kind confirmation
     window (action_reward_windows.confirmation_window_days).
     """
-    rows = await conn.fetch(_SKU_ACTIONS_SQL, shop_id)
+    rows = await conn.fetch(_SKU_ACTIONS_SQL, shop_id, list(SKU_ACTION_KINDS))
     out: list[ActionRewardInput] = []
     for a in rows:
         created = a["created_at"]

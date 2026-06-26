@@ -15,6 +15,15 @@ from calderyn_engine.moat.action_rewards import compute_action_reward
 
 WINDOW_DAYS = 14
 
+# These action kinds are owned by the SKU reward path (sku_reward_inputs.py).
+# They MUST be excluded from the campaign query so the campaign loop never
+# writes reward_signal=0 for them before the SKU loop can write the correct value.
+SKU_ACTION_KINDS: tuple[str, ...] = (
+    "discontinue_sku",
+    "adjust_price",
+    "reallocate_inventory",
+)
+
 
 class ActionRewardInput(TypedDict):
     shop_id: str
@@ -39,6 +48,7 @@ SELECT a.id, a.action_kind,
   FROM public.action_audit a
   LEFT JOIN public.alerts al ON al.id = a.alert_id
  WHERE a.shop_id = $1 AND a.actor_user_id = 'autopilot' AND a.outcome = 'succeeded'
+   AND a.action_kind <> ALL($2)
 """
 
 _SPEND_SQL = """
@@ -85,7 +95,7 @@ async def derive_action_reward_inputs(
         campaign_id, chosen_pct, reward, action_id — the seam consumed by the
         peer ETL (Task 7) and trainer (Task 8).
     """
-    actions = await conn.fetch(_ACTIONS_SQL, shop_id)
+    actions = await conn.fetch(_ACTIONS_SQL, shop_id, list(SKU_ACTION_KINDS))
 
     grade_rows = await conn.fetch(_GRADE_SQL, shop_id)
     grades: dict[str, Decimal] = {
