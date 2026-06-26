@@ -34,7 +34,12 @@ export type DetectorId =
   | "return_rate_hidden_loss"
   | "scaling_sku_fulfillment_risk"
   | "sku_stockout_vs_spend"
-  | "wrong_location_concentration";
+  | "wrong_location_concentration"
+  | "out_of_stock_live"
+  | "inventory_untracked"
+  | "priced_below_cost"
+  | "thin_margin"
+  | "missing_cost";
 
 export interface Alert {
   id: string;

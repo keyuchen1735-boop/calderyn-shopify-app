@@ -92,9 +92,10 @@ describe("onboarding wizard — render", () => {
     expect(html).toContain("Set your limits");
     expect(html).toContain("Spend at most per day");
     expect(html).toContain("Ask me before any change over");
-    // Seeded from DEFAULT_GUARDRAILS ($2,500/day, $1,000/action).
-    expect(html).toContain('value="2500"');
-    expect(html).toContain('value="1000"');
+    // Seeded from DEFAULT_GUARDRAILS ($2,500/day, $1,000/action), shown with
+    // thousands separators by the grouped text inputs.
+    expect(html).toContain('value="2,500"');
+    expect(html).toContain('value="1,000"');
   });
 
   it("step 1 (guardrails): seeds saved values when present", () => {

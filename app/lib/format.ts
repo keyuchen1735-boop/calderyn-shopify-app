@@ -5,6 +5,18 @@ export const fmtMoney = (cents: number) => {
 export const fmtMoneyDec = (cents: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format((cents ?? 0) / 100);
 
+// Group a whole-number numeric string with thousands separators for display in text
+// inputs (e.g. "10000" -> "10,000"). Returns "" for empty input so the field stays
+// clearable while editing. Pair with digitsOnly() to keep the raw value in state.
+export const fmtGroup = (raw: string) => {
+  const digits = digitsOnly(raw);
+  return digits ? Number(digits).toLocaleString("en-US") : "";
+};
+
+// Strip everything but digits — the inverse of fmtGroup for parsing input back to a
+// raw numeric string before storing in state.
+export const digitsOnly = (raw: string) => String(raw).replace(/\D/g, "");
+
 export const fmtRelTime = (iso: string) => {
   const t = new Date(iso);
   if (!Number.isFinite(t.getTime())) return "—";
