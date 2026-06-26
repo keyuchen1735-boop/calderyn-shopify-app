@@ -193,7 +193,7 @@ describe("executeAdjustPriceAlertAction", () => {
     await expect(run(alert({}))).rejects.toMatchObject({ status: 502 });
   });
 
-  // ── Task 18b: actor / triggerReason wiring ─────────────────────────────────
+  // ── actor / triggerReason wiring ─────────────────────────────────
 
   it("persists actor='autopilot' to the audit row's actor field", async () => {
     const a = alert({});

@@ -52,7 +52,7 @@ const client = {
 
 const ADMIN = { graphql: vi.fn() };
 
-// sb stub that handles the sku_dim lookup added in Task 18b (sku_id resolution).
+// sb stub that handles the sku_dim lookup for sku_id resolution.
 // All other tables return null so existing test assertions are unaffected.
 function makeSb(skuDimId: string | null = null) {
   function builder(table: string) {
@@ -235,9 +235,9 @@ describe("error propagation", () => {
   });
 });
 
-// ── Task 18b: actor / triggerReason / sku_id wiring ──────────────────────────
+// ── actor / triggerReason / sku_id wiring ──────────────────────────
 
-describe("executeInventoryAlertAction — Task 18b actor/triggerReason/sku_id", () => {
+describe("executeInventoryAlertAction — actor/triggerReason/sku_id", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     alertsGet.mockResolvedValue(makeAlert());

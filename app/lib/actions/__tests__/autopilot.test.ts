@@ -229,7 +229,7 @@ describe("runAutopilotForShop", () => {
     // executeAction continue to pass. I6 tests override below.
     acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true, acquiredAt: new Date().toISOString() });
     releaseAutopilotLock.mockReset().mockResolvedValue(undefined);
-    // Task 18c: price/inventory autonomous-execution mocks. Defaults chosen so a
+    // price/inventory autonomous-execution mocks. Defaults chosen so a
     // graduated, within-cap move ACTS; price/inventory gate tests override below.
     checkPriceInventoryGuardrails.mockReset().mockResolvedValue({ allowed: true });
     executeInventoryAlertAction.mockReset().mockResolvedValue({ auditId: "aud6", outcome: "succeeded", acknowledged: true });
@@ -1470,13 +1470,13 @@ describe("runAutopilotForShop", () => {
     });
   });
 
-  // ─── Task 18c: autonomous adjust_price execution ─────────────────────────
+  // ─── autonomous adjust_price execution ─────────────────────────
   // margin_erosion / cogs_drift reach tryRemediation (PRODUCT_ECON). enrichRemediation
   // flips review_pricing → executor "adjust_price"; the autopilot PREDICTS the
   // executor's price (suggestAdjustPrice with the merchant cap) and BLOCKS an
   // over-cap move (routes to the merchant queue) rather than clamping it.
 
-  describe("autonomous adjust_price (Task 18c)", () => {
+  describe("autonomous adjust_price", () => {
     const priceAlert = {
       alert_id: "al-price",
       detector_id: "margin_erosion",
@@ -1597,11 +1597,11 @@ describe("runAutopilotForShop", () => {
     });
   });
 
-  // ─── Task 18c: autonomous reallocate_inventory execution ─────────────────
+  // ─── autonomous reallocate_inventory execution ─────────────────
   // Inventory-relocation detectors route through tryInventoryRelocation (NOT a
   // remediation MoveKind), guarded by graduation + an inventory-unit cap.
 
-  describe("autonomous reallocate_inventory (Task 18c)", () => {
+  describe("autonomous reallocate_inventory", () => {
     const invAlert = {
       alert_id: "al-inv",
       detector_id: "regional_shortage_risk",
