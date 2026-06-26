@@ -6,8 +6,7 @@
   "functions": {
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" },
     "api/engine/moat_train.py": { "maxDuration": 300, "includeFiles": "engine/**" },
-    "api/engine/autopilot_train.py": { "maxDuration": 300, "includeFiles": "engine/**" },
-    "api/envdiag.js": { "maxDuration": 10 }
+    "api/engine/autopilot_train.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
   "rewrites": [
     {
