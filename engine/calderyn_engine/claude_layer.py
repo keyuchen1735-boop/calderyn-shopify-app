@@ -228,6 +228,18 @@ async def rank_and_narrate(
             messages=[{"role": "user", "content": user_msg}],
             max_tokens=2048,
         )
+        # Volume + cost telemetry: every real (non-cached, non-template) Claude
+        # call lands here. Grep `claude_rank_call` to size engine LLM spend and
+        # judge whether the Batch path (ENGINE_BATCH_NARRATIVES) is worth wiring.
+        _usage = getattr(response, "usage", None)
+        logger.info(
+            "claude_rank_call",
+            detections=len(detections),
+            new_findings=len(needs_claude),
+            input_tokens=getattr(_usage, "input_tokens", None),
+            output_tokens=getattr(_usage, "output_tokens", None),
+            cache_read_tokens=getattr(_usage, "cache_read_input_tokens", None),
+        )
         text = _extract_text(response)
         parsed = ClaudeOutput.model_validate_json(text)
         _assert_covers_input(parsed, detections)
