@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, TypedDict
 
+from calderyn_engine.moat.action_reward_windows import confirmation_window_days
 from calderyn_engine.moat.action_rewards import compute_action_reward
 
 WINDOW_DAYS = 14
@@ -23,6 +24,8 @@ class ActionRewardInput(TypedDict):
     chosen_pct: float
     reward: Decimal
     action_id: str
+    window_closed: bool
+    action_created_at: datetime
 
 
 _ACTIONS_SQL = """
@@ -102,8 +105,10 @@ async def derive_action_reward_inputs(
             created = datetime.fromisoformat(str(created))
 
         action_date = created.date()
-        lo = action_date - timedelta(days=WINDOW_DAYS)
-        hi = action_date + timedelta(days=WINDOW_DAYS)
+        win_days = confirmation_window_days(a["action_kind"])
+        lo = action_date - timedelta(days=WINDOW_DAYS)   # PRE stays a 14d baseline
+        hi = action_date + timedelta(days=win_days)       # POST is per-kind
+        window_closed = run_date >= hi
 
         spend_rows = await conn.fetch(_SPEND_SQL, shop_id, action_date, lo, hi)
         agg = {(r["campaign_id"], r["phase"]): r for r in spend_rows}
@@ -140,6 +145,8 @@ async def derive_action_reward_inputs(
                 chosen_pct=float(chosen_pct),
                 reward=reward,
                 action_id=a["id"],
+                window_closed=window_closed,
+                action_created_at=created,
             )
         )
 
