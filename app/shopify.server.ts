@@ -10,6 +10,22 @@ import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server
 import { enqueueShopifyBackfill, shopifyNeverSynced } from "./lib/ingest/enqueue.server";
 import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
 
+// TEMP diagnostic (remove after env investigation): logs only the LENGTH of each
+// secret at runtime — never the value — so we can see which prod env vars reach
+// the lambda empty. Runs before shopifyApp() validates so it fires even if init throws.
+console.log(
+  "[envcheck]",
+  JSON.stringify({
+    env: process.env.VERCEL_ENV || "?",
+    APP_URL: (process.env.SHOPIFY_APP_URL || "").length,
+    API_KEY: (process.env.SHOPIFY_API_KEY || "").length,
+    API_SECRET: (process.env.SHOPIFY_API_SECRET || "").length,
+    SCOPES: (process.env.SCOPES || "").length,
+    DATABASE_URL: (process.env.DATABASE_URL || "").length,
+    SUPABASE_URL: (process.env.SUPABASE_URL || "").length,
+  }),
+);
+
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
