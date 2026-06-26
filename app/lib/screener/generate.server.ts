@@ -162,6 +162,10 @@ export function copyGenerator(opts: { createMessage: CreateMessageFn; model: str
     mode: "copy",
     available: () => true,
     async generate(req) {
+      // No cache_control here: this is a single, text-only, per-generation call
+      // (the prompt is rebuilt from the creative's own flaws each time, with no
+      // repeated prefix across calls), so a breakpoint would never be read — and
+      // the prompt is below Sonnet 4.6's 2048-token cache minimum anyway.
       const res = await opts.createMessage({
         model: opts.model,
         max_tokens: MAX_TOKENS,

@@ -133,24 +133,35 @@ export function buildUserContent(
     const duration = input.videoDurationSec
       ? ` (~${Math.round(input.videoDurationSec)}s)`
       : "";
-    const blocks: Anthropic.ContentBlockParam[] = [
-      {
-        type: "text",
-        text:
-          `This is a VIDEO creative${duration}. The ${frames.length} images below are key frames ` +
-          "in order, start → end. The first frame is the hook the viewer sees before deciding to keep watching.",
-      },
-    ];
+    const intro: Anthropic.TextBlockParam = {
+      type: "text",
+      text:
+        `This is a VIDEO creative${duration}. The ${frames.length} images below are key frames ` +
+        "in order, start → end. The first frame is the hook the viewer sees before deciding to keep watching.",
+    };
+    const imageBlocks: Anthropic.ImageBlockParam[] = [];
     for (const f of frames) {
       const block = toImageBlock(f);
-      if (block) blocks.push(block);
+      if (block) imageBlocks.push(block);
     }
-    blocks.push({ type: "text", text });
-    return blocks;
+    // Cache the prefix up to and including the LAST frame, so the cached span is
+    // tools + system + intro + every frame. The re-score gate replays the same
+    // media with different copy text, so this prefix is identical across calls;
+    // only the trailing creative-copy text below varies and stays uncached.
+    const lastImage = imageBlocks[imageBlocks.length - 1];
+    if (lastImage) lastImage.cache_control = { type: "ephemeral" };
+    return [intro, ...imageBlocks, { type: "text", text }];
   }
 
   const imageBlock = input.imageUrl ? toImageBlock(input.imageUrl) : null;
+  // Text-only fallback: a plain string can't carry a cache_control breakpoint,
+  // and without media the system+tools prefix (~1.4k tokens) is below Sonnet
+  // 4.6's 2048-token cache minimum anyway — so there is nothing to cache here.
   if (!imageBlock) return text;
+  // Breakpoint on the image → cached prefix is tools + system + image, stable
+  // across re-scores of this creative; the trailing copy text varies, so leave
+  // it after the breakpoint (uncached).
+  imageBlock.cache_control = { type: "ephemeral" };
   return [imageBlock, { type: "text", text }];
 }
 

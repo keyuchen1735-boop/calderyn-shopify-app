@@ -22,12 +22,17 @@ Flagging alerts:
 Apart from flag_alert, never claim you performed an action. You explain and propose; the merchant confirms.`;
 
 /**
- * System blocks: a long-lived cached instruction block followed by the volatile
- * per-shop snapshot. Tool definitions are cached separately at the call site.
+ * System blocks, each carrying a cache breakpoint. The instruction block is
+ * byte-identical across every shop, so its breakpoint is a globally shared cache
+ * prefix. The snapshot is byte-identical across a single turn's tool-loop
+ * iterations; caching it stops the same ~1.5-3k tokens being re-billed at full
+ * price on every createMessage call in the loop. Two breakpoints is within the
+ * 4-per-request cap. Tools render before `system`, so the instruction
+ * breakpoint already covers them — there is no separate tools breakpoint.
  */
 export function buildSystemPrompt(snapshot: string): Anthropic.TextBlockParam[] {
   return [
     { type: "text", text: ASSISTANT_SYSTEM_INSTRUCTIONS, cache_control: { type: "ephemeral" } },
-    { type: "text", text: snapshot },
+    { type: "text", text: snapshot, cache_control: { type: "ephemeral" } },
   ];
 }
