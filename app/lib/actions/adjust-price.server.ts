@@ -55,9 +55,10 @@ export async function executeAdjustPriceAlertAction(opts: {
   /** Merchant-confirmed price (cents). Omit to apply the engine suggestion. */
   newPriceCents?: number;
   actor?: string;
+  triggerReason?: string | null;
   signal?: AbortSignal;
 }): Promise<{ auditId: string; outcome: string; acknowledged: boolean }> {
-  const { client, admin, sb, shopId, alertId, kind, idempotencyKey, newPriceCents, actor, signal } =
+  const { client, admin, sb, shopId, alertId, kind, idempotencyKey, newPriceCents, actor, triggerReason, signal } =
     opts;
 
   const alert = await client.alerts.get(alertId, signal);
@@ -220,9 +221,8 @@ export async function executeAdjustPriceAlertAction(opts: {
     capped,
     estimate_cents: alert.dollar_impact,
   };
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey });
+  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);
-  void actor;
   return { auditId: audit.id, outcome: audit.outcome ?? "succeeded", acknowledged };
 }

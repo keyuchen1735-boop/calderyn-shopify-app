@@ -25,8 +25,8 @@ export interface ExecuteInput {
   dailyBudgetCents?: number;
   actor?: string;
   /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
-   *  sets it; manual paths leave it undefined. */
-  triggerReason?: string;
+   *  sets it; manual paths leave it undefined or null. */
+  triggerReason?: string | null;
 }
 
 export interface ExecutedAudit {

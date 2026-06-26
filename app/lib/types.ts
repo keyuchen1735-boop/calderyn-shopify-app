@@ -257,6 +257,12 @@ export interface GuardrailConfig {
    *  Merchant-facing (adjust_price is confirm-only, never autopilot) — gates how
    *  far one click may move a variant price. */
   max_price_change_pct: number;
+  /** Max single-step autonomous price move, whole percent 1..100. Gates the
+   *  adjust_price action when autopilot executes it unattended. */
+  autopilot_max_price_change_pct: number;
+  /** Max units autopilot may move in a single reallocate_inventory action; null
+   *  means no unit cap (unlimited). */
+  autopilot_max_inventory_units_per_move: number | null;
 }
 
 /** Why a merchant rejected a calibration proposal. Used by the feedback

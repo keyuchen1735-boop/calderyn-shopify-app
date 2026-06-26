@@ -15,6 +15,8 @@ const cfg: AutopilotGuardrails = {
   businessHoursOnly: false,
   businessHoursStartUtc: 14,
   businessHoursEndUtc: 0,
+  maxPriceChangePct: 10,
+  maxInventoryUnitsPerMove: null,
 };
 
 const facts: GuardrailFacts = {
@@ -247,6 +249,7 @@ describe("evaluateGuardrails · reallocate_budget", () => {
     maxBudgetIncreasePct: 20, maxDailyBudgetCents: null,
     dollarCapCents: 100000, cooldownMinutes: 30, businessHoursOnly: false,
     businessHoursStartUtc: 0, businessHoursEndUtc: 0,
+    maxPriceChangePct: 10, maxInventoryUnitsPerMove: null,
   };
   const base: GuardrailFacts = {
     kind: "reallocate_budget", dollarImpactCents: 500, campaignSpendCents: 50000,

@@ -109,6 +109,42 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ autopilot_max_daily_budget_cents: -100 })).not.toBeNull();
   });
 
+  it("accepts a valid autopilot price cap", () => {
+    expect(validateGuardrailPatch({ autopilot_max_price_change_pct: 10 })).toBeNull();
+  });
+
+  it("rejects an out-of-range autopilot price cap (above 100)", () => {
+    expect(validateGuardrailPatch({ autopilot_max_price_change_pct: 150 })).toBe(
+      "invalid_autopilot_max_price_change_pct",
+    );
+  });
+
+  it("rejects a zero autopilot price cap (must be 1..100)", () => {
+    expect(validateGuardrailPatch({ autopilot_max_price_change_pct: 0 })).toBe(
+      "invalid_autopilot_max_price_change_pct",
+    );
+  });
+
+  it("accepts null as the inventory units cap (unlimited)", () => {
+    expect(validateGuardrailPatch({ autopilot_max_inventory_units_per_move: null })).toBeNull();
+  });
+
+  it("accepts a positive integer inventory units cap", () => {
+    expect(validateGuardrailPatch({ autopilot_max_inventory_units_per_move: 50 })).toBeNull();
+  });
+
+  it("rejects zero for the inventory units cap", () => {
+    expect(validateGuardrailPatch({ autopilot_max_inventory_units_per_move: 0 })).toBe(
+      "invalid_autopilot_max_inventory_units_per_move",
+    );
+  });
+
+  it("rejects a negative inventory units cap", () => {
+    expect(validateGuardrailPatch({ autopilot_max_inventory_units_per_move: -5 })).toBe(
+      "invalid_autopilot_max_inventory_units_per_move",
+    );
+  });
+
   it("ignores keys not present in the patch", () => {
     expect(validateGuardrailPatch({})).toBeNull();
   });

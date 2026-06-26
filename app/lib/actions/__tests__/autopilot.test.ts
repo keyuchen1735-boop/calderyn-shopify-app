@@ -10,13 +10,21 @@ import type { GuardrailResult } from "../guardrails";
 // the runAutopilotForShop import above.
 const {
   checkGuardrails,
+  checkPriceInventoryGuardrails,
   executeAction,
   executeReallocation,
   loadReallocationCandidates,
   pickReallocation,
   checkSkuGuardrails,
   executeDiscontinueAlertAction,
+  executeInventoryAlertAction,
   executeReallocateSpendSku,
+  executeAdjustPriceAlertAction,
+  resolveSkuVariant,
+  suggestAdjustPrice,
+  readVariantPrice,
+  getCurrentUnitCostCents,
+  transferPlanFromEvidence,
   enrichRemediation,
   calderynClient,
   unauthenticatedAdmin,
@@ -29,6 +37,7 @@ const {
   releaseAutopilotLock,
 } = vi.hoisted(() => ({
   checkGuardrails: vi.fn(),
+  checkPriceInventoryGuardrails: vi.fn(async (): Promise<GuardrailResult> => ({ allowed: true })),
   executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
   executeReallocation: vi.fn(async () => ({ id: "aud2", outcome: "succeeded" })),
   loadReallocationCandidates: vi.fn(async (): Promise<ReallocationCandidate[]> => []),
@@ -36,11 +45,44 @@ const {
   checkSkuGuardrails: vi.fn(async (): Promise<GuardrailResult> => ({ allowed: true })),
   // Both gateways take a single opts object and return { auditId, outcome, acknowledged }.
   executeDiscontinueAlertAction: vi.fn(async () => ({ auditId: "aud3", outcome: "succeeded", acknowledged: true })),
+  executeInventoryAlertAction: vi.fn(async () => ({ auditId: "aud6", outcome: "succeeded", acknowledged: true })),
   executeReallocateSpendSku: vi.fn(async () => ({ auditId: "aud4", outcome: "succeeded", acknowledged: true })),
+  executeAdjustPriceAlertAction: vi.fn(async () => ({ auditId: "aud5", outcome: "succeeded", acknowledged: true })),
+  // SKU→variant resolver for the adjust_price prediction step. Default: a linked variant.
+  resolveSkuVariant: vi.fn(async () => ({ skuId: "sku-int-1", variantGid: "gid://shopify/ProductVariant/1" })),
+  // Pure price suggestion — mocked so adjust_price tests control the predicted
+  // newPriceCents (and thus the priceChangePct fed to the guard). Default: a 7%
+  // raise from a 1000c prior price (within a 10% autopilot cap). Return type is
+  // the suggestion-or-null union so a per-test null override typechecks.
+  suggestAdjustPrice: vi.fn(
+    (): { newPriceCents: number; capped: boolean; basis: "margin_erosion" | "cogs_drift" } | null => ({
+      newPriceCents: 1070,
+      capped: false,
+      basis: "margin_erosion",
+    }),
+  ),
+  readVariantPrice: vi.fn(async () => ({ priceCents: 1000, productGid: "gid://shopify/Product/1" })),
+  getCurrentUnitCostCents: vi.fn(async (): Promise<number | null> => 600),
+  // Default: mirror the REAL pure derivation — a plan only when the evidence
+  // carries all four transfer fields, else null. This keeps non-relocation
+  // inventory alerts (e.g. sku_stockout_vs_spend with no transfer evidence)
+  // falling through, exactly like production.
+  transferPlanFromEvidence: vi.fn((evidence: Record<string, unknown> = {}) => {
+    const str = (v: unknown): string =>
+      typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+    const inventoryItemId = str(evidence.inventory_item_id);
+    const fromLocationId = str(evidence.from_location_id);
+    const toLocationId = str(evidence.to_location_id);
+    const delta = Number(evidence.recommended_delta ?? evidence.delta ?? 0);
+    if (!inventoryItemId || !fromLocationId || !toLocationId || !delta) return null;
+    return { inventoryItemId, fromLocationId, toLocationId, delta };
+  }),
   // Phase-3 resolver is mocked here to isolate routing from the DB read; it is
   // exercised for-real in its own enrich.test.ts (Phase 3). Default = identity.
   enrichRemediation: vi.fn(async (_alert: unknown, plan: unknown) => plan),
-  calderynClient: vi.fn(() => ({})),
+  // guardrails.get supplies the merchant confirm cap (max_price_change_pct) the
+  // adjust_price branch uses to predict the executor's price. Default 15%.
+  calderynClient: vi.fn(() => ({ guardrails: { get: vi.fn(async () => ({ max_price_change_pct: 15 })) } })),
   unauthenticatedAdmin: vi.fn(async () => ({ admin: {} })),
   // Default: true — existing tests that expect executeAction to be reached keep
   // passing. New graduation-gate tests override this per-test. NOTE: this default
@@ -62,14 +104,19 @@ const {
   acquireAutopilotLock: vi.fn(async (): Promise<{ acquired: boolean; reason?: string; acquiredAt?: string }> => ({ acquired: true, acquiredAt: new Date().toISOString() })),
   releaseAutopilotLock: vi.fn(async () => {}),
 }));
-vi.mock("../guardrails.server", () => ({ checkGuardrails }));
+vi.mock("../guardrails.server", () => ({ checkGuardrails, checkPriceInventoryGuardrails }));
 vi.mock("../execute.server", () => ({ executeAction }));
 vi.mock("../reallocate.server", () => ({ executeReallocation }));
 vi.mock("../reallocation-suggest.server", () => ({ loadReallocationCandidates, pickReallocation }));
 vi.mock("../remediation-guard.server", () => ({ checkSkuGuardrails }));
 vi.mock("../../remediation/enrich.server", () => ({ enrichRemediation }));
-vi.mock("../alert-action.server", () => ({ executeDiscontinueAlertAction }));
+vi.mock("../alert-action.server", () => ({ executeDiscontinueAlertAction, executeInventoryAlertAction }));
 vi.mock("../reallocate-sku.server", () => ({ executeReallocateSpendSku }));
+vi.mock("../adjust-price.server", () => ({ executeAdjustPriceAlertAction, resolveSkuVariant }));
+vi.mock("../../remediation/price", () => ({ suggestAdjustPrice }));
+vi.mock("../../shopify/price.server", () => ({ readVariantPrice }));
+vi.mock("../../po/draft.server", () => ({ getCurrentUnitCostCents }));
+vi.mock("../../shopify/inventory.server", () => ({ transferPlanFromEvidence }));
 vi.mock("../../calderyn.server", () => ({ calderynClient }));
 vi.mock("~/shopify.server", () => ({ unauthenticated: { admin: unauthenticatedAdmin } }));
 // Default: null → mu falls back to 1 → full-cap behavior (today's exact numbers).
@@ -182,6 +229,29 @@ describe("runAutopilotForShop", () => {
     // executeAction continue to pass. I6 tests override below.
     acquireAutopilotLock.mockReset().mockResolvedValue({ acquired: true, acquiredAt: new Date().toISOString() });
     releaseAutopilotLock.mockReset().mockResolvedValue(undefined);
+    // price/inventory autonomous-execution mocks. Defaults chosen so a
+    // graduated, within-cap move ACTS; price/inventory gate tests override below.
+    checkPriceInventoryGuardrails.mockReset().mockResolvedValue({ allowed: true });
+    executeInventoryAlertAction.mockReset().mockResolvedValue({ auditId: "aud6", outcome: "succeeded", acknowledged: true });
+    executeAdjustPriceAlertAction.mockReset().mockResolvedValue({ auditId: "aud5", outcome: "succeeded", acknowledged: true });
+    resolveSkuVariant.mockReset().mockResolvedValue({ skuId: "sku-int-1", variantGid: "gid://shopify/ProductVariant/1" });
+    suggestAdjustPrice.mockReset().mockReturnValue({ newPriceCents: 1070, capped: false, basis: "margin_erosion" });
+    readVariantPrice.mockReset().mockResolvedValue({ priceCents: 1000, productGid: "gid://shopify/Product/1" });
+    getCurrentUnitCostCents.mockReset().mockResolvedValue(600);
+    // Reset to the real pure derivation (plan only when evidence has all four
+    // transfer fields), so the default never spuriously diverts a non-relocation
+    // inventory alert from its legacy path.
+    transferPlanFromEvidence.mockReset().mockImplementation((evidence: Record<string, unknown> = {}) => {
+      const str = (v: unknown): string =>
+        typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+      const inventoryItemId = str(evidence.inventory_item_id);
+      const fromLocationId = str(evidence.from_location_id);
+      const toLocationId = str(evidence.to_location_id);
+      const delta = Number(evidence.recommended_delta ?? evidence.delta ?? 0);
+      if (!inventoryItemId || !fromLocationId || !toLocationId || !delta) return null;
+      return { inventoryItemId, fromLocationId, toLocationId, delta };
+    });
+    calderynClient.mockReset().mockReturnValue({ guardrails: { get: vi.fn(async () => ({ max_price_change_pct: 15 })) } });
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -1394,6 +1464,278 @@ describe("runAutopilotForShop", () => {
       expect(executeAction).toHaveBeenCalledWith(
         SHOP,
         expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+  });
+
+  // ─── autonomous adjust_price execution ─────────────────────────
+  // margin_erosion / cogs_drift reach tryRemediation (PRODUCT_ECON). enrichRemediation
+  // flips review_pricing → executor "adjust_price"; the autopilot PREDICTS the
+  // executor's price (suggestAdjustPrice with the merchant cap) and BLOCKS an
+  // over-cap move (routes to the merchant queue) rather than clamping it.
+
+  describe("autonomous adjust_price", () => {
+    const priceAlert = {
+      alert_id: "al-price",
+      detector_id: "margin_erosion",
+      dollar_impact: 200, // dollars
+      campaign_id: null,
+      campaign_spend_cents: 0,
+      daily_budget_cents: null,
+      evidence: { baseline_unit_margin_usd: 18, current_unit_margin_usd: 7 },
+      sku: "Slim Margin Tee",
+      sku_id: "sku-2",
+    };
+
+    // enrichRemediation flips review_pricing to an executable adjust_price move.
+    function withAdjustPriceMove() {
+      enrichRemediation.mockResolvedValueOnce({
+        moves: [
+          {
+            kind: "review_pricing",
+            dollarImpactCents: 20000,
+            executor: "adjust_price",
+            label: "Raise price to restore margin",
+            target: { skuId: "sku-2" },
+          },
+          { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+        ],
+        recommended: "review_pricing",
+        structurallyDead: false,
+      });
+    }
+
+    it("graduated + within cap → acts via executeAdjustPriceAlertAction (actor autopilot, once)", async () => {
+      withAdjustPriceMove();
+      // Predicted 1000c → 1070c = +7% (< 15% merchant cap, < 10% autopilot cap).
+      suggestAdjustPrice.mockReturnValue({ newPriceCents: 1070, capped: false, basis: "margin_erosion" });
+      checkPriceInventoryGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(executeAdjustPriceAlertAction).toHaveBeenCalledTimes(1);
+      expect(executeAdjustPriceAlertAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopId: SHOP,
+          alertId: "al-price",
+          kind: "adjust_price",
+          actor: "autopilot",
+          idempotencyKey: "autopilot:al-price:adjust_price",
+        }),
+      );
+      // The guard saw the PREDICTED +7% change and the per-action dollar impact (cents).
+      expect(checkPriceInventoryGuardrails).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "adjust_price", priceChangePct: expect.closeTo(7, 5) }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("predicts the price using the merchant confirm cap (not the autopilot cap)", async () => {
+      withAdjustPriceMove();
+      checkPriceInventoryGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+      await runAutopilotForShop(SHOP, sb);
+      // suggestAdjustPrice must be called with capPct = the merchant cap (15),
+      // so the prediction equals the price the executor will recompute + apply.
+      expect(suggestAdjustPrice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          detectorId: "margin_erosion",
+          currentPriceCents: 1000,
+          currentCogsCents: 600,
+          capPct: 15,
+        }),
+      );
+    });
+
+    it("graduated + OVER cap → blocked 'price change exceeds max', executor NOT called, alert stays open", async () => {
+      withAdjustPriceMove();
+      // Predicted 1000c → 1200c = +20% (> 10% autopilot cap).
+      suggestAdjustPrice.mockReturnValue({ newPriceCents: 1200, capped: false, basis: "margin_erosion" });
+      // The guard is the source of truth for the cap decision (block, not clamp).
+      checkPriceInventoryGuardrails.mockResolvedValue({ allowed: false, reason: "price change exceeds max" });
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      // BLOCK-NOT-CLAMP: the executor must not fire (no price applied, no ack).
+      expect(executeAdjustPriceAlertAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "price change exceeds max": 1 });
+      const dec = r.decisions.find((d) => d.alertId === "al-price");
+      expect(dec).toMatchObject({ outcome: "blocked", reason: "price change exceeds max" });
+    });
+
+    it("not graduated → skipped (skippedMoves), executor + guard NOT called", async () => {
+      withAdjustPriceMove();
+      isGraduated.mockResolvedValue(false);
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAdjustPriceAlertAction).not.toHaveBeenCalled();
+      expect(checkPriceInventoryGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.skippedMoves).toBe(1);
+      expect(r.blocked).toBe(0);
+      // Gate keys on the move's EXECUTOR kind (adjust_price).
+      expect(isGraduated).toHaveBeenCalledWith(SHOP, "margin_erosion", "adjust_price", sb);
+    });
+
+    it("no price suggestion → blocked, executor + guard NOT called", async () => {
+      withAdjustPriceMove();
+      suggestAdjustPrice.mockReturnValue(null);
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeAdjustPriceAlertAction).not.toHaveBeenCalled();
+      expect(checkPriceInventoryGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions.find((d) => d.alertId === "al-price");
+      expect(dec?.reason).toContain("no price suggestion");
+    });
+  });
+
+  // ─── autonomous reallocate_inventory execution ─────────────────
+  // Inventory-relocation detectors route through tryInventoryRelocation (NOT a
+  // remediation MoveKind), guarded by graduation + an inventory-unit cap.
+
+  describe("autonomous reallocate_inventory", () => {
+    const invAlert = {
+      alert_id: "al-inv",
+      detector_id: "regional_shortage_risk",
+      dollar_impact: 90, // dollars
+      campaign_id: null,
+      campaign_spend_cents: 0,
+      daily_budget_cents: null,
+      evidence: {
+        inventory_item_id: "gid://shopify/InventoryItem/1",
+        from_location_id: "gid://shopify/Location/1",
+        to_location_id: "gid://shopify/Location/2",
+        recommended_delta: 4,
+      },
+      sku: "Regional Tee",
+      sku_id: "sku-inv",
+    };
+
+    it("graduated + delta ≤ cap → acts via executeInventoryAlertAction (actor autopilot)", async () => {
+      transferPlanFromEvidence.mockReturnValue({
+        inventoryItemId: "gid://shopify/InventoryItem/1",
+        fromLocationId: "gid://shopify/Location/1",
+        toLocationId: "gid://shopify/Location/2",
+        delta: 4,
+      });
+      checkPriceInventoryGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(executeInventoryAlertAction).toHaveBeenCalledTimes(1);
+      expect(executeInventoryAlertAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopId: SHOP,
+          alertId: "al-inv",
+          kind: "reallocate_inventory",
+          actor: "autopilot",
+          idempotencyKey: "autopilot:al-inv:reallocate_inventory",
+        }),
+      );
+      // Guard saw the |delta| as the units moved, and dollar impact in CENTS (90 → 9000).
+      expect(checkPriceInventoryGuardrails).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({
+          kind: "reallocate_inventory",
+          inventoryUnitsMoved: 4,
+          dollarImpactCents: 9000,
+        }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("delta > cap → blocked 'inventory move exceeds max units', executor NOT called", async () => {
+      transferPlanFromEvidence.mockReturnValue({
+        inventoryItemId: "gid://shopify/InventoryItem/1",
+        fromLocationId: "gid://shopify/Location/1",
+        toLocationId: "gid://shopify/Location/2",
+        delta: -50, // |50| over the merchant cap
+      });
+      checkPriceInventoryGuardrails.mockResolvedValue({ allowed: false, reason: "inventory move exceeds max units" });
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons).toEqual({ "inventory move exceeds max units": 1 });
+      // |delta| is what the guard receives.
+      expect(checkPriceInventoryGuardrails).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ inventoryUnitsMoved: 50 }),
+        sb,
+      );
+    });
+
+    it("not graduated → skipped (skippedMoves), executor + guard NOT called", async () => {
+      isGraduated.mockResolvedValue(false);
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(checkPriceInventoryGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.skippedMoves).toBe(1);
+      expect(isGraduated).toHaveBeenCalledWith(SHOP, "regional_shortage_risk", "reallocate_inventory", sb);
+    });
+
+    it("missing/invalid evidence (pure-relocation detector) → blocked, executor NOT called", async () => {
+      transferPlanFromEvidence.mockReturnValue(null);
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.blocked).toBe(1);
+      const dec = r.decisions.find((d) => d.alertId === "al-inv");
+      expect(dec?.reason).toContain("invalid inventory evidence");
+    });
+
+    it("non-inventory detector → fell_through (handled by the existing pause path)", async () => {
+      // campaign_below_breakeven is not an inventory detector — tryInventoryRelocation
+      // must defer so the legacy pause path still acts on it.
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [candidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al1" }),
+        sb,
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("sku_stockout_vs_spend with NO transfer plan falls through to its legacy pause path", async () => {
+      // sku_stockout_vs_spend is an inventory detector but its evidence carries no
+      // transfer plan; it must defer to the pause path rather than block, so the
+      // shipped stockout-pause no-brainer autonomy is preserved (one decision/alert).
+      transferPlanFromEvidence.mockReturnValue(null);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      stockoutPauseAllowed.mockResolvedValue({ ok: true });
+      const stockout = {
+        ...candidate,
+        alert_id: "al-stock",
+        detector_id: "sku_stockout_vs_spend",
+        sku_id: "sku-1",
+        sku: "WID-1",
+      };
+      const sb = fakeSb({
+        enabled: true,
+        alerts: [stockout],
+        scopedAlerts: [{ id: "al-stock", detector_id: "sku_stockout_vs_spend", entity_ref: { sku_id: "sku-1" } }],
+      });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", alertId: "al-stock" }),
         sb,
       );
       expect(r.acted).toBe(1);

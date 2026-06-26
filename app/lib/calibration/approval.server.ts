@@ -11,22 +11,10 @@
 // returned (all zeros / false); the action result is always authoritative.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { GRADUATABLE_V1, graduationVerdict } from "./graduation";
+import { GRADUATABLE, graduationVerdict } from "./graduation";
 import { trustDelta, ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
-
-/**
- * Action kinds with a working undo branch (mirror of the set in
- * graduation.server.ts). Needed for the justGraduated verdict — graduation
- * requires a reversible action with an undo path.
- */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-]);
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 const PAIR_COLS =
   "alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign";
@@ -105,7 +93,7 @@ export async function recordApproval(
 
     const cleanApprovals = num(afterRow?.clean_approvals);
     const graduationThreshold = num(afterRow?.graduation_threshold);
-    const graduatable = GRADUATABLE_V1.has(actionKind);
+    const graduatable = GRADUATABLE.has(actionKind);
 
     // 5. justGraduated = the AFTER row now clears every graduation gate AND the
     //    pair was NOT already graduated before this approval. Uses the same

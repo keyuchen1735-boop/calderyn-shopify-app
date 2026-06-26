@@ -167,6 +167,10 @@ export interface GuardrailVM {
   autopilot_max_daily_budget_cents: number | null;
   /** Max single-step price change for the adjust_price action, whole percent. */
   max_price_change_pct: number;
+  /** Max single-step autonomous price move, whole percent 1..100. */
+  autopilot_max_price_change_pct: number;
+  /** Max units autopilot may move in a single reallocate_inventory action; null = no cap. */
+  autopilot_max_inventory_units_per_move: number | null;
 }
 
 export interface DailyRow {

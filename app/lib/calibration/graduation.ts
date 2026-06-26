@@ -4,15 +4,29 @@
 import type { ActionKind } from "../types";
 import { actionTier, NO_BRAINER } from "./confidence";
 
-/** The action kinds that may graduate. v1: two reversible campaign actions, plus
- *  discontinue_sku — a product archive that is reversible via its undo branch
- *  (48h auto-undo) but more consequential, so it carries the hard_to_reverse
- *  approval floor (gate 6 is tier-aware). reallocate_spend_sku is intentionally
- *  excluded: it records as reallocate_budget, which v1 never auto-runs. */
-export const GRADUATABLE_V1: ReadonlySet<ActionKind> = new Set<ActionKind>([
+/** The action kinds that may graduate to unattended autopilot execution.
+ *  Expanded from 3 to 7 in Phase 2: adds resume_campaign, reallocate_budget,
+ *  reallocate_inventory, and adjust_price alongside the original three.
+ *  Each kind must still clear all 7 gates (undo branch, approvals, outcomes,
+ *  confidence) before it can act unattended.
+ *
+ *  Note on resume_campaign and reallocate_budget:
+ *  Both were added because they have complete undo branches.
+ *  reallocate_budget has an autopilot trigger (a DETECTOR_TO_ACTIONS mapping
+ *  fires it), so it accrues measured outcomes normally.
+ *  resume_campaign currently has NO autonomous trigger — no DETECTOR_TO_ACTIONS
+ *  mapping and no autopilot branch fires it — so it is graduation-eligible but
+ *  dormant: it will never accumulate outcomes and cannot graduate until a resume
+ *  trigger is added. It remains in this set (plan-mandated) so the undo branch
+ *  and graduation machinery are ready for that future trigger. */
+export const GRADUATABLE: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "pause_campaign",
   "reduce_campaign_budget",
   "discontinue_sku",
+  "resume_campaign",
+  "reallocate_budget",
+  "reallocate_inventory",
+  "adjust_price",
 ]);
 
 /** Minimum clean approvals required per reversibility class. */
@@ -57,7 +71,7 @@ export interface GraduationVerdict {
  * Gates are checked in order; the first failing condition is returned.
  * ALL seven gates must pass for graduated=true.
  *
- *  1. Kind must be in the graduatable set (pause/reduce_campaign_budget, discontinue_sku).
+ *  1. Kind must be in the graduatable set (GRADUATABLE — 7 kinds as of Phase 2).
  *  2. A working undo branch must exist for the kind (I7).
  *  3. The merchant must not have disabled the pair (or a muted_pair rule is active).
  *  4. The pair must not be on probation (pair_probation_until rule active).
@@ -69,8 +83,8 @@ export interface GraduationVerdict {
 export function graduationVerdict(
   input: GraduationVerdictInput,
 ): GraduationVerdict {
-  if (!GRADUATABLE_V1.has(input.actionKind)) {
-    return { graduated: false, reason: "kind not graduatable in v1" };
+  if (!GRADUATABLE.has(input.actionKind)) {
+    return { graduated: false, reason: "kind not graduatable" };
   }
   if (!input.hasUndoBranch) {
     return { graduated: false, reason: "no undo branch" };

@@ -108,6 +108,9 @@ describe("structural sets are internally consistent", () => {
   it("every executor kind has a tier", () => {
     for (const k of HAS_EXECUTOR) expect(["reversible","hard_to_reverse","irreversible"]).toContain(actionTier(k));
   });
+  it("treats adjust_price as hard_to_reverse (customer-visible but undoable)", () => {
+    expect(actionTier("adjust_price")).toBe("hard_to_reverse");
+  });
   it("reversibilityFactor is ordered", () => {
     expect(reversibilityFactor("reversible")).toBeGreaterThan(reversibilityFactor("hard_to_reverse"));
     expect(reversibilityFactor("hard_to_reverse")).toBeGreaterThan(reversibilityFactor("irreversible"));
