@@ -3,9 +3,9 @@
 
 import type { ExecutableKind } from "./execute.server";
 
-/** Kinds the guardrail evaluator understands: the single-campaign executables
- * plus the composite reallocation (executed by reallocate.server.ts). */
-export type GuardedKind = ExecutableKind | "reallocate_budget";
+/** Kinds the guardrail evaluator understands: the single-campaign executables,
+ * the composite reallocation, and the high-stakes price/inventory actions. */
+export type GuardedKind = ExecutableKind | "reallocate_budget" | "adjust_price" | "reallocate_inventory";
 
 export interface AutopilotGuardrails {
   enabled: boolean;
@@ -28,6 +28,12 @@ export interface AutopilotGuardrails {
   businessHoursOnly: boolean;
   businessHoursStartUtc: number; // 0-23
   businessHoursEndUtc: number;   // 0-23 (may wrap past midnight)
+  /** Max autonomous price change magnitude (%). Blocks adjust_price whose
+   * |priceChangePct| exceeds this value. Default 10 (conservative). */
+  maxPriceChangePct: number;
+  /** Max autonomous inventory units moved in a single reallocate_inventory
+   * action. null = no autonomous unit cap (merchant opts a cap in). */
+  maxInventoryUnitsPerMove: number | null;
 }
 
 export interface GuardrailFacts {
@@ -47,6 +53,12 @@ export interface GuardrailFacts {
   /** True when the call is from the autopilot (autonomous) path. Affects the
    * null-cap treatment: null = unlimited for merchant calls, 5 for autonomous. */
   autonomous?: boolean;
+  /** Signed price change percentage for adjust_price actions. Absent for other
+   * kinds. The evaluator checks Math.abs against maxPriceChangePct. */
+  priceChangePct?: number;
+  /** Number of inventory units moved for reallocate_inventory actions. Absent
+   * for other kinds. The evaluator checks this against maxInventoryUnitsPerMove. */
+  inventoryUnitsMoved?: number;
 }
 
 export interface GuardrailResult {
@@ -122,6 +134,21 @@ export function evaluateGuardrails(cfg: AutopilotGuardrails, facts: GuardrailFac
     if (cfg.maxDailyBudgetCents != null && facts.newBudgetCents > cfg.maxDailyBudgetCents) {
       return { allowed: false, reason: "budget exceeds daily ceiling" };
     }
+  }
+  if (
+    facts.kind === "adjust_price" &&
+    facts.priceChangePct != null &&
+    Math.abs(facts.priceChangePct) > cfg.maxPriceChangePct + 1e-9
+  ) {
+    return { allowed: false, reason: "price change exceeds max" };
+  }
+  if (
+    facts.kind === "reallocate_inventory" &&
+    cfg.maxInventoryUnitsPerMove != null &&
+    facts.inventoryUnitsMoved != null &&
+    facts.inventoryUnitsMoved > cfg.maxInventoryUnitsPerMove
+  ) {
+    return { allowed: false, reason: "inventory move exceeds max units" };
   }
   if (cfg.businessHoursOnly && !withinBusinessHours(cfg.businessHoursStartUtc, cfg.businessHoursEndUtc, facts.nowUtcHour)) {
     return { allowed: false, reason: "outside business hours" };

@@ -68,7 +68,7 @@ export async function checkGuardrails(
   const { data: row, error } = await sb
     .from("guardrail_config")
     .select(
-      "autopilot_enabled, autopilot_bypass_guardrails, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, daily_action_budget, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc",
+      "autopilot_enabled, autopilot_bypass_guardrails, autopilot_daily_action_cap, autopilot_min_spend_cents, autopilot_max_budget_cut_pct, autopilot_max_budget_increase_pct, autopilot_max_daily_budget_cents, dollar_impact_cap_without_2fa, daily_action_budget, cooldown_minutes_per_campaign, business_hours_only, business_hours_start_utc, business_hours_end_utc, autopilot_max_price_change_pct, autopilot_max_inventory_units_per_move",
     )
     .eq("shop_id", shopId)
     .maybeSingle();
@@ -95,6 +95,13 @@ export async function checkGuardrails(
     businessHoursOnly: Boolean(row.business_hours_only),
     businessHoursStartUtc: Number(row.business_hours_start_utc ?? 0),
     businessHoursEndUtc: Number(row.business_hours_end_utc ?? 0),
+    // Bounded-magnitude caps for autonomous price/inventory actions (§2.4).
+    // Default 10% max price move; null inventory cap = unlimited (merchant opts in).
+    maxPriceChangePct: Number(row.autopilot_max_price_change_pct ?? 10),
+    maxInventoryUnitsPerMove:
+      row.autopilot_max_inventory_units_per_move == null
+        ? null
+        : Number(row.autopilot_max_inventory_units_per_move),
   };
 
   // Count today's autopilot actions (UTC day). Only landed actions consume
