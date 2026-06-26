@@ -3,7 +3,7 @@ import { undoAction } from "../undo.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Mock the action adapter the same way undo.test.ts does.
-const { adapter, actionAdapterForShop } = vi.hoisted(() => {
+const { actionAdapterForShop } = vi.hoisted(() => {
   const adapter = {
     platform: "meta",
     pause: vi.fn(),
@@ -12,7 +12,7 @@ const { adapter, actionAdapterForShop } = vi.hoisted(() => {
     getState: vi.fn(),
   };
   const actionAdapterForShop = vi.fn(async () => adapter);
-  return { adapter, actionAdapterForShop };
+  return { actionAdapterForShop };
 });
 vi.mock("../../ads/action-registry.server", () => ({ actionAdapterForShop }));
 
