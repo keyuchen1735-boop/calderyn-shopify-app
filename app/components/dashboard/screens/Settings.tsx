@@ -377,6 +377,48 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                 />
               </SettingRow>
               <SettingRow
+                label="Most a price can move on its own (%)"
+                sub="When autopilot adjusts a price without you, it never moves it more than this in one step."
+              >
+                <GuardrailField
+                  value={g.autopilot_max_price_change_pct}
+                  presets={[
+                    { value: 5, label: "5%" },
+                    { value: 10, label: "10%" },
+                    { value: 15, label: "15%" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                  }}
+                  suffix="%"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("autopilot_max_price_change_pct", v);
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Most stock Calderyn can move on its own (units)"
+                sub="When autopilot reallocates inventory without you, it never moves more than this many units at once. Leave unset for no limit."
+              >
+                <GuardrailField
+                  value={g.autopilot_max_inventory_units_per_move}
+                  presets={[
+                    { value: 10, label: "10" },
+                    { value: 50, label: "50" },
+                    { value: 100, label: "100" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
+                  }}
+                  unlimited={{ label: "No limit" }}
+                  disabled={saving}
+                  onCommit={(v) => commit("autopilot_max_inventory_units_per_move", v)}
+                />
+              </SettingRow>
+              <SettingRow
                 label="Max budget increase"
                 sub="Autopilot never raises a campaign budget by more than this in one step."
               >

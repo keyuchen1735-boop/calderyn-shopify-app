@@ -198,13 +198,20 @@ export function parseGuardrailForm(fd: FormData): Partial<GuardrailConfig> {
   num("autopilot_min_spend_cents", fd.get("autopilot_min_spend_cents"), (n) => Math.round(n * 100));
   num("autopilot_max_budget_cut_pct", fd.get("autopilot_max_budget_cut_pct"));
   num("autopilot_max_budget_increase_pct", fd.get("autopilot_max_budget_increase_pct"));
-  // Honour the price-change cap if a field ever submits it (the dashboard owns
-  // the editor today).
   num("max_price_change_pct", fd.get("max_price_change_pct"));
-  // TODO(parity): add a visible "Max price change" control here to mirror the
-  // dashboard Settings field. adjust_price executes on BOTH surfaces and reads
-  // this cap; until the embedded editor exists it defaults to 15% on this
-  // surface (editable on /dashboard). Tracked as the one deferred parity item.
+  num("autopilot_max_price_change_pct", fd.get("autopilot_max_price_change_pct"));
+  // Inventory units cap: blank string clears it (null = no cap); otherwise a
+  // positive integer. Passed through raw so the validator rejects out-of-range
+  // values visibly (same pattern as autopilot_daily_action_cap).
+  const invUnitsRaw = fd.get("autopilot_max_inventory_units_per_move");
+  if (invUnitsRaw !== null) {
+    const s = String(invUnitsRaw).trim();
+    if (s === "") patch.autopilot_max_inventory_units_per_move = null;
+    else {
+      const n = Number(s);
+      if (Number.isFinite(n)) patch.autopilot_max_inventory_units_per_move = n;
+    }
+  }
   // Daily ceiling: empty string clears it (null = no cap); otherwise dollars -> cents.
   const ceilRaw = fd.get("autopilot_max_daily_budget_cents");
   if (ceilRaw !== null) {
@@ -958,6 +965,15 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
       ? ""
       : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
   );
+  const [autopilotMaxPriceChangePct, setAutopilotMaxPriceChangePct] = useState(
+    String(guardrails.autopilot_max_price_change_pct),
+  );
+  // Blank string represents null (no unit cap — unlimited).
+  const [autopilotMaxInventoryUnits, setAutopilotMaxInventoryUnits] = useState(
+    guardrails.autopilot_max_inventory_units_per_move == null
+      ? ""
+      : String(guardrails.autopilot_max_inventory_units_per_move),
+  );
 
   useEffect(() => {
     setBudget(String(Math.round(guardrails.daily_action_budget_cents / 100)));
@@ -980,6 +996,12 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
       guardrails.autopilot_max_daily_budget_cents == null
         ? ""
         : String(Math.round(guardrails.autopilot_max_daily_budget_cents / 100)),
+    );
+    setAutopilotMaxPriceChangePct(String(guardrails.autopilot_max_price_change_pct));
+    setAutopilotMaxInventoryUnits(
+      guardrails.autopilot_max_inventory_units_per_move == null
+        ? ""
+        : String(guardrails.autopilot_max_inventory_units_per_move),
     );
   }, [guardrails]);
 
@@ -1064,6 +1086,17 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
             type="hidden"
             name="autopilot_max_daily_budget_cents"
             value={autopilotMaxDailyBudget.trim()}
+          />
+          <input
+            type="hidden"
+            name="autopilot_max_price_change_pct"
+            value={autopilotMaxPriceChangePct.trim()}
+          />
+          {/* Empty string => null (no unit cap). Non-empty => positive integer. */}
+          <input
+            type="hidden"
+            name="autopilot_max_inventory_units_per_move"
+            value={autopilotMaxInventoryUnits.trim()}
           />
           <input
             type="hidden"
@@ -1193,6 +1226,24 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
                             autoComplete="off"
                             onChange={setAutopilotMaxDailyBudget}
                             helpText="Leave blank for no ceiling. Autopilot will not scale a budget above this."
+                          />
+                        </FormLayout.Group>
+                        <FormLayout.Group>
+                          <TextField
+                            label="Most a price can move on its own (%)"
+                            type="number"
+                            value={autopilotMaxPriceChangePct}
+                            autoComplete="off"
+                            onChange={setAutopilotMaxPriceChangePct}
+                            helpText="When autopilot adjusts a price, it never moves it more than this in one step."
+                          />
+                          <TextField
+                            label="Most stock Calderyn can move on its own (units, optional)"
+                            type="number"
+                            value={autopilotMaxInventoryUnits}
+                            autoComplete="off"
+                            onChange={setAutopilotMaxInventoryUnits}
+                            helpText="Leave blank for no limit. Autopilot will not move more than this many units at once."
                           />
                         </FormLayout.Group>
                       </FormLayout>
