@@ -63,7 +63,7 @@ describe("recomputeShopCalibration", () => {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 30,
+        prevPct: 31,
         onShopUpdate: (patch) => normalUpdates.push(patch),
       }),
     }, { skipPeerPrior: true });
@@ -72,16 +72,16 @@ describe("recomputeShopCalibration", () => {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 30,
+        prevPct: 31,
         onShopUpdate: (patch) => forcedUpdates.push(patch),
       }),
     }, { skipPeerPrior: true, forceVisibleStep: true });
 
-    expect(normal.raw).toBe(31);
-    expect(normal.display).toBe(30);
-    expect(forced.raw).toBe(31);
-    expect(forced.display).toBe(31);
-    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 31);
+    expect(normal.raw).toBe(32);
+    expect(normal.display).toBe(31);
+    expect(forced.raw).toBe(32);
+    expect(forced.display).toBe(32);
+    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 32);
   });
 });
 
