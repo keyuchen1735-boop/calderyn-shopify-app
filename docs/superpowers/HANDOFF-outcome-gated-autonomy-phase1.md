@@ -14,18 +14,21 @@ outcomes; auto-demotes on a measured loss or an autopilot undo; per-kind confirm
 Verified here: `typecheck` 0, `lint` 0 errors, `build` + client-bundle verifier 0,
 `vitest` 2579 pass, `pytest tests/engine/moat` 64 pass.
 
-## MUST DO before merging to main (main auto-deploys to prod)
+## Migrations — APPLIED to prod 2026-06-26 (project `ajgrmnvzxfxxlwrxcgnu`)
 
-The new code SELECTs new columns. If it reaches prod before the columns exist, those reads ERROR.
-**Apply these two migrations to the database first:**
+Both applied via the Supabase MCP and verified present (columns + RPC + index). Recorded in the
+remote migration history under these versions (the committed files are renamed to match, so the
+repo and the DB history align — `supabase migration list` will NOT show them as pending):
 
-1. `supabase/migrations/20260626120000_pair_calibration_outcomes.sql`
-   (adds `pair_calibration.net_positive_outcomes`, `last_outcome_sign`;
-    `action_audit.reward_signal`, `reward_window_closed_at`; + a partial index)
-2. `supabase/migrations/20260626120100_calibration_record_undo_fn.sql`
-   (the `calibration_record_undo` RPC)
+1. `supabase/migrations/20260626203700_pair_calibration_outcomes.sql`
+   (`pair_calibration.net_positive_outcomes`, `last_outcome_sign`;
+    `action_audit.reward_signal`, `reward_window_closed_at`; + partial index)
+2. `supabase/migrations/20260626203711_calibration_record_undo_fn.sql`
+   (the `calibration_record_undo` RPC — `service_role`-only; security advisor confirmed it is NOT
+    anon-executable)
 
-Both are additive and safe. Apply via the Supabase MCP / dashboard / CLI, then merge.
+The DB is now ahead of the deployed code (prod runs the OLD code, which simply ignores the new
+columns — safe). **Merging this branch to main is now DB-unblocked.**
 
 ## Deferred verification (need a database; couldn't run in the build session)
 
