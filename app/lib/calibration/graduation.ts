@@ -22,6 +22,14 @@ export const MIN_APPROVALS = {
   irreversible: 25,
 } as const;
 
+/** Minimum net-positive MEASURED outcomes required per reversibility class
+ *  (design 2026-06-26 §2.1). The second of the two graduation bars. */
+export const MIN_OUTCOMES = {
+  reversible: 3,
+  hard_to_reverse: 5,
+  irreversible: 8,
+} as const;
+
 export interface GraduationVerdictInput {
   detectorId: string;
   actionKind: ActionKind;
@@ -32,6 +40,10 @@ export interface GraduationVerdictInput {
   merchantDisabled: boolean;
   onProbation: boolean;
   hasUndoBranch: boolean;
+  /** Net-positive measured outcomes (design §2.1). 0 until windows close. */
+  netPositiveOutcomes: number;
+  /** Sign of the most recently closed outcome (design §2.3). <0 demotes. */
+  lastOutcomeSign: -1 | 0 | 1;
 }
 
 export interface GraduationVerdict {
@@ -72,6 +84,12 @@ export function graduationVerdict(
   if (input.consecutiveUndos !== 0) {
     return { graduated: false, reason: "recent undo" };
   }
+  // Measured-loss demotion (design §2.3): the most recent closed outcome lost
+  // money. Applies to ALL pairs, including shipped no-brainers — reality can
+  // revoke trust without waiting for a merchant undo.
+  if (input.lastOutcomeSign < 0) {
+    return { graduated: false, reason: "recent measured loss" };
+  }
   // These three conservative pause pairs ship with Calderyn. They are
   // auto-unlocked from day one, but still sit behind the shop-level Autopilot
   // switch, per-feature merchant switch, live rules, undo support, guardrails,
@@ -81,6 +99,10 @@ export function graduationVerdict(
   }
   if (input.cleanApprovals < MIN_APPROVALS[actionTier(input.actionKind)]) {
     return { graduated: false, reason: "needs more approvals" };
+  }
+  // Second bar (design §2.1): the dollars must prove it, not just the clicks.
+  if (input.netPositiveOutcomes < MIN_OUTCOMES[actionTier(input.actionKind)]) {
+    return { graduated: false, reason: "needs proven results" };
   }
   if (input.lastConf < input.gradThreshold) {
     return { graduated: false, reason: "below confidence bar" };
