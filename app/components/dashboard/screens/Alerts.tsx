@@ -477,7 +477,7 @@ function AlertDetail({
                     );
                   })}
                 </div>
-                {(alert.deepLinkKinds ?? []).length > 0 && (
+                {app.shopDomain && (alert.deepLinkKinds ?? []).length > 0 && (
                   <div className="flex flex-col gap-2 mt-1">
                     {alert.deepLinkKinds!.map((kind) => {
                       const dl = actionDeepLink(kind, app.shopDomain);
@@ -492,7 +492,7 @@ function AlertDetail({
                           style={{ textDecoration: "none" }}
                         >
                           <CDIcon name="arrowUpRight" size={16} strokeWidth={1.9} />
-                          <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
+                          <span className="flex-1 text-left">{dl.label}</span>
                         </a>
                       );
                     })}

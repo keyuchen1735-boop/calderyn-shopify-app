@@ -11,7 +11,9 @@ export function shopifyAdminUrl(shop: string, path: string): string {
 // Account-level Ads Manager — the merchant lands in their own account to adjust
 // campaign targeting. Meta is the dominant platform; this is the honest interim
 // for region exclusion, which has no clean per-region API on a shared campaign.
-const META_ADS_MANAGER_URL = "https://adsmanager.facebook.com/adsmanager/manage/campaigns";
+// FOLLOW-UP: thread the campaign platform (resolve via campaign_id → ad_campaign_dim
+// server-side) so Google/TikTok shops deep-link to their own platform, not Meta.
+export const META_ADS_MANAGER_URL = "https://adsmanager.facebook.com/adsmanager/manage/campaigns";
 
 /**
  * The manual destination for an action kind with no executor, or null when the

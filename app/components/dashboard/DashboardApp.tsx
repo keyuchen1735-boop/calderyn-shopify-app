@@ -391,10 +391,20 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       ) {
         // Target budget: reduce → 70% of current; increase → scale up by the
         // engine's suggested percent (alert evidence increase_pct, default +20%);
-        // pause → none. Prefer the live campaigns-list row; fall back to the move's
-        // carried budget for a SKU alert whose loser campaign isn't in this view.
-        const currentBudgetCents = campaigns.find((c) => c.id === campId)?.daily_budget_cents
-          ?? opts?.loserBudgetCents;
+        // pause → none. Prefer a POSITIVE live campaigns-list budget; else the
+        // move's carried budget (cut_ads SKU alert); else the alert evidence
+        // daily_budget_usd (scaling alert whose campaign has a null/ad-set-level
+        // budget that v_campaigns_flat coerces to 0). Mirrors the embedded route —
+        // without the evidence fallback the Scale button 422s on those campaigns.
+        const listBudget = campaigns.find((c) => c.id === campId)?.daily_budget_cents;
+        const evBudgetCents =
+          Number(alert.evidence?.daily_budget_usd) > 0
+            ? Math.round(Number(alert.evidence.daily_budget_usd) * 100)
+            : undefined;
+        const currentBudgetCents =
+          (listBudget && listBudget > 0 ? listBudget : undefined) ??
+          opts?.loserBudgetCents ??
+          evBudgetCents;
         let targetBudget: number | undefined;
         if (kind === "reduce_campaign_budget" && currentBudgetCents) {
           targetBudget = Math.round(currentBudgetCents * 0.7);

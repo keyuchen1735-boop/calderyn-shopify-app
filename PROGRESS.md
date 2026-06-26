@@ -134,3 +134,17 @@ If any gate fails: fix the root cause. Do NOT `--no-verify`, do NOT emit the pro
 - 3b — exclude_geo → deep-link (both surfaces), reusing 4b infra. VERIFIED same data-gap class as 3a (no adset dim / per-region exclusion data in schema), so per the "deep-link now, executor later" decision it deep-links to Ads Manager rather than a dead button. One actionDeepLink case auto-flows to embedded (dedupedAllowedActions) + dashboard (deepLinkKinds). Fixes the post-1a 422 on the embedded exclude_geo button. tsc clean; full suite 2567/0.
 - **exclude_geo real executor (3b).** Build once an adset dim + current-geo-targeting data exist: Meta excluded_geo_locations (update_adset) adapter method + executor, Google geo criteria, both surfaces. Interim = Ads Manager deep-link (shipped).
 - 3c — SKIPPED by decision (2026-06-25). reallocate_budget already deep-links to Campaigns on both surfaces (satisfies the goal), and one-click loser→winner reallocation is already delivered by reallocate_spend_sku (enrich-resolved). A dedicated reallocate_budget one-click would duplicate that with no distinct merchant entry point — not built (rule 1/2: no redundant/speculative code). All boxes now satisfied.
+
+## Code-review fixes (2026-06-26, pre-prod gate)
+Resolved CONFIRMED blockers from /code-review before merge:
+- B1: increase_campaign_budget read wrong evidence key — now reads daily_budget_usd (embedded + dashboard fallback); test fixture corrected to the real shape (rule 9).
+- B2: apply_direction idempotency key now includes the target budget (scale vs direction card no longer collide into a phantom).
+- B3: 'e' shortcut + ?action= now exclude actionDeepLink kinds (no dead 422 modal for free-ship/geo).
+- B4: per-action dollar cap no longer blocks increase_campaign_budget (upside, not risk) + regression test.
+- B5: dashboard deep-links/scale render real labels (dl.label + format.ts increase label), no raw snake_case.
+- B6: increase_campaign_budget modal copy added; stale exclude_geo "reversible" copy corrected; upside vs "saves/recovered" wording fixed.
+- B7: scale banner gates on outcome (retrying ≠ success); dropped misleading "Guardrailed" claim.
+- cleanup: deduped Meta Ads Manager URL (action-deeplinks export); dashboard shopDomain guard; campaign-budget kinds dropped from legacy list when no campaign_id.
+
+### DOWNGRADED (documented, not blocking) → deferred follow-up
+- **Platform-aware deep-links.** exclude_geo + shared-Advantage+ deep-link to Meta Ads Manager regardless of platform; the screenshot/dominant case IS Meta (correct), but a Google/TikTok shop lands in the wrong manager. Platform isn't available at the render sites (evidence lacks it; view's dedicated_campaign_platform is null on the shared branch). FOLLOW-UP: resolve campaign platform server-side (campaign_id → ad_campaign_dim) and pick the right ads-manager URL.

@@ -219,7 +219,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // `* 100` double-converted, inflating the impact 100x and tripping the cap on
     // every action once a realistic (non-sentinel) cap is configured.
     const impactCents = alert.dollar_impact;
-    if (kind !== "snooze_alert" && impactCents > guardrails.dollar_cap_cents) {
+    // increase_campaign_budget is an UPSIDE action — alert.dollar_impact is the
+    // projected gain, not downside risk — so the per-action risk cap does not
+    // apply (it would block exactly the highest-upside scaling opportunities).
+    if (
+      kind !== "snooze_alert" &&
+      kind !== "increase_campaign_budget" &&
+      impactCents > guardrails.dollar_cap_cents
+    ) {
       throw new CalderynError({
         code: "GUARDRAIL_DOLLAR_CAP",
         status: 403,
@@ -474,11 +481,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
         }
       } else if (kind === "increase_campaign_budget") {
-        // Scale up by the engine's suggested percent (evidence.increase_pct),
-        // mirroring the Campaigns detail "Proposed (+X%)" card. Default +20% when
-        // evidence omits it. No current budget → leave undefined so executeAction
-        // fails visibly rather than guessing a budget (rule 12).
-        const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
+        // Scale up by the engine's suggested percent, mirroring the Campaigns
+        // detail "Proposed (+X%)" card (loadScaleOpportunity reads the same keys).
+        // campaign_scaling_opportunity evidence carries the budget as
+        // daily_budget_usd (dollars); fall back to *_cents only if a caller ever
+        // provides them. Default +20% when the percent is absent. No current
+        // budget → leave undefined so executeAction fails visibly (rule 12).
+        const usd = Number(ev.daily_budget_usd);
+        const current =
+          usd > 0 ? usd * 100 : Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
         const pct = Number(ev.increase_pct) || 20;
         dailyBudgetCents = current > 0 ? Math.round(current * (1 + pct / 100)) : undefined;
       }
@@ -630,14 +641,15 @@ export default function AlertDetail() {
   useEffect(() => {
     if (!alert) return;
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-    // Deep-linked kinds have no inline confirm modal — opening one would only
-    // 400 on submit, so the param is ignored and the deep-link button remains.
+    // Deep-linked kinds (in-app DEEP_LINK_ACTIONS or external actionDeepLink such
+    // as free-ship / exclude_geo) have no inline confirm modal — opening one would
+    // dead-end on submit (422), so exclude them; the deep-link button stays.
     const fromUrl = resolveActionParam(
       searchParams.get("action"),
-      allowed.filter((k) => !DEEP_LINK_ACTIONS[k]),
+      allowed.filter((k) => !DEEP_LINK_ACTIONS[k] && !actionDeepLink(k, shop)),
     );
     if (fromUrl) setActionKind(fromUrl);
-  }, [alert, searchParams]);
+  }, [alert, searchParams, shop]);
 
   useEffect(() => {
     if (actionData?.ok) {
@@ -652,16 +664,16 @@ export default function AlertDetail() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-      // Deep-linked kinds have no inline confirm modal. Skip them so the
-      // shortcut lands on the first actionable kind rather than silently
-      // firing a server 400.
-      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k]);
+      // Deep-linked kinds (in-app or external actionDeepLink) have no inline
+      // confirm modal — skip them so the shortcut lands on a real inline action
+      // rather than opening a modal that dead-ends on submit (422).
+      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k] && !actionDeepLink(k, shop));
       if (e.key === "e" && inlineKinds[0]) setActionKind(inlineKinds[0]);
       if (e.key === "s") setActionKind("snooze_alert");
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [alert]);
+  }, [alert, shop]);
 
   if (error) {
     return (
@@ -698,8 +710,20 @@ export default function AlertDetail() {
           .map((m) => m.executor as ActionKind),
       )
     : new Set();
+  // Campaign-budget kinds on the legacy path need a campaign to act on. Without
+  // one, the action handler's executableKinds branch (which requires campaignId)
+  // is skipped and the kind 422s — a dead button. Drop them when the alert has no
+  // campaign_id, matching the executable path's precondition (rule 12).
+  const hasCampaign = !!stringOrEmpty(alert.evidence?.campaign_id);
+  const CAMPAIGN_BUDGET_KINDS: Set<ActionKind> = new Set([
+    "pause_campaign",
+    "reduce_campaign_budget",
+    "increase_campaign_budget",
+  ]);
   const dedupedAllowedActions = allowedActions.filter(
-    (k) => k === "snooze_alert" || !remediationExecutorKinds.has(k),
+    (k) =>
+      k === "snooze_alert" ||
+      (!remediationExecutorKinds.has(k) && (!CAMPAIGN_BUDGET_KINDS.has(k) || hasCampaign)),
   );
 
   const submitting = navigation.state !== "idle";
@@ -881,7 +905,7 @@ export default function AlertDetail() {
                   const adminDeepLink = shop ? actionDeepLink(kind, shop) : null;
                   const button = adminDeepLink ? (
                     <Button fullWidth url={adminDeepLink.href} external>
-                      {ACTION_LABELS[kind]} →
+                      {adminDeepLink.label} →
                     </Button>
                   ) : deepLink ? (
                     <Button fullWidth onClick={() => navigate(deepLink.path)}>
@@ -1139,7 +1163,9 @@ function ExecuteActionModal({
                 <Text as="span" fontWeight="semibold">
                   {fmtMoney(alert.dollar_impact)}
                 </Text>{" "}
-                recovered over 30 days.
+                {kind === "increase_campaign_budget"
+                  ? "added upside over 30 days."
+                  : "recovered over 30 days."}
               </Banner>
             )}
             <InlineStack align="end" gap="200">
@@ -1157,7 +1183,9 @@ function ExecuteActionModal({
                     loss, it doesn't recover it). */}
                 {kind === "snooze_alert" || alert.dollar_impact <= 0
                   ? ACTION_LABELS[kind]
-                  : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
+                  : kind === "increase_campaign_budget"
+                    ? `${ACTION_LABELS[kind]} · +${fmtMoney(alert.dollar_impact)}/mo upside`
+                    : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
               </Button>
             </InlineStack>
           </BlockStack>
@@ -1202,8 +1230,11 @@ function actionDescription(kind: ActionKind) {
       return "Resumes the paused campaign via the ad platform API.";
     case "reduce_campaign_budget":
       return "Reduces daily budget by 30% (historical bend point). Reversible via Undo.";
+    case "increase_campaign_budget":
+      return "Raises this campaign's daily budget by the engine's suggested percent via the ad platform API. Reversible via Undo.";
     case "exclude_geo":
-      return "Adds region to campaign exclusions for 7 days. Reversible via Undo.";
+      // exclude_geo has no executor — it renders as a deep-link, not this modal.
+      return "Open Ads Manager to exclude this region from the campaign's location targeting.";
     case "reallocate_inventory":
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":

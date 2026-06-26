@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Alert } from "../types";
 import type { RemediationPlan, StrategicMove } from "./types";
 import { toNumericEvidence } from "./rank";
+import { META_ADS_MANAGER_URL } from "../action-deeplinks";
 
 interface SkuRemediationRow {
   sku_id: string;
@@ -36,7 +37,7 @@ const REDUCE_FLOOR_CENTS = 1000;
 // shared campaign id is exposed by the engine.
 const META_ADS_MANAGER_DEEPLINK: StrategicMove["deepLink"] = {
   label: "Open in Meta Ads Manager",
-  href: "https://adsmanager.facebook.com/adsmanager/manage/campaigns",
+  href: META_ADS_MANAGER_URL,
   external: true,
 };
 

@@ -209,7 +209,9 @@ describe("alert action — calibration signal fires on approval", () => {
       ...ALERT,
       detector_id: "campaign_scaling_opportunity",
       campaign_id: "camp-dim-uuid",
-      evidence: { campaign_id: "camp-dim-uuid", daily_budget_cents: 10000, increase_pct: 25 },
+      // REAL evidence shape: campaign_scaling_opportunity carries the budget as
+      // daily_budget_usd (dollars), matching loadScaleOpportunity — NOT *_cents.
+      evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 25 },
     });
     const res = await call(makeRequest("increase_campaign_budget"));
     const body = (await res.json()) as { ok: boolean };
@@ -220,12 +222,28 @@ describe("alert action — calibration signal fires on approval", () => {
       expect.objectContaining({
         kind: "increase_campaign_budget",
         campaignId: "camp-dim-uuid",
-        dailyBudgetCents: 12500, // 10000 * (1 + 25/100)
+        dailyBudgetCents: 12500, // $100 → 10000c → * (1 + 25/100)
       }),
       expect.anything(),
     );
     // Must NOT fall to the phantom recorder.
     expect(clientExecuteSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT apply the per-action dollar cap to increase_campaign_budget (upside, not risk)", async () => {
+    // dollar_impact is the projected UPSIDE for a scaling alert, not downside
+    // risk; an upside well above the cap must still execute, not 403.
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "campaign_scaling_opportunity",
+      campaign_id: "camp-dim-uuid",
+      dollar_impact: 500_000_00, // $500k upside, far above the $100k cap
+      evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 20 },
+    });
+    const res = await call(makeRequest("increase_campaign_budget"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true); // not GUARDRAIL_DOLLAR_CAP 403
+    expect(executeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT call recordApproval for snooze_alert", async () => {
