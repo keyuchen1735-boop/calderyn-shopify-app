@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 from calderyn_engine.moat.action_reward_inputs import derive_action_reward_inputs
+from calderyn_engine.moat.sku_reward_inputs import derive_sku_action_reward_inputs
 
 _UPDATE_SQL = """
 UPDATE public.action_audit
@@ -27,7 +28,16 @@ async def persist_action_rewards(conn, shop_id: str, run_date: date) -> int:
     Returns the number of action_audit rows updated.
     """
     written = 0
+    # Campaign-scoped rewards (pause/resume/budget/reallocate_budget).
     for r in await derive_action_reward_inputs(conn, shop_id, run_date):
+        if not r["window_closed"]:
+            continue
+        await conn.execute(_UPDATE_SQL, r["action_id"], r["reward"], shop_id)
+        written += 1
+    # SKU/variant/location-scoped rewards (discontinue_sku, adjust_price,
+    # reallocate_inventory). Same ActionRewardInput shape, same idempotent
+    # closed-window-only write via _UPDATE_SQL (reward_window_closed_at IS NULL).
+    for r in await derive_sku_action_reward_inputs(conn, shop_id, run_date):
         if not r["window_closed"]:
             continue
         await conn.execute(_UPDATE_SQL, r["action_id"], r["reward"], shop_id)
