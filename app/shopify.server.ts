@@ -15,7 +15,9 @@ const shopify = shopifyApp({
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: ApiVersion.July25,
   scopes: process.env.SCOPES?.split(","),
-  appUrl: process.env.SHOPIFY_APP_URL || "",
+  // Fall back to the app's known public URL (also in shopify.app.toml) so a
+  // blank SHOPIFY_APP_URL env var can never crash the whole app at boot.
+  appUrl: process.env.SHOPIFY_APP_URL || "https://app.calderyncompany.com",
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   hooks: {
