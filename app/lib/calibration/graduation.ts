@@ -8,7 +8,17 @@ import { actionTier, NO_BRAINER } from "./confidence";
  *  Expanded from 3 to 7 in Phase 2: adds resume_campaign, reallocate_budget,
  *  reallocate_inventory, and adjust_price alongside the original three.
  *  Each kind must still clear all 7 gates (undo branch, approvals, outcomes,
- *  confidence) before it can act unattended. */
+ *  confidence) before it can act unattended.
+ *
+ *  Note on resume_campaign and reallocate_budget:
+ *  Both were added because they have complete undo branches.
+ *  reallocate_budget has an autopilot trigger (a DETECTOR_TO_ACTIONS mapping
+ *  fires it), so it accrues measured outcomes normally.
+ *  resume_campaign currently has NO autonomous trigger — no DETECTOR_TO_ACTIONS
+ *  mapping and no autopilot branch fires it — so it is graduation-eligible but
+ *  dormant: it will never accumulate outcomes and cannot graduate until a resume
+ *  trigger is added. It remains in this set (plan-mandated) so the undo branch
+ *  and graduation machinery are ready for that future trigger. */
 export const GRADUATABLE: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "pause_campaign",
   "reduce_campaign_budget",

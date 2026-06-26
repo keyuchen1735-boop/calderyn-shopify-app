@@ -96,6 +96,11 @@ async def derive_sku_action_reward_inputs(
             post = await conn.fetch(_SKU_ECON_SQL, shop_id, a["sku_id"], ad, hi)
             pre_econ = int(pre[0]["unit_margin_cents"]) if pre else 0
             post_econ = int(post[0]["unit_margin_cents"]) if post else 0
+            # v1 simplification: fall back to pre-window units when the post window has
+            # no sales (e.g. a just-discontinued SKU). A discontinued SKU's averted bleed
+            # is arguably better sized by historical (pre-window) volume; using post-window
+            # units can under-credit the action when there is residual post-archive
+            # sell-through. Refine once a cleaner attribution signal is available.
             units = int(post[0]["units"]) if post else (int(pre[0]["units"]) if pre else 0)
             reward = compute_sku_action_reward(
                 a["action_kind"], pre_econ, post_econ, units, bool(a["undone"]),
