@@ -9,7 +9,7 @@
 // nothing.
 
 import type { Activity } from "../github-digest/collect.server";
-import { getAnthropic, assistantModel } from "../assistant/anthropic.server";
+import { getAnthropic, digestModel } from "../assistant/anthropic.server";
 import type { SocialPack, PackFeature } from "./slides.server";
 
 const ILLUSTRATIVE_PERCENTILE = "68th";
@@ -179,7 +179,7 @@ export async function buildSocialPack(input: PackInput): Promise<{ pack: SocialP
       // This also runs ~weekly and regeneration is human-paced, so no two calls
       // re-send the same prefix inside the 5-minute cache TTL.
       const msg = await client.messages.create({
-        model: assistantModel(),
+        model: digestModel(),
         max_tokens: 1400,
         temperature,
         system: SYSTEM_PROMPT,

@@ -54,3 +54,14 @@ export function getAnthropic(): Anthropic {
 export function assistantModel(): string {
   return process.env.ANTHROPIC_MODEL || DEFAULT_ASSISTANT_MODEL;
 }
+
+// Haiku by default for the digest crons: the github/social summaries are simple
+// and low-volume, so the cheaper model (~3x less than Sonnet) is the right
+// tradeoff, and both digests fall back to deterministic templates if Claude
+// fails. Override with DIGEST_MODEL.
+export const DEFAULT_DIGEST_MODEL = "claude-haiku-4-5";
+
+/** Model for the digest crons; env-overridable via DIGEST_MODEL. */
+export function digestModel(): string {
+  return process.env.DIGEST_MODEL || DEFAULT_DIGEST_MODEL;
+}

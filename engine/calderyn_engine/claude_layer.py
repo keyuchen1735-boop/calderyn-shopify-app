@@ -172,6 +172,11 @@ async def rank_and_narrate(
 
     user_msg = _build_user_message(detections)
     try:
+        # No prompt caching: SYSTEM_PROMPT is ~450 tokens, below the 2048-token
+        # minimum cacheable prefix, and the detections payload is volatile per
+        # run, so there is no stable >=2048 prefix to cache. Cost is held down
+        # instead by the template-only skip and the narrative cache above — a
+        # stable shop makes zero Claude calls.
         response = await client.messages.create(
             model=cfg.claude_model,
             system=SYSTEM_PROMPT,

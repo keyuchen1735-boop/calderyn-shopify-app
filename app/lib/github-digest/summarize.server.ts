@@ -16,7 +16,7 @@ import {
   type PersonGroup,
   type RenderInput,
 } from "./render.server";
-import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
+import { getAnthropic, digestModel } from "~/lib/assistant/anthropic.server";
 import type { WaitlistSignup } from "./waitlist.server";
 
 export interface DigestContent {
@@ -89,7 +89,7 @@ async function aiStructured(groups: PersonGroup[], dateLabel: string): Promise<A
   // would be a no-op at best and a 1.25x write premium for zero reads at
   // worst, so it is intentionally omitted.
   const msg = await client.messages.create({
-    model: assistantModel(),
+    model: digestModel(),
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: activityForPrompt(groups, dateLabel) }],
