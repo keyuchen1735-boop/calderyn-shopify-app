@@ -67,7 +67,9 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory
 
 const DASHBOARD_THEME = {
   dark: false,
-  accent: "#24556E",
+  // Accent is theme-driven in dashboard.css (near-black light / near-white dark);
+  // kept here only for reference, not applied inline.
+  accent: "#1A1A1C",
   density: "balanced",
   radius: 14,
   glass: 0.72,
@@ -722,14 +724,15 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       ({ compact: 0.82, balanced: 1, comfy: 1.18 } as Record<string, number>)[
         String(t.density)
       ] ?? 1;
+    // --accent / --on-accent are defined per theme in dashboard.css (near-black
+    // in light, near-white in dark); do not override them inline here.
     return {
-      "--accent": String(t.accent),
       "--radius": t.radius + "px",
       "--glass": t.glass,
       "--density": density,
       "--type-scale": t.typeScale,
     } as React.CSSProperties;
-  }, [t.accent, t.radius, t.glass, t.density, t.typeScale]);
+  }, [t.radius, t.glass, t.density, t.typeScale]);
 
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
   const openCount = alerts.filter((a) => a.status === "open").length;
