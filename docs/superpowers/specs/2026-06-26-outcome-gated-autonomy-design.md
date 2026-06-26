@@ -147,10 +147,12 @@ adds layers 1b and 6b and extends layer 3 to the new kinds.
 6b. One loss →         measured negative outcome → demote ── NEW (§2.3)
 ```
 
-## 4. Outcome signal — reuse the existing kernel
+## 4. Outcome signal — built on the existing kernel
 
-No new reward math. Graduation/demotion read the **existing**
-`compute_action_reward` (`engine/.../moat/action_rewards.py`):
+Graduation/demotion read the signed reward from `compute_action_reward`
+(`engine/.../moat/action_rewards.py`). Phase 1 uses it as-is (it already grades
+pause/reduce); Phase 2 adds signed branches for the four expansion kinds (see §5b).
+The kernel's contract is fixed:
 
 - Inputs per executed action (from `action_audit`): `action_kind`, target
   campaign/SKU, exec time `T`, and whether a later row has `undo_of = this.id`.
@@ -214,18 +216,64 @@ rows. Implications the plan must handle gracefully:
   of those — a couple more good results and it can do this on its own." No jargon
   on the surface; the math lives underneath.
 
+## 5b. Implementation reality (post-investigation, 2026-06-26)
+
+A codebase investigation after the design was approved found three gaps the
+original "reuse `compute_action_reward` verbatim" assumption glossed over. They do
+not change the *design*, but they reshape the *plan* into two phases.
+
+1. **Outcome scoring only exists for ad-budget actions.**
+   `compute_action_reward` (`engine/.../action_rewards.py`) returns a real signal
+   only for `pause_campaign` and `reduce_campaign_budget` (defensive: loss averted)
+   and `increase_campaign_budget` / `reallocate_budget` (profit delta). For every
+   other kind — including `resume_campaign`, `discontinue_sku`, `adjust_price`,
+   `reallocate_inventory` — it returns `0` (no opinion). So the new graduatable
+   actions have **no outcome signal until one is built**, per kind.
+2. **Per-action rewards are never persisted.** They are computed nightly in
+   `derive_action_reward_inputs`, folded into `moat.action_models` posteriors, then
+   discarded. Nothing TypeScript-readable records a per-action reward sign. The
+   outcome tally therefore needs a **new persisted signal** (decision: a
+   `reward_signal` + `reward_window_closed_at` written back to `action_audit` by the
+   nightly engine pass; see plan).
+3. **Undo→demote is unfinished.** `consecutive_undos` is read by graduation but
+   **nothing increments it** on undo (`undo.server.ts` does not touch it). Demotion
+   on a merchant undo is currently inert and must be wired as part of this work.
+
+Also confirmed: bounded-magnitude guardrails exist for budget actions
+(`maxBudgetCutPct`, `maxBudgetIncreasePct`, `maxDailyBudgetCents` in `guardrails.ts`)
+but **no cap fields exist for `adjust_price` or `reallocate_inventory`** — §2.4
+needs new guardrail fields. The autopilot autonomy gate is a single choke point:
+`isGraduated(...)` is called before execution at `autopilot.server.ts:197` (remediation
+moves) and `:614` (campaign actions); the outcome gate rides inside `graduationVerdict`,
+so no new call site is needed.
+
+### Two-phase delivery
+
+- **Phase 1 — outcome-gated trust for the actions already scored.** Wire the
+  two-bar graduation + outcome demotion + finished undo→demote + per-kind
+  confirmation window + score persistence, scoped to `pause_campaign` and
+  `reduce_campaign_budget` (the kinds `compute_action_reward` already grades). Fully
+  shippable; delivers the whole "trust earned by dollars, reality revokes trust"
+  loop end-to-end on real data.
+- **Phase 2 — expand the graduatable set 3→7.** Build a per-kind outcome metric for
+  `resume_campaign`, `discontinue_sku`, `adjust_price`, `reallocate_inventory`
+  (extending `compute_action_reward` + its input derivation), add the
+  `adjust_price` / `reallocate_inventory` bounded-magnitude guardrail fields, then
+  flip the four into `GRADUATABLE`. Larger; depends on Phase 1's plumbing.
+
 ## 6. Non-goals (YAGNI)
 
-- No new reward kernel or outcome metric — reuse `compute_action_reward` verbatim.
 - No graduation for `increase_campaign_budget` / `create_po_draft` (no undo branch
   yet).
 - No cooling-off / time-delay window for any action (explicitly rejected: breaks
   the overnight-autonomy promise).
-- No change to detector math, to `compute_action_reward`, or to guardrail
-  semantics — guardrails are read as an autonomous-execution condition, not
-  redefined.
+- No change to detector math or to guardrail *semantics* — new guardrail *fields*
+  for price/inventory are added (§2.4), but the evaluation contract is unchanged.
 - No learned outcome thresholds — the per-tier counts in §2.1 are fixed constants
   in v1 (tunable later).
+- Phase 2's new reward branches reuse the existing kernel's *shape and sign
+  convention* (numbers in, signed `Decimal` out, undo = hard negative); they are
+  additive branches, not a rewrite.
 
 ## 7. Existing seams this design pins (do not redefine)
 
@@ -236,8 +284,10 @@ rows. Implications the plan must handle gracefully:
 - `app/lib/actions/undo.server.ts` — the undo branches that justify the expanded
   set (`resume_campaign`, `reallocate_budget`, `reallocate_inventory`,
   `adjust_price`).
-- `engine/calderyn_engine/moat/action_rewards.py::compute_action_reward` — the
-  outcome sign, read (not changed) by the new tally.
+- `engine/calderyn_engine/moat/action_rewards.py::compute_action_reward` +
+  `action_reward_inputs.py::derive_action_reward_inputs` — the outcome sign. Phase 1
+  reads it unchanged (pause/reduce already scored) and persists it per action; Phase
+  2 adds new signed branches for the four expansion kinds.
 - `app/lib/calibration/recompute.server.ts` + `app/routes/cron.calibration-recompute.tsx`
   — natural host for the nightly outcome tally + demotion sweep.
 - `app/lib/actions/guardrails.ts` / `guardrails.server.ts` — the caps that bound
@@ -247,10 +297,13 @@ rows. Implications the plan must handle gracefully:
 
 ## 8. Open items for the plan to pin (do not guess in code)
 
-1. **Where the outcome tally lives** — new `pair_calibration` columns
-   (`net_positive_outcomes`, `last_outcome_sign`, …) vs a view over `action_audit`
-   + reward. Leaning toward persisted columns updated by the recompute job, for
-   symmetry with the existing approval counters.
+1. **Where the outcome tally lives** — DECIDED: two layers. (a) Per-action signal:
+   the nightly engine pass writes `action_audit.reward_signal numeric` and
+   `action_audit.reward_window_closed_at timestamptz` once an action's per-kind
+   window (§4.2) has elapsed. (b) Per-pair tally: `pair_calibration` gains
+   `net_positive_outcomes integer` + `last_outcome_sign smallint`, recomputed by the
+   calibration recompute job from the closed-window `action_audit` rows — symmetric
+   with the existing approval counters.
 2. **Exact demotion window** in §2.3 (consecutive count vs rolling net) — start
    conservative (demote readily), since a demotion is low-cost (just asks again).
 3. **Inventory cap field** — confirm the existing guardrail key for the
