@@ -11,7 +11,7 @@
 // returned (all zeros / false); the action result is always authoritative.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { GRADUATABLE_V1, graduationVerdict } from "./graduation";
+import { GRADUATABLE, graduationVerdict } from "./graduation";
 import { trustDelta, ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
 import { HAS_UNDO_BRANCH } from "./undo-branches";
@@ -93,7 +93,7 @@ export async function recordApproval(
 
     const cleanApprovals = num(afterRow?.clean_approvals);
     const graduationThreshold = num(afterRow?.graduation_threshold);
-    const graduatable = GRADUATABLE_V1.has(actionKind);
+    const graduatable = GRADUATABLE.has(actionKind);
 
     // 5. justGraduated = the AFTER row now clears every graduation gate AND the
     //    pair was NOT already graduated before this approval. Uses the same

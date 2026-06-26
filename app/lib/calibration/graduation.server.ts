@@ -5,7 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { graduationVerdict, GRADUATABLE_V1, MIN_OUTCOMES } from "./graduation";
+import { graduationVerdict, GRADUATABLE, MIN_OUTCOMES } from "./graduation";
 import { pairConfidence, actionTier } from "./confidence";
 import { HAS_UNDO_BRANCH } from "./undo-branches";
 
@@ -160,7 +160,7 @@ export async function countNearGraduation(
     let count = 0;
     for (const row of pairsRes.data ?? []) {
       const action = row.action_kind as ActionKind;
-      if (!GRADUATABLE_V1.has(action)) continue;
+      if (!GRADUATABLE.has(action)) continue;
       if (row.graduated) continue;
       if (Number(row.clean_approvals ?? 0) < 1) continue;
       if (Number(row.consecutive_undos ?? 0) > 0) continue;

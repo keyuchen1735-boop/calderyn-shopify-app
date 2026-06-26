@@ -783,11 +783,10 @@ export async function runAutopilotForShop(
       // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
       // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
       //
-      // Calibration gate: reallocate_budget is NOT in GRADUATABLE_V1 and can NEVER
-      // auto-execute in v1. Even if reduce_campaign_budget is graduated, we must
-      // independently verify reallocate_budget graduation before entering the
-      // reallocation sub-branch. This prevents a graduated reduce from smuggling in
-      // an autonomous reallocation. When not graduated (always in v1), fall through
+      // Calibration gate: even though reallocate_budget is now in GRADUATABLE,
+      // we independently verify its graduation before entering the reallocation
+      // sub-branch. This prevents a graduated reduce_campaign_budget from
+      // smuggling in an autonomous reallocation. When not graduated, fall through
       // to the plain reduce path so loss-prevention still acts.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         if (currentBudgetCents - newBudgetCents > 0) {

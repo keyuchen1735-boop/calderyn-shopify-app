@@ -245,14 +245,14 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
     );
     expect(targetUpdate).toBeDefined();
-    // pause_campaign is in GRADUATABLE_V1, has undo branch, all gates pass → graduated.
+    // pause_campaign is in GRADUATABLE, has undo branch, all gates pass → graduated.
     expect(targetUpdate!.patch.graduated).toBe(true);
     expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);
   });
 
-  it("writes graduated=false for increase_campaign_budget (not in GRADUATABLE_V1)", async () => {
+  it("writes graduated=false for increase_campaign_budget (not in GRADUATABLE)", async () => {
     const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
-    // increase_campaign_budget cannot graduate (not in v1 set, spec I7).
+    // increase_campaign_budget cannot graduate (not in GRADUATABLE set, spec I7).
     const pairRow = {
       detector_id: "campaign_scaling_opportunity",
       action_kind: "increase_campaign_budget",
@@ -275,7 +275,7 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       (u) => u.detector === "campaign_scaling_opportunity" && u.action === "increase_campaign_budget",
     );
     expect(targetUpdate).toBeDefined();
-    // Not in GRADUATABLE_V1 → never graduated.
+    // Not in GRADUATABLE → never graduated.
     expect(targetUpdate!.patch.graduated).toBe(false);
   });
 

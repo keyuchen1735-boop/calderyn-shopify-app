@@ -91,15 +91,15 @@ describe("recordApproval — trust receipt", () => {
     expect(r.graduationThreshold).toBe(75);
   });
 
-  it("graduatable=true for a GRADUATABLE_V1 kind (pause_campaign)", async () => {
+  it("graduatable=true for a GRADUATABLE kind (pause_campaign)", async () => {
     const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
     const r = await recordApproval("shop-1", DETECTOR, "pause_campaign", sb);
     expect(r.graduatable).toBe(true);
   });
 
-  it("graduatable=false for a non-graduatable kind (reallocate_inventory)", async () => {
+  it("graduatable=false for a non-graduatable kind (increase_campaign_budget)", async () => {
     const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
-    const r = await recordApproval("shop-1", "regional_shortage_risk", "reallocate_inventory", sb);
+    const r = await recordApproval("shop-1", "regional_shortage_risk", "increase_campaign_budget", sb);
     expect(r.graduatable).toBe(false);
   });
 
