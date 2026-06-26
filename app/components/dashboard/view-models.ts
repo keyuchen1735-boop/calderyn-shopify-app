@@ -46,6 +46,10 @@ export interface AlertVM {
   narrative: string;
   evidence: Record<string, string>;
   actions: string[];
+  /** Action kinds with no executor that deep-link to a manual destination
+   *  (e.g. free-shipping → Shopify Shipping settings). Rendered as links, not
+   *  execute buttons (rule 12). The href is built at render time from the shop. */
+  deepLinkKinds?: string[];
   recommended: string | null;
   rec_detail: string;
   remediation: RemediationPlan | null;

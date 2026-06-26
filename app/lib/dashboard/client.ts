@@ -39,6 +39,7 @@ import type {
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { hasActionDeepLink } from "~/lib/action-deeplinks";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
@@ -164,8 +165,12 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // /dashboard/api/alerts/:id/action. Detector kinds without a dashboard
   // endpoint (exclude_geo) stay hidden until wired.
   const detectorActions = DETECTOR_TO_ACTIONS[a.detector_id] ?? [];
+  // Campaign kinds need a resolved campaign AND must be valid for the detector —
+  // a winning-campaign (scaling) alert offers increase, never pause/reduce.
   const actions: string[] = [
-    ...(campaign_id ? ["pause_campaign", "reduce_campaign_budget"] : []),
+    ...(campaign_id && detectorActions.includes("pause_campaign") ? ["pause_campaign"] : []),
+    ...(campaign_id && detectorActions.includes("reduce_campaign_budget") ? ["reduce_campaign_budget"] : []),
+    ...(campaign_id && detectorActions.includes("increase_campaign_budget") ? ["increase_campaign_budget"] : []),
     ...(detectorActions.includes("reallocate_inventory") ? ["reallocate_inventory"] : []),
     ...(detectorActions.includes("create_po_draft") ? ["create_po_draft"] : []),
     "snooze_alert",
@@ -174,6 +179,10 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // recommended is the first concrete action; if all we can do is snooze there
   // is no recommendation to surface.
   const recommended = actions.length > 1 ? actions[0] : null;
+
+  // Detector kinds with no executor but a manual destination (e.g. free-shipping
+  // → Shopify Shipping settings) surface as deep-links, not dead buttons (rule 12).
+  const deepLinkKinds = detectorActions.filter(hasActionDeepLink);
 
   // Evidence values may arrive as non-strings; coerce so AlertVM's
   // Record<string,string> contract holds.
@@ -197,6 +206,7 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
     evidence,
     campaign_id,
     actions,
+    deepLinkKinds,
     recommended,
     rec_detail: a.rec_detail ?? "",
     remediation: a.remediation ?? null,

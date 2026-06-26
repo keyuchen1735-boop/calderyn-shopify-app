@@ -46,6 +46,7 @@ export interface DashboardTheme {
 export type ActionKind =
   | "pause_campaign"
   | "reduce_campaign_budget"
+  | "increase_campaign_budget"
   | "exclude_geo"
   | "reallocate_inventory"
   | "create_po_draft"
@@ -56,6 +57,8 @@ export type ActionKind =
 
 export interface DashboardCtx {
   t: DashboardTheme;
+  /** Shop myshopify domain — for building Shopify admin deep-links. */
+  shopDomain: string;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; scrolls main to top. */

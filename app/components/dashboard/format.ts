@@ -83,6 +83,7 @@ export function blendedRoas(revenueCents: number, spendCents: number): string {
 export const ACTION_LABELS: Record<string, string> = {
   pause_campaign: "Pause campaign",
   reduce_campaign_budget: "Reduce budget",
+  increase_campaign_budget: "Scale campaign budget",
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
   create_po_draft: "Create PO draft",

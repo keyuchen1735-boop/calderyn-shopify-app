@@ -19,6 +19,7 @@ import type { DashboardCtx } from "../../context";
 // what both the server render and the client's first/hydration render see.
 const ctx: DashboardCtx = {
   t: {},
+  shopDomain: "test.myshopify.com",
   nav: { screen: "dashboard", param: null },
   navigate: () => {},
   alerts: [],

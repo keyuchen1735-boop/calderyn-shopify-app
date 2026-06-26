@@ -4,9 +4,11 @@ import {
   useActionData,
   useLoaderData,
   useNavigation,
+  useRouteLoaderData,
   useSearchParams,
 } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
+import { actionDeepLink } from "~/lib/action-deeplinks";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
@@ -217,7 +219,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // `* 100` double-converted, inflating the impact 100x and tripping the cap on
     // every action once a realistic (non-sentinel) cap is configured.
     const impactCents = alert.dollar_impact;
-    if (kind !== "snooze_alert" && impactCents > guardrails.dollar_cap_cents) {
+    // increase_campaign_budget is an UPSIDE action — alert.dollar_impact is the
+    // projected gain, not downside risk — so the per-action risk cap does not
+    // apply (it would block exactly the highest-upside scaling opportunities).
+    if (
+      kind !== "snooze_alert" &&
+      kind !== "increase_campaign_budget" &&
+      impactCents > guardrails.dollar_cap_cents
+    ) {
       throw new CalderynError({
         code: "GUARDRAIL_DOLLAR_CAP",
         status: 403,
@@ -445,7 +454,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Google/TikTok execute live only once OAuth has stored credentials; if the
     // adapter resolves to null, executeAction records a failed audit with
     // last_error set — no silent swallowing.
-    const executableKinds: ExecutableKind[] = ["pause_campaign", "reduce_campaign_budget"];
+    const executableKinds: ExecutableKind[] = [
+      "pause_campaign",
+      "reduce_campaign_budget",
+      "increase_campaign_budget",
+    ];
     const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
     // cut_ads on a SKU alert submits the loser campaign from the remediation move
     // (the evidence has no campaign_id). executeAction validates shop ownership,
@@ -467,6 +480,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           const current = Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
           dailyBudgetCents = current > 0 ? Math.round(current * 0.7) : undefined;
         }
+      } else if (kind === "increase_campaign_budget") {
+        // Scale up by the engine's suggested percent, mirroring the Campaigns
+        // detail "Proposed (+X%)" card (loadScaleOpportunity reads the same keys).
+        // campaign_scaling_opportunity evidence carries the budget as
+        // daily_budget_usd (dollars); fall back to *_cents only if a caller ever
+        // provides them. Default +20% when the percent is absent. No current
+        // budget → leave undefined so executeAction fails visibly (rule 12).
+        const usd = Number(ev.daily_budget_usd);
+        const current =
+          usd > 0 ? usd * 100 : Number(ev.daily_budget_cents ?? ev.budget_cents ?? 0);
+        const pct = Number(ev.increase_pct) || 20;
+        dailyBudgetCents = current > 0 ? Math.round(current * (1 + pct / 100)) : undefined;
       }
 
       const shopId = await resolveShopId(session.shop);
@@ -517,9 +542,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    // All other intents (snooze_alert, exclude_geo, reallocate_inventory,
-    // create_po_draft) and pause/budget actions without a campaign_id UUID
-    // in evidence stay on the legacy client path.
+    // The legacy recorder writes outcome:"succeeded" and acknowledges the alert
+    // WITHOUT any platform mutation. Only three kinds may legitimately reach it:
+    // snooze_alert (its real defer runs below) and reallocate_inventory /
+    // create_po_draft (which performed their real work above and only need the
+    // audit row written). Any other kind here has no wired executor — recording
+    // success would be a phantom (rule 12). Fail visibly instead.
+    const LEGACY_RECORDED_KINDS = new Set<ActionKind>([
+      "snooze_alert",
+      "reallocate_inventory",
+      "create_po_draft",
+    ]);
+    if (!LEGACY_RECORDED_KINDS.has(kind as ActionKind)) {
+      throw new CalderynError({
+        code: "UNSUPPORTED_ACTION",
+        status: 422,
+        message: "This action can't be run automatically yet.",
+      });
+    }
+
     await client.actions.execute({
       alertId,
       kind,
@@ -580,6 +621,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function AlertDetail() {
   const navigate = useEmbeddedNavigate();
+  // Shop domain for building Shopify admin deep-links (same source embedded-nav reads).
+  const shop = (useRouteLoaderData("routes/app") as { shop?: string } | undefined)?.shop ?? "";
   const { alert, guardrails, poDefaults, existingPoDraft, error } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -598,14 +641,15 @@ export default function AlertDetail() {
   useEffect(() => {
     if (!alert) return;
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-    // Deep-linked kinds have no inline confirm modal — opening one would only
-    // 400 on submit, so the param is ignored and the deep-link button remains.
+    // Deep-linked kinds (in-app DEEP_LINK_ACTIONS or external actionDeepLink such
+    // as free-ship / exclude_geo) have no inline confirm modal — opening one would
+    // dead-end on submit (422), so exclude them; the deep-link button stays.
     const fromUrl = resolveActionParam(
       searchParams.get("action"),
-      allowed.filter((k) => !DEEP_LINK_ACTIONS[k]),
+      allowed.filter((k) => !DEEP_LINK_ACTIONS[k] && !actionDeepLink(k, shop)),
     );
     if (fromUrl) setActionKind(fromUrl);
-  }, [alert, searchParams]);
+  }, [alert, searchParams, shop]);
 
   useEffect(() => {
     if (actionData?.ok) {
@@ -620,16 +664,16 @@ export default function AlertDetail() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] || ["snooze_alert"];
-      // Deep-linked kinds have no inline confirm modal. Skip them so the
-      // shortcut lands on the first actionable kind rather than silently
-      // firing a server 400.
-      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k]);
+      // Deep-linked kinds (in-app or external actionDeepLink) have no inline
+      // confirm modal — skip them so the shortcut lands on a real inline action
+      // rather than opening a modal that dead-ends on submit (422).
+      const inlineKinds = allowed.filter((k) => !DEEP_LINK_ACTIONS[k] && !actionDeepLink(k, shop));
       if (e.key === "e" && inlineKinds[0]) setActionKind(inlineKinds[0]);
       if (e.key === "s") setActionKind("snooze_alert");
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [alert]);
+  }, [alert, shop]);
 
   if (error) {
     return (
@@ -666,8 +710,20 @@ export default function AlertDetail() {
           .map((m) => m.executor as ActionKind),
       )
     : new Set();
+  // Campaign-budget kinds on the legacy path need a campaign to act on. Without
+  // one, the action handler's executableKinds branch (which requires campaignId)
+  // is skipped and the kind 422s — a dead button. Drop them when the alert has no
+  // campaign_id, matching the executable path's precondition (rule 12).
+  const hasCampaign = !!stringOrEmpty(alert.evidence?.campaign_id);
+  const CAMPAIGN_BUDGET_KINDS: Set<ActionKind> = new Set([
+    "pause_campaign",
+    "reduce_campaign_budget",
+    "increase_campaign_budget",
+  ]);
   const dedupedAllowedActions = allowedActions.filter(
-    (k) => k === "snooze_alert" || !remediationExecutorKinds.has(k),
+    (k) =>
+      k === "snooze_alert" ||
+      (!remediationExecutorKinds.has(k) && (!CAMPAIGN_BUDGET_KINDS.has(k) || hasCampaign)),
   );
 
   const submitting = navigation.state !== "idle";
@@ -819,6 +875,20 @@ export default function AlertDetail() {
                                 — {m.ineligibleReason}
                               </Text>
                             )}
+                            {m.deepLink && (
+                              <Button
+                                variant="plain"
+                                url={m.deepLink.external ? m.deepLink.href : undefined}
+                                external={m.deepLink.external || undefined}
+                                onClick={
+                                  m.deepLink.external
+                                    ? undefined
+                                    : () => navigate(m.deepLink!.href)
+                                }
+                              >
+                                {m.deepLink.label}
+                              </Button>
+                            )}
                           </InlineStack>
                         );
                       })}
@@ -829,7 +899,15 @@ export default function AlertDetail() {
                 )}
                 {dedupedAllowedActions.map((kind, i) => {
                   const deepLink = DEEP_LINK_ACTIONS[kind];
-                  const button = deepLink ? (
+                  // Kinds with no one-click executor (free-ship) deep-link to where
+                  // the merchant does it manually in Shopify admin — an external
+                  // link, never the execute path (which would 422). rule 12.
+                  const adminDeepLink = shop ? actionDeepLink(kind, shop) : null;
+                  const button = adminDeepLink ? (
+                    <Button fullWidth url={adminDeepLink.href} external>
+                      {adminDeepLink.label} →
+                    </Button>
+                  ) : deepLink ? (
                     <Button fullWidth onClick={() => navigate(deepLink.path)}>
                       {ACTION_LABELS[kind]} →
                     </Button>
@@ -1085,7 +1163,9 @@ function ExecuteActionModal({
                 <Text as="span" fontWeight="semibold">
                   {fmtMoney(alert.dollar_impact)}
                 </Text>{" "}
-                recovered over 30 days.
+                {kind === "increase_campaign_budget"
+                  ? "added upside over 30 days."
+                  : "recovered over 30 days."}
               </Banner>
             )}
             <InlineStack align="end" gap="200">
@@ -1103,7 +1183,9 @@ function ExecuteActionModal({
                     loss, it doesn't recover it). */}
                 {kind === "snooze_alert" || alert.dollar_impact <= 0
                   ? ACTION_LABELS[kind]
-                  : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
+                  : kind === "increase_campaign_budget"
+                    ? `${ACTION_LABELS[kind]} · +${fmtMoney(alert.dollar_impact)}/mo upside`
+                    : `${ACTION_LABELS[kind]} · saves ${fmtMoney(alert.dollar_impact)}`}
               </Button>
             </InlineStack>
           </BlockStack>
@@ -1148,8 +1230,11 @@ function actionDescription(kind: ActionKind) {
       return "Resumes the paused campaign via the ad platform API.";
     case "reduce_campaign_budget":
       return "Reduces daily budget by 30% (historical bend point). Reversible via Undo.";
+    case "increase_campaign_budget":
+      return "Raises this campaign's daily budget by the engine's suggested percent via the ad platform API. Reversible via Undo.";
     case "exclude_geo":
-      return "Adds region to campaign exclusions for 7 days. Reversible via Undo.";
+      // exclude_geo has no executor — it renders as a deep-link, not this modal.
+      return "Open Ads Manager to exclude this region from the campaign's location targeting.";
     case "reallocate_inventory":
       return "Transfers inventory between locations via Shopify. Reversible via Undo.";
     case "create_po_draft":

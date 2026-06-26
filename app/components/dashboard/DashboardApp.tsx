@@ -384,24 +384,40 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       // (cut_ads on a SKU-level alert, passed via opts.campaignId).
       const campId = opts?.campaignId ?? alert.campaign_id;
       if (
-        (kind === "pause_campaign" || kind === "reduce_campaign_budget") &&
+        (kind === "pause_campaign" ||
+          kind === "reduce_campaign_budget" ||
+          kind === "increase_campaign_budget") &&
         campId
       ) {
-        // Reduced budget = 70% of the campaign's current daily budget. Prefer the
-        // live campaigns-list row; fall back to the move's carried budget for a
-        // SKU alert whose loser campaign isn't in this view's campaigns list.
-        const currentBudgetCents = campaigns.find((c) => c.id === campId)?.daily_budget_cents
-          ?? opts?.loserBudgetCents;
-        const reducedBudget =
-          kind === "reduce_campaign_budget" && currentBudgetCents
-            ? Math.round(currentBudgetCents * 0.7)
+        // Target budget: reduce → 70% of current; increase → scale up by the
+        // engine's suggested percent (alert evidence increase_pct, default +20%);
+        // pause → none. Prefer a POSITIVE live campaigns-list budget; else the
+        // move's carried budget (cut_ads SKU alert); else the alert evidence
+        // daily_budget_usd (scaling alert whose campaign has a null/ad-set-level
+        // budget that v_campaigns_flat coerces to 0). Mirrors the embedded route —
+        // without the evidence fallback the Scale button 422s on those campaigns.
+        const listBudget = campaigns.find((c) => c.id === campId)?.daily_budget_cents;
+        const evBudgetCents =
+          Number(alert.evidence?.daily_budget_usd) > 0
+            ? Math.round(Number(alert.evidence.daily_budget_usd) * 100)
             : undefined;
+        const currentBudgetCents =
+          (listBudget && listBudget > 0 ? listBudget : undefined) ??
+          opts?.loserBudgetCents ??
+          evBudgetCents;
+        let targetBudget: number | undefined;
+        if (kind === "reduce_campaign_budget" && currentBudgetCents) {
+          targetBudget = Math.round(currentBudgetCents * 0.7);
+        } else if (kind === "increase_campaign_budget" && currentBudgetCents) {
+          const pct = Number(alert.evidence?.increase_pct) || 20;
+          targetBudget = Math.round(currentBudgetCents * (1 + pct / 100));
+        }
         let receipt: ApproveReceipt | null = null;
         let ok = false;
         try {
           const { outcome, calibration } = await client.executeCampaignAction(campId, {
             type: kind,
-            dailyBudgetCents: reducedBudget,
+            dailyBudgetCents: targetBudget,
             alertId: alert.id,
           });
           const view = presentActionOutcome(outcome, label);
@@ -421,7 +437,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
               cs.map((c) => {
                 if (c.id !== campId) return c;
                 if (kind === "pause_campaign") return { ...c, status: "paused" };
-                return { ...c, daily_budget_cents: reducedBudget ?? c.daily_budget_cents };
+                return { ...c, daily_budget_cents: targetBudget ?? c.daily_budget_cents };
               }),
             );
           }
@@ -672,6 +688,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
 
   const app: DashboardCtx = {
     t,
+    shopDomain,
     nav,
     navigate,
     alerts,
