@@ -351,5 +351,28 @@ export async function undoAction(
     }
   }
 
+  // Record the undo as a negative calibration signal (graduation gate 5). Only
+  // autopilot actions feed trust; a merchant undoing their OWN click is not a
+  // veto of autonomy. Best-effort: log, never fail the recorded undo.
+  if (String(orig.actor_user_id ?? "") === "autopilot" && orig.alert_id) {
+    const { data: al } = await sb
+      .from("alerts")
+      .select("detector_id")
+      .eq("shop_id", shopId)
+      .eq("id", orig.alert_id)
+      .maybeSingle();
+    const detectorId = al?.detector_id ?? null;
+    if (detectorId) {
+      const { error: undoSigErr } = await sb.rpc("calibration_record_undo", {
+        p_shop_id: shopId,
+        p_detector_id: detectorId,
+        p_action_kind: orig.action_kind,
+      });
+      if (undoSigErr) {
+        console.error(`[undo] calibration_record_undo failed for ${detectorId}:${orig.action_kind}`, undoSigErr);
+      }
+    }
+  }
+
   return { id: String(ins.id) };
 }

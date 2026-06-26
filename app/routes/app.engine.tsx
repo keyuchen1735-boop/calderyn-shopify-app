@@ -2,7 +2,7 @@ import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useEffect, useState, type ReactNode } from "react";
-import { Page } from "@shopify/polaris";
+import { Page, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { fmtMoney } from "~/lib/format";
@@ -176,6 +176,11 @@ function FeatureRow({ f, autopilotEnabled }: { f: LiveEngineFeatureVM; autopilot
         <div className="engx-feat-sub">
           {f.watching} &middot; {f.lastText}
         </div>
+        {!f.proven && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            Approved {f.approvals}/{f.approvalsNeeded} &middot; made money {f.outcomes}/{f.outcomesNeeded}. A few more good results and it can run on its own.
+          </Text>
+        )}
       </div>
       {active && f.moneyCents > 0 && (
         <div className="engx-feat-money">

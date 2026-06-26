@@ -226,6 +226,8 @@ describe("Default autonomy invariant — only shipped no-brainers start unlocked
     merchantDisabled: false,
     onProbation: false,
     hasUndoBranch: true,
+    netPositiveOutcomes: 0,
+    lastOutcomeSign: 0 as -1 | 0 | 1,
   };
 
   it("a normal pause pair does NOT graduate for a fresh shop", () => {

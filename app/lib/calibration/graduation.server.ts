@@ -5,8 +5,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { graduationVerdict, GRADUATABLE_V1 } from "./graduation";
-import { pairConfidence } from "./confidence";
+import { graduationVerdict, GRADUATABLE_V1, MIN_OUTCOMES } from "./graduation";
+import { pairConfidence, actionTier } from "./confidence";
 
 /**
  * Action kinds that have a working undo branch.
@@ -44,7 +44,7 @@ export async function isGraduated(
     const { data: row, error: rowErr } = await sb
       .from("pair_calibration")
       .select(
-        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled",
+        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled, net_positive_outcomes, last_outcome_sign",
       )
       .eq("shop_id", shopId)
       .eq("detector_id", detectorId)
@@ -102,6 +102,8 @@ export async function isGraduated(
       merchantDisabled: Boolean(row.merchant_disabled) || mutedByRule,
       onProbation,
       hasUndoBranch,
+      netPositiveOutcomes: Number(row.net_positive_outcomes ?? 0),
+      lastOutcomeSign: Number(row.last_outcome_sign ?? 0) as -1 | 0 | 1,
     });
 
     return verdict.graduated;
@@ -135,7 +137,7 @@ export async function countNearGraduation(
       sb
         .from("pair_calibration")
         .select(
-          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated",
+          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign",
         )
         .eq("shop_id", shopId),
       sb
@@ -178,6 +180,9 @@ export async function countNearGraduation(
       const detector = String(row.detector_id);
       if (muted(detector, action)) continue;
       if (onProbation(detector, action)) continue;
+      const tier = actionTier(action);
+      if (Number(row.net_positive_outcomes ?? 0) < MIN_OUTCOMES[tier]) continue;
+      if (Number(row.last_outcome_sign ?? 0) < 0) continue;
       const threshold = Number(row.graduation_threshold ?? 100) || 100;
       const conf = pairConfidence(
         detector,

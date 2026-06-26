@@ -76,6 +76,12 @@ export interface LiveEngineFeatureVM {
   lastAt: string | null;
   /** "last acted 12 min ago" | "no actions yet". */
   lastText: string;
+  /** Two-bar graduation progress (design 2026-06-26 §2.1). */
+  approvals: number;
+  approvalsNeeded: number;
+  outcomes: number;
+  outcomesNeeded: number;
+  proven: boolean;
 }
 
 export interface LiveEnginePageData {

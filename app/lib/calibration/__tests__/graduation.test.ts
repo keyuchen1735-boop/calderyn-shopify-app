@@ -12,6 +12,8 @@ const PASSING: Parameters<typeof graduationVerdict>[0] = {
   merchantDisabled: false,
   onProbation: false,
   hasUndoBranch: true,
+  netPositiveOutcomes: 3,
+  lastOutcomeSign: 0,
 };
 
 describe("graduationVerdict — passing case", () => {
@@ -158,6 +160,7 @@ describe("graduationVerdict — discontinue_sku (hard_to_reverse: 10-approval fl
     ...PASSING,
     actionKind: "discontinue_sku",
     cleanApprovals: 10,
+    netPositiveOutcomes: 5,
   };
 
   it("is in the graduatable set", () => {

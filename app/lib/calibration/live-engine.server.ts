@@ -31,6 +31,10 @@ export interface LiveEngineFeature {
   actions: number;
   /** ISO timestamp of the most recent autonomous action, or null if none yet. */
   lastAt: string | null;
+  /** Clean (consecutive) approvals from pair_calibration. */
+  cleanApprovals: number;
+  /** Net-positive measured outcomes from pair_calibration. */
+  netPositiveOutcomes: number;
 }
 
 export interface LiveEngineSummary {
@@ -44,6 +48,8 @@ export interface PairRow {
   action_kind: string;
   merchant_disabled?: boolean | null;
   graduated?: boolean | null;
+  clean_approvals?: number | null;
+  net_positive_outcomes?: number | null;
 }
 
 /**
@@ -108,6 +114,8 @@ export function aggregateLiveEngine(
       moneyCents: a.money,
       actions: a.actions,
       lastAt: a.lastAt,
+      cleanApprovals: Number(p.clean_approvals ?? 0),
+      netPositiveOutcomes: Number(p.net_positive_outcomes ?? 0),
     };
   });
 
@@ -137,7 +145,7 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
 
     const { data: pairRows, error: pairErr } = await sb
       .from("pair_calibration")
-      .select("detector_id, action_kind, merchant_disabled, graduated")
+      .select("detector_id, action_kind, merchant_disabled, graduated, clean_approvals, net_positive_outcomes")
       .eq("shop_id", shopId);
     const visiblePairs = ((pairRows ?? []) as PairRow[]).filter(
       (row) =>
