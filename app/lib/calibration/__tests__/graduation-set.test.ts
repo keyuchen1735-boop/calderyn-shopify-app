@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { GRADUATABLE } from "../graduation";
 
 it("contains exactly the seven graduatable kinds", () => {

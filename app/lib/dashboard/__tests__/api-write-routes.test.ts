@@ -39,10 +39,22 @@ vi.mock("../../actions/execute.server", () => ({
 vi.mock("../../actions/undo.server", () => ({
   undoAction: (...a: unknown[]) => undoAction(...a),
 }));
-vi.mock("../../supabase.server", () => ({
-  getSupabase: () => ({ mocked: true }),
-  resolveShopId: vi.fn(async () => "shop-1"),
-}));
+vi.mock("../../supabase.server", () => {
+  // Chainable stub for raw reads the routes/executors make via getSupabase
+  // (e.g. the sku_dim lookup that resolves sku_id, the showcase demo_mode probe).
+  // Every terminal resolves to no row, which is a valid path for all of them.
+  const chain: Record<string, unknown> = {
+    from: () => chain,
+    select: () => chain,
+    eq: () => chain,
+    maybeSingle: async () => ({ data: null, error: null }),
+    single: async () => ({ data: null, error: null }),
+  };
+  return {
+    getSupabase: () => chain,
+    resolveShopId: vi.fn(async () => "shop-1"),
+  };
+});
 vi.mock("../../calderyn.server", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../../calderyn.server")>();
   return {
