@@ -120,6 +120,8 @@ export async function recordApproval(
       merchantDisabled: Boolean(afterRow?.merchant_disabled),
       onProbation: false, // approval-time best-effort; the nightly recompute is authoritative
       hasUndoBranch: HAS_UNDO_BRANCH.has(actionKind),
+      netPositiveOutcomes: num(afterRow?.net_positive_outcomes),
+      lastOutcomeSign: (num(afterRow?.last_outcome_sign) as -1 | 0 | 1),
     });
     const justGraduated = verdict.graduated && !wasGraduatedBefore;
 
