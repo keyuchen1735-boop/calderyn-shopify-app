@@ -111,7 +111,9 @@ SELECT rs.sku_id,
        d.inventory_item_id                    AS inventory_item_id,
        dest.external_id                       AS to_location_external_id,
        src.external_id                        AS from_location_external_id,
-       src.available                          AS from_location_available
+       src.available                          AS from_location_available,
+       tc.id                                  AS campaign_id,
+       tc.platform                            AS campaign_platform
 FROM regional_spend rs
 LEFT JOIN regional_stock rst ON rst.sku_id = rs.sku_id AND rst.region = rs.region
 LEFT JOIN total_stock    ts  ON ts.sku_id  = rs.sku_id
@@ -144,6 +146,29 @@ LEFT JOIN LATERAL (
     ORDER BY li.available DESC, l.external_id
     LIMIT 1
 ) src ON true
+-- Top-spending campaign for this (sku, region): the campaign that targets the
+-- starved region and spends the most on this sku. Stamped onto entity_ref so the
+-- exclude_geo action knows which campaign to drop the region from. Deterministic
+-- tiebreak (c.id) keeps the alert stable across re-runs.
+LEFT JOIN LATERAL (
+    SELECT c.id, c.platform,
+           sum(s.spend_cents::numeric / NULLIF(array_length(c.geo_targets, 1), 0)) AS alloc_spend
+    FROM public.ad_spend_fact s
+    JOIN public.ad_campaign_dim c
+      ON c.id = s.campaign_id
+     AND c.shop_id = s.shop_id
+    JOIN public.ad_creative_sku_map m
+      ON m.shop_id  = s.shop_id
+     AND m.platform = c.platform
+    WHERE s.shop_id = $1
+      AND s.day >= (now() - interval '7 days')::date
+      AND m.source IN ('merchant_confirmed', 'merchant_manual')
+      AND m.sku_id = rs.sku_id
+      AND rs.region = ANY(c.geo_targets)
+    GROUP BY c.id, c.platform
+    ORDER BY alloc_spend DESC NULLS LAST, c.id
+    LIMIT 1
+) tc ON true
 WHERE rs.spend_cents >= ($2 * 100)
   AND coalesce(rst.qty, 0) <= 0
   AND (coalesce(ts.qty, 0) - coalesce(rst.qty, 0)) > 0
@@ -223,14 +248,22 @@ async def detect(
                 evidence["to_location_id"] = to_loc
                 evidence["recommended_delta"] = recommended_delta
 
+        entity_ref: dict[str, Any] = {
+            "sku_id": str(r["sku_id"]),
+            "region": r["region"],
+            "sku": r["sku_code"],
+        }
+        # The campaign the exclude_geo action acts on. Absent only when no
+        # geo-targeted campaign maps to this sku (then exclude_geo has nothing to
+        # act on and the route falls back / fails visibly — never a phantom).
+        if r["campaign_id"] is not None:
+            entity_ref["campaign_id"] = str(r["campaign_id"])
+            entity_ref["platform"] = r["campaign_platform"]
+
         out.append(
             DetectionResult(
                 detector_id=DETECTOR_ID,
-                entity_ref={
-                    "sku_id": str(r["sku_id"]),
-                    "region": r["region"],
-                    "sku": r["sku_code"],
-                },
+                entity_ref=entity_ref,
                 severity="high",
                 dollar_impact=impact,
                 evidence=evidence,
