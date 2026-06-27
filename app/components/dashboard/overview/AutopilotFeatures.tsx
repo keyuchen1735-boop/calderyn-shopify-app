@@ -5,7 +5,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import type { FeatureGroupVM, FeatureRowVM } from "./features-model";
-import { countEnabled, countTotal } from "./features-model";
+import { countEnabled, countTotal, LOCKED_FEATURE_TOOLTIP } from "./features-model";
 
 function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }) {
   const [on, setOn] = useState(row.enabled);
@@ -30,7 +30,7 @@ function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }
 
   if (row.locked) {
     return (
-      <div className="cd-apfeat" data-locked="1" title="Approve more to unlock">
+      <div className="cd-apfeat" data-locked="1" title={LOCKED_FEATURE_TOOLTIP}>
         <span className="cd-apfeat-name">{row.name}</span>
         <CDIcon name="lock" size={15} className="cd-apfeat-lock" />
       </div>

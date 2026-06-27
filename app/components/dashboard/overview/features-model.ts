@@ -1,9 +1,8 @@
-// Builds the Autopilot-features rail model from REAL data: graduated features
-// (toggleable) come from LiveEnginePageData.features; "locked" rows are distinct
-// (detector, action) pairs the shop is still learning, surfaced from the pending
-// Action Queue — nothing here is fabricated. The hero's hex meter and the rail
-// share this model so their counts always agree.
-import { ACTION_LABELS } from "../format";
+// Builds the Autopilot-features rail model: graduated features (toggleable) come
+// from LiveEnginePageData.features; every other feature in FEATURE_CATALOG renders
+// as a "locked" row the shop unlocks as Calderyn learns. The catalog is real
+// product capability, not fabricated activity, and is the single source both
+// surfaces (this rail + the embedded LiveEngineView) share so they can't drift.
 import type { WatchGroup } from "../engine-events";
 import type { LiveEngineFeatureVM } from "../../../lib/calibration/live-engine-types";
 import type { QueueProposalVM } from "../view-models";
@@ -77,25 +76,81 @@ function pairKey(detectorId: string, actionKind: string): string {
   return `${detectorId}:${actionKind}`;
 }
 
-export function buildFeatureGroups(
-  features: LiveEngineFeatureVM[],
-  pending: QueueProposalVM[],
-): FeatureGroupVM[] {
+export interface CatalogEntry {
+  detectorId: string;
+  /** The action this feature takes — also the toggle's action once unlocked. */
+  actionKind: string;
+  /** Plain merchant-facing name. */
+  name: string;
+  group: WatchGroup;
+}
+
+// The full menu of autopilot features Calderyn offers, grouped by domain. Each
+// row is a real detector + the action it takes for that problem. A store starts
+// with these LOCKED and unlocks them as pairs graduate (proven approvals +
+// results): unlocked ones render as live toggles, the rest as locked rows with a
+// "learns your store" tooltip. Pure presentation metadata — the locked state is
+// the honest "not yet", never fabricated activity.
+export const FEATURE_CATALOG: CatalogEntry[] = [
+  // Ads & campaigns
+  { detectorId: "campaign_below_breakeven", actionKind: "pause_campaign", name: "Pause losing campaigns", group: "ads" },
+  { detectorId: "campaign_scaling_opportunity", actionKind: "increase_campaign_budget", name: "Scale winning campaigns", group: "ads" },
+  { detectorId: "ad_tax_overload", actionKind: "reduce_campaign_budget", name: "Cut wasted ad spend", group: "ads" },
+  // Inventory
+  { detectorId: "sku_stockout_vs_spend", actionKind: "pause_campaign", name: "Pause ads for sold-out items", group: "inv" },
+  { detectorId: "sku_stockout_cleared", actionKind: "resume_campaign", name: "Resume ads when restocked", group: "inv" },
+  { detectorId: "wrong_location_concentration", actionKind: "reallocate_inventory", name: "Move stock where it sells", group: "inv" },
+  { detectorId: "regional_shortage_risk", actionKind: "reallocate_inventory", name: "Prevent regional shortages", group: "inv" },
+  { detectorId: "regional_spend_starved_stock", actionKind: "pause_campaign", name: "Pause ads in out-of-stock regions", group: "inv" },
+  { detectorId: "reorder_timing", actionKind: "create_po_draft", name: "Reorder before you run out", group: "inv" },
+  { detectorId: "scaling_sku_fulfillment_risk", actionKind: "reallocate_inventory", name: "Keep best-sellers in stock", group: "inv" },
+  { detectorId: "out_of_stock_live", actionKind: "pause_campaign", name: "Catch out-of-stock products", group: "inv" },
+  // Pricing & margin
+  { detectorId: "negative_unit_economics", actionKind: "pause_campaign", name: "Stop selling at a loss", group: "price" },
+  { detectorId: "margin_erosion", actionKind: "adjust_price", name: "Restore lost margin", group: "price" },
+  { detectorId: "cogs_drift", actionKind: "adjust_price", name: "Adjust for rising costs", group: "price" },
+  { detectorId: "priced_below_cost", actionKind: "adjust_price", name: "Fix below-cost prices", group: "price" },
+  { detectorId: "thin_margin", actionKind: "adjust_price", name: "Fix thin margins", group: "price" },
+  // Retention & shipping (recommend-only today; shown locked)
+  { detectorId: "free_shipping_leakage", actionKind: "raise_free_ship_threshold", name: "Fix costly free shipping", group: "ret" },
+  { detectorId: "return_rate_hidden_loss", actionKind: "exclude_sku_free_ship", name: "Cut costly returns", group: "ret" },
+];
+
+const CATALOG_BY_DETECTOR = new Map(FEATURE_CATALOG.map((c) => [c.detectorId, c]));
+
+/** Simpler catalog display name for a detector, falling back to the raw label. */
+export function catalogName(detectorId: string, fallback: string): string {
+  return CATALOG_BY_DETECTOR.get(detectorId)?.name ?? fallback;
+}
+
+/** Tooltip shown on a locked feature row, on both surfaces. */
+export const LOCKED_FEATURE_TOOLTIP =
+  "Unlocked as Calderyn learns your store. Approve or deny its suggestions to unlock more.";
+
+/** Catalog entries in a group the store has not unlocked yet (the locked rows). */
+export function lockedCatalogForGroup(
+  group: WatchGroup,
+  unlockedDetectorIds: Set<string>,
+): CatalogEntry[] {
+  return FEATURE_CATALOG.filter((c) => c.group === group && !unlockedDetectorIds.has(c.detectorId));
+}
+
+export function buildFeatureGroups(features: LiveEngineFeatureVM[]): FeatureGroupVM[] {
   const byGroup = new Map<WatchGroup, FeatureRowVM[]>(ORDER.map((g) => [g, []]));
   const seen = new Set<string>();
-  const push = (g: WatchGroup, row: FeatureRowVM) => {
-    seen.add(pairKey(row.detectorId, row.actionKind));
-    byGroup.get(g)!.push(row);
-  };
+  const unlockedDetectors = new Set<string>();
 
-  // graduated, toggleable features (dedup defensively so a repeated
-  // (detector, action) can never render two toggles fighting over one pair)
+  // Unlocked (graduated) features — real, toggleable. Dedup defensively so a
+  // repeated (detector, action) can never render two toggles for one pair.
   for (const f of features) {
-    if (seen.has(pairKey(f.detectorId, f.actionKind))) continue;
-    push(domainForDetector(f.detectorId), {
+    const key = pairKey(f.detectorId, f.actionKind);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unlockedDetectors.add(f.detectorId);
+    byGroup.get(domainForDetector(f.detectorId))!.push({
       detectorId: f.detectorId,
       actionKind: f.actionKind,
-      name: f.name,
+      name: catalogName(f.detectorId, f.name),
       enabled: f.enabled,
       locked: false,
       recommended: f.recommended,
@@ -104,15 +159,16 @@ export function buildFeatureGroups(
     });
   }
 
-  // locked, still-learning pairs from the pending queue (deduped, not already graduated)
-  for (const p of pending) {
-    const key = pairKey(p.detector_id, p.action_kind);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    push(domainForDetector(p.detector_id), {
-      detectorId: p.detector_id,
-      actionKind: p.action_kind,
-      name: ACTION_LABELS[p.action_kind] ?? p.action_kind,
+  // Locked catalog features — everything Calderyn can do that this store has not
+  // unlocked yet, so the merchant sees the full menu and what approving
+  // suggestions earns them. One catalog entry per detector, skipped once any of
+  // that detector's pairs is unlocked above.
+  for (const c of FEATURE_CATALOG) {
+    if (unlockedDetectors.has(c.detectorId)) continue;
+    byGroup.get(c.group)!.push({
+      detectorId: c.detectorId,
+      actionKind: c.actionKind,
+      name: c.name,
       enabled: false,
       locked: true,
       recommended: false,

@@ -200,16 +200,20 @@ export function Toggle({
   value,
   onChange,
   disabled,
+  ariaLabel,
 }: {
   value: boolean;
   onChange?: (next: boolean) => void;
   disabled?: boolean;
+  /** Accessible name for the switch (the visible label is a sibling node). */
+  ariaLabel?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={value}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange && onChange(!value)}
       className="cd-toggle"

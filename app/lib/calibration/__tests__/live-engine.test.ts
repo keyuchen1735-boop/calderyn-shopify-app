@@ -219,7 +219,7 @@ describe("liveEngineSummary", () => {
     const calls: RecCall[] = [];
     const sb = recordingSb(
       {
-        shops: [{ autopilot_enabled: true }],
+        guardrail_config: [{ autopilot_enabled: true }],
         pair_calibration: [
           { detector_id: "campaign_below_breakeven", action_kind: "pause_campaign", merchant_disabled: false },
         ],
@@ -253,7 +253,7 @@ describe("liveEngineSummary", () => {
 
   it("returns a calm empty summary (no throw) when there are no graduated pairs", async () => {
     const calls: RecCall[] = [];
-    const sb = recordingSb({ shops: [{ autopilot_enabled: false }], pair_calibration: [] }, calls);
+    const sb = recordingSb({ guardrail_config: [{ autopilot_enabled: false }], pair_calibration: [] }, calls);
     const out = await liveEngineSummary("shop-1", sb);
     expect(out.features).toEqual([]);
     expect(out.moneyProtectedWeekCents).toBe(0);

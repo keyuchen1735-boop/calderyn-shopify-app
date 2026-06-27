@@ -11,7 +11,6 @@ import InspectorPanel from "../overview/InspectorPanel";
 import {
   buildFeatureGroups,
   countEnabled,
-  countTotal,
   flaggedGroups,
 } from "../overview/features-model";
 import {
@@ -79,9 +78,11 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     }
   }, [data, app.actionQueue, selected]);
 
-  const groups = data ? buildFeatureGroups(data.features, app.actionQueue) : [];
+  const groups = data ? buildFeatureGroups(data.features) : [];
   const featureOn = countEnabled(groups);
-  const featureTotal = countTotal(groups);
+  // Hero meter denominator stays the store's UNLOCKED features (matches the
+  // embedded hero); the locked catalog rows live in the list below, not the ring.
+  const featureTotal = data?.features.length ?? 0;
   const band = calibrationBand(data?.calibrationPct ?? null);
   const running = !!data && data.autopilotEnabled && featureOn > 0;
   // Stable Set identity across renders so the hero's setFlags effect only fires
