@@ -340,4 +340,11 @@ export interface QueueProposal {
    * normal muted pair. Absent (undefined) for un-muted proposals.
    */
   always_ask?: boolean;
+  /**
+   * True when this proposal is on a graduated (autopilot) pair but its specific
+   * move exceeds the merchant's autonomy cap, so autopilot blocks it
+   * (block-not-clamp) and it needs manual approval. The UI renders an
+   * "over your autopilot limit" treatment. Absent for normal proposals.
+   */
+  over_autopilot_cap?: boolean;
 }
