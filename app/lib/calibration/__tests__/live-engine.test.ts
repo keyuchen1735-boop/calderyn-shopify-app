@@ -8,8 +8,8 @@ const iso = (daysAgo: number) => new Date(NOW - daysAgo * 86_400_000).toISOStrin
 describe("aggregateLiveEngine", () => {
   it("aggregates autonomous money + count per pair and the this-week total", () => {
     const pairs = [
-      { detector_id: "campaign_below_breakeven", action_kind: "pause_campaign", merchant_disabled: false },
-      { detector_id: "sku_stockout_vs_spend", action_kind: "pause_campaign", merchant_disabled: true },
+      { detector_id: "campaign_below_breakeven", action_kind: "pause_campaign", merchant_disabled: false, autonomy_enabled: true },
+      { detector_id: "sku_stockout_vs_spend", action_kind: "pause_campaign", merchant_disabled: true, autonomy_enabled: false },
     ];
     // dollar_impact_at_exec is stored in DOLLARS.
     const audit = [
@@ -28,7 +28,7 @@ describe("aggregateLiveEngine", () => {
     const f2 = out.features.find((f) => f.detectorId === "sku_stockout_vs_spend")!;
     expect(f2.moneyCents).toBe(2000);
     expect(f2.actions).toBe(1);
-    expect(f2.enabled).toBe(false); // merchant_disabled -> paused
+    expect(f2.enabled).toBe(false); // autonomy_enabled=false -> not running
 
     // this week = $50 + $20 ($30 from 10d ago is excluded) -> 7000 cents
     expect(out.moneyProtectedWeekCents).toBe(7000);
@@ -94,6 +94,59 @@ describe("aggregateLiveEngine", () => {
     const order = (ps: typeof pairs) => aggregateLiveEngine(ps, [], NOW).features.map((f) => f.detectorId);
     expect(order(pairs)).toEqual(order([...pairs].reverse()));
   });
+
+  // Slice C: a feature is RECOMMENDED when it is unlocked (graduated), the merchant
+  // has not enabled it, it is not muted, and it has a track record
+  // (clean_approvals >= MIN_APPROVALS[tier] = 3 for the reversible no-brainers).
+  it("recommends a graduated, not-enabled, not-muted pair with a track record", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: false, merchant_disabled: false, clean_approvals: 3 }],
+      [], NOW);
+    expect(out.features[0].enabled).toBe(false);
+    expect(out.features[0].recommended).toBe(true);
+  });
+
+  it("does NOT recommend before the track-record bar", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: false, merchant_disabled: false, clean_approvals: 2 }],
+      [], NOW);
+    expect(out.features[0].recommended).toBe(false);
+  });
+
+  it("does NOT recommend an already-enabled pair", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: true, merchant_disabled: false, clean_approvals: 9 }],
+      [], NOW);
+    expect(out.features[0].recommended).toBe(false);
+  });
+
+  it("does NOT recommend a hard-muted pair (merchant_disabled)", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: false, merchant_disabled: true, clean_approvals: 9 }],
+      [], NOW);
+    expect(out.features[0].recommended).toBe(false);
+  });
+
+  it("does NOT recommend a pair muted via a calibration rule", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: false, merchant_disabled: false, clean_approvals: 9 }],
+      [], NOW,
+      new Set(["campaign_below_breakeven:pause_campaign"]));
+    expect(out.features[0].recommended).toBe(false);
+  });
+
+  it("does NOT recommend a not-yet-unlocked pair even with approvals", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "reduce_timing", action_kind: "pause_campaign",
+         graduated: false, autonomy_enabled: false, merchant_disabled: false, clean_approvals: 9 }],
+      [], NOW);
+    expect(out.features[0].recommended).toBe(false);
+  });
 });
 
 /* Minimal Supabase mock: captures the update payload, resolves { error: null }. */
@@ -115,20 +168,21 @@ function mockSb(cap: { payload?: Record<string, unknown> }): SupabaseClient {
 }
 
 describe("setPairAutonomy", () => {
-  it("disabling sets merchant_disabled=true (always-safe direction)", async () => {
-    const cap: { payload?: Record<string, unknown> } = {};
-    const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", false, mockSb(cap));
-    expect(r.ok).toBe(true);
-    expect(cap.payload?.merchant_disabled).toBe(true);
-    expect(cap.payload?.graduated).toBe(false);
-  });
-
-  it("enabling sets merchant_disabled=false", async () => {
+  it("enabling sets autonomy_enabled=true (per-feature opt-in)", async () => {
     const cap: { payload?: Record<string, unknown> } = {};
     const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", true, mockSb(cap));
     expect(r.ok).toBe(true);
-    expect(cap.payload?.merchant_disabled).toBe(false);
-    expect(cap.payload?.graduated).toBe(true);
+    expect(cap.payload?.autonomy_enabled).toBe(true);
+  });
+
+  it("disabling sets autonomy_enabled=false and does NOT mute the pair (re-suggestable)", async () => {
+    const cap: { payload?: Record<string, unknown> } = {};
+    const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", false, mockSb(cap));
+    expect(r.ok).toBe(true);
+    expect(cap.payload?.autonomy_enabled).toBe(false);
+    // Turning off is just opt-out, not a harsh mute: merchant_disabled/graduated untouched.
+    expect(cap.payload?.merchant_disabled).toBeUndefined();
+    expect(cap.payload?.graduated).toBeUndefined();
   });
 });
 

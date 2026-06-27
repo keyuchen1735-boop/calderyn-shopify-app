@@ -172,6 +172,7 @@ export async function buildLiveEnginePageData(
         name: f.name,
         watching: f.watching,
         enabled: f.enabled,
+        recommended: f.recommended,
         moneyCents: f.moneyCents,
         actions: f.actions,
         lastAt: f.lastAt,
