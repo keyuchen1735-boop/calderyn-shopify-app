@@ -71,6 +71,9 @@ export interface LiveEngineFeatureVM {
   /** Detector label, e.g. "Campaign is losing money". */
   watching: string;
   enabled: boolean;
+  /** Unlocked + not enabled + not muted + has a track record => show a
+   *  "Ready to turn on" recommendation (Slice C). */
+  recommended: boolean;
   moneyCents: number;
   actions: number;
   lastAt: string | null;

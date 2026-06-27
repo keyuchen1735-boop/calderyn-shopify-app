@@ -1059,6 +1059,7 @@
 .engx-feat-namerow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .engx-feat-name { font-size: 14px; font-weight: 600; color: #1a1a1a; }
 .engx-feat-active { display: inline-flex; align-items: center; gap: 5px; height: 19px; padding: 0 8px; border-radius: 6px; background: #e4f3e6; font-size: 10px; font-weight: 700; color: #1a7f4f; }
+.engx-feat-recommend { display: inline-flex; align-items: center; gap: 5px; height: 19px; padding: 0 8px; border-radius: 6px; background: #fff4e2; font-size: 10px; font-weight: 700; color: #a8650a; }
 .engx-feat-sub { font-size: 12px; color: #8a8a8a; margin-top: 4px; }
 .engx-feat-money { flex: none; text-align: right; margin-right: 4px; }
 .engx-feat-money-amt { font-size: 14px; font-weight: 700; color: #1a7f4f; font-variant-numeric: tabular-nums; }
