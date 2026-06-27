@@ -160,12 +160,17 @@ export function aggregateLiveEngine(
 export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Promise<LiveEngineSummary> {
   const empty: LiveEngineSummary = { autopilotEnabled: false, moneyProtectedWeekCents: 0, features: [] };
   try {
-    const { data: shopRow } = await sb
-      .from("shops")
+    // The shop-level autopilot switch lives in guardrail_config (keyed by
+    // shop_id), the same source every other autopilot reader uses
+    // (guardrails.server.ts, autopilot.server.ts, remediation-guard.server.ts).
+    // shops has no autopilot_enabled column, so the old read here resolved to
+    // null and pinned autopilotEnabled to false regardless of the real setting.
+    const { data: cfgRow } = await sb
+      .from("guardrail_config")
       .select("autopilot_enabled")
-      .eq("id", shopId)
+      .eq("shop_id", shopId)
       .maybeSingle();
-    const autopilotEnabled = Boolean(shopRow?.autopilot_enabled);
+    const autopilotEnabled = Boolean(cfgRow?.autopilot_enabled);
 
     const { data: pairRows, error: pairErr } = await sb
       .from("pair_calibration")
