@@ -1519,6 +1519,15 @@
 .cd-insp-dec[data-tag="APPROVED"] { background: var(--text-1); color: var(--card-solid); }
 .cd-insp-dec[data-tag="BLOCKED"] { background: var(--red-bg); color: var(--red); }
 .cd-insp-dec-note { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); margin-top: 7px; line-height: 1.5; }
+/* Pending "why" figures: humanized label left, formatted value right. */
+.cd-insp-stats { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+.cd-insp-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cd-insp-stat-lab { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); letter-spacing: -0.002em; }
+.cd-insp-stat-val { font-size: calc(12.5px * var(--type-scale)); font-weight: 600; color: var(--text-1); white-space: nowrap; }
+/* Pending decision: what approve/deny does, then one plain trust line. */
+.cd-insp-decide { display: flex; flex-direction: column; gap: 13px; }
+.cd-insp-act-note { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.5; margin: 0; }
+.cd-insp-trust { font-size: calc(12px * var(--type-scale)); color: var(--text-3); line-height: 1.5; margin: 0; padding-top: 12px; border-top: 0.5px solid var(--hairline-strong); }
 
 /* ============ Live Engine hero (.ha) ============ */
 .ha { --mono: ui-monospace, SFMono-Regular, Menlo, monospace; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }

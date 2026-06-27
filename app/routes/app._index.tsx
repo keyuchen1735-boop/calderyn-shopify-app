@@ -41,6 +41,7 @@ const EMPTY_ENGINE: LiveEnginePageData = {
   features: [],
   pipeline: [],
   trace: [],
+  pending: [],
   predictions: [],
   calibrationPct: null,
   nearGraduation: 0,

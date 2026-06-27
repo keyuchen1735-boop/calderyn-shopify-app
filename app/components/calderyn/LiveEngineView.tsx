@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
 import { Text } from "@shopify/polaris";
 import { fmtMoney } from "~/lib/format";
@@ -14,14 +14,27 @@ import type { WatchGroup } from "~/components/dashboard/engine-events";
 import type {
   LiveEnginePageData,
   LiveEngineFeatureVM,
+  PendingInspectorVM,
   TraceEventVM,
   TraceTag,
 } from "~/lib/calibration/live-engine-page.server";
-import type { ActionKind } from "~/lib/types";
+import type { ActionKind, RejectReason } from "~/lib/types";
 
 /* Reply shape of the route action that handles the per-feature autonomy toggle.
    The view posts to whatever route mounts it, so this mirrors that contract. */
 type ToggleResult = { ok: true; enabled: boolean } | { error: string };
+
+/* Reply shape of /app/alerts/$id for an approve (kind) or deny (intent=reject). */
+type AlertActionResult = { ok: boolean; toast?: { message: string; isError?: boolean } };
+
+/* Quick deny reasons → real RejectReason codes (teaches the engine the same way
+   the alert page's full picker does). */
+const DENY_REASONS: { label: string; reason: RejectReason }[] = [
+  { label: "Too risky", reason: "too_aggressive" },
+  { label: "Wrong timing", reason: "wrong_timing" },
+  { label: "Not enough proof", reason: "not_enough_data" },
+  { label: "I handle this", reason: "i_handle_this" },
+];
 
 /* ---------- inline icons (stroke=currentColor so CSS color drives the tint) ---------- */
 const sx = { display: "block" } as const;
@@ -64,6 +77,9 @@ function IUsers({ s = 14, w = 2 }: IP) {
 }
 function ILock({ s = 15, w = 2 }: IP) {
   return (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" style={sx}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>);
+}
+function IAlert({ s = 15, w = 2 }: IP) {
+  return (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" style={sx}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>);
 }
 
 /* ---------- shared bits ---------- */
@@ -300,7 +316,112 @@ function TraceRow({ t, selected, onSelect }: { t: TraceEventVM; selected: boolea
   );
 }
 
-function CalderynLog({ trace, selectedId, onSelect }: { trace: TraceEventVM[]; selectedId: string | null; onSelect: (id: string) => void }) {
+/* A flagged proposal in the log: NEEDS YOU, with inline approve / deny. Approve
+   executes via /app/alerts/$id; deny records a rejection (teaches, runs nothing).
+   A real success removes the row, then the parent revalidates. */
+type PendingRowState = "idle" | "denying";
+
+function PendingRow({
+  p,
+  selected,
+  onSelect,
+  onResolved,
+}: {
+  p: PendingInspectorVM;
+  selected: boolean;
+  onSelect: () => void;
+  onResolved: (alertId: string) => void;
+}) {
+  const fetcher = useFetcher<AlertActionResult>();
+  const [state, setState] = useState<PendingRowState>("idle");
+  const busy = fetcher.state !== "idle";
+  const error =
+    fetcher.state === "idle" && fetcher.data && fetcher.data.ok === false
+      ? fetcher.data.toast?.message ?? "Couldn't save that. Try the Alerts page."
+      : null;
+
+  // Resolve exactly once on the first successful approve/deny — the row then
+  // leaves the list, so guard against a re-render firing onResolved again.
+  const resolvedRef = useRef(false);
+  useEffect(() => {
+    if (resolvedRef.current) return;
+    if (fetcher.state === "idle" && fetcher.data?.ok) {
+      resolvedRef.current = true;
+      onResolved(p.alertId);
+    }
+  }, [fetcher.state, fetcher.data, onResolved, p.alertId]);
+
+  const approve = () => {
+    fetcher.submit({ kind: p.actionKind }, { method: "post", action: `/app/alerts/${p.alertId}` });
+  };
+  const deny = (reason: RejectReason) => {
+    fetcher.submit({ intent: "reject", reason }, { method: "post", action: `/app/alerts/${p.alertId}` });
+  };
+
+  return (
+    <div className="engx-trace-row" data-tag="REVIEW" data-pending="1" data-selected={selected}>
+      <button type="button" className="engx-trace-rowmain" onClick={onSelect} title="See why Calderyn flagged this">
+        <span className="engx-trace-ico">
+          <IAlert />
+        </span>
+        <span className="engx-trace-main">
+          <span className="engx-trace-top">
+            <span className="engx-trace-tag">NEEDS YOU</span>
+            <span className="engx-trace-time">{p.confidence}% confident</span>
+          </span>
+          <span className="engx-trace-text">{p.title}</span>
+          <span className="engx-trace-money engx-trace-money--good">
+            {fmtMoney(Math.abs(p.dollarImpactCents))} at stake &middot; will {p.actionLabel.toLowerCase()}
+          </span>
+        </span>
+      </button>
+
+      {state === "idle" && (
+        <div className="engx-review-actions">
+          <button type="button" className="engx-review-btn engx-review-btn--reject" disabled={busy} onClick={() => setState("denying")}>
+            Deny
+          </button>
+          <button type="button" className="engx-review-btn engx-review-btn--accept" disabled={busy} onClick={approve}>
+            {busy ? "Approving…" : "Approve"}
+          </button>
+        </div>
+      )}
+
+      {state === "denying" && (
+        <div className="engx-deny-why">
+          <span className="engx-deny-why-lab">Why are you turning this down?</span>
+          <span className="engx-deny-chips">
+            {DENY_REASONS.map((r) => (
+              <button key={r.reason} type="button" className="engx-deny-chip" disabled={busy} onClick={() => deny(r.reason)}>
+                {r.label}
+              </button>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {error && <div className="engx-review-err">{error}</div>}
+    </div>
+  );
+}
+
+type LogSelection = { kind: "trace" | "pending"; id: string } | null;
+
+function CalderynLog({
+  pending,
+  trace,
+  selected,
+  onSelectTrace,
+  onSelectPending,
+  onResolved,
+}: {
+  pending: PendingInspectorVM[];
+  trace: TraceEventVM[];
+  selected: LogSelection;
+  onSelectTrace: (id: string) => void;
+  onSelectPending: (alertId: string) => void;
+  onResolved: (alertId: string) => void;
+}) {
   return (
     <div className="engx-trace">
       <div className="engx-trace-head">
@@ -310,14 +431,28 @@ function CalderynLog({ trace, selectedId, onSelect }: { trace: TraceEventVM[]; s
         </div>
         <p className="engx-trace-sub">Newest first. Click any row to see why.</p>
       </div>
-      {trace.length === 0 ? (
+      {pending.length === 0 && trace.length === 0 ? (
         <div className="engx-trace-empty">
           Nothing yet. When Calderyn acts on its own, or you approve a suggestion, it shows up here with the full reasoning.
         </div>
       ) : (
         <div className="engx-trace-list">
+          {pending.map((p) => (
+            <PendingRow
+              key={p.alertId}
+              p={p}
+              selected={selected?.kind === "pending" && selected.id === p.alertId}
+              onSelect={() => onSelectPending(p.alertId)}
+              onResolved={onResolved}
+            />
+          ))}
           {trace.map((t) => (
-            <TraceRow key={t.id} t={t} selected={t.id === selectedId} onSelect={() => onSelect(t.id)} />
+            <TraceRow
+              key={t.id}
+              t={t}
+              selected={selected?.kind === "trace" && selected.id === t.id}
+              onSelect={() => onSelectTrace(t.id)}
+            />
           ))}
         </div>
       )}
@@ -409,6 +544,63 @@ function Inspector({ t, onClose }: { t: TraceEventVM; onClose: () => void }) {
   );
 }
 
+/* ---------- 2c. pending inspector (NEEDS YOU) ---------- */
+// The simplified card: why Calderyn flagged it + a few humanized figures, then
+// what approving vs. denying does and one plain line on why it asks. No weighing
+// bars; the approve/deny buttons live on the log row.
+function PendingInspector({ p, onClose }: { p: PendingInspectorVM; onClose: () => void }) {
+  return (
+    <div className="engx-insp">
+      <div className="engx-insp-head">
+        <button type="button" className="engx-insp-back" aria-label="Close" onClick={onClose}>
+          <IChevL />
+        </button>
+        <span className="engx-insp-tag" data-tag="REVIEW">
+          NEEDS YOU
+        </span>
+        <span className="engx-insp-time">now</span>
+      </div>
+      <div className="engx-insp-body">
+        <h3 className="engx-insp-title">{p.title}</h3>
+
+        {p.dollarImpactCents !== 0 && (
+          <div className="engx-insp-money engx-insp-money--good">
+            <span>At stake</span>
+            <strong>{fmtMoney(Math.abs(p.dollarImpactCents))}</strong>
+          </div>
+        )}
+
+        <div className="engx-insp-sec">
+          <div className="engx-insp-sec-h">WHY CALDERYN FLAGGED THIS</div>
+          <p className="engx-insp-signal">{p.signal}</p>
+          {p.stats.length > 0 && (
+            <div className="engx-insp-stats">
+              {p.stats.map((s) => (
+                <div className="engx-insp-stat" key={s.label}>
+                  <span className="engx-insp-stat-lab">{s.label}</span>
+                  <span className="engx-insp-stat-val">{s.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="engx-insp-sec engx-insp-decide">
+          <div>
+            <div className="engx-insp-sec-h">IF YOU APPROVE</div>
+            <p className="engx-insp-act-note">{p.approveText}</p>
+          </div>
+          <div>
+            <div className="engx-insp-sec-h">IF YOU DENY</div>
+            <p className="engx-insp-act-note">{p.denyText}</p>
+          </div>
+          <p className="engx-insp-trust">{p.trustLine}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- view ---------- */
 function Stack({ children }: { children: ReactNode }) {
   return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>{children}</div>;
@@ -423,32 +615,48 @@ function Stack({ children }: { children: ReactNode }) {
  * its own action.
  */
 export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<LogSelection>(null);
+  // Proposals worked through this session, hidden immediately so the row leaves
+  // before the next revalidation swaps in fresh loader data.
+  const [resolved, setResolved] = useState<Set<string>>(new Set());
   const revalidator = useRevalidator();
+
+  const livePending = data.pending.filter((p) => !resolved.has(p.alertId));
 
   // Gentle freshness: pull new actions/money while the tab is visible and the
   // merchant isn't mid-inspection. Real new rows, not fabricated motion.
   useEffect(() => {
     const tick = () => {
-      if (document.visibilityState === "visible" && !selectedId && revalidator.state === "idle") {
+      if (document.visibilityState === "visible" && !selected && revalidator.state === "idle") {
         revalidator.revalidate();
       }
     };
     const id = setInterval(tick, 45000);
     return () => clearInterval(id);
-  }, [selectedId, revalidator]);
+  }, [selected, revalidator]);
 
-  const selected = selectedId ? data.trace.find((t) => t.id === selectedId) ?? null : null;
+  const markResolved = useCallback(
+    (alertId: string) => {
+      setResolved((s) => new Set(s).add(alertId));
+      setSelected((cur) => (cur?.kind === "pending" && cur.id === alertId ? null : cur));
+      revalidator.revalidate();
+    },
+    [revalidator],
+  );
+
+  const selectedTrace =
+    selected?.kind === "trace" ? data.trace.find((t) => t.id === selected.id) ?? null : null;
+  const selectedPending =
+    selected?.kind === "pending" ? livePending.find((p) => p.alertId === selected.id) ?? null : null;
 
   // Hero inputs, computed from the same data contract the dashboard hero uses.
   const featureOn = data.autopilotEnabled ? data.features.filter((f) => f.enabled).length : 0;
   const featureTotal = data.features.length;
   const band = calibrationBand(data.calibrationPct);
   const running = data.autopilotEnabled && featureOn > 0;
-  // The embedded home doesn't load the pending queue, so no Watching row is
-  // flagged here — they read "All good", matching a quiet shop. The dashboard,
-  // which holds the live queue, drives flags there.
-  const flagged = new Set<WatchGroup>();
+  // Flag the Watching rows whose domain has a proposal awaiting approval, so the
+  // hero reads the live queue the same way the dashboard does.
+  const flagged = new Set<WatchGroup>(livePending.map((p) => domainForDetector(p.detectorId)));
 
   return (
     <Stack>
@@ -463,10 +671,19 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
         flaggedGroups={flagged}
       />
       <div className="engx-cols">
-        <CalderynLog trace={data.trace} selectedId={selectedId} onSelect={setSelectedId} />
+        <CalderynLog
+          pending={livePending}
+          trace={data.trace}
+          selected={selected}
+          onSelectTrace={(id) => setSelected({ kind: "trace", id })}
+          onSelectPending={(id) => setSelected({ kind: "pending", id })}
+          onResolved={markResolved}
+        />
         <div className="engx-rail">
-          {selected ? (
-            <Inspector t={selected} onClose={() => setSelectedId(null)} />
+          {selectedPending ? (
+            <PendingInspector p={selectedPending} onClose={() => setSelected(null)} />
+          ) : selectedTrace ? (
+            <Inspector t={selectedTrace} onClose={() => setSelected(null)} />
           ) : (
             <AutopilotFeaturesCard data={data} />
           )}

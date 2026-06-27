@@ -96,6 +96,10 @@ function stubClient(): Client {
     alerts: {
       list: async () => [
         { id: "al9", detector_id: "campaign_below_breakeven", severity: "high", status: "open", dollar_impact: 621600, claude_rank: 1, created_at: iso(0.3), title: "Summit Tee is bleeding money", narrative: "ROAS 0.7 for 5 days", campaign: "Summit", campaign_id: null, campaign_external_id: null, sku: null, evidence: {} },
+        // The open alert behind proposal "a1": its narrative + evidence feed the
+        // pending inspector. Internal id + title keys are suppressed; the rest is
+        // humanized. Impact kept below al9 so it stays the predictions top alert.
+        { id: "a1", detector_id: "sku_stockout_vs_spend", severity: "high", status: "open", dollar_impact: 394000, claude_rank: 2, created_at: iso(0.2), title: "Trailhead Cap sold out", narrative: "Sold out 3 days but still spending", campaign: null, campaign_id: null, campaign_external_id: null, sku: null, evidence: { inventory_item_id: "gid://shopify/InventoryItem/1", title: "Trailhead Cap", stock: "0 units", days_of_cover: "0", spend_this_7d_usd: "120" } },
       ],
     },
     analytics: {
@@ -147,6 +151,29 @@ describe("buildLiveEnginePageData", () => {
     expect(byId("e4").decisionNote).toContain("daily budget cap reached");
   });
 
+  it("builds pending proposals: plain why, humanized figures, approve/deny copy", async () => {
+    const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
+    expect(d.pending).toHaveLength(1);
+    const p = d.pending[0];
+    expect(p.alertId).toBe("a1");
+    expect(p.actionKind).toBe("pause_campaign");
+    expect(p.actionLabel).toBe("Pause campaign");
+    expect(p.dollarImpactCents).toBe(394000);
+    expect(p.confidence).toBe(52);
+    expect(p.threshold).toBe(80); // the pair's real graduation bar
+    // signal comes from the matched alert's narrative, not raw fields
+    expect(p.signal).toBe("Sold out 3 days but still spending");
+    // internal id + product name suppressed; the rest humanized + formatted, capped at 3
+    expect(p.stats).toEqual([
+      { label: "Total stock", value: "0 units" },
+      { label: "Days until sold out", value: "0 days" },
+      { label: "Spend, this 7 days", value: "$120" },
+    ]);
+    expect(p.approveText).toBe("Calderyn will pause campaign now. You can undo it anytime from your history.");
+    expect(p.denyText).toContain("Nothing changes");
+    expect(p.trustLine).toContain("Still learning this one");
+  });
+
   it("derives predictions from real signals only (runway + below-breakeven + top alert)", async () => {
     const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
     const stock = d.predictions.find((p) => p.kind === "stockout");
@@ -182,6 +209,7 @@ describe("buildLiveEnginePageData", () => {
     const d = await buildLiveEnginePageData(broken, undefined, NOW);
     expect(d.features).toEqual([]);
     expect(d.trace).toEqual([]);
+    expect(d.pending).toEqual([]);
     expect(d.predictions).toEqual([]);
     expect(d.autopilotEnabled).toBe(false);
   });

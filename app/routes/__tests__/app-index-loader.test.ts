@@ -52,6 +52,7 @@ const EMPTY_ENGINE = {
   features: [],
   pipeline: [],
   trace: [],
+  pending: [],
   predictions: [],
   calibrationPct: null,
   nearGraduation: 0,

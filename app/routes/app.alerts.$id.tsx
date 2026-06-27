@@ -50,6 +50,7 @@ import {
   ACTION_LABELS,
   ACTION_VERBS,
   DETECTOR_TO_ACTIONS,
+  recommendedAction,
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
@@ -67,7 +68,7 @@ import {
   NarrativeCard,
   SeverityBadge,
 } from "~/components/calderyn";
-import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
+import type { ActionKind, Alert, GuardrailConfig, RejectReason } from "~/lib/types";
 
 type PoDefaults = { quantity: number | null; unit_cost_cents: number | null };
 
@@ -164,10 +165,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 };
 
+// The 5 known reject reasons (mirrors the dashboard reject endpoint). A reject
+// teaches the calibration agent without executing anything.
+const REJECT_REASONS: RejectReason[] = [
+  "too_aggressive",
+  "wrong_timing",
+  "not_enough_data",
+  "i_handle_this",
+  "other",
+];
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
   const kind = String(formData.get("kind") || "") as ActionKind;
   const alertId = String(formData.get("alertId") || params.id || "");
   const idempotencyKey =
@@ -188,6 +200,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const alert = await client.alerts.get(alertId, request.signal);
+
+    // Reject (teach, don't act): the embedded mirror of the dashboard reject
+    // endpoint. Re-derives detector + recommended action from the TRUSTED alert
+    // and records the rejection — recordRejection executes nothing, it is purely
+    // calibration bookkeeping that makes Calderyn more cautious about this pair.
+    if (intent === "reject") {
+      const reason = String(formData.get("reason") || "").trim() as RejectReason;
+      if (!REJECT_REASONS.includes(reason)) {
+        throw new CalderynError({
+          code: "INVALID_REQUEST",
+          status: 400,
+          message: "Unknown reject reason.",
+        });
+      }
+      const rejectAction = recommendedAction(alert.detector_id, {
+        hasCampaign: Boolean(alert.campaign_id),
+      });
+      if (!rejectAction) {
+        throw new CalderynError({
+          code: "INVALID_REQUEST",
+          status: 400,
+          message: "No recommended action for this alert.",
+        });
+      }
+      await client.calibration.recordRejection({
+        alertId,
+        detectorId: alert.detector_id,
+        actionKind: rejectAction,
+        reason,
+        dollarImpactCents: alert.dollar_impact,
+      });
+      return json<ActionPayload>({ ok: true });
+    }
 
     // Only actions this detector exposes may run against this alert.
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
