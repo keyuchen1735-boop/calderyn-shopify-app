@@ -64,6 +64,12 @@ _SKIP_REASONS: dict[str, str] = {
     "regional_shortage_risk": (
         "needs region-scoped fulfillment_fact + inventory seed (Phase A)"
     ),
+    "sku_stockout_cleared": (
+        "needs an autopilot stockout pause_campaign in action_audit plus a "
+        "restocked-above-buffer inventory_level_fact — the shared stockout seed "
+        "is sold out and has no pause row; covered by "
+        "test_detector_sku_stockout_cleared.py (seed_stockout_cleared_scenario)"
+    ),
     "campaign_below_breakeven": (
         "needs full attribution_fact + order_line_fact COGS chain (Phase A)"
     ),

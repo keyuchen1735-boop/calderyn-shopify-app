@@ -33,7 +33,7 @@ import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
 import { calibrationActionKind } from "../calibration/action-kind";
-import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
+import { preconditionFresh, stockoutPauseAllowed, stockoutClearedResumeAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
 import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
@@ -45,6 +45,10 @@ const PAUSE_DETECTORS = new Set([
 ]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
 const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
+// Slice B: resume a campaign Calderyn auto-paused for a stockout once the SKU is
+// restocked. resume_campaign restarts spend, so it is gated like every other
+// autonomous kind (graduation + rules + guardrails + a live precondition).
+const RESUME_DETECTORS = new Set(["sku_stockout_cleared"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
 
@@ -676,11 +680,16 @@ export async function runAutopilotForShop(
   const scopedOnly = scoped.filter((s) => !seenAlertIds.has(s.alert_id));
   const allCandidates = [...mergedViewCandidates, ...scopedOnly];
 
-  // Defensive actions (pause/reduce/reallocate) take priority over offensive
+  // Defensive actions (pause/reduce/reallocate) take priority over resume and
   // scale-ups so loss-prevention is never starved of the daily action cap by a
-  // bigger-dollar scale opportunity. Each subgroup keeps its dollar_impact order.
+  // bigger-dollar opportunity. Resume restarts spend, so it ranks ahead of
+  // offensive scale-ups but behind loss-prevention. Each subgroup keeps its
+  // dollar_impact order.
   const ordered = [
-    ...allCandidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter(
+      (c) => !SCALE_DETECTORS.has(c.detector_id) && !RESUME_DETECTORS.has(c.detector_id),
+    ),
+    ...allCandidates.filter((c) => RESUME_DETECTORS.has(c.detector_id)),
     ...allCandidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
   ];
 
@@ -800,6 +809,7 @@ export async function runAutopilotForShop(
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
       else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
       else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
+      else if (RESUME_DETECTORS.has(c.detector_id)) kind = "resume_campaign";
       if (!kind) {
         decide(c, null, "skipped", "detector not actionable by autopilot", "none");
         continue;
@@ -863,6 +873,94 @@ export async function runAutopilotForShop(
           // The capped amount is resolved after currentBudgetCents is known, below.
           (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents = ruleVerdict.cappedDollarCents;
         }
+      }
+
+      // Slice B: resume a campaign Calderyn auto-paused for a stockout, now that
+      // its SKU is restocked. resume_campaign restarts spend, so it clears the
+      // same gates as the other autonomous kinds: guardrails (with the PRE-PAUSE
+      // spend so the min-spend gate is not defeated by the paused campaign's
+      // near-zero recent spend), an I4 freshness re-check (campaign still paused),
+      // and the dedicated live restock allowlist (restocked above buffer, still
+      // Calderyn-paused). Every check is fail-safe → on any doubt we skip and the
+      // alert stays queued for the merchant. Resolved here (continue) — resume
+      // never touches the budget logic below.
+      if (kind === "resume_campaign") {
+        // Resume candidates always come from the view (the merged Candidate with
+        // evidence/sku/sku_id); the scoped ad_tax_overload candidates are never a
+        // RESUME_DETECTORS id. Narrow to read the view-only fields.
+        const cc = c as Candidate;
+        const evidence = (cc.evidence ?? null) as Record<string, unknown> | null;
+        const prepauseSpendCents = Math.round(Number(evidence?.prepause_spend_7d_usd ?? 0) * 100);
+        const bufferUnits = Number(evidence?.buffer_units ?? 0);
+        const verdict = await checkGuardrails(
+          shopId,
+          {
+            kind: "resume_campaign",
+            campaignId,
+            dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+            // Pre-pause spend, not the paused campaign's near-zero recent spend,
+            // so the min-spend guardrail stays meaningful instead of false-blocking.
+            campaignSpendCents: Math.max(c.campaign_spend_cents, prepauseSpendCents),
+          },
+          sb,
+          { forceBypassOff: true, autonomous: true },
+        );
+        if (!verdict.allowed) {
+          decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
+          continue;
+        }
+        const precheck = await preconditionFresh({
+          kind,
+          candidate: { ...c, campaign_id: campaignId },
+          sb,
+          nowMs: Date.now(),
+        });
+        if (!precheck.ok) {
+          console.info(`[autopilot] resume precondition failed for ${campaignId}: ${precheck.reason}`);
+          decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
+          continue;
+        }
+        const resumeCheck = await stockoutClearedResumeAllowed({
+          shopId,
+          alert: {
+            id: c.alert_id,
+            detector_id: c.detector_id,
+            entity_ref: {
+              campaign_id: campaignId,
+              sku_id: cc.sku_id ?? undefined,
+              sku: cc.sku ?? undefined,
+            },
+          },
+          bufferUnits,
+          sb,
+        });
+        if (!resumeCheck.ok) {
+          console.info(`[autopilot] resume allowlist blocked ${campaignId}: ${resumeCheck.reason}`);
+          decide(c, kind, "skipped", resumeCheck.reason ?? "resume_precondition_not_met");
+          continue;
+        }
+        const res = await executeAction(
+          shopId,
+          {
+            alertId: c.alert_id,
+            kind: "resume_campaign",
+            campaignId,
+            idempotencyKey: `autopilot:${c.alert_id}:resume_campaign`,
+            actor: "autopilot",
+            triggerReason: autopilotReason("Auto-resume", c.detector_id, c.dollar_impact),
+          },
+          sb,
+        );
+        record(c, kind, res.outcome);
+        if (res.outcome === "succeeded") {
+          notifyPromises.push(
+            notifyAutonomousAction(
+              { shopId, actionDescription: `Resumed campaign ${campaignId}` },
+              merchantEmail,
+            ).catch((e) => console.error("[autopilot-notify] unexpected error (resume)", e)),
+          );
+        }
+        continue;
       }
 
       const currentBudgetCents = c.daily_budget_cents ?? null;

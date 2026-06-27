@@ -219,12 +219,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // `* 100` double-converted, inflating the impact 100x and tripping the cap on
     // every action once a realistic (non-sentinel) cap is configured.
     const impactCents = alert.dollar_impact;
-    // increase_campaign_budget is an UPSIDE action — alert.dollar_impact is the
-    // projected gain, not downside risk — so the per-action risk cap does not
-    // apply (it would block exactly the highest-upside scaling opportunities).
+    // increase_campaign_budget and resume_campaign are UPSIDE actions —
+    // alert.dollar_impact is the projected gain / recovered spend, not downside
+    // risk — so the per-action risk cap does not apply (it would block exactly the
+    // highest-upside opportunities, e.g. resuming a big restocked campaign).
     if (
       kind !== "snooze_alert" &&
       kind !== "increase_campaign_budget" &&
+      kind !== "resume_campaign" &&
       impactCents > guardrails.dollar_cap_cents
     ) {
       throw new CalderynError({
@@ -456,6 +458,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // last_error set — no silent swallowing.
     const executableKinds: ExecutableKind[] = [
       "pause_campaign",
+      "resume_campaign",
       "reduce_campaign_budget",
       "increase_campaign_budget",
     ];

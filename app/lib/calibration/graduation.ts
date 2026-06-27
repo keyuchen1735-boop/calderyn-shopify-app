@@ -14,11 +14,11 @@ import { actionTier, NO_BRAINER } from "./confidence";
  *  Both were added because they have complete undo branches.
  *  reallocate_budget has an autopilot trigger (a DETECTOR_TO_ACTIONS mapping
  *  fires it), so it accrues measured outcomes normally.
- *  resume_campaign currently has NO autonomous trigger — no DETECTOR_TO_ACTIONS
- *  mapping and no autopilot branch fires it — so it is graduation-eligible but
- *  dormant: it will never accumulate outcomes and cannot graduate until a resume
- *  trigger is added. It remains in this set (plan-mandated) so the undo branch
- *  and graduation machinery are ready for that future trigger. */
+ *  resume_campaign now has its autonomous trigger too (autopilot trust UX Slice B):
+ *  the sku_stockout_cleared detector maps to resume_campaign via DETECTOR_TO_ACTIONS,
+ *  and the RESUME_DETECTORS branch in autopilot.server.ts fires it once the pair is
+ *  graduated AND merchant-enabled — so it accrues outcomes and can graduate like
+ *  the others. */
 export const GRADUATABLE: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "pause_campaign",
   "reduce_campaign_budget",

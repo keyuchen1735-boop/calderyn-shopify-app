@@ -64,6 +64,26 @@ describe("buildActionQueue", () => {
     expect(q[0].confidence).toBeGreaterThanOrEqual(qCold[0].confidence);
   });
 
+  it("surfaces a sku_stockout_cleared alert as a resume_campaign suggestion (Slice B warm-up)", () => {
+    const a = alert({
+      id: "rc1",
+      detector_id: "sku_stockout_cleared",
+      title: "Sold-out product is back in stock",
+      evidence: { campaign_id: "c1", buffer_units: "30" },
+    });
+    const q = buildActionQueue([a] as never, new Map(), new Set(), new Set());
+    expect(q).toHaveLength(1);
+    expect(q[0].action_kind).toBe("resume_campaign");
+    expect(q[0].detector_id).toBe("sku_stockout_cleared");
+  });
+
+  it("drops the sku_stockout_cleared:resume_campaign proposal once the pair runs autonomously (no double actor)", () => {
+    const a = alert({ id: "rc2", detector_id: "sku_stockout_cleared", evidence: { campaign_id: "c1" } });
+    const autonomy = new Set(["sku_stockout_cleared:resume_campaign"]);
+    const q = buildActionQueue([a] as never, new Map(), new Set(), new Set(), autonomy);
+    expect(q).toHaveLength(0);
+  });
+
   it("produces a proposal with the expected shape", () => {
     const [p] = buildActionQueue([alert()] as never, new Map(), new Set(), new Set());
     expect(p).toMatchObject({
