@@ -261,8 +261,8 @@ function AutopilotFeaturesCard({ data }: { data: LiveEnginePageData }) {
       </div>
       {groups.length === 0 ? (
         <div className="engx-auto-empty">
-          No features run on autopilot yet. As you approve suggestions in the{" "}
-          <a href="/app/queue">Action Queue</a>, the ones you trust most graduate to run here on their own.
+          No features run on autopilot yet. As you approve suggestions on the{" "}
+          <a href="/app/alerts">Alerts</a> page, the ones you trust most graduate to run here on their own.
         </div>
       ) : (
         groups.map((g) => (

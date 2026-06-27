@@ -25,7 +25,6 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
-  LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
   Toast,
@@ -41,8 +40,6 @@ import ScreenGenerator from "./screens/Generator";
 import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
-import ScreenActionQueue from "./screens/ActionQueue";
-import ScreenLiveEngine from "./screens/LiveEngine";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
 
@@ -56,8 +53,6 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
-  { id: "action-queue", label: "Action Queue", icon: "target" },
-  { id: "live-engine", label: "Live Engine", icon: "bolt" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -83,8 +78,6 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
   audit: ScreenAudit,
-  "action-queue": ScreenActionQueue,
-  "live-engine": ScreenLiveEngine,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,
@@ -140,7 +133,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
   const [actionQueue, setActionQueue] = useState<QueueProposalVM[]>([]);
-  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[]>([]);
   const [liveEngine, setLiveEngine] = useState<DashboardCtx["liveEngine"]>(null);
   const [loading, setLoading] = useState(true);
 
@@ -193,7 +185,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal, aq, lr, le] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal, aq, le] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
@@ -202,8 +194,8 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       client.fetchConsent(),
       client.fetchCalibration(),
       client.fetchActionQueue(),
-      client.fetchLearnedRules(),
-      // New screen: a Live Engine failure must not blank the whole dashboard.
+      // The Overview hero embeds the Live Engine; a failure here must not blank
+      // the whole dashboard.
       client.fetchLiveEngine().catch(() => null),
     ]);
     setCampaigns(camps);
@@ -215,7 +207,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setConsent(co);
     setCalibration(cal);
     setActionQueue(aq);
-    setLearnedRules(lr);
     setLiveEngine(le);
   }, []);
 
@@ -701,7 +692,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     calibration,
     refreshCalibration,
     actionQueue,
-    learnedRules,
     liveEngine,
     feed,
     liveOn,
