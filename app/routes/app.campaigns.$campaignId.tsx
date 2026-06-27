@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -7,13 +7,16 @@ import {
   Badge,
   Banner,
   BlockStack,
+  Box,
   Button,
   Card,
+  FormLayout,
   InlineGrid,
   InlineStack,
   Page,
   Spinner,
   Text,
+  TextField,
   Thumbnail,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
@@ -57,6 +60,8 @@ import {
   MIN_SPEND_CENTS,
 } from "~/lib/screener/types";
 import type { ScoreActionPayload } from "./app.campaigns.$campaignId.score";
+import type { RegenActionPayload } from "./app.campaigns.$campaignId.regenerate";
+import type { ScreenActionPayload } from "./app.campaigns.$campaignId.screen";
 import { fmtMoney } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
@@ -819,8 +824,104 @@ export default function CampaignDetailPage() {
             )}
           </BlockStack>
         </Card>
+        {detail && (
+          <RegenerateCard
+            campaignIdParam={campaignIdParam}
+            adIds={creatives.map((c) => c.adId).filter(Boolean)}
+            assumedSpendCents={assumedSpendCents}
+          />
+        )}
+        {detail && <ScreenNewCreativeCard campaignIdParam={campaignIdParam} />}
       </BlockStack>
     </Page>
+  );
+}
+
+function RegenerateCard({
+  campaignIdParam,
+  adIds,
+  assumedSpendCents,
+}: {
+  campaignIdParam: string;
+  adIds: string[];
+  assumedSpendCents: number;
+}) {
+  const fetcher = useFetcher<RegenActionPayload>();
+  const busy = fetcher.state !== "idle";
+  const data = fetcher.data;
+  const variants = data && data.ok ? data.variants : [];
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingSm">Regenerate copy</Text>
+        <Text as="p" tone="subdued" variant="bodySm">
+          Rewrites the campaign&apos;s weakest creative, re-scores each rewrite, and keeps only ones that beat it.
+        </Text>
+        <fetcher.Form
+          method="post"
+          action={`/app/campaigns/${encodeURIComponent(campaignIdParam)}/regenerate`}
+        >
+          <input type="hidden" name="adIds" value={JSON.stringify(adIds)} />
+          <input type="hidden" name="assumedSpendCents" value={String(assumedSpendCents)} />
+          <Button submit variant="primary" loading={busy} disabled={busy || adIds.length === 0}>
+            Regenerate
+          </Button>
+        </fetcher.Form>
+        {data && !data.ok && <Banner tone="warning">{data.error.message}</Banner>}
+        {variants.map((v, i) => (
+          <div key={i} style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 12, padding: "12px 14px" }}>
+            <InlineStack gap="200" blockAlign="center">
+              <Badge tone="info">{v.mode}</Badge>
+              <Text as="span" variant="bodyMd" fontWeight="semibold">{String(v.composite)}</Text>
+              <Text as="span" variant="bodySm" tone="success">{`+${v.delta}`}</Text>
+            </InlineStack>
+            <Box paddingBlockStart="150">
+              <Text as="p" variant="bodyMd">&ldquo;{v.input.headline}&rdquo; · CTA: {v.input.cta}</Text>
+            </Box>
+            <Text as="p" variant="bodySm" tone="subdued">{v.rationale}</Text>
+          </div>
+        ))}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function ScreenNewCreativeCard({ campaignIdParam }: { campaignIdParam: string }) {
+  const fetcher = useFetcher<ScreenActionPayload>();
+  const busy = fetcher.state !== "idle";
+  const data = fetcher.data;
+  const card = data && data.ok && data.run.scorecard ? data.run.scorecard : null;
+  const [imageUrl, setImageUrl] = useState("");
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingSm">Screen a new creative</Text>
+        <fetcher.Form
+          method="post"
+          action={`/app/campaigns/${encodeURIComponent(campaignIdParam)}/screen`}
+        >
+          <FormLayout>
+            <TextField label="Headline" name="headline" autoComplete="off" />
+            <TextField label="Primary text" name="primaryText" multiline={3} autoComplete="off" />
+            <FormLayout.Group>
+              <TextField label="Call to action" name="cta" autoComplete="off" placeholder="Shop now" />
+              <TextField label="Audience" name="audience" autoComplete="off" />
+            </FormLayout.Group>
+            <TextField label="Where the click goes" name="destinationUrl" autoComplete="off" />
+            <TextField label="Image URL (https)" name="imageUrl" autoComplete="off" value={imageUrl} onChange={setImageUrl} />
+            <input type="hidden" name="mediaKind" value="image" />
+            <Button submit variant="primary" loading={busy} disabled={busy || !imageUrl}>
+              Score creative
+            </Button>
+          </FormLayout>
+        </fetcher.Form>
+        {data && !data.ok && <Banner tone="critical">{data.error.message}</Banner>}
+        {data && data.ok && data.run.status === "error" && (
+          <Banner tone="critical">{data.run.error}</Banner>
+        )}
+        {card && <Scorecard card={card} />}
+      </BlockStack>
+    </Card>
   );
 }
 
