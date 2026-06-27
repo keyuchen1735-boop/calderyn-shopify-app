@@ -31,7 +31,6 @@ const ctx: DashboardCtx = {
   overview: null,
   calibration: null,
   actionQueue: [],
-  learnedRules: [],
   liveEngine: null,
   feed: [],
   liveOn: true,

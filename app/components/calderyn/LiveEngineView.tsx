@@ -235,8 +235,8 @@ function AutopilotFeaturesCard({ data }: { data: LiveEnginePageData }) {
       </div>
       {groups.length === 0 ? (
         <div className="engx-auto-empty">
-          No features run on autopilot yet. As you approve suggestions in the{" "}
-          <a href="/app/queue">Action Queue</a>, the ones you trust most graduate to run here on their own.
+          No features run on autopilot yet. As you approve suggestions on the{" "}
+          <a href="/app/alerts">Alerts</a> page, the ones you trust most graduate to run here on their own.
         </div>
       ) : (
         groups.map((g) => (
@@ -419,9 +419,9 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
   const featureTotal = data.features.length;
   const band = calibrationBand(data.calibrationPct);
   const running = data.autopilotEnabled && featureOn > 0;
-  // The embedded home doesn't load the pending queue (it lives on /app/queue),
-  // so no Watching row is flagged here — they read "All good", matching a quiet
-  // shop. The dashboard, which holds the live queue, drives flags there.
+  // The embedded home doesn't load the pending queue, so no Watching row is
+  // flagged here — they read "All good", matching a quiet shop. The dashboard,
+  // which holds the live queue, drives flags there.
   const flagged = new Set<WatchGroup>();
 
   return (
