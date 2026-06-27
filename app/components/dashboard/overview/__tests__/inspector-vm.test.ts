@@ -72,14 +72,20 @@ const call = (o: Partial<PipelineCallVM>): PipelineCallVM => ({
 describe("inspectorFromTrace", () => {
   it("passes through trace inspector fields", () => {
     const vm = inspectorFromTrace(trace({}));
+    expect(vm.variant).toBe("trace");
     expect(vm.signal).toBe("ROAS below break-even 6 days");
     expect(vm.evidence).toEqual(["ROAS 0.8", "Spend $300"]);
+    expect(vm.stats).toEqual([]);
     expect(vm.decisionLabel).toBe("DONE AUTOMATICALLY");
     expect(vm.confidence).toBe(82);
     expect(vm.threshold).toBe(75);
     expect(vm.showMoney).toBe(true);
     expect(vm.moneyCents).toBe(42000);
     expect(vm.moneyLabel).toBe("Ad spend protected");
+    // History rows carry no approve/deny framing.
+    expect(vm.approveText).toBeNull();
+    expect(vm.denyText).toBeNull();
+    expect(vm.trustLine).toBeNull();
   });
 
   it("tolerates null factors/confidence on a trace row", () => {
@@ -90,11 +96,11 @@ describe("inspectorFromTrace", () => {
 });
 
 describe("inspectorFromPending", () => {
-  it("builds an inspector from proposal + alert evidence + pipeline factors", () => {
-    const vm = inspectorFromPending(prop({}), alert({}), call({}));
+  it("frames the decision as approve/deny outcomes with a plain trust line", () => {
+    const vm = inspectorFromPending(prop({ action_kind: "reallocate_inventory" }), alert({}), call({}));
+    expect(vm.variant).toBe("pending");
     expect(vm.tag).toBe("NEEDS YOU");
     expect(vm.signal).toBe("Out of stock, still spending");
-    expect(vm.evidence).toEqual(["stock: 0 units", "spend: $120/day"]);
     expect(vm.factors).toEqual(factors);
     expect(vm.confidence).toBe(70);
     expect(vm.threshold).toBe(75);
@@ -102,6 +108,43 @@ describe("inspectorFromPending", () => {
     expect(vm.moneyLabel).toBe("At stake");
     expect(vm.moneyCents).toBe(12000);
     expect(vm.showMoney).toBe(true);
+    // Approve copy names the action in plain language; deny + trust are present.
+    expect(vm.approveText).toBe("Calderyn will reallocate inventory now. You can undo it anytime from your history.");
+    expect(vm.denyText).toContain("Nothing changes");
+    expect(vm.trustLine).toContain("Still learning this one");
+  });
+
+  it("humanizes alert evidence into figures, suppressing internal IDs and the product name", () => {
+    const vm = inspectorFromPending(
+      prop({}),
+      alert({
+        evidence: {
+          inventory_item_id: "gid://shopify/InventoryItem/1",
+          title: "Cascade Rain Shell — M",
+          stock_concentration_pct: "92.7",
+          demand_share_pct: "11.4",
+          location_region: "us-west",
+        },
+      }),
+      call({}),
+    );
+    // Raw key:value dump is gone; the legacy `evidence` chips are empty.
+    expect(vm.evidence).toEqual([]);
+    // Internal id + redundant product name dropped; the rest humanized + formatted.
+    expect(vm.stats).toEqual([
+      { label: "Stock kept in this region", value: "92.7%" },
+      { label: "Sales from this region", value: "11.4%" },
+      { label: "Region", value: "us-west" },
+    ]);
+  });
+
+  it("caps the figures so the panel stays glanceable", () => {
+    const vm = inspectorFromPending(
+      prop({}),
+      alert({ evidence: { a_units: "1", b_units: "2", c_units: "3", d_units: "4" } }),
+      call({}),
+    );
+    expect(vm.stats).toHaveLength(3);
   });
 
   it("degrades gracefully when alert/pipeline are missing", () => {
@@ -112,6 +155,7 @@ describe("inspectorFromPending", () => {
     );
     expect(vm.signal).toBe("Margin down");
     expect(vm.evidence).toEqual([]);
+    expect(vm.stats).toEqual([]);
     expect(vm.factors).toEqual([]);
     expect(vm.confidence).toBe(55);
     expect(vm.threshold).toBe(75); // default bar when no pipeline call

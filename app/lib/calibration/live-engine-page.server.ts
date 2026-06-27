@@ -27,6 +27,12 @@ import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
 import { graduationProgress } from "./progress";
+import {
+  pendingEvidenceStats,
+  pendingApproveText,
+  PENDING_DENY_TEXT,
+  PENDING_TRUST_LINE,
+} from "./pending-inspector";
 import type {
   LiveEnginePageData,
   LiveEngineFeatureVM,
@@ -34,6 +40,7 @@ import type {
   TraceEventVM,
   TraceTag,
   PredictionVM,
+  PendingInspectorVM,
 } from "./live-engine-types";
 
 // Re-export the browser-safe VM contract so the embedded route can keep
@@ -48,6 +55,8 @@ export type {
   TraceTag,
   PredictionVM,
   PredictionTone,
+  PendingInspectorVM,
+  InspectorStat,
 } from "./live-engine-types";
 
 type Client = ReturnType<typeof calderynClient>;
@@ -58,6 +67,7 @@ const EMPTY: LiveEnginePageData = {
   features: [],
   pipeline: [],
   trace: [],
+  pending: [],
   predictions: [],
   calibrationPct: null,
   nearGraduation: 0,
@@ -264,6 +274,32 @@ export async function buildLiveEnginePageData(
       };
     });
 
+    /* pending: flagged proposals awaiting approval, shaped for the simplified
+       inspector. Each is joined to its open alert for the narrative + humanized
+       evidence figures; the bar comes from the pair's real graduation threshold.
+       Same shared assembly as the dashboard's client-side inspector. */
+    const alertById = new Map(openAlerts.map((a) => [a.id, a]));
+    const pending: PendingInspectorVM[] = proposals.map((p) => {
+      const alert = alertById.get(p.alertId);
+      const { threshold } = breakdownFor(p.detector_id, p.action_kind);
+      const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
+      return {
+        alertId: p.alertId,
+        detectorId: p.detector_id,
+        actionKind: p.action_kind,
+        title: p.title || actionLabel,
+        actionLabel,
+        dollarImpactCents: p.dollar_impact,
+        confidence: p.confidence,
+        threshold,
+        signal: alert?.narrative || p.reasoning,
+        stats: pendingEvidenceStats(alert?.evidence),
+        approveText: pendingApproveText(actionLabel),
+        denyText: PENDING_DENY_TEXT,
+        trustLine: PENDING_TRUST_LINE,
+      };
+    });
+
     /* predictions: derived from real forward-looking signals only */
     const predictions: PredictionVM[] = [];
     // (a) inventory runway — the only legitimate forward number
@@ -310,6 +346,7 @@ export async function buildLiveEnginePageData(
       features,
       pipeline,
       trace,
+      pending,
       predictions,
       calibrationPct,
       nearGraduation,

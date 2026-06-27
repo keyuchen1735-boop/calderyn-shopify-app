@@ -63,6 +63,41 @@ export interface PredictionVM {
   tone: PredictionTone;
 }
 
+/** One humanized figure (label + formatted value) in a pending "why". */
+export interface InspectorStat {
+  label: string;
+  value: string;
+}
+
+/**
+ * A flagged proposal awaiting approval, shaped for the simplified inspector:
+ * the plain why + a few humanized figures, then what approving vs. denying does.
+ * Built server-side so both surfaces render it the same way; no weighing math.
+ */
+export interface PendingInspectorVM {
+  alertId: string;
+  detectorId: string;
+  actionKind: ActionKind;
+  title: string;
+  /** Action label, e.g. "Reallocate inventory". */
+  actionLabel: string;
+  dollarImpactCents: number;
+  /** Calibrated confidence, 0-100 (shown as "X% confident", not as bars). */
+  confidence: number;
+  /** The per-pair auto-act bar, 0-100. */
+  threshold: number;
+  /** WHY CALDERYN FLAGGED THIS — the plain-language signal. */
+  signal: string;
+  /** WHY — a few humanized key figures from the alert evidence. */
+  stats: InspectorStat[];
+  /** What approving does. */
+  approveText: string;
+  /** What denying does. */
+  denyText: string;
+  /** One plain line on why it asks instead of acting. */
+  trustLine: string;
+}
+
 export interface LiveEngineFeatureVM {
   detectorId: string;
   actionKind: ActionKind;
@@ -93,6 +128,8 @@ export interface LiveEnginePageData {
   features: LiveEngineFeatureVM[];
   pipeline: PipelineCallVM[];
   trace: TraceEventVM[];
+  /** Flagged proposals awaiting approval, newest-impact first. */
+  pending: PendingInspectorVM[];
   predictions: PredictionVM[];
   calibrationPct: number | null;
   nearGraduation: number;

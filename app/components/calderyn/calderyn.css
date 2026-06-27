@@ -1206,6 +1206,37 @@
 .engx-insp-cta { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 16px; height: 38px; border-radius: 9px; background: #23556e; color: #fff; font-size: 13px; font-weight: 600; text-decoration: none; }
 .engx-insp-cta:hover { background: #173a4d; }
 
+/* ----- 3b-pending. flagged proposals (NEEDS YOU) in the log ----- */
+.engx-trace-row[data-pending="1"] { flex-direction: column; align-items: stretch; gap: 0; cursor: default; }
+.engx-trace-row[data-tag="REVIEW"] { border-left-color: #c98a2a; }
+.engx-trace-row[data-tag="REVIEW"] .engx-trace-ico { background: #fbeedd; color: #9a5a12; }
+.engx-trace-row[data-tag="REVIEW"] .engx-trace-tag { background: #fbeedd; color: #9a5a12; }
+.engx-trace-rowmain { display: flex; gap: 12px; width: 100%; background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.engx-review-actions { display: flex; gap: 8px; margin-top: 11px; padding-left: 40px; }
+.engx-review-btn { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; border: 1px solid transparent; cursor: pointer; }
+.engx-review-btn:disabled { opacity: .55; cursor: default; }
+.engx-review-btn--reject { background: #fff; border-color: #d8dcdf; color: #5a5a5a; }
+.engx-review-btn--reject:hover:not(:disabled) { background: #f6f8f9; }
+.engx-review-btn--accept { background: #23556e; border-color: #23556e; color: #fff; }
+.engx-review-btn--accept:hover:not(:disabled) { background: #1d4a60; }
+.engx-deny-why { display: flex; flex-direction: column; gap: 8px; margin-top: 11px; padding-left: 40px; }
+.engx-deny-why-lab { font-size: 12px; color: #6a6a6a; }
+.engx-deny-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.engx-deny-chip { font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid #d8dcdf; background: #fff; color: #3a3a3a; cursor: pointer; }
+.engx-deny-chip:hover:not(:disabled) { background: #f4f6f7; }
+.engx-deny-chip:disabled { opacity: .55; cursor: default; }
+.engx-review-err { margin-top: 8px; padding-left: 40px; font-size: 12px; color: #b3300f; }
+
+/* ----- 3b-pending inspector: why + figures + approve/deny outcomes ----- */
+.engx-insp-tag[data-tag="REVIEW"] { background: #fbeedd; color: #9a5a12; }
+.engx-insp-stats { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+.engx-insp-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.engx-insp-stat-lab { font-size: 12.5px; color: #5a5a5a; }
+.engx-insp-stat-val { font-size: 12.5px; font-weight: 600; color: #2a2a2a; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.engx-insp-decide { display: flex; flex-direction: column; gap: 13px; }
+.engx-insp-act-note { margin: 0; font-size: 12.5px; color: #5a5a5a; line-height: 1.5; }
+.engx-insp-trust { margin: 0; padding-top: 12px; border-top: 1px solid #ededed; font-size: 12px; color: #8a8a8a; line-height: 1.5; }
+
 /* ----- 3c. calibration mini ----- */
 .engx-cal { background: #fff; border: 1px solid #e3e3e3; border-radius: 16px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(26, 26, 26, .04); }
 .engx-cal-top { display: flex; align-items: center; gap: 14px; }
