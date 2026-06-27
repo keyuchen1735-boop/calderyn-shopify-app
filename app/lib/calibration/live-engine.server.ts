@@ -90,6 +90,9 @@ export function aggregateLiveEngine(
   pairs: PairRow[],
   auditRows: AutopilotAuditRow[],
   nowMs: number,
+  /** `${detector}:${action}` pairs the merchant has muted via a muted_pair rule.
+   *  A muted pair is never recommended (the merchant said "I handle this"). */
+  mutedPairs: Set<string> = new Set(),
 ): { moneyProtectedWeekCents: number; features: LiveEngineFeature[] } {
   const weekStart = nowMs - 7 * DAY_MS;
   const agg = new Map<string, { money: number; actions: number; lastAt: string | null }>();
@@ -110,17 +113,20 @@ export function aggregateLiveEngine(
   const features: LiveEngineFeature[] = pairs.map((p) => {
     const detectorId = String(p.detector_id);
     const actionKind = p.action_kind as ActionKind;
-    const a = agg.get(`${detectorId}:${actionKind}`) ?? { money: 0, actions: 0, lastAt: null };
+    const pairKey = `${detectorId}:${actionKind}`;
+    const a = agg.get(pairKey) ?? { money: 0, actions: 0, lastAt: null };
     const cleanApprovals = Number(p.clean_approvals ?? 0);
     // Slice C: recommend turning a feature on when it is unlocked (graduated),
-    // the merchant has not enabled it, it is not muted, and it has earned a track
-    // record (clean approvals at the action's reversibility-tier floor). For the
-    // shipped no-brainers this is the approvals bar (3); for learned pairs it is
-    // already met at graduation, so the same formula serves both.
+    // the merchant has not enabled it, it is neither hard-muted (merchant_disabled)
+    // nor muted via a rule, and it has earned a track record (clean approvals at the
+    // action's reversibility-tier floor). For the shipped no-brainers this is the
+    // approvals bar (3); for learned pairs it is already met at graduation, so the
+    // same formula serves both. Boolean(p.graduated) keeps the result a clean boolean.
     const recommended =
       Boolean(p.graduated) &&
-      !Boolean(p.autonomy_enabled) &&
-      !Boolean(p.merchant_disabled) &&
+      !p.autonomy_enabled &&
+      !p.merchant_disabled &&
+      !mutedPairs.has(pairKey) &&
       cleanApprovals >= MIN_APPROVALS[actionTier(actionKind)];
     return {
       detectorId,
@@ -191,10 +197,25 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
       .is("undo_of", null)
       .gte("created_at", sinceIso);
 
+    // Active muted_pair rules: a pair the merchant has trained Calderyn to leave to
+    // them must NOT be recommended (the autopilot path vetoes it anyway). Mirrors
+    // the muted-pair read in queue.list. Best-effort: a read error degrades to an
+    // empty set (no muted filtering), never throws.
+    const { data: mutedRows } = await sb
+      .from("calibration_rule")
+      .select("detector_id, action_kind")
+      .eq("shop_id", shopId)
+      .eq("active", true)
+      .eq("rule_kind", "muted_pair");
+    const mutedPairs = new Set(
+      (mutedRows ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+    );
+
     const { moneyProtectedWeekCents, features } = aggregateLiveEngine(
       visiblePairs,
       (auditRows ?? []) as AutopilotAuditRow[],
       Date.now(),
+      mutedPairs,
     );
     return { autopilotEnabled, moneyProtectedWeekCents, features };
   } catch {

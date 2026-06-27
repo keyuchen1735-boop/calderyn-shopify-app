@@ -123,11 +123,20 @@ describe("aggregateLiveEngine", () => {
     expect(out.features[0].recommended).toBe(false);
   });
 
-  it("does NOT recommend a muted pair", () => {
+  it("does NOT recommend a hard-muted pair (merchant_disabled)", () => {
     const out = aggregateLiveEngine(
       [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
          graduated: true, autonomy_enabled: false, merchant_disabled: true, clean_approvals: 9 }],
       [], NOW);
+    expect(out.features[0].recommended).toBe(false);
+  });
+
+  it("does NOT recommend a pair muted via a calibration rule", () => {
+    const out = aggregateLiveEngine(
+      [{ detector_id: "campaign_below_breakeven", action_kind: "pause_campaign",
+         graduated: true, autonomy_enabled: false, merchant_disabled: false, clean_approvals: 9 }],
+      [], NOW,
+      new Set(["campaign_below_breakeven:pause_campaign"]));
     expect(out.features[0].recommended).toBe(false);
   });
 

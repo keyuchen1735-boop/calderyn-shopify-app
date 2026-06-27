@@ -140,31 +140,31 @@ describe("buildActionQueue", () => {
     expect(q).toHaveLength(1);
   });
 
-  // I5 graduated pair exclusion
-  it("drops a proposal whose detector:action pair is in graduatedPairs (no double-actor)", () => {
-    const graduated = new Set(["campaign_below_breakeven:pause_campaign"]);
-    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), graduated);
+  // I5 no-double-actor: pairs RUNNING autonomously (graduated AND enabled) are excluded
+  it("drops a proposal whose detector:action pair is in autonomyPairs (running, no double-actor)", () => {
+    const running = new Set(["campaign_below_breakeven:pause_campaign"]);
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), running);
     expect(q).toHaveLength(0);
   });
 
-  it("keeps a proposal whose pair is NOT in graduatedPairs", () => {
-    const graduated = new Set(["other_detector:pause_campaign"]);
-    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), graduated);
+  it("keeps a proposal whose pair is NOT in autonomyPairs", () => {
+    const running = new Set(["other_detector:pause_campaign"]);
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), running);
     expect(q).toHaveLength(1);
     expect(q[0].alertId).toBe("a1");
   });
 
-  it("graduated exclusion is independent of mutedPairs (both can exclude)", () => {
+  it("autonomy (running) exclusion is independent of mutedPairs (both can exclude)", () => {
     const a1 = alert({ id: "a1", detector_id: "campaign_below_breakeven", campaign_id: "c1" });
     const a2 = alert({ id: "a2", detector_id: "reorder_timing", campaign_id: null, evidence: {} });
-    // Graduate a1's pair; mute a2's pair
-    const graduated = new Set(["campaign_below_breakeven:pause_campaign"]);
+    // a1's pair is running autonomously; a2's pair is muted
+    const running = new Set(["campaign_below_breakeven:pause_campaign"]);
     const muted = new Set(["reorder_timing:create_po_draft"]);
-    const q = buildActionQueue([a1, a2] as never, new Map(), new Set(), muted, graduated);
+    const q = buildActionQueue([a1, a2] as never, new Map(), new Set(), muted, running);
     expect(q).toHaveLength(0);
   });
 
-  it("non-graduated pair with otherwise valid alert is kept", () => {
+  it("a pair not running autonomously, otherwise valid alert is kept", () => {
     // Empty autonomyPairs — nothing is running autonomously
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set());
     expect(q).toHaveLength(1);
