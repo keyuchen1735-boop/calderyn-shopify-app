@@ -125,6 +125,7 @@ export async function metaWriteClientForShopId(shopId: string): Promise<MetaWrit
   if (!data || !data.access_token_encrypted) return null;
   const token = decrypt(data.access_token_encrypted as string);
   const adAccountId = (data.external_account_id as string | null) ?? "";
+  if (!adAccountId) return null;
   const client: MetaClient = {
     async get(path, params = {}) {
       const qs = new URLSearchParams({ ...params, access_token: token }).toString();
