@@ -9,6 +9,8 @@ import { blendedRoas, money, moneyK, SEV_STYLE } from "./format";
 import { CDIcon } from "./icons";
 import { PlatformIcon } from "../PlatformIcon";
 import type { DailyRow, Severity, Grade, Platform, Toast } from "./view-models";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
+import { scorePillStyle } from "./score-pill";
 
 /* ---------- CountUp: animated number ticker ---------- */
 export function useCountUp(value: number, dur = 800): number {
@@ -165,6 +167,16 @@ export function GradePill({ grade }: { grade: Grade | string }) {
     nodata: ["No data", "neutral"],
   };
   const [label, tone] = map[grade] || ["—", "neutral"];
+  return <Pill tone={tone}>{label}</Pill>;
+}
+
+/**
+ * The single primary campaign indicator: the blended Calderyn score (0–100 +
+ * band), band-driven color. Replaces GradePill on campaign rows and detail
+ * headers. "Score pending" when band is "nodata".
+ */
+export function ScorePill({ score }: { score: CampaignCalderynScore }) {
+  const { label, tone } = scorePillStyle(score);
   return <Pill tone={tone}>{label}</Pill>;
 }
 
