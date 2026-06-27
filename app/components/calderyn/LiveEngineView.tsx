@@ -669,6 +669,7 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
         levels={band.levels}
         moneyProtectedCents={data.moneyProtectedWeekCents}
         flaggedGroups={flagged}
+        watchScan={data.watchScan}
       />
       <div className="engx-cols">
         <CalderynLog

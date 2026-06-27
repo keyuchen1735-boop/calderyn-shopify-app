@@ -122,6 +122,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
             levels={band.levels}
             moneyProtectedCents={data.moneyProtectedWeekCents}
             flaggedGroups={flagged}
+            watchScan={data.watchScan}
             dark={app.t.dark}
           />
 
