@@ -165,9 +165,20 @@ describe("buildActionQueue", () => {
   });
 
   it("non-graduated pair with otherwise valid alert is kept", () => {
-    // Empty graduatedPairs — nothing is graduated
+    // Empty autonomyPairs — nothing is running autonomously
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set());
     expect(q).toHaveLength(1);
+  });
+
+  // Slice C warm-up: the 5th arg is the set of pairs RUNNING autonomously
+  // (graduated AND merchant-enabled). A pair that is graduated/unlocked but the
+  // merchant has NOT enabled is absent from that set, so it stays in the queue as
+  // a suggestion until the merchant opts in.
+  it("keeps a graduated-but-NOT-enabled pair as a suggestion (warm-up)", () => {
+    const autonomyPairs = new Set<string>(); // unlocked, but autonomy_enabled=false => not running
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), autonomyPairs);
+    expect(q).toHaveLength(1);
+    expect(q[0].alertId).toBe("a1");
   });
 
   // (a) Magnitude-awareness: a graduated pair's OVER-CAP alert is blocked by
