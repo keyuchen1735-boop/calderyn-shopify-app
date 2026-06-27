@@ -6,7 +6,7 @@ import { isSourceDisconnected } from "~/lib/integration-status";
 import {
   Card,
   SectionTitle,
-  GradePill,
+  ScorePill,
   PlatformMark,
   Sparkline,
   Pill,
@@ -16,6 +16,7 @@ import {
   CountMoney,
   Tooltip,
 } from "../ui";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { money } from "../format";
 import { CDIcon } from "../icons";
 import { fetchAnalytics, executeCampaignAction, DashboardApiError, fetchCampaignDirection, type CampaignDirectionDTO } from "~/lib/dashboard/client";
@@ -24,6 +25,11 @@ import { scaleReason as buildScaleReason } from "~/lib/scale-reason";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM, Platform } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
+
+const PENDING_SCORE: CampaignCalderynScore = {
+  value: null, band: "nodata", performance: null, creative: null, confidence: "low",
+  weakDimensions: [], tips: [], adsCovered: 0, adsTotal: 0,
+};
 
 const DIR_PILL: Record<string, { label: string; tone: "success" | "warn" | "critical" | "neutral"; icon?: string }> = {
   scale_up: { label: "Scale up", tone: "success", icon: "arrowUpRight" },
@@ -74,7 +80,11 @@ function CampaignRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">{c.name}</span>
-          {c.status === "paused" ? <Pill icon="pause">Paused</Pill> : <GradePill grade={c.grade} />}
+          {c.status === "paused" ? (
+            <Pill icon="pause">Paused</Pill>
+          ) : (
+            <ScorePill score={c.calderynScore ?? PENDING_SCORE} />
+          )}
           {staleSource && (
             <Tooltip content="This ad platform is disconnected — its data may be out of date.">
               <Pill tone="warn" icon="clock">Stale</Pill>
@@ -216,7 +226,7 @@ function CampaignDetail({
             <span className="cd-caption">
               {c.platform} · {paused ? "Paused" : "Active"}
             </span>
-            <GradePill grade={c.grade} />
+            <ScorePill score={c.calderynScore ?? PENDING_SCORE} />
           </div>
           <h1 className="cd-h1" style={{ maxWidth: "24ch" }}>
             {c.name}
@@ -408,6 +418,54 @@ function CampaignDetail({
                   <span className="cd-row-num tabular-nums">{money(a.dollar_impact)}{IMPACT_SUFFIX}</span>
                   <CDIcon name="chevronRight" size={14} />
                 </button>
+              ))}
+            </div>
+          </Card>
+        );
+      })()}
+
+      {(() => {
+        const s = c.calderynScore ?? PENDING_SCORE;
+        return (
+          <Card>
+            <SectionTitle>Calderyn score</SectionTitle>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+              <ScorePill score={s} />
+              <span className="cd-caption">Performance {s.performance != null ? s.performance : "—"}</span>
+              <span className="cd-caption">Creative {s.creative != null ? s.creative : "—"}</span>
+              <Pill>{`Confidence: ${s.confidence}`}</Pill>
+              <span className="cd-caption">{`Ads scored ${s.adsCovered}/${s.adsTotal}`}</span>
+            </div>
+            {(s.performance == null || s.creative == null) && (
+              <p className="cd-caption">
+                {s.performance == null ? "Performance pending — attribution. " : ""}
+                {s.creative == null ? "Open this campaign and connect Meta to score its creatives." : ""}
+              </p>
+            )}
+          </Card>
+        );
+      })()}
+
+      {(() => {
+        const s = c.calderynScore ?? PENDING_SCORE;
+        if (s.weakDimensions.length === 0 && s.tips.length === 0) return null;
+        return (
+          <Card pad={false}>
+            <div className="cd-pad-x cd-pad-t">
+              <SectionTitle>How to improve</SectionTitle>
+            </div>
+            <div className="cd-rows">
+              {s.weakDimensions.map((d, i) => (
+                <div key={`wd-${d.adId}-${i}`} className="cd-row">
+                  <span>{d.label}</span>
+                  <Pill tone="warn">{d.score}</Pill>
+                </div>
+              ))}
+              {s.tips.map((t, i) => (
+                <div key={`tip-${i}`} className="cd-row">
+                  <CDIcon name="sparkle" size={14} />
+                  <span>{t}</span>
+                </div>
               ))}
             </div>
           </Card>
