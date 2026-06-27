@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
+import type { RegionCode } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { type AdminGraphqlClient } from "../shopify/inventory.server";
 import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
@@ -286,6 +287,14 @@ export async function undoAction(
       variantId: pp.variant_id,
       newPriceCents: Number(pp.prior_price_cents),
     });
+  } else if (orig.action_kind === "exclude_geo") {
+    // Reverse a geo exclusion: re-include the recorded region's targeting.
+    // No mirror restore — exclude_geo never changed ad_campaign_dim status/budget.
+    if (!externalId) throw new Error("cannot undo exclude_geo: missing campaign external id");
+    const region = (orig.params as { region?: string } | null)?.region;
+    if (!region) throw new Error(`audit ${auditId} lacks the excluded region; cannot undo`);
+    const adapter = await requireAdapter();
+    await adapter.includeGeo(externalId, region as RegionCode);
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).
