@@ -189,13 +189,13 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
     }
   });
 
-  it("defaults a blank (one-click) quantity to the suggested reorder qty", async () => {
-    // evidence velocity 5.71, lead 14, cover 4.0 -> ceil(5.71 * (14 + 14 - 4)) = 138
+  it("defaults a blank (one-click) quantity to the derived reorder qty", async () => {
+    // derivePoQuantity: no shortfall_units -> velocity 5.71 over lead 14 -> ceil(5.71 * 14) = 80
     const res = await call(poRequest({ po_quantity: "" }));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     const params = (executeSpy.mock.calls[0][0] as { params: { po: { lines: Array<{ quantity: number }> } } }).params;
-    expect(params.po.lines[0].quantity).toBe(138);
+    expect(params.po.lines[0].quantity).toBe(80);
   });
 
   it("still 422s a blank quantity when the alert has no usable velocity", async () => {

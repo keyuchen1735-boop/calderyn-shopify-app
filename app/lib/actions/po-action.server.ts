@@ -10,9 +10,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalderynError } from "../calderyn.server";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import { acknowledgeAlert } from "../alerts.server";
-import { buildPoDraft } from "../po/draft.server";
+import { buildPoDraft, derivePoQuantity } from "../po/draft.server";
 import { resolveSkuForDiscontinue } from "./discontinue.server";
-import { suggestedReorderQty } from "./reorder-qty";
 import type { ActionKind, Alert, AuditEntry } from "../types";
 
 export interface PoActionClient {
@@ -70,7 +69,7 @@ export async function executeCreatePoDraft(opts: {
   // typed number. A typed quantity always wins. If no suggestion can be derived
   // (no usable velocity), qtyRaw stays "" and the validation below fails visibly.
   const typed = quantity.trim();
-  const qtyRaw = typed === "" ? String(suggestedReorderQty(alert.evidence ?? {}) ?? "") : typed;
+  const qtyRaw = typed === "" ? String(derivePoQuantity(alert.evidence ?? {}) ?? "") : typed;
   const qty = Number(qtyRaw);
   if (!/^\d+$/.test(qtyRaw) || qty <= 0 || qty > 1_000_000) {
     throw new CalderynError({

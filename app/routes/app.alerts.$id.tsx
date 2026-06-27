@@ -29,7 +29,6 @@ import {
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { snoozeAlert } from "~/lib/actions/snooze.server";
-import { suggestedReorderQty } from "~/lib/actions/reorder-qty";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -279,7 +278,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       // suggestion is null, qtyRaw stays "", and validation below fails visibly.
       const typedQty = String(formData.get("po_quantity") ?? "").trim();
       const qtyRaw =
-        typedQty === "" ? String(suggestedReorderQty(alert.evidence ?? {}) ?? "") : typedQty;
+        typedQty === "" ? String(derivePoQuantity(alert.evidence ?? {}) ?? "") : typedQty;
       const quantity = Number(qtyRaw);
       // Digits-only regex already guarantees an integer; bound it to a sane max.
       if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {

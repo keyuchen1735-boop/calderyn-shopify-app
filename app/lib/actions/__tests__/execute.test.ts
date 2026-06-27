@@ -117,6 +117,19 @@ describe("executeAction", () => {
     expect(adapter.excludeGeo).not.toHaveBeenCalled();
   });
 
+  it("exclude_geo rejects an unknown region bucket before any platform call", async () => {
+    const { sb } = fakeSb({ campaign });
+    await expect(
+      executeAction(
+        SHOP,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising the bad-region guard
+        { alertId: "alert-1", kind: "exclude_geo", campaignId: CAMP, idempotencyKey: "kgeo3", region: "us-bogus" as any },
+        sb,
+      ),
+    ).rejects.toThrow(/valid region/i);
+    expect(adapter.excludeGeo).not.toHaveBeenCalled();
+  });
+
   it("does not touch alerts on a succeeded action without an alert", async () => {
     const { sb, calls } = fakeSb({ campaign });
     await executeAction(SHOP, { alertId: null, kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kackn" }, sb);
