@@ -101,6 +101,15 @@ describe("executeCreatePoDraft", () => {
     }
   });
 
+  it("defaults an empty (one-click) quantity to the suggested reorder qty", async () => {
+    // velocity 2.0, lead 14, no cover -> ceil(2 * (14 + 14)) = 56
+    const c = client(alert({ evidence: { title: "Trail Runner — 9", daily_velocity_units: "2.0", lead_time_days: 14 } }));
+    const res = await executeCreatePoDraft({ ...base, client: c as never, sb: SB, quantity: "", unitCost: "" });
+    const call = c.actions.execute.mock.calls[0][0] as { params: { po?: { lines: Array<{ quantity: number }> } } };
+    expect(call.params.po?.lines[0].quantity).toBe(56);
+    expect(res).toMatchObject({ outcome: "succeeded" });
+  });
+
   it("refuses to draft a PO for a discontinued (Do-Not-Reorder) SKU (409)", async () => {
     resolveSkuForDiscontinue.mockResolvedValue({ skuId: "sku-1", productGid: "gid://x", alreadyFlagged: true });
     await expect(
