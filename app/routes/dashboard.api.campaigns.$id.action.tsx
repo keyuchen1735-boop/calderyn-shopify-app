@@ -4,6 +4,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import type { RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -14,7 +15,9 @@ const KINDS: ExecutableKind[] = [
   "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
+  "exclude_geo",
 ];
+const REGIONS: readonly RegionCode[] = ["us-west", "us-east", "us-south", "us-central"];
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -33,6 +36,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const dailyBudgetCents =
     body.daily_budget_cents === undefined ? undefined : Number(body.daily_budget_cents);
 
+  const region = typeof body.region === "string" ? (body.region as RegionCode) : undefined;
+
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
   if (
@@ -40,6 +45,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
     (!Number.isFinite(dailyBudgetCents) || (dailyBudgetCents as number) <= 0)
   ) {
     return jsonError(422, "invalid_daily_budget_cents");
+  }
+  if (kind === "exclude_geo" && (!region || !REGIONS.includes(region))) {
+    return jsonError(422, "invalid_region");
   }
 
   const alertId = typeof body.alert_id === "string" ? body.alert_id : null;
@@ -53,6 +61,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       campaignId: String(params.id),
       idempotencyKey,
       dailyBudgetCents,
+      region,
       actor: "merchant:web-dashboard",
     },
     sb,

@@ -6,6 +6,9 @@ import {
   getRecorded,
 } from "../../lib/__tests__/_supabase_chain_mock";
 import { action, loader } from "../app.alerts.$id";
+import { executeAction } from "~/lib/actions/execute.server";
+
+const executeActionMock = vi.mocked(executeAction);
 
 // Spies for the boundaries; the real route `action` logic runs against them.
 const { executeSpy, alertsGetSpy, guardrailsGetSpy } = vi.hoisted(() => ({
@@ -212,6 +215,38 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
     const res = await call(poRequest({ po_unit_cost: "-1" }));
     expect(res.status).toBe(422);
     expect(executeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("alert action — exclude_geo", () => {
+  const GEO_ALERT = {
+    ...ALERT,
+    detector_id: "regional_spend_starved_stock",
+    sku: "PP-WATER-B",
+    campaign_id: "11111111-1111-1111-1111-111111111111", // resolved from entity_ref by the view
+    evidence: { region: "us-west", sku_title: "Water Bottle" },
+  };
+
+  it("exclude_geo approve calls executeAction with the campaign id and region", async () => {
+    alertsGetSpy.mockResolvedValue(GEO_ALERT);
+    executeActionMock.mockResolvedValueOnce({ id: "aud-geo-1", outcome: "succeeded" });
+    const fd = new FormData();
+    fd.set("kind", "exclude_geo");
+    fd.set("alertId", GEO_ALERT.id);
+    fd.set("idempotencyKey", "k-geo-1");
+    const req = new Request(`http://localhost/app/alerts/${GEO_ALERT.id}`, { method: "POST", body: fd });
+    const res = await call(req);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(executeActionMock).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      expect.objectContaining({
+        kind: "exclude_geo",
+        campaignId: "11111111-1111-1111-1111-111111111111",
+        region: "us-west",
+      }),
+      expect.anything(),
+    );
   });
 });
 
