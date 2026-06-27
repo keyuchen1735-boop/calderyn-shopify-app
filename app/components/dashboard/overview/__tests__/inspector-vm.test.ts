@@ -77,6 +77,9 @@ describe("inspectorFromTrace", () => {
     expect(vm.decisionLabel).toBe("DONE AUTOMATICALLY");
     expect(vm.confidence).toBe(82);
     expect(vm.threshold).toBe(75);
+    expect(vm.showMoney).toBe(true);
+    expect(vm.moneyCents).toBe(42000);
+    expect(vm.moneyLabel).toBe("Ad spend protected");
   });
 
   it("tolerates null factors/confidence on a trace row", () => {
@@ -96,6 +99,9 @@ describe("inspectorFromPending", () => {
     expect(vm.confidence).toBe(70);
     expect(vm.threshold).toBe(75);
     expect(vm.decisionLabel).toBe("NEEDS YOUR APPROVAL");
+    expect(vm.moneyLabel).toBe("At stake");
+    expect(vm.moneyCents).toBe(12000);
+    expect(vm.showMoney).toBe(true);
   });
 
   it("degrades gracefully when alert/pipeline are missing", () => {

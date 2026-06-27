@@ -30,6 +30,12 @@ export interface InspectorVM {
   decisionLabel: string;
   /** DECISION — plain-language note. */
   decisionNote: string;
+  /** Whether to render the money row. */
+  showMoney: boolean;
+  /** Signed money for the money row (cents). */
+  moneyCents: number;
+  /** Label for the money row, e.g. "Ad spend protected" / "At stake". */
+  moneyLabel: string;
 }
 
 /** Default auto-act bar when no pipeline call is available for a pending item. */
@@ -48,6 +54,9 @@ export function inspectorFromTrace(t: TraceEventVM): InspectorVM {
     threshold: t.threshold,
     decisionLabel: t.decisionLabel,
     decisionNote: t.decisionNote,
+    showMoney: t.tag !== "BLOCKED" && t.moneyCents !== 0,
+    moneyCents: t.moneyCents,
+    moneyLabel: t.tag === "AUTO" ? "Ad spend protected" : t.tag === "UNDONE" ? "Reversed" : "Impact",
   };
 }
 
@@ -80,5 +89,8 @@ export function inspectorFromPending(
     decisionLabel: "NEEDS YOUR APPROVAL",
     decisionNote:
       "Calderyn is confident enough to suggest this, not yet to do it on its own.",
+    showMoney: p.dollar_impact !== 0,
+    moneyCents: p.dollar_impact,
+    moneyLabel: "At stake",
   };
 }
