@@ -27,6 +27,7 @@ import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
 import { graduationProgress } from "./progress";
+import { buildWatchScan } from "./watch-scan";
 import {
   pendingEvidenceStats,
   pendingApproveText,
@@ -69,6 +70,7 @@ const EMPTY: LiveEnginePageData = {
   trace: [],
   pending: [],
   predictions: [],
+  watchScan: { inv: [], ads: [], price: [], ret: [] },
   calibrationPct: null,
   nearGraduation: 0,
 };
@@ -143,7 +145,7 @@ export async function buildLiveEnginePageData(
   now: number = Date.now(),
 ): Promise<LiveEnginePageData> {
   try {
-    const [summaryR, pairsR, calR, nearR, proposalsR, auditR, skusR, alertsR, gradesR] =
+    const [summaryR, pairsR, calR, nearR, proposalsR, auditR, skusR, alertsR, gradesR, campaignsR] =
       await Promise.allSettled([
         client.calibration.liveEngine(),
         client.calibration.pairEvidence(),
@@ -154,6 +156,7 @@ export async function buildLiveEnginePageData(
         client.skus.list(signal),
         client.alerts.list({ status: "open" }, signal),
         client.analytics.campaignGrades(signal),
+        client.campaigns.list(signal),
       ]);
 
     const summary = summaryR.status === "fulfilled" ? summaryR.value : null;
@@ -165,6 +168,11 @@ export async function buildLiveEnginePageData(
     const skus = skusR.status === "fulfilled" ? skusR.value : [];
     const openAlerts = alertsR.status === "fulfilled" ? alertsR.value : [];
     const grades = gradesR.status === "fulfilled" ? gradesR.value : [];
+    const campaigns = campaignsR.status === "fulfilled" ? campaignsR.value : [];
+    const watchScan = buildWatchScan(
+      skus.map((s) => ({ title: s.title, velocity: s.velocity })),
+      campaigns.map((c) => ({ name: c.name })),
+    );
 
     const evMap = new Map(pairEv.map((p) => [`${p.detectorId}:${p.actionKind}`, p]));
     const breakdownFor = (detectorId: string, actionKind: ActionKind) => {
@@ -348,6 +356,7 @@ export async function buildLiveEnginePageData(
       trace,
       pending,
       predictions,
+      watchScan,
       calibrationPct,
       nearGraduation,
     };
