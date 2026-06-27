@@ -4,7 +4,12 @@ import { Text } from "@shopify/polaris";
 import { fmtMoney } from "~/lib/format";
 import { calibrationBand } from "~/lib/calibration/bands";
 import AutopilotHero from "~/components/dashboard/hero/AutopilotHero";
-import { domainForDetector } from "~/components/dashboard/overview/features-model";
+import {
+  domainForDetector,
+  lockedCatalogForGroup,
+  catalogName,
+  LOCKED_FEATURE_TOOLTIP,
+} from "~/components/dashboard/overview/features-model";
 import type { WatchGroup } from "~/components/dashboard/engine-events";
 import type {
   LiveEnginePageData,
@@ -56,6 +61,9 @@ function ITag({ s = 14, w = 2 }: IP) {
 }
 function IUsers({ s = 14, w = 2 }: IP) {
   return (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" style={sx}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>);
+}
+function ILock({ s = 15, w = 2 }: IP) {
+  return (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" style={sx}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>);
 }
 
 /* ---------- shared bits ---------- */
@@ -175,18 +183,33 @@ const GROUP_META: Record<WatchGroup, { label: string; icon: ReactNode }> = {
 };
 const GROUP_ORDER: WatchGroup[] = ["ads", "inv", "price", "ret"];
 
+/** Locked catalog feature — a capability this store hasn't unlocked yet. */
+function LockedFeatureRow({ name }: { name: string }) {
+  return (
+    <div className="engx-feat" data-locked="true" title={LOCKED_FEATURE_TOOLTIP}>
+      <span className="engx-feat-ico engx-feat-ico--locked"><ILock /></span>
+      <div className="engx-feat-body">
+        <span className="engx-feat-name engx-feat-name--locked">{name}</span>
+      </div>
+    </div>
+  );
+}
+
 function FeatureGroupSection({
   label,
   icon,
-  features,
+  unlocked,
+  locked,
   autopilotEnabled,
 }: {
   label: string;
   icon: ReactNode;
-  features: LiveEngineFeatureVM[];
+  unlocked: LiveEngineFeatureVM[];
+  locked: { detectorId: string; name: string }[];
   autopilotEnabled: boolean;
 }) {
-  const onCount = autopilotEnabled ? features.filter((f) => f.enabled).length : 0;
+  const onCount = autopilotEnabled ? unlocked.filter((f) => f.enabled).length : 0;
+  const total = unlocked.length + locked.length;
   const [collapsed, setCollapsed] = useState(onCount === 0);
 
   // Auto-expand when a group gains its first active feature (e.g. a pair just
@@ -201,7 +224,7 @@ function FeatureGroupSection({
         <span className="engx-grp-ico">{icon}</span>
         <span className="engx-grp-name">{label}</span>
         <span className="engx-grp-count">
-          {onCount} / {features.length}
+          {onCount} / {total}
         </span>
         <span className="engx-grp-chev" data-collapsed={collapsed}>
           <IChevDown s={15} />
@@ -209,8 +232,15 @@ function FeatureGroupSection({
       </button>
       {!collapsed && (
         <div className="engx-feat-list">
-          {features.map((f) => (
-            <FeatureRow key={`${f.detectorId}:${f.actionKind}`} f={f} autopilotEnabled={autopilotEnabled} />
+          {unlocked.map((f) => (
+            <FeatureRow
+              key={`${f.detectorId}:${f.actionKind}`}
+              f={{ ...f, name: catalogName(f.detectorId, f.name) }}
+              autopilotEnabled={autopilotEnabled}
+            />
+          ))}
+          {locked.map((c) => (
+            <LockedFeatureRow key={c.detectorId} name={c.name} />
           ))}
         </div>
       )}
@@ -220,12 +250,14 @@ function FeatureGroupSection({
 
 function AutopilotFeaturesCard({ data }: { data: LiveEnginePageData }) {
   const onCount = data.autopilotEnabled ? data.features.filter((f) => f.enabled).length : 0;
+  const unlockedDetectors = new Set(data.features.map((f) => f.detectorId));
   const groups = GROUP_ORDER.map((key) => ({
     key,
     label: GROUP_META[key].label,
     icon: GROUP_META[key].icon,
-    features: data.features.filter((f) => domainForDetector(f.detectorId) === key),
-  })).filter((g) => g.features.length > 0);
+    unlocked: data.features.filter((f) => domainForDetector(f.detectorId) === key),
+    locked: lockedCatalogForGroup(key, unlockedDetectors),
+  }));
 
   return (
     <div className="engx-auto">
@@ -233,22 +265,16 @@ function AutopilotFeaturesCard({ data }: { data: LiveEnginePageData }) {
         <h2 className="engx-auto-h2">Autopilot features</h2>
         <span className="engx-feat-head-badge">{onCount} on</span>
       </div>
-      {groups.length === 0 ? (
-        <div className="engx-auto-empty">
-          No features run on autopilot yet. As you approve suggestions in the{" "}
-          <a href="/app/alerts">Alerts</a> page, the ones you trust most graduate to run here on their own.
-        </div>
-      ) : (
-        groups.map((g) => (
-          <FeatureGroupSection
-            key={g.key}
-            label={g.label}
-            icon={g.icon}
-            features={g.features}
-            autopilotEnabled={data.autopilotEnabled}
-          />
-        ))
-      )}
+      {groups.map((g) => (
+        <FeatureGroupSection
+          key={g.key}
+          label={g.label}
+          icon={g.icon}
+          unlocked={g.unlocked}
+          locked={g.locked}
+          autopilotEnabled={data.autopilotEnabled}
+        />
+      ))}
     </div>
   );
 }
