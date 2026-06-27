@@ -37,6 +37,15 @@ export function makeTikTokActionAdapter(call: CallFn, advertiserId: string): Act
       // per-campaign read endpoint is not needed for the action path.
       throw new ActionError("tiktok", "getState not used for tiktok in Slice 3");
     },
+    // Geo exclusion on TikTok lives on ad-group location targeting, requiring a
+    // fan-out over the campaign's ad groups — built in Phase 2. Until then fail
+    // terminally (no phantom). Demo shops use showcaseActionAdapter, not this.
+    async excludeGeo() {
+      throw new ActionError("tiktok", "geo exclusion not yet supported on tiktok", { retriable: false });
+    },
+    async includeGeo() {
+      throw new ActionError("tiktok", "geo exclusion not yet supported on tiktok", { retriable: false });
+    },
   };
 }
 

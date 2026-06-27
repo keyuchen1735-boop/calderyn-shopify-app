@@ -35,6 +35,12 @@ describe("metaActionAdapter", () => {
     const s = await makeMetaActionAdapter(c).getState("c1");
     expect(s).toEqual({ status: "paused", dailyBudgetCents: 5000 });
   });
+
+  it("excludeGeo / includeGeo fail terminally until Phase 2 (no phantom)", async () => {
+    const a = makeMetaActionAdapter(client({}));
+    await expect(a.excludeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
+    await expect(a.includeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
+  });
 });
 
 describe("metaActionAdapter rate limiting", () => {
