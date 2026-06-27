@@ -48,6 +48,7 @@ const DETECTOR_DOMAIN: Record<string, WatchGroup> = {
   campaign_scaling_opportunity: "ads",
   // Inventory / fulfillment
   sku_stockout_vs_spend: "inv",
+  sku_stockout_cleared: "inv",
   regional_shortage_risk: "inv",
   regional_spend_starved_stock: "inv",
   reorder_timing: "inv",

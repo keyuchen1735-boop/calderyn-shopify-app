@@ -246,6 +246,49 @@ describe("alert action — calibration signal fires on approval", () => {
     expect(executeSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("resumes a campaign through executeAction and records approval for sku_stockout_cleared (Slice B warm-up)", async () => {
+    // A merchant approving the resume suggestion must execute resume_campaign AND
+    // record the approval, so the (sku_stockout_cleared, resume_campaign) pair can
+    // accrue clean approvals toward graduation. campaign_id comes from evidence.
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "sku_stockout_cleared",
+      campaign_id: "camp-dim-uuid",
+      dollar_impact: 5000, // cents; recovered upside, well under the cap
+      evidence: { campaign_id: "camp-dim-uuid" },
+    });
+    const res = await call(makeRequest("resume_campaign"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      expect.objectContaining({ kind: "resume_campaign", campaignId: "camp-dim-uuid" }),
+      expect.anything(),
+    );
+    expect(recordApprovalSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "sku_stockout_cleared",
+      "resume_campaign",
+      expect.anything(),
+    );
+    // Resume is upside, not downside — the legacy phantom recorder must not run.
+    expect(clientExecuteSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT 403 a high-recovered-value resume on the per-action dollar cap (upside, not risk)", async () => {
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "sku_stockout_cleared",
+      campaign_id: "camp-dim-uuid",
+      dollar_impact: 500_000_00, // far above the $100k cap
+      evidence: { campaign_id: "camp-dim-uuid" },
+    });
+    const res = await call(makeRequest("resume_campaign"));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("does NOT call recordApproval for snooze_alert", async () => {
     // snooze_alert is in DETECTOR_TO_ACTIONS for every detector; allow it here.
     const alertWithSnooze = {

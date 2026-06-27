@@ -127,6 +127,21 @@ export async function preconditionFresh(input: PreconditionFreshInput): Promise<
       return { ok: true };
     }
 
+    if (kind === "resume_campaign") {
+      // The inverse of pause: resume restarts spend, so the campaign must still
+      // be PAUSED (not already running). If it is active again — a merchant or
+      // another path resumed it — there is nothing to resume; abort.
+      const isActive = ACTIVE_CAMPAIGN_STATUSES.has(campaign.status);
+      const isInactive = INACTIVE_CAMPAIGN_STATUSES.has(campaign.status);
+      if (isActive || !isInactive) {
+        return {
+          ok: false,
+          reason: `precondition_stale: not paused (status=${campaign.status})`,
+        };
+      }
+      return { ok: true };
+    }
+
     if (kind === "reduce_campaign_budget") {
       // The precondition: live daily_budget_cents must still match the snapshot.
       // If live < snapshot, someone already cut it — abort to avoid double-cutting.
@@ -241,6 +256,147 @@ export async function stockoutPauseAllowed(input: StockoutAllowedInput): Promise
     console.error(`[preconditions] stockoutPauseAllowed threw: ${msg}`);
     return { ok: false, reason: `threw: ${msg}` };
   }
+}
+
+// ---------------------------------------------------------------------------
+// stockoutClearedResumeAllowed (Slice B: auto-resume on stockout-clear)
+// ---------------------------------------------------------------------------
+
+interface StockoutClearedResumeAllowedInput {
+  shopId: string;
+  /** The resume-candidate alert. entity_ref carries {campaign_id, sku_id, sku}. */
+  alert: { id: string; detector_id: string; entity_ref: Record<string, unknown> };
+  /** The restock buffer the alert cleared (alert evidence.buffer_units). */
+  bufferUnits: number;
+  sb: SupabaseClient;
+  nowMs?: number;
+}
+
+/**
+ * Live re-check before an autonomous resume_campaign — the resume analogue of
+ * stockoutPauseAllowed (I10). Resuming restarts spend, so it returns ok:true
+ * ONLY when ALL of the following hold, re-read live at execution time:
+ *   1. entity_ref carries both campaign_id and sku_id.
+ *   2. The campaign is STILL paused on the platform and freshly synced (<= 24h).
+ *   3. fork #1: the LATEST action_audit row for the campaign is Calderyn's own
+ *      autopilot pause_campaign — never override a merchant who took it over.
+ *   4. fork #2: the SKU's latest per-location stock is fresh (<= 60 min) and the
+ *      total is at or above the buffer the alert was raised against.
+ *
+ * Fail-safe: any missing datum, DB error, or thrown read returns ok:false
+ * ("when unsure, leave it queued for the merchant"). Never throws.
+ */
+export async function stockoutClearedResumeAllowed(
+  input: StockoutClearedResumeAllowedInput,
+): Promise<PreconditionResult> {
+  try {
+    const nowMs = input.nowMs ?? Date.now();
+    const entityRef = input.alert.entity_ref ?? {};
+    const skuId = typeof entityRef.sku_id === "string" ? entityRef.sku_id : null;
+    const campaignId = typeof entityRef.campaign_id === "string" ? entityRef.campaign_id : null;
+    if (!skuId) return { ok: false, reason: "sku_id_missing: entity_ref has no sku_id" };
+    if (!campaignId) return { ok: false, reason: "campaign_id_missing: entity_ref has no campaign_id" };
+    // Fail-safe (MONEY-PATH INVARIANT): a missing/zero buffer is an unverifiable
+    // anti-flip-flop threshold, not "no buffer required". The detector always
+    // emits buffer_units >= MIN_RESTOCK_UNITS, so 0/NaN means malformed/legacy
+    // evidence — skip rather than resume on an unbounded restock check.
+    if (!Number.isFinite(input.bufferUnits) || input.bufferUnits <= 0) {
+      return { ok: false, reason: "buffer_units_missing: cannot verify restock buffer" };
+    }
+
+    // 1. Campaign must still be PAUSED on the platform + freshly synced.
+    const { data: campaign, error: campErr } = await input.sb
+      .from("ad_campaign_dim")
+      .select("id, status, last_synced_at")
+      .eq("shop_id", input.shopId)
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (campErr) return { ok: false, reason: `db_error reading campaign: ${campErr.message}` };
+    if (!campaign) return { ok: false, reason: "campaign_not_found" };
+    const status = String(campaign.status);
+    if (ACTIVE_CAMPAIGN_STATUSES.has(status) || !INACTIVE_CAMPAIGN_STATUSES.has(status)) {
+      return { ok: false, reason: `precondition_stale: campaign not paused (${status})` };
+    }
+    const syncedAt = campaign.last_synced_at ? new Date(campaign.last_synced_at).getTime() : 0;
+    if (nowMs - syncedAt > SPEND_FRESH_MS) {
+      return { ok: false, reason: "stale_facts: campaign sync older than 24h" };
+    }
+
+    // 2. fork #1: the latest action on this campaign must be Calderyn's pause.
+    const { data: latest, error: actErr } = await input.sb
+      .from("action_audit")
+      .select("action_kind, actor_user_id, created_at")
+      .eq("shop_id", input.shopId)
+      .filter("params->>campaign_id", "eq", campaignId)
+      .order("created_at", { ascending: false })
+      // Deterministic tie-break so two same-timestamp rows can't flip which
+      // "latest action" we read (and thus the merchant-takeover guard).
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (actErr) return { ok: false, reason: `db_error reading action_audit: ${actErr.message}` };
+    if (!latest) return { ok: false, reason: "no_calderyn_pause: campaign has no recorded action" };
+    if (latest.action_kind !== "pause_campaign" || latest.actor_user_id !== "autopilot") {
+      return {
+        ok: false,
+        reason: `precondition_stale: latest action is ${latest.actor_user_id}/${latest.action_kind}, not Calderyn's pause`,
+      };
+    }
+
+    // 3. fork #2: SKU restocked above buffer with a fresh observation per location.
+    const stockCheck = await sumLatestStockFresh(input.shopId, skuId, input.sb, nowMs);
+    if (!stockCheck.ok) return stockCheck;
+    if ((stockCheck.units ?? 0) < input.bufferUnits) {
+      return {
+        ok: false,
+        reason: `restock_below_buffer: ${stockCheck.units} < ${input.bufferUnits} units`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[preconditions] stockoutClearedResumeAllowed threw: ${msg}`);
+    return { ok: false, reason: `threw: ${msg}` };
+  }
+}
+
+/** Sum the latest-per-location available stock for a SKU, requiring every
+ *  location's latest observation to be fresh (<= 60 min). Fail-safe on any DB
+ *  error / missing rows / stale observation. */
+async function sumLatestStockFresh(
+  shopId: string,
+  skuId: string,
+  sb: SupabaseClient,
+  nowMs: number,
+): Promise<PreconditionResult & { units?: number }> {
+  const { data: rows, error } = await sb
+    .from("inventory_level_fact")
+    .select("sku_id, location_id, available, observed_at")
+    .eq("shop_id", shopId)
+    .eq("sku_id", skuId);
+  if (error) return { ok: false, reason: `db_error reading inventory: ${error.message}` };
+  if (!rows?.length) return { ok: false, reason: "stale_facts: no inventory rows found" };
+
+  const latest = new Map<string, { available: number; observedAt: string }>();
+  for (const row of rows) {
+    const key = String(row.location_id);
+    const prev = latest.get(key);
+    if (!prev || String(row.observed_at) > prev.observedAt) {
+      latest.set(key, {
+        available: Number(row.available ?? 0),
+        observedAt: String(row.observed_at ?? ""),
+      });
+    }
+  }
+  let total = 0;
+  for (const { available, observedAt } of latest.values()) {
+    const t = new Date(observedAt).getTime();
+    if (!Number.isFinite(t) || nowMs - t > STOCK_FRESH_MS) {
+      return { ok: false, reason: "stale_facts: stock observation older than 60min" };
+    }
+    total += available;
+  }
+  return { ok: true, units: total };
 }
 
 // ---------------------------------------------------------------------------

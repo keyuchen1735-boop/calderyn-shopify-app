@@ -31,6 +31,7 @@ const {
   isGraduated,
   preconditionFresh,
   stockoutPauseAllowed,
+  stockoutClearedResumeAllowed,
   loadAndApplyRules,
   notifyAutonomousAction,
   acquireAutopilotLock,
@@ -93,6 +94,8 @@ const {
   // passing. Precondition-gate tests override this per-test.
   preconditionFresh: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
   stockoutPauseAllowed: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: false, reason: "inventory_policy_not_available" })),
+  // Default: ok:true — a graduated resume reaches executeAction. Resume-gate tests override.
+  stockoutClearedResumeAllowed: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
   // Default: {} (no veto, no cap) — existing tests that expect executeAction to be
   // reached keep passing. Rule-enforcement tests override this per-test.
   loadAndApplyRules: vi.fn(async () => ({})),
@@ -132,7 +135,7 @@ vi.mock("../autopilot-targeting.server", async (importOriginal) => {
 vi.mock("../../calibration/graduation.server", () => ({ isGraduated }));
 // Precondition re-check mock (Slice 5 Task 4). Default = ok:true so existing
 // tests that reach executeAction continue to pass. Precondition tests override below.
-vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, stockoutPauseAllowed }));
+vi.mock("../../calibration/preconditions.server", () => ({ preconditionFresh, stockoutPauseAllowed, stockoutClearedResumeAllowed }));
 // Rule enforcement mock (Slice 5 Task 5). Default = {} (no veto, no cap) so
 // existing tests that reach executeAction continue to pass. Rule tests override below.
 vi.mock("../rule-enforce.server", () => ({ loadAndApplyRules }));
@@ -221,6 +224,8 @@ describe("runAutopilotForShop", () => {
     // Default: precondition ok:true so existing tests that reach executeAction keep passing.
     preconditionFresh.mockReset().mockResolvedValue({ ok: true });
     stockoutPauseAllowed.mockReset().mockResolvedValue({ ok: false, reason: "inventory_policy_not_available" });
+    // Default: ok:true so a graduated resume reaches executeAction. Resume-gate tests override.
+    stockoutClearedResumeAllowed.mockReset().mockResolvedValue({ ok: true });
     // Default: {} (no veto, no cap) so existing tests that reach executeAction keep passing.
     loadAndApplyRules.mockReset().mockResolvedValue({});
     // Default: no-op so existing tests are unaffected by the notification path.
@@ -1768,5 +1773,93 @@ describe("runAutopilotForShop", () => {
       );
       expect(r.acted).toBe(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice B: auto-resume on stockout-clear. A sku_stockout_cleared alert resolves
+// to resume_campaign. Resuming restarts spend, so it is gated identically to the
+// other autonomous kinds: graduation + rules + guardrails + a live precondition.
+// ---------------------------------------------------------------------------
+describe("runAutopilotForShop — resume_campaign (Slice B)", () => {
+  const resumeCandidate = {
+    alert_id: "alR",
+    detector_id: "sku_stockout_cleared",
+    dollar_impact: 200,
+    campaign_id: "camp-uuid",
+    campaign_spend_cents: 0, // paused → near-zero recent spend
+    daily_budget_cents: 10000,
+    evidence: { buffer_units: "30", prepause_spend_7d_usd: "900" },
+    sku: "SC-1",
+    sku_id: "sku-1",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isGraduated.mockResolvedValue(true);
+    preconditionFresh.mockResolvedValue({ ok: true });
+    stockoutClearedResumeAllowed.mockResolvedValue({ ok: true });
+    checkGuardrails.mockResolvedValue({ allowed: true });
+    executeAction.mockResolvedValue({ id: "audR", outcome: "succeeded" });
+    loadAndApplyRules.mockResolvedValue({});
+    loadReallocationCandidates.mockResolvedValue([]);
+    notifyAutonomousAction.mockResolvedValue(undefined);
+    acquireAutopilotLock.mockResolvedValue({ acquired: true, acquiredAt: new Date().toISOString() });
+    releaseAutopilotLock.mockResolvedValue(undefined);
+  });
+
+  it("resumes a campaign when its sold-out product is restocked and every gate passes", async () => {
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "resume_campaign", campaignId: "camp-uuid", actor: "autopilot", alertId: "alR" }),
+      sb,
+    );
+    expect(r.acted).toBe(1);
+  });
+
+  it("does NOT resume when the pair has not graduated (suggestion-only until merchant enables)", async () => {
+    isGraduated.mockResolvedValue(false);
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(0);
+  });
+
+  it("does NOT resume when guardrails block it", async () => {
+    checkGuardrails.mockResolvedValue({ allowed: false, reason: "daily dollar ceiling reached" });
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.blocked).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does NOT resume when the live restock re-check fails (fail-safe skip → stays queued)", async () => {
+    stockoutClearedResumeAllowed.mockResolvedValue({ ok: false, reason: "restock_below_buffer" });
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(0);
+  });
+
+  it("does NOT resume when the campaign is no longer paused (preconditionFresh fails)", async () => {
+    preconditionFresh.mockResolvedValue({ ok: false, reason: "precondition_stale: not paused" });
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    const r = await runAutopilotForShop(SHOP, sb);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(r.acted).toBe(0);
+  });
+
+  it("passes the pre-pause spend to guardrails so the min-spend gate is not defeated by a paused campaign", async () => {
+    const sb = fakeSb({ enabled: true, alerts: [resumeCandidate] });
+    await runAutopilotForShop(SHOP, sb);
+    // prepause_spend_7d_usd "900" → 90000c; campaign_spend_cents is 0 while paused.
+    expect(checkGuardrails).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "resume_campaign", campaignSpendCents: 90000 }),
+      sb,
+      expect.objectContaining({ autonomous: true }),
+    );
   });
 });
