@@ -1,0 +1,11 @@
+-- Register the discontinue_sku action kind. The discontinue feature archives a
+-- money-losing SKU's Shopify product and sets do_not_reorder; the executor
+-- (executeDiscontinueAlertAction) writes action_audit.action_kind =
+-- 'discontinue_sku'. Without the enum value every insert is rejected AFTER the
+-- Shopify archive but BEFORE the audit row, 500ing both merchant surfaces and
+-- the autopilot remediation path (same class of bug as increase_campaign_budget
+-- / adjust_price). discontinue_sku is also graduatable (it has a working undo
+-- branch) and is keyed into pair_calibration + the SKU reward path, so it must
+-- be a storable action_kind. ALTER TYPE ... ADD VALUE is idempotent-guarded with
+-- IF NOT EXISTS.
+alter type public.action_kind add value if not exists 'discontinue_sku';

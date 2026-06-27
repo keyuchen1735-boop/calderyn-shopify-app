@@ -32,6 +32,7 @@ import { transferPlanFromEvidence } from "../shopify/inventory.server";
 import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
+import { calibrationActionKind } from "../calibration/action-kind";
 import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
@@ -202,10 +203,12 @@ async function tryRemediation(
   //
   // Graduation gate (Slice 5 parity): an executable remediation move MUST NOT
   // bypass calibration's safety model. Gate it on the SAME isGraduated check the
-  // legacy autonomous path applies — keyed on the move's executor kind (which is
-  // a valid ActionKind: discontinue_sku | reallocate_spend_sku | pause_campaign |
-  // reduce_campaign_budget). isGraduated is fail-safe (false on any read error),
-  // so a DB hiccup can never grant remediation autonomy. NOT graduated → record a
+  // legacy autonomous path applies — keyed on the kind the move is calibrated +
+  // audited under (calibrationActionKind: reallocate_spend_sku → reallocate_budget,
+  // every other executor is its own action_kind enum value). The SAME normalizer
+  // keys the merchant approval write, so the two never train different pairs.
+  // isGraduated is fail-safe (false on any read error), so a DB hiccup can never
+  // grant remediation autonomy. NOT graduated → record a
   // structured skip (the caller buckets this as `skippedMoves`, not a guardrail
   // block) and the candidate is fully resolved — it does NOT fall through, because
   // the detector's legacy path is graduation-gated too and would also skip;
@@ -213,9 +216,10 @@ async function tryRemediation(
   // graduated) autopilot-remediation is therefore dormant, consistent with the
   // rest of the autonomy system. Merchant-facing remediation (panels / manual
   // execution) is UNAFFECTED — this gate is autopilot-only.
-  if (!(await isGraduated(shopId, c.detector_id, move.executor, sb))) {
+  const graduationKind = calibrationActionKind(move.executor);
+  if (!(await isGraduated(shopId, c.detector_id, graduationKind, sb))) {
     console.info(
-      `[autopilot] remediation skip on alert ${c.alert_id}: pair (${c.detector_id}/${move.executor}) not graduated`,
+      `[autopilot] remediation skip on alert ${c.alert_id}: pair (${c.detector_id}/${graduationKind}) not graduated`,
     );
     return { outcome: "skipped", reason: "remediation pair not graduated" };
   }
