@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildActionQueue } from "../queue.server";
+import { buildActionQueue, inventoryOverCapAlertIds } from "../queue.server";
 
 const alert = (over: Record<string, unknown> = {}) => ({
   id: "a1",
@@ -168,5 +168,94 @@ describe("buildActionQueue", () => {
     // Empty graduatedPairs — nothing is graduated
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set());
     expect(q).toHaveLength(1);
+  });
+
+  // (a) Magnitude-awareness: a graduated pair's OVER-CAP alert is blocked by
+  // autopilot (block-not-clamp), so it must stay approvable in the queue.
+  it("keeps a graduated-pair alert that is in overCapAlertIds, flagged over_autopilot_cap", () => {
+    // regional_shortage_risk -> recommendedAction = reallocate_inventory.
+    const a = alert({ id: "inv1", detector_id: "regional_shortage_risk", campaign_id: null, evidence: {} });
+    const graduated = new Set(["regional_shortage_risk:reallocate_inventory"]);
+    // Sanity: without the over-cap set, the graduated pair is dropped (I5).
+    expect(buildActionQueue([a] as never, new Map(), new Set(), new Set(), graduated)).toHaveLength(0);
+    // With the alert flagged over-cap, it is KEPT and marked for manual approval.
+    const q = buildActionQueue([a] as never, new Map(), new Set(), new Set(), graduated, new Set(["inv1"]));
+    expect(q).toHaveLength(1);
+    expect(q[0].alertId).toBe("inv1");
+    expect(q[0].action_kind).toBe("reallocate_inventory");
+    expect(q[0].over_autopilot_cap).toBe(true);
+  });
+
+  it("still drops a graduated-pair alert that is NOT in overCapAlertIds (autopilot handles within-cap)", () => {
+    const a = alert({ id: "inv2", detector_id: "regional_shortage_risk", campaign_id: null, evidence: {} });
+    const graduated = new Set(["regional_shortage_risk:reallocate_inventory"]);
+    const q = buildActionQueue([a] as never, new Map(), new Set(), new Set(), graduated, new Set(["other"]));
+    expect(q).toHaveLength(0);
+  });
+
+  it("does not set over_autopilot_cap on a normal (non-graduated) proposal even if its id is in overCapAlertIds", () => {
+    // A non-graduated alert is already in the queue normally; the over-cap flag is
+    // only meaningful for graduated pairs, so it must not leak onto normal ones.
+    const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set(), new Set(["a1"]));
+    expect(q).toHaveLength(1);
+    expect(q[0].over_autopilot_cap).toBeUndefined();
+  });
+});
+
+// The facade derives which graduated reallocate_inventory alerts are over the
+// merchant's per-move unit cap, from the alert's own evidence (exact, no I/O).
+const invAlert = (over: Record<string, unknown> = {}) =>
+  alert({
+    id: "inv1",
+    detector_id: "regional_shortage_risk", // recommendedAction -> reallocate_inventory
+    campaign_id: null,
+    evidence: { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 50 },
+    ...over,
+  });
+
+describe("inventoryOverCapAlertIds", () => {
+  const graduated = new Set(["regional_shortage_risk:reallocate_inventory"]);
+
+  it("flags a graduated reallocate_inventory alert whose |delta| exceeds the cap", () => {
+    const ids = inventoryOverCapAlertIds([invAlert()] as never, graduated, 20);
+    expect(ids.has("inv1")).toBe(true);
+  });
+
+  it("does not flag a within-cap move", () => {
+    const ids = inventoryOverCapAlertIds([invAlert()] as never, graduated, 100);
+    expect(ids.has("inv1")).toBe(false);
+  });
+
+  it("flags nothing when the cap is null (unlimited)", () => {
+    const ids = inventoryOverCapAlertIds([invAlert()] as never, graduated, null);
+    expect(ids.size).toBe(0);
+  });
+
+  it("does not flag an over-cap move on a NON-graduated pair", () => {
+    const ids = inventoryOverCapAlertIds([invAlert()] as never, new Set(), 20);
+    expect(ids.has("inv1")).toBe(false);
+  });
+
+  it("ignores alerts whose recommended action is not reallocate_inventory", () => {
+    const ids = inventoryOverCapAlertIds(
+      [alert()] as never,
+      new Set(["campaign_below_breakeven:pause_campaign"]),
+      1,
+    );
+    expect(ids.size).toBe(0);
+  });
+
+  it("ignores an inventory alert with no transfer plan in evidence", () => {
+    const ids = inventoryOverCapAlertIds([invAlert({ evidence: {} })] as never, graduated, 1);
+    expect(ids.size).toBe(0);
+  });
+
+  it("treats a negative delta by magnitude (abs)", () => {
+    const ids = inventoryOverCapAlertIds(
+      [invAlert({ evidence: { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: -50 } })] as never,
+      graduated,
+      20,
+    );
+    expect(ids.has("inv1")).toBe(true);
   });
 });

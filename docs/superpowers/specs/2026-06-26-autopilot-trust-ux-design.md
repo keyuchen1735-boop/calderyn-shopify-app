@@ -65,11 +65,18 @@ Shopify I/O in the queue-list path).
 - Within-cap graduated alerts stay hidden (autopilot handles them) → no double
   actor. Only genuinely-over-cap alerts (which autopilot refuses) are surfaced.
 
-### UI (both surfaces — parity)
-Embedded Action Queue (`app/routes/app.queue.tsx`) and dashboard ActionQueue
-(`app/components/dashboard/screens/ActionQueue.tsx`) render an
-"Over your autopilot limit — needs approval" badge on a proposal flagged
-`over_autopilot_cap`.
+### UI / parity
+Parity is automatic: both the embedded Action Queue (`app/routes/app.queue.tsx`)
+and the dashboard queue (`app/routes/dashboard.api.queue._index.tsx`) call the same
+`queue.list` facade, so the over-cap alerts now appear in both queues for approval
+with no separate work. The proposals render through the existing
+`reallocate_inventory` proposal path (already supported for non-graduated inventory
+pairs), so no new render path is needed.
+
+The explanatory "over your autopilot limit" **badge** is deferred as a small
+follow-up: the codebase does not currently render the sibling `always_ask` flag
+either, and the two queue UIs are bespoke (no badge pattern to mirror). The
+`over_autopilot_cap` flag is plumbed end-to-end and ready for the badge when added.
 
 ### Tests
 - `buildActionQueue`: a graduated-pair alert in `overCapAlertIds` is KEPT (flagged

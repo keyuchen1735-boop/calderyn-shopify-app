@@ -22,7 +22,7 @@
 import { rankMoves, toNumericEvidence } from "./remediation/rank";
 import { synopsisFor } from "./remediation/synopsis";
 import type { RemediationInput } from "./remediation/types";
-import { buildActionQueue } from "./calibration/queue.server";
+import { buildActionQueue, inventoryOverCapAlertIds } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
@@ -1520,7 +1520,7 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
           // so the open-alerts SQL is not duplicated.
-          const [alerts, pairsRes, feedbackRes, rulesRes, graduatedRes] = await Promise.all([
+          const [alerts, pairsRes, feedbackRes, rulesRes, graduatedRes, gcRes] = await Promise.all([
             fetchOpenAlerts(shopId),
             supabase
               .from("pair_calibration")
@@ -1549,12 +1549,21 @@ export function calderynClient(shop: string) {
               .select("detector_id, action_kind")
               .eq("shop_id", shopId)
               .eq("graduated", true),
+            // Autonomy unit cap for the magnitude-aware over-cap check: a graduated
+            // reallocate_inventory move bigger than this is blocked by autopilot
+            // (block-not-clamp), so it must stay approvable in the queue.
+            supabase
+              .from("guardrail_config")
+              .select("autopilot_max_inventory_units_per_move")
+              .eq("shop_id", shopId)
+              .maybeSingle(),
           ]);
 
           if (pairsRes.error) throw pairsRes.error;
           if (feedbackRes.error) throw feedbackRes.error;
           if (rulesRes.error) throw rulesRes.error;
           if (graduatedRes.error) throw graduatedRes.error;
+          if (gcRes.error) throw gcRes.error;
 
           const map = new Map(
             (pairsRes.data ?? []).map((r) => [
@@ -1577,7 +1586,22 @@ export function calderynClient(shop: string) {
             (graduatedRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
           );
 
-          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs, graduatedPairs);
+          // Magnitude-aware: keep a graduated reallocate_inventory alert in the
+          // queue when its move exceeds the merchant's per-move unit cap (autopilot
+          // blocks it, so it needs manual approval). Exact from the alert evidence.
+          const maxUnitsPerMove =
+            (gcRes.data as { autopilot_max_inventory_units_per_move?: number | null } | null)
+              ?.autopilot_max_inventory_units_per_move ?? null;
+          const overCapAlertIds = inventoryOverCapAlertIds(alerts, graduatedPairs, maxUnitsPerMove);
+
+          return buildActionQueue(
+            alerts,
+            map,
+            rejectedAlertIds,
+            mutedPairs,
+            graduatedPairs,
+            overCapAlertIds,
+          );
         } catch (err) {
           rethrow("queue.list", err);
         }
