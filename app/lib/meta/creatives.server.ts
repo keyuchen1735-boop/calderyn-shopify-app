@@ -109,6 +109,35 @@ export function parseAdCreative(rawAd: unknown): CampaignCreative {
   };
 }
 
+export interface MetaAdSet {
+  id: string;
+  name: string;
+  status: string; // raw Meta status, e.g. "ACTIVE" | "PAUSED"
+}
+
+type RawAdSet = { id?: string; name?: string; status?: string };
+
+// I/O — GET /{campaignId}/adsets. A created ad must belong to an ad set, but no
+// other module fetches them; this is the source for the executor's draft target.
+// Single page (no paging): a campaign with >25 ad sets would be truncated.
+export async function listCampaignAdSets(
+  client: MetaClient,
+  campaignId: string,
+): Promise<MetaAdSet[]> {
+  // Injection safety: campaignId must be a Meta numeric id (same guard as
+  // listCampaignCreatives). NEVER interpolate untrusted text into the path.
+  if (!/^\d+$/.test(campaignId)) {
+    throw new Error("Invalid Meta campaign id");
+  }
+  const body = check(await client.get(`/${campaignId}/adsets`, { fields: "id,name,status" }));
+  const data = (body.data as RawAdSet[]) ?? [];
+  return data.map((a) => ({
+    id: str(a.id),
+    name: str(a.name),
+    status: str(a.status) || "UNKNOWN",
+  }));
+}
+
 // I/O — GET /{campaignId}/ads with the creative fields, map each via parseAdCreative.
 // Paging is not handled (single page); a campaign with >25 ads would be truncated.
 export async function listCampaignCreatives(
