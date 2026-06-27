@@ -1542,6 +1542,16 @@
 .cd-scanflag { color: var(--ha-flag); font-weight: 600; }
 .cd-scandim { color: var(--ha-ink-3); opacity: .75; }
 
+/* Live Engine hero — mobile reflow (stack Watching/Acting, reflow header) */
+@media (max-width: 640px) {
+  .ha { padding: 18px 16px !important; }
+  .ha-head { gap: 12px !important; }
+  .ha-headmeta { margin-left: 0 !important; width: 100% !important; justify-content: space-between !important; }
+  .ha-headdiv { display: none !important; }
+  .ha-money { font-size: 28px !important; }
+  .ha [data-role="live"] { grid-template-columns: 1fr !important; min-height: 0 !important; }
+}
+
 .ha-scroll { overflow-x: hidden; }
 .ha-scroll::-webkit-scrollbar { width: 6px; }
 .ha-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
