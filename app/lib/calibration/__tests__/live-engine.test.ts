@@ -115,20 +115,21 @@ function mockSb(cap: { payload?: Record<string, unknown> }): SupabaseClient {
 }
 
 describe("setPairAutonomy", () => {
-  it("disabling sets merchant_disabled=true (always-safe direction)", async () => {
-    const cap: { payload?: Record<string, unknown> } = {};
-    const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", false, mockSb(cap));
-    expect(r.ok).toBe(true);
-    expect(cap.payload?.merchant_disabled).toBe(true);
-    expect(cap.payload?.graduated).toBe(false);
-  });
-
-  it("enabling sets merchant_disabled=false", async () => {
+  it("enabling sets autonomy_enabled=true (per-feature opt-in)", async () => {
     const cap: { payload?: Record<string, unknown> } = {};
     const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", true, mockSb(cap));
     expect(r.ok).toBe(true);
-    expect(cap.payload?.merchant_disabled).toBe(false);
-    expect(cap.payload?.graduated).toBe(true);
+    expect(cap.payload?.autonomy_enabled).toBe(true);
+  });
+
+  it("disabling sets autonomy_enabled=false and does NOT mute the pair (re-suggestable)", async () => {
+    const cap: { payload?: Record<string, unknown> } = {};
+    const r = await setPairAutonomy("shop-1", "campaign_below_breakeven", "pause_campaign", false, mockSb(cap));
+    expect(r.ok).toBe(true);
+    expect(cap.payload?.autonomy_enabled).toBe(false);
+    // Turning off is just opt-out, not a harsh mute: merchant_disabled/graduated untouched.
+    expect(cap.payload?.merchant_disabled).toBeUndefined();
+    expect(cap.payload?.graduated).toBeUndefined();
   });
 });
 

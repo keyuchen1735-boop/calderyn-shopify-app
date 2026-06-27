@@ -186,11 +186,13 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
 
 /**
  * Turn a feature's unattended autonomy on/off for this shop by flipping
- * pair_calibration.merchant_disabled. DISABLING is always safe: the pair simply
- * falls back to asking you in the Action Queue. ENABLING only takes effect for a
- * pair that is actually graduated AND while the shop-level autopilot flag is on,
- * so the graduation gate (not this flag) remains the real authority. Scoped to
- * the shop. Best-effort: returns {ok:false} on error, never throws.
+ * pair_calibration.autonomy_enabled (Slice C). Graduation only UNLOCKS a pair;
+ * this switch is the merchant's explicit per-feature opt-in. ENABLING only bites
+ * for a pair that is actually graduated AND while the shop-level autopilot flag is
+ * on, so the graduation gate stays the real authority. DISABLING is always safe:
+ * the pair simply falls back to asking you in the Action Queue, and (since it is
+ * not muted) Calderyn may recommend turning it on again later. Scoped to the shop.
+ * Best-effort: returns {ok:false} on error, never throws.
  */
 export async function setPairAutonomy(
   shopId: string,
@@ -200,12 +202,10 @@ export async function setPairAutonomy(
   sb: SupabaseClient,
 ): Promise<{ ok: boolean }> {
   try {
-    const shipped = NO_BRAINER.has(`${detectorId}:${actionKind}`);
     const { error } = await sb
       .from("pair_calibration")
       .update({
-        merchant_disabled: !enabled,
-        ...(shipped ? { graduated: enabled } : {}),
+        autonomy_enabled: enabled,
         updated_at: new Date().toISOString(),
       })
       .eq("shop_id", shopId)
