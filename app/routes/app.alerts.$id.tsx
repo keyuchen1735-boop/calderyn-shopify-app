@@ -29,6 +29,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { snoozeAlert } from "~/lib/actions/snooze.server";
+import { suggestedReorderQty } from "~/lib/actions/reorder-qty";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
@@ -271,7 +272,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       // local document only — the PO draft snapshotted into the audit row, with
       // no external side effect — and are strictly validated below. The SKU and
       // line title still come from the trusted alert record, never the form.
-      const qtyRaw = String(formData.get("po_quantity") ?? "").trim();
+      // One-click Approve sends no po_quantity; default to a computed reorder
+      // suggestion from the alert's velocity/lead-time so the card works without
+      // a typed number. A typed quantity always wins. With no usable velocity the
+      // suggestion is null, qtyRaw stays "", and validation below fails visibly.
+      const typedQty = String(formData.get("po_quantity") ?? "").trim();
+      const qtyRaw =
+        typedQty === "" ? String(suggestedReorderQty(alert.evidence ?? {}) ?? "") : typedQty;
       const quantity = Number(qtyRaw);
       // Digits-only regex already guarantees an integer; bound it to a sane max.
       if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {

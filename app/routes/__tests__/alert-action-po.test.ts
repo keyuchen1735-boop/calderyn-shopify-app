@@ -178,12 +178,28 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
   });
 
   it("rejects a non-positive or non-integer quantity with 422 and records nothing", async () => {
-    for (const bad of ["0", "-5", "12.5", "abc", ""]) {
+    for (const bad of ["0", "-5", "12.5", "abc"]) {
       executeSpy.mockClear();
       const res = await call(poRequest({ po_quantity: bad }));
       expect(res.status).toBe(422);
       expect(executeSpy).not.toHaveBeenCalled();
     }
+  });
+
+  it("defaults a blank (one-click) quantity to the suggested reorder qty", async () => {
+    // evidence velocity 5.71, lead 14, cover 4.0 -> ceil(5.71 * (14 + 14 - 4)) = 138
+    const res = await call(poRequest({ po_quantity: "" }));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    const params = (executeSpy.mock.calls[0][0] as { params: { po: { lines: Array<{ quantity: number }> } } }).params;
+    expect(params.po.lines[0].quantity).toBe(138);
+  });
+
+  it("still 422s a blank quantity when the alert has no usable velocity", async () => {
+    alertsGetSpy.mockResolvedValue({ ...ALERT, evidence: { title: "No velocity", lead_time_days: 14 } });
+    const res = await call(poRequest({ po_quantity: "" }));
+    expect(res.status).toBe(422);
+    expect(executeSpy).not.toHaveBeenCalled();
   });
 
   it("rejects an absurdly large quantity with 422 and records nothing", async () => {
