@@ -438,8 +438,8 @@ function CampaignDetail({
             </div>
             {(s.performance == null || s.creative == null) && (
               <p className="cd-caption">
-                {s.performance == null ? "Performance pending — attribution. " : ""}
-                {s.creative == null ? "Open this campaign and connect Meta to score its creatives." : ""}
+                {s.performance == null ? "Performance pending — attribution." : ""}
+                {s.creative == null ? "Connect your Meta integration to score this campaign's creatives." : ""}
               </p>
             )}
           </Card>
