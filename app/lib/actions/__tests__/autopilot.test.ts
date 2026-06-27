@@ -652,6 +652,34 @@ describe("runAutopilotForShop", () => {
     expect(r.acted).toBe(1);
   });
 
+  // A reallocate_spend_sku move executes + is calibrated as reallocate_budget
+  // (its executor writes action_kind='reallocate_budget'). reallocate_spend_sku
+  // is NOT a member of the action_kind Postgres enum, so passing it to
+  // isGraduated makes the pair_calibration read error (22P02) and the pair can
+  // never graduate. The graduation gate must therefore key on reallocate_budget.
+  it("keys the graduation gate on reallocate_budget for a SKU-realloc move (never the non-enum reallocate_spend_sku)", async () => {
+    const reallocCandidate = {
+      alert_id: "al-realloc", detector_id: "ad_tax_overload", dollar_impact: 5305,
+      campaign_id: "camp-loser", campaign_spend_cents: 80000, daily_budget_cents: 20000,
+      evidence: { gross_unit_margin_usd: 3, ad_spend_7d_usd: 800 }, sku: "Tax Overload Tee", sku_id: "sku-3",
+    };
+    enrichRemediation.mockResolvedValueOnce({
+      moves: [
+        { kind: "reallocate_to_winner", dollarImpactCents: 530500, executor: "reallocate_spend_sku",
+          label: "Move ad budget to a higher-margin product",
+          target: { loserCampaignId: "camp-loser", winnerCampaignId: "camp-winner", amountCents: 530500 } },
+        { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+      ],
+      recommended: "reallocate_to_winner",
+      structurallyDead: false,
+    });
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [reallocCandidate] });
+    await runAutopilotForShop(SHOP, sb);
+    expect(isGraduated).toHaveBeenCalledWith(SHOP, "ad_tax_overload", "reallocate_budget", sb);
+    expect(isGraduated).not.toHaveBeenCalledWith(SHOP, "ad_tax_overload", "reallocate_spend_sku", sb);
+  });
+
   // Viable margin-erosion alert: plan.recommended == "review_pricing" (or
   // "reallocate_to_winner" with null executor from identity enrichRemediation)
   // → advisory, executor null → tryRemediation returns "fell_through".

@@ -11,6 +11,7 @@
 // returned (all zeros / false); the action result is always authoritative.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
+import { calibrationActionKind } from "./action-kind";
 import { GRADUATABLE, graduationVerdict } from "./graduation";
 import { trustDelta, ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
@@ -57,10 +58,15 @@ async function refreshShopCalibrationHeadline(
 export async function recordApproval(
   shopId: string,
   detectorId: string,
-  actionKind: ActionKind,
+  rawActionKind: ActionKind,
   sb: SupabaseClient,
 ): Promise<ApproveReceipt> {
   try {
+    // Normalize a gateway kind to the action_kind it is audited + calibrated
+    // under (reallocate_spend_sku → reallocate_budget) BEFORE any enum-typed read
+    // or RPC, so the approval lands on the same pair the autopilot graduation gate
+    // reads, and never raises 22P02 on the non-enum gateway kind.
+    const actionKind = calibrationActionKind(rawActionKind);
     // 1. Read the pair row BEFORE the bump (so we can diff confidence + detect a
     //    fresh graduation). A cold-start pair has no row → treat as alpha/beta 0.
     const beforeRow = await readPairRow(sb, shopId, detectorId, actionKind);
