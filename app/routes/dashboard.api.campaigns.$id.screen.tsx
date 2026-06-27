@@ -20,8 +20,11 @@ import {
 
 // Pure parse helper — no server imports so Vite can include this export in the
 // client manifest without pulling in media.server (rule: exported route
-// functions must not reference *.server modules). Mirrors creativeInputFromJson
-// from media.server; validateCreativeMedia/Urls stay inside action only.
+// functions must not reference *.server modules). validateCreativeMedia/Urls
+// stay inside action only.
+// NOTE: deliberate browser-safe mirror of creativeInputFromJson in
+// media.server — duplicated to keep this exported parser server-import-free;
+// debt to consolidate into a shared browser-safe shaper later.
 function parseCreativeInputFromJson(body: Record<string, unknown>): CreativeInput {
   const str = (k: string) => (typeof body[k] === "string" ? (body[k] as string).trim() : "");
   const mediaKind = str("mediaKind");

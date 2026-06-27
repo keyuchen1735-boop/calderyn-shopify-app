@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import { trueRoas } from "~/lib/roas";
 import { gradeFromRow } from "~/lib/campaign-grade";
@@ -153,6 +153,10 @@ function CampaignDetail({
   }, [c.status]);
 
   const [creativeData, setCreativeData] = useState<CampaignCreativesDTO | null>(null);
+  // Distinct from `creativeData == null` (still loading): a fetch failure must
+  // not masquerade as "not connected" — that would show misleading Meta-connect
+  // guidance on a transient network/5xx error (rule 12, fail visibly).
+  const [creativesLoadError, setCreativesLoadError] = useState(false);
   const [scored, setScored] = useState<Record<string, AdScorecardDTO>>({});
   const [scoring, setScoring] = useState<string | null>(null);
   const [variants, setVariants] = useState<Variant[]>([]);
@@ -162,14 +166,18 @@ function CampaignDetail({
 
   useEffect(() => {
     let live = true;
+    setCreativesLoadError(false);
     fetchCampaignCreatives(c.id)
       .then((d) => { if (live) setCreativeData(d); })
-      .catch(() => { if (live) setCreativeData({ creatives: [], scorecards: [], assumedSpendCents: 0, metaConnected: false, creativesError: null }); });
+      .catch(() => { if (live) setCreativesLoadError(true); });
     return () => { live = false; };
   }, [c.id]);
 
-  const cachedByAd: Record<string, AdScorecardDTO> = {};
-  for (const s of creativeData?.scorecards ?? []) cachedByAd[s.adId] = s;
+  const cachedByAd = useMemo(() => {
+    const m: Record<string, AdScorecardDTO> = {};
+    for (const s of creativeData?.scorecards ?? []) m[s.adId] = s;
+    return m;
+  }, [creativeData?.scorecards]);
 
   const scoreAd = async (ad: CampaignCreativeDTO) => {
     setScoring(ad.adId);
@@ -427,7 +435,9 @@ function CampaignDetail({
       <Card pad={false}>
         <SectionTitle>Creatives</SectionTitle>
         <div style={{ padding: 16 }}>
-          {!creativeData ? (
+          {creativesLoadError ? (
+            <Placeholder icon="megaphone" title="Couldn't load creatives" sub="Refresh to retry." />
+          ) : !creativeData ? (
             <Placeholder icon="scan" title="Loading creatives…" />
           ) : !creativeData.metaConnected ? (
             <Placeholder icon="megaphone" title="Connect Meta to score creatives" sub="No score is fabricated until your ad account is connected." />
@@ -445,7 +455,7 @@ function CampaignDetail({
                     ) : sc && sc.status === "error" ? (
                       <span className="cd-caption">Analysis unavailable: {sc.error}</span>
                     ) : (
-                      <Btn icon="scan" disabled={scoring === ad.adId} onClick={() => scoreAd(ad)}>
+                      <Btn icon="scan" disabled={!!scoring} onClick={() => scoreAd(ad)}>
                         {scoring === ad.adId ? "Scoring…" : "Score this ad"}
                       </Btn>
                     )}
@@ -468,8 +478,8 @@ function CampaignDetail({
         </div>
         {variants.length > 0 && (
           <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
-            {variants.map((v, i) => (
-              <div key={i} style={{ background: "var(--cd-surface-2, #f5f5f5)", borderRadius: 12, padding: "12px 14px" }}>
+            {variants.map((v) => (
+              <div key={v.mode + v.input.headline} style={{ background: "var(--cd-surface-2, #f5f5f5)", borderRadius: 12, padding: "12px 14px" }}>
                 <div className="flex items-center gap-2">
                   <Pill tone="accent">{v.mode}</Pill>
                   <span style={{ fontWeight: 600 }}>{v.composite}</span>
