@@ -47,6 +47,40 @@ describe("googleActionAdapter", () => {
     const s = await makeGoogleActionAdapter(mutate, "123", read).getState("777");
     expect(s).toEqual({ status: "paused", dailyBudgetCents: 5000 });
   });
+
+  it("excludeGeo creates one negative location criterion per state in the region", async () => {
+    const ops: Array<{ resource: string; op: Record<string, unknown> }> = [];
+    const mutate = vi.fn(async (resource: string, op: Record<string, unknown>) => {
+      ops.push({ resource, op });
+      return {};
+    });
+    // us-east covers 12 states (incl. DC).
+    await makeGoogleActionAdapter(mutate, "123").excludeGeo("555", "us-east");
+    expect(ops).toHaveLength(12);
+    expect(ops[0].resource).toBe("campaignCriteria");
+    expect(ops[0].op).toMatchObject({
+      create: {
+        campaign: "customers/123/campaigns/555",
+        negative: true,
+        location: { geoTargetConstant: expect.stringMatching(/^geoTargetConstants\/\d+$/) },
+      },
+    });
+  });
+
+  it("includeGeo removes only the region's negative location criteria", async () => {
+    const removed: string[] = [];
+    const mutate = vi.fn(async (_resource: string, op: Record<string, unknown>) => {
+      if ("remove" in op) removed.push(String(op.remove));
+      return {};
+    });
+    // One criterion in the region (CA = us-west) and one outside it (NY = us-east).
+    const searchCriteria = vi.fn(async () => [
+      { resourceName: "customers/123/campaignCriteria/555~1", geoTargetConstant: "geoTargetConstants/21137" }, // CA
+      { resourceName: "customers/123/campaignCriteria/555~2", geoTargetConstant: "geoTargetConstants/21167" }, // NY
+    ]);
+    await makeGoogleActionAdapter(mutate, "123", undefined, searchCriteria).includeGeo("555", "us-west");
+    expect(removed).toEqual(["customers/123/campaignCriteria/555~1"]);
+  });
 });
 
 describe("googleActionAdapterForShop mutate errors", () => {

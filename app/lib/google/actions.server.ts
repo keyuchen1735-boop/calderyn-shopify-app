@@ -7,14 +7,24 @@ import { getSupabase } from "../supabase.server";
 import { decrypt } from "../crypto.server";
 import type { ActionAdapter, CampaignActionState } from "../ads/actions";
 import { ActionError } from "../ads/actions";
+import { googleGeoTargetConstants } from "../ads/geo-regions";
 import { extractAdsError } from "./client.server";
 
 type MutateFn = (resource: string, operation: Record<string, unknown>, campaignExternalId?: string) => Promise<unknown>;
 type ReadFn = (campaignExternalId: string) => Promise<{ status?: string; amountMicros?: number }>;
+/** Reads the campaign's existing NEGATIVE location criteria (for include/undo). */
+type SearchCriteriaFn = (
+  campaignExternalId: string,
+) => Promise<Array<{ resourceName: string; geoTargetConstant: string }>>;
 
 const CENTS_TO_MICROS = 10_000;
 
-export function makeGoogleActionAdapter(mutate: MutateFn, customerId: string, read?: ReadFn): ActionAdapter {
+export function makeGoogleActionAdapter(
+  mutate: MutateFn,
+  customerId: string,
+  read?: ReadFn,
+  searchCriteria?: SearchCriteriaFn,
+): ActionAdapter {
   const setStatus = (externalId: string, status: "ENABLED" | "PAUSED") =>
     mutate("campaigns", {
       update: { resourceName: `customers/${customerId}/campaigns/${externalId}`, status },
@@ -42,6 +52,29 @@ export function makeGoogleActionAdapter(mutate: MutateFn, customerId: string, re
         status: (r.status ?? "").toUpperCase() === "PAUSED" ? "paused" : "active",
         dailyBudgetCents: r.amountMicros != null ? Math.round(r.amountMicros / CENTS_TO_MICROS) : null,
       };
+    },
+    async excludeGeo(externalId, region) {
+      // One negative campaign-criterion per state in the region. Campaign-level
+      // criteria are the campaign-scoped equivalent of an ad-set exclusion.
+      for (const geo of googleGeoTargetConstants(region)) {
+        await mutate("campaignCriteria", {
+          create: {
+            campaign: `customers/${customerId}/campaigns/${externalId}`,
+            negative: true,
+            location: { geoTargetConstant: geo },
+          },
+        });
+      }
+    },
+    async includeGeo(externalId, region) {
+      if (!searchCriteria) throw new ActionError("google", "includeGeo reader not configured");
+      const wanted = new Set(googleGeoTargetConstants(region));
+      const existing = await searchCriteria(externalId);
+      for (const row of existing) {
+        if (wanted.has(row.geoTargetConstant)) {
+          await mutate("campaignCriteria", { remove: row.resourceName });
+        }
+      }
     },
   };
 }
@@ -134,5 +167,28 @@ export async function googleActionAdapterForShop(shopId: string): Promise<Action
     return json;
   };
 
-  return makeGoogleActionAdapter(mutate, customerId);
+  // Read the campaign's existing NEGATIVE location criteria so includeGeo (undo)
+  // can find the exact resource names to remove.
+  const searchCriteria: SearchCriteriaFn = async (campaignExternalId) => {
+    if (!/^\d+$/.test(campaignExternalId)) {
+      throw new ActionError("google", `invalid campaign id: ${campaignExternalId}`);
+    }
+    const json = (await search(
+      `SELECT campaign_criterion.resource_name, campaign_criterion.location.geo_target_constant
+       FROM campaign_criterion
+       WHERE campaign.id = ${campaignExternalId}
+         AND campaign_criterion.negative = true
+         AND campaign_criterion.type = LOCATION`,
+    )) as {
+      results?: Array<{
+        campaignCriterion?: { resourceName?: string; location?: { geoTargetConstant?: string } };
+      }>;
+    };
+    return (json.results ?? []).map((r) => ({
+      resourceName: String(r.campaignCriterion?.resourceName ?? ""),
+      geoTargetConstant: String(r.campaignCriterion?.location?.geoTargetConstant ?? ""),
+    }));
+  };
+
+  return makeGoogleActionAdapter(mutate, customerId, undefined, searchCriteria);
 }
