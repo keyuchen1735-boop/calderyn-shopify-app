@@ -32,6 +32,7 @@ const CAMPAIGN: CampaignVM = {
   breakeven_roas: 1.7,
   contribution_margin: 0.5,
   grade: "winning",
+  calderynScore: null,
 };
 
 const GUARDRAILS: GuardrailVM = {

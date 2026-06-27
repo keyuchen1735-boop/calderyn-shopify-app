@@ -2,6 +2,7 @@
 
 import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
 import type { RemediationPlan } from "./remediation/types";
+import type { CampaignCalderynScore } from "./campaign-score/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
@@ -112,6 +113,8 @@ export interface Campaign {
   roas_7d: number;
   contribution_margin: number;
   spend_7d: number;
+  /** Blended Calderyn score, attached server-side by the campaigns API loaders. */
+  calderynScore?: CampaignCalderynScore | null;
 }
 
 /** Platforms that enrich a SKU beyond the Shopify catalog sync:

@@ -235,6 +235,7 @@ export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): Campaign
     grade,
     // TODO(api): per-campaign roas series — no per-campaign trend exists yet.
     trend: undefined,
+    calderynScore: c.calderynScore ?? null,
   };
 }
 
