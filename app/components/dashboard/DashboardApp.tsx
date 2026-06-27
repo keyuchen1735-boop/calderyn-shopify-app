@@ -15,6 +15,7 @@ import type { ApproveReceipt } from "~/lib/calibration/delta";
 import type {
   ActionKind,
   DashboardCtx,
+  DashboardTheme,
   NavState,
   Screen as ScreenId,
 } from "./context";
@@ -69,6 +70,9 @@ const DASHBOARD_THEME = {
   typeScale: 1,
 };
 
+// Persisted night-mode preference (per browser). Light is the default.
+const NIGHT_MODE_KEY = "cd-night-mode";
+
 const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> = {
   dashboard: ScreenDashboard,
   alerts: ScreenAlerts,
@@ -98,7 +102,27 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
-  const t = DASHBOARD_THEME;
+  // Night mode (dark theme). Defaults to light; the merchant's choice persists in
+  // localStorage. Initialised to false so the server render and first client render
+  // agree (no hydration mismatch); the stored preference is applied post-mount.
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "1") setDark(true);
+    } catch {
+      /* localStorage unavailable — stay on the light default */
+    }
+  }, []);
+  const setNightMode = useCallback((next: boolean) => {
+    setDark(next);
+    try {
+      window.localStorage.setItem(NIGHT_MODE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore persistence failure — the toggle still applies for this session */
+    }
+  }, []);
+  const t = useMemo<DashboardTheme>(() => ({ ...DASHBOARD_THEME, dark }), [dark]);
+
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
   // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
   const [moreOpen, setMoreOpen] = useState(false);
@@ -782,9 +806,9 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         </nav>
         <div className="cd-side-foot">
           <div className="cd-live-row">
-            <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
-            <span className="flex-1">Live sync</span>
-            <Toggle value={liveOn} onChange={setLiveOn} />
+            <CDIcon name="moon" size={15} strokeWidth={1.9} />
+            <span className="flex-1">Night mode</span>
+            <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
           </div>
           <div className="cd-caption" style={{ paddingLeft: 2 }}>
             Shopify · Meta · Google · TikTok · QuickBooks
@@ -890,9 +914,9 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             </div>
             <div className="cd-more-foot">
               <div className="cd-live-row">
-                <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
-                <span className="flex-1">Live sync</span>
-                <Toggle value={liveOn} onChange={setLiveOn} />
+                <CDIcon name="moon" size={15} strokeWidth={1.9} />
+                <span className="flex-1">Night mode</span>
+                <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
               </div>
               <div className="cd-caption" style={{ paddingLeft: 2 }}>
                 Shopify · Meta · Google · TikTok · QuickBooks
