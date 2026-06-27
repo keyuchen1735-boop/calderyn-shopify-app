@@ -47,6 +47,11 @@ import {
   type AdScorecard,
 } from "~/lib/screener/campaign-ads.server";
 import {
+  resolveCampaignScore,
+  gradeRowFromPerformance,
+} from "~/lib/campaign-score/resolve.server";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
+import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
   MIN_SPEND_CENTS,
@@ -61,6 +66,13 @@ const DIRECTION_BADGE: Record<Direction, { label: string; tone: "success" | "att
   keep: { label: "Keep", tone: undefined },
   scale_down: { label: "Scale down", tone: "attention" },
   pause: { label: "Pause", tone: "critical" },
+};
+
+const SCORE_BADGE_TONE: Record<CampaignCalderynScore["band"], "success" | "warning" | "critical" | undefined> = {
+  strong: "success",
+  fair: "warning",
+  weak: "critical",
+  nodata: undefined,
 };
 
 type ScaleOpportunity = {
@@ -105,6 +117,8 @@ type LoaderPayload = {
   /** Open scale opportunity for this campaign (why-to-scale), or null. */
   scale: ScaleOpportunity | null;
   direction: CampaignDirection | null;
+  /** Blended Calderyn score for this campaign (full P+C — creatives are loaded). */
+  calderynScore: CampaignCalderynScore | null;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -297,6 +311,26 @@ async function respondForDetail(
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
+  const gradeRow = gradeRowFromPerformance({
+    campaignId: detail.id,
+    name: detail.name,
+    roas: detail.performance.reportedRoas ?? 0,
+    breakEvenRoas: detail.performance.breakEvenRoas ?? 0,
+    spendCents: detail.performance.spend7dCents ?? 0,
+  });
+  const calderynScore = await resolveCampaignScore(
+    shop,
+    {
+      id: detail.id,
+      ads: creatives.map((cr) => ({
+        adId: cr.adId,
+        status: cr.status.toUpperCase() === "PAUSED" ? "paused" : "active",
+      })),
+    },
+    gradeRow,
+    // Reuse the scorecards already loaded above — no second cache read (D3).
+    { loadCachedAdScorecards: async (_s, ids) => scorecards.filter((sc) => ids.includes(sc.adId)) },
+  );
   return json<LoaderPayload>({
     detail,
     error: null,
@@ -309,6 +343,7 @@ async function respondForDetail(
     campaignIdParam,
     scale,
     direction,
+    calderynScore,
   });
 }
 
@@ -330,6 +365,7 @@ function emptyPayload(
     campaignIdParam,
     scale: null,
     direction: null,
+    calderynScore: null,
   };
 }
 
@@ -542,6 +578,7 @@ export default function CampaignDetailPage() {
     campaignIdParam,
     scale,
     direction,
+    calderynScore,
   } = useLoaderData<typeof loader>();
   const directionFetcher = useFetcher<typeof action>();
   const scaleFetcher = useFetcher<typeof action>();
@@ -566,9 +603,14 @@ export default function CampaignDetailPage() {
     <Page
       title={detail.name}
       titleMetadata={
-        <Badge tone={detail.status === "active" ? "success" : "attention"}>
-          {detail.status === "active" ? "Active" : "Paused"}
-        </Badge>
+        <InlineStack gap="200" blockAlign="center">
+          <Badge tone={detail.status === "active" ? "success" : "attention"}>
+            {detail.status === "active" ? "Active" : "Paused"}
+          </Badge>
+          <Badge tone={SCORE_BADGE_TONE[calderynScore?.band ?? "nodata"]}>
+            {calderynScore?.value != null ? `Score ${calderynScore.value}` : "Score pending"}
+          </Badge>
+        </InlineStack>
       }
       subtitle={`${detail.platform} campaign`}
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
@@ -697,6 +739,50 @@ export default function CampaignDetailPage() {
             )}
           </BlockStack>
         </Card>
+
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h2" variant="headingMd">Calderyn score</Text>
+            <InlineStack gap="400" blockAlign="center" wrap>
+              <Badge tone={SCORE_BADGE_TONE[calderynScore?.band ?? "nodata"]}>
+                {calderynScore?.value != null ? `Score ${calderynScore.value}` : "Score pending"}
+              </Badge>
+              <Text as="span" tone="subdued">
+                Performance {calderynScore?.performance != null ? calderynScore.performance : "—"}
+              </Text>
+              <Text as="span" tone="subdued">
+                Creative {calderynScore?.creative != null ? calderynScore.creative : "—"}
+              </Text>
+              <Text as="span" tone="subdued">Confidence: {calderynScore?.confidence ?? "low"}</Text>
+              <Text as="span" tone="subdued">
+                Ads scored {calderynScore?.adsCovered ?? 0}/{calderynScore?.adsTotal ?? 0}
+              </Text>
+            </InlineStack>
+            {(calderynScore?.performance == null || calderynScore?.creative == null) && (
+              <Text as="p" tone="subdued">
+                {calderynScore?.performance == null ? "Performance pending — attribution. " : ""}
+                {calderynScore?.creative == null ? "Connect Meta to score this campaign's creatives." : ""}
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        {calderynScore && (calderynScore.weakDimensions.length > 0 || calderynScore.tips.length > 0) && (
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h2" variant="headingMd">How to improve</Text>
+              {calderynScore.weakDimensions.map((d, i) => (
+                <InlineStack key={`wd-${d.adId}-${i}`} gap="200" align="space-between">
+                  <Text as="span">{d.label}</Text>
+                  <Badge tone="warning">{String(d.score)}</Badge>
+                </InlineStack>
+              ))}
+              {calderynScore.tips.map((t, i) => (
+                <Text as="p" key={`tip-${i}`}>{t}</Text>
+              ))}
+            </BlockStack>
+          </Card>
+        )}
 
         <Card>
           <BlockStack gap="300">
