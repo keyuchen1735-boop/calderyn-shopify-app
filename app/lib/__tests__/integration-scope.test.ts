@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { hasAdsManagementScope, grantedScopesFromPermissions } from "../integration-status";
+import { vi } from "vitest";
+import { metaDraftPushEnabled } from "../meta/ad-create.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 describe("hasAdsManagementScope", () => {
   it("is true when ads_management is present", () => {
@@ -28,5 +31,26 @@ describe("grantedScopesFromPermissions", () => {
   it("returns '' on a malformed payload", () => {
     expect(grantedScopesFromPermissions(null)).toBe("");
     expect(grantedScopesFromPermissions({})).toBe("");
+  });
+});
+
+describe("metaDraftPushEnabled", () => {
+  function fakeSb(scopes: string | null, error = false): SupabaseClient {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn(async () =>
+      error ? { data: null, error: { message: "x" } } : { data: { scopes }, error: null },
+    );
+    return { from: vi.fn(() => chain) } as unknown as SupabaseClient;
+  }
+  it("true when the stored token carries ads_management", async () => {
+    expect(await metaDraftPushEnabled(fakeSb("ads_management,ads_read"), "shop")).toBe(true);
+  });
+  it("false when ads_management is missing", async () => {
+    expect(await metaDraftPushEnabled(fakeSb("ads_read"), "shop")).toBe(false);
+  });
+  it("false when the lookup errors (no false-enable)", async () => {
+    expect(await metaDraftPushEnabled(fakeSb(null, true), "shop")).toBe(false);
   });
 });
