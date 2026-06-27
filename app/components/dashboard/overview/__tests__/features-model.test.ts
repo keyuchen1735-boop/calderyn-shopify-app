@@ -24,6 +24,7 @@ const feat = (o: Partial<LiveEngineFeatureVM>): LiveEngineFeatureVM => ({
   outcomes: 3,
   outcomesNeeded: 3,
   proven: true,
+  recommended: false,
   ...o,
 });
 

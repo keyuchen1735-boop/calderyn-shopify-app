@@ -5,6 +5,7 @@
 import type { Alert, QueueProposal } from "../types";
 import { recommendedAction } from "../labels";
 import { pairConfidence, NO_BRAINER } from "./confidence";
+import { transferPlanFromEvidence } from "../shopify/inventory.server";
 
 /**
  * Build a ranked list of action proposals from open alerts.
@@ -20,9 +21,11 @@ import { pairConfidence, NO_BRAINER } from "./confidence";
  *       but mark `always_ask: true` (mute downgrades to "always ask", not silent suppress).
  *     - If the pair is in `mutedPairs` AND it is a normal (non-no-brainer) pair → skip
  *       (existing behavior: merchant has said "I handle this").
- *  6. Skip if the `${detector}:${action}` pair is in `graduatedPairs` (I5 no-double-actor:
- *     graduated pairs auto-run via autopilot; they must not also appear as approvable
- *     proposals so merchant-approve and autopilot cannot both fire for the same alert).
+ *  6. Skip if the `${detector}:${action}` pair is in `autonomyPairs` (I5 no-double-actor:
+ *     pairs RUNNING autonomously — graduated AND merchant-enabled — must not also
+ *     appear as approvable proposals so merchant-approve and autopilot cannot both
+ *     fire for the same alert. A graduated-but-not-enabled pair is NOT in this set,
+ *     so it stays as a suggestion until the merchant opts in — Slice C warm-up).
  *  7. Look up the pair's Beta counters from `pairRows`; default to {alpha:0, beta:0} on
  *     a cold-start pair (no calibration data yet).
  *  8. Compute confidence via `pairConfidence` with `peerP50=null` (no RPC in this slice).
@@ -35,8 +38,14 @@ export function buildActionQueue(
   pairRows: Map<string, { alpha: number; beta: number }>,
   rejectedAlertIds: Set<string> = new Set(),
   mutedPairs: Set<string> = new Set(),
-  /** I5: pairs where graduated=true must not appear in the queue (autopilot handles them). */
-  graduatedPairs: Set<string> = new Set(),
+  /** I5 / Slice C: pairs RUNNING autonomously (graduated AND merchant-enabled)
+   *  must not appear in the queue (autopilot handles them). A graduated-but-not-
+   *  enabled pair is absent here, so it stays as a suggestion (warm-up). */
+  autonomyPairs: Set<string> = new Set(),
+  /** Alert ids on a running pair whose specific move exceeds the merchant's
+   *  autonomy cap: autopilot blocks these (block-not-clamp), so unlike the rest of
+   *  their pair they stay approvable in the queue, flagged `over_autopilot_cap`. */
+  overCapAlertIds: Set<string> = new Set(),
 ): QueueProposal[] {
   const out: QueueProposal[] = [];
   for (const a of alerts) {
@@ -54,8 +63,14 @@ export function buildActionQueue(
     // A muted normal pair is excluded entirely (existing behavior).
     if (isMuted && !isNoBrainer) continue;
 
-    // I5: graduated pairs are handled by autopilot; must not appear as proposals.
-    if (graduatedPairs.has(pairKey)) continue;
+    // I5 / Slice C: pairs RUNNING autonomously (graduated AND merchant-enabled)
+    // are handled by autopilot and must not appear as proposals — EXCEPT an alert
+    // whose specific move exceeds the autonomy cap, which autopilot blocks
+    // (block-not-clamp) and therefore still needs manual approval. A graduated-but-
+    // not-enabled pair is absent from autonomyPairs, so it stays as a suggestion.
+    const isAutonomy = autonomyPairs.has(pairKey);
+    const isOverCap = isAutonomy && overCapAlertIds.has(a.id);
+    if (isAutonomy && !isOverCap) continue;
 
     const ev = pairRows.get(pairKey) ?? { alpha: 0, beta: 0 };
     const proposal: QueueProposal = {
@@ -70,7 +85,39 @@ export function buildActionQueue(
     // Flag the proposal so the UI can render an "always ask" badge / skip
     // the graduation UI path for this pair (I8).
     if (isMuted && isNoBrainer) proposal.always_ask = true;
+    // Flag an over-cap graduated move so the UI shows it needs approval because
+    // it exceeds the merchant's autopilot limit (not the usual learning path).
+    if (isOverCap) proposal.over_autopilot_cap = true;
     out.push(proposal);
+  }
+  return out;
+}
+
+/**
+ * Derive which graduated reallocate_inventory alerts exceed the merchant's
+ * per-move unit cap, from each alert's own evidence (the transfer-plan delta —
+ * exact, no Shopify I/O). These are exactly the moves autopilot blocks
+ * (block-not-clamp), so the queue keeps them approvable (via `overCapAlertIds`).
+ *
+ * A null `maxUnitsPerMove` means unlimited, so nothing is over-cap. Only pairs
+ * RUNNING autonomously (graduated AND merchant-enabled) `(detector,
+ * reallocate_inventory)` are considered — a pair that is not running already shows
+ * in the queue normally and needs no flag. Pure.
+ */
+export function inventoryOverCapAlertIds(
+  alerts: Alert[],
+  autonomyPairs: Set<string>,
+  maxUnitsPerMove: number | null,
+): Set<string> {
+  const out = new Set<string>();
+  if (maxUnitsPerMove == null) return out;
+  for (const a of alerts) {
+    const action = recommendedAction(a.detector_id, { hasCampaign: Boolean(a.campaign_id) });
+    if (action !== "reallocate_inventory") continue;
+    if (!autonomyPairs.has(`${a.detector_id}:reallocate_inventory`)) continue;
+    const plan = transferPlanFromEvidence(a.evidence ?? {});
+    if (!plan) continue;
+    if (Math.abs(plan.delta) > maxUnitsPerMove) out.add(a.id);
   }
   return out;
 }

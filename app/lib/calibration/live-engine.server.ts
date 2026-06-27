@@ -11,7 +11,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
 import { DETECTOR_LABELS, featureLabel } from "../labels";
-import { NO_BRAINER } from "./confidence";
+import { NO_BRAINER, actionTier } from "./confidence";
+import { MIN_APPROVALS } from "./graduation";
 
 const DAY_MS = 86_400_000;
 const WINDOW_DAYS = 90;
@@ -23,8 +24,11 @@ export interface LiveEngineFeature {
   name: string;
   /** Detector label, e.g. "Campaign is losing money" — what it watches for. */
   watching: string;
-  /** Per-feature autonomy on (true) or paused by the merchant (false). */
+  /** Per-feature autonomy on (true = merchant enabled it) or off (false). */
   enabled: boolean;
+  /** Unlocked + not enabled + not muted + has a track record => Calderyn
+   *  recommends the merchant turn this feature on (Slice C). */
+  recommended: boolean;
   /** Money this feature protected via autonomous actions in the window (cents). */
   moneyCents: number;
   /** Autonomous actions taken in the window. */
@@ -47,6 +51,8 @@ export interface PairRow {
   detector_id: string;
   action_kind: string;
   merchant_disabled?: boolean | null;
+  /** Merchant's per-feature opt-in (Slice C). enabled mirrors this. */
+  autonomy_enabled?: boolean | null;
   graduated?: boolean | null;
   clean_approvals?: number | null;
   net_positive_outcomes?: number | null;
@@ -84,6 +90,9 @@ export function aggregateLiveEngine(
   pairs: PairRow[],
   auditRows: AutopilotAuditRow[],
   nowMs: number,
+  /** `${detector}:${action}` pairs the merchant has muted via a muted_pair rule.
+   *  A muted pair is never recommended (the merchant said "I handle this"). */
+  mutedPairs: Set<string> = new Set(),
 ): { moneyProtectedWeekCents: number; features: LiveEngineFeature[] } {
   const weekStart = nowMs - 7 * DAY_MS;
   const agg = new Map<string, { money: number; actions: number; lastAt: string | null }>();
@@ -104,17 +113,32 @@ export function aggregateLiveEngine(
   const features: LiveEngineFeature[] = pairs.map((p) => {
     const detectorId = String(p.detector_id);
     const actionKind = p.action_kind as ActionKind;
-    const a = agg.get(`${detectorId}:${actionKind}`) ?? { money: 0, actions: 0, lastAt: null };
+    const pairKey = `${detectorId}:${actionKind}`;
+    const a = agg.get(pairKey) ?? { money: 0, actions: 0, lastAt: null };
+    const cleanApprovals = Number(p.clean_approvals ?? 0);
+    // Slice C: recommend turning a feature on when it is unlocked (graduated),
+    // the merchant has not enabled it, it is neither hard-muted (merchant_disabled)
+    // nor muted via a rule, and it has earned a track record (clean approvals at the
+    // action's reversibility-tier floor). For the shipped no-brainers this is the
+    // approvals bar (3); for learned pairs it is already met at graduation, so the
+    // same formula serves both. Boolean(p.graduated) keeps the result a clean boolean.
+    const recommended =
+      Boolean(p.graduated) &&
+      !p.autonomy_enabled &&
+      !p.merchant_disabled &&
+      !mutedPairs.has(pairKey) &&
+      cleanApprovals >= MIN_APPROVALS[actionTier(actionKind)];
     return {
       detectorId,
       actionKind,
       name: featureLabel(detectorId, actionKind),
       watching: DETECTOR_LABELS[detectorId as keyof typeof DETECTOR_LABELS] ?? detectorId,
-      enabled: !p.merchant_disabled,
+      enabled: Boolean(p.autonomy_enabled),
+      recommended,
       moneyCents: a.money,
       actions: a.actions,
       lastAt: a.lastAt,
-      cleanApprovals: Number(p.clean_approvals ?? 0),
+      cleanApprovals,
       netPositiveOutcomes: Number(p.net_positive_outcomes ?? 0),
     };
   });
@@ -145,7 +169,7 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
 
     const { data: pairRows, error: pairErr } = await sb
       .from("pair_calibration")
-      .select("detector_id, action_kind, merchant_disabled, graduated, clean_approvals, net_positive_outcomes")
+      .select("detector_id, action_kind, merchant_disabled, autonomy_enabled, graduated, clean_approvals, net_positive_outcomes")
       .eq("shop_id", shopId);
     const visiblePairs = ((pairRows ?? []) as PairRow[]).filter(
       (row) =>
@@ -173,10 +197,25 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
       .is("undo_of", null)
       .gte("created_at", sinceIso);
 
+    // Active muted_pair rules: a pair the merchant has trained Calderyn to leave to
+    // them must NOT be recommended (the autopilot path vetoes it anyway). Mirrors
+    // the muted-pair read in queue.list. Best-effort: a read error degrades to an
+    // empty set (no muted filtering), never throws.
+    const { data: mutedRows } = await sb
+      .from("calibration_rule")
+      .select("detector_id, action_kind")
+      .eq("shop_id", shopId)
+      .eq("active", true)
+      .eq("rule_kind", "muted_pair");
+    const mutedPairs = new Set(
+      (mutedRows ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+    );
+
     const { moneyProtectedWeekCents, features } = aggregateLiveEngine(
       visiblePairs,
       (auditRows ?? []) as AutopilotAuditRow[],
       Date.now(),
+      mutedPairs,
     );
     return { autopilotEnabled, moneyProtectedWeekCents, features };
   } catch {
@@ -186,11 +225,13 @@ export async function liveEngineSummary(shopId: string, sb: SupabaseClient): Pro
 
 /**
  * Turn a feature's unattended autonomy on/off for this shop by flipping
- * pair_calibration.merchant_disabled. DISABLING is always safe: the pair simply
- * falls back to asking you in the Action Queue. ENABLING only takes effect for a
- * pair that is actually graduated AND while the shop-level autopilot flag is on,
- * so the graduation gate (not this flag) remains the real authority. Scoped to
- * the shop. Best-effort: returns {ok:false} on error, never throws.
+ * pair_calibration.autonomy_enabled (Slice C). Graduation only UNLOCKS a pair;
+ * this switch is the merchant's explicit per-feature opt-in. ENABLING only bites
+ * for a pair that is actually graduated AND while the shop-level autopilot flag is
+ * on, so the graduation gate stays the real authority. DISABLING is always safe:
+ * the pair simply falls back to asking you in the Action Queue, and (since it is
+ * not muted) Calderyn may recommend turning it on again later. Scoped to the shop.
+ * Best-effort: returns {ok:false} on error, never throws.
  */
 export async function setPairAutonomy(
   shopId: string,
@@ -200,12 +241,10 @@ export async function setPairAutonomy(
   sb: SupabaseClient,
 ): Promise<{ ok: boolean }> {
   try {
-    const shipped = NO_BRAINER.has(`${detectorId}:${actionKind}`);
     const { error } = await sb
       .from("pair_calibration")
       .update({
-        merchant_disabled: !enabled,
-        ...(shipped ? { graduated: enabled } : {}),
+        autonomy_enabled: enabled,
         updated_at: new Date().toISOString(),
       })
       .eq("shop_id", shopId)

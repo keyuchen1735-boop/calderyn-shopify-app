@@ -32,7 +32,7 @@ export async function isGraduated(
     const { data: row, error: rowErr } = await sb
       .from("pair_calibration")
       .select(
-        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled, net_positive_outcomes, last_outcome_sign",
+        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled, autonomy_enabled, net_positive_outcomes, last_outcome_sign",
       )
       .eq("shop_id", shopId)
       .eq("detector_id", detectorId)
@@ -94,7 +94,10 @@ export async function isGraduated(
       lastOutcomeSign: Number(row.last_outcome_sign ?? 0) as -1 | 0 | 1,
     });
 
-    return verdict.graduated;
+    // Slice C: graduation only UNLOCKS a pair. It acts autonomously only after
+    // the merchant explicitly enables this feature (autonomy_enabled). The column
+    // defaults false, so a brand-new/unmigrated row is fail-safe OFF.
+    return verdict.graduated && Boolean(row.autonomy_enabled);
   } catch (err) {
     // 8. Fail-safe: never throw; return false.
     console.error(

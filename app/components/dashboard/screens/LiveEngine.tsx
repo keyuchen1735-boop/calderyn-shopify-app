@@ -94,22 +94,28 @@ function FeatureRow({ f, app, autopilotEnabled }: { f: LiveEngineFeatureVM; app:
       <div className="min-w-0 flex-1">
         <div className="cd-le-feat-namerow">
           <span className="cd-le-feat-name">{f.name}</span>
-          {active && (
+          {active ? (
             <span className="cd-le-feat-active">
               <span className="cd-live-dot on" />
               ACTIVE
             </span>
-          )}
+          ) : f.recommended && !on ? (
+            <span className="cd-le-feat-recommend">Ready to turn on</span>
+          ) : null}
         </div>
         <div className="cd-le-feat-sub">
           {f.watching} &middot; {f.lastText}
         </div>
-        {!f.proven && (
+        {f.recommended && !on ? (
+          <p className="cd-feature-progress">
+            You&rsquo;ve approved this enough times. Turn it on to let Calderyn handle it for you.
+          </p>
+        ) : !f.proven ? (
           <p className="cd-feature-progress">
             Approved {f.approvals}/{f.approvalsNeeded} &middot; made money {f.outcomes}/{f.outcomesNeeded}.
             {" "}A few more good results and it can run on its own.
           </p>
-        )}
+        ) : null}
       </div>
       {active && f.moneyCents > 0 && (
         <div className="cd-le-feat-money">
@@ -164,10 +170,10 @@ function AutopilotCard({ data, app }: { data: LiveEnginePageData; app: Dashboard
           </div>
           <p className="cd-caption" style={{ color: "var(--text-3)", marginTop: 3 }}>
             {running
-              ? "These graduated to run without you. Calderyn handles them on its own and logs every action below."
+              ? "You turned these on, so Calderyn handles them on its own and logs every action below."
               : unlocked > 0
-                ? "These no-brainer features ship unlocked. Turn on shop-level Autopilot in Settings when you want Calderyn to run them."
-                : "Approve suggestions in the Action Queue to graduate your most-trusted fixes to run here on their own."}
+                ? "These features are unlocked. Turn on the ones you trust above, and Calderyn runs them on its own once shop-level Autopilot is on in Settings."
+                : "Approve suggestions in the Action Queue to unlock your most-trusted fixes to run here on their own."}
           </p>
         </div>
         {running && (

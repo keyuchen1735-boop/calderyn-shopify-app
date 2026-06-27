@@ -2,13 +2,15 @@ import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isGraduated } from "../graduation.server";
 
-/** A pair_calibration row where all graduation gates pass. */
+/** A pair_calibration row where all graduation gates pass AND the merchant has
+ *  enabled this feature (Slice C: autonomy_enabled is required for isGraduated). */
 const PASSING_ROW = {
   last_conf: 74,
   graduation_threshold: 75,
   clean_approvals: 0,
   consecutive_undos: 0,
   merchant_disabled: false,
+  autonomy_enabled: true,
 };
 
 /**
@@ -64,6 +66,28 @@ describe("isGraduated — happy path", () => {
     const { sb } = makeStub({ pairRow: PASSING_ROW, rules: [] });
     const result = await isGraduated("shop-1", "campaign_below_breakeven", "pause_campaign", sb);
     expect(result).toBe(true);
+  });
+});
+
+describe("isGraduated — per-feature autonomy opt-in (Slice C)", () => {
+  it("returns false when autonomy_enabled is false even if all gates pass", async () => {
+    const { sb } = makeStub({ pairRow: { ...PASSING_ROW, autonomy_enabled: false }, rules: [] });
+    const result = await isGraduated("shop-1", "campaign_below_breakeven", "pause_campaign", sb);
+    expect(result).toBe(false);
+  });
+
+  it("returns true when autonomy_enabled is true and gates pass (no-brainer)", async () => {
+    const { sb } = makeStub({ pairRow: { ...PASSING_ROW, autonomy_enabled: true }, rules: [] });
+    const result = await isGraduated("shop-1", "campaign_below_breakeven", "pause_campaign", sb);
+    expect(result).toBe(true);
+  });
+
+  it("treats a missing autonomy_enabled column as not-enabled (fail-safe)", async () => {
+    const row: Record<string, unknown> = { ...PASSING_ROW };
+    delete row.autonomy_enabled;
+    const { sb } = makeStub({ pairRow: row, rules: [] });
+    const result = await isGraduated("shop-1", "campaign_below_breakeven", "pause_campaign", sb);
+    expect(result).toBe(false);
   });
 });
 

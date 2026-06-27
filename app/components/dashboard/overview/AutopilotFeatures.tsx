@@ -40,6 +40,7 @@ function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }
   return (
     <div className="cd-apfeat" data-on={on ? "1" : "0"}>
       <span className="cd-apfeat-name">{row.name}</span>
+      {row.recommended && !on && <span className="cd-le-feat-recommend">Ready to turn on</span>}
       <Toggle value={on} onChange={toggle} disabled={busy} />
     </div>
   );

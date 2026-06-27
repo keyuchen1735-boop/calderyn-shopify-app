@@ -14,6 +14,8 @@ export interface FeatureRowVM {
   name: string;
   enabled: boolean;
   locked: boolean;
+  /** Graduated + proven but not yet switched on — show a "Ready to turn on" nudge. */
+  recommended: boolean;
   moneyCents: number;
   actions: number;
 }
@@ -95,6 +97,7 @@ export function buildFeatureGroups(
       name: f.name,
       enabled: f.enabled,
       locked: false,
+      recommended: f.recommended,
       moneyCents: f.moneyCents,
       actions: f.actions,
     });
@@ -111,6 +114,7 @@ export function buildFeatureGroups(
       name: ACTION_LABELS[p.action_kind] ?? p.action_kind,
       enabled: false,
       locked: true,
+      recommended: false,
       moneyCents: 0,
       actions: 0,
     });
