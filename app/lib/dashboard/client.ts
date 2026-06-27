@@ -45,7 +45,7 @@ import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
-import type { CreativeScreenRun } from "~/lib/screener/types";
+import type { CreativeScreenRun, ScoreCard, CreativeInput, Variant } from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
@@ -972,4 +972,90 @@ export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
       cta: v.input.cta,
     })),
   };
+}
+
+// --- campaign creatives + per-campaign regenerate / screen ------------------
+// Browser-safe DTO mirrors of the server-side AdScorecard / CampaignCreative
+// shapes. client.ts must not import any *.server module (top-of-file contract),
+// so the wire shapes are re-declared here from the browser-safe screener/types.
+
+export interface AdScorecardDTO {
+  adId: string;
+  status: "done" | "error";
+  scorecard: ScoreCard | null;
+  error: string | null;
+}
+
+export interface CampaignCreativeDTO {
+  adId: string;
+  adName: string;
+  status: string;
+  creative: CreativeInput;
+}
+
+export interface CampaignCreativesDTO {
+  creatives: CampaignCreativeDTO[];
+  scorecards: AdScorecardDTO[];
+  assumedSpendCents: number;
+  metaConnected: boolean;
+  creativesError: string | null;
+}
+
+export async function fetchCampaignCreatives(
+  campaignId: string,
+  assumedSpendCents?: number,
+): Promise<CampaignCreativesDTO> {
+  const q = assumedSpendCents ? `?assumedSpendCents=${assumedSpendCents}` : "";
+  return apiGet<CampaignCreativesDTO>(
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/creatives${q}`,
+  );
+}
+
+export async function scoreCampaignAd(
+  campaignId: string,
+  payload: {
+    adId: string;
+    headline: string;
+    primaryText: string;
+    cta: string;
+    destinationUrl: string;
+    audience: string;
+    imageUrl: string | null;
+    assumedSpendCents: number;
+  },
+): Promise<AdScorecardDTO> {
+  const data = await apiSend<{ scorecard: AdScorecardDTO }>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/score`,
+    payload,
+  );
+  return data.scorecard;
+}
+
+export type RegenerateDTO =
+  | { ok: true; runId: string; weakestAdId: string; variants: Variant[]; allScored: Variant[]; generated: number; discarded: number }
+  | { ok: false; reason: string };
+
+export async function regenerateCampaign(
+  campaignId: string,
+  adIds: string[],
+  assumedSpendCents: number,
+): Promise<RegenerateDTO> {
+  return apiSend<RegenerateDTO>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/regenerate`,
+    { adIds, assumedSpendCents },
+  );
+}
+
+export async function screenCampaignCreative(
+  campaignId: string,
+  payload: ScreenCreativePayload,
+): Promise<CreativeScreenRun> {
+  const data = await apiSend<{ run: CreativeScreenRun }>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/screen`,
+    payload,
+  );
+  return data.run;
 }
