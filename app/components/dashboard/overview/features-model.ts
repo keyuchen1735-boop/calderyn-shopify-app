@@ -85,8 +85,10 @@ export function buildFeatureGroups(
     byGroup.get(g)!.push(row);
   };
 
-  // graduated, toggleable features
+  // graduated, toggleable features (dedup defensively so a repeated
+  // (detector, action) can never render two toggles fighting over one pair)
   for (const f of features) {
+    if (seen.has(pairKey(f.detectorId, f.actionKind))) continue;
     push(domainForDetector(f.detectorId), {
       detectorId: f.detectorId,
       actionKind: f.actionKind,

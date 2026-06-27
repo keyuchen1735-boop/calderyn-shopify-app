@@ -48,6 +48,14 @@ function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }
 function FeatureGroup({ group, app }: { group: FeatureGroupVM; app: DashboardCtx }) {
   const [collapsed, setCollapsed] = useState(group.onCount === 0);
 
+  // Auto-expand when a group gains its first active feature (e.g. a pair just
+  // graduated and the 45s poll rebuilt the groups) so the new toggle isn't
+  // hidden behind a stale collapsed state. Manual collapses still stick until
+  // the active count changes again.
+  useEffect(() => {
+    if (group.onCount > 0) setCollapsed(false);
+  }, [group.onCount]);
+
   return (
     <>
       <button
