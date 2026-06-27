@@ -176,7 +176,7 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
 
       {/* header row */}
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div className="ha-head" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <span className="ha-fx" style={{ flex: "0 0 auto", display: "inline-flex", filter: "drop-shadow(0 5px 12px rgba(0,0,0,.28))" }}>
             <svg width="50" height="50" viewBox="0 0 32 32" fill="none">
               <path className="ha-hexbase" d="M16 2.4 L27.86 9 L27.86 22.9 L16 29.6 L4.14 22.9 L4.14 9 Z" fill="#111113" stroke="rgba(255,255,255,.16)" strokeWidth="1.4" strokeLinejoin="round" />
@@ -200,7 +200,7 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
             </span>
           </div>
 
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
+          <div className="ha-headmeta" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
             {/* calibration ring */}
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ position: "relative", width: 46, height: 46, flex: "0 0 auto" }}>
@@ -219,11 +219,11 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
                 <span data-cal-note style={{ fontSize: 10.5, color: "var(--ha-ink-3)", lineHeight: 1.3 }} />
               </div>
             </div>
-            <span style={{ alignSelf: "stretch", width: 1, background: "var(--ha-line-2)", margin: "2px 0", flex: "0 0 auto" }} />
+            <span className="ha-headdiv" style={{ alignSelf: "stretch", width: 1, background: "var(--ha-line-2)", margin: "2px 0", flex: "0 0 auto" }} />
             {/* money */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 11 }}>
-                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-.035em", lineHeight: 1, fontVariantNumeric: "tabular-nums", textShadow: "var(--ha-money-shadow)" }}>{money(moneyProtectedCents)}</div>
+                <div className="ha-money" style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-.035em", lineHeight: 1, fontVariantNumeric: "tabular-nums", textShadow: "var(--ha-money-shadow)" }}>{money(moneyProtectedCents)}</div>
               </div>
               <span style={{ fontSize: 11, color: "var(--ha-ink-2)" }}>protected this week</span>
             </div>
