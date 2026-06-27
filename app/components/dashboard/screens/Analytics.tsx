@@ -13,6 +13,16 @@ import { gradeFromRow } from "~/lib/campaign-grade";
 import type { DashboardCtx } from "../context";
 import type { DailyRow, TopAd } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
+import {
+  StatRow,
+  FocusCard,
+  ActivityFeed,
+  PredictorCard,
+  GuardrailCard,
+  AttentionSection,
+} from "./overview-cards";
+import { PeerBenchmarks } from "./PeerBenchmarks";
+import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 
 type Range = "7d" | "14d" | "30d";
 
@@ -48,6 +58,8 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Peer Benchmarks: self-fetched (relocated from the former Overview).
+  const [benchmarks, setBenchmarks] = useState<BenchmarksData | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -66,6 +78,23 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       })
       .finally(() => {
         if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/dashboard/api/benchmarks")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d && Array.isArray((d as BenchmarksData).kpis)) {
+          setBenchmarks(d as BenchmarksData);
+        }
+      })
+      .catch((e) => {
+        console.error("peer benchmarks fetch failed", e);
       });
     return () => {
       alive = false;
@@ -290,6 +319,23 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
             Engagement = reactions + comments + shares + saves, last 30 days.
           </p>
         </section>
+      </div>
+
+      {/* Operational cards relocated from the former Overview (now the Live Engine). */}
+      <StatRow app={app} />
+      <div className="cd-grid-main">
+        <div className="flex flex-col gap-4 min-w-0">
+          <FocusCard app={app} />
+          <GuardrailCard app={app} />
+        </div>
+        <div className="flex flex-col gap-4 min-w-0">
+          <ActivityFeed app={app} limit={7} tall />
+        </div>
+      </div>
+      <AttentionSection app={app} />
+      <div className="cd-grid-duo">
+        <PredictorCard app={app} />
+        {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
       </div>
     </div>
   );

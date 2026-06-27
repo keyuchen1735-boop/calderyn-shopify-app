@@ -1,6 +1,8 @@
 // Analytics — account ROAS trend + per-campaign winning/okay/poor grade
 // (computed by the engine) + top ads by engagement + the linked
-// campaign_below_breakeven alert as the "next step".
+// campaign_below_breakeven alert as the "next step". The lower section carries
+// the at-a-glance money tiles, today's focus, and peer benchmarks that used to
+// live on the home page (which is now the Live Engine).
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { Fragment } from "react";
@@ -11,6 +13,7 @@ import {
   Banner,
   BlockStack,
   Box,
+  Button,
   Card,
   Divider,
   InlineStack,
@@ -25,15 +28,35 @@ import { type CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { MarginChart } from "~/components/MarginChart";
 import { toRoasSeries, formatRoas, gradeTone } from "~/lib/analytics-view";
 import { gradeFromRow, gradeLabel } from "~/lib/campaign-grade";
-import { fmtMoney, fmtMoneyDec } from "~/lib/format";
-import type { CampaignGradeRow, DailyRoasRow, TopAdRow } from "~/lib/types";
+import { fmtMoney, fmtMoneyDec, fmtRelTime } from "~/lib/format";
+import { recoveredWithin } from "~/lib/recovered";
+import { getPeerBenchmarks } from "~/lib/benchmarks/peer-benchmarks.server";
+import { PeerBenchmarksCard } from "~/components/calderyn/PeerBenchmarksCard";
+import { ACTION_LABELS, recommendedAction } from "~/lib/labels";
+import { Icon } from "~/components/calderyn";
+import type { PeerBenchmarks } from "~/lib/benchmarks/types";
+import type {
+  Alert,
+  CampaignGradeRow,
+  DailyRoasRow,
+  GuardrailConfig,
+  TopAdRow,
+} from "~/lib/types";
 
 const WINDOW_DAYS = 30;
+// Recovered impact over the trailing 7 days — windowed server-side so the
+// "Money we've saved you" tile matches its label (audit.list returns up to 90d).
+const RECOVERED_WINDOW_DAYS = 7;
 
 type LoaderPayload = {
   roasSeries: DailyRoasRow[];
   grades: CampaignGradeRow[];
   topAds: TopAdRow[];
+  // Relocated-from-home: drive the focus alert, money tiles, and benchmarks.
+  alerts: Alert[];
+  guardrails: GuardrailConfig | null;
+  recovered7d: { cents: number; count: number };
+  benchmarks: PeerBenchmarks;
   error: { code: string; message: string } | null;
 };
 
@@ -41,15 +64,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   try {
-    const [roasSeries, grades, topAds] = await Promise.all([
-      client.analytics.dailyRoasSeries(WINDOW_DAYS, request.signal),
-      client.analytics.campaignGrades(request.signal),
-      client.analytics.topAdsByEngagement(WINDOW_DAYS, 20, request.signal),
-    ]);
+    const [roasSeries, grades, topAds, alerts, audit, guardrails, benchmarks] =
+      await Promise.all([
+        client.analytics.dailyRoasSeries(WINDOW_DAYS, request.signal),
+        client.analytics.campaignGrades(request.signal),
+        client.analytics.topAdsByEngagement(WINDOW_DAYS, 20, request.signal),
+        client.alerts.list({ status: "open" }, request.signal),
+        client.audit.list(request.signal),
+        client.guardrails.get(request.signal),
+        getPeerBenchmarks(session.shop),
+      ]);
+    const sinceIso = new Date(
+      Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
     return json<LoaderPayload>({
       roasSeries,
       grades,
       topAds,
+      alerts,
+      guardrails,
+      recovered7d: recoveredWithin(audit, sinceIso),
+      benchmarks,
       error: null,
     });
   } catch (err) {
@@ -58,6 +93,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       roasSeries: [],
       grades: [],
       topAds: [],
+      alerts: [],
+      guardrails: null,
+      recovered7d: { cents: 0, count: 0 },
+      benchmarks: { niche: "cat:uncategorized", consented: false, kpis: [] },
       error: { code: e.code ?? "ERROR", message: e.message },
     });
   }
@@ -157,7 +196,16 @@ function Sparkline({ values }: { values: number[] }) {
 
 export default function Analytics() {
   const navigate = useEmbeddedNavigate();
-  const { roasSeries, grades, topAds, error } = useLoaderData<typeof loader>();
+  const {
+    roasSeries,
+    grades,
+    topAds,
+    alerts,
+    guardrails,
+    recovered7d,
+    benchmarks,
+    error,
+  } = useLoaderData<typeof loader>();
   const series = toRoasSeries(roasSeries);
   // Phones get stacked cards instead of the multi-column DataTables.
   const { smDown } = useBreakpoints();
@@ -186,6 +234,22 @@ export default function Analytics() {
     sparkValues.length >= 2
       ? sparkValues[sparkValues.length - 1] - sparkValues[0]
       : null;
+
+  // ----- relocated from the old home: money tiles + today's focus -----
+  const openAlerts = alerts.filter((a) => a.status === "open");
+  const critical = openAlerts.filter((a) => a.severity === "critical");
+  const { cents: recovered7dCents, count: recoveredCount } = recovered7d;
+  const atRisk = critical.reduce((s, a) => s + a.dollar_impact, 0);
+  const ranked = [...openAlerts].sort((a, b) => a.claude_rank - b.claude_rank);
+  const focus = ranked[0];
+  // Campaign-aware so a no-campaign SKU alert never recommends "Pause campaign";
+  // null means no direct fix — the card offers Review instead.
+  const focusActionKind = focus
+    ? recommendedAction(focus.detector_id, { hasCampaign: Boolean(focus.campaign) })
+    : null;
+  const budgetLeft = guardrails
+    ? guardrails.daily_action_budget_cents - guardrails.daily_action_budget_used_cents
+    : 0;
 
   return (
     <Page
@@ -447,6 +511,103 @@ export default function Analytics() {
             })()
           )}
         </Card>
+
+        {/* ===== At a glance — relocated from the old home page ===== */}
+        <Divider />
+
+        <div className="cdn-stat-row">
+          <InlineStack gap="400" wrap>
+            <Box minWidth="220px">
+              <Card>
+                <BlockStack gap="150">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Money at risk now
+                  </Text>
+                  <Text as="p" variant="heading2xl" tone={critical.length ? "critical" : undefined}>
+                    {fmtMoney(atRisk)}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    from {openAlerts.length} thing{openAlerts.length === 1 ? "" : "s"} we found
+                  </Text>
+                </BlockStack>
+              </Card>
+            </Box>
+            <Box minWidth="220px">
+              <Card>
+                <BlockStack gap="150">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Money we&apos;ve saved you
+                  </Text>
+                  <Text as="p" variant="heading2xl" tone="success">
+                    {fmtMoney(recovered7dCents)}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    last 7 days, across {recoveredCount} fix{recoveredCount === 1 ? "" : "es"}
+                  </Text>
+                </BlockStack>
+              </Card>
+            </Box>
+            <Box minWidth="220px">
+              <Card>
+                <BlockStack gap="150">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Budget left today
+                  </Text>
+                  <Text as="p" variant="heading2xl">
+                    {guardrails ? fmtMoney(budgetLeft) : "—"}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {guardrails
+                      ? `of ${fmtMoney(guardrails.daily_action_budget_cents)} for fixes Calderyn makes on its own`
+                      : "unavailable"}
+                  </Text>
+                </BlockStack>
+              </Card>
+            </Box>
+          </InlineStack>
+        </div>
+
+        {focus && (
+          <div className="cdn-card cdn-accent-left cdn-accent-left--primary">
+            <BlockStack gap="300">
+              <BlockStack gap="150">
+                <InlineStack gap="100" blockAlign="center">
+                  <span style={{ color: "var(--cdn-success)", display: "inline-flex" }}>
+                    <Icon name="spark" size={14} fill />
+                  </span>
+                  <Text as="span" variant="headingXs" tone="success">
+                    TODAY&apos;S FOCUS
+                  </Text>
+                </InlineStack>
+                <Text as="h3" variant="headingMd">
+                  {focus.title}
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {focusActionKind
+                    ? `Recommended: ${ACTION_LABELS[focusActionKind]} · protects `
+                    : "Protects "}
+                  <Text as="span" tone="success" fontWeight="semibold">
+                    {fmtMoney(focus.dollar_impact)}
+                  </Text>{" "}
+                  / 30d · flagged {fmtRelTime(focus.created_at)}
+                </Text>
+              </BlockStack>
+              <InlineStack gap="200">
+                <Button onClick={() => navigate(`/app/alerts/${focus.id}`)}>Review</Button>
+                {focusActionKind && (
+                  <Button
+                    variant="primary"
+                    onClick={() => navigate(`/app/alerts/${focus.id}?action=${focusActionKind}`)}
+                  >
+                    {ACTION_LABELS[focusActionKind]}
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </div>
+        )}
+
+        <PeerBenchmarksCard data={benchmarks} />
       </BlockStack>
     </Page>
   );

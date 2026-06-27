@@ -143,14 +143,17 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
     // bounce the merchant back to the wizard — render the dashboard with its
     // error banner instead.
     getStateSpy.mockResolvedValue({ step: 8, done: true });
-    alertsListSpy.mockRejectedValue(
-      Object.assign(new Error("alerts query failed"), { code: "ERROR", status: 500 }),
+    // The home is now the Live Engine; a transient failure in any data the
+    // loader pulls (here: guardrails, which backs autopilot-on-load) must render
+    // the page with its error banner, not bounce the merchant to the wizard.
+    guardrailsGetSpy.mockRejectedValue(
+      Object.assign(new Error("guardrails query failed"), { code: "ERROR", status: 500 }),
     );
 
     const res = (await callLoader()) as Response;
     const body = (await res.json()) as { error: { message: string } | null };
 
     expect(res.status).toBe(200);
-    expect(body.error).toEqual({ code: "ERROR", message: "alerts query failed" });
+    expect(body.error).toEqual({ code: "ERROR", message: "guardrails query failed" });
   });
 });

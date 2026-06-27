@@ -67,7 +67,7 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory
 
 const DASHBOARD_THEME = {
   dark: false,
-  accent: "#24556E",
+  accent: "#1A1A1C",
   density: "balanced",
   radius: 14,
   glass: 0.72,
@@ -759,11 +759,11 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           >
             <path
               d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
-              fill="#24556E"
+              fill="var(--accent)"
             />
             <path
               d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-              stroke="#fff"
+              stroke="var(--on-accent)"
               strokeWidth="3.6"
               strokeLinejoin="round"
               strokeLinecap="round"

@@ -4,8 +4,8 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 // loads with every boundary already mocked.
 import { loader } from "../app._index";
 
-const { listAlertsSpy } = vi.hoisted(() => ({
-  listAlertsSpy: vi.fn(),
+const { buildEngineSpy } = vi.hoisted(() => ({
+  buildEngineSpy: vi.fn(),
 }));
 
 // Stub the UI deps so importing the route module doesn't pull the real libs.
@@ -24,28 +24,38 @@ vi.mock("@shopify/polaris", () => {
     Text: Stub,
   };
 });
-vi.mock("~/components/calderyn", () => ({
-  AlertCard: () => null,
-  AmbientAlertBanner: () => null,
-  GuardrailMeter: () => null,
-  Icon: () => null,
-  StatTile: () => null,
+vi.mock("~/components/calderyn/LiveEngineView", () => ({
+  default: () => null,
+  LiveBadge: () => null,
 }));
 
 vi.mock("../../shopify.server", () => ({
   authenticate: { admin: async () => ({ session: { shop: "acme.myshopify.com" } }) },
 }));
 
+// The home now renders the Live Engine: its loader builds LiveEnginePageData.
+vi.mock("~/lib/calibration/live-engine-page.server", () => ({
+  buildLiveEnginePageData: (...a: unknown[]) => buildEngineSpy(...a),
+}));
+
 vi.mock("~/lib/calderyn.server", () => ({
   calderynClient: () => ({
-    alerts: { list: (...a: unknown[]) => listAlertsSpy(...a) },
-    audit: { list: async () => [] },
-    campaigns: { list: async () => [] },
-    guardrails: { get: async () => null },
     onboarding: { getState: async () => ({ done: true }) },
-    calibration: { get: async () => ({ pct: null, updated_at: null }) },
+    guardrails: { get: async () => ({ autopilot_enabled: false }) },
+    campaigns: { list: async () => [] },
   }),
 }));
+
+const EMPTY_ENGINE = {
+  autopilotEnabled: false,
+  moneyProtectedWeekCents: 0,
+  features: [],
+  pipeline: [],
+  trace: [],
+  predictions: [],
+  calibrationPct: null,
+  nearGraduation: 0,
+};
 
 function args(): LoaderFunctionArgs {
   return {
@@ -55,25 +65,26 @@ function args(): LoaderFunctionArgs {
   } as LoaderFunctionArgs;
 }
 
-describe("app._index loader dashboardLoginUrl", () => {
+describe("app._index (Live Engine home) loader dashboardLoginUrl", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
-    listAlertsSpy.mockReset();
+    buildEngineSpy.mockReset();
   });
 
   it("points at the public dashboard login for the session shop", async () => {
     vi.stubEnv("DASHBOARD_PUBLIC_URL", "https://calderyncompany.com");
-    listAlertsSpy.mockResolvedValue([]);
+    buildEngineSpy.mockResolvedValue(EMPTY_ENGINE);
     const res = await loader(args());
     const payload = await (res as Response).json();
+    expect(payload.error).toBeNull();
     expect(payload.dashboardLoginUrl).toBe(
       "https://calderyncompany.com/dashboard/login?shop=acme.myshopify.com",
     );
   });
 
-  it("is present on the error payload too", async () => {
+  it("is present on the error payload too, with the error code propagated", async () => {
     vi.stubEnv("DASHBOARD_PUBLIC_URL", "https://calderyncompany.com");
-    listAlertsSpy.mockRejectedValue(Object.assign(new Error("boom"), { code: "DOWN" }));
+    buildEngineSpy.mockRejectedValue(Object.assign(new Error("boom"), { code: "DOWN" }));
     const res = await loader(args());
     const payload = await (res as Response).json();
     expect(payload.error?.code).toBe("DOWN");

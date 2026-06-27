@@ -330,7 +330,7 @@ function GraduationMoment({ info, onDismiss }: { info: GraduatedInfo; onDismiss:
     setOn(next); // optimistic
     toggleFetcher.submit(
       { intent: "toggle-feature", detectorId: info.detectorId, actionKind: info.actionKind, enabled: String(next) },
-      { method: "post", action: "/app/engine" },
+      { method: "post", action: "/app" },
     );
   };
 
@@ -364,7 +364,7 @@ function GraduationMoment({ info, onDismiss }: { info: GraduatedInfo; onDismiss:
         <span className="aqx-grad-toggle-lab">{on ? "Autopilot is on for this fix" : "Turn on autopilot"}</span>
       </div>
       <div className="aqx-grad-foot">
-        You stay in control. Manage every autopilot fix from the <a href="/app/engine">Live Engine</a>.
+        You stay in control. Manage every autopilot fix from the <a href="/app">Live Engine</a>.
       </div>
     </div>
   );
