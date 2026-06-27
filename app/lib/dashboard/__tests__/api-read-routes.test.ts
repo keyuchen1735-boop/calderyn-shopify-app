@@ -7,6 +7,7 @@ import { loader as campaignLoader } from "../../../routes/dashboard.api.campaign
 const requireDashboardSession = vi.fn();
 const campaignsList = vi.fn();
 const campaignsGet = vi.fn();
+const campaignGrades = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
@@ -21,6 +22,9 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
         list: (...a: unknown[]) => campaignsList(...a),
         get: (...a: unknown[]) => campaignsGet(...a),
       },
+      analytics: {
+        campaignGrades: (...a: unknown[]) => campaignGrades(...a),
+      },
     }),
   };
 });
@@ -32,6 +36,7 @@ beforeEach(() => {
     shopDomain: "x.myshopify.com",
     sessionId: "sess-1",
   });
+  campaignGrades.mockResolvedValue([]);
 });
 
 describe("GET /dashboard/api/campaigns", () => {
@@ -57,7 +62,25 @@ describe("GET /dashboard/api/campaigns", () => {
     })) as Response;
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
-    expect(await res.json()).toEqual({ campaigns: [{ id: "c1", name: "Spring" }] });
+    expect(await res.json()).toEqual({
+      campaigns: [
+        {
+          id: "c1",
+          name: "Spring",
+          calderynScore: {
+            value: null,
+            band: "nodata",
+            performance: null,
+            creative: null,
+            confidence: "low",
+            weakDimensions: [],
+            tips: [],
+            adsCovered: 0,
+            adsTotal: 0,
+          },
+        },
+      ],
+    });
   });
 });
 
