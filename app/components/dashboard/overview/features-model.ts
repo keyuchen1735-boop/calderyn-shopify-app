@@ -207,3 +207,16 @@ export function flaggedGroups(pending: QueueProposalVM[]): Set<WatchGroup> {
   for (const p of pending) set.add(domainForDetector(p.detector_id));
   return set;
 }
+
+/** First pending item's title per group — the plain-language text the hero shows
+ *  in a flagged Watching row. Caller normalises the detector field. */
+export function flagTextByGroup(
+  items: ReadonlyArray<{ detectorId: string; title: string }>,
+): Partial<Record<WatchGroup, string>> {
+  const out: Partial<Record<WatchGroup, string>> = {};
+  for (const it of items) {
+    const g = domainForDetector(it.detectorId);
+    if (!out[g]) out[g] = it.title;
+  }
+  return out;
+}

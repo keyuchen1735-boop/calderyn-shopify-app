@@ -6,6 +6,7 @@ import { calibrationBand } from "~/lib/calibration/bands";
 import AutopilotHero from "~/components/dashboard/hero/AutopilotHero";
 import {
   domainForDetector,
+  flagTextByGroup,
   lockedCatalogForGroup,
   catalogName,
   LOCKED_FEATURE_TOOLTIP,
@@ -657,6 +658,7 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
   // Flag the Watching rows whose domain has a proposal awaiting approval, so the
   // hero reads the live queue the same way the dashboard does.
   const flagged = new Set<WatchGroup>(livePending.map((p) => domainForDetector(p.detectorId)));
+  const watchFlags = flagTextByGroup(livePending.map((p) => ({ detectorId: p.detectorId, title: p.title })));
 
   return (
     <Stack>
@@ -670,6 +672,7 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
         moneyProtectedCents={data.moneyProtectedWeekCents}
         flaggedGroups={flagged}
         watchScan={data.watchScan}
+        watchFlags={watchFlags}
       />
       <div className="engx-cols">
         <CalderynLog

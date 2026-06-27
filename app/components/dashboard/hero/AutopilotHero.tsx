@@ -2,7 +2,9 @@ import { useRef, useEffect, type CSSProperties } from "react";
 import { useGSAP } from "@gsap/react";
 import { money } from "../format";
 import { HeroEngine } from "./hero-motion";
+import ScanFeed from "./ScanFeed";
 import { onEngine, type WatchGroup } from "../engine-events";
+import type { ScanItem } from "../../../lib/calibration/live-engine-types";
 
 export interface AutopilotHeroProps {
   /** watching | running — drives the title crossfade + Acting card. */
@@ -18,8 +20,10 @@ export interface AutopilotHeroProps {
   moneyProtectedCents: number;
   /** Watching groups that currently hold a pending (flagged) item. */
   flaggedGroups: Set<WatchGroup>;
-  /** Real names being scanned per group; drives the per-row roll ticker. */
-  watchScan: { inv: string[]; ads: string[]; price: string[]; ret: string[] };
+  /** Real items being scanned per group; drives the per-row roll ticker. */
+  watchScan: { inv: ScanItem[]; ads: ScanItem[]; price: ScanItem[]; ret: ScanItem[] };
+  /** Plain-language flag text per group, shown when that group has a pending item. */
+  watchFlags?: Partial<Record<WatchGroup, string>>;
   dark?: boolean;
 }
 
@@ -70,6 +74,14 @@ const WATCH_GROUPS: { key: WatchGroup; label: string; icon: JSX.Element }[] = [
   },
 ];
 
+/** Dim line shown in a Watching row when a group has no real items to scan. */
+const EMPTY_TEXT: Record<WatchGroup, string> = {
+  inv: "No inventory to scan yet",
+  ads: "No campaigns to scan yet",
+  price: "No products to price-check yet",
+  ret: "Retention monitoring coming soon",
+};
+
 function calNote(level: number, levels: number): string {
   return level >= levels
     ? `Level ${level} of ${levels} &middot; fully<br>calibrated`
@@ -103,7 +115,7 @@ const WATCH_ICO: CSSProperties = {
 };
 
 export default function AutopilotHero(props: AutopilotHeroProps) {
-  const { running, featureOn, featureTotal, calibrationPct, level, levels, moneyProtectedCents, flaggedGroups, watchScan, dark } = props;
+  const { running, featureOn, featureTotal, calibrationPct, level, levels, moneyProtectedCents, flaggedGroups, watchScan, watchFlags, dark } = props;
   const rootRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<HeroEngine | null>(null);
 
@@ -119,7 +131,6 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
       engine.updateCalibration(calibrationPct ?? 0, calNote(level, levels), false);
       engine.setTitle(running);
       engine.setFlags(flaggedGroups);
-      engine.setScan(watchScan);
       engine.startWatch();
 
       const offDock = onEngine("le-dock", (d) => d && engine.dock(d));
@@ -142,7 +153,6 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
   useEffect(() => { engineRef.current?.updateCalibration(calibrationPct ?? 0, calNote(level, levels)); }, [calibrationPct, level, levels]);
   useEffect(() => { engineRef.current?.setTitle(running); }, [running]);
   useEffect(() => { engineRef.current?.setFlags(flaggedGroups); }, [flaggedGroups]);
-  useEffect(() => { engineRef.current?.setScan(watchScan); }, [watchScan]);
 
   return (
     <div
@@ -249,7 +259,12 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
                       <span data-watch-ico style={WATCH_ICO}>{g.icon}</span>
                       <span style={{ flex: "0 0 auto", fontSize: 12.5, fontWeight: 600, color: "var(--ha-ink)", whiteSpace: "nowrap", position: "relative", zIndex: 1 }}>{g.label}</span>
                       <div style={{ flex: "1 1 auto", minWidth: 0, position: "relative", height: 18, overflow: "hidden", zIndex: 1 }}>
-                        <span data-watch-scan style={{ display: "flex", alignItems: "center", position: "absolute", inset: 0, fontSize: 11.5, fontWeight: 500, lineHeight: "18px", color: "var(--ha-ink-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", willChange: "transform" }} />
+                        <ScanFeed
+                          items={watchScan[g.key]}
+                          state={flaggedGroups.has(g.key) ? "flag" : watchScan[g.key].length ? "scan" : "off"}
+                          flagText={watchFlags?.[g.key]}
+                          emptyText={EMPTY_TEXT[g.key]}
+                        />
                         <span data-watch-sub style={{ display: "none", alignItems: "center", position: "absolute", inset: 0, fontSize: 11.5, fontWeight: 600, lineHeight: "18px", color: "var(--ha-flag)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} />
                       </div>
                       <span data-watch-stat style={{ display: "inline-flex", alignItems: "center", gap: 5, flex: "0 0 auto", fontSize: 10.5, fontWeight: 600, color: "var(--ha-ink-3)", position: "relative", zIndex: 1 }}>

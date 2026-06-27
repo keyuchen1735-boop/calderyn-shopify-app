@@ -1533,6 +1533,15 @@
 .ha { --mono: ui-monospace, SFMono-Regular, Menlo, monospace; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
 .ha { --ha-bg: linear-gradient(135deg, #FFFFFF 0%, #F3F3F4 100%); --ha-shadow: 0 18px 48px -26px rgba(0,0,0,.28), inset 0 0 0 1px rgba(0,0,0,.07); --ha-glow1: radial-gradient(circle, rgba(0,0,0,.05), transparent 60%); --ha-glow2: radial-gradient(circle, rgba(0,0,0,.04), transparent 62%); --ha-ink: #18181B; --ha-ink-1b: rgba(24,24,27,.78); --ha-ink-2: rgba(24,24,27,.60); --ha-ink-3: rgba(24,24,27,.42); --ha-line: rgba(0,0,0,.10); --ha-line-2: rgba(0,0,0,.07); --ha-line-3: rgba(0,0,0,.20); --ha-chip: rgba(0,0,0,.06); --ha-fill: rgba(0,0,0,.06); --ha-surface: rgba(0,0,0,.035); --ha-accent: #18181B; --ha-on-accent: #FFFFFF; --ha-money-shadow: none; --ha-flag: #B45309; --ha-flag-bg: rgba(180,83,9,.08); --ha-flag-line: rgba(180,83,9,.34); --ha-word-grad: linear-gradient(90deg, #9A9A9E 0%, #18181B 38%, #6E6E73 64%, #9A9A9E 100%); }
 .ha[data-theme="dark"] { --ha-bg: linear-gradient(135deg, #1C1C1F 0%, #121214 58%, #0B0B0C 100%); --ha-shadow: 0 26px 60px -28px rgba(0,0,0,.85), inset 0 0 0 1px rgba(255,255,255,.08); --ha-glow1: radial-gradient(circle, rgba(255,255,255,.10), transparent 60%); --ha-glow2: radial-gradient(circle, rgba(255,255,255,.06), transparent 62%); --ha-ink: #FFFFFF; --ha-ink-1b: rgba(255,255,255,.80); --ha-ink-2: rgba(255,255,255,.60); --ha-ink-3: rgba(255,255,255,.42); --ha-line: rgba(255,255,255,.14); --ha-line-2: rgba(255,255,255,.10); --ha-line-3: rgba(255,255,255,.28); --ha-chip: rgba(255,255,255,.16); --ha-fill: rgba(255,255,255,.14); --ha-surface: rgba(255,255,255,.055); --ha-accent: #FFFFFF; --ha-on-accent: #141414; --ha-money-shadow: 0 2px 20px rgba(0,0,0,.18); --ha-flag: #F0B45F; --ha-flag-bg: rgba(240,180,95,.13); --ha-flag-line: rgba(240,180,95,.36); --ha-word-grad: linear-gradient(90deg, #7A7A7E 0%, #FFFFFF 38%, #B8B8BC 64%, #7A7A7E 100%); }
+/* Watching-row scan ticker (vertical roll feed) */
+.cd-scanwin { position: absolute; inset: 0; overflow: hidden; }
+.cd-scanstrip { display: flex; flex-direction: column; will-change: transform; }
+.cd-scanline { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 18px; line-height: 18px; font-size: 11.5px; font-weight: 500; }
+.cd-scanline-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ha-ink-2); }
+.cd-scanline-val { flex: 0 0 auto; color: var(--ha-ink-3); font-variant-numeric: tabular-nums; }
+.cd-scanflag { color: var(--ha-flag); font-weight: 600; }
+.cd-scandim { color: var(--ha-ink-3); opacity: .75; }
+
 .ha-scroll { overflow-x: hidden; }
 .ha-scroll::-webkit-scrollbar { width: 6px; }
 .ha-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
