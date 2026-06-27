@@ -108,6 +108,12 @@ function stubClient(): Client {
         { campaign_id: "c2", name: "Healthy PMax", grade: "winning", roas: 3.2, break_even_roas: 1.5, spend_cents: 0, revenue_cents: 0, day_bucket: "" },
       ],
     },
+    campaigns: {
+      list: async () => [
+        { id: "c1", name: "Meta Retargeting" },
+        { id: "c2", name: "Google Brand PMax" },
+      ],
+    },
   } as unknown as Client;
 }
 
@@ -174,6 +180,14 @@ describe("buildLiveEnginePageData", () => {
     expect(p.trustLine).toContain("Still learning this one");
   });
 
+  it("builds watchScan from real SKUs + campaigns; ret reserved empty", async () => {
+    const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
+    expect(d.watchScan.inv).toContain("Basecamp Water Bottle");
+    expect(d.watchScan.price).toContain("Basecamp Water Bottle");
+    expect(d.watchScan.ads).toEqual(["Meta Retargeting", "Google Brand PMax"]);
+    expect(d.watchScan.ret).toEqual([]);
+  });
+
   it("derives predictions from real signals only (runway + below-breakeven + top alert)", async () => {
     const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
     const stock = d.predictions.find((p) => p.kind === "stockout");
@@ -205,12 +219,14 @@ describe("buildLiveEnginePageData", () => {
       skus: { list: async () => { throw new Error("x"); } },
       alerts: { list: async () => { throw new Error("x"); } },
       analytics: { campaignGrades: async () => { throw new Error("x"); } },
+      campaigns: { list: async () => { throw new Error("x"); } },
     } as unknown as Client;
     const d = await buildLiveEnginePageData(broken, undefined, NOW);
     expect(d.features).toEqual([]);
     expect(d.trace).toEqual([]);
     expect(d.pending).toEqual([]);
     expect(d.predictions).toEqual([]);
+    expect(d.watchScan).toEqual({ inv: [], ads: [], price: [], ret: [] });
     expect(d.autopilotEnabled).toBe(false);
   });
 });

@@ -43,6 +43,7 @@ const EMPTY_ENGINE: LiveEnginePageData = {
   trace: [],
   pending: [],
   predictions: [],
+  watchScan: { inv: [], ads: [], price: [], ret: [] },
   calibrationPct: null,
   nearGraduation: 0,
 };

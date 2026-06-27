@@ -131,6 +131,15 @@ export interface LiveEnginePageData {
   /** Flagged proposals awaiting approval, newest-impact first. */
   pending: PendingInspectorVM[];
   predictions: PredictionVM[];
+  /** Real names currently being scanned, per Watching group (bounded ~8 each).
+   *  Empty lists are normal (new store) — the hero falls back to a neutral
+   *  activity line. Never fabricated; `ret` is reserved (no real source yet). */
+  watchScan: {
+    inv: string[];
+    ads: string[];
+    price: string[];
+    ret: string[];
+  };
   calibrationPct: number | null;
   nearGraduation: number;
 }
