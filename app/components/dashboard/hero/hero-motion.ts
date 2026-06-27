@@ -273,7 +273,7 @@ export class HeroEngine {
   /** Provide the real per-group names. Renders the current line on each row
    *  immediately (no animation) so a data refresh never blanks the ticker. */
   setScan(lists: Record<WatchGroup, string[]>): void {
-    this.scan = lists;
+    this.scan = lists ?? { inv: [], ads: [], price: [], ret: [] };
     this.watchRows().forEach((row) => this.renderScan(row, false));
   }
 
@@ -286,15 +286,17 @@ export class HeroEngine {
     const g = row.getAttribute("data-group") as WatchGroup | null;
     if (!el || !g) return;
     const next = this.scanTextFor(g);
+    // Animate opacity/translate only — visibility is owned by setFlags/setSub/
+    // the dock settle, so the ambient roll never un-hides a flagged row.
     if (!animate || reduced()) {
       el.textContent = next;
-      gsap.set(el, { y: 0, autoAlpha: 1 });
+      gsap.set(el, { y: 0, opacity: 1 });
       return;
     }
     const tl = gsap.timeline();
-    tl.to(el, { y: -10, autoAlpha: 0, duration: 0.22, ease: "power1.in" })
+    tl.to(el, { y: -10, opacity: 0, duration: 0.22, ease: "power1.in" })
       .add(() => { el.textContent = next; })
-      .fromTo(el, { y: 10, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.3, ease: EMPH });
+      .fromTo(el, { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: EMPH });
   }
 
   private startScan(): void {
@@ -306,8 +308,10 @@ export class HeroEngine {
       this.watchRows().forEach((row, k) => {
         const g = row.getAttribute("data-group") as WatchGroup | null;
         const sub = q<HTMLElement>(row, "[data-watch-sub]");
+        const scanEl = q<HTMLElement>(row, "[data-watch-scan]");
         const subShown = !!sub && sub.style.display !== "none";
-        if (g && !subShown) this.wait(0.08 * k, () => this.renderScan(row, true));
+        const hidden = !scanEl || scanEl.style.visibility === "hidden";
+        if (g && !subShown && !hidden) this.wait(0.08 * k, () => this.renderScan(row, true));
       });
       this.wait(2.4, step);
     };
@@ -455,7 +459,7 @@ export class HeroEngine {
           const sub = q<HTMLElement>(row, "[data-watch-sub]");
           if (sub) sub.style.display = "none";
           const scanEl = q<HTMLElement>(row, "[data-watch-scan]");
-          if (scanEl) { scanEl.style.visibility = "visible"; gsap.set(scanEl, { y: 0, autoAlpha: 1 }); }
+          if (scanEl) { scanEl.style.visibility = "visible"; gsap.set(scanEl, { y: 0, opacity: 1 }); }
           done();
         });
       });
