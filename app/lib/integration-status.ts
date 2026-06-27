@@ -26,3 +26,21 @@ export function isSourceDisconnected(
   // status is normalized to isPaired's union at the data layer (integrations.list).
   return it ? !isPaired(it.status as Parameters<typeof isPaired>[0]) : false;
 }
+
+/** True when a stored, comma-joined OAuth scope string carries ads_management
+ *  (required to create ad creatives/ads). Pure; safe on both surfaces. */
+export function hasAdsManagementScope(scopes: string | null | undefined): boolean {
+  if (!scopes) return false;
+  return scopes.split(",").map((s) => s.trim()).includes("ads_management");
+}
+
+/** Reduce a Graph GET /me/permissions payload to a comma-joined list of the
+ *  GRANTED permissions. Defensive: a malformed payload yields "". */
+export function grantedScopesFromPermissions(perms: unknown): string {
+  const data = (perms as { data?: Array<{ permission?: unknown; status?: unknown }> } | null)?.data;
+  if (!Array.isArray(data)) return "";
+  return data
+    .filter((p) => p?.status === "granted" && typeof p?.permission === "string")
+    .map((p) => String(p.permission))
+    .join(",");
+}
