@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
-import { Badge, BlockStack, Box, Card, Divider, InlineGrid, InlineStack, Text } from "@shopify/polaris";
+import { Text } from "@shopify/polaris";
 import { fmtMoney } from "~/lib/format";
 import { calibrationBand } from "~/lib/calibration/bands";
+import AutopilotHero from "~/components/dashboard/hero/AutopilotHero";
+import { domainForDetector } from "~/components/dashboard/overview/features-model";
+import type { WatchGroup } from "~/components/dashboard/engine-events";
 import type {
   LiveEnginePageData,
   LiveEngineFeatureVM,
@@ -10,35 +13,6 @@ import type {
   TraceTag,
 } from "~/lib/calibration/live-engine-page.server";
 import type { ActionKind } from "~/lib/types";
-
-/** Which "Watching" domain a detector belongs to. Mirrors the dashboard's
- *  features-model mapping, kept local so the embedded view pulls in NO
- *  dashboard/client modules (and never GSAP) into the server bundle. */
-type WatchGroup = "ads" | "inv" | "price" | "ret";
-const DETECTOR_DOMAIN: Record<string, WatchGroup> = {
-  ad_tax_overload: "ads",
-  campaign_below_breakeven: "ads",
-  campaign_scaling_opportunity: "ads",
-  sku_stockout_vs_spend: "inv",
-  regional_shortage_risk: "inv",
-  regional_spend_starved_stock: "inv",
-  reorder_timing: "inv",
-  scaling_sku_fulfillment_risk: "inv",
-  wrong_location_concentration: "inv",
-  out_of_stock_live: "inv",
-  inventory_untracked: "inv",
-  negative_unit_economics: "price",
-  margin_erosion: "price",
-  cogs_drift: "price",
-  priced_below_cost: "price",
-  thin_margin: "price",
-  missing_cost: "price",
-  return_rate_hidden_loss: "ret",
-  free_shipping_leakage: "ret",
-};
-function domainForDetector(detectorId: string): WatchGroup {
-  return DETECTOR_DOMAIN[detectorId] ?? "ads";
-}
 
 /* Reply shape of the route action that handles the per-feature autonomy toggle.
    The view posts to whatever route mounts it, so this mirrors that contract. */
@@ -261,8 +235,8 @@ function AutopilotFeaturesCard({ data }: { data: LiveEnginePageData }) {
       </div>
       {groups.length === 0 ? (
         <div className="engx-auto-empty">
-          No features run on autopilot yet. As you approve suggestions on the{" "}
-          <a href="/app/alerts">Alerts</a> page, the ones you trust most graduate to run here on their own.
+          No features run on autopilot yet. As you approve suggestions in the{" "}
+          <a href="/app/queue">Action Queue</a>, the ones you trust most graduate to run here on their own.
         </div>
       ) : (
         groups.map((g) => (
@@ -409,117 +383,6 @@ function Inspector({ t, onClose }: { t: TraceEventVM; onClose: () => void }) {
   );
 }
 
-/* ---------- hero (Polaris-native + SSR-safe: the embedded mirror of the web
-   dashboard's animated AutopilotHero — same information, no GSAP, no copy) ---------- */
-function CalRing({ pct }: { pct: number }) {
-  const R = 19.5;
-  const C = 2 * Math.PI * R;
-  const shown = Math.max(0, Math.min(100, Math.round(pct)));
-  const offset = C * (1 - shown / 100);
-  return (
-    <span style={{ position: "relative", width: 46, height: 46, flex: "0 0 auto", display: "inline-flex" }}>
-      <svg width="46" height="46" viewBox="0 0 46 46" style={{ transform: "rotate(-90deg)" }}>
-        <circle cx="23" cy="23" r={R} fill="none" stroke="var(--p-color-border, #e1e3e5)" strokeWidth="4" />
-        <circle cx="23" cy="23" r={R} fill="none" stroke="var(--p-color-icon, #303030)" strokeWidth="4" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={offset} />
-      </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>
-        {shown}%
-      </span>
-    </span>
-  );
-}
-
-const WATCH_META: { key: WatchGroup; label: string; icon: ReactNode }[] = [
-  { key: "inv", label: "Inventory", icon: <IBox s={15} /> },
-  { key: "ads", label: "Ads", icon: <IMegaphone s={15} /> },
-  { key: "price", label: "Pricing", icon: <ITag s={15} /> },
-  { key: "ret", label: "Retention", icon: <IUsers s={15} /> },
-];
-
-function EmbeddedHero({ data }: { data: LiveEnginePageData }) {
-  const featureOn = data.autopilotEnabled ? data.features.filter((f) => f.enabled).length : 0;
-  const running = data.autopilotEnabled && featureOn > 0;
-  const band = calibrationBand(data.calibrationPct);
-  return (
-    <Card>
-      <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center" gap="400">
-          <BlockStack gap="100">
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="h2" variant="headingLg">
-                Calderyn is {running ? "running" : "watching"}
-              </Text>
-              <LiveBadge />
-            </InlineStack>
-            <Text as="p" tone="subdued">
-              {featureOn} autopilot {featureOn === 1 ? "feature" : "features"} active
-            </Text>
-          </BlockStack>
-          <InlineStack gap="400" blockAlign="center">
-            <InlineStack gap="200" blockAlign="center">
-              <CalRing pct={data.calibrationPct ?? 0} />
-              <BlockStack gap="050">
-                <Text as="span" variant="headingSm">
-                  Calibration
-                </Text>
-                <Text as="span" tone="subdued" variant="bodySm">
-                  Level {band.level} of {band.levels}
-                </Text>
-              </BlockStack>
-            </InlineStack>
-            <BlockStack gap="050" inlineAlign="end">
-              <Text as="p" variant="heading2xl">
-                {fmtMoney(data.moneyProtectedWeekCents)}
-              </Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                protected this week
-              </Text>
-            </BlockStack>
-          </InlineStack>
-        </InlineStack>
-
-        <Divider />
-
-        <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingSm">
-              Watching
-            </Text>
-            <BlockStack gap="200">
-              {WATCH_META.map((w) => (
-                <InlineStack key={w.key} align="space-between" blockAlign="center">
-                  <InlineStack gap="200" blockAlign="center">
-                    <span style={{ display: "inline-flex", color: "var(--p-color-icon-secondary, #6b6b6b)" }}>{w.icon}</span>
-                    <Text as="span" variant="bodyMd">
-                      {w.label}
-                    </Text>
-                  </InlineStack>
-                  <Badge tone="success">All good</Badge>
-                </InlineStack>
-              ))}
-            </BlockStack>
-          </BlockStack>
-          <Box background="bg-surface-secondary" borderRadius="300" padding="400">
-            <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h3" variant="headingSm">
-                  Acting
-                </Text>
-                <Badge tone={running ? "success" : undefined}>{running ? "Active" : "Standing by"}</Badge>
-              </InlineStack>
-              <Text as="p" tone="subdued" variant="bodySm">
-                {running
-                  ? "Calderyn is handling your graduated features on its own. Every change shows up in the log below."
-                  : "Calderyn isn't changing anything right now. When it acts on a graduated feature, it shows up here and in the log below."}
-              </Text>
-            </BlockStack>
-          </Box>
-        </InlineGrid>
-      </BlockStack>
-    </Card>
-  );
-}
-
 /* ---------- view ---------- */
 function Stack({ children }: { children: ReactNode }) {
   return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>{children}</div>;
@@ -551,9 +414,28 @@ export default function LiveEngineView({ data }: { data: LiveEnginePageData }) {
 
   const selected = selectedId ? data.trace.find((t) => t.id === selectedId) ?? null : null;
 
+  // Hero inputs, computed from the same data contract the dashboard hero uses.
+  const featureOn = data.autopilotEnabled ? data.features.filter((f) => f.enabled).length : 0;
+  const featureTotal = data.features.length;
+  const band = calibrationBand(data.calibrationPct);
+  const running = data.autopilotEnabled && featureOn > 0;
+  // The embedded home doesn't load the pending queue (it lives on /app/queue),
+  // so no Watching row is flagged here — they read "All good", matching a quiet
+  // shop. The dashboard, which holds the live queue, drives flags there.
+  const flagged = new Set<WatchGroup>();
+
   return (
     <Stack>
-      <EmbeddedHero data={data} />
+      <AutopilotHero
+        running={running}
+        featureOn={featureOn}
+        featureTotal={featureTotal}
+        calibrationPct={data.calibrationPct}
+        level={band.level}
+        levels={band.levels}
+        moneyProtectedCents={data.moneyProtectedWeekCents}
+        flaggedGroups={flagged}
+      />
       <div className="engx-cols">
         <CalderynLog trace={data.trace} selectedId={selectedId} onSelect={setSelectedId} />
         <div className="engx-rail">
