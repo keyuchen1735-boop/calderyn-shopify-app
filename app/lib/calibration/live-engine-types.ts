@@ -122,6 +122,15 @@ export interface LiveEngineFeatureVM {
   proven: boolean;
 }
 
+/** One line in a Watching-row scan ticker: an item name + a real figure. */
+export interface ScanItem {
+  /** Item name shown on the left (truncated). */
+  label: string;
+  /** Real figure shown muted on the right, e.g. "12 left", "1.8×", "+$6/u".
+   *  Empty string when there is no figure for this item. */
+  value: string;
+}
+
 export interface LiveEnginePageData {
   autopilotEnabled: boolean;
   moneyProtectedWeekCents: number;
@@ -131,14 +140,15 @@ export interface LiveEnginePageData {
   /** Flagged proposals awaiting approval, newest-impact first. */
   pending: PendingInspectorVM[];
   predictions: PredictionVM[];
-  /** Real names currently being scanned, per Watching group (bounded ~8 each).
-   *  Empty lists are normal (new store) — the hero falls back to a neutral
-   *  activity line. Never fabricated; `ret` is reserved (no real source yet). */
+  /** Real items being scanned per Watching group (bounded ~8 each), each a
+   *  name + a real figure. Empty lists are normal (new store / no source) — the
+   *  hero shows a dimmed line instead. Never fabricated; `ret` stays empty until
+   *  a real customer/cohort source exists. */
   watchScan: {
-    inv: string[];
-    ads: string[];
-    price: string[];
-    ret: string[];
+    inv: ScanItem[];
+    ads: ScanItem[];
+    price: ScanItem[];
+    ret: ScanItem[];
   };
   calibrationPct: number | null;
   nearGraduation: number;

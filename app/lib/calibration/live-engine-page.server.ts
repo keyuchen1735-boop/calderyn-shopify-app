@@ -170,8 +170,8 @@ export async function buildLiveEnginePageData(
     const grades = gradesR.status === "fulfilled" ? gradesR.value : [];
     const campaigns = campaignsR.status === "fulfilled" ? campaignsR.value : [];
     const watchScan = buildWatchScan(
-      skus.map((s) => ({ title: s.title, velocity: s.velocity })),
-      campaigns.map((c) => ({ name: c.name })),
+      skus.map((s) => ({ title: s.title, onHand: s.on_hand, velocity: s.velocity, shipPnlCents: s.ship_pnl_cents })),
+      campaigns.map((c) => ({ name: c.name, roas7d: c.roas_7d, status: c.status })),
     );
 
     const evMap = new Map(pairEv.map((p) => [`${p.detectorId}:${p.actionKind}`, p]));

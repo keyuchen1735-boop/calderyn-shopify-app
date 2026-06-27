@@ -7,7 +7,6 @@
 import gsap from "gsap";
 import { CustomEase } from "gsap/CustomEase";
 import type { WatchGroup, LeDockDetail } from "../engine-events";
-import { scanLineFor } from "../../../lib/calibration/watch-scan";
 
 let easesReady = false;
 function ensureEases(): void {
@@ -33,13 +32,6 @@ const GROUP_ICO: Record<WatchGroup, string> = {
   ads: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
   price: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.4" fill="currentColor" stroke="none"/></svg>',
   ret: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-};
-/** Neutral, truthful activity lines shown when a group has no names to roll. */
-const SCAN_ASPECTS: Record<WatchGroup, string[]> = {
-  inv: ["Checking stock levels", "Stock vs forecast"],
-  ads: ["Checking ROAS", "Budget pacing"],
-  price: ["Checking margins", "Price vs market"],
-  ret: ["Checking repeat orders", "Churn signals"],
 };
 const CHECK_ICO =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -68,8 +60,6 @@ export class HeroEngine {
   private busy = false;
   private destroyed = false;
   private watchI = -1;
-  private scan: Record<WatchGroup, string[]> = { inv: [], ads: [], price: [], ret: [] };
-  private scanTick = 0;
   private strays: HTMLElement[] = [];
 
   constructor(root: HTMLElement, opts?: { speed?: number }) {
@@ -237,7 +227,6 @@ export class HeroEngine {
       this.wait(2.6, step);
     };
     this.wait(0.5, step);
-    this.startScan();
   }
 
   stopWatch(): void {
@@ -268,56 +257,6 @@ export class HeroEngine {
     }
   }
 
-  // ---- per-row scan ticker (real names rolling up/in, one line) ----
-
-  /** Provide the real per-group names. Renders the current line on each row
-   *  immediately (no animation) so a data refresh never blanks the ticker. */
-  setScan(lists: Record<WatchGroup, string[]>): void {
-    this.scan = lists ?? { inv: [], ads: [], price: [], ret: [] };
-    this.watchRows().forEach((row) => this.renderScan(row, false));
-  }
-
-  private scanTextFor(g: WatchGroup): string {
-    return scanLineFor(this.scan[g] ?? [], SCAN_ASPECTS[g] ?? [], this.scanTick);
-  }
-
-  private renderScan(row: HTMLElement, animate: boolean): void {
-    const el = q<HTMLElement>(row, "[data-watch-scan]");
-    const g = row.getAttribute("data-group") as WatchGroup | null;
-    if (!el || !g) return;
-    const next = this.scanTextFor(g);
-    // Animate opacity/translate only — visibility is owned by setFlags/setSub/
-    // the dock settle, so the ambient roll never un-hides a flagged row.
-    if (!animate || reduced()) {
-      el.textContent = next;
-      gsap.set(el, { y: 0, opacity: 1 });
-      return;
-    }
-    const tl = gsap.timeline();
-    tl.to(el, { y: -10, opacity: 0, duration: 0.22, ease: "power1.in" })
-      .add(() => { el.textContent = next; })
-      .fromTo(el, { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: EMPH });
-  }
-
-  private startScan(): void {
-    if (reduced()) return;
-    const step = () => {
-      if (this.destroyed || this.busy) return;
-      this.scanTick += 1;
-      // Small per-row stagger for a cascade; only idle (non-flagged) rows roll.
-      this.watchRows().forEach((row, k) => {
-        const g = row.getAttribute("data-group") as WatchGroup | null;
-        const sub = q<HTMLElement>(row, "[data-watch-sub]");
-        const scanEl = q<HTMLElement>(row, "[data-watch-scan]");
-        const subShown = !!sub && sub.style.display !== "none";
-        const hidden = !scanEl || scanEl.style.visibility === "hidden";
-        if (g && !subShown && !hidden) this.wait(0.08 * k, () => this.renderScan(row, true));
-      });
-      this.wait(2.4, step);
-    };
-    this.wait(2.4, step);
-  }
-
   /** Mark which groups currently hold a pending (flagged) item — amber row.
    *  Skipped while a sequence is running so a concurrent data refresh can't
    *  fight the dock sequence for control of a row's styling. */
@@ -334,11 +273,6 @@ export class HeroEngine {
       if (dot) dot.style.background = flagged ? "var(--ha-flag)" : "var(--ha-ink-3)";
       if (stat) stat.style.color = flagged ? "var(--ha-flag)" : "var(--ha-ink-3)";
       if (txt) txt.textContent = flagged ? "Needs you" : "All good";
-      const scanEl = q<HTMLElement>(row, "[data-watch-scan]");
-      if (scanEl) {
-        scanEl.style.visibility = flagged ? "hidden" : "visible";
-        if (!flagged) this.renderScan(row, false);
-      }
     });
   }
 
@@ -459,7 +393,7 @@ export class HeroEngine {
           const sub = q<HTMLElement>(row, "[data-watch-sub]");
           if (sub) sub.style.display = "none";
           const scanEl = q<HTMLElement>(row, "[data-watch-scan]");
-          if (scanEl) { scanEl.style.visibility = "visible"; gsap.set(scanEl, { y: 0, opacity: 1 }); }
+          if (scanEl) scanEl.style.visibility = "visible";
           done();
         });
       });

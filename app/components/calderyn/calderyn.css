@@ -1347,6 +1347,15 @@
   .ha-word, .ha-drift, .ha-rowscan, .ha-spin { animation: none; }
 }
 
+/* Watching-row scan ticker (vertical roll feed) */
+.cd-scanwin { position: absolute; inset: 0; overflow: hidden; }
+.cd-scanstrip { display: flex; flex-direction: column; will-change: transform; }
+.cd-scanline { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 18px; line-height: 18px; font-size: 11.5px; font-weight: 500; }
+.cd-scanline-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ha-ink-2); }
+.cd-scanline-val { flex: 0 0 auto; color: var(--ha-ink-3); font-variant-numeric: tabular-nums; }
+.cd-scanflag { color: var(--ha-flag); font-weight: 600; }
+.cd-scandim { color: var(--ha-ink-3); opacity: .75; }
+
 /* ===== Grouped autopilot features (parity with the dashboard's grouped rail) ===== */
 .engx-grp { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 20px; background: #fafafa; border: none; border-top: 1px solid #f0f0f0; cursor: pointer; font: inherit; text-align: left; }
 .engx-grp-ico { display: inline-flex; color: #6b6b6b; flex: 0 0 auto; }

@@ -110,8 +110,8 @@ function stubClient(): Client {
     },
     campaigns: {
       list: async () => [
-        { id: "c1", name: "Meta Retargeting" },
-        { id: "c2", name: "Google Brand PMax" },
+        { id: "c1", name: "Meta Retargeting", roas_7d: 1.83, status: "active" },
+        { id: "c2", name: "Google Brand PMax", roas_7d: 3.2, status: "active" },
       ],
     },
   } as unknown as Client;
@@ -180,11 +180,14 @@ describe("buildLiveEnginePageData", () => {
     expect(p.trustLine).toContain("Still learning this one");
   });
 
-  it("builds watchScan from real SKUs + campaigns; ret reserved empty", async () => {
+  it("builds watchScan items (name + real figure) from SKUs + campaigns; ret empty", async () => {
     const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
-    expect(d.watchScan.inv).toContain("Basecamp Water Bottle");
-    expect(d.watchScan.price).toContain("Basecamp Water Bottle");
-    expect(d.watchScan.ads).toEqual(["Meta Retargeting", "Google Brand PMax"]);
+    expect(d.watchScan.inv).toContainEqual({ label: "Basecamp Water Bottle", value: "18 left" });
+    expect(d.watchScan.price.some((i) => i.label === "Basecamp Water Bottle")).toBe(true);
+    expect(d.watchScan.ads).toEqual([
+      { label: "Meta Retargeting", value: "1.8×" },
+      { label: "Google Brand PMax", value: "3.2×" },
+    ]);
     expect(d.watchScan.ret).toEqual([]);
   });
 

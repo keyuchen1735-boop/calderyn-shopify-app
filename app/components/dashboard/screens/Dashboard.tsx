@@ -12,6 +12,7 @@ import {
   buildFeatureGroups,
   countEnabled,
   flaggedGroups,
+  flagTextByGroup,
 } from "../overview/features-model";
 import {
   inspectorFromTrace,
@@ -88,6 +89,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // Stable Set identity across renders so the hero's setFlags effect only fires
   // when the pending queue actually changes (not on every 45s poll tick).
   const flagged = useMemo(() => flaggedGroups(app.actionQueue), [app.actionQueue]);
+  const watchFlags = useMemo(
+    () => flagTextByGroup(app.actionQueue.map((p) => ({ detectorId: p.detector_id, title: p.title }))),
+    [app.actionQueue],
+  );
 
   // Build the inspector VM for whichever item is selected (history or pending).
   let inspectorVM: InspectorVM | null = null;
@@ -123,6 +128,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
             moneyProtectedCents={data.moneyProtectedWeekCents}
             flaggedGroups={flagged}
             watchScan={data.watchScan}
+            watchFlags={watchFlags}
             dark={app.t.dark}
           />
 
