@@ -44,7 +44,8 @@ watchScan: {
   inv: string[];   // active product names
   ads: string[];   // active campaign names
   price: string[]; // product names (different slice/order than inv)
-  ret: string[];   // customer-group labels, e.g. "Repeat buyers"
+  ret: string[];   // reserved: no real customer/cohort source today → stays
+                   // empty → row uses the aspect fallback. No fabricated names.
 };
 ```
 
@@ -57,15 +58,18 @@ Inside `buildLiveEnginePageData`, add a `watchScan` section assembled via the
 same best-effort `Promise.allSettled` pattern as the other sections (a failing
 read degrades that one list to empty, never breaks the page):
 
-| Group | Source | Query shape |
-|-------|--------|-------------|
-| `inv`   | products (`sku_dim`) | top ~8 active SKU display names by recent activity |
-| `price` | products (`sku_dim`) | ~8 product names, different sort (e.g. by price/margin) so it differs from `inv` |
-| `ads`   | campaigns | ~8 active campaign names |
-| `ret`   | orders / customers | small set of **real** cohort labels that have members, e.g. "Repeat buyers", "First-time buyers (30d)", "At-risk customers", "VIP customers" — derived deterministically from order history. **No individual customer names/PII.** |
+| Group | Source | Notes |
+|-------|--------|-------|
+| `inv`   | `client.skus.list()` — **already fetched** by the loader | product `title`s, top ~8 (list is ordered by `on_hand` desc); dedup |
+| `price` | same `client.skus.list()` result | ~8 product `title`s in a **different deterministic order** (e.g. by `velocity`/`ship_pnl_cents`) so it never mirrors `inv` |
+| `ads`   | `client.campaigns.list()` — **one new bounded read** (`v_campaigns_flat`) | campaign `name`s, top ~8. (Reliable; `campaignGrades` is empty until the engine grades.) |
+| `ret`   | none today | no customer/cohort source exists in the client; `ret` stays `[]` → row uses aspect fallback. No PII, no fabricated names. |
 
-All reads go through the existing `calderynClient` (same client the loader
-already uses). Each list capped at ~8 entries. Names trimmed/deduped server-side.
+All reads go through the existing `calderynClient`. `inv`/`price` reuse data the
+loader already loads (zero extra cost); `ads` adds one bounded read inside the
+same `Promise.allSettled` batch. Each list capped at ~8 entries, trimmed/deduped
+server-side. SKU titles are product-level (no variant), so e.g. "Summit Logo
+Tee" — the design's "· M" variant suffix isn't available and is omitted.
 
 `EMPTY` constant gets `watchScan: { inv: [], ads: [], price: [], ret: [] }`.
 
@@ -105,16 +109,17 @@ The Watching row already has a flexible middle slot currently holding the hidden
 - Yields to `[data-watch-sub]` when the row is flagged or running an action
   (existing `setSub` already hides the strip — keep that handshake).
 
-## Embedded mirror
+## Embedded mirror (automatic — shared component)
 
-The embedded hero is Polaris-composed with lighter motion and must degrade
-gracefully in the iframe.
+The embedded surface (`app/components/calderyn/LiveEngineView.tsx`) imports and
+renders the **same** `AutopilotHero` as the dashboard, and its route loader uses
+the same `buildLiveEnginePageData`. So the carousel appears on both surfaces from
+one implementation — no separate Polaris hero, no second animation to write.
 
-- Consume the same `watchScan` field (the contract is shared by both surfaces).
-- Use a lighter vertical swap (CSS or minimal GSAP) — a simple cross-fade is an
-  acceptable degrade. Same ~2.4s cadence, same reduced-motion behavior.
-- Confirm the embedded hero component during implementation
-  (`app/components/calderyn/LiveEngineHero.tsx` / `LiveEngineView.tsx`).
+Mirror work is just prop plumbing:
+- `LiveEngineView` passes `watchScan={data.watchScan}` to `AutopilotHero`, the
+  same way `Dashboard.tsx` does.
+- Reduced-motion + iframe behavior already work because both share the hero.
 
 ## Edge cases
 
@@ -138,7 +143,8 @@ gracefully in the iframe.
 - `app/components/dashboard/hero/AutopilotHero.tsx` — ticker markup + pass lists.
 - `app/components/dashboard/hero/hero-motion.ts` — roll animation + pause/resume.
 - `app/components/dashboard/screens/Dashboard.tsx` — pass `watchScan` prop.
-- Embedded hero (`app/components/calderyn/…`) — lighter mirror.
+- `app/components/calderyn/LiveEngineView.tsx` — pass `watchScan` prop (same
+  shared `AutopilotHero`; this is the entire embedded mirror).
 - Tests: server list-builder (sources + caps + empty fallback), reduced-motion
   guard, contract shape.
 
