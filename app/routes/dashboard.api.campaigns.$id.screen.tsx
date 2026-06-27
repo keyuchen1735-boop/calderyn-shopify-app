@@ -9,23 +9,44 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
-import {
-  creativeInputFromJson,
-  validateCreativeMedia,
-  validateCreativeMediaUrls,
-} from "~/lib/screener/media.server";
+import { validateCreativeMedia, validateCreativeMediaUrls } from "~/lib/screener/media.server";
 import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
   MIN_SPEND_CENTS,
   type CreativeInput,
+  type MediaKind,
 } from "~/lib/screener/types";
+
+// Pure parse helper — no server imports so Vite can include this export in the
+// client manifest without pulling in media.server (rule: exported route
+// functions must not reference *.server modules). Mirrors creativeInputFromJson
+// from media.server; validateCreativeMedia/Urls stay inside action only.
+function parseCreativeInputFromJson(body: Record<string, unknown>): CreativeInput {
+  const str = (k: string) => (typeof body[k] === "string" ? (body[k] as string).trim() : "");
+  const mediaKind = str("mediaKind");
+  const videoFrameUrls = Array.isArray(body.videoFrameUrls)
+    ? (body.videoFrameUrls as unknown[]).filter((f): f is string => typeof f === "string")
+    : [];
+  const duration = Number(body.videoDurationSec);
+  return {
+    imageUrl: str("imageUrl") || null,
+    mediaKind: mediaKind === "image" || mediaKind === "video" ? (mediaKind as MediaKind) : null,
+    videoFrameUrls,
+    videoDurationSec: Number.isFinite(duration) && duration > 0 ? duration : null,
+    headline: str("headline"),
+    primaryText: str("primaryText"),
+    cta: str("cta") || "SHOP_NOW",
+    destinationUrl: str("destinationUrl"),
+    audience: str("audience"),
+  };
+}
 
 export function parseScreenBody(body: Record<string, unknown>): {
   input: CreativeInput;
   assumedSpendCents: number;
 } {
-  const input = creativeInputFromJson(body);
+  const input = parseCreativeInputFromJson(body);
   const raw = Math.round(Number(body.assumedSpendCents));
   const assumedSpendCents = Number.isFinite(raw)
     ? Math.min(Math.max(raw, MIN_SPEND_CENTS), MAX_SPEND_CENTS)
