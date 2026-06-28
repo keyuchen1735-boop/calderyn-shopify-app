@@ -2,6 +2,7 @@
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
+import type { RegionCode } from "~/lib/ads/actions";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
 import type {
   ShipCostSource,
@@ -42,6 +43,9 @@ export interface AlertVM {
   title: string;
   campaign: string | null;
   campaign_id: string | null;
+  /** exclude_geo region bucket resolved from evidence, when one of the four
+   *  buckets; undefined leaves exclude_geo as a deep-link, not a button. */
+  region?: RegionCode;
   sku: string | null;
   narrative: string;
   evidence: Record<string, string>;

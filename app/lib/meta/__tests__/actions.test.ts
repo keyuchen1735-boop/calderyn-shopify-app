@@ -1,14 +1,50 @@
 import { describe, it, expect, vi } from "vitest";
-import { makeMetaActionAdapter } from "../actions.server";
+import {
+  makeMetaActionAdapter,
+  mergeExcludedRegions,
+  dropExcludedRegions,
+  type MetaTargeting,
+} from "../actions.server";
 import { ActionError, isRetriableFailure } from "../../ads/actions";
 import { RateLimitError } from "../../ads/backoff";
-import type { MetaClient } from "../campaigns.server";
+import { regionStateNames } from "../../ads/geo-regions";
+import type { MetaClient, MetaResponse } from "../campaigns.server";
 
 function client(getBody: Record<string, unknown>): MetaClient {
   return {
     get: vi.fn(async () => getBody),
     post: vi.fn(async () => ({ success: true })),
   };
+}
+
+type AdSet = { id: string; targeting?: MetaTargeting };
+
+// A path-dispatching fake MetaClient: /search resolves a region name to a key,
+// /<id>/adsets lists the campaign's ad sets, POST /<adsetId> captures the merged
+// targeting. Mirrors the three Graph calls excludeGeo/includeGeo make.
+function geoClient(opts: {
+  resolveKey?: (name: string) => string | null; // null → no matching region (resolution failure)
+  adSets?: AdSet[];
+}): { client: MetaClient; posts: Array<{ path: string; targeting: MetaTargeting }> } {
+  const posts: Array<{ path: string; targeting: MetaTargeting }> = [];
+  const client: MetaClient = {
+    get: vi.fn(async (path: string, params: Record<string, string> = {}): Promise<MetaResponse> => {
+      if (path === "/search") {
+        const name = params.q ?? "";
+        const key = opts.resolveKey ? opts.resolveKey(name) : `K:${name}`;
+        return key == null
+          ? { data: [] }
+          : { data: [{ key, name, type: "region", country_code: "US" }] };
+      }
+      if (path.endsWith("/adsets")) return { data: opts.adSets ?? [] };
+      return {};
+    }),
+    post: vi.fn(async (path: string, body: Record<string, string>): Promise<MetaResponse> => {
+      posts.push({ path, targeting: JSON.parse(body.targeting) as MetaTargeting });
+      return { success: true };
+    }),
+  };
+  return { client, posts };
 }
 
 describe("metaActionAdapter", () => {
@@ -36,10 +72,83 @@ describe("metaActionAdapter", () => {
     expect(s).toEqual({ status: "paused", dailyBudgetCents: 5000 });
   });
 
-  it("excludeGeo / includeGeo fail terminally until Phase 2 (no phantom)", async () => {
-    const a = makeMetaActionAdapter(client({}));
-    await expect(a.excludeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
-    await expect(a.includeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
+});
+
+describe("meta targeting merge helpers", () => {
+  it("mergeExcludedRegions adds new keys and preserves existing excluded regions + sibling fields", () => {
+    const t: MetaTargeting = {
+      geo_locations: { countries: ["US"] },
+      excluded_geo_locations: { regions: [{ key: "111" }], cities: [{ key: "c9" }] },
+    };
+    const merged = mergeExcludedRegions(t, ["111", "222"]);
+    expect(merged.excluded_geo_locations?.regions).toEqual([{ key: "111" }, { key: "222" }]); // 111 not duplicated
+    expect(merged.excluded_geo_locations?.cities).toEqual([{ key: "c9" }]); // sibling field preserved
+    expect(merged.geo_locations).toEqual({ countries: ["US"] }); // included targeting untouched
+  });
+
+  it("dropExcludedRegions removes only the given keys, keeping others", () => {
+    const t: MetaTargeting = { excluded_geo_locations: { regions: [{ key: "111" }, { key: "999" }] } };
+    const dropped = dropExcludedRegions(t, ["111"]);
+    expect(dropped.excluded_geo_locations?.regions).toEqual([{ key: "999" }]);
+  });
+});
+
+describe("metaActionAdapter geo exclusion", () => {
+  it("excludeGeo resolves each state to a region key and merges them into every ad set", async () => {
+    const { client: c, posts } = geoClient({
+      adSets: [
+        { id: "as1", targeting: { geo_locations: { countries: ["US"] } } },
+        {
+          id: "as2",
+          targeting: { geo_locations: { countries: ["US"] }, excluded_geo_locations: { regions: [{ key: "OLD" }] } },
+        },
+      ],
+    });
+    await makeMetaActionAdapter(c).excludeGeo("c1", "us-east");
+
+    const expectedKeys = regionStateNames("us-east").map((n) => `K:${n}`); // 12 states incl. DC
+    expect(posts).toHaveLength(2);
+    expect(posts[0].path).toBe("/as1");
+    expect(posts[0].targeting.excluded_geo_locations?.regions?.map((r) => r.key)).toEqual(expectedKeys);
+    // as2 keeps its pre-existing OLD exclusion and gains the region's keys.
+    expect(posts[1].targeting.excluded_geo_locations?.regions?.map((r) => r.key)).toEqual(["OLD", ...expectedKeys]);
+  });
+
+  it("excludeGeo does not re-POST an ad set already fully excluding the region", async () => {
+    const fullyExcluded = regionStateNames("us-west").map((n) => ({ key: `K:${n}` }));
+    const { client: c, posts } = geoClient({
+      adSets: [{ id: "as1", targeting: { excluded_geo_locations: { regions: fullyExcluded } } }],
+    });
+    await makeMetaActionAdapter(c).excludeGeo("c1", "us-west");
+    expect(posts).toHaveLength(0); // nothing changed → no write
+  });
+
+  it("includeGeo removes only the region's keys from each ad set, preserving others", async () => {
+    const westKeys = regionStateNames("us-west").map((n) => ({ key: `K:${n}` }));
+    const { client: c, posts } = geoClient({
+      adSets: [{ id: "as1", targeting: { excluded_geo_locations: { regions: [{ key: "OTHER" }, ...westKeys] } } }],
+    });
+    await makeMetaActionAdapter(c).includeGeo("c1", "us-west");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].targeting.excluded_geo_locations?.regions).toEqual([{ key: "OTHER" }]);
+  });
+
+  it("excludeGeo fails visibly (no phantom) when a state's region key can't be resolved", async () => {
+    const { client: c, posts } = geoClient({
+      resolveKey: () => null, // Meta returns no matching region
+      adSets: [{ id: "as1", targeting: {} }],
+    });
+    const err = await makeMetaActionAdapter(c).excludeGeo("c1", "us-west").then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(false);
+    expect(posts).toHaveLength(0); // resolution fails before any write
+  });
+
+  it("excludeGeo fails visibly when the campaign has no ad sets to exclude", async () => {
+    const { client: c } = geoClient({ adSets: [] });
+    const err = await makeMetaActionAdapter(c).excludeGeo("c1", "us-west").then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ActionError);
+    expect(isRetriableFailure(err)).toBe(false);
   });
 });
 

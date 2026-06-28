@@ -471,6 +471,40 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return { ok, receipt };
       }
 
+      // exclude_geo: live endpoint — drops the alert's region bucket from the
+      // campaign's targeting (Meta real, Google real, TikTok fail-visible). The
+      // region was resolved + validated in adaptAlert; only a real platform
+      // success resolves the alert (P0-1), a 502 surfaces as an error toast.
+      if (kind === "exclude_geo" && campId && alert.region) {
+        let receipt: ApproveReceipt | null = null;
+        let ok = false;
+        try {
+          const { outcome, calibration } = await client.executeCampaignAction(campId, {
+            type: kind,
+            region: alert.region,
+            alertId: alert.id,
+          });
+          const view = presentActionOutcome(outcome, label);
+          if (view.succeeded) {
+            ok = true;
+            receipt = calibration ?? null;
+            if (receipt) refreshCalibration();
+            markResolved();
+          }
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          if (view.succeeded) toast(view.message, "check");
+          else if (view.isError) toast(view.message, "warn", "critical");
+          else toast(view.message, "clock");
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return { ok, receipt };
+      }
+
       // discontinue_sku: live endpoint — archives the product on Shopify and
       // sets the internal Do-Not-Reorder flag, both derived server-side from the
       // alert. A failure (e.g. SKU with no Shopify product) surfaces as an error
@@ -627,15 +661,15 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         }
       }
 
-      // No live dashboard endpoint for this kind. Two ways to land here:
-      //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
-      //       so the assistant renders "Review & confirm" (deep-link), not
-      //       "Run now"; only a direct executeAction caller reaches this.
-      //   (2) pause_campaign / reduce_campaign_budget on a (malformed) alert
-      //       with no campaign_id — the live branch above is skipped.
+      // No live dashboard endpoint for this kind (or a precondition was missing).
+      // Ways to land here:
+      //   (1) create_po_draft routed without its quantity/cost dialog (handled
+      //       above), or another non-inline kind reached by a direct caller.
+      //   (2) pause_campaign / reduce_campaign_budget / exclude_geo on a
+      //       (malformed) alert with no campaign_id — or exclude_geo with no
+      //       resolved region bucket — so the live branch above is skipped.
       // Either way NEVER fake a success (rule 12): leave the alert unresolved
       // and surface a visible toast, no phantom audit row.
-      // TODO(api): wire real mutations + acknowledge for (1).
       toast(
         `${label} isn't available on the dashboard yet — open it on the alert to review.`,
         "warn",
