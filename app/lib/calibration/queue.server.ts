@@ -2,10 +2,52 @@
 // Pure function — no I/O. The facade in calderyn.server.ts loads open alerts +
 // pair_calibration rows, then calls this to produce the ranked proposal list.
 
-import type { Alert, QueueProposal } from "../types";
+import type { ActionKind, Alert, QueueProposal } from "../types";
 import { recommendedAction } from "../labels";
 import { pairConfidence, NO_BRAINER } from "./confidence";
 import { transferPlanFromEvidence } from "../shopify/inventory.server";
+import { derivePoQuantity } from "../po/draft.server";
+import { isValidRegion } from "../ads/actions";
+
+/**
+ * Can the Action Queue actually EXECUTE `action` on THIS alert right now?
+ *
+ * recommendedAction picks the best-fit kind for the detector, but a given alert
+ * may lack the inputs that kind's executor reads (every input is re-derived from
+ * the trusted alert record, never the form body). Surfacing an Approve button
+ * that then 422s is a rule-12 dead button, so the queue gates every proposal on
+ * the SAME preconditions the executors enforce:
+ *   - campaign kinds (pause/resume/reduce/increase): a resolvable campaign id
+ *   - exclude_geo: a campaign id AND a valid region bucket
+ *   - reallocate_inventory: a complete transfer plan in evidence
+ *   - create_po_draft: a SKU and a derivable positive reorder quantity
+ * Any other kind recommendedAction can emit (reallocate_budget, the free-ship
+ * kinds) has no inline queue executor — it reviews/deep-links on another surface,
+ * so it is never an approvable proposal here.
+ *
+ * Keep in sync with the executor preconditions in routes/app.alerts.$id.tsx and
+ * actions/execute.server.ts.
+ */
+function queueActionRunnable(action: ActionKind, a: Alert): boolean {
+  const ev = a.evidence ?? {};
+  const campaignId =
+    a.campaign_id || (typeof ev.campaign_id === "string" ? ev.campaign_id : "");
+  switch (action) {
+    case "pause_campaign":
+    case "resume_campaign":
+    case "reduce_campaign_budget":
+    case "increase_campaign_budget":
+      return Boolean(campaignId);
+    case "exclude_geo":
+      return Boolean(campaignId) && isValidRegion(ev.region);
+    case "reallocate_inventory":
+      return transferPlanFromEvidence(ev) !== null;
+    case "create_po_draft":
+      return Boolean(a.sku) && (derivePoQuantity(ev) ?? 0) > 0;
+    default:
+      return false;
+  }
+}
 
 /**
  * Build a ranked list of action proposals from open alerts.
@@ -53,6 +95,12 @@ export function buildActionQueue(
     const hasCampaign = Boolean(a.campaign_id);
     const action = recommendedAction(a.detector_id, { hasCampaign });
     if (!action) continue;
+
+    // Rule 12: never surface an Approve button the queue can't actually run on
+    // this alert's data (missing campaign/region, no transfer plan, no reorder
+    // qty, or a kind with no inline queue executor). Such proposals 422 on
+    // approve; skip them rather than offer a dead button.
+    if (!queueActionRunnable(action, a)) continue;
 
     const pairKey = `${a.detector_id}:${action}`;
     const isMuted = mutedPairs.has(pairKey);

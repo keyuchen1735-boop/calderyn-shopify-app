@@ -204,8 +204,15 @@ describe("buildActionQueue", () => {
   // (a) Magnitude-awareness: a graduated pair's OVER-CAP alert is blocked by
   // autopilot (block-not-clamp), so it must stay approvable in the queue.
   it("keeps a graduated-pair alert that is in overCapAlertIds, flagged over_autopilot_cap", () => {
-    // regional_shortage_risk -> recommendedAction = reallocate_inventory.
-    const a = alert({ id: "inv1", detector_id: "regional_shortage_risk", campaign_id: null, evidence: {} });
+    // regional_shortage_risk -> recommendedAction = reallocate_inventory. A real
+    // over-cap alert always carries a transfer plan (the over-cap status is
+    // derived from its delta), so it passes the runnability gate.
+    const a = alert({
+      id: "inv1",
+      detector_id: "regional_shortage_risk",
+      campaign_id: null,
+      evidence: { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 50 },
+    });
     const graduated = new Set(["regional_shortage_risk:reallocate_inventory"]);
     // Sanity: without the over-cap set, the graduated pair is dropped (I5).
     expect(buildActionQueue([a] as never, new Map(), new Set(), new Set(), graduated)).toHaveLength(0);
@@ -218,7 +225,12 @@ describe("buildActionQueue", () => {
   });
 
   it("still drops a graduated-pair alert that is NOT in overCapAlertIds (autopilot handles within-cap)", () => {
-    const a = alert({ id: "inv2", detector_id: "regional_shortage_risk", campaign_id: null, evidence: {} });
+    const a = alert({
+      id: "inv2",
+      detector_id: "regional_shortage_risk",
+      campaign_id: null,
+      evidence: { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 50 },
+    });
     const graduated = new Set(["regional_shortage_risk:reallocate_inventory"]);
     const q = buildActionQueue([a] as never, new Map(), new Set(), new Set(), graduated, new Set(["other"]));
     expect(q).toHaveLength(0);
@@ -230,6 +242,60 @@ describe("buildActionQueue", () => {
     const q = buildActionQueue([alert()] as never, new Map(), new Set(), new Set(), new Set(), new Set(["a1"]));
     expect(q).toHaveLength(1);
     expect(q[0].over_autopilot_cap).toBeUndefined();
+  });
+});
+
+// Rule-12 runnability gate: the queue must only surface an Approve button it can
+// actually execute on the alert's data, mirroring the executor preconditions.
+describe("buildActionQueue runnability gate", () => {
+  const build = (a: Record<string, unknown>) =>
+    buildActionQueue([alert(a)] as never, new Map(), new Set(), new Set());
+
+  it("keeps exclude_geo only when the alert has BOTH a campaign id and a valid region", () => {
+    // regional_spend_starved_stock -> recommendedAction = exclude_geo.
+    const base = { id: "g1", detector_id: "regional_spend_starved_stock", campaign_id: null };
+    // complete: campaign_id + valid region in evidence -> kept
+    const ok = build({ ...base, evidence: { campaign_id: "c9", region: "us-east" } });
+    expect(ok).toHaveLength(1);
+    expect(ok[0].action_kind).toBe("exclude_geo");
+    // missing region -> dropped (would 422: no valid region bucket)
+    expect(build({ ...base, evidence: { campaign_id: "c9" } })).toHaveLength(0);
+    // missing campaign -> dropped (would 422: nothing to exclude geo from)
+    expect(build({ ...base, evidence: { region: "us-east" } })).toHaveLength(0);
+    // invalid region bucket -> dropped
+    expect(build({ ...base, evidence: { campaign_id: "c9", region: "europe" } })).toHaveLength(0);
+  });
+
+  it("keeps reallocate_inventory only when evidence carries a complete transfer plan", () => {
+    const base = { id: "i1", detector_id: "wrong_location_concentration", campaign_id: null };
+    const plan = { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 12 };
+    expect(build({ ...base, evidence: plan })).toHaveLength(1);
+    // partial plan (no destination) -> dropped
+    expect(build({ ...base, evidence: { inventory_item_id: "ii1", from_location_id: "l1", recommended_delta: 12 } })).toHaveLength(0);
+    // no plan at all -> dropped
+    expect(build({ ...base, evidence: {} })).toHaveLength(0);
+  });
+
+  it("keeps create_po_draft only when there is a SKU and a derivable reorder quantity", () => {
+    const base = { id: "p1", detector_id: "reorder_timing", campaign_id: null };
+    // sku + velocity -> derivePoQuantity > 0 -> kept
+    expect(build({ ...base, sku: "SKU-1", evidence: { velocity_units_per_day: 3, lead_time_days: 14 } })).toHaveLength(1);
+    // sku but no velocity/shortfall -> qty not derivable -> dropped
+    expect(build({ ...base, sku: "SKU-1", evidence: {} })).toHaveLength(0);
+    // velocity but no sku -> dropped
+    expect(build({ ...base, sku: null, evidence: { velocity_units_per_day: 3 } })).toHaveLength(0);
+  });
+
+  it("drops a kind with no inline queue executor (reallocate_budget) even with a campaign", () => {
+    // ad_tax_overload + campaign -> recommendedAction = reallocate_budget, which
+    // deep-links/reviews on Campaigns and has no queue executor (would 422).
+    const q = build({ id: "b1", detector_id: "ad_tax_overload", campaign_id: "c1", evidence: { campaign_id: "c1" } });
+    expect(q).toHaveLength(0);
+  });
+
+  it("keeps a campaign action (pause_campaign) when the campaign id resolves", () => {
+    // base alert: campaign_below_breakeven + campaign_id c1 -> pause_campaign.
+    expect(buildActionQueue([alert()] as never, new Map(), new Set(), new Set())).toHaveLength(1);
   });
 });
 
