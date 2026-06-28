@@ -24,7 +24,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
-import { createPaymentIntent } from "./stripe.server";
+import { createPaymentIntent, processStripeEvent } from "./stripe.server";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,5 +70,101 @@ describe("createPaymentIntent", () => {
     await expect(createPaymentIntent("shop-1", 12.5, "usd")).rejects.toThrow();
     await expect(createPaymentIntent("shop-1", 2500, "xyz")).rejects.toThrow();
     expect(h.piCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("processStripeEvent", () => {
+  const succeededEvent = {
+    id: "evt_1",
+    type: "payment_intent.succeeded",
+    created: 1_700_000_000,
+    data: {
+      object: {
+        id: "pi_1",
+        amount_received: 2500,
+        currency: "usd",
+        latest_charge: "ch_1",
+        metadata: { shop_id: "shop-1", order_ref: "order-1" },
+      },
+    },
+  };
+
+  it("records a payment_intent.succeeded event exactly once across duplicate deliveries", async () => {
+    h.constructEvent.mockReturnValue(succeededEvent);
+
+    // Faithful stand-in for the record_stripe_event SQL function: unique(stripe_event_id)
+    // + exactly one ledger row per first delivery. The real guarantee is the DB unique
+    // constraint, exercised end-to-end in the Verification task via `stripe trigger`.
+    const ledger: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+    h.rpc.mockImplementation(async (_fn: string, a: Record<string, any>) => {
+      if (seen.has(a.p_event_id)) return { data: false, error: null };
+      seen.add(a.p_event_id);
+      if (a.p_kind) {
+        ledger.push({ stripe_event_id: a.p_event_id, kind: a.p_kind, amount_cents: a.p_amount_cents });
+      }
+      return { data: true, error: null };
+    });
+
+    const first = await processStripeEvent("raw-body", "sig");
+    const second = await processStripeEvent("raw-body", "sig"); // Stripe redelivers the same evt_
+
+    expect(first).toEqual({ status: 200, processed: true, duplicate: false });
+    expect(second).toEqual({ status: 200, processed: false, duplicate: true });
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({ kind: "capture", amount_cents: 2500 });
+    expect(h.rpc).toHaveBeenCalledTimes(2);
+    // stripe_ref takes the charge id from the PI's latest_charge.
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({
+      p_event_id: "evt_1",
+      p_shop_id: "shop-1",
+      p_stripe_pi_id: "pi_1",
+      p_new_status: "succeeded",
+      p_kind: "capture",
+      p_amount_cents: 2500,
+      p_stripe_ref: "ch_1",
+      p_signature_verified: true,
+    });
+  });
+
+  it("rejects an invalid signature with 400 and writes nothing", async () => {
+    h.constructEvent.mockImplementation(() => {
+      throw new Error("Webhook signature verification failed");
+    });
+    const res = await processStripeEvent("raw-body", "bad-sig");
+    expect(res).toEqual({ status: 400, processed: false, duplicate: false });
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing signature with 400 and writes nothing", async () => {
+    const res = await processStripeEvent("raw-body", null);
+    expect(res).toEqual({ status: 400, processed: false, duplicate: false });
+    expect(h.constructEvent).not.toHaveBeenCalled();
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("on payment_intent.payment_failed updates status but writes no ledger row", async () => {
+    h.constructEvent.mockReturnValue({
+      ...succeededEvent,
+      id: "evt_2",
+      type: "payment_intent.payment_failed",
+    });
+    const ledger: Array<Record<string, unknown>> = [];
+    h.rpc.mockImplementation(async (_fn: string, a: Record<string, any>) => {
+      if (a.p_kind) ledger.push({ kind: a.p_kind });
+      return { data: true, error: null };
+    });
+
+    const res = await processStripeEvent("raw-body", "sig");
+    expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+    expect(h.rpc.mock.calls[0][1]).toMatchObject({ p_new_status: "failed", p_kind: null });
+    expect(ledger).toHaveLength(0); // no money moved -> no ledger row (keeps reconciliation exact)
+  });
+
+  it("acknowledges an unhandled event type with 200 and writes nothing", async () => {
+    h.constructEvent.mockReturnValue({ id: "evt_3", type: "charge.updated", created: 1, data: { object: {} } });
+    const res = await processStripeEvent("raw-body", "sig");
+    expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+    expect(h.rpc).not.toHaveBeenCalled();
   });
 });

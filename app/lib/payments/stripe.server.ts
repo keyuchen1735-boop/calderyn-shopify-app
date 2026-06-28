@@ -62,3 +62,66 @@ export async function createPaymentIntent(
     currency: cur,
   };
 }
+
+/**
+ * Verify + idempotently process a Stripe webhook event over the RAW request body.
+ * Returns the HTTP status the route should send plus whether this was a first
+ * delivery (processed) or a duplicate (no-op). Writes nothing on bad/missing signature.
+ */
+export async function processStripeEvent(
+  rawBody: string,
+  signature: string | null,
+): Promise<{ status: number; processed: boolean; duplicate: boolean }> {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET is not configured");
+  if (!signature) {
+    return { status: 400, processed: false, duplicate: false };
+  }
+
+  // Signature verification via the SDK over raw bytes — never hand-rolled.
+  let event: Stripe.Event;
+  try {
+    event = getStripe().webhooks.constructEvent(rawBody, signature, secret);
+  } catch {
+    return { status: 400, processed: false, duplicate: false };
+  }
+
+  // Only money-moving / status events touch the DB; ack everything else so Stripe stops retrying.
+  if (event.type !== "payment_intent.succeeded" && event.type !== "payment_intent.payment_failed") {
+    return { status: 200, processed: false, duplicate: false };
+  }
+
+  const pi = event.data.object as Stripe.PaymentIntent;
+  const shopId = pi.metadata?.shop_id;
+  if (!shopId) {
+    // Fail visibly (rule 12): an event we can't tie to a tenant must not be silently dropped.
+    throw new Error(`Stripe event ${event.id} has no shop_id in PaymentIntent metadata`);
+  }
+
+  const succeeded = event.type === "payment_intent.succeeded";
+  const stripeRef =
+    typeof pi.latest_charge === "string" && pi.latest_charge ? pi.latest_charge : pi.id;
+
+  const { data, error } = await getSupabase().rpc("record_stripe_event", {
+    p_event_id: event.id,
+    p_type: event.type,
+    p_shop_id: shopId,
+    p_signature_verified: true,
+    p_payload: event as unknown as Record<string, unknown>,
+    p_stripe_pi_id: pi.id,
+    p_new_status: succeeded ? "succeeded" : "failed",
+    p_kind: succeeded ? "capture" : null,
+    p_amount_cents: succeeded ? pi.amount_received : null,
+    p_currency: pi.currency,
+    p_stripe_ref: stripeRef,
+    p_occurred_at: new Date(event.created * 1000).toISOString(),
+  });
+  if (error) throw error;
+
+  const processed = data === true; // true = first delivery, false = duplicate no-op
+  if (processed && succeeded) {
+    // ponytail: STUBBED order step — no order table until #2. Upgrade: real order.state='paid' via #2's adapter.
+    console.info(`[stripe] would set order ${pi.metadata?.order_ref || "(none)"} to paid for PI ${pi.id}`);
+  }
+  return { status: 200, processed, duplicate: !processed };
+}
