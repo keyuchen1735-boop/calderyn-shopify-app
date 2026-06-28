@@ -71,6 +71,12 @@ If any step fails: **stop, surface the failure, fix the root cause.** Do not `--
 - Never commit `.env`, `prisma/dev.sqlite`, or anything under `.shopify/`.
 - **Auto-commit completed features.** Once a feature is done and verified, commit it without waiting to be asked — but only after the Pre-commit gate above is fully green (every step run, results shown). The gate is a hard precondition; never auto-commit past a failing or skipped check (rule 12). If on the default branch, branch first. Do not push or open a PR automatically — that still waits for an explicit request.
 
+## Platform-pivot spec — progress reporting (MANDATORY)
+The platform pivot is tracked in `docs/superpowers/specs/2026-06-27-calderyn-platform-pivot-design.md` (35-feature catalog + 12-step MVP build order). Whenever you open a PR for any work that implements part of that spec, end your reply with two things, kept tight:
+1. **What's remaining** — the spec's not-yet-shipped build-order steps / features (done · in-progress · not-started), keyed to the 12-step MVP build order; call out which step the just-opened PR advances.
+2. **Big-picture status (the "where are we")** — a one-glance summary: which MVP-tier steps are complete, the current focus, what's next, and who owns it per the John↔Eric work-distribution split.
+Keep it a short checklist + a 1–2 line summary, not a wall of text. (Applies to PRs touching spec *features* — not edits to the spec doc itself.)
+
 ## Tool use
 - **Always prefer available MCP/CLI tools over manual work or guessing.** Before doing a task by hand (shell scripting, reading files ad hoc, recalling API shapes), check whether an MCP server or CLI listed below covers it and use that. Asking me whether a tool exists is a last resort — discover it yourself first (e.g. `which <cli>`, the MCP/CLI lists below, `codegraph_status`). Only ask if discovery is inconclusive or the tool needs credentials/permission you can't supply.
 
