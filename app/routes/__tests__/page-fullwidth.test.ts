@@ -19,8 +19,6 @@ const FULL_WIDTH_PAGES = [
   "app.analytics._index.tsx",
   "app.campaigns._index.tsx",
   "app.alerts._index.tsx",
-  "app.screener.tsx",
-  "app.generator.tsx",
   "app.settings.tsx",
   "app.mcp.tsx",
 ];
