@@ -379,13 +379,15 @@ export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
   "reallocate_inventory",
 ]);
 
-// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD can actually execute inline
-// today — the kinds DashboardApp.executeAction has a live endpoint for (campaign
-// pause/reduce, snooze, reallocate_inventory). exclude_geo has no dashboard
-// endpoint yet, so the dashboard assistant deep-links it to the Alerts review
-// screen instead of faking a run. Keep in sync with executeAction in
-// app/components/dashboard/DashboardApp.tsx. (create_po_draft is not chat-inline
-// on any surface — it collects quantity/cost on a review surface.)
+// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD assistant may run inline from
+// chat — the kinds DashboardApp.executeAction can fire without a review surface
+// (campaign pause/reduce, snooze, reallocate_inventory). exclude_geo is excluded
+// here on purpose: it needs a resolved campaign AND a valid region bucket (the
+// Alerts review screen gates that before showing its one-click button), so the
+// assistant deep-links it to that screen rather than running it blind. Keep in
+// sync with executeAction in app/components/dashboard/DashboardApp.tsx.
+// (create_po_draft is not chat-inline on any surface — it collects quantity/cost
+// on a review surface.)
 export const DASH_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set(
   [...CHAT_INLINE_ACTIONS].filter((k) => k !== "exclude_geo"),
 );
