@@ -3,11 +3,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
+import StorefrontLayout, { loader as layoutLoader, links } from "../storefront";
+import StorefrontHome, { loader as homeLoader } from "../storefront._index";
+import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
+import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
+import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 
 // getCatalog is mocked file-wide; default returns the REAL fixture so the
 // criterion-1 loader tests exercise real fixture data, while the swap test
 // (Task 10) overrides it with a second fake. useLoaderData/Outlet are mocked so
 // route components render in the node test environment without a router.
+// vi.mock/vi.hoisted are hoisted above the imports above at transform time, so the
+// mocks are registered before the route modules load.
 const { getCatalogMock, loaderDataRef } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(),
   loaderDataRef: { current: null as unknown },
@@ -17,12 +24,6 @@ vi.mock("@remix-run/react", () => ({
   useLoaderData: () => loaderDataRef.current,
   Outlet: () => null,
 }));
-
-import StorefrontLayout, { loader as layoutLoader, links } from "../storefront";
-import StorefrontHome, { loader as homeLoader } from "../storefront._index";
-import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
-import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
-import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 
 beforeEach(() => {
   getCatalogMock.mockReset();
