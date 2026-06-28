@@ -4,7 +4,7 @@ import { ActionError } from "../../ads/actions";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const { adapter, actionAdapterForShop } = vi.hoisted(() => {
-  const adapter = { platform: "meta", pause: vi.fn(async () => {}), resume: vi.fn(), setDailyBudget: vi.fn(async () => {}), getState: vi.fn() };
+  const adapter = { platform: "meta", pause: vi.fn(async () => {}), resume: vi.fn(), setDailyBudget: vi.fn(async () => {}), getState: vi.fn(), excludeGeo: vi.fn(async () => {}), includeGeo: vi.fn(async () => {}) };
   const actionAdapterForShop = vi.fn(async (): Promise<typeof adapter | null> => adapter);
   return { adapter, actionAdapterForShop };
 });
@@ -91,6 +91,43 @@ describe("executeAction", () => {
     const { sb, calls } = fakeSb({ campaign, alertImpactDollars: 100 });
     await executeAction(SHOP, { alertId: "alert-1", kind: "pause_campaign", campaignId: CAMP, idempotencyKey: "kackf" }, sb);
     expect(calls.updates.filter((u) => u.table === "alerts")).toEqual([]);
+  });
+
+  it("exclude_geo calls adapter.excludeGeo with the region and records it in params", async () => {
+    const { sb, calls } = fakeSb({ campaign });
+    const res = await executeAction(
+      SHOP,
+      { alertId: "alert-1", kind: "exclude_geo", campaignId: CAMP, idempotencyKey: "kgeo", region: "us-west" },
+      sb,
+    );
+    expect(adapter.excludeGeo).toHaveBeenCalledWith("c1", "us-west");
+    expect(res.outcome).toBe("succeeded");
+    const audit = calls.inserts.find((i) => i.table === "action_audit");
+    expect((audit?.rows as { action_kind: string; params: Record<string, unknown> }).action_kind).toBe("exclude_geo");
+    expect((audit?.rows as { params: Record<string, unknown> }).params).toMatchObject({ region: "us-west" });
+    // Targeting-only change: status/budget unchanged in post_state.
+    expect((audit?.rows as { post_state: Record<string, unknown> }).post_state).toMatchObject({ status: "active", daily_budget_cents: 5000 });
+  });
+
+  it("exclude_geo without a region fails visibly before any platform call", async () => {
+    const { sb } = fakeSb({ campaign });
+    await expect(
+      executeAction(SHOP, { alertId: "alert-1", kind: "exclude_geo", campaignId: CAMP, idempotencyKey: "kgeo2" }, sb),
+    ).rejects.toThrow(/region/i);
+    expect(adapter.excludeGeo).not.toHaveBeenCalled();
+  });
+
+  it("exclude_geo rejects an unknown region bucket before any platform call", async () => {
+    const { sb } = fakeSb({ campaign });
+    await expect(
+      executeAction(
+        SHOP,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising the bad-region guard
+        { alertId: "alert-1", kind: "exclude_geo", campaignId: CAMP, idempotencyKey: "kgeo3", region: "us-bogus" as any },
+        sb,
+      ),
+    ).rejects.toThrow(/valid region/i);
+    expect(adapter.excludeGeo).not.toHaveBeenCalled();
   });
 
   it("does not touch alerts on a succeeded action without an alert", async () => {

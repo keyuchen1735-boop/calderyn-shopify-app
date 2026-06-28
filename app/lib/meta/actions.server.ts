@@ -69,6 +69,16 @@ export function makeMetaActionAdapter(client: MetaClient, retry: RetryOptions = 
         dailyBudgetCents: raw.daily_budget != null ? Number(raw.daily_budget) : null,
       };
     },
+    // Geo exclusion on Meta lives on ad-set targeting (excluded_geo_locations),
+    // which requires fanning out over the campaign's ad sets — built in Phase 2.
+    // Until then fail terminally (no phantom, no retry burn). Demo shops never
+    // reach here (they use showcaseActionAdapter).
+    async excludeGeo() {
+      throw new ActionError("meta", "geo exclusion not yet supported on meta", { retriable: false });
+    },
+    async includeGeo() {
+      throw new ActionError("meta", "geo exclusion not yet supported on meta", { retriable: false });
+    },
   };
 }
 

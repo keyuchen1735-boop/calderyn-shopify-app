@@ -23,4 +23,10 @@ describe("tiktokActionAdapter", () => {
       advertiser_id: "adv1", campaign_id: "c1", budget: 50,
     }));
   });
+
+  it("excludeGeo / includeGeo fail terminally until Phase 2 (no phantom)", async () => {
+    const a = makeTikTokActionAdapter(vi.fn(async () => ({ code: 0 })), "adv1");
+    await expect(a.excludeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
+    await expect(a.includeGeo("c1", "us-west")).rejects.toMatchObject({ name: "ActionError", retriable: false });
+  });
 });

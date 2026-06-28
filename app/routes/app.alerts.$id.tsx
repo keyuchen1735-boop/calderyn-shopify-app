@@ -32,6 +32,7 @@ import { snoozeAlert } from "~/lib/actions/snooze.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import type { RegionCode } from "~/lib/ads/actions";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
@@ -318,7 +319,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       // local document only — the PO draft snapshotted into the audit row, with
       // no external side effect — and are strictly validated below. The SKU and
       // line title still come from the trusted alert record, never the form.
-      const qtyRaw = String(formData.get("po_quantity") ?? "").trim();
+      // One-click Approve sends no po_quantity; default to a computed reorder
+      // suggestion from the alert's velocity/lead-time so the card works without
+      // a typed number. A typed quantity always wins. With no usable velocity the
+      // suggestion is null, qtyRaw stays "", and validation below fails visibly.
+      const typedQty = String(formData.get("po_quantity") ?? "").trim();
+      const qtyRaw =
+        typedQty === "" ? String(derivePoQuantity(alert.evidence ?? {}) ?? "") : typedQty;
       const quantity = Number(qtyRaw);
       // Digits-only regex already guarantees an integer; bound it to a sane max.
       if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {
@@ -506,13 +513,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       "resume_campaign",
       "reduce_campaign_budget",
       "increase_campaign_budget",
+      "exclude_geo",
     ];
     const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
     // cut_ads on a SKU alert submits the loser campaign from the remediation move
     // (the evidence has no campaign_id). executeAction validates shop ownership,
     // so a submitted id can't reach another shop's campaign.
     const moveCampaignId = stringOrEmpty(formData.get("move_campaign_id"));
-    const campaignId = moveCampaignId || evidenceCampaignId;
+    // Engine alerts carry the campaign UUID in entity_ref, which the view resolves
+    // to alert.campaign_id; fall back to it so campaign actions (and exclude_geo)
+    // route through the real executeAction rather than the legacy stub.
+    const campaignId = moveCampaignId || evidenceCampaignId || stringOrEmpty(alert.campaign_id);
 
     if (executableKinds.includes(kind as ExecutableKind) && campaignId) {
       // reduce_campaign_budget: the new budget is 70% of the current daily budget.
@@ -542,6 +553,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         dailyBudgetCents = current > 0 ? Math.round(current * (1 + pct / 100)) : undefined;
       }
 
+      // exclude_geo: the region to drop from the campaign's targeting comes from
+      // the alert evidence (engine-produced; one of the four internal buckets).
+      let region: RegionCode | undefined;
+      if (kind === "exclude_geo") {
+        region = (stringOrEmpty(ev.region) || undefined) as RegionCode | undefined;
+      }
+
       const shopId = await resolveShopId(session.shop);
       const result = await executeAction(
         shopId,
@@ -551,6 +569,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           campaignId,
           idempotencyKey,
           dailyBudgetCents,
+          region,
         },
         getSupabase(),
       );

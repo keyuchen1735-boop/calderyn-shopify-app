@@ -86,6 +86,8 @@ export function showcaseActionAdapter(platform: Platform): ActionAdapter {
     async getState(): Promise<CampaignActionState> {
       return { status: "active", dailyBudgetCents: null };
     },
+    async excludeGeo() {},
+    async includeGeo() {},
   };
 }
 

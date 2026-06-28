@@ -6,6 +6,9 @@ import {
   getRecorded,
 } from "../../lib/__tests__/_supabase_chain_mock";
 import { action, loader } from "../app.alerts.$id";
+import { executeAction } from "~/lib/actions/execute.server";
+
+const executeActionMock = vi.mocked(executeAction);
 
 // Spies for the boundaries; the real route `action` logic runs against them.
 const { executeSpy, alertsGetSpy, guardrailsGetSpy } = vi.hoisted(() => ({
@@ -178,12 +181,28 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
   });
 
   it("rejects a non-positive or non-integer quantity with 422 and records nothing", async () => {
-    for (const bad of ["0", "-5", "12.5", "abc", ""]) {
+    for (const bad of ["0", "-5", "12.5", "abc"]) {
       executeSpy.mockClear();
       const res = await call(poRequest({ po_quantity: bad }));
       expect(res.status).toBe(422);
       expect(executeSpy).not.toHaveBeenCalled();
     }
+  });
+
+  it("defaults a blank (one-click) quantity to the derived reorder qty", async () => {
+    // derivePoQuantity: no shortfall_units -> velocity 5.71 over lead 14 -> ceil(5.71 * 14) = 80
+    const res = await call(poRequest({ po_quantity: "" }));
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    const params = (executeSpy.mock.calls[0][0] as { params: { po: { lines: Array<{ quantity: number }> } } }).params;
+    expect(params.po.lines[0].quantity).toBe(80);
+  });
+
+  it("still 422s a blank quantity when the alert has no usable velocity", async () => {
+    alertsGetSpy.mockResolvedValue({ ...ALERT, evidence: { title: "No velocity", lead_time_days: 14 } });
+    const res = await call(poRequest({ po_quantity: "" }));
+    expect(res.status).toBe(422);
+    expect(executeSpy).not.toHaveBeenCalled();
   });
 
   it("rejects an absurdly large quantity with 422 and records nothing", async () => {
@@ -196,6 +215,38 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
     const res = await call(poRequest({ po_unit_cost: "-1" }));
     expect(res.status).toBe(422);
     expect(executeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("alert action — exclude_geo", () => {
+  const GEO_ALERT = {
+    ...ALERT,
+    detector_id: "regional_spend_starved_stock",
+    sku: "PP-WATER-B",
+    campaign_id: "11111111-1111-1111-1111-111111111111", // resolved from entity_ref by the view
+    evidence: { region: "us-west", sku_title: "Water Bottle" },
+  };
+
+  it("exclude_geo approve calls executeAction with the campaign id and region", async () => {
+    alertsGetSpy.mockResolvedValue(GEO_ALERT);
+    executeActionMock.mockResolvedValueOnce({ id: "aud-geo-1", outcome: "succeeded" });
+    const fd = new FormData();
+    fd.set("kind", "exclude_geo");
+    fd.set("alertId", GEO_ALERT.id);
+    fd.set("idempotencyKey", "k-geo-1");
+    const req = new Request(`http://localhost/app/alerts/${GEO_ALERT.id}`, { method: "POST", body: fd });
+    const res = await call(req);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(executeActionMock).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      expect.objectContaining({
+        kind: "exclude_geo",
+        campaignId: "11111111-1111-1111-1111-111111111111",
+        region: "us-west",
+      }),
+      expect.anything(),
+    );
   });
 });
 

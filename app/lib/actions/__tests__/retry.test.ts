@@ -329,6 +329,8 @@ describe("drainActionRetries · reallocate_budget", () => {
       resume: vi.fn(async () => {}),
       setDailyBudget: vi.fn(async () => {}),
       getState: vi.fn(),
+      excludeGeo: vi.fn(async () => {}),
+      includeGeo: vi.fn(async () => {}),
     };
   }
 
@@ -435,6 +437,8 @@ function makeFakeAdapter(overrides: Record<string, unknown> = {}) {
     resume: vi.fn(async () => {}),
     setDailyBudget: vi.fn(async () => {}),
     getState: vi.fn(),
+    excludeGeo: vi.fn(async () => {}),
+    includeGeo: vi.fn(async () => {}),
     ...overrides,
   };
 }

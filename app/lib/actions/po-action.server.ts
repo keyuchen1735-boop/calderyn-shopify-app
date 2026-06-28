@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalderynError } from "../calderyn.server";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import { acknowledgeAlert } from "../alerts.server";
-import { buildPoDraft } from "../po/draft.server";
+import { buildPoDraft, derivePoQuantity } from "../po/draft.server";
 import { resolveSkuForDiscontinue } from "./discontinue.server";
 import type { ActionKind, Alert, AuditEntry } from "../types";
 
@@ -64,7 +64,12 @@ export async function executeCreatePoDraft(opts: {
     });
   }
 
-  const qtyRaw = quantity.trim();
+  // A one-click Approve sends no quantity; default to a computed reorder
+  // suggestion from the alert's velocity/lead-time so the card works without a
+  // typed number. A typed quantity always wins. If no suggestion can be derived
+  // (no usable velocity), qtyRaw stays "" and the validation below fails visibly.
+  const typed = quantity.trim();
+  const qtyRaw = typed === "" ? String(derivePoQuantity(alert.evidence ?? {}) ?? "") : typed;
   const qty = Number(qtyRaw);
   if (!/^\d+$/.test(qtyRaw) || qty <= 0 || qty > 1_000_000) {
     throw new CalderynError({
