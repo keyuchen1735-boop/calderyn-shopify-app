@@ -1,20 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { basicAuthHeader, apiBase } from "../easypost.server";
-
-const maybeSingleMock = vi.fn();
-vi.mock("../../../supabase.server", () => ({
-  getSupabase: () => ({
-    from: () => ({
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: maybeSingleMock }) }) }),
-    }),
-  }),
-}));
-vi.mock("../../../crypto.server", () => ({
-  decrypt: (cipher: string) => {
-    if (cipher === "enc(broken)") throw new Error("malformed ciphertext");
-    return `key_for_${cipher}`;
-  },
-}));
 import type {
   NormalizedRateOption,
   RateRequest,
@@ -30,6 +15,23 @@ import {
   easyPostRateAdapter,
   type EasyPostRateQuote,
 } from "../easypost-rate.server";
+
+// vi.mock is hoisted above the imports by vitest; the factory dereferences
+// maybeSingleMock lazily (only when connect() reads it), so this placement is safe.
+const maybeSingleMock = vi.fn();
+vi.mock("../../../supabase.server", () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: maybeSingleMock }) }) }),
+    }),
+  }),
+}));
+vi.mock("../../../crypto.server", () => ({
+  decrypt: (cipher: string) => {
+    if (cipher === "enc(broken)") throw new Error("malformed ciphertext");
+    return `key_for_${cipher}`;
+  },
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
