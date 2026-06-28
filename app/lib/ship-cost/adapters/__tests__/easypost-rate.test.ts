@@ -7,6 +7,8 @@ import type {
   Address,
   Parcel,
 } from "../rate-quote";
+import rateFixture from "./fixtures/easypost-rates.json";
+import { mapRateToOption, type EasyPostRateQuote } from "../easypost-rate.server";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -61,5 +63,46 @@ describe("rate-quote contract types", () => {
   it("a RateQuoteResult carries fallbackUsed + latencyMs visibility fields", () => {
     const res = { options: [], fallbackUsed: true, latencyMs: 12, provider: "easypost" } satisfies RateQuoteResult;
     expect(res.fallbackUsed).toBe(true);
+  });
+});
+
+// ── mapRateToOption: one EasyPost rate → NormalizedRateOption (parseRateToCents reuse) ──
+describe("mapRateToOption (pure normalization)", () => {
+  const rates = rateFixture.rates as EasyPostRateQuote[];
+
+  it('maps a USPS Priority "7.39" rate to 739 cents with every field', () => {
+    expect(mapRateToOption(rates[0])).toEqual({
+      carrier: "USPS",
+      serviceCode: "Priority",
+      serviceName: "Priority",
+      amountCents: 739,
+      currency: "USD",
+      estTransitDays: 2,
+      guaranteed: false,
+      deliveryDateEstimate: "2026-07-02T00:00:00Z",
+      rateType: "list",
+    });
+  });
+
+  it("reads guaranteed + delivery_date for an Express rate", () => {
+    const opt = mapRateToOption(rates[1]);
+    expect(opt?.amountCents).toBe(2695);
+    expect(opt?.guaranteed).toBe(true);
+    expect(opt?.deliveryDateEstimate).toBe("2026-07-01T00:00:00Z");
+  });
+
+  it("falls back delivery_days → est_delivery_days, and delivery_date → null", () => {
+    const opt = mapRateToOption(rates[2]);
+    expect(opt?.estTransitDays).toBe(3);
+    expect(opt?.deliveryDateEstimate).toBeNull();
+  });
+
+  it("DROPS a negative/malformed rate (null), never coerces to 0 (rule 12)", () => {
+    expect(mapRateToOption(rates[3])).toBeNull();
+  });
+
+  it("drops a rate missing carrier or service (cannot present an option)", () => {
+    expect(mapRateToOption({ service: "Priority", rate: "5.00" })).toBeNull();
+    expect(mapRateToOption({ carrier: "USPS", rate: "5.00" })).toBeNull();
   });
 });
