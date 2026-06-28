@@ -8,7 +8,9 @@ export const DEMO_SHOP_ID = "demo-shop";
 export function storefrontSlug(request: Request): string {
   const url = new URL(request.url);
   const fromParam = url.searchParams.get("shop");
-  if (fromParam) return fromParam.toLowerCase();
+  // ?shop= is a DEV-only override; in production the host alone selects the tenant, so an
+  // attacker-supplied query param can never pick another shop on this public surface.
+  if (fromParam && process.env.NODE_ENV !== "production") return fromParam.toLowerCase();
   const host = request.headers.get("host") ?? url.host;
   return host.split(":")[0].split(".")[0].toLowerCase();
 }

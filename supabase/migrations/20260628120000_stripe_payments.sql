@@ -117,9 +117,12 @@ begin
     on conflict (stripe_event_id, kind) do nothing;
   end if;
 
+  -- Stripe does not guarantee delivery order; never let a late non-succeeded event
+  -- clobber a PI that already captured (the capture ledger row is the money truth).
   update public.payment_intent
   set status = p_new_status, updated_at = now()
-  where id = v_pi_id;
+  where id = v_pi_id
+    and not (status = 'succeeded' and p_new_status <> 'succeeded');
 
   return true;
 end;

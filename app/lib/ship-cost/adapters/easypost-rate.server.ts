@@ -148,7 +148,7 @@ export async function fetchEasyPostRates(
   fetchImpl: typeof fetch = fetch,
 ): Promise<RateQuoteResult> {
   const start = Date.now();
-  const parcel = req.parcels[0]; // ponytail: single-parcel; multi-parcel packing is #6.3.
+  const parcel = req.parcels?.[0]; // ponytail: single-parcel; multi-parcel packing is #6.3. Optional-chain so missing parcels degrades, never throws (contract).
   const fallback = (): RateQuoteResult => ({
     options: buildFallbackOptions(req),
     fallbackUsed: true,

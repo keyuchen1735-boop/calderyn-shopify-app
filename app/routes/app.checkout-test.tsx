@@ -11,6 +11,8 @@ import { createPaymentIntent } from "~/lib/payments/stripe.server";
 // Loaders are read-only (repo convention): expose only the client-safe publishable key.
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.admin(request);
+  // Test-only harness: never reachable in production so it cannot write test PIs to live data.
+  if (process.env.NODE_ENV === "production") throw new Response("Not Found", { status: 404 });
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) throw new Error("STRIPE_PUBLISHABLE_KEY is not configured");
   return json({ publishableKey });

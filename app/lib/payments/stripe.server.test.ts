@@ -183,4 +183,16 @@ describe("processStripeEvent", () => {
     expect(res).toEqual({ status: 200, processed: false, duplicate: false });
     expect(h.rpc).not.toHaveBeenCalled();
   });
+
+  it("ACKs (200) and writes nothing for a PI not created by us (no shop_id metadata)", async () => {
+    // A foreign PaymentIntent on the same Stripe account must NOT 500-loop forever.
+    h.constructEvent.mockReturnValue({
+      ...succeededEvent,
+      id: "evt_foreign",
+      data: { object: { id: "pi_foreign", amount_received: 999, currency: "usd", metadata: {} } },
+    });
+    const res = await processStripeEvent("raw-body", "sig");
+    expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
 });

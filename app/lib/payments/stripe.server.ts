@@ -72,6 +72,8 @@ export async function processStripeEvent(
   rawBody: string,
   signature: string | null,
 ): Promise<{ status: number; processed: boolean; duplicate: boolean }> {
+  // TODO(parity): surface payment_intent / transaction_ledger in the Calderyn dashboard
+  // payments view when #3 graduates from spike (CLAUDE.md "Dashboard parity").
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET is not configured");
   if (!signature) {
@@ -94,8 +96,12 @@ export async function processStripeEvent(
   const pi = event.data.object as Stripe.PaymentIntent;
   const shopId = pi.metadata?.shop_id;
   if (!shopId) {
-    // Fail visibly (rule 12): an event we can't tie to a tenant must not be silently dropped.
-    throw new Error(`Stripe event ${event.id} has no shop_id in PaymentIntent metadata`);
+    // No shop_id metadata ⇒ this PaymentIntent was not created by Calderyn (e.g. another
+    // integration, or a Dashboard PI, on the same Stripe account). ACK so Stripe stops
+    // retrying, and log for visibility (rule 12) — 500-looping on an event that is not ours
+    // to process would be a permanent retry storm, not useful failure-surfacing.
+    console.warn(`[stripe] ignoring event ${event.id}: PaymentIntent ${pi.id} has no shop_id metadata`);
+    return { status: 200, processed: false, duplicate: false };
   }
 
   const succeeded = event.type === "payment_intent.succeeded";
