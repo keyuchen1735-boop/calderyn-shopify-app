@@ -21,6 +21,8 @@ vi.mock("@remix-run/react", () => ({
 import StorefrontLayout, { loader as layoutLoader, links } from "../storefront";
 import StorefrontHome, { loader as homeLoader } from "../storefront._index";
 import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
+import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
+import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 
 beforeEach(() => {
   getCatalogMock.mockReset();
@@ -126,5 +128,80 @@ describe("storefront collection", () => {
     const html = renderToStaticMarkup(createElement(StorefrontCollection));
     expect(html).toContain("cd-store__grid");
     expect(html).toContain("Apparel");
+  });
+});
+
+describe("storefront PDP", () => {
+  it("loads the product with its variants (shopId-scoped)", async () => {
+    const res = await productLoader({ request: req(), params: { handle: "zip-hoodie" }, context: {} });
+    const data = await res.json();
+    expect(data.product.title).toBe("Zip Hoodie");
+    expect(data.product.variants.length).toBe(2);
+    expect(data.product.variants[0].priceCents).toBe(5499);
+    expect(data.product.variants[0].currency).toBe("USD");
+  });
+
+  it("404s when the product handle is unknown", async () => {
+    await expect(
+      productLoader({ request: req(), params: { handle: "nope" }, context: {} }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("renders an inert Add-to-cart button (no form, no submit)", () => {
+    loaderDataRef.current = {
+      product: {
+        id: "p-hoodie",
+        handle: "zip-hoodie",
+        title: "Zip Hoodie",
+        description: "Fleece-lined zip hoodie.",
+        images: [{ url: "https://img.example/h.jpg", alt: "Zip hoodie" }],
+        variants: [{ id: "v1", sku: "HOOD-M", title: "Medium", priceCents: 5499, currency: "USD", available: true }],
+        collections: ["apparel"],
+      },
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontProduct));
+    expect(html).toContain("Add to cart");
+    expect(html).toContain('class="cd-pdp__buy"');
+    expect(html).not.toContain("<form");
+  });
+});
+
+describe("storefront swap seam (criterion 2)", () => {
+  it("drives all three loaders through a second fake catalog unchanged", async () => {
+    const novel = {
+      id: "f1",
+      handle: "novel",
+      title: "Novel",
+      description: "",
+      images: [],
+      variants: [{ id: "fv1", sku: null, title: "Default", priceCents: 1200, currency: "USD", available: true }],
+      collections: ["books"],
+    };
+    const secondFake: StorefrontCatalog = {
+      async listCollections() {
+        return [{ handle: "books", title: "Books" }];
+      },
+      async listProducts(_shopId, opts) {
+        return !opts?.collection || opts.collection === "books" ? [novel] : [];
+      },
+      async getProduct(_shopId, handle) {
+        return handle === "novel" ? novel : null;
+      },
+    };
+    getCatalogMock.mockReturnValue(secondFake);
+
+    const home = await (await homeLoader({ request: req(), params: {}, context: {} })).json();
+    expect(home.collections[0].handle).toBe("books");
+    expect(home.products[0].handle).toBe("novel");
+
+    const collection = await (
+      await collectionLoader({ request: req(), params: { handle: "books" }, context: {} })
+    ).json();
+    expect(collection.products[0].handle).toBe("novel");
+
+    const pdp = await (
+      await productLoader({ request: req(), params: { handle: "novel" }, context: {} })
+    ).json();
+    expect(pdp.product.handle).toBe("novel");
   });
 });
