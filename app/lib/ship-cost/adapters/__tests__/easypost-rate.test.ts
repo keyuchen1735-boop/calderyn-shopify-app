@@ -11,6 +11,7 @@ import rateFixture from "./fixtures/easypost-rates.json";
 import {
   mapRateToOption,
   buildFallbackOptions,
+  fetchEasyPostRates,
   type EasyPostRateQuote,
 } from "../easypost-rate.server";
 
@@ -139,5 +140,53 @@ describe("buildFallbackOptions (static table)", () => {
       expect(Number.isInteger(o.amountCents)).toBe(true);
       expect(o.deliveryDateEstimate).toBeNull();
     }
+  });
+});
+
+// ── fetchEasyPostRates: POST /v2/shipments → normalize ALL rates[] ──────────────
+function sampleReq(serviceFilter?: string[]): RateRequest {
+  return {
+    origin: { name: "Shop", street1: "1 A St", city: "SF", state: "CA", zip: "94016", country: "US" },
+    destination: { name: "Buyer", street1: "2 B St", city: "NYC", state: "NY", zip: "10001", country: "US" },
+    parcels: [{ lengthIn: 10, widthIn: 8, heightIn: 4, weightOz: 32 }],
+    serviceFilter,
+  };
+}
+
+function okJson(body: unknown): Response {
+  return { ok: true, status: 200, statusText: "OK", json: async () => body } as Response;
+}
+
+describe("fetchEasyPostRates — happy path", () => {
+  it("POSTs the shipment with to/from/parcel and HTTP Basic auth", async () => {
+    const mockFetch = vi.fn(async () => okJson(rateFixture));
+    await fetchEasyPostRates("EZTKtest123", sampleReq(), mockFetch as unknown as typeof fetch);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.easypost.com/v2/shipments");
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe(`Basic ${Buffer.from("EZTKtest123:").toString("base64")}`);
+    const body = JSON.parse(init.body as string);
+    expect(body.shipment.parcel.weight).toBe(32); // EasyPost parcel weight is OUNCES.
+    expect(body.shipment.to_address.zip).toBe("10001");
+    expect(body.shipment.from_address.zip).toBe("94016");
+  });
+
+  it("normalizes ALL rates[] (not selected_rate) and drops the malformed one", async () => {
+    const mockFetch = vi.fn(async () => okJson(rateFixture));
+    const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(false);
+    expect(result.provider).toBe("easypost");
+    expect(result.options.map((o) => `${o.carrier}:${o.serviceCode}:${o.amountCents}`)).toEqual([
+      "USPS:Priority:739",
+      "USPS:Express:2695",
+      "UPS:Ground:912",
+    ]);
+  });
+
+  it("applies serviceFilter client-side to the returned options", async () => {
+    const mockFetch = vi.fn(async () => okJson(rateFixture));
+    const result = await fetchEasyPostRates("k", sampleReq(["Priority"]), mockFetch as unknown as typeof fetch);
+    expect(result.options.map((o) => o.serviceCode)).toEqual(["Priority"]);
   });
 });

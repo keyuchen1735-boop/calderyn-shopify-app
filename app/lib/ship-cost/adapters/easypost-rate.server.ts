@@ -5,8 +5,14 @@
 //
 // No new npm dependency (repo rule P6): built-in fetch + HTTP Basic + AbortController.
 
-import { parseRateToCents } from "./easypost.server";
-import type { NormalizedRateOption, RateRequest } from "./rate-quote";
+import { parseRateToCents, basicAuthHeader, apiBase } from "./easypost.server";
+import type {
+  Address,
+  NormalizedRateOption,
+  Parcel,
+  RateQuoteResult,
+  RateRequest,
+} from "./rate-quote";
 
 /** Shape of one element of an EasyPost shipment's `rates[]` (fields we read). */
 export interface EasyPostRateQuote {
@@ -95,4 +101,67 @@ export function buildFallbackOptions(req: RateRequest): NormalizedRateOption[] {
       rateType: "list",
     },
   ];
+}
+
+/** Provider-blind Address → EasyPost address body. */
+function toEasyPostAddress(a: Address): Record<string, unknown> {
+  return {
+    name: a.name,
+    company: a.company,
+    street1: a.street1,
+    street2: a.street2,
+    city: a.city,
+    state: a.state,
+    zip: a.zip,
+    country: a.country || "US",
+    phone: a.phone,
+  };
+}
+
+/** Provider-blind Parcel → EasyPost parcel body (weight in OUNCES). */
+function toEasyPostParcel(p: Parcel): Record<string, unknown> {
+  return { length: p.lengthIn, width: p.widthIn, height: p.heightIn, weight: p.weightOz };
+}
+
+/** Shape of the POST /v2/shipments response (fields we read). */
+interface EasyPostShipmentRates {
+  rates?: EasyPostRateQuote[] | null;
+}
+
+/**
+ * Create a shipment and read ALL of its rate options. v1 quotes parcels[0] only.
+ * (Timeout + degrade-to-fallback are added in Task 6 — this is the happy path.)
+ */
+export async function fetchEasyPostRates(
+  apiKey: string,
+  req: RateRequest,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RateQuoteResult> {
+  const start = Date.now();
+  const parcel = req.parcels[0]; // ponytail: single-parcel; multi-parcel packing is #6.3.
+  const res = await fetchImpl(`${apiBase()}/shipments`, {
+    method: "POST",
+    headers: {
+      Authorization: basicAuthHeader(apiKey),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      shipment: {
+        to_address: toEasyPostAddress(req.destination),
+        from_address: toEasyPostAddress(req.origin),
+        parcel: toEasyPostParcel(parcel),
+      },
+    }),
+  });
+  const json = (await res.json()) as EasyPostShipmentRates;
+  const rawRates = json.rates ?? [];
+  let options = rawRates
+    .map(mapRateToOption)
+    .filter((o): o is NormalizedRateOption => o !== null);
+  if (req.serviceFilter && req.serviceFilter.length > 0) {
+    const allow = new Set(req.serviceFilter); // ponytail: client-side filter, not server-side.
+    options = options.filter((o) => allow.has(o.serviceCode));
+  }
+  return { options, fallbackUsed: false, latencyMs: Date.now() - start, provider: "easypost" };
 }
