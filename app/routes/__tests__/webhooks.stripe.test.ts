@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const { processStripeEvent } = vi.hoisted(() => ({ processStripeEvent: vi.fn() }));
 vi.mock("~/lib/payments/stripe.server", () => ({ processStripeEvent }));
 
+// eslint-disable-next-line import/first -- import must follow vi.mock so the stripe.server fake is registered before the route module loads
 import { action } from "../webhooks.stripe";
 
 function post(body: string, sig?: string): Request {

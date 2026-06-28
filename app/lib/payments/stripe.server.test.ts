@@ -24,6 +24,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
+// eslint-disable-next-line import/first -- import must follow vi.mock so the stripe + supabase fakes are registered before the module under test loads
 import { createPaymentIntent, processStripeEvent } from "./stripe.server";
 
 beforeEach(() => {
