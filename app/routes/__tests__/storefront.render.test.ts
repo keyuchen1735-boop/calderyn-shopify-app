@@ -19,6 +19,7 @@ vi.mock("@remix-run/react", () => ({
 }));
 
 import StorefrontLayout, { loader as layoutLoader, links } from "../storefront";
+import StorefrontHome, { loader as homeLoader } from "../storefront._index";
 
 beforeEach(() => {
   getCatalogMock.mockReset();
@@ -54,5 +55,35 @@ describe("storefront layout", () => {
     const html = renderToStaticMarkup(createElement(StorefrontLayout));
     expect(html).toContain("cd-store");
     expect(html).toContain("Demo Store");
+  });
+});
+
+describe("storefront home", () => {
+  it("loads all fixture collections and products (shopId-scoped)", async () => {
+    const res = await homeLoader({ request: req(), params: {}, context: {} });
+    const data = await res.json();
+    expect(data.collections.length).toBe(2);
+    expect(data.products.length).toBe(4);
+  });
+
+  it("renders a product grid with collection nav", () => {
+    loaderDataRef.current = {
+      collections: [{ handle: "apparel", title: "Apparel" }],
+      products: [
+        {
+          id: "p1",
+          handle: "cotton-tee",
+          title: "Cotton Tee",
+          description: "",
+          images: [{ url: "https://img.example/1.jpg", alt: "Cotton tee" }],
+          variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
+          collections: ["apparel"],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontHome));
+    expect(html).toContain("cd-store__grid");
+    expect(html).toContain("Cotton Tee");
+    expect(html).toContain("/storefront/collections/apparel");
   });
 });
