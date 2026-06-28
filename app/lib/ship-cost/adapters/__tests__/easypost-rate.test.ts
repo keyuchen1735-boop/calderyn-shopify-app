@@ -8,7 +8,11 @@ import type {
   Parcel,
 } from "../rate-quote";
 import rateFixture from "./fixtures/easypost-rates.json";
-import { mapRateToOption, type EasyPostRateQuote } from "../easypost-rate.server";
+import {
+  mapRateToOption,
+  buildFallbackOptions,
+  type EasyPostRateQuote,
+} from "../easypost-rate.server";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -104,5 +108,36 @@ describe("mapRateToOption (pure normalization)", () => {
   it("drops a rate missing carrier or service (cannot present an option)", () => {
     expect(mapRateToOption({ service: "Priority", rate: "5.00" })).toBeNull();
     expect(mapRateToOption({ carrier: "USPS", rate: "5.00" })).toBeNull();
+  });
+});
+
+// ── buildFallbackOptions: static table (load-bearing — no rate = no sale) ────────
+function fallbackReq(weightOz: number): RateRequest {
+  return {
+    origin: { street1: "1 A St", city: "SF", state: "CA", zip: "94016", country: "US" },
+    destination: { street1: "2 B St", city: "NYC", state: "NY", zip: "10001", country: "US" },
+    parcels: [{ lengthIn: 10, widthIn: 8, heightIn: 4, weightOz }],
+  };
+}
+
+describe("buildFallbackOptions (static table)", () => {
+  it("returns a NON-EMPTY conservative set (economy + expedited)", () => {
+    const opts = buildFallbackOptions(fallbackReq(20));
+    expect(opts.length).toBeGreaterThanOrEqual(1);
+    expect(opts.map((o) => o.serviceCode)).toEqual(["Economy", "Expedited"]);
+  });
+
+  it("prices a heavier parcel into a higher band", () => {
+    const light = buildFallbackOptions(fallbackReq(8))[0].amountCents;
+    const heavy = buildFallbackOptions(fallbackReq(100))[0].amountCents;
+    expect(heavy).toBeGreaterThan(light);
+  });
+
+  it("never marks a fallback option guaranteed, and uses integer cents", () => {
+    for (const o of buildFallbackOptions(fallbackReq(500))) {
+      expect(o.guaranteed).toBe(false);
+      expect(Number.isInteger(o.amountCents)).toBe(true);
+      expect(o.deliveryDateEstimate).toBeNull();
+    }
   });
 });
