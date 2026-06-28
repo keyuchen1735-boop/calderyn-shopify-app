@@ -14,6 +14,21 @@ export interface CampaignActionState {
 /** Internal geographic buckets a campaign's targeting can exclude (and undo). */
 export type RegionCode = "us-west" | "us-east" | "us-south" | "us-central";
 
+/** The exclude_geo buckets as a runtime set — single source of truth for both
+ *  the executor's region guard and the Action Queue's proposal gate. A region
+ *  outside this set has no platform geo-id mapping. */
+export const VALID_REGIONS: ReadonlySet<RegionCode> = new Set([
+  "us-west",
+  "us-east",
+  "us-south",
+  "us-central",
+]);
+
+/** True when `region` is one of the known geo buckets exclude_geo can drop. */
+export function isValidRegion(region: unknown): region is RegionCode {
+  return typeof region === "string" && VALID_REGIONS.has(region as RegionCode);
+}
+
 /** Thrown by adapters on a platform API failure (surfaced into action_audit). */
 export class ActionError extends Error {
   readonly platform: Platform;
