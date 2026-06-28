@@ -175,7 +175,7 @@ function okJson(body: unknown): Response {
 
 describe("fetchEasyPostRates — happy path", () => {
   it("POSTs the shipment with to/from/parcel and HTTP Basic auth", async () => {
-    const mockFetch = vi.fn(async () => okJson(rateFixture));
+    const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) => okJson(rateFixture));
     await fetchEasyPostRates("EZTKtest123", sampleReq(), mockFetch as unknown as typeof fetch);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.easypost.com/v2/shipments");
