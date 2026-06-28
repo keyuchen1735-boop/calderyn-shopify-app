@@ -32,7 +32,6 @@ import type {
   LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
-  Scorecard,
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
@@ -922,12 +921,7 @@ export async function toggleFeatureAutonomy(input: {
   return apiSend<{ ok: boolean; enabled: boolean }>("POST", "/dashboard/api/live-engine/toggle", input);
 }
 
-// --- creative screener (Predictor) ------------------------------------------
-
-export async function fetchLatestScreenRun(): Promise<CreativeScreenRun | null> {
-  const data = await apiGet<{ latest: CreativeScreenRun | null }>("/dashboard/api/screener");
-  return data.latest;
-}
+// --- creative screener (campaign drop-in) ------------------------------------
 
 export interface ScreenCreativePayload {
   headline: string;
@@ -940,66 +934,6 @@ export interface ScreenCreativePayload {
   imageUrl: string;
   videoFrameUrls?: string[];
   videoDurationSec?: number;
-}
-
-export async function screenCreative(
-  payload: ScreenCreativePayload,
-): Promise<CreativeScreenRun> {
-  const data = await apiSend<{ run: CreativeScreenRun }>(
-    "POST",
-    "/dashboard/api/screener",
-    payload,
-  );
-  return data.run;
-}
-
-/** Coerce a possibly null/undefined/NaN model number to a finite value so the
- * Predictor's `.toFixed(1)` / arithmetic renders can never throw. */
-function fin(n: unknown, fallback = 0): number {
-  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
-}
-
-/** Live run DTO → the Scorecard view-model the Predictor screen renders. */
-export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
-  const sc = run.scorecard;
-  if (!sc) return null;
-  return {
-    ad_name:
-      run.creativeInput?.headline?.trim() ||
-      (run.source === "meta_ad" ? "Meta ad" : "Your ad"),
-    composite: fin(sc.composite),
-    grade: sc.grade,
-    confidence: sc.confidence,
-    summary: sc.summary,
-    outcomes: {
-      estimatedRoas: fin(sc.outcomes.estimatedRoas),
-      roasLow: fin(sc.outcomes.roasLow),
-      roasHigh: fin(sc.outcomes.roasHigh),
-      breakEvenRoas: fin(sc.outcomes.breakEvenRoas),
-      predictedCtr: fin(sc.outcomes.predictedCtr),
-      holdRate: fin(sc.outcomes.holdRate),
-      assumedSpendCents: fin(sc.outcomes.assumedSpendCents),
-      predictedRevenueCents: fin(sc.outcomes.predictedRevenueCents),
-      mappedSku: sc.outcomes.mappedSku ?? "No SKU",
-      skuPriceCents: fin(sc.outcomes.skuPriceCents),
-    },
-    metrics: sc.metrics.map((m) => ({
-      id: m.id,
-      group: m.group,
-      label: m.label,
-      score: fin(m.score),
-      reasoning: m.reasoning,
-    })),
-    tips: sc.tips,
-    variants: run.variants.map((v) => ({
-      mode: v.mode,
-      composite: v.composite,
-      delta: v.delta,
-      summary: v.summary,
-      headline: v.input.headline,
-      cta: v.input.cta,
-    })),
-  };
 }
 
 // --- campaign creatives + per-campaign regenerate / screen ------------------
