@@ -1,0 +1,58 @@
+{
+  "id": "shp_ratetest123",
+  "object": "Shipment",
+  "rates": [
+    {
+      "id": "rate_usps_priority",
+      "object": "Rate",
+      "carrier": "USPS",
+      "service": "Priority",
+      "rate": "7.39",
+      "currency": "USD",
+      "list_rate": "7.39",
+      "delivery_days": 2,
+      "est_delivery_days": 2,
+      "delivery_date": "2026-07-02T00:00:00Z",
+      "delivery_date_guaranteed": false
+    },
+    {
+      "id": "rate_usps_express",
+      "object": "Rate",
+      "carrier": "USPS",
+      "service": "Express",
+      "rate": "26.95",
+      "currency": "USD",
+      "list_rate": "29.95",
+      "delivery_days": 1,
+      "est_delivery_days": 1,
+      "delivery_date": "2026-07-01T00:00:00Z",
+      "delivery_date_guaranteed": true
+    },
+    {
+      "id": "rate_ups_ground",
+      "object": "Rate",
+      "carrier": "UPS",
+      "service": "Ground",
+      "rate": "9.12",
+      "currency": "USD",
+      "list_rate": "9.12",
+      "delivery_days": null,
+      "est_delivery_days": 3,
+      "delivery_date": null,
+      "delivery_date_guaranteed": false
+    },
+    {
+      "id": "rate_broken_negative",
+      "object": "Rate",
+      "carrier": "FedEx",
+      "service": "Home",
+      "rate": "-4.00",
+      "currency": "USD",
+      "list_rate": "-4.00",
+      "delivery_days": 4,
+      "est_delivery_days": 4,
+      "delivery_date": null,
+      "delivery_date_guaranteed": false
+    }
+  ]
+}
