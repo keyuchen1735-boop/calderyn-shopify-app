@@ -778,8 +778,7 @@ function AlertActionsDialog({
 
 /* ---------- Relocate dialog ---------- */
 // No shared modal primitive exists in the dashboard kit yet, so this renders a
-// minimal fixed backdrop + centered Card, with cd-field/cd-input form controls
-// (the Predictor screen's form styling).
+// minimal fixed backdrop + centered Card, with cd-field/cd-input form controls.
 /** Lazy-loaded 90-day on-hand trend for one SKU, shown in the relocate dialog.
  * Reuses the dashboard Sparkline primitive. Auto-scaled, so the min–max range is
  * labelled to keep the shape honest (a small wiggle shouldn't read as a crash). */

@@ -13,6 +13,7 @@ import {
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
+import { grantedScopesFromPermissions } from "~/lib/integration-status";
 
 const GRAPH_VERSION = "v21.0";
 
@@ -77,6 +78,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const now = new Date().toISOString();
   const expiresAt = expiresInSec ? new Date(Date.now() + expiresInSec * 1000).toISOString() : null;
 
+  // Capture the actually-granted scopes so the UI can gate the creative-draft
+  // push deterministically. Best-effort: a permissions read failure leaves
+  // scopes "" (push stays disabled) rather than failing the connection.
+  let grantedScopes = "";
+  try {
+    const permsRes = await fetch(
+      `https://graph.facebook.com/${GRAPH_VERSION}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
+    );
+    grantedScopes = grantedScopesFromPermissions(await permsRes.json());
+  } catch {
+    grantedScopes = "";
+  }
+
   const cred = await sb.from("integration_credentials").upsert(
     {
       shop_id: shopId,
@@ -84,6 +98,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       access_token_encrypted: encrypt(accessToken),
       token_expires_at: expiresAt,
       external_account_id: adAccountId,
+      scopes: grantedScopes,
       updated_at: now,
     },
     { onConflict: "shop_id,kind" },

@@ -17,7 +17,6 @@ import {
   StatRow,
   FocusCard,
   ActivityFeed,
-  PredictorCard,
   GuardrailCard,
   AttentionSection,
 } from "./overview-cards";
@@ -333,10 +332,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
         </div>
       </div>
       <AttentionSection app={app} />
-      <div className="cd-grid-duo">
-        <PredictorCard app={app} />
-        {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
-      </div>
+      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
     </div>
   );
 }

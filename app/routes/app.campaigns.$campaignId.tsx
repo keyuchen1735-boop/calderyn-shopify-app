@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -7,13 +7,16 @@ import {
   Badge,
   Banner,
   BlockStack,
+  Box,
   Button,
   Card,
+  FormLayout,
   InlineGrid,
   InlineStack,
   Page,
   Spinner,
   Text,
+  TextField,
   Thumbnail,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
@@ -41,17 +44,26 @@ import {
 } from "~/lib/ads/campaign-detail.server";
 import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
 import { executeAction } from "~/lib/actions/execute.server";
+import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
+import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
 import type { Direction, DirectionActionKind } from "~/lib/actions/direction.server";
 import {
   loadCachedAdScorecards,
   type AdScorecard,
 } from "~/lib/screener/campaign-ads.server";
 import {
+  resolveCampaignScore,
+  gradeRowFromPerformance,
+} from "~/lib/campaign-score/resolve.server";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
+import {
   DEFAULT_SPEND_CENTS,
   MAX_SPEND_CENTS,
   MIN_SPEND_CENTS,
 } from "~/lib/screener/types";
 import type { ScoreActionPayload } from "./app.campaigns.$campaignId.score";
+import type { RegenActionPayload } from "./app.campaigns.$campaignId.regenerate";
+import type { ScreenActionPayload } from "./app.campaigns.$campaignId.screen";
 import { fmtMoney } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { Campaign } from "~/lib/types";
@@ -61,6 +73,13 @@ const DIRECTION_BADGE: Record<Direction, { label: string; tone: "success" | "att
   keep: { label: "Keep", tone: undefined },
   scale_down: { label: "Scale down", tone: "attention" },
   pause: { label: "Pause", tone: "critical" },
+};
+
+const SCORE_BADGE_TONE: Record<CampaignCalderynScore["band"], "success" | "warning" | "critical" | undefined> = {
+  strong: "success",
+  fair: "warning",
+  weak: "critical",
+  nodata: undefined,
 };
 
 type ScaleOpportunity = {
@@ -105,6 +124,10 @@ type LoaderPayload = {
   /** Open scale opportunity for this campaign (why-to-scale), or null. */
   scale: ScaleOpportunity | null;
   direction: CampaignDirection | null;
+  /** Blended Calderyn score for this campaign (full P+C — creatives are loaded). */
+  calderynScore: CampaignCalderynScore | null;
+  /** Whether the stored Meta token has ads_management scope for the push gate. */
+  metaCanPushDrafts: boolean;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -210,6 +233,40 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
+
+  if (String(form.get("intent")) === "push_creative_draft") {
+    const campaignId = String(form.get("campaign_id") ?? "");
+    if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
+    const parsed = parsePushDraftCreative({
+      headline: form.get("headline"),
+      primaryText: form.get("primaryText"),
+      cta: form.get("cta"),
+      destinationUrl: form.get("destinationUrl"),
+      imageUrl: form.get("imageUrl"),
+      audience: form.get("audience"),
+    });
+    if (!parsed.ok) return json({ ok: false, error: parsed.error }, { status: 400 });
+    const shopId = await resolveShopId(session.shop);
+    // Defense in depth: refuse before any Meta call if the stored token lacks
+    // ads_management (the loader gate is advisory; a direct POST bypasses it).
+    if (!(await metaDraftPushEnabled(getSupabase(), shopId))) {
+      return json({ ok: false, error: "meta_scope_insufficient" }, { status: 403 });
+    }
+    const res = await executeAction(
+      shopId,
+      {
+        alertId: null,
+        kind: "push_creative_draft",
+        campaignId,
+        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+        creative: parsed.creative,
+        actor: "merchant:admin-detail",
+      },
+      getSupabase(),
+    );
+    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+  }
+
   if (String(form.get("intent")) !== "apply_direction") {
     return json({ ok: false, error: "unknown_intent" }, { status: 400 });
   }
@@ -289,14 +346,35 @@ async function respondForDetail(
   detail: CampaignDetail,
   campaignIdParam: string,
 ) {
-  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction] = await Promise.all([
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction, metaCanPushDrafts] = await Promise.all([
     loadCreatives(shop, detail),
     loadAdMetrics(shop, detail),
     loadScaleOpportunity(shop, detail),
     resolveDirectionForDetail(shop, detail).catch(() => null),
+    resolveShopId(shop).then((shopId) => metaDraftPushEnabled(getSupabase(), shopId)).catch(() => false),
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
+  const gradeRow = gradeRowFromPerformance({
+    campaignId: detail.id,
+    name: detail.name,
+    roas: detail.performance.reportedRoas ?? 0,
+    breakEvenRoas: detail.performance.breakEvenRoas ?? 0,
+    spendCents: detail.performance.spend7dCents ?? 0,
+  });
+  const calderynScore = await resolveCampaignScore(
+    shop,
+    {
+      id: detail.id,
+      ads: creatives.map((cr) => ({
+        adId: cr.adId,
+        status: cr.status.toUpperCase() === "PAUSED" ? "paused" : "active",
+      })),
+    },
+    gradeRow,
+    // Reuse the scorecards already loaded above — no second cache read (D3).
+    { loadCachedAdScorecards: async (_s, ids) => scorecards.filter((sc) => ids.includes(sc.adId)) },
+  );
   return json<LoaderPayload>({
     detail,
     error: null,
@@ -309,6 +387,8 @@ async function respondForDetail(
     campaignIdParam,
     scale,
     direction,
+    calderynScore,
+    metaCanPushDrafts,
   });
 }
 
@@ -330,6 +410,8 @@ function emptyPayload(
     campaignIdParam,
     scale: null,
     direction: null,
+    calderynScore: null,
+    metaCanPushDrafts: false,
   };
 }
 
@@ -542,6 +624,8 @@ export default function CampaignDetailPage() {
     campaignIdParam,
     scale,
     direction,
+    calderynScore,
+    metaCanPushDrafts,
   } = useLoaderData<typeof loader>();
   const directionFetcher = useFetcher<typeof action>();
   const scaleFetcher = useFetcher<typeof action>();
@@ -566,9 +650,14 @@ export default function CampaignDetailPage() {
     <Page
       title={detail.name}
       titleMetadata={
-        <Badge tone={detail.status === "active" ? "success" : "attention"}>
-          {detail.status === "active" ? "Active" : "Paused"}
-        </Badge>
+        <InlineStack gap="200" blockAlign="center">
+          <Badge tone={detail.status === "active" ? "success" : "attention"}>
+            {detail.status === "active" ? "Active" : "Paused"}
+          </Badge>
+          <Badge tone={SCORE_BADGE_TONE[calderynScore?.band ?? "nodata"]}>
+            {calderynScore?.value != null ? `Score ${calderynScore.value}` : "Score pending"}
+          </Badge>
+        </InlineStack>
       }
       subtitle={`${detail.platform} campaign`}
       backAction={{ content: "Campaigns", onAction: () => navigate("/app/campaigns") }}
@@ -699,6 +788,50 @@ export default function CampaignDetailPage() {
         </Card>
 
         <Card>
+          <BlockStack gap="200">
+            <Text as="h2" variant="headingMd">Calderyn score</Text>
+            <InlineStack gap="400" blockAlign="center" wrap>
+              <Badge tone={SCORE_BADGE_TONE[calderynScore?.band ?? "nodata"]}>
+                {calderynScore?.value != null ? `Score ${calderynScore.value}` : "Score pending"}
+              </Badge>
+              <Text as="span" tone="subdued">
+                Performance {calderynScore?.performance != null ? calderynScore.performance : "—"}
+              </Text>
+              <Text as="span" tone="subdued">
+                Creative {calderynScore?.creative != null ? calderynScore.creative : "—"}
+              </Text>
+              <Text as="span" tone="subdued">Confidence: {calderynScore?.confidence ?? "low"}</Text>
+              <Text as="span" tone="subdued">
+                Ads scored {calderynScore?.adsCovered ?? 0}/{calderynScore?.adsTotal ?? 0}
+              </Text>
+            </InlineStack>
+            {(calderynScore?.performance == null || calderynScore?.creative == null) && (
+              <Text as="p" tone="subdued">
+                {calderynScore?.performance == null ? "Performance pending — attribution. " : ""}
+                {calderynScore?.creative == null ? "Connect Meta to score this campaign's creatives." : ""}
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        {calderynScore && (calderynScore.weakDimensions.length > 0 || calderynScore.tips.length > 0) && (
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h2" variant="headingMd">How to improve</Text>
+              {calderynScore.weakDimensions.map((d, i) => (
+                <InlineStack key={`wd-${d.adId}-${i}`} gap="200" align="space-between">
+                  <Text as="span">{d.label}</Text>
+                  <Badge tone="warning">{String(d.score)}</Badge>
+                </InlineStack>
+              ))}
+              {calderynScore.tips.map((t, i) => (
+                <Text as="p" key={`tip-${i}`}>{t}</Text>
+              ))}
+            </BlockStack>
+          </Card>
+        )}
+
+        <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
               Ad creatives
@@ -733,8 +866,133 @@ export default function CampaignDetailPage() {
             )}
           </BlockStack>
         </Card>
+        {detail && (
+          <RegenerateCard
+            campaignIdParam={campaignIdParam}
+            adIds={creatives.map((c) => c.adId).filter(Boolean)}
+            assumedSpendCents={assumedSpendCents}
+            metaCanPushDrafts={metaCanPushDrafts}
+          />
+        )}
+        {detail && <ScreenNewCreativeCard campaignIdParam={campaignIdParam} />}
       </BlockStack>
     </Page>
+  );
+}
+
+function RegenerateCard({
+  campaignIdParam,
+  adIds,
+  assumedSpendCents,
+  metaCanPushDrafts,
+}: {
+  campaignIdParam: string;
+  adIds: string[];
+  assumedSpendCents: number;
+  metaCanPushDrafts: boolean;
+}) {
+  const fetcher = useFetcher<RegenActionPayload>();
+  const pushFetcher = useFetcher<{ ok: boolean; outcome?: string }>();
+  const busy = fetcher.state !== "idle";
+  const data = fetcher.data;
+  const variants = data && data.ok ? data.variants : [];
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingSm">Regenerate copy</Text>
+        <Text as="p" tone="subdued" variant="bodySm">
+          Rewrites the campaign&apos;s weakest creative, re-scores each rewrite, and keeps only ones that beat it.
+        </Text>
+        <fetcher.Form
+          method="post"
+          action={`/app/campaigns/${encodeURIComponent(campaignIdParam)}/regenerate`}
+        >
+          <input type="hidden" name="adIds" value={JSON.stringify(adIds)} />
+          <input type="hidden" name="assumedSpendCents" value={String(assumedSpendCents)} />
+          <Button submit variant="primary" loading={busy} disabled={busy || adIds.length === 0}>
+            Regenerate
+          </Button>
+        </fetcher.Form>
+        {data && !data.ok && <Banner tone="warning">{data.error.message}</Banner>}
+        {!metaCanPushDrafts && variants.length > 0 && (
+          <Banner tone="info">
+            Reconnect Meta with ad-management access to push drafts.
+          </Banner>
+        )}
+        {pushFetcher.data?.ok === false && (
+          <Banner tone="critical">Couldn&apos;t push the draft — see action history.</Banner>
+        )}
+        {variants.map((v, i) => (
+          <div key={i} style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 12, padding: "12px 14px" }}>
+            <InlineStack gap="200" blockAlign="center">
+              <Badge tone="info">{v.mode}</Badge>
+              <Text as="span" variant="bodyMd" fontWeight="semibold">{String(v.composite)}</Text>
+              <Text as="span" variant="bodySm" tone="success">{`+${v.delta}`}</Text>
+            </InlineStack>
+            <Box paddingBlockStart="150">
+              <Text as="p" variant="bodyMd">&ldquo;{v.input.headline}&rdquo; · CTA: {v.input.cta}</Text>
+            </Box>
+            <Text as="p" variant="bodySm" tone="subdued">{v.rationale}</Text>
+            {metaCanPushDrafts && (
+              <Box paddingBlockStart="200">
+                <pushFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="push_creative_draft" />
+                  <input type="hidden" name="campaign_id" value={campaignIdParam} />
+                  <input type="hidden" name="headline" value={v.input.headline} />
+                  <input type="hidden" name="primaryText" value={v.input.primaryText} />
+                  <input type="hidden" name="cta" value={v.input.cta} />
+                  <input type="hidden" name="destinationUrl" value={v.input.destinationUrl} />
+                  <input type="hidden" name="imageUrl" value={v.input.imageUrl ?? ""} />
+                  <input type="hidden" name="audience" value={v.input.audience ?? ""} />
+                  <Button submit loading={pushFetcher.state !== "idle"}>
+                    Push to Meta as paused draft
+                  </Button>
+                </pushFetcher.Form>
+              </Box>
+            )}
+          </div>
+        ))}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function ScreenNewCreativeCard({ campaignIdParam }: { campaignIdParam: string }) {
+  const fetcher = useFetcher<ScreenActionPayload>();
+  const busy = fetcher.state !== "idle";
+  const data = fetcher.data;
+  const card = data && data.ok && data.run.scorecard ? data.run.scorecard : null;
+  const [imageUrl, setImageUrl] = useState("");
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingSm">Screen a new creative</Text>
+        <fetcher.Form
+          method="post"
+          action={`/app/campaigns/${encodeURIComponent(campaignIdParam)}/screen`}
+        >
+          <FormLayout>
+            <TextField label="Headline" name="headline" autoComplete="off" />
+            <TextField label="Primary text" name="primaryText" multiline={3} autoComplete="off" />
+            <FormLayout.Group>
+              <TextField label="Call to action" name="cta" autoComplete="off" placeholder="Shop now" />
+              <TextField label="Audience" name="audience" autoComplete="off" />
+            </FormLayout.Group>
+            <TextField label="Where the click goes" name="destinationUrl" autoComplete="off" />
+            <TextField label="Image URL (https)" name="imageUrl" autoComplete="off" value={imageUrl} onChange={setImageUrl} />
+            <input type="hidden" name="mediaKind" value="image" />
+            <Button submit variant="primary" loading={busy} disabled={busy || !imageUrl}>
+              Score creative
+            </Button>
+          </FormLayout>
+        </fetcher.Form>
+        {data && !data.ok && <Banner tone="critical">{data.error.message}</Banner>}
+        {data && data.ok && data.run.status === "error" && (
+          <Banner tone="critical">{data.run.error}</Banner>
+        )}
+        {card && <Scorecard card={card} />}
+      </BlockStack>
+    </Card>
   );
 }
 

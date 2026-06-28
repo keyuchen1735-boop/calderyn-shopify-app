@@ -2,6 +2,7 @@
 
 import type { ShipCostSource, ShipCostConfidence } from "./ship-cost/types";
 import type { RemediationPlan } from "./remediation/types";
+import type { CampaignCalderynScore } from "./campaign-score/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
@@ -19,7 +20,8 @@ export type ActionKind =
   | "exclude_sku_free_ship"
   | "discontinue_sku"
   | "adjust_price"
-  | "snooze_alert";
+  | "snooze_alert"
+  | "push_creative_draft";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"
@@ -113,6 +115,8 @@ export interface Campaign {
   roas_7d: number;
   contribution_margin: number;
   spend_7d: number;
+  /** Blended Calderyn score, attached server-side by the campaigns API loaders. */
+  calderynScore?: CampaignCalderynScore | null;
 }
 
 /** Platforms that enrich a SKU beyond the Shopify catalog sync:

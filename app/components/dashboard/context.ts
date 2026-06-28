@@ -15,8 +15,6 @@ export type Screen =
   | "dashboard"
   | "alerts"
   | "campaigns"
-  | "predictor"
-  | "generator"
   | "analytics"
   | "inventory"
   | "audit"

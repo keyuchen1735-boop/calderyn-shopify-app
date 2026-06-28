@@ -1,7 +1,7 @@
 // Legacy Overview cards, relocated from the Overview (now the Live Engine) to the
 // Analytics screen. These are the cards that did NOT duplicate Analytics' own KPI
 // row and revenue chart: the top-priority Focus alert, the Activity feed, the
-// Creative Predictor teaser, the Autopilot/guardrail card, and the Needs-attention
+// Autopilot/guardrail card, and the Needs-attention
 // list. Behaviour is unchanged — only their home moved.
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
@@ -12,8 +12,6 @@ import {
   Btn,
   Meter,
   Placeholder,
-  RingGauge,
-  GradePill,
   CountMoney,
 } from "../ui";
 import { money, detectorLabel, ACTION_LABELS, timeAgo } from "../format";
@@ -209,31 +207,6 @@ export function ActivityFeed({ app, limit = 8, tall }: { app: DashboardCtx; limi
             </div>
           ))
         )}
-      </div>
-    </Card>
-  );
-}
-
-/* ---------- Predictor teaser ---------- */
-export function PredictorCard({ app }: { app: DashboardCtx }) {
-  return (
-    <Card pad={false} className="flex flex-col" onClick={() => app.navigate("predictor")}>
-      <div className="cd-pad flex items-center gap-4">
-        <RingGauge value={82} size={86} label="score" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="cd-h2">Creative Predictor</h2>
-            <GradePill grade="winning" />
-          </div>
-          <p className="cd-caption" style={{ maxWidth: "42ch" }}>
-            Score a new ad creative before you spend — Calderyn predicts ROAS against your
-            break-even and flags weak hooks, offers, and CTAs.
-          </p>
-          <div className="cd-link mt-2">
-            Screen a new creative
-            <CDIcon name="chevronRight" size={13} style={{ display: "inline", verticalAlign: "-2px" }} />
-          </div>
-        </div>
       </div>
     </Card>
   );

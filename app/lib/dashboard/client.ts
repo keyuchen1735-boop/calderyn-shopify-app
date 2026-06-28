@@ -32,7 +32,6 @@ import type {
   LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
-  Scorecard,
   SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
@@ -46,7 +45,7 @@ import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
-import type { CreativeScreenRun } from "~/lib/screener/types";
+import type { CreativeScreenRun, ScoreCard, CreativeInput, Variant } from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
@@ -251,6 +250,7 @@ export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): Campaign
     grade,
     // TODO(api): per-campaign roas series — no per-campaign trend exists yet.
     trend: undefined,
+    calderynScore: c.calderynScore ?? null,
   };
 }
 
@@ -263,7 +263,7 @@ const AUDIT_VERBS: Record<string, string> = {
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",
   snooze_alert: "Snoozed alert",
-  push_ad_draft: "Pushed ad draft",
+  push_creative_draft: "Pushed paused draft to Meta",
 };
 
 /** Stringify a pre/post state blob into a succinct one-liner, or "—". */
@@ -647,12 +647,14 @@ interface AnalyticsEnvelope {
   roas_series: DailyRoasRow[];
   grades: CampaignGradeRow[];
   top_ads: TopAdRow[];
+  meta_can_push_drafts?: boolean;
 }
 
 export async function fetchAnalytics(): Promise<{
   daily: DailyRow[];
   grades: CampaignGradeRow[];
   topAds: TopAd[];
+  metaCanPushDrafts: boolean;
 }> {
   const data = await apiGet<AnalyticsEnvelope>("/dashboard/api/analytics");
   return {
@@ -667,6 +669,7 @@ export async function fetchAnalytics(): Promise<{
       saves: t.saves,
       engagement: t.engagement,
     })),
+    metaCanPushDrafts: data.meta_can_push_drafts ?? false,
   };
 }
 
@@ -700,6 +703,31 @@ export async function executeCampaignAction(
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
   return { auditId: data.audit_id, outcome: data.outcome, calibration: data.calibration };
+}
+
+/** Push a regenerated winning variant to Meta as a PAUSED draft ad. The
+ *  idempotency key is derived server-side from (campaign + variant), so this
+ *  sends only the campaign + creative. A 502 surfaces as a DashboardApiError. */
+export async function pushCreativeDraft(
+  campaignId: string,
+  variant: CreativeInput,
+): Promise<{ auditId: string; outcome: string }> {
+  const data = await apiSend<{ audit_id: string; outcome: string }>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/action`,
+    {
+      type: "push_creative_draft",
+      creative: {
+        headline: variant.headline,
+        primaryText: variant.primaryText,
+        cta: variant.cta,
+        destinationUrl: variant.destinationUrl,
+        imageUrl: variant.imageUrl,
+        audience: variant.audience,
+      },
+    },
+  );
+  return { auditId: data.audit_id, outcome: data.outcome };
 }
 
 export async function executeAlertAction(
@@ -912,12 +940,7 @@ export async function toggleFeatureAutonomy(input: {
   return apiSend<{ ok: boolean; enabled: boolean }>("POST", "/dashboard/api/live-engine/toggle", input);
 }
 
-// --- creative screener (Predictor) ------------------------------------------
-
-export async function fetchLatestScreenRun(): Promise<CreativeScreenRun | null> {
-  const data = await apiGet<{ latest: CreativeScreenRun | null }>("/dashboard/api/screener");
-  return data.latest;
-}
+// --- creative screener (campaign drop-in) ------------------------------------
 
 export interface ScreenCreativePayload {
   headline: string;
@@ -932,62 +955,88 @@ export interface ScreenCreativePayload {
   videoDurationSec?: number;
 }
 
-export async function screenCreative(
+// --- campaign creatives + per-campaign regenerate / screen ------------------
+// Browser-safe DTO mirrors of the server-side AdScorecard / CampaignCreative
+// shapes. client.ts must not import any *.server module (top-of-file contract),
+// so the wire shapes are re-declared here from the browser-safe screener/types.
+
+export interface AdScorecardDTO {
+  adId: string;
+  status: "done" | "error";
+  scorecard: ScoreCard | null;
+  error: string | null;
+}
+
+export interface CampaignCreativeDTO {
+  adId: string;
+  adName: string;
+  status: string;
+  creative: CreativeInput;
+}
+
+export interface CampaignCreativesDTO {
+  creatives: CampaignCreativeDTO[];
+  scorecards: AdScorecardDTO[];
+  assumedSpendCents: number;
+  metaConnected: boolean;
+  creativesError: string | null;
+}
+
+export async function fetchCampaignCreatives(
+  campaignId: string,
+  assumedSpendCents?: number,
+): Promise<CampaignCreativesDTO> {
+  const q = assumedSpendCents ? `?assumedSpendCents=${assumedSpendCents}` : "";
+  return apiGet<CampaignCreativesDTO>(
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/creatives${q}`,
+  );
+}
+
+export async function scoreCampaignAd(
+  campaignId: string,
+  payload: {
+    adId: string;
+    headline: string;
+    primaryText: string;
+    cta: string;
+    destinationUrl: string;
+    audience: string;
+    imageUrl: string | null;
+    assumedSpendCents: number;
+  },
+): Promise<AdScorecardDTO> {
+  const data = await apiSend<{ scorecard: AdScorecardDTO }>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/score`,
+    payload,
+  );
+  return data.scorecard;
+}
+
+export type RegenerateDTO =
+  | { ok: true; runId: string; weakestAdId: string; variants: Variant[]; allScored: Variant[]; generated: number; discarded: number }
+  | { ok: false; reason: string };
+
+export async function regenerateCampaign(
+  campaignId: string,
+  adIds: string[],
+  assumedSpendCents: number,
+): Promise<RegenerateDTO> {
+  return apiSend<RegenerateDTO>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/regenerate`,
+    { adIds, assumedSpendCents },
+  );
+}
+
+export async function screenCampaignCreative(
+  campaignId: string,
   payload: ScreenCreativePayload,
 ): Promise<CreativeScreenRun> {
   const data = await apiSend<{ run: CreativeScreenRun }>(
     "POST",
-    "/dashboard/api/screener",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/screen`,
     payload,
   );
   return data.run;
-}
-
-/** Coerce a possibly null/undefined/NaN model number to a finite value so the
- * Predictor's `.toFixed(1)` / arithmetic renders can never throw. */
-function fin(n: unknown, fallback = 0): number {
-  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
-}
-
-/** Live run DTO → the Scorecard view-model the Predictor screen renders. */
-export function adaptScreenRun(run: CreativeScreenRun): Scorecard | null {
-  const sc = run.scorecard;
-  if (!sc) return null;
-  return {
-    ad_name:
-      run.creativeInput?.headline?.trim() ||
-      (run.source === "meta_ad" ? "Meta ad" : "Your ad"),
-    composite: fin(sc.composite),
-    grade: sc.grade,
-    confidence: sc.confidence,
-    summary: sc.summary,
-    outcomes: {
-      estimatedRoas: fin(sc.outcomes.estimatedRoas),
-      roasLow: fin(sc.outcomes.roasLow),
-      roasHigh: fin(sc.outcomes.roasHigh),
-      breakEvenRoas: fin(sc.outcomes.breakEvenRoas),
-      predictedCtr: fin(sc.outcomes.predictedCtr),
-      holdRate: fin(sc.outcomes.holdRate),
-      assumedSpendCents: fin(sc.outcomes.assumedSpendCents),
-      predictedRevenueCents: fin(sc.outcomes.predictedRevenueCents),
-      mappedSku: sc.outcomes.mappedSku ?? "No SKU",
-      skuPriceCents: fin(sc.outcomes.skuPriceCents),
-    },
-    metrics: sc.metrics.map((m) => ({
-      id: m.id,
-      group: m.group,
-      label: m.label,
-      score: fin(m.score),
-      reasoning: m.reasoning,
-    })),
-    tips: sc.tips,
-    variants: run.variants.map((v) => ({
-      mode: v.mode,
-      composite: v.composite,
-      delta: v.delta,
-      summary: v.summary,
-      headline: v.input.headline,
-      cta: v.input.cta,
-    })),
-  };
 }

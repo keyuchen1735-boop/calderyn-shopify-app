@@ -18,7 +18,6 @@ export const DASH_TILE_IDS = [
   "feed",
   "revenue",
   "attention",
-  "predictor",
   "autopilot",
   "benchmarks",
 ] as const;
@@ -43,8 +42,7 @@ const LG: Layout[] = [
   { i: "feed", x: 8, y: 4, w: 4, h: 13, minW: 3, minH: 10 },
   { i: "revenue", x: 0, y: 10, w: 8, h: 7, minW: 6, minH: 6 },
   { i: "attention", x: 0, y: 17, w: 12, h: 5, minW: 12, minH: 4 },
-  { i: "predictor", x: 0, y: 22, w: 6, h: 5, minW: 5, minH: 4 },
-  { i: "autopilot", x: 6, y: 22, w: 6, h: 5, minW: 5, minH: 4 },
+  { i: "autopilot", x: 0, y: 22, w: 6, h: 5, minW: 5, minH: 4 },
   { i: "benchmarks", x: 0, y: 27, w: 12, h: 10, minW: 12, minH: 7 },
 ];
 
@@ -55,7 +53,6 @@ const STACK_H: Record<DashTileId, number> = {
   feed: 11,
   revenue: 7,
   attention: 5,
-  predictor: 5,
   autopilot: 5,
   benchmarks: 10,
 };

@@ -11,6 +11,9 @@ import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import { restoreProduct } from "../shopify/product.server";
 import { setVariantPrice } from "../shopify/price.server";
 import { setDoNotReorder } from "./discontinue.server";
+import type { MetaClient } from "../meta/campaigns.server";
+import type { MetaWriteConn } from "../meta/ad-create.server";
+import { deleteAd as realDeleteAd, metaWriteClientForShopId } from "../meta/ad-create.server";
 
 // Undo windows: autonomous actions (actor_user_id='autopilot') get a 48-hour
 // window because the merchant never clicked a button — they need more time to
@@ -71,7 +74,11 @@ export async function undoAction(
   shopId: string,
   auditId: string,
   sb: SupabaseClient,
-  deps: { admin?: AdminGraphqlClient } = {},
+  deps: {
+    admin?: AdminGraphqlClient;
+    resolveMetaWriteClient?: (shopId: string) => Promise<MetaWriteConn | null>;
+    deleteAd?: (client: MetaClient, adId: string) => Promise<void>;
+  } = {},
 ): Promise<{ id: string }> {
   const { data: orig, error } = await sb
     .from("action_audit")
@@ -287,6 +294,20 @@ export async function undoAction(
       variantId: pp.variant_id,
       newPriceCents: Number(pp.prior_price_cents),
     });
+  } else if (orig.action_kind === "push_creative_draft") {
+    // Reversal = delete the paused draft ad we created. MetaClient has no DELETE
+    // verb, so deleteAd sets the writable status to DELETED. Absolute-state, so
+    // a retry is safe. Refuse loudly without the created ad id or a write client
+    // rather than record a "succeeded" undo that deleted nothing (rule 12). No
+    // mirrorBackToPreState — a creative draft never touched ad_campaign_dim.
+    const post = (orig.post_state ?? {}) as { created_ad_id?: string };
+    const adId = String(post.created_ad_id ?? "");
+    if (!adId) throw new Error(`audit ${auditId} lacks created_ad_id; cannot undo a creative draft`);
+    const resolveClient = deps.resolveMetaWriteClient ?? metaWriteClientForShopId;
+    const del = deps.deleteAd ?? realDeleteAd;
+    const conn = await resolveClient(shopId);
+    if (!conn) throw new Error("Meta not connected; cannot undo creative draft");
+    await del(conn.client, adId);
   } else if (orig.action_kind === "exclude_geo") {
     // Reverse a geo exclusion: re-include the recorded region's targeting.
     // No mirror restore — exclude_geo never changed ad_campaign_dim status/budget.

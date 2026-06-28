@@ -24,6 +24,7 @@ const CAMPAIGNS: CampaignVM[] = [
     breakeven_roas: 1.7,
     contribution_margin: 0.5,
     grade: "winning",
+    calderynScore: null,
   },
   {
     id: "c2",
@@ -36,6 +37,7 @@ const CAMPAIGNS: CampaignVM[] = [
     breakeven_roas: 1.7,
     contribution_margin: 0.4,
     grade: "okay",
+    calderynScore: null,
   },
 ];
 

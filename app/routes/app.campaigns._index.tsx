@@ -55,6 +55,15 @@ import { useActionToast } from "~/lib/toast";
 import { fmtMoney, fmtMoneyDec } from "~/lib/format";
 import { scaleReason } from "~/lib/scale-reason";
 import type { ActionKind, Campaign } from "~/lib/types";
+import { resolveCampaignScore } from "~/lib/campaign-score/resolve.server";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
+
+const SCORE_BADGE_TONE: Record<CampaignCalderynScore["band"], "success" | "warning" | "critical" | undefined> = {
+  strong: "success",
+  fair: "warning",
+  weak: "critical",
+  nodata: undefined,
+};
 
 type ScalePrefill = {
   campaignId: string; // id as used by the campaigns list (Meta = external id)
@@ -168,7 +177,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       scaleSuggestions = [];
     }
 
-    return json<LoaderPayload>({ campaigns, reallocation, scaleSuggestions, error: null });
+    // Performance-led list score (cost guard rule 6): ads:[] ⇒ resolve does zero
+    // creative I/O on list render; the full P+C score is computed on the detail
+    // page (which already loads creatives). Best-effort: a grade-fetch failure
+    // degrades to no badge (band "nodata") — the rows still render (rule 12).
+    let campaignsWithScore: Campaign[] = campaigns;
+    try {
+      const grades = await client.analytics.campaignGrades(request.signal);
+      const gradeById = new Map(grades.map((g) => [g.campaign_id, g]));
+      campaignsWithScore = await Promise.all(
+        campaigns.map(async (c) => ({
+          ...c,
+          calderynScore: await resolveCampaignScore(
+            session.shop,
+            { id: c.id, ads: [] },
+            gradeById.get(c.id),
+          ),
+        })),
+      );
+    } catch {
+      campaignsWithScore = campaigns;
+    }
+
+    return json<LoaderPayload>({ campaigns: campaignsWithScore, reallocation, scaleSuggestions, error: null });
   } catch (err) {
     const e = err as CalderynError;
     return json<LoaderPayload>({
@@ -715,6 +746,11 @@ function CampaignCard({
               <Badge tone={c.status === "active" ? "success" : "attention"}>
                 {c.status === "active" ? "Active" : "Paused"}
               </Badge>
+              {c.calderynScore?.value != null && (
+                <Badge tone={SCORE_BADGE_TONE[c.calderynScore.band]}>
+                  {`Score ${c.calderynScore.value}`}
+                </Badge>
+              )}
               {scaleSuggestion ? (
                 <Tooltip content={scaleSuggestion.reason}>
                   <Link
@@ -962,6 +998,11 @@ export default function Campaigns() {
                               <span className="cmpx-tag-dot" />
                               Active
                             </span>
+                          )}
+                          {c.calderynScore?.value != null && (
+                            <Badge tone={SCORE_BADGE_TONE[c.calderynScore.band]}>
+                              {`Score ${c.calderynScore.value}`}
+                            </Badge>
                           )}
                           {sug === "scale" && <span className="cmpx-tag cmpx-tag-scale">Scale suggested</span>}
                           {sug === "pause" && <span className="cmpx-tag cmpx-tag-pause">Pause suggested</span>}

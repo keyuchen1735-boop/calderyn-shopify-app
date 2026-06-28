@@ -4,6 +4,8 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
+import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
 import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
@@ -16,6 +18,7 @@ const KINDS: ExecutableKind[] = [
   "reduce_campaign_budget",
   "increase_campaign_budget",
   "exclude_geo",
+  "push_creative_draft",
 ];
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -38,6 +41,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const region = typeof body.region === "string" ? (body.region as RegionCode) : undefined;
 
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
+
+  if (kind === "push_creative_draft") {
+    const parsed = parsePushDraftCreative(body.creative);
+    if (!parsed.ok) return jsonError(422, parsed.error);
+    // Defense in depth: refuse before any Meta call if the stored token lacks
+    // ads_management (the UI gate is advisory; a direct POST bypasses it).
+    if (!(await metaDraftPushEnabled(getSupabase(), session.shopId))) {
+      return jsonError(403, "meta_scope_insufficient");
+    }
+    const campaignId = String(params.id);
+    const result = await executeAction(
+      session.shopId,
+      {
+        alertId: null,
+        kind,
+        campaignId,
+        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+        creative: parsed.creative,
+        actor: "merchant:web-dashboard",
+      },
+      getSupabase(),
+    );
+    if (result.outcome === "failed") {
+      return new Response(
+        JSON.stringify({
+          error: "action_failed",
+          message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
+          audit_id: result.id,
+          outcome: result.outcome,
+        }),
+        { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+      );
+    }
+    return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
+  }
+
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
   if (
     (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&

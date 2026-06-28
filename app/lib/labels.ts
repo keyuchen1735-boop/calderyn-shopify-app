@@ -108,6 +108,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   discontinue_sku: "Stop reordering & archive product",
   adjust_price: "Raise price to restore margin",
   snooze_alert: "Snooze alert",
+  push_creative_draft: "Push to Meta as paused draft",
 };
 
 // Plain-language name for a (detector, action) autopilot feature. Several
@@ -141,6 +142,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   discontinue_sku: "Discontinued product",
   adjust_price: "Raised price",
   snooze_alert: "Snoozed alert",
+  push_creative_draft: "Pushed paused draft to Meta",
 };
 
 // Who acted, in the merchant's terms. Raw actor_user_id values ("merchant",

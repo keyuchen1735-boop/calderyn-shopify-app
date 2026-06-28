@@ -1,0 +1,55 @@
+// Pure helpers shared by both push_creative_draft routes: a deterministic
+// idempotency key derived from the campaign + serialized variant (so a retry of
+// the SAME variant dedups, while a distinct variant gets a distinct key), and a
+// boundary validator for the inbound creative payload (rule: validate FormData/
+// JSON shapes at the action boundary — never trust them).
+
+import { createHash } from "node:crypto";
+import type { CreativeInput } from "~/lib/screener/types";
+
+/** Stable serialization in a FIXED field order (not JSON.stringify of the whole
+ *  object, whose key order is caller-dependent). */
+function serializeVariant(creative: CreativeInput): string {
+  return [
+    creative.headline,
+    creative.primaryText,
+    creative.cta,
+    creative.destinationUrl,
+    creative.imageUrl ?? "",
+    creative.audience,
+  ].join("\u0000");
+}
+
+export function pushCreativeDraftKey(campaignId: string, creative: CreativeInput): string {
+  const payload = `${campaignId}\u0000${serializeVariant(creative)}`;
+  return `push_creative_draft:${createHash("sha256").update(payload).digest("hex")}`;
+}
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+export type ParsedPushDraft =
+  | { ok: true; creative: CreativeInput }
+  | { ok: false; error: string };
+
+export function parsePushDraftCreative(raw: unknown): ParsedPushDraft {
+  if (typeof raw !== "object" || raw === null) return { ok: false, error: "invalid_creative" };
+  const b = raw as Record<string, unknown>;
+  const headline = str(b.headline);
+  if (!headline) return { ok: false, error: "missing_headline" };
+  const destinationUrl = str(b.destinationUrl);
+  if (!/^https?:\/\//i.test(destinationUrl)) return { ok: false, error: "missing_destination_url" };
+  const imageRaw = str(b.imageUrl);
+  return {
+    ok: true,
+    creative: {
+      headline,
+      primaryText: str(b.primaryText),
+      cta: str(b.cta) || "SHOP_NOW",
+      destinationUrl,
+      imageUrl: imageRaw.length > 0 ? imageRaw : null,
+      audience: str(b.audience),
+    },
+  };
+}

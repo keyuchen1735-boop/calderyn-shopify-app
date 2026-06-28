@@ -9,6 +9,7 @@ import type {
   ShipCostConfidence,
 } from "~/lib/ship-cost/types";
 import type { RemediationPlan } from "~/lib/remediation/types";
+import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 export type { Tip, TipDetail } from "~/lib/screener/types";
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -30,6 +31,8 @@ export interface CampaignVM {
   grade: Grade;
   /** No per-campaign series exists yet. TODO(api): per-campaign roas series. */
   trend?: number[];
+  /** Blended Calderyn score; null until resolved server-side. */
+  calderynScore: CampaignCalderynScore | null;
 }
 
 export interface AlertVM {
@@ -249,35 +252,6 @@ export interface Scorecard {
   variants: ScorecardVariant[];
 }
 
-export interface GeneratorFix {
-  dim: string;
-  before: number;
-  fix: string;
-}
-
-export interface GeneratorOutput {
-  id: string;
-  recommended: boolean;
-  name: string;
-  format: string;
-  duration: string | null;
-  headline: string;
-  primaryText: string;
-  cta: string;
-  composite: number;
-  delta: number;
-  estRoas: number;
-  fixed: Array<[string, number, number]>;
-}
-
-export interface Generator {
-  source_ad: string;
-  source_composite: number;
-  fixes: GeneratorFix[];
-  styles: string[];
-  steps: string[];
-  outputs: GeneratorOutput[];
-}
 
 export interface FeedEvent {
   id?: string | number;

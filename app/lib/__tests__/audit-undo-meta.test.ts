@@ -3,10 +3,14 @@ import { calderynClient } from "../calderyn.server";
 
 // Spies for the IO boundaries we mock. vi.hoisted runs before the (hoisted)
 // vi.mock factories that reference these. The real audit.undo logic runs.
-const { insertSpy, setStatusSpy, metaForShopSpy, tiktokAdapter, actionAdapterForShop, sbState } = vi.hoisted(() => ({
+const { insertSpy, setStatusSpy, metaForShopSpy, deleteAdSpy, metaWriteSpy, tiktokAdapter, actionAdapterForShop, sbState } = vi.hoisted(() => ({
   insertSpy: vi.fn(),
   setStatusSpy: vi.fn(),
   metaForShopSpy: vi.fn(),
+  // push_creative_draft routes through undoAction with empty deps, so it falls
+  // back to these module-level fns — mock them so the undo never touches Meta.
+  deleteAdSpy: vi.fn(),
+  metaWriteSpy: vi.fn(),
   // Platform-aware adapter the gateway undo path resolves. Default: a TikTok
   // adapter, so the legacy undo proves it reverses through the real platform
   // (not the Meta client) for non-Meta campaigns.
@@ -91,10 +95,18 @@ vi.mock("../ads/action-registry.server", () => ({
   actionAdapterForShop: (...args: unknown[]) => actionAdapterForShop(...args),
 }));
 
+vi.mock("../meta/ad-create.server", () => ({
+  deleteAd: (...args: unknown[]) => deleteAdSpy(...args),
+  metaWriteClientForShopId: (...args: unknown[]) => metaWriteSpy(...args),
+}));
+
 beforeEach(() => {
   insertSpy.mockReset();
   setStatusSpy.mockReset();
   metaForShopSpy.mockReset();
+  deleteAdSpy.mockReset();
+  metaWriteSpy.mockReset();
+  metaWriteSpy.mockResolvedValue({ client: { post: vi.fn() }, adAccountId: "act_1" });
   tiktokAdapter.pause.mockClear();
   tiktokAdapter.resume.mockClear();
   tiktokAdapter.setDailyBudget.mockClear();
@@ -194,6 +206,34 @@ describe("audit.undo platform restore", () => {
 
     expect(tiktokAdapter.pause).toHaveBeenCalledWith("121");
     expect(setStatusSpy).not.toHaveBeenCalled();
+    expect(insertSpy).toHaveBeenCalled();
+  });
+});
+
+describe("audit.undo creative draft", () => {
+  it("routes push_creative_draft through the gateway and deletes the created ad (no fake-success legacy insert)", async () => {
+    // Regression guard for GATEWAY_UNDO_KINDS: if push_creative_draft falls out
+    // of the allowlist it hits the legacy path that records outcome:"succeeded"
+    // WITHOUT deleting the draft on Meta (rule 12). Proving deleteAd fires keeps
+    // it on the real reversal path.
+    sbState.origRow = {
+      id: "pd1",
+      action_kind: "push_creative_draft",
+      pre_state: { status: "active", daily_budget_cents: 5000 },
+      post_state: { created_ad_id: "ad_777", status: "PAUSED", adset_id: "as1" },
+      alert_id: null,
+      params: { campaign_id: "c-uuid", external_id: "120", platform: "meta", adset_id: "as1", created_ad_id: "ad_777" },
+      dollar_impact_at_exec: 0,
+      outcome: "succeeded",
+    };
+
+    const client = calderynClient("acme.myshopify.com");
+    await client.audit.undo("pd1");
+
+    // Resolved the Meta write client by shop and deleted the paused draft ad.
+    expect(metaWriteSpy).toHaveBeenCalledWith("shop-uuid");
+    expect(deleteAdSpy).toHaveBeenCalledWith(expect.anything(), "ad_777");
+    // The inverse audit row is still written — by undoAction, the real path.
     expect(insertSpy).toHaveBeenCalled();
   });
 });
