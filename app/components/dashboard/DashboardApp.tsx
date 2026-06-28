@@ -36,8 +36,6 @@ import BugReportButton from "./BugReportButton";
 import ScreenDashboard from "./screens/Dashboard";
 import ScreenAlerts from "./screens/Alerts";
 import ScreenCampaigns from "./screens/Campaigns";
-import ScreenPredictor from "./screens/Predictor";
-import ScreenGenerator from "./screens/Generator";
 import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
@@ -46,13 +44,10 @@ import ScreenLiveEngine from "./screens/LiveEngine";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
 
-// `generator` is reachable via navigate() but intentionally absent from the rail
-// (same as the prototype — it's an inner flow off the predictor).
 const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Overview", icon: "gauge" },
   { id: "alerts", label: "Alerts", icon: "bell" },
   { id: "campaigns", label: "Campaigns", icon: "megaphone" },
-  { id: "predictor", label: "Creative Predictor", icon: "sparkle" },
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
@@ -78,8 +73,6 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   dashboard: ScreenDashboard,
   alerts: ScreenAlerts,
   campaigns: ScreenCampaigns,
-  predictor: ScreenPredictor,
-  generator: ScreenGenerator,
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
   audit: ScreenAudit,
