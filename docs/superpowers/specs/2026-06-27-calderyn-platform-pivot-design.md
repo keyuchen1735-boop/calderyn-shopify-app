@@ -61,7 +61,7 @@ The five extend features (`ActionAdapter`, `SessionAuth`, `IngestETL`, `TenantId
 
 ## Feature catalog — detailed, grouped by MVP tier
 
-Generated from the 35-feature decomposition (the coarse 1–15 + extend list fans out into the sub-features an MVP cut actually needs). Each carries file:line grounding for what exists vs net-new.
+Generated from the 36-feature decomposition (the coarse 1–16 + extend list fans out into the sub-features an MVP cut actually needs; `#16` agentic store generator added 2026-06-28). Each carries file:line grounding for what exists vs net-new.
 
 ---
 
@@ -523,6 +523,42 @@ Generated from the 35-feature decomposition (the coarse 1–15 + extend list fan
 
 ---
 
+### #16 — Agentic store generator ("describe it / connect your catalog → AI builds the store")
+
+> *(MVP-core — added 2026-06-28 by founder decision; build **Step 7b**. The Replit-like "AI builds your store" headline. This is the GENERATOR, not the visual editor — that's `#8`, deferred.)*
+
+**What it is.** An agentic orchestrator that composes a complete, sellable, **published** store in one pass — from a free-text brief ("describe your store") or the owned catalog ("connect your catalog"). Deterministic compose loop: pick one of `#7`'s **fixed** templates, generate grounded **store- and collection-level** copy with the existing in-app Claude harness (store name, tagline, homepage hero, collection names + groupings, hero/featured selection), bind imagery from the catalog's existing (imported) product images, then write the result into `#7`'s flat brand/store-settings contract so the `#7` SSR storefront serves it. It fills `#7`'s fixed-template slots and **never emits a block tree** (that's `#8`). Human-in-the-loop: produces a reviewable proposal the merchant approves before publish (mirrors the assistant propose-then-confirm pattern); a **deterministic fallback** always yields a publishable store if the LLM is unavailable.
+
+**Includes:**
+- `generateStore` orchestrator, two entry modes: **brief** (free-text intent) and **catalog** (reads the owned catalog `#5` and composes from what's there). Deterministic control flow in code (rule 5); Claude does only language work.
+- Template selection from `#7`'s **fixed** set — deterministic heuristic + optional Claude suggestion, validated to the allowed enum (never invents a layout).
+- Grounded **store/collection-level** copy via `app/lib/assistant/*` under a **locked, validated output contract** (`StorePlan`) + deterministic fallback — mirroring `claude_layer.py`'s `_assert_covers_input` (reject fabricated ids) and untrusted-evidence (prompt-injection) discipline. **No per-product copy in the thin path** (cost + it would write John's catalog tables — deferred).
+- Catalog **read + grouping plan**: group products into collections, pick hero/featured, select imagery from existing `product_media.url` (hotlinked — **no `#9`**). Any write into the owned catalog goes through John's catalog-write contract — Eric never edits his tables directly.
+- Review/apply/publish gate: write a reviewable `store_generation_proposal` → merchant approves → apply into `#7`'s brand/store-settings (+ collection groupings via the catalog-write seam) → publish flips the store live for `#7` SSR. **Never auto-publishes unreviewed AI copy.**
+- `store_generation` run/audit record (rule 12): every skipped product, validation rejection, fallback-to-template surfaced.
+- Per-run token/cost budget (rule 6). Single **imagery-source interface** (hotlink today; `#9`+Higgsfield later) and single **output-target interface** (`#7` settings today; `#8` document later) so fast-follow swaps are localized.
+- Dashboard parity: brief input + proposal review + "Generate my store" CTA mirrored on the dashboard stack.
+
+**Depends on:** `#5` (owned catalog — read; bind to its canonical `product_dim/variant_dim/product_media` names, **not** `#13.promote`'s `*_sot`), `#7` (fixed templates + its **frozen** brand/store-settings contract — the binding gate). Reuses the already-built Claude harness (`app/lib/assistant/*`, `claude_layer.py` patterns) — **no new model infra**. Soft: `#13.promote` (Step 9) materializes the real imported catalog so "connect your catalog" reaches full fidelity; "describe it" runs on `#5` alone at Step 7b.
+
+**Data model / contracts.** PRODUCER into existing contracts + two small net-new audit tables. Writes `#7`'s per-shop brand/store-settings (store name, logo ref, palette, homepage hero, `template_id` enum); collection groupings via the catalog-write seam. Reads `product_media.url` (no `asset_dim`/`#9` in the thin path). Net-new (shop_id-scoped, migrations sequenced **after** John's commerce-core numbering): `store_generation(shop_id, run_id, source brief|catalog, brief_text, template_chosen, model, status draft|applied|published, …)` + `store_generation_proposal(run_id, plan_json)`. Locked `StorePlan` output (validators: only real owned collection/variant ids; bounded copy; deterministic template fallback).
+
+**Grounding.** EXISTS (reused): the in-app Claude harness `app/lib/assistant/*` (`getAnthropic`, `assistantModel = claude-sonnet-4-6`, `runAssistantTurn`, system+cache-breakpoint prompt) and the engine locked-contract pattern `engine/calderyn_engine/claude_layer.py` (`_assert_covers_input`, untrusted-evidence, deterministic `_fallback`). Higgsfield generate-N-score loop exists (`screener/higgsfield.server.ts`) but is ad-specific → fast-follow imagery, not thin MVP. NET-NEW: the compose-a-store orchestration, `StorePlan` schema, the two audit tables, the review/apply/publish gate. `#5`'s catalog + `#7`'s settings tables are themselves net-new (Steps 2, 7) — `#16` binds to them.
+
+**MVP rationale.** Founder decision — the headline activation surface: turns the owned catalog (`#5`) + fixed templates (`#7`) into a complete, sellable, published store in one pass, so a pilot merchant isn't left hand-assembling a store before any guest can buy. Marginal MVP cost is **orchestration + a locked contract + a review gate**, not new model infra (the Claude harness exists). Stays thin by reusing imported product images + store/collection copy only and writing `#7`'s flat settings — keeping the heavy editor (`#8`) and original generated imagery (`#9`/Higgsfield) **out** of the MVP. Off the payment critical path → parallels `#2`/`#3`.
+
+**Risks:**
+- **Naming/media conflict (rule 7):** `#5` = `product_dim/product_media`; `#13.promote` = `product_sot/variant_sot` and promotes **no media table** — at cutover the generated store's imagery breaks. Make `#5` canonical AND add `product_media` to `#13.promote` before coding.
+- **Ownership seam:** `#16` is Eric's; in the thin path it writes ONLY `#7`'s settings directly. Collection-grouping/catalog writes go through John's catalog-write contract.
+- **`#7` settings contract is the gate:** `#16` is blocked until `#7`'s `store_settings_dim` shape is frozen.
+- LLM can hallucinate ids → validate every reference against real owned ids; deterministic fallback always yields a valid store (rule 12).
+- Catalog text is untrusted (prompt-injection) → reuse `claude_layer`'s evidence-untrusted discipline.
+- Public storefront copy → merchant-approval gate mandatory; no auto-publish.
+- Scope creep toward `#8` → keep strictly to `#7`'s fixed-template slots, never emit blocks.
+- Hotlinked Shopify image URLs can rotate → acceptable for pilot; the imagery-source interface makes the `#9` swap localized.
+
+---
+
 ## Tier 2 — Fast-follow (the near-term differentiators)
 
 ### #12 — Tenant isolation hardening (Postgres RLS)
@@ -938,6 +974,8 @@ Generated from the 35-feature decomposition (the coarse 1–15 + extend list fan
 
 ### #8 — Store builder (page/section/block/template data model + visual editor)
 
+> **Note:** the *generator* (`#16`) is MVP-core and composes stores on `#7`'s fixed templates; `#8` (this — the visual *editor*) stays later (Step 12) and will receive `#16`'s editable block output once it lands — the generator becomes `#8`'s cold-start, not a competitor to it.
+
 **What it is.** A merchant-facing visual editor plus a normalized content model (template -> page -> section -> block tree, with draft/published versioning) that lets a merchant compose their storefront beyond the fixed templates of #7. The builder writes a published page document that #7's SSR renderer consumes instead of a hard-coded template, turning Calderyn from a renderer into an actual store builder. The editor lives in the dashboard's own non-Polaris cd-* stack and can reuse the react-grid-layout drag/resize substrate already loaded there. Blocks (hero, product grid, rich text, image, collection list) bind to the owned catalog and pull imagery from #9, including re-prompted Higgsfield-generated page imagery. Per the dashboard-parity rule this must be mirrored on the standalone dashboard's postgres/withShopContext stack, not just here.
 
 **Includes:**
@@ -970,6 +1008,8 @@ Generated from the 35-feature decomposition (the coarse 1–15 + extend list fan
 
 > **DECISION (2026-06-28 — founder): BOTH surfaces ship as one MVP.** The agentic buy-in-chat surface (`#14`) + its quote MCP tool (`extend:MCP+storefront`) are promoted from fast-follow into MVP-core and built at **Step 8b** (below), on top of the owned checkout core. The owned storefront/checkout is *also* MVP. So the first sale can happen on either surface, both on Calderyn's own rails. This is the bigger MVP, chosen deliberately for two-surface coverage from day one. (Agentic *experimentation* `#15` stays deferred — distinct from the buy-in-chat surface.)
 
+> **DECISION (2026-06-28 — founder): the agentic store generator (`#16`) is also MVP-core.** Built at **Step 7b** on `#7`'s fixed templates + the existing Claude harness — the "describe it / connect your catalog → AI builds the store" headline ships in v1. It drags nothing else in (verified: `forcedIntoMvp` empty). The heavy visual *editor* (`#8`) and original generated imagery (`#9`/Higgsfield) stay deferred.
+
 **Step 1 — `extend:TenantIdentity`**
 
 Foundational, zero-dependency enabler and the closest-to-done seam (shops.id UUID already isolates every fact/dim table; only the lookup KEY is Shopify-coupled). A pilot merchant with no *.myshopify.com domain needs a shops row provisioned from an owned org id. SessionAuth, IngestETL, ActionAdapter, catalog, and cutover all hang off this, so it lands first. Cheap because downstream UUID isolation already exists.
@@ -997,6 +1037,10 @@ IngestETL (depends on TenantIdentity + ActionAdapter) re-points the raw→transf
 **Step 7 — `#2`, `#7`**
 
 #2 (cart/checkout/order state machine; depends on #1 + the inventory ledger from #4) is the transactional spine: cart priced against owned variants, reservation at checkout, order origination as SoT, and the warehouse-emission adapter that keeps order_fact/order_line_fact/attribution flowing to the existing brain. #7 (thin SSR storefront; depends on owned catalog #5, routes to checkout) is the public unauthenticated tenant-scoped surface a buyer loads to browse and start a purchase — fixed templates + brand settings, explicitly NOT the builder. Built together: storefront hands add-to-cart intent to the checkout spine.
+
+**Step 7b — `#16`** *(MVP-core, founder decision — parallel to Step 8, off the first-sale critical path)*
+
+The agentic store generator — "describe it / connect your catalog → AI builds the store." Rides `#5` (owned catalog) + `#7`'s fixed templates + its frozen brand/store-settings + the already-built Claude harness (`app/lib/assistant/*`, `claude_layer` locked-contract pattern); writes `#7`'s flat settings, never `#8` blocks. Reuses imported product imagery (hotlink, no `#9`) and generates store/collection-level copy only — so it drags **nothing** else into the MVP (`#9`, Higgsfield, `#8`, `#15` all stay deferred; `forcedIntoMvp` verified empty). Produces a previewable `#7`-rendered draft pre-cutover; the "connect your catalog" mode reaches full fidelity at Step 9 when `#13.promote` materializes the real catalog. Off the payment critical path → parallels `#3` (Step 8). **Owner: Eric.** Two pre-code fixes (rule 7): make `#5`'s `product_dim/product_media` names canonical (vs `#13.promote`'s `*_sot`) and add `product_media` to `#13.promote`, else the generated store's imagery breaks at cutover.
 
 **Step 8 — `#3`**
 
@@ -1061,6 +1105,7 @@ Two builders shipping the MVP simultaneously. Split by **existing strength** *an
 | Shipping quote engine + carrier adapter | **Eric** | new shipping module |
 | Agentic surface + MCP | **Eric** | `app/lib/assistant/*`, MCP tools |
 | Ads stack + experimentation (ad side) | **Eric** | `app/lib/ads/*`, `app/lib/meta/*`, screener/generator |
+| Agentic store generator (`#16`) | **Eric** | new `app/lib/storegen/*` + the `app/lib/assistant/*` Claude harness; writes `#7` settings; reads John's catalog via the read contract (never edits his tables) |
 
 **The integration contracts — agree these UP FRONT, then build to them in parallel (this is what prevents trampling):**
 1. **Catalog read contract** — John publishes the owned-catalog read types/API; Eric's storefront + checkout consume. *(John → Eric)*
