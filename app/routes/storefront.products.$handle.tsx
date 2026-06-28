@@ -1,9 +1,19 @@
 // app/routes/storefront.products.$handle.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+
+export const meta: MetaFunction<typeof loader> = ({ data }) => {
+  const title = data ? `${data.product.title} — Calderyn Demo Store` : "Product — Calderyn Demo Store";
+  const description = data?.product.description || "Product detail.";
+  return [
+    { title },
+    { name: "description", content: description },
+    { property: "og:title", content: title },
+  ];
+};
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";

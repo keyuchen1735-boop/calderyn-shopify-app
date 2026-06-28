@@ -1,6 +1,6 @@
 // app/routes/storefront.tsx
 // Public storefront layout. No authenticate.admin — a genuinely public, SSR route.
-import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
+import type { LoaderFunctionArgs, LinksFunction, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, Outlet } from "@remix-run/react";
 import storefrontCss from "~/styles/storefront.css?url";
@@ -8,6 +8,16 @@ import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
+
+export const meta: MetaFunction = () => {
+  const title = "Calderyn Demo Store";
+  const description = "Browse the Calderyn Demo Store.";
+  return [
+    { title },
+    { name: "description", content: description },
+    { property: "og:title", content: title },
+  ];
+};
 
 export async function loader({ request }: LoaderFunctionArgs) {
   // Public, multi-tenant entry: resolve the tenant from the request, then scope
