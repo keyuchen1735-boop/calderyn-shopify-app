@@ -1,6 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { hasAdsManagementScope, grantedScopesFromPermissions } from "../integration-status";
-import { vi } from "vitest";
 import { metaDraftPushEnabled } from "../meta/ad-create.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
