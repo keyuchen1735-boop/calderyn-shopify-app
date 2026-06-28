@@ -4,7 +4,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
-import { isRegionCode, type RegionCode } from "~/lib/ads/actions";
+import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -45,7 +45,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   ) {
     return jsonError(422, "invalid_daily_budget_cents");
   }
-  if (kind === "exclude_geo" && !isRegionCode(region)) {
+  if (kind === "exclude_geo" && !isValidRegion(region)) {
     return jsonError(422, "invalid_region");
   }
 

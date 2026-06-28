@@ -40,7 +40,7 @@ import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
 import { hasActionDeepLink } from "~/lib/action-deeplinks";
-import { isRegionCode, type RegionCode } from "~/lib/ads/actions";
+import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { projectedStockoutDate } from "~/lib/inventory-demand";
@@ -166,7 +166,7 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // (e.g. "US-TX") in some evidence; those are NOT buckets, so a non-bucket value
   // leaves exclude_geo as the Ads-Manager deep-link rather than a button that 422s.
   const regionRaw = (a.evidence as Record<string, unknown> | null)?.region;
-  const region = isRegionCode(regionRaw) ? regionRaw : undefined;
+  const region = isValidRegion(regionRaw) ? regionRaw : undefined;
 
   // Live-executable kinds render as buttons: campaign kinds (incl. exclude_geo)
   // go through /dashboard/api/campaigns/:id/action, reallocate_inventory through
