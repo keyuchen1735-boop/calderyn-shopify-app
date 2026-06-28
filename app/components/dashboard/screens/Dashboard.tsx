@@ -11,8 +11,6 @@ import {
   Btn,
   Meter,
   Placeholder,
-  RingGauge,
-  GradePill,
 } from "../ui";
 import { money, detectorLabel, ACTION_LABELS, timeAgo } from "../format";
 import { trueRoas } from "~/lib/roas";
@@ -196,32 +194,6 @@ function ActivityFeed({ app, limit = 8, tall }: { app: DashboardCtx; limit?: num
             </div>
           ))
         )}
-      </div>
-    </Card>
-  );
-}
-
-/* ---------- Predictor teaser ---------- */
-// TODO(api): wire to a live `app.overview.predictor` / scorecard summary when available.
-function PredictorCard({ app }: { app: DashboardCtx }) {
-  return (
-    <Card pad={false} className="flex flex-col" onClick={() => app.navigate("predictor")}>
-      <div className="cd-pad flex items-center gap-4">
-        <RingGauge value={82} size={86} label="score" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="cd-h2">Creative Predictor</h2>
-            <GradePill grade="winning" />
-          </div>
-          <p className="cd-caption" style={{ maxWidth: "42ch" }}>
-            Score a new ad creative before you spend — Calderyn predicts ROAS against your
-            break-even and flags weak hooks, offers, and CTAs.
-          </p>
-          <div className="cd-link mt-2">
-            Screen a new creative
-            <CDIcon name="chevronRight" size={13} style={{ display: "inline", verticalAlign: "-2px" }} />
-          </div>
-        </div>
       </div>
     </Card>
   );
@@ -426,10 +398,7 @@ function OriginalLayout({
         </div>
       </div>
       {hasAttention && <AttentionSection app={app} />}
-      <div className="cd-grid-duo">
-        <PredictorCard app={app} />
-        <GuardrailCard app={app} />
-      </div>
+      <GuardrailCard app={app} />
       {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
     </>
   );
@@ -524,7 +493,6 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     { id: "feed", node: <ActivityFeed app={app} limit={7} tall /> },
     { id: "revenue", node: <RevenueCard app={app} /> },
     ...(hasAttention ? [{ id: "attention", node: <AttentionSection app={app} /> }] : []),
-    { id: "predictor", node: <PredictorCard app={app} /> },
     { id: "autopilot", node: <GuardrailCard app={app} /> },
     ...(benchmarks ? [{ id: "benchmarks", node: <PeerBenchmarks data={benchmarks} /> }] : []),
   ];
