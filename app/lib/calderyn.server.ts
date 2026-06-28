@@ -696,6 +696,7 @@ export function calderynClient(shop: string) {
             "resume_campaign",
             "reduce_campaign_budget",
             "reallocate_inventory",
+            "push_creative_draft",
           ]);
           if (GATEWAY_UNDO_KINDS.has(String(orig.action_kind))) {
             // Lazy import: ~/shopify.server initializes shopifyApp (env,
