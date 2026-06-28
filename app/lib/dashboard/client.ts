@@ -247,7 +247,7 @@ const AUDIT_VERBS: Record<string, string> = {
   reallocate_inventory: "Reallocated inventory",
   create_po_draft: "Created PO draft",
   snooze_alert: "Snoozed alert",
-  push_ad_draft: "Pushed ad draft",
+  push_creative_draft: "Pushed paused draft to Meta",
 };
 
 /** Stringify a pre/post state blob into a succinct one-liner, or "—". */

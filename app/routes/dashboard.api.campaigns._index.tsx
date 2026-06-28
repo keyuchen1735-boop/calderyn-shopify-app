@@ -13,10 +13,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       client.analytics.campaignGrades(),
     ]);
     const gradeById = new Map(grades.map((g) => [g.campaign_id, g]));
-    // Performance-led list score: no per-campaign creative fetch on list render
+    // Performance-only list score: no per-campaign creative fetch on list render
     // (rule 6 cost guard). ads:[] ⇒ resolve does no creative I/O. The creative
-    // half resolves on the detail page (Phase 2 ports the dashboard creatives
-    // fetch). Uncached/no-grade campaigns resolve to band "nodata" ⇒ ScorePill
+    // half is blended on the detail page, which loads each campaign's cached
+    // scorecards. Uncached/no-grade campaigns resolve to band "nodata" ⇒ ScorePill
     // renders "Score pending".
     const withScore = await Promise.all(
       campaigns.map(async (c) => ({
