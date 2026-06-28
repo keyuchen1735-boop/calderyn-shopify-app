@@ -14,6 +14,8 @@ import type {
   RateRequest,
 } from "./rate-quote";
 
+const RATE_TIMEOUT_MS = 5000; // hard p95 budget; carrier slowness must not block checkout.
+
 /** Shape of one element of an EasyPost shipment's `rates[]` (fields we read). */
 export interface EasyPostRateQuote {
   carrier?: string | null;
@@ -129,8 +131,11 @@ interface EasyPostShipmentRates {
 }
 
 /**
- * Create a shipment and read ALL of its rate options. v1 quotes parcels[0] only.
- * (Timeout + degrade-to-fallback are added in Task 6 — this is the happy path.)
+ * Create a shipment and read ALL of its rate options, provider-blind. v1 quotes
+ * parcels[0] only. NEVER throws at runtime: on abort/timeout, network error,
+ * non-2xx, malformed body, or empty rates[] it returns the static fallback with
+ * fallbackUsed:true (load-bearing — no rate = no sale). connect() keeps throw
+ * semantics; this runtime path degrades.
  */
 export async function fetchEasyPostRates(
   apiKey: string,
@@ -139,29 +144,49 @@ export async function fetchEasyPostRates(
 ): Promise<RateQuoteResult> {
   const start = Date.now();
   const parcel = req.parcels[0]; // ponytail: single-parcel; multi-parcel packing is #6.3.
-  const res = await fetchImpl(`${apiBase()}/shipments`, {
-    method: "POST",
-    headers: {
-      Authorization: basicAuthHeader(apiKey),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      shipment: {
-        to_address: toEasyPostAddress(req.destination),
-        from_address: toEasyPostAddress(req.origin),
-        parcel: toEasyPostParcel(parcel),
-      },
-    }),
+  const fallback = (): RateQuoteResult => ({
+    options: buildFallbackOptions(req),
+    fallbackUsed: true,
+    latencyMs: Date.now() - start,
+    provider: "easypost",
   });
-  const json = (await res.json()) as EasyPostShipmentRates;
-  const rawRates = json.rates ?? [];
-  let options = rawRates
-    .map(mapRateToOption)
-    .filter((o): o is NormalizedRateOption => o !== null);
-  if (req.serviceFilter && req.serviceFilter.length > 0) {
-    const allow = new Set(req.serviceFilter); // ponytail: client-side filter, not server-side.
-    options = options.filter((o) => allow.has(o.serviceCode));
+  if (!parcel) return fallback(); // nothing to quote → degrade, never throw.
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RATE_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(`${apiBase()}/shipments`, {
+      method: "POST",
+      headers: {
+        Authorization: basicAuthHeader(apiKey),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        shipment: {
+          to_address: toEasyPostAddress(req.destination),
+          from_address: toEasyPostAddress(req.origin),
+          parcel: toEasyPostParcel(parcel),
+        },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return fallback(); // non-2xx at RUNTIME → degrade (flagged), never throw.
+    const json = (await res.json()) as EasyPostShipmentRates;
+    const rawRates = json.rates ?? [];
+    let options = rawRates
+      .map(mapRateToOption)
+      .filter((o): o is NormalizedRateOption => o !== null);
+    if (req.serviceFilter && req.serviceFilter.length > 0) {
+      const allow = new Set(req.serviceFilter); // ponytail: client-side filter, not server-side.
+      options = options.filter((o) => allow.has(o.serviceCode));
+    }
+    if (options.length === 0) return fallback(); // empty rates[] / all-dropped → degrade.
+    return { options, fallbackUsed: false, latencyMs: Date.now() - start, provider: "easypost" };
+  } catch {
+    // abort/timeout/network/malformed-body → degrade, NEVER propagate (load-bearing).
+    return fallback();
+  } finally {
+    clearTimeout(timer);
   }
-  return { options, fallbackUsed: false, latencyMs: Date.now() - start, provider: "easypost" };
 }

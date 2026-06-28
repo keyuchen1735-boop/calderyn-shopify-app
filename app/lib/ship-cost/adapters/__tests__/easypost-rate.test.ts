@@ -190,3 +190,52 @@ describe("fetchEasyPostRates — happy path", () => {
     expect(result.options.map((o) => o.serviceCode)).toEqual(["Priority"]);
   });
 });
+
+// ── fetchEasyPostRates: degrade-to-fallback, NEVER throw at runtime ─────────────
+describe("fetchEasyPostRates — timeout & fallback", () => {
+  it("returns the static fallback (fallbackUsed:true) WITHOUT throwing when the carrier times out", async () => {
+    vi.useFakeTimers();
+    // fetch that never resolves on its own and rejects only when the AbortController fires.
+    const hangingFetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+    const promise = fetchEasyPostRates("k", sampleReq(), hangingFetch as unknown as typeof fetch);
+    await vi.advanceTimersByTimeAsync(5000); // trip RATE_TIMEOUT_MS.
+    const result = await promise;
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.options.length).toBeGreaterThan(0);
+    vi.useRealTimers();
+  });
+
+  it("falls back on a non-2xx response without throwing", async () => {
+    const mockFetch = vi.fn(async () =>
+      ({ ok: false, status: 500, statusText: "ISE", text: async () => "boom", json: async () => ({}) } as Response));
+    const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.options.length).toBeGreaterThan(0);
+  });
+
+  it("falls back when rates[] is EMPTY (rate-shopping creds not configured)", async () => {
+    const mockFetch = vi.fn(async () => okJson({ id: "shp_x", rates: [] }));
+    const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(true);
+  });
+
+  it("falls back on a malformed body (json() throws) without throwing", async () => {
+    const mockFetch = vi.fn(async () =>
+      ({ ok: true, status: 200, statusText: "OK", json: async () => { throw new Error("bad json"); } } as unknown as Response));
+    const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(true);
+  });
+
+  it("falls back when every rate is malformed/dropped (never returns zero options)", async () => {
+    const mockFetch = vi.fn(async () => okJson({ id: "shp_x", rates: [{ carrier: "USPS", service: "X", rate: "-1.00" }] }));
+    const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(true);
+  });
+});
