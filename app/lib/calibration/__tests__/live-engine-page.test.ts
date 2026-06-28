@@ -96,12 +96,22 @@ function stubClient(): Client {
     alerts: {
       list: async () => [
         { id: "al9", detector_id: "campaign_below_breakeven", severity: "high", status: "open", dollar_impact: 621600, claude_rank: 1, created_at: iso(0.3), title: "Summit Tee is bleeding money", narrative: "ROAS 0.7 for 5 days", campaign: "Summit", campaign_id: null, campaign_external_id: null, sku: null, evidence: {} },
+        // The open alert behind proposal "a1": its narrative + evidence feed the
+        // pending inspector. Internal id + title keys are suppressed; the rest is
+        // humanized. Impact kept below al9 so it stays the predictions top alert.
+        { id: "a1", detector_id: "sku_stockout_vs_spend", severity: "high", status: "open", dollar_impact: 394000, claude_rank: 2, created_at: iso(0.2), title: "Trailhead Cap sold out", narrative: "Sold out 3 days but still spending", campaign: null, campaign_id: null, campaign_external_id: null, sku: null, evidence: { inventory_item_id: "gid://shopify/InventoryItem/1", title: "Trailhead Cap", stock: "0 units", days_of_cover: "0", spend_this_7d_usd: "120" } },
       ],
     },
     analytics: {
       campaignGrades: async () => [
         { campaign_id: "c1", name: "Summit Logo Tee", grade: "poor", roas: 0.7, break_even_roas: 1.5, spend_cents: 0, revenue_cents: 0, day_bucket: "" },
         { campaign_id: "c2", name: "Healthy PMax", grade: "winning", roas: 3.2, break_even_roas: 1.5, spend_cents: 0, revenue_cents: 0, day_bucket: "" },
+      ],
+    },
+    campaigns: {
+      list: async () => [
+        { id: "c1", name: "Meta Retargeting", roas_7d: 1.83, status: "active" },
+        { id: "c2", name: "Google Brand PMax", roas_7d: 3.2, status: "active" },
       ],
     },
   } as unknown as Client;
@@ -147,6 +157,40 @@ describe("buildLiveEnginePageData", () => {
     expect(byId("e4").decisionNote).toContain("daily budget cap reached");
   });
 
+  it("builds pending proposals: plain why, humanized figures, approve/deny copy", async () => {
+    const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
+    expect(d.pending).toHaveLength(1);
+    const p = d.pending[0];
+    expect(p.alertId).toBe("a1");
+    expect(p.actionKind).toBe("pause_campaign");
+    expect(p.actionLabel).toBe("Pause campaign");
+    expect(p.dollarImpactCents).toBe(394000);
+    expect(p.confidence).toBe(52);
+    expect(p.threshold).toBe(80); // the pair's real graduation bar
+    // signal comes from the matched alert's narrative, not raw fields
+    expect(p.signal).toBe("Sold out 3 days but still spending");
+    // internal id + product name suppressed; the rest humanized + formatted, capped at 3
+    expect(p.stats).toEqual([
+      { label: "Total stock", value: "0 units" },
+      { label: "Days until sold out", value: "0 days" },
+      { label: "Spend, this 7 days", value: "$120" },
+    ]);
+    expect(p.approveText).toBe("Calderyn will pause campaign now. You can undo it anytime from your history.");
+    expect(p.denyText).toContain("Nothing changes");
+    expect(p.trustLine).toContain("Still learning this one");
+  });
+
+  it("builds watchScan items (name + real figure) from SKUs + campaigns; ret empty", async () => {
+    const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
+    expect(d.watchScan.inv).toContainEqual({ label: "Basecamp Water Bottle", value: "18 left" });
+    expect(d.watchScan.price.some((i) => i.label === "Basecamp Water Bottle")).toBe(true);
+    expect(d.watchScan.ads).toEqual([
+      { label: "Meta Retargeting", value: "1.8×" },
+      { label: "Google Brand PMax", value: "3.2×" },
+    ]);
+    expect(d.watchScan.ret).toEqual([]);
+  });
+
   it("derives predictions from real signals only (runway + below-breakeven + top alert)", async () => {
     const d = await buildLiveEnginePageData(stubClient(), undefined, NOW);
     const stock = d.predictions.find((p) => p.kind === "stockout");
@@ -178,11 +222,14 @@ describe("buildLiveEnginePageData", () => {
       skus: { list: async () => { throw new Error("x"); } },
       alerts: { list: async () => { throw new Error("x"); } },
       analytics: { campaignGrades: async () => { throw new Error("x"); } },
+      campaigns: { list: async () => { throw new Error("x"); } },
     } as unknown as Client;
     const d = await buildLiveEnginePageData(broken, undefined, NOW);
     expect(d.features).toEqual([]);
     expect(d.trace).toEqual([]);
+    expect(d.pending).toEqual([]);
     expect(d.predictions).toEqual([]);
+    expect(d.watchScan).toEqual({ inv: [], ads: [], price: [], ret: [] });
     expect(d.autopilotEnabled).toBe(false);
   });
 });

@@ -36,6 +36,7 @@ export type DetectorId =
   | "return_rate_hidden_loss"
   | "scaling_sku_fulfillment_risk"
   | "sku_stockout_vs_spend"
+  | "sku_stockout_cleared"
   | "wrong_location_concentration"
   | "out_of_stock_live"
   | "inventory_untracked"
@@ -261,6 +262,12 @@ export interface GuardrailConfig {
    *  Merchant-facing (adjust_price is confirm-only, never autopilot) — gates how
    *  far one click may move a variant price. */
   max_price_change_pct: number;
+  /** Max single-step autonomous price move, whole percent 1..100. Gates the
+   *  adjust_price action when autopilot executes it unattended. */
+  autopilot_max_price_change_pct: number;
+  /** Max units autopilot may move in a single reallocate_inventory action; null
+   *  means no unit cap (unlimited). */
+  autopilot_max_inventory_units_per_move: number | null;
 }
 
 /** Why a merchant rejected a calibration proposal. Used by the feedback
@@ -338,4 +345,11 @@ export interface QueueProposal {
    * normal muted pair. Absent (undefined) for un-muted proposals.
    */
   always_ask?: boolean;
+  /**
+   * True when this proposal is on a graduated (autopilot) pair but its specific
+   * move exceeds the merchant's autonomy cap, so autopilot blocks it
+   * (block-not-clamp) and it needs manual approval. The UI renders an
+   * "over your autopilot limit" treatment. Absent for normal proposals.
+   */
+  over_autopilot_cap?: boolean;
 }

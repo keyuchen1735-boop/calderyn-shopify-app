@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { graduationVerdict, GRADUATABLE_V1, MIN_APPROVALS } from "../graduation";
+import { graduationVerdict, GRADUATABLE, MIN_APPROVALS } from "../graduation";
 
 /** A fully-qualifying reversible pair (all gates pass). */
 const PASSING: Parameters<typeof graduationVerdict>[0] = {
@@ -12,6 +12,8 @@ const PASSING: Parameters<typeof graduationVerdict>[0] = {
   merchantDisabled: false,
   onProbation: false,
   hasUndoBranch: true,
+  netPositiveOutcomes: 3,
+  lastOutcomeSign: 0,
 };
 
 describe("graduationVerdict — passing case", () => {
@@ -53,10 +55,10 @@ describe("graduationVerdict — shipped no-brainers", () => {
 });
 
 describe("graduationVerdict — gate failures (each condition in isolation)", () => {
-  it('non-v1 kind (increase_campaign_budget) → "kind not graduatable in v1"', () => {
+  it('non-graduatable kind (increase_campaign_budget) → "kind not graduatable"', () => {
     const v = graduationVerdict({ ...PASSING, actionKind: "increase_campaign_budget" });
     expect(v.graduated).toBe(false);
-    expect(v.reason).toBe("kind not graduatable in v1");
+    expect(v.reason).toBe("kind not graduatable");
   });
 
   it('hasUndoBranch=false → "no undo branch"', () => {
@@ -100,25 +102,26 @@ describe("graduationVerdict — kinds that must never graduate", () => {
   it("increase_campaign_budget never graduates even with perfect stats", () => {
     const v = graduationVerdict({ ...PASSING, actionKind: "increase_campaign_budget" });
     expect(v.graduated).toBe(false);
-    expect(v.reason).toBe("kind not graduatable in v1");
-  });
-
-  it("reallocate_inventory never graduates even with perfect stats", () => {
-    const v = graduationVerdict({ ...PASSING, actionKind: "reallocate_inventory" });
-    expect(v.graduated).toBe(false);
-    expect(v.reason).toBe("kind not graduatable in v1");
+    expect(v.reason).toBe("kind not graduatable");
   });
 });
 
-describe("GRADUATABLE_V1 set contents", () => {
-  it("contains pause_campaign and reduce_campaign_budget", () => {
-    expect(GRADUATABLE_V1.has("pause_campaign")).toBe(true);
-    expect(GRADUATABLE_V1.has("reduce_campaign_budget")).toBe(true);
+describe("GRADUATABLE set contents", () => {
+  it("contains the original three kinds", () => {
+    expect(GRADUATABLE.has("pause_campaign")).toBe(true);
+    expect(GRADUATABLE.has("reduce_campaign_budget")).toBe(true);
+    expect(GRADUATABLE.has("discontinue_sku")).toBe(true);
   });
 
-  it("does NOT contain increase_campaign_budget or reallocate_inventory", () => {
-    expect(GRADUATABLE_V1.has("increase_campaign_budget")).toBe(false);
-    expect(GRADUATABLE_V1.has("reallocate_inventory")).toBe(false);
+  it("contains the four new Phase 2 kinds", () => {
+    expect(GRADUATABLE.has("resume_campaign")).toBe(true);
+    expect(GRADUATABLE.has("reallocate_budget")).toBe(true);
+    expect(GRADUATABLE.has("reallocate_inventory")).toBe(true);
+    expect(GRADUATABLE.has("adjust_price")).toBe(true);
+  });
+
+  it("does NOT contain increase_campaign_budget", () => {
+    expect(GRADUATABLE.has("increase_campaign_budget")).toBe(false);
   });
 });
 
@@ -158,10 +161,11 @@ describe("graduationVerdict — discontinue_sku (hard_to_reverse: 10-approval fl
     ...PASSING,
     actionKind: "discontinue_sku",
     cleanApprovals: 10,
+    netPositiveOutcomes: 5,
   };
 
   it("is in the graduatable set", () => {
-    expect(GRADUATABLE_V1.has("discontinue_sku")).toBe(true);
+    expect(GRADUATABLE.has("discontinue_sku")).toBe(true);
   });
 
   it("graduates with 10 clean approvals + all other gates passing", () => {

@@ -26,6 +26,14 @@ import { pairConfidenceBreakdown } from "./confidence";
 import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
+import { graduationProgress } from "./progress";
+import { buildWatchScan } from "./watch-scan";
+import {
+  pendingEvidenceStats,
+  pendingApproveText,
+  PENDING_DENY_TEXT,
+  PENDING_TRUST_LINE,
+} from "./pending-inspector";
 import type {
   LiveEnginePageData,
   LiveEngineFeatureVM,
@@ -33,6 +41,7 @@ import type {
   TraceEventVM,
   TraceTag,
   PredictionVM,
+  PendingInspectorVM,
 } from "./live-engine-types";
 
 // Re-export the browser-safe VM contract so the embedded route can keep
@@ -47,6 +56,8 @@ export type {
   TraceTag,
   PredictionVM,
   PredictionTone,
+  PendingInspectorVM,
+  InspectorStat,
 } from "./live-engine-types";
 
 type Client = ReturnType<typeof calderynClient>;
@@ -57,7 +68,9 @@ const EMPTY: LiveEnginePageData = {
   features: [],
   pipeline: [],
   trace: [],
+  pending: [],
   predictions: [],
+  watchScan: { inv: [], ads: [], price: [], ret: [] },
   calibrationPct: null,
   nearGraduation: 0,
 };
@@ -132,7 +145,7 @@ export async function buildLiveEnginePageData(
   now: number = Date.now(),
 ): Promise<LiveEnginePageData> {
   try {
-    const [summaryR, pairsR, calR, nearR, proposalsR, auditR, skusR, alertsR, gradesR] =
+    const [summaryR, pairsR, calR, nearR, proposalsR, auditR, skusR, alertsR, gradesR, campaignsR] =
       await Promise.allSettled([
         client.calibration.liveEngine(),
         client.calibration.pairEvidence(),
@@ -143,6 +156,7 @@ export async function buildLiveEnginePageData(
         client.skus.list(signal),
         client.alerts.list({ status: "open" }, signal),
         client.analytics.campaignGrades(signal),
+        client.campaigns.list(signal),
       ]);
 
     const summary = summaryR.status === "fulfilled" ? summaryR.value : null;
@@ -154,6 +168,11 @@ export async function buildLiveEnginePageData(
     const skus = skusR.status === "fulfilled" ? skusR.value : [];
     const openAlerts = alertsR.status === "fulfilled" ? alertsR.value : [];
     const grades = gradesR.status === "fulfilled" ? gradesR.value : [];
+    const campaigns = campaignsR.status === "fulfilled" ? campaignsR.value : [];
+    const watchScan = buildWatchScan(
+      skus.map((s) => ({ title: s.title, onHand: s.on_hand, velocity: s.velocity, shipPnlCents: s.ship_pnl_cents })),
+      campaigns.map((c) => ({ name: c.name, roas7d: c.roas_7d, status: c.status })),
+    );
 
     const evMap = new Map(pairEv.map((p) => [`${p.detectorId}:${p.actionKind}`, p]));
     const breakdownFor = (detectorId: string, actionKind: ActionKind) => {
@@ -163,17 +182,22 @@ export async function buildLiveEnginePageData(
     };
 
     /* features */
-    const features: LiveEngineFeatureVM[] = (summary?.features ?? []).map((f) => ({
-      detectorId: f.detectorId,
-      actionKind: f.actionKind,
-      name: f.name,
-      watching: f.watching,
-      enabled: f.enabled,
-      moneyCents: f.moneyCents,
-      actions: f.actions,
-      lastAt: f.lastAt,
-      lastText: f.lastAt ? `last acted ${relTime(f.lastAt, now)}` : "no actions yet",
-    }));
+    const features: LiveEngineFeatureVM[] = (summary?.features ?? []).map((f) => {
+      const prog = graduationProgress(f.actionKind, f.cleanApprovals, f.netPositiveOutcomes);
+      return {
+        detectorId: f.detectorId,
+        actionKind: f.actionKind,
+        name: f.name,
+        watching: f.watching,
+        enabled: f.enabled,
+        recommended: f.recommended,
+        moneyCents: f.moneyCents,
+        actions: f.actions,
+        lastAt: f.lastAt,
+        lastText: f.lastAt ? `last acted ${relTime(f.lastAt, now)}` : "no actions yet",
+        ...prog,
+      };
+    });
 
     /* pipeline: blend the live "ask you" branch (open proposals, below their bar)
        with the "handle it" branch (recent autopilot actions, above their bar), so
@@ -258,6 +282,32 @@ export async function buildLiveEnginePageData(
       };
     });
 
+    /* pending: flagged proposals awaiting approval, shaped for the simplified
+       inspector. Each is joined to its open alert for the narrative + humanized
+       evidence figures; the bar comes from the pair's real graduation threshold.
+       Same shared assembly as the dashboard's client-side inspector. */
+    const alertById = new Map(openAlerts.map((a) => [a.id, a]));
+    const pending: PendingInspectorVM[] = proposals.map((p) => {
+      const alert = alertById.get(p.alertId);
+      const { threshold } = breakdownFor(p.detector_id, p.action_kind);
+      const actionLabel = ACTION_LABELS[p.action_kind] ?? p.action_kind;
+      return {
+        alertId: p.alertId,
+        detectorId: p.detector_id,
+        actionKind: p.action_kind,
+        title: p.title || actionLabel,
+        actionLabel,
+        dollarImpactCents: p.dollar_impact,
+        confidence: p.confidence,
+        threshold,
+        signal: alert?.narrative || p.reasoning,
+        stats: pendingEvidenceStats(alert?.evidence),
+        approveText: pendingApproveText(actionLabel),
+        denyText: PENDING_DENY_TEXT,
+        trustLine: PENDING_TRUST_LINE,
+      };
+    });
+
     /* predictions: derived from real forward-looking signals only */
     const predictions: PredictionVM[] = [];
     // (a) inventory runway — the only legitimate forward number
@@ -304,7 +354,9 @@ export async function buildLiveEnginePageData(
       features,
       pipeline,
       trace,
+      pending,
       predictions,
+      watchScan,
       calibrationPct,
       nearGraduation,
     };

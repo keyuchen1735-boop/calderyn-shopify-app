@@ -100,6 +100,25 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     }
   }
 
+  if ("autopilot_max_price_change_pct" in patch) {
+    const v = patch.autopilot_max_price_change_pct;
+    // Whole-percent 1..100 — mirrors max_price_change_pct but gates autopilot's
+    // autonomous adjust_price path. A 0% move is a no-op; reject for clarity.
+    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 100) {
+      return "invalid_autopilot_max_price_change_pct";
+    }
+  }
+
+  if ("autopilot_max_inventory_units_per_move" in patch) {
+    const v = patch.autopilot_max_inventory_units_per_move;
+    // null = no cap (unlimited) is valid; otherwise a positive integer up to
+    // 1_000_000. Zero is rejected — a zero cap silently blocks every move;
+    // the only way to express "no cap" is an explicit null.
+    if (v !== null && (!isFiniteNum(v) || !Number.isInteger(v) || v < 1 || v > 1_000_000)) {
+      return "invalid_autopilot_max_inventory_units_per_move";
+    }
+  }
+
   if ("business_hours_only" in patch && typeof patch.business_hours_only !== "boolean") {
     return "invalid_business_hours_only";
   }

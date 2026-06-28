@@ -68,6 +68,8 @@ const ACTION_TIER: Partial<Record<ActionKind, Tier>> = {
   // Reversible via its undo branch (re-publish + clear flag, 48h auto-undo) but
   // archiving a product is more consequential than a budget tweak.
   discontinue_sku: "hard_to_reverse",
+  // Customer-visible but reversible via its undo branch (re-set the prior price).
+  adjust_price: "hard_to_reverse",
   reallocate_inventory: "irreversible",
   exclude_sku_free_ship: "irreversible",
   raise_free_ship_threshold: "irreversible",

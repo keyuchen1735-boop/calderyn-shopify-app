@@ -217,11 +217,28 @@ async def rank_and_narrate(
 
     user_msg = _build_user_message(detections)
     try:
+        # No prompt caching: SYSTEM_PROMPT is ~450 tokens, below the 2048-token
+        # minimum cacheable prefix, and the detections payload is volatile per
+        # run, so there is no stable >=2048 prefix to cache. Cost is held down
+        # instead by the template-only skip and the narrative cache above — a
+        # stable shop makes zero Claude calls.
         response = await client.messages.create(
             model=cfg.claude_model,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
             max_tokens=2048,
+        )
+        # Volume + cost telemetry: every real (non-cached, non-template) Claude
+        # call lands here. Grep `claude_rank_call` to size engine LLM spend and
+        # judge whether the Batch path (ENGINE_BATCH_NARRATIVES) is worth wiring.
+        _usage = getattr(response, "usage", None)
+        logger.info(
+            "claude_rank_call",
+            detections=len(detections),
+            new_findings=len(needs_claude),
+            input_tokens=getattr(_usage, "input_tokens", None),
+            output_tokens=getattr(_usage, "output_tokens", None),
+            cache_read_tokens=getattr(_usage, "cache_read_input_tokens", None),
         )
         text = _extract_text(response)
         parsed = ClaudeOutput.model_validate_json(text)

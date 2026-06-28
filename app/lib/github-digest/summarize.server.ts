@@ -16,7 +16,7 @@ import {
   type PersonGroup,
   type RenderInput,
 } from "./render.server";
-import { getAnthropic, assistantModel } from "~/lib/assistant/anthropic.server";
+import { getAnthropic, digestModel } from "~/lib/assistant/anthropic.server";
 import type { WaitlistSignup } from "./waitlist.server";
 
 export interface DigestContent {
@@ -83,8 +83,13 @@ function parseAi(raw: string): AiResult | null {
 
 async function aiStructured(groups: PersonGroup[], dateLabel: string): Promise<AiResult | null> {
   const client = getAnthropic();
+  // No cache_control: SYSTEM_PROMPT is ~150 tokens, below this model's
+  // 2048-token minimum cacheable prefix, and this runs once per day (cron),
+  // so the prefix is never re-read within the 5-minute cache TTL. Caching
+  // would be a no-op at best and a 1.25x write premium for zero reads at
+  // worst, so it is intentionally omitted.
   const msg = await client.messages.create({
-    model: assistantModel(),
+    model: digestModel(),
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: activityForPrompt(groups, dateLabel) }],

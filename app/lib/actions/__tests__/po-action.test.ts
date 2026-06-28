@@ -93,12 +93,29 @@ describe("executeCreatePoDraft", () => {
     expect(call.params.po?.lines[0].unit_cost_cents).toBeNull();
   });
 
-  it("rejects a non-positive / non-integer quantity (422)", async () => {
-    for (const q of ["0", "-3", "1.5", "abc", ""]) {
+  it("rejects a non-positive / non-integer typed quantity (422)", async () => {
+    for (const q of ["0", "-3", "1.5", "abc"]) {
       await expect(
         executeCreatePoDraft({ ...base, client: client(alert()) as never, sb: SB, quantity: q, unitCost: "" }),
       ).rejects.toMatchObject({ status: 422 });
     }
+  });
+
+  it("rejects a blank quantity (422) when the alert evidence can't derive one", async () => {
+    // No shortfall_units and no velocity -> derivePoQuantity returns null.
+    const a = alert({ evidence: { title: "No signal" } });
+    await expect(
+      executeCreatePoDraft({ ...base, client: client(a) as never, sb: SB, quantity: "", unitCost: "" }),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("defaults an empty (one-click) quantity to the derived reorder qty", async () => {
+    // derivePoQuantity: no shortfall_units -> velocity 2.0 over lead 14 -> ceil(2 * 14) = 28
+    const c = client(alert({ evidence: { title: "Trail Runner — 9", daily_velocity_units: "2.0", lead_time_days: 14 } }));
+    const res = await executeCreatePoDraft({ ...base, client: c as never, sb: SB, quantity: "", unitCost: "" });
+    const call = c.actions.execute.mock.calls[0][0] as { params: { po?: { lines: Array<{ quantity: number }> } } };
+    expect(call.params.po?.lines[0].quantity).toBe(28);
+    expect(res).toMatchObject({ outcome: "succeeded" });
   });
 
   it("refuses to draft a PO for a discontinued (Do-Not-Reorder) SKU (409)", async () => {

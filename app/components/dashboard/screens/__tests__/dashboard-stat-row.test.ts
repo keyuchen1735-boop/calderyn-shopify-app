@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
-import Dashboard from "../Dashboard";
+import { StatRow } from "../overview-cards";
 import type { DashboardCtx } from "../../context";
 import type { AuditVM, CampaignVM, GuardrailVM } from "../../view-models";
 
@@ -58,6 +58,8 @@ const GUARDRAILS: GuardrailVM = {
   autopilot_max_budget_increase_pct: 20,
   autopilot_max_daily_budget_cents: null,
   max_price_change_pct: 15,
+  autopilot_max_price_change_pct: 10,
+  autopilot_max_inventory_units_per_move: null,
 };
 
 function auditEntry(
@@ -108,7 +110,6 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     overview: null,
     calibration: null,
     actionQueue: [],
-    learnedRules: [],
     liveEngine: null,
     feed: [],
     liveOn: false,
@@ -128,15 +129,13 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
 
 function renderStatGrid(app: DashboardCtx): { html: string; grid: string } {
   // Strip SSR text-boundary markers (`across <!-- -->1<!-- --> action`) so
-  // assertions can match the visible text.
-  const html = renderToString(h(Dashboard, { app })).replace(/<!-- -->/g, "");
-  // The uncustomized default renders the original CSS-flow layout, so the stat
-  // grid is bounded by the `cd-grid-main` block that follows it.
+  // assertions can match the visible text. StatRow now lives in overview-cards
+  // and is rendered on the Analytics screen (the Overview is the Live Engine);
+  // render it directly — its whole output IS the stat grid.
+  const html = renderToString(h(StatRow, { app })).replace(/<!-- -->/g, "");
   const start = html.indexOf("cd-stat-grid");
-  const end = html.indexOf("cd-grid-main");
   expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return { html, grid: html.slice(start, end) };
+  return { html, grid: html.slice(start) };
 }
 
 describe("Dashboard stat row mirrors the extension's KPI contract", () => {

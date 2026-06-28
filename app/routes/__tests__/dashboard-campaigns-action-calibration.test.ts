@@ -157,4 +157,25 @@ describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-
     expect(res.status).toBe(200);
     expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
+
+  it("exclude_geo passes the region through to executeAction", async () => {
+    const res = await call({
+      type: "exclude_geo",
+      idempotency_key: "idem-geo-1",
+      region: "us-west",
+      alert_id: ALERT_ID,
+    });
+    expect(res.status).toBe(200);
+    expect(executeActionSpy).toHaveBeenCalledWith(
+      SHOP_ID,
+      expect.objectContaining({ kind: "exclude_geo", campaignId: CAMPAIGN_ID, region: "us-west" }),
+      expect.anything(),
+    );
+  });
+
+  it("exclude_geo with a missing/invalid region is rejected (422), no platform call", async () => {
+    const res = await call({ type: "exclude_geo", idempotency_key: "idem-geo-2", alert_id: ALERT_ID });
+    expect(res.status).toBe(422);
+    expect(executeActionSpy).not.toHaveBeenCalled();
+  });
 });

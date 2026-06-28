@@ -19,6 +19,9 @@ class Config:
     anthropic_api_key: str
     env: str
     claude_model: str
+    # Dormant until ENGINE_BATCH_NARRATIVES=1: route new-finding narratives through
+    # the Message Batches API (50% cheaper) instead of an inline call.
+    batch_narratives: bool = False
 
 
 def load_config() -> Config:
@@ -30,4 +33,5 @@ def load_config() -> Config:
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         env=os.environ.get("ENGINE_ENV", "dev"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6"),
+        batch_narratives=os.environ.get("ENGINE_BATCH_NARRATIVES") == "1",
     )

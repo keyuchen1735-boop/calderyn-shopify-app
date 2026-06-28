@@ -25,3 +25,24 @@ describe("assistantModel", () => {
     expect(() => getAnthropic()).toThrow(/ANTHROPIC_API_KEY/);
   });
 });
+
+describe("digestModel", () => {
+  const OLD = { ...process.env };
+  beforeEach(() => vi.resetModules());
+  afterEach(() => {
+    process.env = { ...OLD };
+  });
+
+  it("returns DIGEST_MODEL when set", async () => {
+    process.env.DIGEST_MODEL = "claude-digest-xyz";
+    const { digestModel } = await import("../anthropic.server");
+    expect(digestModel()).toBe("claude-digest-xyz");
+  });
+
+  it("defaults the digest crons to Haiku when DIGEST_MODEL is unset", async () => {
+    delete process.env.DIGEST_MODEL;
+    const mod = await import("../anthropic.server");
+    expect(mod.digestModel()).toBe(mod.DEFAULT_DIGEST_MODEL);
+    expect(mod.DEFAULT_DIGEST_MODEL).toContain("haiku");
+  });
+});

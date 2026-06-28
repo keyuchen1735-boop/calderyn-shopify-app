@@ -9,7 +9,7 @@
  *     has no such floor applied.
  *  3. Opt-in default: a fresh shop (no graduated pairs) executes nothing
  *     autonomously — asserted via graduationVerdict for all fresh inputs.
- *  4. Reallocation tripwire: reallocate_budget is NOT in GRADUATABLE_V1.
+ *  4. GRADUATABLE set membership: 7 kinds as of Phase 2.
  */
 
 import { describe, it, expect } from "vitest";
@@ -19,7 +19,7 @@ import {
   NO_BRAINER,
   NO_BRAINER_CONF_FLOOR,
 } from "../confidence";
-import { graduationVerdict, GRADUATABLE_V1 } from "../graduation";
+import { graduationVerdict, GRADUATABLE } from "../graduation";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -226,6 +226,8 @@ describe("Default autonomy invariant — only shipped no-brainers start unlocked
     merchantDisabled: false,
     onProbation: false,
     hasUndoBranch: true,
+    netPositiveOutcomes: 0,
+    lastOutcomeSign: 0 as -1 | 0 | 1,
   };
 
   it("a normal pause pair does NOT graduate for a fresh shop", () => {
@@ -240,8 +242,8 @@ describe("Default autonomy invariant — only shipped no-brainers start unlocked
     expect(v.reason).toBe("needs more approvals");
   });
 
-  it("no non-no-brainer kind in GRADUATABLE_V1 graduates with zero approvals", () => {
-    for (const kind of GRADUATABLE_V1) {
+  it("no non-no-brainer kind in GRADUATABLE graduates with zero approvals", () => {
+    for (const kind of GRADUATABLE) {
       const v = graduationVerdict({ ...FRESH_INPUT, actionKind: kind });
       expect(v.graduated).toBe(false);
     }
@@ -264,10 +266,10 @@ describe("Default autonomy invariant — only shipped no-brainers start unlocked
     // Two-layer wall:
     //  (a) autopilot_enabled=false → runAutopilotForShop returns {skipped:true} immediately.
     //  (b) Zero approved pairs → no pair graduates → isGraduated=false for all candidates.
-    // We assert (b) here: EVERY kind in GRADUATABLE_V1 fails graduation with 0 approvals.
+    // We assert (b) here: EVERY kind in GRADUATABLE fails graduation with 0 approvals.
     // Combined with (a), this is the complete opt-in guarantee.
-    expect(GRADUATABLE_V1.size).toBeGreaterThan(0); // invariant: the v1 set is non-empty
-    for (const kind of GRADUATABLE_V1) {
+    expect(GRADUATABLE.size).toBeGreaterThan(0); // invariant: the graduatable set is non-empty
+    for (const kind of GRADUATABLE) {
       const v = graduationVerdict({ ...FRESH_INPUT, cleanApprovals: 0, actionKind: kind });
       expect(v.graduated).toBe(false);
     }
@@ -275,46 +277,23 @@ describe("Default autonomy invariant — only shipped no-brainers start unlocked
 });
 
 // ---------------------------------------------------------------------------
-// 4. Reallocation tripwire
+// 4. GRADUATABLE set membership (Phase 2: 7 kinds)
 // ---------------------------------------------------------------------------
 
-describe("Reallocation tripwire — reallocate_budget NOT in GRADUATABLE_V1", () => {
-  /**
-   * reallocate_budget MUST NOT be added to GRADUATABLE_V1 until all three
-   * prerequisites are wired:
-   *
-   *  1. Its own graduation gate: a dedicated isGraduated check for the
-   *     reallocate_budget kind (currently uses the same gate as pause/reduce,
-   *     but the precondition path is distinct and not yet validated).
-   *
-   *  2. A preconditionFresh call + branch for reallocate_budget in
-   *     preconditions.server.ts (stockoutPauseAllowed handles the stockout
-   *     case; reallocate needs its own fresh-read of donor/recipient budgets).
-   *
-   *  3. The dollar-cap clamp must be threaded into the reallocation AMOUNT
-   *     (not just the donor cut) — the clamp in rule-enforce.server.ts sizes
-   *     the donor-cut but does not currently propagate the cap to the
-   *     recipient raise.
-   *
-   * If you are adding reallocate_budget to GRADUATABLE_V1, implement ALL THREE
-   * prerequisites, add tests for each, get opus review, and remove this tripwire.
-   */
-  it("reallocate_budget is NOT in GRADUATABLE_V1 (prerequisites not yet wired)", () => {
-    expect(GRADUATABLE_V1.has("reallocate_budget")).toBe(false);
+describe("GRADUATABLE set — Phase 2 membership", () => {
+  it("contains all seven approved kinds", () => {
+    expect(GRADUATABLE.has("pause_campaign")).toBe(true);
+    expect(GRADUATABLE.has("reduce_campaign_budget")).toBe(true);
+    expect(GRADUATABLE.has("discontinue_sku")).toBe(true);
+    expect(GRADUATABLE.has("resume_campaign")).toBe(true);
+    expect(GRADUATABLE.has("reallocate_budget")).toBe(true);
+    expect(GRADUATABLE.has("reallocate_inventory")).toBe(true);
+    expect(GRADUATABLE.has("adjust_price")).toBe(true);
+    expect(GRADUATABLE.size).toBe(7);
   });
 
-  it("GRADUATABLE_V1 contains exactly the three approved kinds", () => {
-    expect(GRADUATABLE_V1.has("pause_campaign")).toBe(true);
-    expect(GRADUATABLE_V1.has("reduce_campaign_budget")).toBe(true);
-    // Deliberate expansion: discontinue_sku is reversible via its undo branch
-    // (re-publish, 48h auto-undo) and gated at the hard_to_reverse approval floor
-    // (10) — see graduation.ts. Autopilot-remediation only acts once a pair
-    // graduates, so this stays dormant until a merchant earns it.
-    expect(GRADUATABLE_V1.has("discontinue_sku")).toBe(true);
-    // Reallocation tripwire holds: reallocate_spend_sku records as
-    // reallocate_budget, which v1 never auto-runs — neither may graduate.
-    expect(GRADUATABLE_V1.has("reallocate_budget")).toBe(false);
-    expect(GRADUATABLE_V1.has("reallocate_spend_sku")).toBe(false);
-    expect(GRADUATABLE_V1.size).toBe(3);
+  it("does NOT contain increase_campaign_budget or reallocate_spend_sku", () => {
+    expect(GRADUATABLE.has("increase_campaign_budget")).toBe(false);
+    expect(GRADUATABLE.has("reallocate_spend_sku")).toBe(false);
   });
 });

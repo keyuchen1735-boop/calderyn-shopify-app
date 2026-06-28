@@ -64,6 +64,10 @@ const DIRECTION_VERB: Record<Direction, string> = {
  *  caller falls back to the template. */
 async function directionReason(direction: Direction, f: ReasonFacts): Promise<string> {
   const client = getAnthropic();
+  // No prompt caching here: this ~80-token system prompt is far below the
+  // 2048-token minimum cacheable prefix, so cache_control would be a silent
+  // no-op — and resolveCampaignDirection already caches this call per
+  // shop/campaign/date/direction in Supabase. Do not add it "for consistency".
   const msg = await client.messages.create({
     model: assistantModel(),
     max_tokens: 120,

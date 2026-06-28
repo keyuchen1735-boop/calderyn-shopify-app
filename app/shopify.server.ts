@@ -10,12 +10,35 @@ import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server
 import { enqueueShopifyBackfill, shopifyNeverSynced } from "./lib/ingest/enqueue.server";
 import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
 
+// A failure in a fire-and-forget background task — e.g. the session-store table
+// poll the Prisma session storage starts in its constructor, which rejects if
+// the database is briefly unreachable on a cold start — must NOT crash the whole
+// serverless function and 500 every route (including static assets). Node exits
+// the process on an unhandled rejection by default; install a guard once so such
+// failures are logged and the app keeps serving.
+const g = globalThis as unknown as { __cdProcessGuards?: boolean };
+if (!g.__cdProcessGuards) {
+  g.__cdProcessGuards = true;
+  process.on("unhandledRejection", (reason) => {
+    console.error("[unhandledRejection]", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[uncaughtException]", err);
+  });
+}
+
+// The Shopify SDK validates config synchronously at construction and throws if
+// apiKey or appUrl is blank — and this module is imported by the server entry,
+// so a blank value would crash the entire bundle at boot (every route 500s,
+// including static assets). Fall back to the known PUBLIC values (the client ID
+// is shipped to the browser via App Bridge; the app URL is public) so a missing
+// env never takes the app down. The API secret stays env-only.
 const shopify = shopifyApp({
-  apiKey: process.env.SHOPIFY_API_KEY,
+  apiKey: process.env.SHOPIFY_API_KEY || "508429753f1e60bd48c4dadbe063a27e",
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: ApiVersion.July25,
   scopes: process.env.SCOPES?.split(","),
-  appUrl: process.env.SHOPIFY_APP_URL || "",
+  appUrl: process.env.SHOPIFY_APP_URL || "https://app.calderyncompany.com",
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   hooks: {

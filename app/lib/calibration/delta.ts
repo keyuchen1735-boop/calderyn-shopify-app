@@ -39,7 +39,7 @@ export interface ApproveReceipt {
   after: number;
   /** clean_approvals counter AFTER the bump. */
   cleanApprovals: number;
-  /** True if this action kind can ever graduate to autopilot (GRADUATABLE_V1). */
+  /** True if this action kind can ever graduate to autopilot (GRADUATABLE). */
   graduatable: boolean;
   /** The pair's graduation_threshold AFTER the bump. */
   graduationThreshold: number;

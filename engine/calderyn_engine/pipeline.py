@@ -67,6 +67,7 @@ from calderyn_engine.detectors import (  # noqa: E402, F401
     reorder_timing,
     return_rate_hidden_loss,
     scaling_sku_fulfillment_risk,
+    sku_stockout_cleared,
     sku_stockout_vs_spend,
     thin_margin,
     wrong_location_concentration,

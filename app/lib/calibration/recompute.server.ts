@@ -16,6 +16,8 @@ import {
   calibrationPct, pairConfidence, smooth,
 } from "./confidence";
 import { graduationVerdict } from "./graduation";
+import { loadPairOutcomeTallies } from "./outcomes.server";
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 export interface RecomputeDeps {
   sb: SupabaseClient;
@@ -24,15 +26,6 @@ export interface RecomputeDeps {
 const RANK_DECAY = 0.6; // first action gets 60% of a detector's weight; rest split the remainder
 const SEED_FIRES = 1; // every legal detector gets a baseline fire so new shops show a stable %
 const WINDOW_DAYS = 90;
-
-/** Action kinds with a working undo branch (mirrors graduation.server.ts HAS_UNDO_BRANCH). */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-]);
 
 export function computeWeights(
   detectorFires: Record<string, number>,
@@ -89,7 +82,7 @@ export async function recomputeShopCalibration(
   const { data: pairData, error: pairErr } = await sb
     .from("pair_calibration")
     .select(
-      "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold",
+      "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, net_positive_outcomes, last_outcome_sign",
     )
     .eq("shop_id", shopId);
   if (pairErr) throw pairErr;
@@ -102,6 +95,8 @@ export async function recomputeShopCalibration(
       consecutive_undos: number;
       merchant_disabled: boolean;
       graduation_threshold: number;
+      net_positive_outcomes: number;
+      last_outcome_sign: number;
     }
   >();
   for (const r of pairData ?? []) {
@@ -112,8 +107,15 @@ export async function recomputeShopCalibration(
       consecutive_undos: Number(r.consecutive_undos ?? 0),
       merchant_disabled: Boolean(r.merchant_disabled),
       graduation_threshold: Number(r.graduation_threshold ?? 75),
+      net_positive_outcomes: Number(r.net_positive_outcomes ?? 0),
+      last_outcome_sign: Number(r.last_outcome_sign ?? 0),
     });
   }
+
+  // Per-pair measured-outcome tallies from closed-window action_audit rewards.
+  // Fail-safe: an empty map (read error / no data) means every pair sees 0
+  // outcomes → no graduation on clicks alone, never a crash.
+  const outcomeTallies = await loadPairOutcomeTallies(shopId, sb);
 
   // 2. 90-day detector fire counts
   const sinceIso = new Date(Date.now() - WINDOW_DAYS * 86400_000).toISOString();
@@ -157,6 +159,9 @@ export async function recomputeShopCalibration(
     // the authoritative gate. onProbation=false is intentionally conservative:
     // a probation rule installed mid-day will be caught by the live gate.
     if (ev) {
+      const tally = outcomeTallies.get(key);
+      const netPositiveOutcomes = tally?.netPositive ?? 0;
+      const lastOutcomeSign = tally?.lastSign ?? 0;
       const verdict = graduationVerdict({
         detectorId: detector,
         actionKind: action as ActionKind,
@@ -167,10 +172,18 @@ export async function recomputeShopCalibration(
         merchantDisabled: ev.merchant_disabled,
         onProbation: false, // live gate is authoritative for mid-day rule changes
         hasUndoBranch: HAS_UNDO_BRANCH.has(action as ActionKind),
+        netPositiveOutcomes,
+        lastOutcomeSign,
       });
       const { error: pairUpdErr } = await sb
         .from("pair_calibration")
-        .update({ graduated: verdict.graduated, last_conf: Math.round(conf), updated_at: new Date().toISOString() })
+        .update({
+          graduated: verdict.graduated,
+          last_conf: Math.round(conf),
+          net_positive_outcomes: netPositiveOutcomes,
+          last_outcome_sign: lastOutcomeSign,
+          updated_at: new Date().toISOString(),
+        })
         .eq("shop_id", shopId)
         .eq("detector_id", detector)
         .eq("action_kind", action);

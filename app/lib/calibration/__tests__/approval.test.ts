@@ -56,6 +56,22 @@ describe("recordApproval — RPC call (unchanged write behavior)", () => {
       p_action_kind: ACTION,
     });
   });
+
+  // reallocate_spend_sku is a SKU-scoped gateway whose executor writes
+  // action_audit.action_kind = 'reallocate_budget', and it is NOT a member of the
+  // action_kind Postgres enum. Recording the approval under the raw gateway kind
+  // hits an enum-typed column + RPC param → 22P02 (swallowed), silently dropping
+  // the merchant's approval. It must be recorded under reallocate_budget so the
+  // approval lands on the same pair the autopilot graduation gate reads.
+  it("records a reallocate_spend_sku approval under reallocate_budget (its audited + calibrated kind)", async () => {
+    const { sb, rpc } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
+    await recordApproval("shop-1", "ad_tax_overload", "reallocate_spend_sku", sb);
+    expect(rpc).toHaveBeenCalledWith("calibration_record_approval", {
+      p_shop_id: "shop-1",
+      p_detector_id: "ad_tax_overload",
+      p_action_kind: "reallocate_budget",
+    });
+  });
 });
 
 describe("recordApproval — trust receipt", () => {
@@ -91,15 +107,15 @@ describe("recordApproval — trust receipt", () => {
     expect(r.graduationThreshold).toBe(75);
   });
 
-  it("graduatable=true for a GRADUATABLE_V1 kind (pause_campaign)", async () => {
+  it("graduatable=true for a GRADUATABLE kind (pause_campaign)", async () => {
     const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
     const r = await recordApproval("shop-1", DETECTOR, "pause_campaign", sb);
     expect(r.graduatable).toBe(true);
   });
 
-  it("graduatable=false for a non-graduatable kind (reallocate_inventory)", async () => {
+  it("graduatable=false for a non-graduatable kind (increase_campaign_budget)", async () => {
     const { sb } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
-    const r = await recordApproval("shop-1", "regional_shortage_risk", "reallocate_inventory", sb);
+    const r = await recordApproval("shop-1", "regional_shortage_risk", "increase_campaign_budget", sb);
     expect(r.graduatable).toBe(false);
   });
 

@@ -57,13 +57,13 @@ describe("/auth/login embedded fallback guard", () => {
     const res = await captureRedirect(
       callLoader("https://app.calderyncompany.com/auth/login", {
         referer:
-          "https://app.calderyncompany.com/app/queue?shop=calderyn-review-store.myshopify.com&host=abc&embedded=1",
+          "https://app.calderyncompany.com/app/alerts?shop=calderyn-review-store.myshopify.com&host=abc&embedded=1",
       }),
     );
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(
-      "/app/queue?shop=calderyn-review-store.myshopify.com&host=abc&embedded=1",
+      "/app/alerts?shop=calderyn-review-store.myshopify.com&host=abc&embedded=1",
     );
     expect(loginMock).not.toHaveBeenCalled();
   });

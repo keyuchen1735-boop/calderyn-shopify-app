@@ -15,6 +15,7 @@ import type { ApproveReceipt } from "~/lib/calibration/delta";
 import type {
   ActionKind,
   DashboardCtx,
+  DashboardTheme,
   NavState,
   Screen as ScreenId,
 } from "./context";
@@ -25,7 +26,6 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
-  LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
   Toast,
@@ -39,8 +39,6 @@ import ScreenCampaigns from "./screens/Campaigns";
 import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
-import ScreenActionQueue from "./screens/ActionQueue";
-import ScreenLiveEngine from "./screens/LiveEngine";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
 
@@ -51,8 +49,6 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
-  { id: "action-queue", label: "Action Queue", icon: "target" },
-  { id: "live-engine", label: "Live Engine", icon: "bolt" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -62,12 +58,15 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory
 
 const DASHBOARD_THEME = {
   dark: false,
-  accent: "#24556E",
+  accent: "#1A1A1C",
   density: "balanced",
   radius: 14,
   glass: 0.72,
   typeScale: 1,
 };
+
+// Persisted night-mode preference (per browser). Light is the default.
+const NIGHT_MODE_KEY = "cd-night-mode";
 
 const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> = {
   dashboard: ScreenDashboard,
@@ -76,8 +75,6 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
   audit: ScreenAudit,
-  "action-queue": ScreenActionQueue,
-  "live-engine": ScreenLiveEngine,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,
@@ -98,7 +95,27 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
-  const t = DASHBOARD_THEME;
+  // Night mode (dark theme). Defaults to light; the merchant's choice persists in
+  // localStorage. Initialised to false so the server render and first client render
+  // agree (no hydration mismatch); the stored preference is applied post-mount.
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "1") setDark(true);
+    } catch {
+      /* localStorage unavailable — stay on the light default */
+    }
+  }, []);
+  const setNightMode = useCallback((next: boolean) => {
+    setDark(next);
+    try {
+      window.localStorage.setItem(NIGHT_MODE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore persistence failure — the toggle still applies for this session */
+    }
+  }, []);
+  const t = useMemo<DashboardTheme>(() => ({ ...DASHBOARD_THEME, dark }), [dark]);
+
   const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
   // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
   const [moreOpen, setMoreOpen] = useState(false);
@@ -133,7 +150,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const [overview, setOverview] = useState<OverviewVM | null>(null);
   const [calibration, setCalibration] = useState<DashboardCtx["calibration"]>(null);
   const [actionQueue, setActionQueue] = useState<QueueProposalVM[]>([]);
-  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[]>([]);
   const [liveEngine, setLiveEngine] = useState<DashboardCtx["liveEngine"]>(null);
   const [loading, setLoading] = useState(true);
 
@@ -186,7 +202,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
   const load = useCallback(async () => {
     const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal, aq, lr, le] = await Promise.all([
+    const [ov, al, au, gr, integ, co, cal, aq, le] = await Promise.all([
       client.fetchOverview(),
       client.fetchAlerts(undefined, camps),
       client.fetchAudit(),
@@ -195,8 +211,8 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
       client.fetchConsent(),
       client.fetchCalibration(),
       client.fetchActionQueue(),
-      client.fetchLearnedRules(),
-      // New screen: a Live Engine failure must not blank the whole dashboard.
+      // The Overview hero embeds the Live Engine; a failure here must not blank
+      // the whole dashboard.
       client.fetchLiveEngine().catch(() => null),
     ]);
     setCampaigns(camps);
@@ -208,7 +224,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     setConsent(co);
     setCalibration(cal);
     setActionQueue(aq);
-    setLearnedRules(lr);
     setLiveEngine(le);
   }, []);
 
@@ -449,6 +464,40 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         return { ok, receipt };
       }
 
+      // exclude_geo: live endpoint — drops the alert's region bucket from the
+      // campaign's targeting (Meta real, Google real, TikTok fail-visible). The
+      // region was resolved + validated in adaptAlert; only a real platform
+      // success resolves the alert (P0-1), a 502 surfaces as an error toast.
+      if (kind === "exclude_geo" && campId && alert.region) {
+        let receipt: ApproveReceipt | null = null;
+        let ok = false;
+        try {
+          const { outcome, calibration } = await client.executeCampaignAction(campId, {
+            type: kind,
+            region: alert.region,
+            alertId: alert.id,
+          });
+          const view = presentActionOutcome(outcome, label);
+          if (view.succeeded) {
+            ok = true;
+            receipt = calibration ?? null;
+            if (receipt) refreshCalibration();
+            markResolved();
+          }
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          if (view.succeeded) toast(view.message, "check");
+          else if (view.isError) toast(view.message, "warn", "critical");
+          else toast(view.message, "clock");
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return { ok, receipt };
+      }
+
       // discontinue_sku: live endpoint — archives the product on Shopify and
       // sets the internal Do-Not-Reorder flag, both derived server-side from the
       // alert. A failure (e.g. SKU with no Shopify product) surfaces as an error
@@ -605,15 +654,15 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         }
       }
 
-      // No live dashboard endpoint for this kind. Two ways to land here:
-      //   (1) exclude_geo / create_po_draft — excluded from DASH_INLINE_ACTIONS,
-      //       so the assistant renders "Review & confirm" (deep-link), not
-      //       "Run now"; only a direct executeAction caller reaches this.
-      //   (2) pause_campaign / reduce_campaign_budget on a (malformed) alert
-      //       with no campaign_id — the live branch above is skipped.
+      // No live dashboard endpoint for this kind (or a precondition was missing).
+      // Ways to land here:
+      //   (1) create_po_draft routed without its quantity/cost dialog (handled
+      //       above), or another non-inline kind reached by a direct caller.
+      //   (2) pause_campaign / reduce_campaign_budget / exclude_geo on a
+      //       (malformed) alert with no campaign_id — or exclude_geo with no
+      //       resolved region bucket — so the live branch above is skipped.
       // Either way NEVER fake a success (rule 12): leave the alert unresolved
       // and surface a visible toast, no phantom audit row.
-      // TODO(api): wire real mutations + acknowledge for (1).
       toast(
         `${label} isn't available on the dashboard yet — open it on the alert to review.`,
         "warn",
@@ -694,7 +743,6 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
     calibration,
     refreshCalibration,
     actionQueue,
-    learnedRules,
     liveEngine,
     feed,
     liveOn,
@@ -752,11 +800,11 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           >
             <path
               d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
-              fill="#24556E"
+              fill="var(--accent)"
             />
             <path
               d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-              stroke="#fff"
+              stroke="var(--on-accent)"
               strokeWidth="3.6"
               strokeLinejoin="round"
               strokeLinecap="round"
@@ -785,9 +833,9 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
         </nav>
         <div className="cd-side-foot">
           <div className="cd-live-row">
-            <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
-            <span className="flex-1">Live sync</span>
-            <Toggle value={liveOn} onChange={setLiveOn} />
+            <CDIcon name="moon" size={15} strokeWidth={1.9} />
+            <span className="flex-1">Night mode</span>
+            <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
           </div>
           <div className="cd-caption" style={{ paddingLeft: 2 }}>
             Shopify · Meta · Google · TikTok · QuickBooks
@@ -893,9 +941,9 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
             </div>
             <div className="cd-more-foot">
               <div className="cd-live-row">
-                <span className={"cd-live-dot" + (liveOn ? " on" : "")}></span>
-                <span className="flex-1">Live sync</span>
-                <Toggle value={liveOn} onChange={setLiveOn} />
+                <CDIcon name="moon" size={15} strokeWidth={1.9} />
+                <span className="flex-1">Night mode</span>
+                <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
               </div>
               <div className="cd-caption" style={{ paddingLeft: 2 }}>
                 Shopify · Meta · Google · TikTok · QuickBooks

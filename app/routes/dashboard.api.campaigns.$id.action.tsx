@@ -6,6 +6,7 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
 import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
+import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -16,6 +17,7 @@ const KINDS: ExecutableKind[] = [
   "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
+  "exclude_geo",
   "push_creative_draft",
 ];
 
@@ -35,6 +37,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const idempotencyKey = String(body.idempotency_key ?? "");
   const dailyBudgetCents =
     body.daily_budget_cents === undefined ? undefined : Number(body.daily_budget_cents);
+
+  const region = typeof body.region === "string" ? (body.region as RegionCode) : undefined;
 
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
 
@@ -80,6 +84,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
   ) {
     return jsonError(422, "invalid_daily_budget_cents");
   }
+  if (kind === "exclude_geo" && !isValidRegion(region)) {
+    return jsonError(422, "invalid_region");
+  }
 
   const alertId = typeof body.alert_id === "string" ? body.alert_id : null;
   const sb = getSupabase();
@@ -92,6 +99,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       campaignId: String(params.id),
       idempotencyKey,
       dailyBudgetCents,
+      region,
       actor: "merchant:web-dashboard",
     },
     sb,

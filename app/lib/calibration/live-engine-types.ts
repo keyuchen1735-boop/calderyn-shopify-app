@@ -63,6 +63,41 @@ export interface PredictionVM {
   tone: PredictionTone;
 }
 
+/** One humanized figure (label + formatted value) in a pending "why". */
+export interface InspectorStat {
+  label: string;
+  value: string;
+}
+
+/**
+ * A flagged proposal awaiting approval, shaped for the simplified inspector:
+ * the plain why + a few humanized figures, then what approving vs. denying does.
+ * Built server-side so both surfaces render it the same way; no weighing math.
+ */
+export interface PendingInspectorVM {
+  alertId: string;
+  detectorId: string;
+  actionKind: ActionKind;
+  title: string;
+  /** Action label, e.g. "Reallocate inventory". */
+  actionLabel: string;
+  dollarImpactCents: number;
+  /** Calibrated confidence, 0-100 (shown as "X% confident", not as bars). */
+  confidence: number;
+  /** The per-pair auto-act bar, 0-100. */
+  threshold: number;
+  /** WHY CALDERYN FLAGGED THIS — the plain-language signal. */
+  signal: string;
+  /** WHY — a few humanized key figures from the alert evidence. */
+  stats: InspectorStat[];
+  /** What approving does. */
+  approveText: string;
+  /** What denying does. */
+  denyText: string;
+  /** One plain line on why it asks instead of acting. */
+  trustLine: string;
+}
+
 export interface LiveEngineFeatureVM {
   detectorId: string;
   actionKind: ActionKind;
@@ -71,11 +106,29 @@ export interface LiveEngineFeatureVM {
   /** Detector label, e.g. "Campaign is losing money". */
   watching: string;
   enabled: boolean;
+  /** Unlocked + not enabled + not muted + has a track record => show a
+   *  "Ready to turn on" recommendation (Slice C). */
+  recommended: boolean;
   moneyCents: number;
   actions: number;
   lastAt: string | null;
   /** "last acted 12 min ago" | "no actions yet". */
   lastText: string;
+  /** Two-bar graduation progress (design 2026-06-26 §2.1). */
+  approvals: number;
+  approvalsNeeded: number;
+  outcomes: number;
+  outcomesNeeded: number;
+  proven: boolean;
+}
+
+/** One line in a Watching-row scan ticker: an item name + a real figure. */
+export interface ScanItem {
+  /** Item name shown on the left (truncated). */
+  label: string;
+  /** Real figure shown muted on the right, e.g. "12 left", "1.8×", "+$6/u".
+   *  Empty string when there is no figure for this item. */
+  value: string;
 }
 
 export interface LiveEnginePageData {
@@ -84,7 +137,19 @@ export interface LiveEnginePageData {
   features: LiveEngineFeatureVM[];
   pipeline: PipelineCallVM[];
   trace: TraceEventVM[];
+  /** Flagged proposals awaiting approval, newest-impact first. */
+  pending: PendingInspectorVM[];
   predictions: PredictionVM[];
+  /** Real items being scanned per Watching group (bounded ~8 each), each a
+   *  name + a real figure. Empty lists are normal (new store / no source) — the
+   *  hero shows a dimmed line instead. Never fabricated; `ret` stays empty until
+   *  a real customer/cohort source exists. */
+  watchScan: {
+    inv: ScanItem[];
+    ads: ScanItem[];
+    price: ScanItem[];
+    ret: ScanItem[];
+  };
   calibrationPct: number | null;
   nearGraduation: number;
 }

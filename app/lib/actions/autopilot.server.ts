@@ -4,7 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getActionPolicy } from "./action-policy.server";
-import { checkGuardrails } from "./guardrails.server";
+import { checkGuardrails, checkPriceInventoryGuardrails } from "./guardrails.server";
 import { executeAction, type ExecutableKind, type ExecutedAudit } from "./execute.server";
 import { executeReallocation } from "./reallocate.server";
 import {
@@ -22,12 +22,18 @@ import { enrichRemediation } from "../remediation/enrich.server";
 import type { MoveKind, StrategicMove } from "../remediation/types";
 import { remediationReason } from "./remediation-reason";
 import { checkSkuGuardrails } from "./remediation-guard.server";
-import { executeDiscontinueAlertAction } from "./alert-action.server";
+import { executeDiscontinueAlertAction, executeInventoryAlertAction } from "./alert-action.server";
 import { executeReallocateSpendSku } from "./reallocate-sku.server";
+import { executeAdjustPriceAlertAction, resolveSkuVariant } from "./adjust-price.server";
+import { suggestAdjustPrice } from "../remediation/price";
+import { readVariantPrice } from "../shopify/price.server";
+import { getCurrentUnitCostCents } from "../po/draft.server";
+import { transferPlanFromEvidence } from "../shopify/inventory.server";
 import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
-import { preconditionFresh, stockoutPauseAllowed } from "../calibration/preconditions.server";
+import { calibrationActionKind } from "../calibration/action-kind";
+import { preconditionFresh, stockoutPauseAllowed, stockoutClearedResumeAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
 import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
@@ -39,6 +45,10 @@ const PAUSE_DETECTORS = new Set([
 ]);
 const BUDGET_DETECTORS = new Set(["ad_tax_overload"]);
 const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
+// Slice B: resume a campaign Calderyn auto-paused for a stockout once the SKU is
+// restocked. resume_campaign restarts spend, so it is gated like every other
+// autonomous kind (graduation + rules + guardrails + a live precondition).
+const RESUME_DETECTORS = new Set(["sku_stockout_cleared"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
 
@@ -48,6 +58,18 @@ const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
   "return_rate_hidden_loss",
   "margin_erosion",
   "cogs_drift",
+]);
+
+// Inventory-relocation detectors whose remediation is a physical stock move
+// (reallocate_inventory). These are NOT product-economics detectors, so they
+// never reach tryRemediation; tryInventoryRelocation handles them via the
+// dedicated executeInventoryAlertAction seam.
+const INVENTORY_RELOCATION_DETECTORS = new Set<DetectorId>([
+  "sku_stockout_vs_spend",
+  "regional_shortage_risk",
+  "regional_spend_starved_stock",
+  "scaling_sku_fulfillment_risk",
+  "wrong_location_concentration",
 ]);
 
 /** Per-candidate decision outcome. "skipped" = a pre-flight refusal (no
@@ -123,6 +145,8 @@ async function tryRemediation(
   shopId: string,
   c: Candidate,
   sb: SupabaseClient,
+  merchantEmail: string | null,
+  notifyPromises: Promise<void>[],
 ): Promise<RemediationResult> {
   if (!PRODUCT_ECON_DETECTORS.has(c.detector_id as DetectorId))
     return { outcome: "fell_through", reason: "not a product-economics detector" };
@@ -183,10 +207,12 @@ async function tryRemediation(
   //
   // Graduation gate (Slice 5 parity): an executable remediation move MUST NOT
   // bypass calibration's safety model. Gate it on the SAME isGraduated check the
-  // legacy autonomous path applies — keyed on the move's executor kind (which is
-  // a valid ActionKind: discontinue_sku | reallocate_spend_sku | pause_campaign |
-  // reduce_campaign_budget). isGraduated is fail-safe (false on any read error),
-  // so a DB hiccup can never grant remediation autonomy. NOT graduated → record a
+  // legacy autonomous path applies — keyed on the kind the move is calibrated +
+  // audited under (calibrationActionKind: reallocate_spend_sku → reallocate_budget,
+  // every other executor is its own action_kind enum value). The SAME normalizer
+  // keys the merchant approval write, so the two never train different pairs.
+  // isGraduated is fail-safe (false on any read error), so a DB hiccup can never
+  // grant remediation autonomy. NOT graduated → record a
   // structured skip (the caller buckets this as `skippedMoves`, not a guardrail
   // block) and the candidate is fully resolved — it does NOT fall through, because
   // the detector's legacy path is graduation-gated too and would also skip;
@@ -194,9 +220,10 @@ async function tryRemediation(
   // graduated) autopilot-remediation is therefore dormant, consistent with the
   // rest of the autonomy system. Merchant-facing remediation (panels / manual
   // execution) is UNAFFECTED — this gate is autopilot-only.
-  if (!(await isGraduated(shopId, c.detector_id, move.executor, sb))) {
+  const graduationKind = calibrationActionKind(move.executor);
+  if (!(await isGraduated(shopId, c.detector_id, graduationKind, sb))) {
     console.info(
-      `[autopilot] remediation skip on alert ${c.alert_id}: pair (${c.detector_id}/${move.executor}) not graduated`,
+      `[autopilot] remediation skip on alert ${c.alert_id}: pair (${c.detector_id}/${graduationKind}) not graduated`,
     );
     return { outcome: "skipped", reason: "remediation pair not graduated" };
   }
@@ -229,6 +256,86 @@ async function tryRemediation(
       triggerReason: reason,
     });
     return { outcome: "acted", reason };
+  }
+
+  // SKU-scoped price move (adjust_price): raise a SKU's selling price to restore
+  // its pre-erosion margin (margin_erosion / cogs_drift). No campaign needed.
+  //
+  // BLOCK-NOT-CLAMP (spec §2.4): an over-cap price move is routed to the merchant
+  // queue, never clamped down and fired. To do that we PREDICT the exact price
+  // the executor would apply, then check the predicted % change against the
+  // autonomous cap. The executor recomputes the identical suggestion from the
+  // SAME inputs (live price + COGS + the merchant confirm cap
+  // guardrails.max_price_change_pct), so the prediction here is byte-for-byte the
+  // price that lands — no override is passed.
+  if (move.executor === "adjust_price") {
+    if (!c.sku) {
+      return { outcome: "blocked", reason: "adjust_price: alert has no SKU" };
+    }
+    const client = calderynClient(shopId);
+    const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+
+    const target = await resolveSkuVariant(sb, shopId, c.sku);
+    if (!target) {
+      return { outcome: "blocked", reason: "adjust_price: SKU has no linked variant" };
+    }
+    const { priceCents: priorPriceCents } = await readVariantPrice(admin, target.variantGid);
+    const currentCogsCents = await getCurrentUnitCostCents(sb, shopId, c.sku);
+
+    // Mirror the executor's suggestion inputs EXACTLY: capPct is the merchant
+    // confirm cap (guardrails.max_price_change_pct), the same value
+    // executeAdjustPriceAlertAction passes — so the predicted price equals the
+    // applied price. The autonomous cap is enforced separately below.
+    const merchantGuardrails = await client.guardrails.get();
+    const suggestion = suggestAdjustPrice({
+      detectorId: c.detector_id as DetectorId,
+      evidence: toNumericEvidence(c.evidence ?? {}),
+      currentPriceCents: priorPriceCents,
+      currentCogsCents,
+      capPct: merchantGuardrails.max_price_change_pct,
+    });
+    if (!suggestion) {
+      return { outcome: "blocked", reason: "adjust_price: no price suggestion" };
+    }
+
+    // Signed change vs the prior price; the autonomous cap blocks an over-cap move.
+    const priceChangePct =
+      ((suggestion.newPriceCents - priorPriceCents) / priorPriceCents) * 100;
+    const verdict = await checkPriceInventoryGuardrails(
+      shopId,
+      { kind: "adjust_price", dollarImpactCents: dollarImpactCents, priceChangePct },
+      sb,
+    );
+    if (!verdict.allowed) {
+      // Over cap (or another guardrail): do NOT execute, do NOT acknowledge —
+      // the alert stays open for merchant approval (§2.4).
+      console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
+      return { outcome: "blocked", reason: verdict.reason ?? "adjust_price: blocked by guardrails" };
+    }
+
+    // The executor recomputes the identical suggestion (same live price + COGS +
+    // merchant cap) and applies the predicted price; it THROWS on any failure
+    // (caught by the loop and counted as `failed`), so a return here is a landed
+    // price change.
+    const triggerReason = autopilotReason("Auto adjust price", c.detector_id, c.dollar_impact);
+    await executeAdjustPriceAlertAction({
+      client,
+      admin,
+      sb,
+      shopId,
+      alertId: c.alert_id,
+      kind: "adjust_price",
+      idempotencyKey,
+      actor: "autopilot",
+      triggerReason,
+    });
+    notifyPromises.push(
+      notifyAutonomousAction(
+        { shopId, actionDescription: `Adjusted price for SKU ${c.sku}` },
+        merchantEmail,
+      ).catch((e) => console.error("[autopilot-notify] unexpected error (adjust_price)", e)),
+    );
+    return { outcome: "acted", reason: triggerReason };
   }
 
   // Campaign-scoped remediation moves: reallocate_spend_sku, or a plain cut via
@@ -312,6 +419,94 @@ async function tryRemediation(
   // Unknown executor union member — fail visibly rather than silently dropping.
   console.warn(`[autopilot] remediation skip on alert ${c.alert_id}: unhandled executor ${move.executor}`);
   return { outcome: "skipped", reason: `remediation: unhandled executor ${move.executor}` };
+}
+
+/** Try to autonomously relocate inventory for an inventory-relocation alert.
+ *  reallocate_inventory is NOT a remediation MoveKind and its detectors are not
+ *  product-economics, so they never reach tryRemediation. This dedicated helper
+ *  mirrors tryRemediation's guard→execute→notify→decide shape for the
+ *  executeInventoryAlertAction seam. Returns "fell_through" for any non-inventory
+ *  detector so the existing remediation/legacy paths still run unchanged. */
+async function tryInventoryRelocation(
+  shopId: string,
+  c: Candidate,
+  sb: SupabaseClient,
+  merchantEmail: string | null,
+  notifyPromises: Promise<void>[],
+): Promise<RemediationResult> {
+  if (!INVENTORY_RELOCATION_DETECTORS.has(c.detector_id as DetectorId)) {
+    return { outcome: "fell_through", reason: "not an inventory-relocation detector" };
+  }
+
+  // Concrete transfer plan from the alert's own evidence (never the request).
+  const plan = transferPlanFromEvidence(c.evidence ?? {});
+  if (!plan) {
+    // No transfer plan in the evidence. sku_stockout_vs_spend ALSO has a legacy
+    // pause_campaign autopilot path (its own no-brainer gate) and never carries a
+    // transfer plan — for it, FALL THROUGH so that pause autonomy is preserved
+    // (one decision per alert: pause OR relocate, never both). For the
+    // pure-relocation detectors (no legacy path), a missing plan is unexecutable
+    // → block so the alert stays open for the merchant (rule 12).
+    if (c.detector_id === "sku_stockout_vs_spend") {
+      return { outcome: "fell_through", reason: "reallocate_inventory: no transfer plan (defer to pause path)" };
+    }
+    console.info(`[autopilot] inventory relocation block on alert ${c.alert_id}: invalid inventory evidence`);
+    return { outcome: "blocked", reason: "reallocate_inventory: invalid inventory evidence" };
+  }
+
+  // Graduation gate (same safety model as every other autonomous path). Keyed on
+  // the executor kind reallocate_inventory. isGraduated is fail-safe (false on any
+  // read error), so a DB hiccup can never grant autonomy. NOT graduated → skip
+  // (bucketed as skippedMoves, not a guardrail block) and resolve the candidate.
+  if (!(await isGraduated(shopId, c.detector_id, "reallocate_inventory", sb))) {
+    console.info(
+      `[autopilot] inventory relocation skip on alert ${c.alert_id}: pair (${c.detector_id}/reallocate_inventory) not graduated`,
+    );
+    return { outcome: "skipped", reason: "remediation pair not graduated" };
+  }
+
+  // DOLLAR/CENTS boundary: c.dollar_impact from v_autopilot_candidates is in
+  // DOLLARS — convert to cents for the guardrail check. (executeInventoryAlertAction
+  // reads alert.dollar_impact already in CENTS via the DTO, so it does NOT convert;
+  // keep the two boundaries consistent and do NOT double-convert here.)
+  const dollarImpactCents = Math.round(Number(c.dollar_impact) * 100);
+  const inventoryUnitsMoved = Math.abs(plan.delta);
+  const verdict = await checkPriceInventoryGuardrails(
+    shopId,
+    { kind: "reallocate_inventory", dollarImpactCents, inventoryUnitsMoved },
+    sb,
+  );
+  if (!verdict.allowed) {
+    // Over cap (or another guardrail): do NOT execute, do NOT acknowledge — the
+    // alert stays open for merchant approval (§2.4).
+    console.info(`[autopilot] inventory relocation block on alert ${c.alert_id}: ${verdict.reason}`);
+    return { outcome: "blocked", reason: verdict.reason ?? "reallocate_inventory: blocked by guardrails" };
+  }
+
+  const client = calderynClient(shopId);
+  const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+  const triggerReason = autopilotReason("Auto move inventory", c.detector_id, c.dollar_impact);
+  // The executor re-derives the transfer plan + sku_id from the alert and THROWS
+  // on any failure (caught by the loop and counted as `failed`), so a return here
+  // is a landed stock move.
+  await executeInventoryAlertAction({
+    client,
+    admin,
+    sb,
+    shopId,
+    alertId: c.alert_id,
+    kind: "reallocate_inventory",
+    idempotencyKey: `autopilot:${c.alert_id}:reallocate_inventory`,
+    actor: "autopilot",
+    triggerReason,
+  });
+  notifyPromises.push(
+    notifyAutonomousAction(
+      { shopId, actionDescription: `Moved inventory${c.sku ? ` for SKU ${c.sku}` : ""}` },
+      merchantEmail,
+    ).catch((e) => console.error("[autopilot-notify] unexpected error (reallocate_inventory)", e)),
+  );
+  return { outcome: "acted", reason: triggerReason };
 }
 
 function autopilotReason(
@@ -485,11 +680,16 @@ export async function runAutopilotForShop(
   const scopedOnly = scoped.filter((s) => !seenAlertIds.has(s.alert_id));
   const allCandidates = [...mergedViewCandidates, ...scopedOnly];
 
-  // Defensive actions (pause/reduce/reallocate) take priority over offensive
+  // Defensive actions (pause/reduce/reallocate) take priority over resume and
   // scale-ups so loss-prevention is never starved of the daily action cap by a
-  // bigger-dollar scale opportunity. Each subgroup keeps its dollar_impact order.
+  // bigger-dollar opportunity. Resume restarts spend, so it ranks ahead of
+  // offensive scale-ups but behind loss-prevention. Each subgroup keeps its
+  // dollar_impact order.
   const ordered = [
-    ...allCandidates.filter((c) => !SCALE_DETECTORS.has(c.detector_id)),
+    ...allCandidates.filter(
+      (c) => !SCALE_DETECTORS.has(c.detector_id) && !RESUME_DETECTORS.has(c.detector_id),
+    ),
+    ...allCandidates.filter((c) => RESUME_DETECTORS.has(c.detector_id)),
     ...allCandidates.filter((c) => SCALE_DETECTORS.has(c.detector_id)),
   ];
 
@@ -550,14 +750,37 @@ export async function runAutopilotForShop(
     // abort loss-prevention for the shop's OTHER money-losing campaigns, so
     // count it failed and keep draining.
     try {
-      // FIRST branch: route product-economics detectors through the engine's
+      // FIRST branch: inventory-relocation detectors route to the dedicated
+      // executeInventoryAlertAction seam (a physical stock move, not a campaign
+      // or product-econ remediation). A candidate that ACTS / BLOCKS / SKIPS here
+      // is fully resolved (`continue`) so it can never also reach tryRemediation
+      // or the legacy path — one decision per alert, no double execution. Only a
+      // "fell_through" (a non-inventory detector, or a sku_stockout_vs_spend with
+      // no transfer plan that should defer to its pause path) proceeds below.
+      const relocation = await tryInventoryRelocation(shopId, c, sb, merchantEmail, notifyPromises);
+      if (relocation.outcome === "acted") {
+        decide(c, null, "acted", relocation.reason);
+        continue;
+      }
+      if (relocation.outcome === "blocked") {
+        decide(c, null, "blocked", relocation.reason);
+        continue;
+      }
+      if (relocation.outcome === "skipped") {
+        skippedMoves += 1;
+        decide(c, null, "skipped", relocation.reason, "none");
+        continue;
+      }
+      // relocation.outcome === "fell_through": not an inventory move — proceed.
+
+      // SECOND branch: route product-economics detectors through the engine's
       // recommended remediation move (discontinue / reallocate / cut a SKU or
       // campaign) within its OWN guardrails. tryRemediation bypasses
       // getActionPolicy on purpose — these are SKU/structural moves, not the
       // campaign-budget multipliers the learned dial scales. A candidate that
       // ACTS or BLOCKS here is fully resolved (`continue`) so it can never also
       // hit the legacy path below — no double execution on live money.
-      const rem = await tryRemediation(shopId, c, sb);
+      const rem = await tryRemediation(shopId, c, sb, merchantEmail, notifyPromises);
       if (rem.outcome === "acted") {
         decide(c, null, "acted", rem.reason);
         continue;
@@ -586,6 +809,7 @@ export async function runAutopilotForShop(
       if (PAUSE_DETECTORS.has(c.detector_id)) kind = "pause_campaign";
       else if (BUDGET_DETECTORS.has(c.detector_id)) kind = "reduce_campaign_budget";
       else if (SCALE_DETECTORS.has(c.detector_id)) kind = "increase_campaign_budget";
+      else if (RESUME_DETECTORS.has(c.detector_id)) kind = "resume_campaign";
       if (!kind) {
         decide(c, null, "skipped", "detector not actionable by autopilot", "none");
         continue;
@@ -649,6 +873,94 @@ export async function runAutopilotForShop(
           // The capped amount is resolved after currentBudgetCents is known, below.
           (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents = ruleVerdict.cappedDollarCents;
         }
+      }
+
+      // Slice B: resume a campaign Calderyn auto-paused for a stockout, now that
+      // its SKU is restocked. resume_campaign restarts spend, so it clears the
+      // same gates as the other autonomous kinds: guardrails (with the PRE-PAUSE
+      // spend so the min-spend gate is not defeated by the paused campaign's
+      // near-zero recent spend), an I4 freshness re-check (campaign still paused),
+      // and the dedicated live restock allowlist (restocked above buffer, still
+      // Calderyn-paused). Every check is fail-safe → on any doubt we skip and the
+      // alert stays queued for the merchant. Resolved here (continue) — resume
+      // never touches the budget logic below.
+      if (kind === "resume_campaign") {
+        // Resume candidates always come from the view (the merged Candidate with
+        // evidence/sku/sku_id); the scoped ad_tax_overload candidates are never a
+        // RESUME_DETECTORS id. Narrow to read the view-only fields.
+        const cc = c as Candidate;
+        const evidence = (cc.evidence ?? null) as Record<string, unknown> | null;
+        const prepauseSpendCents = Math.round(Number(evidence?.prepause_spend_7d_usd ?? 0) * 100);
+        const bufferUnits = Number(evidence?.buffer_units ?? 0);
+        const verdict = await checkGuardrails(
+          shopId,
+          {
+            kind: "resume_campaign",
+            campaignId,
+            dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
+            // Pre-pause spend, not the paused campaign's near-zero recent spend,
+            // so the min-spend guardrail stays meaningful instead of false-blocking.
+            campaignSpendCents: Math.max(c.campaign_spend_cents, prepauseSpendCents),
+          },
+          sb,
+          { forceBypassOff: true, autonomous: true },
+        );
+        if (!verdict.allowed) {
+          decide(c, kind, "blocked", verdict.reason ?? "blocked by guardrails");
+          continue;
+        }
+        const precheck = await preconditionFresh({
+          kind,
+          candidate: { ...c, campaign_id: campaignId },
+          sb,
+          nowMs: Date.now(),
+        });
+        if (!precheck.ok) {
+          console.info(`[autopilot] resume precondition failed for ${campaignId}: ${precheck.reason}`);
+          decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
+          continue;
+        }
+        const resumeCheck = await stockoutClearedResumeAllowed({
+          shopId,
+          alert: {
+            id: c.alert_id,
+            detector_id: c.detector_id,
+            entity_ref: {
+              campaign_id: campaignId,
+              sku_id: cc.sku_id ?? undefined,
+              sku: cc.sku ?? undefined,
+            },
+          },
+          bufferUnits,
+          sb,
+        });
+        if (!resumeCheck.ok) {
+          console.info(`[autopilot] resume allowlist blocked ${campaignId}: ${resumeCheck.reason}`);
+          decide(c, kind, "skipped", resumeCheck.reason ?? "resume_precondition_not_met");
+          continue;
+        }
+        const res = await executeAction(
+          shopId,
+          {
+            alertId: c.alert_id,
+            kind: "resume_campaign",
+            campaignId,
+            idempotencyKey: `autopilot:${c.alert_id}:resume_campaign`,
+            actor: "autopilot",
+            triggerReason: autopilotReason("Auto-resume", c.detector_id, c.dollar_impact),
+          },
+          sb,
+        );
+        record(c, kind, res.outcome);
+        if (res.outcome === "succeeded") {
+          notifyPromises.push(
+            notifyAutonomousAction(
+              { shopId, actionDescription: `Resumed campaign ${campaignId}` },
+              merchantEmail,
+            ).catch((e) => console.error("[autopilot-notify] unexpected error (resume)", e)),
+          );
+        }
+        continue;
       }
 
       const currentBudgetCents = c.daily_budget_cents ?? null;
@@ -783,11 +1095,10 @@ export async function runAutopilotForShop(
       // (currentBudgetCents - newBudgetCents). muRealloc ∈ [0,1] keeps the implied
       // cut ≤ maxCutPct, so checkGuardrails (unchanged) still enforces the ceiling.
       //
-      // Calibration gate: reallocate_budget is NOT in GRADUATABLE_V1 and can NEVER
-      // auto-execute in v1. Even if reduce_campaign_budget is graduated, we must
-      // independently verify reallocate_budget graduation before entering the
-      // reallocation sub-branch. This prevents a graduated reduce from smuggling in
-      // an autonomous reallocation. When not graduated (always in v1), fall through
+      // Calibration gate: even though reallocate_budget is now in GRADUATABLE,
+      // we independently verify its graduation before entering the reallocation
+      // sub-branch. This prevents a graduated reduce_campaign_budget from
+      // smuggling in an autonomous reallocation. When not graduated, fall through
       // to the plain reduce path so loss-prevention still acts.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         if (currentBudgetCents - newBudgetCents > 0) {

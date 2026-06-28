@@ -3,7 +3,7 @@ import { undoAction } from "../undo.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const { adapter, actionAdapterForShop } = vi.hoisted(() => {
-  const adapter = { platform: "meta", pause: vi.fn(), resume: vi.fn(async () => {}), setDailyBudget: vi.fn(async () => {}), getState: vi.fn() };
+  const adapter = { platform: "meta", pause: vi.fn(), resume: vi.fn(async () => {}), setDailyBudget: vi.fn(async () => {}), getState: vi.fn(), excludeGeo: vi.fn(async () => {}), includeGeo: vi.fn(async () => {}) };
   const actionAdapterForShop = vi.fn(async () => adapter);
   return { adapter, actionAdapterForShop };
 });
@@ -52,8 +52,32 @@ const pauseAudit = {
   outcome: "succeeded",
 };
 
+const excludeGeoAudit = {
+  id: "aud2", shop_id: SHOP, action_kind: "exclude_geo",
+  params: { external_id: "c1", platform: "meta", region: "us-west" },
+  pre_state: { status: "active", daily_budget_cents: 5000 },
+  post_state: { status: "active", daily_budget_cents: 5000 },
+  dollar_impact_at_exec: 0,
+  outcome: "succeeded",
+};
+
 describe("undoAction", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("undo of exclude_geo re-includes the recorded region", async () => {
+    const { sb, calls } = fakeSb(excludeGeoAudit);
+    await undoAction(SHOP, "aud2", sb);
+    expect(adapter.includeGeo).toHaveBeenCalledWith("c1", "us-west");
+    const undo = calls.inserts.find((i) => i.table === "action_audit");
+    expect((undo?.rows as Record<string, unknown>)).toMatchObject({ undo_of: "aud2", outcome: "succeeded" });
+  });
+
+  it("refuses to undo exclude_geo with no recorded region", async () => {
+    const noRegion = { ...excludeGeoAudit, params: { external_id: "c1", platform: "meta" } };
+    const { sb } = fakeSb(noRegion);
+    await expect(undoAction(SHOP, "aud2", sb)).rejects.toThrow(/region/i);
+    expect(adapter.includeGeo).not.toHaveBeenCalled();
+  });
 
   it("refuses to undo a campaign row with no external id (never calls the platform with a blank id)", async () => {
     // Legacy rows could lack params.external_id; reversing with "" would hit the

@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import type { ActionKind } from "../types";
-import { isRetriableFailure } from "../ads/actions";
+import { isRetriableFailure, isValidRegion, type RegionCode } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
 import { acknowledgeAlert } from "../alerts.server";
@@ -21,6 +21,7 @@ export type ExecutableKind =
   | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
+  | "exclude_geo"
   | "push_creative_draft";
 
 export interface ExecuteInput {
@@ -29,10 +30,12 @@ export interface ExecuteInput {
   campaignId: string; // ad_campaign_dim uuid
   idempotencyKey: string;
   dailyBudgetCents?: number;
+  /** Required for exclude_geo: the geographic region to drop from targeting. */
+  region?: RegionCode;
   actor?: string;
   /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
-   *  sets it; manual paths leave it undefined. */
-  triggerReason?: string;
+   *  sets it; manual paths leave it undefined or null. */
+  triggerReason?: string | null;
   /** Required for push_creative_draft: the winning variant to publish as a
    *  PAUSED draft ad. Ignored by every other kind. */
   creative?: CreativeInput;
@@ -215,6 +218,14 @@ export async function executeAction(
     throw new Error(`push_creative_draft for ${input.campaignId} has no creative variant to publish`);
   }
 
+  // exclude_geo must carry a VALID region bucket to drop. A missing or unknown
+  // one fails visibly here (before any platform call) rather than reaching the
+  // adapter's region->geo-id lookup with an undefined key (rule 12). Validating
+  // in the shared executor covers every caller (both routes + autopilot).
+  if (input.kind === "exclude_geo" && !isValidRegion(input.region)) {
+    throw new Error(`exclude_geo for ${input.campaignId} has no valid region (got ${input.region ?? "none"})`);
+  }
+
   // 1. Idempotency.
   const prior = await priorExecutionForKey(shopId, input.idempotencyKey, sb);
   if (prior) return prior;
@@ -245,7 +256,12 @@ export async function executeAction(
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
       : input.kind === "resume_campaign"
         ? { status: "active", daily_budget_cents: camp.daily_budget_cents }
-        : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
+        : input.kind === "exclude_geo"
+          ? // Targeting change only: status/budget are unchanged. The excluded
+            // region is recorded in audit params (below), not here, since postState
+            // mirrors to ad_campaign_dim columns.
+            { status: camp.status, daily_budget_cents: camp.daily_budget_cents }
+          : { status: "paused", daily_budget_cents: camp.daily_budget_cents };
 
   // I5: Outcome-idempotent budget guard for reduce_campaign_budget.
   //
@@ -314,6 +330,9 @@ export async function executeAction(
         await adapter.pause(externalId);
       } else if (input.kind === "resume_campaign") {
         await adapter.resume(externalId);
+      } else if (input.kind === "exclude_geo") {
+        // Region presence is validated at the top; assert for the type narrowing.
+        await adapter.excludeGeo(externalId, input.region as RegionCode);
       } else {
         await adapter.setDailyBudget(externalId, input.dailyBudgetCents ?? 0);
       }
@@ -353,7 +372,7 @@ export async function executeAction(
     {
       alert_id: input.alertId,
       action_kind: input.kind,
-      params: { campaign_id: input.campaignId, external_id: externalId, platform, daily_budget_cents: input.dailyBudgetCents ?? null },
+      params: { campaign_id: input.campaignId, external_id: externalId, platform, daily_budget_cents: input.dailyBudgetCents ?? null, region: input.region ?? null },
       outcome,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,

@@ -10,9 +10,19 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, TypedDict
 
+from calderyn_engine.moat.action_reward_windows import confirmation_window_days
 from calderyn_engine.moat.action_rewards import compute_action_reward
 
 WINDOW_DAYS = 14
+
+# These action kinds are owned by the SKU reward path (sku_reward_inputs.py).
+# They MUST be excluded from the campaign query so the campaign loop never
+# writes reward_signal=0 for them before the SKU loop can write the correct value.
+SKU_ACTION_KINDS: tuple[str, ...] = (
+    "discontinue_sku",
+    "adjust_price",
+    "reallocate_inventory",
+)
 
 
 class ActionRewardInput(TypedDict):
@@ -23,6 +33,8 @@ class ActionRewardInput(TypedDict):
     chosen_pct: float
     reward: Decimal
     action_id: str
+    window_closed: bool
+    action_created_at: datetime
 
 
 _ACTIONS_SQL = """
@@ -36,6 +48,7 @@ SELECT a.id, a.action_kind,
   FROM public.action_audit a
   LEFT JOIN public.alerts al ON al.id = a.alert_id
  WHERE a.shop_id = $1 AND a.actor_user_id = 'autopilot' AND a.outcome = 'succeeded'
+   AND a.action_kind::text <> ALL($2)  -- ::text: action_kind is an enum; compare as text against the bound string[]
 """
 
 _SPEND_SQL = """
@@ -82,7 +95,7 @@ async def derive_action_reward_inputs(
         campaign_id, chosen_pct, reward, action_id — the seam consumed by the
         peer ETL (Task 7) and trainer (Task 8).
     """
-    actions = await conn.fetch(_ACTIONS_SQL, shop_id)
+    actions = await conn.fetch(_ACTIONS_SQL, shop_id, list(SKU_ACTION_KINDS))
 
     grade_rows = await conn.fetch(_GRADE_SQL, shop_id)
     grades: dict[str, Decimal] = {
@@ -102,8 +115,10 @@ async def derive_action_reward_inputs(
             created = datetime.fromisoformat(str(created))
 
         action_date = created.date()
-        lo = action_date - timedelta(days=WINDOW_DAYS)
-        hi = action_date + timedelta(days=WINDOW_DAYS)
+        win_days = confirmation_window_days(a["action_kind"])
+        lo = action_date - timedelta(days=WINDOW_DAYS)   # PRE stays a 14d baseline
+        hi = action_date + timedelta(days=win_days)       # POST is per-kind
+        window_closed = run_date >= hi
 
         spend_rows = await conn.fetch(_SPEND_SQL, shop_id, action_date, lo, hi)
         agg = {(r["campaign_id"], r["phase"]): r for r in spend_rows}
@@ -140,6 +155,8 @@ async def derive_action_reward_inputs(
                 chosen_pct=float(chosen_pct),
                 reward=reward,
                 action_id=a["id"],
+                window_closed=window_closed,
+                action_created_at=created,
             )
         )
 

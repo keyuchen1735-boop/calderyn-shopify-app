@@ -94,12 +94,35 @@ SELECT so.sku_id,
        coalesce(p.margin_cents, 0)::numeric  AS margin_cents_7d,
        coalesce(p.revenue_cents, 0)::numeric AS revenue_cents_7d,
        d.sku   AS sku_code,
-       d.title AS sku_title
+       d.title AS sku_title,
+       tc.id       AS campaign_id,
+       tc.platform AS campaign_platform
 FROM stocked_out so
 JOIN spend_last_7d sp ON sp.sku_id = so.sku_id
 LEFT JOIN latest_velocity v ON v.sku_id = so.sku_id
 LEFT JOIN recent_pnl     p ON p.sku_id = so.sku_id
 LEFT JOIN public.sku_dim d ON d.id = so.sku_id
+-- Top-spending campaign for this sku (same (shop, platform) attribution grain as
+-- spend_last_7d). Stamped onto entity_ref so a campaign action (pause/budget) has
+-- a target; with a campaign attached the recommended action becomes pause_campaign
+-- (correct for a sold-out product) rather than the geo path.
+LEFT JOIN LATERAL (
+    SELECT c.id, c.platform, sum(s.spend_cents)::numeric AS spend
+    FROM public.ad_spend_fact s
+    JOIN public.ad_campaign_dim c
+      ON c.id = s.campaign_id
+     AND c.shop_id = s.shop_id
+    JOIN public.ad_creative_sku_map m
+      ON m.shop_id  = s.shop_id
+     AND m.platform = c.platform
+    WHERE s.shop_id = $1
+      AND s.day >= (now() - interval '7 days')::date
+      AND m.source IN ('merchant_confirmed', 'merchant_manual')
+      AND m.sku_id = so.sku_id
+    GROUP BY c.id, c.platform
+    ORDER BY spend DESC NULLS LAST, c.id
+    LIMIT 1
+) tc ON true
 WHERE sp.spend_cents >= ($2 * 100)
 """
 
@@ -142,10 +165,15 @@ async def detect(
             # Fall back to wasted spend as a strict lower bound on the loss.
             impact = spend_dollars
         severity = "critical" if spend_dollars >= threshold * 5 else "high"
+        entity_ref: dict[str, str] = {"sku_id": str(r["sku_id"]), "sku": r["sku_code"]}
+        if r["campaign_id"] is not None:
+            entity_ref["campaign_id"] = str(r["campaign_id"])
+            entity_ref["platform"] = r["campaign_platform"]
+
         out.append(
             DetectionResult(
                 detector_id=DETECTOR_ID,
-                entity_ref={"sku_id": str(r["sku_id"]), "sku": r["sku_code"]},
+                entity_ref=entity_ref,
                 severity=severity,
                 dollar_impact=impact,
                 evidence={

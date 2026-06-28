@@ -22,7 +22,7 @@
 import { rankMoves, toNumericEvidence } from "./remediation/rank";
 import { synopsisFor } from "./remediation/synopsis";
 import type { RemediationInput } from "./remediation/types";
-import { buildActionQueue } from "./calibration/queue.server";
+import { buildActionQueue, inventoryOverCapAlertIds } from "./calibration/queue.server";
 import { recordApproval as _recordApproval } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
@@ -85,6 +85,11 @@ export type ExecuteActionOpts = {
   idempotencyKey: string;
   preState?: unknown;
   postState?: unknown;
+  /** Who triggered this action. Defaults to "merchant" when absent. */
+  actor?: string;
+  /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
+   *  sets it; manual paths leave it undefined. */
+  triggerReason?: string | null;
 };
 
 // OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
@@ -314,6 +319,11 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
     autopilot_max_daily_budget_cents:
       r.autopilot_max_daily_budget_cents == null ? null : Number(r.autopilot_max_daily_budget_cents),
     max_price_change_pct: Number(r.max_price_change_pct ?? 15),
+    autopilot_max_price_change_pct: Number(r.autopilot_max_price_change_pct ?? 10),
+    autopilot_max_inventory_units_per_move:
+      r.autopilot_max_inventory_units_per_move == null
+        ? null
+        : Number(r.autopilot_max_inventory_units_per_move),
   };
 }
 
@@ -821,7 +831,8 @@ export function calderynClient(shop: string) {
               dollar_impact_at_exec: dollarImpactAtExec,
               pre_state: opts.preState ?? null,
               post_state: opts.postState ?? opts.params,
-              actor_user_id: "merchant",
+              actor_user_id: opts.actor ?? "merchant",
+              trigger_reason: opts.triggerReason ?? null,
               completed_at: new Date().toISOString(),
             })
             .select()
@@ -1320,6 +1331,9 @@ export function calderynClient(shop: string) {
           // null is meaningful (clear the ceiling), so test `!== undefined`.
           if (patch.autopilot_max_daily_budget_cents !== undefined) updates.autopilot_max_daily_budget_cents = patch.autopilot_max_daily_budget_cents;
           if (patch.max_price_change_pct !== undefined) updates.max_price_change_pct = patch.max_price_change_pct;
+          if (patch.autopilot_max_price_change_pct !== undefined) updates.autopilot_max_price_change_pct = patch.autopilot_max_price_change_pct;
+          // null is meaningful (clear the unit cap), so test `!== undefined`.
+          if (patch.autopilot_max_inventory_units_per_move !== undefined) updates.autopilot_max_inventory_units_per_move = patch.autopilot_max_inventory_units_per_move;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase
@@ -1507,7 +1521,7 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           // Reuse fetchOpenAlerts (same query alerts.list({status:"open"}) runs)
           // so the open-alerts SQL is not duplicated.
-          const [alerts, pairsRes, feedbackRes, rulesRes, graduatedRes] = await Promise.all([
+          const [alerts, pairsRes, feedbackRes, rulesRes, autonomyRes, gcRes] = await Promise.all([
             fetchOpenAlerts(shopId),
             supabase
               .from("pair_calibration")
@@ -1529,19 +1543,31 @@ export function calderynClient(shop: string) {
               .eq("shop_id", shopId)
               .eq("active", true)
               .eq("rule_kind", "muted_pair"),
-            // I5: graduated pairs auto-run via autopilot; exclude from the queue
-            // so merchant-approve and autopilot cannot both fire for the same alert.
+            // I5 / Slice C: pairs RUNNING autonomously = graduated AND merchant-
+            // enabled. Only these are excluded from the queue (no double actor).
+            // A graduated-but-not-enabled pair stays as a suggestion so the merchant
+            // can build a track record before opting it into autopilot (warm-up).
             supabase
               .from("pair_calibration")
               .select("detector_id, action_kind")
               .eq("shop_id", shopId)
-              .eq("graduated", true),
+              .eq("graduated", true)
+              .eq("autonomy_enabled", true),
+            // Autonomy unit cap for the magnitude-aware over-cap check: a graduated
+            // reallocate_inventory move bigger than this is blocked by autopilot
+            // (block-not-clamp), so it must stay approvable in the queue.
+            supabase
+              .from("guardrail_config")
+              .select("autopilot_max_inventory_units_per_move")
+              .eq("shop_id", shopId)
+              .maybeSingle(),
           ]);
 
           if (pairsRes.error) throw pairsRes.error;
           if (feedbackRes.error) throw feedbackRes.error;
           if (rulesRes.error) throw rulesRes.error;
-          if (graduatedRes.error) throw graduatedRes.error;
+          if (autonomyRes.error) throw autonomyRes.error;
+          if (gcRes.error) throw gcRes.error;
 
           const map = new Map(
             (pairsRes.data ?? []).map((r) => [
@@ -1560,11 +1586,26 @@ export function calderynClient(shop: string) {
             (rulesRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
           );
 
-          const graduatedPairs = new Set(
-            (graduatedRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
+          const autonomyPairs = new Set(
+            (autonomyRes.data ?? []).map((r) => `${r.detector_id}:${r.action_kind}`),
           );
 
-          return buildActionQueue(alerts, map, rejectedAlertIds, mutedPairs, graduatedPairs);
+          // Magnitude-aware: keep a running reallocate_inventory alert in the queue
+          // when its move exceeds the merchant's per-move unit cap (autopilot blocks
+          // it, so it needs manual approval). Exact from the alert evidence.
+          const maxUnitsPerMove =
+            (gcRes.data as { autopilot_max_inventory_units_per_move?: number | null } | null)
+              ?.autopilot_max_inventory_units_per_move ?? null;
+          const overCapAlertIds = inventoryOverCapAlertIds(alerts, autonomyPairs, maxUnitsPerMove);
+
+          return buildActionQueue(
+            alerts,
+            map,
+            rejectedAlertIds,
+            mutedPairs,
+            autonomyPairs,
+            overCapAlertIds,
+          );
         } catch (err) {
           rethrow("queue.list", err);
         }

@@ -11,25 +11,14 @@
 // returned (all zeros / false); the action result is always authoritative.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { GRADUATABLE_V1, graduationVerdict } from "./graduation";
+import { calibrationActionKind } from "./action-kind";
+import { GRADUATABLE, graduationVerdict } from "./graduation";
 import { trustDelta, ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
-
-/**
- * Action kinds with a working undo branch (mirror of the set in
- * graduation.server.ts). Needed for the justGraduated verdict — graduation
- * requires a reversible action with an undo path.
- */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-]);
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 const PAIR_COLS =
-  "alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated";
+  "alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign";
 
 async function readPairRow(
   sb: SupabaseClient,
@@ -69,10 +58,15 @@ async function refreshShopCalibrationHeadline(
 export async function recordApproval(
   shopId: string,
   detectorId: string,
-  actionKind: ActionKind,
+  rawActionKind: ActionKind,
   sb: SupabaseClient,
 ): Promise<ApproveReceipt> {
   try {
+    // Normalize a gateway kind to the action_kind it is audited + calibrated
+    // under (reallocate_spend_sku → reallocate_budget) BEFORE any enum-typed read
+    // or RPC, so the approval lands on the same pair the autopilot graduation gate
+    // reads, and never raises 22P02 on the non-enum gateway kind.
+    const actionKind = calibrationActionKind(rawActionKind);
     // 1. Read the pair row BEFORE the bump (so we can diff confidence + detect a
     //    fresh graduation). A cold-start pair has no row → treat as alpha/beta 0.
     const beforeRow = await readPairRow(sb, shopId, detectorId, actionKind);
@@ -105,7 +99,7 @@ export async function recordApproval(
 
     const cleanApprovals = num(afterRow?.clean_approvals);
     const graduationThreshold = num(afterRow?.graduation_threshold);
-    const graduatable = GRADUATABLE_V1.has(actionKind);
+    const graduatable = GRADUATABLE.has(actionKind);
 
     // 5. justGraduated = the AFTER row now clears every graduation gate AND the
     //    pair was NOT already graduated before this approval. Uses the same
@@ -120,6 +114,8 @@ export async function recordApproval(
       merchantDisabled: Boolean(afterRow?.merchant_disabled),
       onProbation: false, // approval-time best-effort; the nightly recompute is authoritative
       hasUndoBranch: HAS_UNDO_BRANCH.has(actionKind),
+      netPositiveOutcomes: num(afterRow?.net_positive_outcomes),
+      lastOutcomeSign: (num(afterRow?.last_outcome_sign) as -1 | 0 | 1),
     });
     const justGraduated = verdict.graduated && !wasGraduatedBefore;
 

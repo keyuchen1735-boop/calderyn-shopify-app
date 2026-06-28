@@ -32,6 +32,7 @@ import { snoozeAlert } from "~/lib/actions/snooze.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import type { RegionCode } from "~/lib/ads/actions";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
@@ -50,6 +51,7 @@ import {
   ACTION_LABELS,
   ACTION_VERBS,
   DETECTOR_TO_ACTIONS,
+  recommendedAction,
 } from "~/lib/labels";
 import { useActionToast } from "~/lib/toast";
 import { resolveActionParam } from "~/lib/assistant/action-param";
@@ -67,7 +69,7 @@ import {
   NarrativeCard,
   SeverityBadge,
 } from "~/components/calderyn";
-import type { ActionKind, Alert, GuardrailConfig } from "~/lib/types";
+import type { ActionKind, Alert, GuardrailConfig, RejectReason } from "~/lib/types";
 
 type PoDefaults = { quantity: number | null; unit_cost_cents: number | null };
 
@@ -164,10 +166,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 };
 
+// The 5 known reject reasons (mirrors the dashboard reject endpoint). A reject
+// teaches the calibration agent without executing anything.
+const REJECT_REASONS: RejectReason[] = [
+  "too_aggressive",
+  "wrong_timing",
+  "not_enough_data",
+  "i_handle_this",
+  "other",
+];
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const client = calderynClient(session.shop);
   const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
   const kind = String(formData.get("kind") || "") as ActionKind;
   const alertId = String(formData.get("alertId") || params.id || "");
   const idempotencyKey =
@@ -188,6 +201,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const alert = await client.alerts.get(alertId, request.signal);
+
+    // Reject (teach, don't act): the embedded mirror of the dashboard reject
+    // endpoint. Re-derives detector + recommended action from the TRUSTED alert
+    // and records the rejection — recordRejection executes nothing, it is purely
+    // calibration bookkeeping that makes Calderyn more cautious about this pair.
+    if (intent === "reject") {
+      const reason = String(formData.get("reason") || "").trim() as RejectReason;
+      if (!REJECT_REASONS.includes(reason)) {
+        throw new CalderynError({
+          code: "INVALID_REQUEST",
+          status: 400,
+          message: "Unknown reject reason.",
+        });
+      }
+      const rejectAction = recommendedAction(alert.detector_id, {
+        hasCampaign: Boolean(alert.campaign_id),
+      });
+      if (!rejectAction) {
+        throw new CalderynError({
+          code: "INVALID_REQUEST",
+          status: 400,
+          message: "No recommended action for this alert.",
+        });
+      }
+      await client.calibration.recordRejection({
+        alertId,
+        detectorId: alert.detector_id,
+        actionKind: rejectAction,
+        reason,
+        dollarImpactCents: alert.dollar_impact,
+      });
+      return json<ActionPayload>({ ok: true });
+    }
 
     // Only actions this detector exposes may run against this alert.
     const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
@@ -219,12 +265,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // `* 100` double-converted, inflating the impact 100x and tripping the cap on
     // every action once a realistic (non-sentinel) cap is configured.
     const impactCents = alert.dollar_impact;
-    // increase_campaign_budget is an UPSIDE action — alert.dollar_impact is the
-    // projected gain, not downside risk — so the per-action risk cap does not
-    // apply (it would block exactly the highest-upside scaling opportunities).
+    // increase_campaign_budget and resume_campaign are UPSIDE actions —
+    // alert.dollar_impact is the projected gain / recovered spend, not downside
+    // risk — so the per-action risk cap does not apply (it would block exactly the
+    // highest-upside opportunities, e.g. resuming a big restocked campaign).
     if (
       kind !== "snooze_alert" &&
       kind !== "increase_campaign_budget" &&
+      kind !== "resume_campaign" &&
       impactCents > guardrails.dollar_cap_cents
     ) {
       throw new CalderynError({
@@ -271,7 +319,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       // local document only — the PO draft snapshotted into the audit row, with
       // no external side effect — and are strictly validated below. The SKU and
       // line title still come from the trusted alert record, never the form.
-      const qtyRaw = String(formData.get("po_quantity") ?? "").trim();
+      // One-click Approve sends no po_quantity; default to a computed reorder
+      // suggestion from the alert's velocity/lead-time so the card works without
+      // a typed number. A typed quantity always wins. With no usable velocity the
+      // suggestion is null, qtyRaw stays "", and validation below fails visibly.
+      const typedQty = String(formData.get("po_quantity") ?? "").trim();
+      const qtyRaw =
+        typedQty === "" ? String(derivePoQuantity(alert.evidence ?? {}) ?? "") : typedQty;
       const quantity = Number(qtyRaw);
       // Digits-only regex already guarantees an integer; bound it to a sane max.
       if (!/^\d+$/.test(qtyRaw) || quantity <= 0 || quantity > 1_000_000) {
@@ -456,15 +510,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // last_error set — no silent swallowing.
     const executableKinds: ExecutableKind[] = [
       "pause_campaign",
+      "resume_campaign",
       "reduce_campaign_budget",
       "increase_campaign_budget",
+      "exclude_geo",
     ];
     const evidenceCampaignId = stringOrEmpty(alert.evidence?.campaign_id);
     // cut_ads on a SKU alert submits the loser campaign from the remediation move
     // (the evidence has no campaign_id). executeAction validates shop ownership,
     // so a submitted id can't reach another shop's campaign.
     const moveCampaignId = stringOrEmpty(formData.get("move_campaign_id"));
-    const campaignId = moveCampaignId || evidenceCampaignId;
+    // Engine alerts carry the campaign UUID in entity_ref, which the view resolves
+    // to alert.campaign_id; fall back to it so campaign actions (and exclude_geo)
+    // route through the real executeAction rather than the legacy stub.
+    const campaignId = moveCampaignId || evidenceCampaignId || stringOrEmpty(alert.campaign_id);
 
     if (executableKinds.includes(kind as ExecutableKind) && campaignId) {
       // reduce_campaign_budget: the new budget is 70% of the current daily budget.
@@ -494,6 +553,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         dailyBudgetCents = current > 0 ? Math.round(current * (1 + pct / 100)) : undefined;
       }
 
+      // exclude_geo: the region to drop from the campaign's targeting comes from
+      // the alert evidence (engine-produced; one of the four internal buckets).
+      let region: RegionCode | undefined;
+      if (kind === "exclude_geo") {
+        region = (stringOrEmpty(ev.region) || undefined) as RegionCode | undefined;
+      }
+
       const shopId = await resolveShopId(session.shop);
       const result = await executeAction(
         shopId,
@@ -503,6 +569,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           campaignId,
           idempotencyKey,
           dailyBudgetCents,
+          region,
         },
         getSupabase(),
       );

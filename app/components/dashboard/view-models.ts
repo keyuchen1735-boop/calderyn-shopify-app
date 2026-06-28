@@ -2,6 +2,7 @@
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
 import type { CostSource } from "~/lib/types";
+import type { RegionCode } from "~/lib/ads/actions";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
 import type {
   ShipCostSource,
@@ -45,6 +46,9 @@ export interface AlertVM {
   title: string;
   campaign: string | null;
   campaign_id: string | null;
+  /** exclude_geo region bucket resolved from evidence, when one of the four
+   *  buckets; undefined leaves exclude_geo as a deep-link, not a button. */
+  region?: RegionCode;
   sku: string | null;
   narrative: string;
   evidence: Record<string, string>;
@@ -170,6 +174,10 @@ export interface GuardrailVM {
   autopilot_max_daily_budget_cents: number | null;
   /** Max single-step price change for the adjust_price action, whole percent. */
   max_price_change_pct: number;
+  /** Max single-step autonomous price move, whole percent 1..100. */
+  autopilot_max_price_change_pct: number;
+  /** Max units autopilot may move in a single reallocate_inventory action; null = no cap. */
+  autopilot_max_inventory_units_per_move: number | null;
 }
 
 export interface DailyRow {

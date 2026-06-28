@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
+import type { RegionCode } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { type AdminGraphqlClient } from "../shopify/inventory.server";
 import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
@@ -307,6 +308,14 @@ export async function undoAction(
     const conn = await resolveClient(shopId);
     if (!conn) throw new Error("Meta not connected; cannot undo creative draft");
     await del(conn.client, adId);
+  } else if (orig.action_kind === "exclude_geo") {
+    // Reverse a geo exclusion: re-include the recorded region's targeting.
+    // No mirror restore — exclude_geo never changed ad_campaign_dim status/budget.
+    if (!externalId) throw new Error("cannot undo exclude_geo: missing campaign external id");
+    const region = (orig.params as { region?: string } | null)?.region;
+    if (!region) throw new Error(`audit ${auditId} lacks the excluded region; cannot undo`);
+    const adapter = await requireAdapter();
+    await adapter.includeGeo(externalId, region as RegionCode);
   } else {
     // No platform reversal implemented for this kind — refuse loudly instead
     // of recording a "succeeded" undo that never touched the platform (rule 12).
@@ -369,6 +378,29 @@ export async function undoAction(
       .eq("status", "acknowledged");
     if (reopenErr) {
       console.error(`[undo] failed to re-open alert ${orig.alert_id} after undo of ${orig.id}`, reopenErr);
+    }
+  }
+
+  // Record the undo as a negative calibration signal (graduation gate 5). Only
+  // autopilot actions feed trust; a merchant undoing their OWN click is not a
+  // veto of autonomy. Best-effort: log, never fail the recorded undo.
+  if (String(orig.actor_user_id ?? "") === "autopilot" && orig.alert_id) {
+    const { data: al } = await sb
+      .from("alerts")
+      .select("detector_id")
+      .eq("shop_id", shopId)
+      .eq("id", orig.alert_id)
+      .maybeSingle();
+    const detectorId = al?.detector_id ?? null;
+    if (detectorId) {
+      const { error: undoSigErr } = await sb.rpc("calibration_record_undo", {
+        p_shop_id: shopId,
+        p_detector_id: detectorId,
+        p_action_kind: orig.action_kind,
+      });
+      if (undoSigErr) {
+        console.error(`[undo] calibration_record_undo failed for ${detectorId}:${orig.action_kind}`, undoSigErr);
+      }
     }
   }
 

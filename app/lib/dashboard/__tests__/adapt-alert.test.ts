@@ -29,11 +29,43 @@ describe("adaptAlert action list", () => {
     const vm = adaptAlert(makeAlert(), CAMPAIGNS);
     expect(vm.actions).toContain("reallocate_inventory");
     expect(vm.actions).toContain("snooze_alert");
-    // Only live-executable kinds may render as buttons; exclude_geo has no
-    // dashboard endpoint yet and must stay hidden.
+    // exclude_geo needs both a campaign and a valid region bucket; this alert has
+    // neither, so it stays a deep-link rather than an execute button.
     expect(vm.actions).not.toContain("exclude_geo");
     expect(vm.actions).not.toContain("pause_campaign");
     expect(vm.recommended).toBe("reallocate_inventory");
+  });
+
+  it("offers exclude_geo as an executable action when the alert has a campaign and a valid region bucket", () => {
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "regional_spend_starved_stock",
+        campaign_id: "c1",
+        evidence: { region: "us-central" },
+      }),
+      CAMPAIGNS,
+    );
+    expect(vm.actions).toContain("exclude_geo");
+    expect(vm.region).toBe("us-central");
+    // Executable → it must NOT also appear as a deep-link (no double surface).
+    expect(vm.deepLinkKinds ?? []).not.toContain("exclude_geo");
+  });
+
+  it("keeps exclude_geo a deep-link when the evidence region is a state, not one of the four buckets", () => {
+    // The engine emits state-form regions (e.g. US-TX) in some evidence; the
+    // executor only accepts the four buckets, so a non-bucket must NOT render a
+    // button that would 422 — it stays the Ads Manager deep-link.
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "regional_spend_starved_stock",
+        campaign_id: "c1",
+        evidence: { region: "US-TX" },
+      }),
+      CAMPAIGNS,
+    );
+    expect(vm.actions).not.toContain("exclude_geo");
+    expect(vm.deepLinkKinds).toContain("exclude_geo");
+    expect(vm.region).toBeUndefined();
   });
 
   it("keeps campaign actions first for campaign-linked alerts", () => {

@@ -17,6 +17,7 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
   return_rate_hidden_loss: "Returns quietly costing you money",
   scaling_sku_fulfillment_risk: "Best-seller may sell out",
   sku_stockout_vs_spend: "Running ads for a sold-out product",
+  sku_stockout_cleared: "Sold-out product is back in stock",
   wrong_location_concentration: "Stock in the wrong warehouse",
   out_of_stock_live: "Live product is out of stock",
   inventory_untracked: "Stock not being tracked",
@@ -41,6 +42,7 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   return_rate_hidden_loss: "Return-rate hidden loss",
   scaling_sku_fulfillment_risk: "Scaling SKU fulfillment risk",
   sku_stockout_vs_spend: "SKU stockout vs spend",
+  sku_stockout_cleared: "Stockout cleared",
   wrong_location_concentration: "Wrong location concentration",
   out_of_stock_live: "Out-of-stock live SKU",
   inventory_untracked: "Untracked inventory",
@@ -118,6 +120,7 @@ const FEATURE_LABELS: Record<string, string> = {
   "campaign_below_breakeven:pause_campaign": "Pause money-losing campaigns",
   "negative_unit_economics:pause_campaign": "Pause ads losing money on every sale",
   "sku_stockout_vs_spend:pause_campaign": "Pause ads for sold-out products",
+  "sku_stockout_cleared:resume_campaign": "Resume ads when a sold-out product is back in stock",
 };
 
 export function featureLabel(detectorId: string, actionKind: ActionKind): string {
@@ -241,6 +244,8 @@ export const EVIDENCE_LABELS: Record<string, string> = {
   regional_stock: "Regional stock",
   stock_elsewhere: "Stock at other locations",
   stock_units: "Stock",
+  buffer_units: "Stock needed to resume",
+  prepause_spend_7d_usd: "Ad spend before pausing",
   location_region: "Region",
   region: "Region",
   shipping_collected_usd: "Shipping collected from customers",
@@ -376,13 +381,15 @@ export const CHAT_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set([
   "reallocate_inventory",
 ]);
 
-// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD can actually execute inline
-// today — the kinds DashboardApp.executeAction has a live endpoint for (campaign
-// pause/reduce, snooze, reallocate_inventory). exclude_geo has no dashboard
-// endpoint yet, so the dashboard assistant deep-links it to the Alerts review
-// screen instead of faking a run. Keep in sync with executeAction in
-// app/components/dashboard/DashboardApp.tsx. (create_po_draft is not chat-inline
-// on any surface — it collects quantity/cost on a review surface.)
+// Subset of CHAT_INLINE_ACTIONS the WEB DASHBOARD assistant may run inline from
+// chat — the kinds DashboardApp.executeAction can fire without a review surface
+// (campaign pause/reduce, snooze, reallocate_inventory). exclude_geo is excluded
+// here on purpose: it needs a resolved campaign AND a valid region bucket (the
+// Alerts review screen gates that before showing its one-click button), so the
+// assistant deep-links it to that screen rather than running it blind. Keep in
+// sync with executeAction in app/components/dashboard/DashboardApp.tsx.
+// (create_po_draft is not chat-inline on any surface — it collects quantity/cost
+// on a review surface.)
 export const DASH_INLINE_ACTIONS: ReadonlySet<ActionKind> = new Set(
   [...CHAT_INLINE_ACTIONS].filter((k) => k !== "exclude_geo"),
 );
@@ -399,6 +406,9 @@ export function dashReviewScreen(kind: ActionKind): "campaigns" | "alerts" {
 
 export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   sku_stockout_vs_spend: ["pause_campaign", "reduce_campaign_budget", "exclude_geo", "reallocate_inventory", "snooze_alert"],
+  // Slice B: a sold-out product Calderyn auto-paused is back in stock. The only
+  // remediation is to resume the campaign it paused (else snooze).
+  sku_stockout_cleared: ["resume_campaign", "snooze_alert"],
   free_shipping_leakage: ["raise_free_ship_threshold", "exclude_sku_free_ship", "snooze_alert"],
   campaign_below_breakeven: ["pause_campaign", "reduce_campaign_budget", "snooze_alert"],
   campaign_scaling_opportunity: ["increase_campaign_budget", "snooze_alert"],

@@ -5,21 +5,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { graduationVerdict, GRADUATABLE_V1 } from "./graduation";
-import { pairConfidence } from "./confidence";
-
-/**
- * Action kinds that have a working undo branch.
- * Mirror of GATEWAY_UNDO_KINDS restricted to reversible actions only (spec I7).
- */
-const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
-  "pause_campaign",
-  "resume_campaign",
-  "reduce_campaign_budget",
-  "reallocate_budget",
-  "reallocate_inventory",
-  "discontinue_sku",
-]);
+import { graduationVerdict, GRADUATABLE, MIN_OUTCOMES } from "./graduation";
+import { pairConfidence, actionTier } from "./confidence";
+import { HAS_UNDO_BRANCH } from "./undo-branches";
 
 /**
  * Live graduation check for a (shop, detector, action) pair.
@@ -44,7 +32,7 @@ export async function isGraduated(
     const { data: row, error: rowErr } = await sb
       .from("pair_calibration")
       .select(
-        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled",
+        "last_conf, graduation_threshold, clean_approvals, consecutive_undos, merchant_disabled, autonomy_enabled, net_positive_outcomes, last_outcome_sign",
       )
       .eq("shop_id", shopId)
       .eq("detector_id", detectorId)
@@ -102,9 +90,14 @@ export async function isGraduated(
       merchantDisabled: Boolean(row.merchant_disabled) || mutedByRule,
       onProbation,
       hasUndoBranch,
+      netPositiveOutcomes: Number(row.net_positive_outcomes ?? 0),
+      lastOutcomeSign: Number(row.last_outcome_sign ?? 0) as -1 | 0 | 1,
     });
 
-    return verdict.graduated;
+    // Slice C: graduation only UNLOCKS a pair. It acts autonomously only after
+    // the merchant explicitly enables this feature (autonomy_enabled). The column
+    // defaults false, so a brand-new/unmigrated row is fail-safe OFF.
+    return verdict.graduated && Boolean(row.autonomy_enabled);
   } catch (err) {
     // 8. Fail-safe: never throw; return false.
     console.error(
@@ -135,7 +128,7 @@ export async function countNearGraduation(
       sb
         .from("pair_calibration")
         .select(
-          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated",
+          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign",
         )
         .eq("shop_id", shopId),
       sb
@@ -170,7 +163,7 @@ export async function countNearGraduation(
     let count = 0;
     for (const row of pairsRes.data ?? []) {
       const action = row.action_kind as ActionKind;
-      if (!GRADUATABLE_V1.has(action)) continue;
+      if (!GRADUATABLE.has(action)) continue;
       if (row.graduated) continue;
       if (Number(row.clean_approvals ?? 0) < 1) continue;
       if (Number(row.consecutive_undos ?? 0) > 0) continue;
@@ -178,6 +171,9 @@ export async function countNearGraduation(
       const detector = String(row.detector_id);
       if (muted(detector, action)) continue;
       if (onProbation(detector, action)) continue;
+      const tier = actionTier(action);
+      if (Number(row.net_positive_outcomes ?? 0) < MIN_OUTCOMES[tier]) continue;
+      if (Number(row.last_outcome_sign ?? 0) < 0) continue;
       const threshold = Number(row.graduation_threshold ?? 100) || 100;
       const conf = pairConfidence(
         detector,

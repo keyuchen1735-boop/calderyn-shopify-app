@@ -7,7 +7,6 @@ import type {
   FeedEvent,
   GuardrailVM,
   IntegrationVM,
-  LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
 } from "./view-models";
@@ -19,8 +18,6 @@ export type Screen =
   | "analytics"
   | "inventory"
   | "audit"
-  | "action-queue"
-  | "live-engine"
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
@@ -111,11 +108,8 @@ export interface DashboardCtx {
   /** Re-pull the calibration headline after a teaching signal lands. */
   refreshCalibration: () => void;
 
-  /** Action Queue proposals; empty until loaded. */
+  /** Pending proposals surfaced inline on the Overview hero; empty until loaded. */
   actionQueue: QueueProposalVM[];
-
-  /** Learned calibration rules; empty until loaded. */
-  learnedRules: LearnedRuleVM[];
 
   /** Live Engine page data (autopilot + pipeline + trace + predictions); null until loaded. */
   liveEngine: LiveEnginePageData | null;

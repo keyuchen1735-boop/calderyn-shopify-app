@@ -8,11 +8,16 @@ export function getSupabase(): SupabaseClient {
   if (_client) return _client;
 
   const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Prefer the modern secret key (sb_secret_...); fall back to the legacy
+  // service_role JWT. Both are server-only, full-access keys that bypass RLS, so
+  // this is a drop-in. Legacy keys are being phased out by Supabase, so the
+  // secret key takes precedence when present.
+  const serviceRoleKey =
+    process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {
     throw new Error(
-      "Supabase is not configured: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.",
+      "Supabase is not configured: SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) must be set.",
     );
   }
 

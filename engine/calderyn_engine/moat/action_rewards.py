@@ -26,11 +26,13 @@ def compute_action_reward(
             return (Decimal(-pre_profit_cents) / 100)  # the bleed we stopped, in dollars
         return Decimal("0")
 
-    if action_kind in ("increase_campaign_budget", "reallocate_budget"):
+    if action_kind in ("increase_campaign_budget", "reallocate_budget", "resume_campaign"):
         delta = Decimal(post_profit_cents - pre_profit_cents) / 100
-        # Penalise scaling into diminishing returns: if ROAS fell below BE after
-        # the action, the profit delta is treated as the loss it is.
-        if action_kind == "increase_campaign_budget" and post_roas < break_even_roas:
+        # Penalise growth that runs below break-even (increase_campaign_budget and
+        # resume_campaign): if post ROAS fell below BE, the profit delta is treated
+        # as the loss it is. reallocate_budget is excluded from this penalty branch
+        # (its post-state profit delta is taken at face value).
+        if action_kind in ("increase_campaign_budget", "resume_campaign") and post_roas < break_even_roas:
             return delta if delta < 0 else -delta
         return delta
 

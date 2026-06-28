@@ -76,6 +76,16 @@ export default defineConfig({
     sourcemap: false,
     minify: "esbuild",
   },
+  // GSAP (used only by the client-side dashboard hero) is imported through a
+  // server-reachable route module, so it lands in the server build. Left as an
+  // external it resolves locally but breaks on Vercel: gsap exposes subpaths
+  // like "gsap/CustomEase" only via a wildcard `exports` glob that Vercel's
+  // dependency tracer (nft) cannot expand, so the file is absent in the lambda
+  // and the import throws at module-init (every route 500s). Bundling gsap into
+  // the server build removes the trace dependency entirely.
+  ssr: {
+    noExternal: ["gsap", "@gsap/react"],
+  },
   esbuild: {
     legalComments: "none",
   },

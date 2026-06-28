@@ -11,6 +11,8 @@ describe("action contract", () => {
       resume: async () => {},
       setDailyBudget: async () => {},
       getState: async () => state,
+      excludeGeo: async () => {},
+      includeGeo: async () => {},
     };
     expect(adapter.platform).toBe("meta");
     expect((await adapter.getState("c1")).dailyBudgetCents).toBe(5000);

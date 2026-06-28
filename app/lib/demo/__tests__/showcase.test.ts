@@ -51,6 +51,8 @@ describe("showcaseActionAdapter", () => {
     await expect(a.resume("ext")).resolves.toBeUndefined();
     await expect(a.setDailyBudget("ext", 1234)).resolves.toBeUndefined();
     await expect(a.getState("ext")).resolves.toEqual({ status: "active", dailyBudgetCents: null });
+    await expect(a.excludeGeo("ext", "us-west")).resolves.toBeUndefined();
+    await expect(a.includeGeo("ext", "us-west")).resolves.toBeUndefined();
   });
 });
 

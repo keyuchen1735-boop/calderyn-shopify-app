@@ -9,7 +9,7 @@
 // nothing.
 
 import type { Activity } from "../github-digest/collect.server";
-import { getAnthropic, assistantModel } from "../assistant/anthropic.server";
+import { getAnthropic, digestModel } from "../assistant/anthropic.server";
 import type { SocialPack, PackFeature } from "./slides.server";
 
 const ILLUSTRATIVE_PERCENTILE = "68th";
@@ -174,8 +174,12 @@ export async function buildSocialPack(input: PackInput): Promise<{ pack: SocialP
       // Raise temperature only when an actual regeneration directive is present
       // (empty reasons → no directive → keep the steadier first-gen temperature).
       const temperature = variationBlock ? 1 : 0.7;
+      // No prompt caching: SYSTEM_PROMPT is ~300 tokens, below the model's
+      // 2048-token minimum cacheable prefix, so cache_control would be a no-op.
+      // This also runs ~weekly and regeneration is human-paced, so no two calls
+      // re-send the same prefix inside the 5-minute cache TTL.
       const msg = await client.messages.create({
-        model: assistantModel(),
+        model: digestModel(),
         max_tokens: 1400,
         temperature,
         system: SYSTEM_PROMPT,
