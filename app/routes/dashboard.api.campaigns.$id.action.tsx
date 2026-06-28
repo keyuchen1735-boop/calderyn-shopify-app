@@ -4,7 +4,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
-import type { RegionCode } from "~/lib/ads/actions";
+import { isRegionCode, type RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -17,7 +17,6 @@ const KINDS: ExecutableKind[] = [
   "increase_campaign_budget",
   "exclude_geo",
 ];
-const REGIONS: readonly RegionCode[] = ["us-west", "us-east", "us-south", "us-central"];
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -46,7 +45,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   ) {
     return jsonError(422, "invalid_daily_budget_cents");
   }
-  if (kind === "exclude_geo" && (!region || !REGIONS.includes(region))) {
+  if (kind === "exclude_geo" && !isRegionCode(region)) {
     return jsonError(422, "invalid_region");
   }
 

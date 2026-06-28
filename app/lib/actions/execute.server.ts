@@ -6,14 +6,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "../ads/adapter";
 import type { ActionKind } from "../types";
-import { isRetriableFailure, type RegionCode } from "../ads/actions";
+import { isRetriableFailure, isRegionCode, type RegionCode } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
 import { acknowledgeAlert } from "../alerts.server";
-
-// The internal geo buckets exclude_geo accepts. A region outside this set has no
-// platform geo-id mapping, so reject it before the adapter call.
-const VALID_REGIONS = new Set<RegionCode>(["us-west", "us-east", "us-south", "us-central"]);
 
 export type ExecutableKind =
   | "pause_campaign"
@@ -202,7 +198,7 @@ export async function executeAction(
   // one fails visibly here (before any platform call) rather than reaching the
   // adapter's region->geo-id lookup with an undefined key (rule 12). Validating
   // in the shared executor covers every caller (both routes + autopilot).
-  if (input.kind === "exclude_geo" && !(input.region && VALID_REGIONS.has(input.region))) {
+  if (input.kind === "exclude_geo" && !isRegionCode(input.region)) {
     throw new Error(`exclude_geo for ${input.campaignId} has no valid region (got ${input.region ?? "none"})`);
   }
 

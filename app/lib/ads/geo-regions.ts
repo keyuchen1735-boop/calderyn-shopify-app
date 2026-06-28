@@ -43,3 +43,30 @@ const GOOGLE_STATE_ID: Record<UsState, string> = {
 export function googleGeoTargetConstants(region: RegionCode): string[] {
   return REGION_STATES[region].map((s) => `geoTargetConstants/${GOOGLE_STATE_ID[s]}`);
 }
+
+// Full state names. Meta has no published US-state geo CSV like Google's; its
+// region "key" is a numeric id resolved at runtime from the adgeolocation
+// targeting-search API, queried by the state's full name (see
+// app/lib/meta/actions.server.ts). The name is the stable, verifiable input —
+// the coverage test asserts every state has a unique non-empty name so the live
+// resolver is never handed an empty or ambiguous query. "District of Columbia"
+// (DC) matches Meta's own region name for the federal district.
+export const US_STATE_NAMES: Record<UsState, string> = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+  CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia",
+  FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois",
+  IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana",
+  ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota",
+  MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada",
+  NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York",
+  NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma",
+  OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
+  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+};
+
+/** Full state names for every state in a region — the query inputs Meta's
+ * adgeolocation search resolves to numeric region keys. */
+export function regionStateNames(region: RegionCode): string[] {
+  return REGION_STATES[region].map((s) => US_STATE_NAMES[s]);
+}
