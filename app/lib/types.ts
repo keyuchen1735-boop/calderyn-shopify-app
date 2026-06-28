@@ -20,7 +20,8 @@ export type ActionKind =
   | "exclude_sku_free_ship"
   | "discontinue_sku"
   | "adjust_price"
-  | "snooze_alert";
+  | "snooze_alert"
+  | "push_creative_draft";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"

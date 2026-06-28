@@ -10,12 +10,18 @@ import { isRetriableFailure } from "../ads/actions";
 import { actionAdapterForShop } from "../ads/action-registry.server";
 import { recoveredCentsForAction, recoveredCentsFromStates } from "../audit-impact";
 import { acknowledgeAlert } from "../alerts.server";
+import type { MetaWriteConn } from "../meta/ad-create.server";
+import { createPausedAd, metaWriteClientForShopId } from "../meta/ad-create.server";
+import { listCampaignAdSets, type MetaAdSet } from "../meta/creatives.server";
+import type { MetaClient } from "../meta/campaigns.server";
+import type { CreativeInput } from "~/lib/screener/types";
 
 export type ExecutableKind =
   | "pause_campaign"
   | "resume_campaign"
   | "reduce_campaign_budget"
-  | "increase_campaign_budget";
+  | "increase_campaign_budget"
+  | "push_creative_draft";
 
 export interface ExecuteInput {
   alertId: string | null;
@@ -27,6 +33,20 @@ export interface ExecuteInput {
   /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
    *  sets it; manual paths leave it undefined. */
   triggerReason?: string;
+  /** Required for push_creative_draft: the winning variant to publish as a
+   *  PAUSED draft ad. Ignored by every other kind. */
+  creative?: CreativeInput;
+}
+
+/** Injectable Meta-write seams so the executor's push_creative_draft path is
+ *  unit-testable without a live Graph client. Defaults wire the real helpers. */
+export interface ExecuteDeps {
+  resolveMetaWriteClient?: (shopId: string) => Promise<MetaWriteConn | null>;
+  listCampaignAdSets?: (client: MetaClient, campaignId: string) => Promise<MetaAdSet[]>;
+  createPausedAd?: (
+    client: MetaClient,
+    args: { adAccountId: string; adSetId: string; creative: CreativeInput },
+  ) => Promise<{ adId: string }>;
 }
 
 export interface ExecutedAudit {
@@ -179,6 +199,7 @@ export async function executeAction(
   shopId: string,
   input: ExecuteInput,
   sb: SupabaseClient,
+  deps: ExecuteDeps = {},
 ): Promise<ExecutedAudit> {
   // 0. Validate input: a missing/zero target budget must refuse loudly —
   // the old `?? 0` fallthrough would set the live campaign budget to $0.
@@ -189,6 +210,9 @@ export async function executeAction(
     throw new Error(
       `${input.kind} for ${input.campaignId} has no positive dailyBudgetCents (alert evidence lacked the current budget)`,
     );
+  }
+  if (input.kind === "push_creative_draft" && !input.creative) {
+    throw new Error(`push_creative_draft for ${input.campaignId} has no creative variant to publish`);
   }
 
   // 1. Idempotency.
@@ -208,6 +232,14 @@ export async function executeAction(
   const externalId = String(camp.external_id);
   const platform = String(camp.platform) as Platform;
   const preState = { status: camp.status, daily_budget_cents: camp.daily_budget_cents };
+
+  // Creative-draft is not a campaign mutation — it creates a NEW ad object, so
+  // it has its own post-state shape and skips the campaign mirror. Routed here
+  // (after idempotency + ownership) so it still inherits both for free.
+  if (input.kind === "push_creative_draft") {
+    return executePushCreativeDraft(shopId, input, sb, { camp, externalId, platform }, deps);
+  }
+
   const postState =
     input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget"
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
@@ -322,6 +354,87 @@ export async function executeAction(
       alert_id: input.alertId,
       action_kind: input.kind,
       params: { campaign_id: input.campaignId, external_id: externalId, platform, daily_budget_cents: input.dailyBudgetCents ?? null },
+      outcome,
+      pre_state: preState,
+      post_state: outcome === "succeeded" ? postState : null,
+      last_error: lastError,
+      actor_user_id: input.actor ?? "merchant",
+      trigger_reason: input.triggerReason ?? null,
+    },
+    sb,
+  );
+}
+
+async function executePushCreativeDraft(
+  shopId: string,
+  input: ExecuteInput,
+  sb: SupabaseClient,
+  ctx: { camp: { status?: unknown; daily_budget_cents?: unknown }; externalId: string; platform: string },
+  deps: ExecuteDeps,
+): Promise<ExecutedAudit> {
+  const { camp, externalId, platform } = ctx;
+  const preState = { status: camp.status, daily_budget_cents: camp.daily_budget_cents };
+
+  let outcome: "succeeded" | "failed" | "retrying" = "succeeded";
+  let lastError: string | null = null;
+  let postState: Record<string, unknown> | null = null;
+  let adSetId: string | null = null;
+  let createdAdId: string | null = null;
+
+  if (platform.toLowerCase() !== "meta") {
+    // Creative push is Meta-only; refuse on other platforms rather than forcing
+    // Google/TikTok adapters to implement ad creation.
+    outcome = "failed";
+    lastError = `push_creative_draft is only supported on Meta (campaign platform: ${platform})`;
+  } else {
+    const resolveClient = deps.resolveMetaWriteClient ?? metaWriteClientForShopId;
+    const listAdSets = deps.listCampaignAdSets ?? listCampaignAdSets;
+    const create = deps.createPausedAd ?? createPausedAd;
+    const conn = await resolveClient(shopId);
+    if (!conn) {
+      // No integration / token — permanent until reconnect, so fail fast rather
+      // than burn the retry budget (mirrors the adapter-null path above).
+      outcome = "failed";
+      lastError = "Meta not connected";
+    } else {
+      try {
+        const adsets = await listAdSets(conn.client, externalId);
+        const target =
+          adsets.find((a) => a.status === "ACTIVE") ??
+          adsets.find((a) => a.status === "PAUSED") ??
+          adsets[0];
+        if (!target) throw new Error(`campaign ${externalId} has no ad set to receive the draft`);
+        adSetId = target.id;
+        const { adId } = await create(conn.client, {
+          adAccountId: conn.adAccountId,
+          adSetId,
+          creative: input.creative as CreativeInput,
+        });
+        createdAdId = adId;
+        postState = { created_ad_id: adId, status: "PAUSED", adset_id: adSetId };
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        // Transient Meta errors park as `retrying`; known-permanent (ActionError
+        // retriable:false — bad token/permission) fail terminally.
+        outcome = isRetriableFailure(err) ? "retrying" : "failed";
+      }
+    }
+  }
+
+  // No ad_campaign_dim mirror: nothing about the campaign changed.
+  return insertAuditWithIdempotency(
+    shopId,
+    input.idempotencyKey,
+    {
+      alert_id: input.alertId,
+      action_kind: input.kind,
+      params: {
+        campaign_id: input.campaignId,
+        external_id: externalId,
+        platform,
+        adset_id: adSetId,
+        created_ad_id: createdAdId,
+      },
       outcome,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
