@@ -31,11 +31,11 @@ export interface Parcel {
 export interface RateRequest {
   origin: Address;
   destination: Address;
-  // Array for forward-compat; v1 reads parcels[0] only.
-  // ponytail: single-parcel; upgrade path = multi-parcel packing in #6.3.
+  // Array for forward-compat; v1 reads parcels[0] only (single-parcel;
+  // upgrade path = multi-parcel packing in #6.3).
   parcels: Parcel[];
-  // Optional client-side filter to a set of serviceCodes.
-  // ponytail: filter after the call, not a server-side constraint.
+  // Optional client-side filter to a set of serviceCodes; v1 filters after the
+  // call rather than as a server-side constraint.
   serviceFilter?: string[];
 }
 
@@ -43,7 +43,7 @@ export interface RateRequest {
 export interface NormalizedRateOption {
   carrier: string; // e.g. "USPS"
   serviceCode: string; // e.g. "Priority"
-  serviceName: string; // ponytail: serviceCode === serviceName until a display map exists
+  serviceName: string; // v1: serviceCode === serviceName until a display map exists
   amountCents: number; // integer cents via parseRateToCents; never coerced to 0
   currency: string; // ISO-4217, default "USD"
   estTransitDays: number | null;
@@ -51,7 +51,7 @@ export interface NormalizedRateOption {
   deliveryDateEstimate: string | null;
   // Provenance for #6.3 margin reconciliation. v1 is always "list"
   // (EasyPost `rate` = list rate; negotiated needs attached carrier_accounts).
-  // ponytail: list rates only; upgrade path = negotiated rates in v2.
+  // v1 ships list rates only; upgrade path = negotiated rates in v2.
   rateType: "list" | "negotiated";
 }
 
