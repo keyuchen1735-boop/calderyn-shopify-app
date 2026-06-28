@@ -20,6 +20,7 @@ vi.mock("@remix-run/react", () => ({
 
 import StorefrontLayout, { loader as layoutLoader, links } from "../storefront";
 import StorefrontHome, { loader as homeLoader } from "../storefront._index";
+import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
 
 beforeEach(() => {
   getCatalogMock.mockReset();
@@ -85,5 +86,45 @@ describe("storefront home", () => {
     expect(html).toContain("cd-store__grid");
     expect(html).toContain("Cotton Tee");
     expect(html).toContain("/storefront/collections/apparel");
+  });
+});
+
+describe("storefront collection", () => {
+  it("loads only that collection's products (shopId-scoped)", async () => {
+    const res = await collectionLoader({ request: req(), params: { handle: "apparel" }, context: {} });
+    const data = await res.json();
+    expect(data.handle).toBe("apparel");
+    expect(data.title).toBe("Apparel");
+    expect(data.products.map((p: { handle: string }) => p.handle).sort()).toEqual([
+      "cotton-tee",
+      "zip-hoodie",
+    ]);
+  });
+
+  it("404s when the handle yields no products", async () => {
+    await expect(
+      collectionLoader({ request: req(), params: { handle: "nope" }, context: {} }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("renders the collection grid", () => {
+    loaderDataRef.current = {
+      handle: "apparel",
+      title: "Apparel",
+      products: [
+        {
+          id: "p1",
+          handle: "cotton-tee",
+          title: "Cotton Tee",
+          description: "",
+          images: [],
+          variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
+          collections: ["apparel"],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontCollection));
+    expect(html).toContain("cd-store__grid");
+    expect(html).toContain("Apparel");
   });
 });
