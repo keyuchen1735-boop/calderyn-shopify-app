@@ -5,12 +5,17 @@
 //
 // No new npm dependency (repo rule P6): built-in fetch + HTTP Basic + AbortController.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseRateToCents, basicAuthHeader, apiBase } from "./easypost.server";
+import { getSupabase } from "../../supabase.server";
+import { decrypt } from "../../crypto.server";
 import type {
   Address,
   NormalizedRateOption,
   Parcel,
+  RateQuoteAdapter,
   RateQuoteResult,
+  RateQuoteSource,
   RateRequest,
 } from "./rate-quote";
 
@@ -190,3 +195,29 @@ export async function fetchEasyPostRates(
     clearTimeout(timer);
   }
 }
+
+/**
+ * Provider plug. connect() is CONFIG-TIME and keeps the cost-side semantics:
+ *   null  = no credential stored (shop not connected)
+ *   THROW = a credential is stored but structurally broken (decrypt fails / db error)
+ * Runtime carrier failures are handled by fetchEasyPostRates' degrade path, not here.
+ */
+export const easyPostRateAdapter: RateQuoteAdapter = {
+  provider: "easypost",
+  integrationKind: "easypost_ship",
+  async connect(shopId: string): Promise<RateQuoteSource | null> {
+    const sb: SupabaseClient = getSupabase();
+    const { data, error } = await sb
+      .from("integration_credentials")
+      .select("access_token_encrypted")
+      .eq("shop_id", shopId)
+      .eq("kind", "easypost_ship")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || !data.access_token_encrypted) return null; // shop not connected.
+    const apiKey = decrypt(data.access_token_encrypted as string); // throws if ciphertext is broken (rule 12).
+    return {
+      getRates: (req: RateRequest) => fetchEasyPostRates(apiKey, req),
+    };
+  },
+};

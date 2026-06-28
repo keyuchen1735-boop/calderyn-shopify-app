@@ -1,5 +1,20 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { basicAuthHeader, apiBase } from "../easypost.server";
+
+const maybeSingleMock = vi.fn();
+vi.mock("../../../supabase.server", () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: maybeSingleMock }) }) }),
+    }),
+  }),
+}));
+vi.mock("../../../crypto.server", () => ({
+  decrypt: (cipher: string) => {
+    if (cipher === "enc(broken)") throw new Error("malformed ciphertext");
+    return `key_for_${cipher}`;
+  },
+}));
 import type {
   NormalizedRateOption,
   RateRequest,
@@ -12,6 +27,7 @@ import {
   mapRateToOption,
   buildFallbackOptions,
   fetchEasyPostRates,
+  easyPostRateAdapter,
   type EasyPostRateQuote,
 } from "../easypost-rate.server";
 
@@ -237,5 +253,36 @@ describe("fetchEasyPostRates — timeout & fallback", () => {
     const mockFetch = vi.fn(async () => okJson({ id: "shp_x", rates: [{ carrier: "USPS", service: "X", rate: "-1.00" }] }));
     const result = await fetchEasyPostRates("k", sampleReq(), mockFetch as unknown as typeof fetch);
     expect(result.fallbackUsed).toBe(true);
+  });
+});
+
+describe("easyPostRateAdapter.connect", () => {
+  beforeEach(() => maybeSingleMock.mockReset());
+
+  it("exposes the provider-blind adapter identity", () => {
+    expect(easyPostRateAdapter.provider).toBe("easypost");
+    expect(easyPostRateAdapter.integrationKind).toBe("easypost_ship");
+  });
+
+  it("returns null when NO credential row exists (shop not connected)", async () => {
+    maybeSingleMock.mockResolvedValue({ data: null, error: null });
+    expect(await easyPostRateAdapter.connect("shop-1")).toBeNull();
+  });
+
+  it("returns a RateQuoteSource exposing getRates when a credential is stored", async () => {
+    maybeSingleMock.mockResolvedValue({ data: { access_token_encrypted: "enc(ok)" }, error: null });
+    const source = await easyPostRateAdapter.connect("shop-1");
+    expect(source).not.toBeNull();
+    expect(typeof source?.getRates).toBe("function");
+  });
+
+  it("THROWS when a credential is stored but the ciphertext is broken (rule 12, not a silent null)", async () => {
+    maybeSingleMock.mockResolvedValue({ data: { access_token_encrypted: "enc(broken)" }, error: null });
+    await expect(easyPostRateAdapter.connect("shop-1")).rejects.toThrow(/malformed ciphertext/);
+  });
+
+  it("THROWS when the credential read itself errors", async () => {
+    maybeSingleMock.mockResolvedValue({ data: null, error: new Error("db down") });
+    await expect(easyPostRateAdapter.connect("shop-1")).rejects.toThrow(/db down/);
   });
 });
