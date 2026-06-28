@@ -632,12 +632,14 @@ interface AnalyticsEnvelope {
   roas_series: DailyRoasRow[];
   grades: CampaignGradeRow[];
   top_ads: TopAdRow[];
+  meta_can_push_drafts?: boolean;
 }
 
 export async function fetchAnalytics(): Promise<{
   daily: DailyRow[];
   grades: CampaignGradeRow[];
   topAds: TopAd[];
+  metaCanPushDrafts: boolean;
 }> {
   const data = await apiGet<AnalyticsEnvelope>("/dashboard/api/analytics");
   return {
@@ -652,6 +654,7 @@ export async function fetchAnalytics(): Promise<{
       saves: t.saves,
       engagement: t.engagement,
     })),
+    metaCanPushDrafts: data.meta_can_push_drafts ?? false,
   };
 }
 
@@ -682,6 +685,31 @@ export async function executeCampaignAction(
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
   return { auditId: data.audit_id, outcome: data.outcome, calibration: data.calibration };
+}
+
+/** Push a regenerated winning variant to Meta as a PAUSED draft ad. The
+ *  idempotency key is derived server-side from (campaign + variant), so this
+ *  sends only the campaign + creative. A 502 surfaces as a DashboardApiError. */
+export async function pushCreativeDraft(
+  campaignId: string,
+  variant: CreativeInput,
+): Promise<{ auditId: string; outcome: string }> {
+  const data = await apiSend<{ audit_id: string; outcome: string }>(
+    "POST",
+    `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/action`,
+    {
+      type: "push_creative_draft",
+      creative: {
+        headline: variant.headline,
+        primaryText: variant.primaryText,
+        cta: variant.cta,
+        destinationUrl: variant.destinationUrl,
+        imageUrl: variant.imageUrl,
+        audience: variant.audience,
+      },
+    },
+  );
+  return { auditId: data.audit_id, outcome: data.outcome };
 }
 
 export async function executeAlertAction(

@@ -4,6 +4,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
+import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -14,6 +15,7 @@ const KINDS: ExecutableKind[] = [
   "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
+  "push_creative_draft",
 ];
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -34,6 +36,37 @@ export async function action({ request, params }: ActionFunctionArgs) {
     body.daily_budget_cents === undefined ? undefined : Number(body.daily_budget_cents);
 
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
+
+  if (kind === "push_creative_draft") {
+    const parsed = parsePushDraftCreative(body.creative);
+    if (!parsed.ok) return jsonError(422, parsed.error);
+    const campaignId = String(params.id);
+    const result = await executeAction(
+      session.shopId,
+      {
+        alertId: null,
+        kind,
+        campaignId,
+        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+        creative: parsed.creative,
+        actor: "merchant:web-dashboard",
+      },
+      getSupabase(),
+    );
+    if (result.outcome === "failed") {
+      return new Response(
+        JSON.stringify({
+          error: "action_failed",
+          message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
+          audit_id: result.id,
+          outcome: result.outcome,
+        }),
+        { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+      );
+    }
+    return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
+  }
+
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
   if (
     (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&

@@ -19,7 +19,7 @@ import {
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { money } from "../format";
 import { CDIcon } from "../icons";
-import { fetchAnalytics, executeCampaignAction, DashboardApiError, fetchCampaignDirection, fetchCampaignCreatives, scoreCampaignAd, regenerateCampaign, screenCampaignCreative, type CampaignDirectionDTO, type CampaignCreativesDTO, type CampaignCreativeDTO, type AdScorecardDTO, type RegenerateDTO, type ScreenCreativePayload } from "~/lib/dashboard/client";
+import { fetchAnalytics, executeCampaignAction, pushCreativeDraft, DashboardApiError, fetchCampaignDirection, fetchCampaignCreatives, scoreCampaignAd, regenerateCampaign, screenCampaignCreative, type CampaignDirectionDTO, type CampaignCreativesDTO, type CampaignCreativeDTO, type AdScorecardDTO, type RegenerateDTO, type ScreenCreativePayload } from "~/lib/dashboard/client";
 import AdScorecardPanel from "../AdScorecardPanel";
 import type { Variant, CreativeScreenRun } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
@@ -130,15 +130,18 @@ function CampaignDetail({
   app,
   c,
   onBack,
+  metaCanPushDrafts,
 }: {
   app: DashboardCtx;
   c: CampaignVM;
   onBack: () => void;
+  metaCanPushDrafts: boolean;
 }) {
   // The live status can drift from app.campaigns until the next refresh lands,
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
   const [busy, setBusy] = useState(false);
+  const [pushing, setPushing] = useState<string | null>(null);
   const [direction, setDirection] = useState<CampaignDirectionDTO | null>(null);
   useEffect(() => {
     let live = true;
@@ -487,6 +490,33 @@ function CampaignDetail({
                 </div>
                 <p className="cd-body" style={{ marginTop: 6 }}>&ldquo;{v.input.headline}&rdquo; · CTA: {v.input.cta}</p>
                 <p className="cd-caption">{v.rationale}</p>
+                <div style={{ marginTop: 8 }}>
+                  {metaCanPushDrafts ? (
+                    <Btn
+                      icon="arrowUpRight"
+                      disabled={pushing === v.input.headline}
+                      onClick={async () => {
+                        setPushing(v.input.headline);
+                        try {
+                          const r = await pushCreativeDraft(c.id, v.input);
+                          app.toast(r.outcome === "succeeded" ? "Draft pushed to Meta (paused)" : "Push parked for retry");
+                        } catch {
+                          app.toast("Couldn't push the draft — check the action history");
+                        } finally {
+                          setPushing(null);
+                        }
+                      }}
+                    >
+                      Push to Meta as paused draft
+                    </Btn>
+                  ) : (
+                    <Tooltip content="Reconnect Meta with ad-management access to enable drafts">
+                      <Btn icon="lock" disabled>
+                        Reconnect Meta to enable drafts
+                      </Btn>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -670,12 +700,16 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
+  const [metaCanPushDrafts, setMetaCanPushDrafts] = useState(false);
 
   useEffect(() => {
     let alive = true;
     fetchAnalytics()
       .then((res) => {
-        if (alive) setGrades(res.grades);
+        if (alive) {
+          setGrades(res.grades);
+          setMetaCanPushDrafts(res.metaCanPushDrafts);
+        }
       })
       .catch(() => {
         // Non-fatal: the list still renders with default grades.
@@ -699,7 +733,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   // Row-click / deep-link: nav.param carries the selected campaign id.
   const selected = app.nav.param ? joined.find((c) => c.id === app.nav.param) : null;
   if (selected) {
-    return <CampaignDetail app={app} c={selected} onBack={() => app.navigate("campaigns")} />;
+    return <CampaignDetail app={app} c={selected} onBack={() => app.navigate("campaigns")} metaCanPushDrafts={metaCanPushDrafts} />;
   }
 
   // Active campaigns sort to the top; within each status group, highest 7d

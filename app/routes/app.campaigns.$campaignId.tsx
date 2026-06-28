@@ -44,6 +44,8 @@ import {
 } from "~/lib/ads/campaign-detail.server";
 import { resolveCampaignDirection, type CampaignDirection } from "~/lib/actions/direction-reason.server";
 import { executeAction } from "~/lib/actions/execute.server";
+import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
+import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
 import type { Direction, DirectionActionKind } from "~/lib/actions/direction.server";
 import {
   loadCachedAdScorecards,
@@ -124,6 +126,8 @@ type LoaderPayload = {
   direction: CampaignDirection | null;
   /** Blended Calderyn score for this campaign (full P+C — creatives are loaded). */
   calderynScore: CampaignCalderynScore | null;
+  /** Whether the stored Meta token has ads_management scope for the push gate. */
+  metaCanPushDrafts: boolean;
 };
 
 // The list page sources campaigns two ways (see app.campaigns.tsx): the live
@@ -229,6 +233,35 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
+
+  if (String(form.get("intent")) === "push_creative_draft") {
+    const campaignId = String(form.get("campaign_id") ?? "");
+    if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
+    const parsed = parsePushDraftCreative({
+      headline: form.get("headline"),
+      primaryText: form.get("primaryText"),
+      cta: form.get("cta"),
+      destinationUrl: form.get("destinationUrl"),
+      imageUrl: form.get("imageUrl"),
+      audience: form.get("audience"),
+    });
+    if (!parsed.ok) return json({ ok: false, error: parsed.error }, { status: 400 });
+    const shopId = await resolveShopId(session.shop);
+    const res = await executeAction(
+      shopId,
+      {
+        alertId: null,
+        kind: "push_creative_draft",
+        campaignId,
+        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+        creative: parsed.creative,
+        actor: "merchant:admin-detail",
+      },
+      getSupabase(),
+    );
+    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+  }
+
   if (String(form.get("intent")) !== "apply_direction") {
     return json({ ok: false, error: "unknown_intent" }, { status: 400 });
   }
@@ -308,11 +341,12 @@ async function respondForDetail(
   detail: CampaignDetail,
   campaignIdParam: string,
 ) {
-  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction] = await Promise.all([
+  const [{ creatives, creativesError }, { adMetrics, adMetricsError }, scale, direction, metaCanPushDrafts] = await Promise.all([
     loadCreatives(shop, detail),
     loadAdMetrics(shop, detail),
     loadScaleOpportunity(shop, detail),
     resolveDirectionForDetail(shop, detail).catch(() => null),
+    resolveShopId(shop).then((shopId) => metaDraftPushEnabled(getSupabase(), shopId)).catch(() => false),
   ]);
   const assumedSpendCents = spendBasis(detail.performance);
   const scorecards = await loadCachedScorecards(shop, creatives);
@@ -349,6 +383,7 @@ async function respondForDetail(
     scale,
     direction,
     calderynScore,
+    metaCanPushDrafts,
   });
 }
 
@@ -371,6 +406,7 @@ function emptyPayload(
     scale: null,
     direction: null,
     calderynScore: null,
+    metaCanPushDrafts: false,
   };
 }
 
@@ -584,6 +620,7 @@ export default function CampaignDetailPage() {
     scale,
     direction,
     calderynScore,
+    metaCanPushDrafts,
   } = useLoaderData<typeof loader>();
   const directionFetcher = useFetcher<typeof action>();
   const scaleFetcher = useFetcher<typeof action>();
@@ -829,6 +866,7 @@ export default function CampaignDetailPage() {
             campaignIdParam={campaignIdParam}
             adIds={creatives.map((c) => c.adId).filter(Boolean)}
             assumedSpendCents={assumedSpendCents}
+            metaCanPushDrafts={metaCanPushDrafts}
           />
         )}
         {detail && <ScreenNewCreativeCard campaignIdParam={campaignIdParam} />}
@@ -841,12 +879,15 @@ function RegenerateCard({
   campaignIdParam,
   adIds,
   assumedSpendCents,
+  metaCanPushDrafts,
 }: {
   campaignIdParam: string;
   adIds: string[];
   assumedSpendCents: number;
+  metaCanPushDrafts: boolean;
 }) {
   const fetcher = useFetcher<RegenActionPayload>();
+  const pushFetcher = useFetcher<{ ok: boolean; outcome?: string }>();
   const busy = fetcher.state !== "idle";
   const data = fetcher.data;
   const variants = data && data.ok ? data.variants : [];
@@ -868,6 +909,14 @@ function RegenerateCard({
           </Button>
         </fetcher.Form>
         {data && !data.ok && <Banner tone="warning">{data.error.message}</Banner>}
+        {!metaCanPushDrafts && variants.length > 0 && (
+          <Banner tone="info">
+            Reconnect Meta with ad-management access to push drafts.
+          </Banner>
+        )}
+        {pushFetcher.data?.ok === false && (
+          <Banner tone="critical">Couldn&apos;t push the draft — see action history.</Banner>
+        )}
         {variants.map((v, i) => (
           <div key={i} style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 12, padding: "12px 14px" }}>
             <InlineStack gap="200" blockAlign="center">
@@ -879,6 +928,23 @@ function RegenerateCard({
               <Text as="p" variant="bodyMd">&ldquo;{v.input.headline}&rdquo; · CTA: {v.input.cta}</Text>
             </Box>
             <Text as="p" variant="bodySm" tone="subdued">{v.rationale}</Text>
+            {metaCanPushDrafts && (
+              <Box paddingBlockStart="200">
+                <pushFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="push_creative_draft" />
+                  <input type="hidden" name="campaign_id" value={campaignIdParam} />
+                  <input type="hidden" name="headline" value={v.input.headline} />
+                  <input type="hidden" name="primaryText" value={v.input.primaryText} />
+                  <input type="hidden" name="cta" value={v.input.cta} />
+                  <input type="hidden" name="destinationUrl" value={v.input.destinationUrl} />
+                  <input type="hidden" name="imageUrl" value={v.input.imageUrl ?? ""} />
+                  <input type="hidden" name="audience" value={v.input.audience ?? ""} />
+                  <Button submit loading={pushFetcher.state !== "idle"}>
+                    Push to Meta as paused draft
+                  </Button>
+                </pushFetcher.Form>
+              </Box>
+            )}
           </div>
         ))}
       </BlockStack>

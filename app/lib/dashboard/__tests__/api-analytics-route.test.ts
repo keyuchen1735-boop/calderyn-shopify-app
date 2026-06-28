@@ -11,6 +11,8 @@ vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
+vi.mock("../../supabase.server", () => ({ getSupabase: () => ({}) }));
+vi.mock("../../meta/ad-create.server", () => ({ metaDraftPushEnabled: vi.fn(async () => false) }));
 vi.mock("../../calderyn.server", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../../calderyn.server")>();
   return {
@@ -65,6 +67,7 @@ describe("GET /dashboard/api/analytics", () => {
       roas_series: [{ day: "2026-06-01", spend_cents: 100, revenue_cents: 300 }],
       grades: [{ campaign_id: "c1", grade: "winning", break_even_roas: 1.8 }],
       top_ads: [{ ad_external_id: "ad1", engagement: 42 }],
+      meta_can_push_drafts: false,
     });
     expect(dailyRoasSeries).toHaveBeenCalledWith(30);
     expect(topAdsByEngagement).toHaveBeenCalledWith(30, 10);
