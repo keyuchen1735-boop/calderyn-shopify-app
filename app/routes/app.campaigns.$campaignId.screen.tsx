@@ -2,8 +2,7 @@
 // Action-only resource route at /app/campaigns/:campaignId/screen. Drop-in
 // "screen a new creative" for the campaign: parse the manual form, enforce the
 // mandatory-media + SSRF guards, run executeScreen (persists a creative_screen_run),
-// and return the run. Mirrors the manual fallthrough of app.screener.tsx but
-// without importing it (that route is removed in Phase 4).
+// and return the run.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";

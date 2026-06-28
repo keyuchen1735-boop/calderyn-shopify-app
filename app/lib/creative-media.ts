@@ -1,5 +1,5 @@
-// Client-side processing for the predictor's mandatory creative drop box,
-// shared by the extension screener and the dashboard Predictor.
+// Client-side processing for the mandatory creative media drop box,
+// used by campaign creative screens.
 //
 // Images are downscaled to a ≤MAX_DIM WebP data URL so the form post and the
 // persisted creative_input stay small. Videos never leave the browser: we extract

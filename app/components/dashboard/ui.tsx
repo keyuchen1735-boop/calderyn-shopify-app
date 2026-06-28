@@ -595,7 +595,7 @@ export function RingGauge({
   );
 }
 
-/* Horizontal score bar (predictor dimensions). */
+/* Horizontal score bar for creative metric scores. */
 export function ScoreBar({ score }: { score: number }) {
   const [v, setV] = useState(0);
   useEffect(() => {

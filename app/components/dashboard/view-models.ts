@@ -244,35 +244,6 @@ export interface Scorecard {
   variants: ScorecardVariant[];
 }
 
-export interface GeneratorFix {
-  dim: string;
-  before: number;
-  fix: string;
-}
-
-export interface GeneratorOutput {
-  id: string;
-  recommended: boolean;
-  name: string;
-  format: string;
-  duration: string | null;
-  headline: string;
-  primaryText: string;
-  cta: string;
-  composite: number;
-  delta: number;
-  estRoas: number;
-  fixed: Array<[string, number, number]>;
-}
-
-export interface Generator {
-  source_ad: string;
-  source_composite: number;
-  fixes: GeneratorFix[];
-  styles: string[];
-  steps: string[];
-  outputs: GeneratorOutput[];
-}
 
 export interface FeedEvent {
   id?: string | number;

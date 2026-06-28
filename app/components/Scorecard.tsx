@@ -1,6 +1,5 @@
 // Shared predictive scorecard UI for a single screened creative. Pure render —
-// imports NO `.server` module. Used by both the manual Ad Pre-Screen route
-// (app.screener) and the per-ad scorecards on the campaign detail page.
+// imports NO `.server` module. Used by per-ad scorecards on the campaign detail page.
 import { useState } from "react";
 import {
   Badge,
