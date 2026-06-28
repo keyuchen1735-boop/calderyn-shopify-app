@@ -36,7 +36,7 @@ interface EasyPostListResponse {
   has_more?: boolean;
 }
 
-function basicAuthHeader(apiKey: string): string {
+export function basicAuthHeader(apiKey: string): string {
   // EasyPost: key as username, empty password → base64("KEY:").
   return `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`;
 }
@@ -78,7 +78,7 @@ export function mapShipmentToNormalized(s: EasyPostShipment): NormalizedShipment
   };
 }
 
-function apiBase(): string {
+export function apiBase(): string {
   // Optional override (contract P5); default to production v2.
   const raw = process.env.EASYPOST_API_BASE?.trim();
   return (raw && raw.length > 0 ? raw : DEFAULT_BASE).replace(/\/+$/, "");
