@@ -247,6 +247,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
     if (!parsed.ok) return json({ ok: false, error: parsed.error }, { status: 400 });
     const shopId = await resolveShopId(session.shop);
+    // Defense in depth: refuse before any Meta call if the stored token lacks
+    // ads_management (the loader gate is advisory; a direct POST bypasses it).
+    if (!(await metaDraftPushEnabled(getSupabase(), shopId))) {
+      return json({ ok: false, error: "meta_scope_insufficient" }, { status: 403 });
+    }
     const res = await executeAction(
       shopId,
       {

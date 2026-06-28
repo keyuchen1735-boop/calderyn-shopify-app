@@ -481,8 +481,10 @@ function CampaignDetail({
         </div>
         {variants.length > 0 && (
           <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
-            {variants.map((v) => (
-              <div key={v.mode + v.input.headline} style={{ background: "var(--cd-surface-2, #f5f5f5)", borderRadius: 12, padding: "12px 14px" }}>
+            {variants.map((v, i) => {
+              const pushKey = `${i}:${v.input.headline}`;
+              return (
+              <div key={pushKey} style={{ background: "var(--cd-surface-2, #f5f5f5)", borderRadius: 12, padding: "12px 14px" }}>
                 <div className="flex items-center gap-2">
                   <Pill tone="accent">{v.mode}</Pill>
                   <span style={{ fontWeight: 600 }}>{v.composite}</span>
@@ -494,9 +496,9 @@ function CampaignDetail({
                   {metaCanPushDrafts ? (
                     <Btn
                       icon="arrowUpRight"
-                      disabled={pushing === v.input.headline}
+                      disabled={pushing === pushKey}
                       onClick={async () => {
-                        setPushing(v.input.headline);
+                        setPushing(pushKey);
                         try {
                           const r = await pushCreativeDraft(c.id, v.input);
                           app.toast(r.outcome === "succeeded" ? "Draft pushed to Meta (paused)" : "Push parked for retry");
@@ -518,7 +520,8 @@ function CampaignDetail({
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

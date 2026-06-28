@@ -5,6 +5,7 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { parsePushDraftCreative, pushCreativeDraftKey } from "~/lib/actions/push-draft.server";
+import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -40,6 +41,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (kind === "push_creative_draft") {
     const parsed = parsePushDraftCreative(body.creative);
     if (!parsed.ok) return jsonError(422, parsed.error);
+    // Defense in depth: refuse before any Meta call if the stored token lacks
+    // ads_management (the UI gate is advisory; a direct POST bypasses it).
+    if (!(await metaDraftPushEnabled(getSupabase(), session.shopId))) {
+      return jsonError(403, "meta_scope_insufficient");
+    }
     const campaignId = String(params.id);
     const result = await executeAction(
       session.shopId,

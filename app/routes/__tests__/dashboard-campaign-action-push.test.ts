@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { action } from "../dashboard.api.campaigns.$id.action";
 
-const { executeAction } = vi.hoisted(() => ({ executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })) }));
+const { executeAction, metaDraftPushEnabled } = vi.hoisted(() => ({
+  executeAction: vi.fn(async () => ({ id: "aud1", outcome: "succeeded" })),
+  metaDraftPushEnabled: vi.fn(async () => true),
+}));
 vi.mock("~/lib/actions/execute.server", () => ({ executeAction }));
+vi.mock("~/lib/meta/ad-create.server", () => ({ metaDraftPushEnabled }));
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: vi.fn(async () => ({ shopId: "shop-1", shopDomain: "s.myshopify.com" })),
 }));
@@ -26,7 +30,10 @@ function req(body: unknown) {
 }
 
 describe("dashboard campaign action — push_creative_draft", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    metaDraftPushEnabled.mockResolvedValue(true);
+  });
 
   it("validates the creative, computes a deterministic key, and dispatches", async () => {
     const creative = {
@@ -49,6 +56,20 @@ describe("dashboard campaign action — push_creative_draft", () => {
   it("rejects an invalid creative with 422 and never dispatches", async () => {
     const res = await action({ request: req({ type: "push_creative_draft", creative: { primaryText: "x" } }), params: { id: "c-1" }, context: {} } as never);
     expect(res.status).toBe(422);
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 403 when the token lacks ads_management and never dispatches", async () => {
+    metaDraftPushEnabled.mockResolvedValue(false);
+    const creative = {
+      headline: "Summer Sale",
+      primaryText: "50% off.",
+      cta: "SHOP_NOW",
+      destinationUrl: "https://shop.example.com/sale",
+      imageUrl: "https://cdn.example.com/a.jpg",
+    };
+    const res = await action({ request: req({ type: "push_creative_draft", creative }), params: { id: "c-1" }, context: {} } as never);
+    expect(res.status).toBe(403);
     expect(executeAction).not.toHaveBeenCalled();
   });
 });
