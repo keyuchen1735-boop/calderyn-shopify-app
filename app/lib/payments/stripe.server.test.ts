@@ -128,6 +128,21 @@ describe("processStripeEvent", () => {
     });
   });
 
+  it("reconciles: the sum of captured ledger rows equals the Stripe captured amount", async () => {
+    h.constructEvent.mockReturnValue(succeededEvent);
+    const ledger: Array<{ amount_cents: number }> = [];
+    h.rpc.mockImplementation(async (_fn: string, a: Record<string, any>) => {
+      if (a.p_kind) ledger.push({ amount_cents: a.p_amount_cents });
+      return { data: true, error: null };
+    });
+
+    await processStripeEvent("raw-body", "sig");
+
+    const captured = succeededEvent.data.object.amount_received;
+    const ledgerSum = ledger.reduce((acc, row) => acc + row.amount_cents, 0);
+    expect(ledgerSum).toBe(captured); // ledger ties exactly to the captured charge (rule 12)
+  });
+
   it("rejects an invalid signature with 400 and writes nothing", async () => {
     h.constructEvent.mockImplementation(() => {
       throw new Error("Webhook signature verification failed");

@@ -129,3 +129,9 @@ $$;
 revoke execute on function public.record_stripe_event(
   text, text, uuid, boolean, jsonb, text, text, text, bigint, text, text, timestamptz
 ) from public, anon, authenticated;
+
+-- service_role is not the function owner and BYPASSRLS does not grant EXECUTE, so the
+-- webhook (service-role client) needs an explicit grant or every rpc() call fails closed.
+grant execute on function public.record_stripe_event(
+  text, text, uuid, boolean, jsonb, text, text, text, bigint, text, text, timestamptz
+) to service_role;
