@@ -217,7 +217,6 @@ export function verifyPassword(plain: string, stored: string): boolean {
 ```
 
 > **Test note:** the Task 2 test (and any test that hashes) must set `process.env.PASSWORD_PEPPER = "x".repeat(32)` before importing, since hashing now requires the pepper — same as the session test sets `DASHBOARD_SESSION_PEPPER`.
-```
 
 - [ ] **Step 4: Run test to verify it passes**
 
