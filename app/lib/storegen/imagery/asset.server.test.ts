@@ -5,7 +5,7 @@ import { enhanceListing, applyAssetOverrides } from "./asset.server";
 
 const { fromMock, providerMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
-vi.mock("./provider", () => ({ getImageProvider: () => ({ name: "fake", generateListingImage: providerMock }) }));
+vi.mock("./provider.server", () => ({ getImageProvider: () => ({ name: "fake", generateListingImage: providerMock }) }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string, url: string | null): StoreProduct => ({
@@ -45,5 +45,11 @@ describe("applyAssetOverrides", () => {
     const out = await applyAssetOverrides("demo-shop", [product("1", "/old.jpg")]);
     expect(out[0].images[0].url).toBe("/old.jpg");
     expect(fromMock).not.toHaveBeenCalled();
+  });
+  it("adds the override image to a product that had no image (alt falls back to title)", async () => {
+    const eq = vi.fn().mockResolvedValue({ data: [{ product_id: "1", url: "https://img/new.png", status: "ready" }], error: null });
+    fromMock.mockReturnValue({ select: () => ({ eq }) });
+    const out = await applyAssetOverrides(realShop, [product("1", null)]);
+    expect(out[0].images).toEqual([{ url: "https://img/new.png", alt: "P1" }]);
   });
 });

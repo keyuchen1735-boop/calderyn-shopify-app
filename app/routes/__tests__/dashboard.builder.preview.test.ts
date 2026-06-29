@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
-import BuilderPreview, { loader } from "../dashboard.builder.preview";
+import BuilderPreview, { loader, action } from "../dashboard.builder.preview";
 
 const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(),
@@ -47,12 +47,47 @@ describe("builder draft preview", () => {
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No image");
   });
 
+  it("loader surfaces enhanceError when the redirect param is set", async () => {
+    loadDraftMock.mockResolvedValue(null);
+    const r = { request: new Request("https://app/dashboard/builder/preview?enhanceError=1"), params: {}, context: {} } as never;
+    const data = await (await loader(r)).json();
+    expect(data.enhanceError).toBe(true);
+    loaderDataRef.current = data;
+    expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("Image generation failed");
+  });
+
   it("action enhances a selected listing", async () => {
     // "p-tee" is the first product in fixtureCatalog; plan used "1" but fixture IDs are prefixed.
     enhanceMock.mockResolvedValue({ productId: "p-tee", status: "ready", url: "https://img/n.png" });
-    const { action } = await import("../dashboard.builder.preview");
-    const res = await action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({ productId: "p-tee" }) }), params: {}, context: {} } as never);
+    const post = (id: string) => action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({ productId: id }) }), params: {}, context: {} } as never);
+    const res = await post("p-tee");
     expect(enhanceMock).toHaveBeenCalled();
     expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard/builder/preview");
+  });
+
+  it("action rejects with 400 when productId is missing", async () => {
+    const res: Response = await action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({}) }), params: {}, context: {} } as never).then(
+      () => { throw new Error("expected a thrown Response"); },
+      (e) => e,
+    );
+    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(400);
+  });
+
+  it("action rejects with 404 when the product is not in the catalog", async () => {
+    const res: Response = await action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({ productId: "does-not-exist" }) }), params: {}, context: {} } as never).then(
+      () => { throw new Error("expected a thrown Response"); },
+      (e) => e,
+    );
+    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(404);
+  });
+
+  it("action redirects with enhanceError=1 when enhancement fails (rule 12)", async () => {
+    enhanceMock.mockResolvedValue({ productId: "p-tee", status: "failed", url: null });
+    const res = await action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({ productId: "p-tee" }) }), params: {}, context: {} } as never);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toContain("enhanceError=1");
   });
 });

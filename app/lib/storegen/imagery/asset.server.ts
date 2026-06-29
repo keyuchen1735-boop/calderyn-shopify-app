@@ -4,7 +4,7 @@
 // a product's primary image with its latest ready asset, so storefront/preview show the new image.
 import { getSupabase } from "~/lib/supabase.server";
 import type { StoreProduct } from "~/lib/storefront/catalog";
-import { getImageProvider } from "./provider";
+import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SOURCE = "higgsfield";
@@ -25,6 +25,8 @@ export async function enhanceListing(shopId: string, product: StoreProduct): Pro
   } catch {
     status = "failed"; // keep the source image; surfaced as a failed asset row
   }
+  // url is NOT NULL in store_asset; "" is the sentinel for failed rows. It is never surfaced
+  // because applyAssetOverrides filters on status === "ready" && r.url.
   const { error } = await sb.from("store_asset").upsert(
     { shop_id: shopId, product_id: product.id, source: SOURCE, url: url ?? "", status, created_at: new Date().toISOString() },
     { onConflict: "shop_id,product_id,source" },

@@ -22,6 +22,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
   const collections = await catalog.listCollections(shopId);
   const candidates = findImprovableListings(products);
+  const enhanceError = new URL(request.url).searchParams.get("enhanceError") === "1";
   const sample: RenderContext["record"] = { product: products[0], collection: collections[0] };
 
   async function previewFor(page: "home" | "collection" | "pdp") {
@@ -36,6 +37,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     collection: await previewFor("collection"),
     pdp: await previewFor("pdp"),
     candidates,
+    enhanceError,
   });
 }
 
@@ -46,21 +48,25 @@ export async function action({ request }: ActionFunctionArgs) {
   if (typeof productId !== "string" || !productId) throw new Response("productId required", { status: 400 });
   const product = (await getCatalog().listProducts(session.shopId)).find((p) => p.id === productId);
   if (!product) throw new Response("unknown product", { status: 404 });
-  await enhanceListing(session.shopId, product); // selected listing only — never the whole catalog
-  return redirect("/dashboard/builder/preview");
+  const result = await enhanceListing(session.shopId, product); // selected listing only — never the whole catalog
+  // Surface a failed generation back to the merchant instead of redirecting silently (rule 12).
+  return redirect(result.status === "failed" ? "/dashboard/builder/preview?enhanceError=1" : "/dashboard/builder/preview");
 }
 
 type Pane = { doc: BlockDocument; data: RenderData; record?: RenderContext["record"] } | null;
 
 export default function BuilderPreview() {
-  const { home, collection, pdp, candidates } = useLoaderData<typeof loader>() as {
-    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[];
+  const { home, collection, pdp, candidates, enhanceError } = useLoaderData<typeof loader>() as {
+    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[]; enhanceError: boolean;
   };
   const panes: [string, Pane][] = [["Home", home], ["Collection", collection], ["PDP", pdp]];
   const any = panes.some(([, p]) => p);
   return (
     <div className="cd-builder-preview">
       <h1>Generated store (draft)</h1>
+      {enhanceError ? (
+        <p className="cd-builder-preview__error">Image generation failed for that listing — check Higgsfield configuration.</p>
+      ) : null}
       {!any ? <p>No draft yet — generate your store first.</p> : null}
       {panes.map(([label, pane]) =>
         pane ? (

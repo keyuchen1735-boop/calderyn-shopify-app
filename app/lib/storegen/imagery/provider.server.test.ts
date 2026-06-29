@@ -1,8 +1,6 @@
-// app/lib/storegen/imagery/provider.test.ts
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getImageProvider, type ImageProvider } from "./provider";
-
-beforeEach(() => { delete process.env.STOREGEN_IMAGE_PROVIDER; });
+// app/lib/storegen/imagery/provider.server.test.ts
+import { describe, it, expect, vi } from "vitest";
+import { getImageProvider, type ImageProvider } from "./provider.server";
 
 describe("ImageProvider seam", () => {
   it("a fake provider satisfies the interface and returns a url", async () => {
