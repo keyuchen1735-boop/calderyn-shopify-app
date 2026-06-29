@@ -11,6 +11,7 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
+import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
 
 export interface Cart {
   id: string;
@@ -179,6 +180,41 @@ export async function priceCart(shopId: string, cartId: string): Promise<PricedC
   }
   const currency = currencies.values().next().value ?? "usd";
   return { cartId, lines, subtotalCents, currency };
+}
+
+/**
+ * Price a list of (variant, quantity) against the live catalog — the single pricing path
+ * shared by cart add, checkout, and agentic quotes. Throws (rule 12) on an unknown or
+ * unavailable variant rather than silently dropping it. Mixed currencies fail visibly.
+ */
+export async function priceLines(
+  shopId: string,
+  lines: QuoteLine[],
+): Promise<{ lines: PricedLine[]; subtotalCents: number; currency: string }> {
+  if (!shopId) throw new Error("shopId is required");
+  const priced: PricedLine[] = [];
+  for (const line of lines) {
+    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+      throw new Error(`quantity must be a positive integer, got ${line.quantity}`);
+    }
+    const resolved = await resolveVariant(shopId, line.variantId);
+    if (!resolved) throw new Error(`variant ${line.variantId} not found in catalog for shop ${shopId}`);
+    if (!resolved.variant.available) throw new Error(`variant ${line.variantId} is not available`);
+    priced.push({
+      variantId: line.variantId,
+      quantity: line.quantity,
+      unitPriceCents: resolved.variant.priceCents,
+      currency: resolved.variant.currency.toLowerCase(),
+      titleSnapshot: snapshotTitle(resolved.product, resolved.variant),
+    });
+  }
+  const currencies = new Set(priced.map((l) => l.currency));
+  if (currencies.size > 1) {
+    throw new Error(`lines mix currencies: ${[...currencies].sort().join(", ")}`);
+  }
+  const subtotalCents = priced.reduce((s, l) => s + l.unitPriceCents * l.quantity, 0);
+  const currency = currencies.values().next().value ?? "usd";
+  return { lines: priced, subtotalCents, currency };
 }
 
 function mapCart(row: Record<string, unknown>): Cart {
