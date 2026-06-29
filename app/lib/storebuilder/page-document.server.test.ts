@@ -52,12 +52,14 @@ describe("page-document repo", () => {
 
   it("publishDoc copies draft_json into published_json", async () => {
     const maybeSingle = vi.fn().mockResolvedValue({ data: { draft_json: doc, kind: "singleton" }, error: null });
-    const update = vi.fn().mockResolvedValue({ error: null });
+    const eqInner = vi.fn().mockResolvedValue({ error: null });
+    const updateSpy = vi.fn(() => ({ eq: () => ({ eq: eqInner }) }));
     fromMock
       .mockReturnValueOnce({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle }) }) }) }) // read draft
-      .mockReturnValueOnce({ update: () => ({ eq: () => ({ eq: update }) }) }); // write published
+      .mockReturnValueOnce({ update: updateSpy }); // write published
     await publishDoc(realShop, "home");
-    expect(update).toHaveBeenCalled();
+    // assert the COPY, not merely that the chain ran
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ published_json: doc }));
   });
 
   it("publishDoc throws when there is no draft to publish (fail visibly, rule 12)", async () => {

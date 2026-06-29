@@ -13,8 +13,6 @@ create table public.page_document (
   updated_at     timestamptz not null default now(),
   primary key (shop_id, page_key)
 );
-create index page_document_shop_idx on public.page_document (shop_id);
-
 alter table public.page_document enable row level security;
 create policy page_document_shop_scope on public.page_document
   for all

@@ -7,13 +7,15 @@ import { getBlockMeta } from "./registry";
 
 export function renderBlocks(doc: BlockDocument, ctx: RenderContext): ReactNode[] {
   return [...doc.blocks]
-    .sort((a, b) => a.layout.y - b.layout.y || a.layout.x - b.layout.x)
+    // Optional-chain the layout: an untrusted/malformed block (no layout) must not throw out of
+    // sort() and blank the whole page — it sorts as 0 and is rendered (or skipped) like any other.
+    .sort((a, b) => (a.layout?.y ?? 0) - (b.layout?.y ?? 0) || (a.layout?.x ?? 0) - (b.layout?.x ?? 0))
     .map((block) => {
       const meta = getBlockMeta(block.type);
       if (!meta) return null; // unknown type (forward-compat) → skip
       let props: Record<string, unknown>;
       try { props = meta.validateProps(block.props) as Record<string, unknown>; }
-      catch { return null; } // defensive: published docs are pre-validated, but never crash a render
+      catch { return null; } // defensive: skip a malformed block, never crash the page (docs may be unvalidated)
       return createElement(meta.Component as (a: { props: unknown; ctx: RenderContext }) => ReactNode, { key: block.id, props, ctx });
     });
 }

@@ -27,4 +27,15 @@ describe("renderBlocks", () => {
     expect(() => wrap(doc)).not.toThrow();
     expect(wrap(doc)).toContain("OK");
   });
+
+  it("does not throw when a block has a missing/malformed layout (never blanks)", () => {
+    const malformed = { id: "nolayout", type: "hero", props: { headline: "STILL HERE", subhead: "" } } as unknown as Block;
+    const doc: BlockDocument = { kind: "singleton", pageKey: "home", blocks: [
+      malformed,
+      { id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "OK", subhead: "" } },
+    ] };
+    expect(() => wrap(doc)).not.toThrow();
+    expect(wrap(doc)).toContain("OK");
+    expect(wrap(doc)).toContain("STILL HERE");
+  });
 });

@@ -1,6 +1,9 @@
 // app/lib/storebuilder/validate.ts
-// Document validation: never publish a fabricated catalog id, never let an invalid block
-// reach the renderer, and (rule 12) surface every drop. Pure + isomorphic.
+// WRITE-TIME document validation — the publish path (the future generator #16 / editor #8) MUST
+// call this before publishing, to drop fabricated catalog ids and disallowed/unknown blocks and
+// (rule 12) surface every drop. The renderer (render.tsx) is INDEPENDENTLY defensive at read time
+// (skips bad blocks; the shop-scoped resolver neutralizes any stale id), so this is the data-quality
+// gate, not the only line of defense. Pure + isomorphic.
 import type { BlockDocument, BlockType, PageKey } from "./types";
 import { getBlockMeta } from "./registry";
 

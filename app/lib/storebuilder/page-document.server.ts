@@ -37,7 +37,11 @@ export async function saveDraft(shopId: string, pageKey: PageKey, doc: BlockDocu
   if (error) throw error;
 }
 
-/** Promote draft → published. Fails visibly if there is no draft (rule 12). */
+/**
+ * Promote draft → published. Fails visibly if there is no draft (rule 12).
+ * CALLER OBLIGATION: validate the draft (validateDocument) before publishing — this repo does NOT
+ * re-validate here, so a fabricated catalog id in an unvalidated draft would reach published_json.
+ */
 export async function publishDoc(shopId: string, pageKey: PageKey): Promise<void> {
   if (!persistableShop(shopId)) throw new Error(`publishDoc requires a real (uuid) shop_id, got ${shopId}`);
   const sb = getSupabase();
