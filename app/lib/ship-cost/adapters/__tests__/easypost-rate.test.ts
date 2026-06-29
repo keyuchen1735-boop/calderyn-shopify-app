@@ -244,6 +244,17 @@ describe("fetchEasyPostRates — timeout & fallback", () => {
     expect(result.fallbackUsed).toBe(true);
   });
 
+  it("degrades to fallback (never throws) when parcels is missing entirely", async () => {
+    // Untrusted callers (checkout building a RateRequest from JSON) may omit parcels;
+    // both the early guard AND buildFallbackOptions must survive parcels === undefined.
+    const noParcels = { ...sampleReq(), parcels: undefined } as unknown as RateRequest;
+    const mockFetch = vi.fn(async () => okJson(rateFixture));
+    const result = await fetchEasyPostRates("k", noParcels, mockFetch as unknown as typeof fetch);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.options.length).toBeGreaterThan(0);
+    expect(mockFetch).not.toHaveBeenCalled(); // short-circuits before any carrier call
+  });
+
   it("falls back on a malformed body (json() throws) without throwing", async () => {
     const mockFetch = vi.fn(async () =>
       ({ ok: true, status: 200, statusText: "OK", json: async () => { throw new Error("bad json"); } } as unknown as Response));

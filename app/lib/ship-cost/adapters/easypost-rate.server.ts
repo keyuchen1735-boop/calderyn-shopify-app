@@ -80,7 +80,7 @@ const FALLBACK_TOP = { economyCents: 2499, expeditedCents: 4499 }; // > 160 oz.
  * re-implementing it. Options are never guaranteed and carry no firm delivery date.
  */
 export function buildFallbackOptions(req: RateRequest): NormalizedRateOption[] {
-  const weightOz = req.parcels[0]?.weightOz ?? 0; // ponytail: single-parcel.
+  const weightOz = req.parcels?.[0]?.weightOz ?? 0; // ponytail: single-parcel; optional-chain the array too so a missing parcels[] still degrades, never throws (contract).
   const band = FALLBACK_BANDS.find((b) => weightOz <= b.maxWeightOz);
   const economyCents = band ? band.economyCents : FALLBACK_TOP.economyCents;
   const expeditedCents = band ? band.expeditedCents : FALLBACK_TOP.expeditedCents;
