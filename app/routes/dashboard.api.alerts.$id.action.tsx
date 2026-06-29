@@ -48,7 +48,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
 
   const alertId = String(params.id);
-  const client = calderynClient(session.shopDomain);
+  const client = calderynClient(session.shopId);
   const sb = getSupabase();
 
   return dashboardJson(async () => {
@@ -69,7 +69,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         client,
         sb,
         shopId: session.shopId,
-        shopDomain: session.shopDomain,
+        shopDomain: session.shopDomain ?? session.shopId,
         alertId,
         idempotencyKey,
         quantity: String(body.po_quantity ?? ""),
@@ -91,6 +91,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
       const calibration = await recordCalibration(kind, outcome);
       return { audit_id: auditId, outcome, acknowledged, calibration };
+    }
+    if (!session.shopDomain) {
+      throw jsonError(422, "shopify_required", "Connect a Shopify store to use this action.");
     }
     const { admin } = await unauthenticated.admin(session.shopDomain);
     if (kind === "adjust_price") {

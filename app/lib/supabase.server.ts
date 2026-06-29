@@ -34,20 +34,26 @@ export function getSupabase(): SupabaseClient {
 // cache resets on cold start, which is fine — it's only a latency optimization.
 const shopIdCache = new Map<string, string>();
 
-export async function resolveShopId(shopDomain: string): Promise<string> {
-  const cached = shopIdCache.get(shopDomain);
+// A shops.id (UUID) may be passed directly: owned (first-party) shops have no
+// shop_domain, so the dashboard resolves tenancy by the universal shop id. A
+// domain never matches this shape, so existing domain lookups are unaffected.
+const SHOP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function resolveShopId(shopOrId: string): Promise<string> {
+  if (SHOP_ID_RE.test(shopOrId)) return shopOrId;
+  const cached = shopIdCache.get(shopOrId);
   if (cached) return cached;
 
   const { data, error } = await getSupabase()
     .from("shops")
     .select("id")
-    .eq("shop_domain", shopDomain)
+    .eq("shop_domain", shopOrId)
     .maybeSingle();
   if (error) throw error;
   if (!data) {
-    throw new Error(`Shop not found in Supabase: ${shopDomain}`);
+    throw new Error(`Shop not found in Supabase: ${shopOrId}`);
   }
-  shopIdCache.set(shopDomain, data.id);
+  shopIdCache.set(shopOrId, data.id);
   return data.id;
 }
 

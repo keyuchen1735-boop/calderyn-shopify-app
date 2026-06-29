@@ -77,7 +77,8 @@ export async function createSession(shopDomain: string): Promise<{ raw: string }
 
 export type DashboardSession = {
   shopId: string;
-  shopDomain: string;
+  shopDomain: string | null;
+  userId: string | null;
   sessionId: string;
 };
 
@@ -90,7 +91,7 @@ export async function getSessionFromRequest(
   const sb = getSupabase();
   const { data, error } = await sb
     .from("dashboard_sessions")
-    .select("id, shop_id, shop_domain, expires_at, revoked_at")
+    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at")
     .eq("token_hash", hashSessionToken(raw))
     .maybeSingle();
   if (error) throw error;
@@ -110,7 +111,8 @@ export async function getSessionFromRequest(
 
   return {
     shopId: String(data.shop_id),
-    shopDomain: String(data.shop_domain),
+    shopDomain: data.shop_domain == null ? null : String(data.shop_domain),
+    userId: data.user_id == null ? null : String(data.user_id),
     sessionId: String(data.id),
   };
 }
@@ -151,6 +153,35 @@ export async function revokeAllSessionsForShop(shopDomain: string): Promise<void
     .from("dashboard_sessions")
     .update({ revoked_at: new Date().toISOString() })
     .eq("shop_domain", shopDomain)
+    .is("revoked_at", null);
+  if (error) throw error;
+}
+
+export async function createSessionForUser(
+  userId: string,
+  shopId: string,
+): Promise<{ raw: string }> {
+  const raw = newSessionToken();
+  const { error } = await getSupabase()
+    .from("dashboard_sessions")
+    .insert({
+      user_id: userId,
+      shop_id: shopId,
+      token_hash: hashSessionToken(raw),
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  await resurfaceAllSnoozes(getSupabase(), shopId);
+  return { raw };
+}
+
+export async function revokeAllSessionsForUser(userId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("dashboard_sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("user_id", userId)
     .is("revoked_at", null);
   if (error) throw error;
 }

@@ -6,7 +6,7 @@ import { calderynClient } from "~/lib/calderyn.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const onboarding = await calderynClient(session.shopDomain).onboarding.getState();
+    const onboarding = await calderynClient(session.shopId).onboarding.getState();
     return { shop_domain: session.shopDomain, onboarding };
   });
 }

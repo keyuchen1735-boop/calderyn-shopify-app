@@ -50,9 +50,9 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!parsed.ok) return jsonError(422, parsed.error.code, parsed.error.message);
 
   return dashboardJson(async () => {
-    const { calib, scoreOne, claudeDeps } = await gateScoreDeps(session.shopDomain, parsed.assumedSpendCents);
+    const { calib, scoreOne, claudeDeps } = await gateScoreDeps(session.shopId, parsed.assumedSpendCents);
     const generator = pickGenerator("copy", claudeDeps);
-    const result = await regenerateCampaignCreative(session.shopDomain, parsed.adIds, {
+    const result = await regenerateCampaignCreative(session.shopId, parsed.adIds, {
       loadCached: loadCachedAdScorecards,
       getLatestRunForAd,
       gate: { generator, scoreOne },

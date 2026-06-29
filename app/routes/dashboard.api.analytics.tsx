@@ -8,7 +8,7 @@ import { metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     const [roasSeries, grades, topAds] = await Promise.all([
       client.analytics.dailyRoasSeries(30),
       client.analytics.campaignGrades(),

@@ -10,14 +10,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const id = String(params.id);
   return dashboardJson(async () => {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     const [campaign, grades, creativeData] = await Promise.all([
       client.campaigns.get(id),
       client.analytics.campaignGrades(),
       // Cache-ONLY read of the campaign's creatives + per-ad scorecards — NO
       // Claude/scoring on load. Uncached ads are scored on demand via the score
       // endpoint; here we only need the cached half to blend.
-      loadCampaignCreativeScorecards(session.shopDomain, session.shopId, id, DEFAULT_SPEND_CENTS),
+      loadCampaignCreativeScorecards(session.shopId, session.shopId, id, DEFAULT_SPEND_CENTS),
     ]);
     const gradeRow = grades.find((g) => g.campaign_id === id);
     const { creatives, scorecards } = creativeData;
@@ -26,7 +26,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // scorecards. Inject the already-loaded scorecards as deps so resolve does no
     // second cache read. The list loader stays performance-only as a cost guard.
     const calderynScore = await resolveCampaignScore(
-      session.shopDomain,
+      session.shopId,
       {
         id,
         ads: creatives.map((cr) => ({

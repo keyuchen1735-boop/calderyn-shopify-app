@@ -128,7 +128,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   // failure never affects the action result.
   let calibration: ApproveReceipt | undefined;
   if (result.outcome === "succeeded" && alertId) {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     const alert = await client.alerts.get(alertId).catch(() => null);
     if (alert) {
       calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb).catch(

@@ -12,7 +12,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const skuId = String(params.id ?? "");
   return dashboardJson(async () => ({
     history: isUuid(skuId)
-      ? await calderynClient(session.shopDomain).skus.history(skuId)
+      ? await calderynClient(session.shopId).skus.history(skuId)
       : [],
   }));
 }

@@ -10,7 +10,7 @@ import type { GuardrailConfig } from "~/lib/types";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => ({
-    guardrails: await calderynClient(session.shopDomain).guardrails.get(),
+    guardrails: await calderynClient(session.shopId).guardrails.get(),
   }));
 }
 
@@ -55,6 +55,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (validateGuardrailPatch(patch) !== null) return jsonError(422, "invalid_guardrails");
 
   return dashboardJson(async () => ({
-    guardrails: await calderynClient(session.shopDomain).guardrails.update(patch),
+    guardrails: await calderynClient(session.shopId).guardrails.update(patch),
   }));
 }

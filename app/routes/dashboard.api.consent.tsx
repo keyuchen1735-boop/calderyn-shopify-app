@@ -11,7 +11,7 @@ import { calderynClient } from "~/lib/calderyn.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => ({
-    consent: await calderynClient(session.shopDomain).consent.get(),
+    consent: await calderynClient(session.shopId).consent.get(),
   }));
 }
 
@@ -31,7 +31,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // Keep the write inside dashboardJson so a Supabase failure returns the
   // structured {error} envelope the client parses, not a raw 500.
   return dashboardJson(async () => {
-    await calderynClient(session.shopDomain).consent.set(body.consent as boolean);
+    await calderynClient(session.shopId).consent.set(body.consent as boolean);
     return { consent: body.consent as boolean };
   });
 }

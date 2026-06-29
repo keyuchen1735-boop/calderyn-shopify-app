@@ -29,7 +29,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const enabled = body.enabled === true;
   if (!detectorId || !actionKind) return jsonError(400, "missing_feature");
 
-  const client = calderynClient(session.shopDomain);
+  const client = calderynClient(session.shopId);
   return dashboardJson(async () => {
     const r = await client.calibration.setFeatureAutonomy(detectorId, actionKind, enabled);
     if (!r.ok) {

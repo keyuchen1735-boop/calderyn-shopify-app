@@ -7,7 +7,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const sp = new URL(request.url).searchParams;
   return dashboardJson(async () => ({
-    alerts: await calderynClient(session.shopDomain).alerts.list({
+    alerts: await calderynClient(session.shopId).alerts.list({
       status: sp.get("status") ?? undefined,
       severity: sp.get("severity") ?? undefined,
       detector: sp.get("detector") ?? undefined,

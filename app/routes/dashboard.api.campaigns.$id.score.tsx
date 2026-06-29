@@ -58,7 +58,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   return dashboardJson(async () => {
     const [scorecard] = await loadOrScoreAdScorecards(
-      session.shopDomain,
+      session.shopId,
       [{ adId: parsed.adId, creative: parsed.creative }],
       parsed.assumedSpendCents,
     );

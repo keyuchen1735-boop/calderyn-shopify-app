@@ -12,7 +12,7 @@ import { calderynClient } from "~/lib/calderyn.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const rules = await calderynClient(session.shopDomain).calibration.learnedRules();
+    const rules = await calderynClient(session.shopId).calibration.learnedRules();
     return { rules };
   });
 }
@@ -33,7 +33,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!ruleId) return jsonError(400, "missing_rule_id");
 
   return dashboardJson(async () => {
-    await calderynClient(session.shopDomain).calibration.undoRule(ruleId);
+    await calderynClient(session.shopId).calibration.undoRule(ruleId);
     return { ok: true };
   });
 }

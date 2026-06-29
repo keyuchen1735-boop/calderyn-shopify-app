@@ -12,6 +12,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const spend = Number(url.searchParams.get("assumedSpendCents")) || DEFAULT_SPEND_CENTS;
   return dashboardJson(async () =>
-    loadCampaignCreativeScorecards(session.shopDomain, session.shopId, String(params.id), spend),
+    loadCampaignCreativeScorecards(session.shopId, session.shopId, String(params.id), spend),
   );
 }
