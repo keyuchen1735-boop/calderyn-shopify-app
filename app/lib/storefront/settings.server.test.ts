@@ -1,10 +1,10 @@
 // app/lib/storefront/settings.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "./settings.server";
 
 const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 
-import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "./settings.server";
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => fromMock.mockReset());
 

@@ -1,8 +1,10 @@
 // app/lib/storegen/audit.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { recordGeneration, recordProposal } from "./audit.server";
+
 const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
-import { recordGeneration, recordProposal } from "./audit.server";
+
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => fromMock.mockReset());
 

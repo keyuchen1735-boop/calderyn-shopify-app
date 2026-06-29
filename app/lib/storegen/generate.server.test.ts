@@ -1,6 +1,7 @@
 // app/lib/storegen/generate.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
+import { generateStore } from "./generate.server";
 
 const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
@@ -11,8 +12,6 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ saveDraft: saveDraftMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ saveStoreSettings: saveSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
 vi.mock("./audit.server", () => ({ recordGeneration: recGenMock, recordProposal: recPropMock }));
-
-import { generateStore } from "./generate.server";
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string): StoreProduct => ({ id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [{ id: `v-${id}`, sku: null, title: "D", priceCents: 1000, currency: "USD", available: true }], collections: ["summer"] });

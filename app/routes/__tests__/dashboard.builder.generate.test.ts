@@ -1,10 +1,11 @@
 // app/routes/__tests__/dashboard.builder.generate.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { action } from "../dashboard.builder.generate";
+
 const { sessionMock, generateMock } = vi.hoisted(() => ({ sessionMock: vi.fn(), generateMock: vi.fn() }));
 vi.mock("~/lib/dashboard/session.server", () => ({ getSessionOrRedirect: sessionMock }));
 vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
 
-import { action } from "../dashboard.builder.generate";
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => {
   sessionMock.mockReset().mockResolvedValue({ shopId: realShop });
