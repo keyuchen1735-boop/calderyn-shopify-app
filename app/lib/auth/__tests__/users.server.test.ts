@@ -1,6 +1,8 @@
-process.env.PASSWORD_PEPPER = "x".repeat(32);
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// users.server computes a module-load DUMMY_HASH via scrypt; the pepper must be
+// set before the dynamic import("../users.server") inside the test bodies.
+process.env.PASSWORD_PEPPER = "x".repeat(32);
 
 const maybeSingle = vi.fn();
 const single = vi.fn();

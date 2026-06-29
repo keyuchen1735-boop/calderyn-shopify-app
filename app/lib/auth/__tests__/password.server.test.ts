@@ -1,7 +1,8 @@
-process.env.PASSWORD_PEPPER = "x".repeat(32);
-
 import { describe, it, expect } from "vitest";
 import { hashPassword, verifyPassword } from "../password.server";
+
+// scrypt hashing requires the pepper; set it before any test body runs.
+process.env.PASSWORD_PEPPER = "x".repeat(32);
 
 describe("password hashing", () => {
   it("verifies a correct password and rejects a wrong one", () => {
