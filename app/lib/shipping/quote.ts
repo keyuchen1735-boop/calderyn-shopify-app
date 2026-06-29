@@ -67,6 +67,9 @@ export interface ShippingQuote {
   currency: string;
   source: "carrier" | "fallback";
   fallbackUsed: boolean; // true when degraded to the static fallback (rule 12 visibility)
+  // true when parcel assembly had to guess (missing dims/weight) — surfaces low
+  // confidence to consuming surfaces rather than hiding it (rule 12). v1.1 addition.
+  lowConfidence: boolean;
   requestHash: string; // idempotency/cache key over the canonicalized request
 }
 

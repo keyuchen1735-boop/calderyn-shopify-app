@@ -4,11 +4,11 @@
 // getShippingEngine() is invoked from the CarrierService callback (#6.4), storefront,
 // and MCP — no surface re-implements quoting (single source of truth).
 import type { QuoteShipping } from "./quote";
-import { stubQuoteShipping } from "./engine.stub.server";
+import { realQuoteShipping } from "./engine.impl.server";
 
 export function getShippingEngine(): QuoteShipping {
-  // ponytail: passthrough stub by default so consumers build against the frozen
-  // contract. The ENTIRE swap to the real #6.3 engine is one line:
-  //   return realQuoteShipping; // once ./engine.impl.server.ts exists
-  return stubQuoteShipping;
+  // #6.3 real engine: parcel packing, markup/handling/free-ship rules, delivery
+  // windows, request-hash caching, and fallback surfacing. The passthrough stub
+  // (engine.stub.server.ts) remains for #6.4's contract-only tests.
+  return realQuoteShipping;
 }

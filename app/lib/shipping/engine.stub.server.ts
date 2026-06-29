@@ -52,6 +52,7 @@ export const stubQuoteShipping: QuoteShipping = async (req, rateSource) => {
     currency: req.currency,
     source: result.fallbackUsed ? "fallback" : "carrier",
     fallbackUsed: result.fallbackUsed,
+    lowConfidence: false, // stub does no parcel-dim assessment
     requestHash: hashShippingRequest(req),
   };
   return quote;
