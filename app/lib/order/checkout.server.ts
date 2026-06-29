@@ -13,6 +13,7 @@
 // order_fact. Mirror native orders into that view when the dashboard order surface is built
 // (CLAUDE.md "Dashboard parity"); the warehouse emit already feeds the analytics views for free.
 
+import { randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { priceCart } from "./cart.server";
 import {
@@ -45,6 +46,25 @@ export interface CheckoutBuyer {
 export interface CheckoutResult {
   orderId: string;
   clientSecret: string;
+  /**
+   * Unguessable 256-bit token the buyer-facing confirmation page is keyed by (#2c-2). The
+   * confirmation route looks the order up by (shop_id, confirmation_token) — NEVER by the raw
+   * order id — so the confirmation URL can never be turned into an IDOR.
+   */
+  confirmationToken: string;
+}
+
+/** A confirmed-order summary for the buyer-facing confirmation page. PII-free by construction. */
+export interface ConfirmedOrder {
+  orderId: string;
+  state: string;
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+  createdAt: string;
+  lines: Array<{ title: string; quantity: number; unitPriceCents: number }>;
 }
 
 /**
@@ -93,6 +113,11 @@ export async function createCheckout(
     await recordCheckoutConsent(shopId, buyerRow.id, buyer.consent);
   }
 
+  // 256-bit CSPRNG token: the unguessable key the confirmation page is fetched by (#2c-2), so
+  // the confirmation URL can never be enumerated into another buyer's order/PII. base64url is
+  // URL-safe (no padding/`+`/`/`), so it drops straight into the route path.
+  const confirmationToken = randomBytes(32).toString("base64url");
+
   const sb = getSupabase();
   const orderIns = await sb
     .from("orders")
@@ -106,6 +131,7 @@ export async function createCheckout(
       total_cents: totalCents,
       currency: priced.currency,
       attribution, // pass-through snapshot; replayed as ad_click_ref on payment
+      confirmation_token: confirmationToken,
     })
     .select("id")
     .single();
@@ -128,5 +154,71 @@ export async function createCheckout(
 
   const pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId);
 
-  return { orderId, clientSecret: pi.clientSecret };
+  return { orderId, clientSecret: pi.clientSecret, confirmationToken };
+}
+
+const ORDER_SUMMARY_COLS =
+  "id, state, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, created_at";
+
+/**
+ * IDOR-safe confirmation lookup (#2c-2): resolve an order by its unguessable confirmation token,
+ * SCOPED to the shop. Returns null (caller 404s) when no order in this shop carries that token —
+ * so an unknown OR a foreign-shop token reveals nothing. shop_id leads on every read because the
+ * app reaches Postgres via the service-role key (BYPASSRLS); the token is the unguessable key and
+ * the shop scope is defense-in-depth. The returned DTO is PII-FREE (no buyer email/address/IP) —
+ * the confirmation page shows only what the buyer already knows: their lines + total.
+ */
+export async function findOrderByConfirmationToken(
+  shopId: string,
+  token: string,
+): Promise<ConfirmedOrder | null> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!token) return null;
+
+  const sb = getSupabase();
+  const order = await sb
+    .from("orders")
+    .select(ORDER_SUMMARY_COLS)
+    .eq("shop_id", shopId)
+    .eq("confirmation_token", token)
+    .maybeSingle();
+  if (order.error) throw order.error;
+  if (!order.data) return null;
+
+  const o = order.data as Record<string, unknown>;
+  const orderId = String(o.id);
+
+  const lineRes = await sb
+    .from("order_line")
+    .select("title_snapshot, quantity, unit_price_cents")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (lineRes.error) throw lineRes.error;
+
+  const lines = ((lineRes.data ?? []) as Record<string, unknown>[]).map((l) => ({
+    title: String(l.title_snapshot),
+    quantity: Number(l.quantity),
+    unitPriceCents: Number(l.unit_price_cents),
+  }));
+
+  return {
+    orderId,
+    state: String(o.state),
+    subtotalCents: Number(o.subtotal_cents),
+    shippingCents: Number(o.shipping_cents),
+    taxCents: Number(o.tax_cents),
+    totalCents: Number(o.total_cents),
+    currency: String(o.currency),
+    createdAt: String(o.created_at),
+    lines,
+  };
+}
+
+/**
+ * Display-only order reference: the leading 8 hex chars of the order UUID, upper-cased (e.g.
+ * `#A1B2C3D4`). Cosmetic — the unguessable confirmation_token, not this ref, is the security
+ * boundary. Shared by the confirmation page and the confirmation email so both show one ref.
+ */
+export function formatOrderRef(orderId: string): string {
+  return `#${orderId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
 }

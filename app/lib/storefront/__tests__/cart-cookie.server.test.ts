@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { readCartId, commitCartId } from "../cart-cookie.server";
+import { readCartId, commitCartId, clearCartId } from "../cart-cookie.server";
 
 // The helper signs with SHOPIFY_API_SECRET (read lazily per call), so the test
 // sets it the same way the mcp_oauth tests set MCP_OAUTH_COOKIE_SECRET.
@@ -33,5 +33,13 @@ describe("cart cookie", () => {
     const setCookie = await commitCartId("cart-xyz");
     process.env.SHOPIFY_API_SECRET = "a-different-app-secret-1111111111111111111111";
     expect(await readCartId(requestWithCookie(setCookie))).toBeNull();
+  });
+
+  it("clearCartId emits an expiring cookie that reads back as no cart", async () => {
+    const cleared = await clearCartId();
+    expect(cleared).toContain("cd_cart=");
+    // maxAge:0 -> Max-Age=0 (browser deletes); the empty value also reads back as absent.
+    expect(cleared).toContain("Max-Age=0");
+    expect(await readCartId(requestWithCookie(cleared))).toBeNull();
   });
 });

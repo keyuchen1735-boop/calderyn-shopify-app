@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { getSupabase } from "~/lib/supabase.server";
 import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
+import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
 
 let _stripe: Stripe | null = null;
 
@@ -149,6 +150,12 @@ export async function processStripeEvent(
           .eq("shop_id", shopId)
           .eq("id", orderRef);
         if (upd.error) throw upd.error;
+
+        // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
+        // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
+        // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
+        // can never break payment processing or trigger a Stripe retry storm.
+        await sendOrderConfirmation(shopId, orderRef);
       }
 
       // WAREHOUSE EMIT — runs on ANY succeeded delivery (including duplicates). emitPaidOrder is

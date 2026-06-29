@@ -37,3 +37,13 @@ export async function readCartId(request: Request): Promise<string | null> {
 export async function commitCartId(cartId: string): Promise<string> {
   return cartCookie().serialize(cartId);
 }
+
+/**
+ * Serialize an expiring Set-Cookie that clears the cart cookie (#2c-2): emitted on the order
+ * confirmation page so a placed order starts the buyer fresh. maxAge:0 tells the browser to
+ * delete the cookie immediately; the empty value also reads back as "no cart" (readCartId treats
+ * an empty string as absent) for any client that ignores the expiry.
+ */
+export async function clearCartId(): Promise<string> {
+  return cartCookie().serialize("", { maxAge: 0 });
+}
