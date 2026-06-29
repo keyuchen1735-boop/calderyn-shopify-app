@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   constructEvent: vi.fn(),
   insert: vi.fn(),
   rpc: vi.fn(),
+  transitionOrder: vi.fn(),
+  emitPaidOrder: vi.fn(),
 }));
 
 // Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks.
@@ -16,13 +18,24 @@ vi.mock("stripe", () => ({
   },
 }));
 
-// Service-role Supabase client.
+// Service-role Supabase client. `from(...).insert` routes to h.insert (payment_intent persist);
+// `from("orders").update(...).eq(...).eq(...)` is the financial_status='paid' stamp — a chainable
+// no-op resolving { error: null }.
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({ insert: h.insert }),
+    from: () => ({
+      insert: h.insert,
+      update: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }),
+    }),
     rpc: h.rpc,
   }),
 }));
+
+// The order spine + warehouse emission are exercised end-to-end in order.server.test.ts /
+// emit.server.test.ts; here we assert the WIRING — that a confirmed capture drives exactly one
+// transition + emit on first delivery, and nothing on a duplicate.
+vi.mock("~/lib/order/order.server", () => ({ transitionOrder: h.transitionOrder }));
+vi.mock("~/lib/order/emit.server", () => ({ emitPaidOrder: h.emitPaidOrder }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the stripe + supabase fakes are registered before the module under test loads
 import { createPaymentIntent, processStripeEvent } from "./stripe.server";
@@ -31,6 +44,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
+  // Defaults: a successful checkout_pending -> paid transition, then a no-op emit.
+  h.transitionOrder.mockResolvedValue({
+    id: "t-1",
+    orderId: "order-1",
+    fromState: "checkout_pending",
+    toState: "paid",
+    reason: "stripe:payment_intent.succeeded",
+    occurredAt: "2026-06-29T12:00:00.000Z",
+  });
+  h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
 });
 
 describe("createPaymentIntent", () => {
@@ -194,5 +217,108 @@ describe("processStripeEvent", () => {
     const res = await processStripeEvent("raw-body", "sig");
     expect(res).toEqual({ status: 200, processed: false, duplicate: false });
     expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  describe("paid transition + warehouse emission", () => {
+    // A faithful record_stripe_event stand-in: true on first delivery, false on duplicate.
+    function gatedRpc() {
+      const seen = new Set<string>();
+      h.rpc.mockImplementation(async (_fn: string, a: Record<string, any>) => {
+        if (seen.has(a.p_event_id)) return { data: false, error: null };
+        seen.add(a.p_event_id);
+        return { data: true, error: null };
+      });
+    }
+
+    it("on first delivery of a confirmed capture, transitions the order to paid and emits to the warehouse", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1);
+      expect(h.transitionOrder).toHaveBeenCalledWith(
+        "shop-1",
+        "order-1",
+        "paid",
+        "stripe:payment_intent.succeeded",
+      );
+      // emit runs AFTER the transition, keyed to the same order. source_version uses the Stripe
+      // event time (stable across redeliveries of the same event).
+      expect(h.emitPaidOrder).toHaveBeenCalledTimes(1);
+      expect(h.emitPaidOrder).toHaveBeenCalledWith(
+        "shop-1",
+        "order-1",
+        new Date(succeededEvent.created * 1000).toISOString(),
+      );
+    });
+
+    it("does NOT re-transition on a duplicate delivery, but re-runs the (idempotent) emit", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+
+      await processStripeEvent("raw-body", "sig"); // first: transitions + emits
+      const second = await processStripeEvent("raw-body", "sig"); // redelivery: emit only (self-heal)
+
+      expect(second).toEqual({ status: 200, processed: false, duplicate: true });
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1); // SoT never re-transitioned
+      expect(h.emitPaidOrder).toHaveBeenCalledTimes(2); // emit re-runs on every succeeded delivery
+    });
+
+    it("self-heals: first-delivery emit throws (surfaced), then a redelivery re-runs emit with no second transition", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      // First delivery: the order transitions to paid, then emit throws (transient warehouse blip).
+      h.emitPaidOrder.mockRejectedValueOnce(new Error("transient warehouse blip"));
+
+      await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/transient warehouse blip/);
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1);
+      expect(h.emitPaidOrder).toHaveBeenCalledTimes(1); // attempted, failed
+
+      // Stripe redelivers the SAME event: record_stripe_event returns false (duplicate), the order
+      // is already paid, so emit re-runs (now succeeds) and the order is NOT transitioned again.
+      const redelivery = await processStripeEvent("raw-body", "sig");
+      expect(redelivery).toEqual({ status: 200, processed: false, duplicate: true });
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1); // still one paid transition -> one audit row
+      expect(h.emitPaidOrder).toHaveBeenCalledTimes(2); // emit re-ran -> order_fact lands on the retry
+    });
+
+    it("does not force-pay an order that is not checkout_pending — the state machine rejection propagates and nothing is emitted", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.transitionOrder.mockRejectedValueOnce(
+        new Error("illegal order transition paid -> paid; allowed from paid: fulfilled, refunded"),
+      );
+
+      await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/illegal order transition/);
+      expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("does not transition on a payment_failed event (no capture, no paid state)", async () => {
+      h.constructEvent.mockReturnValue({ ...succeededEvent, id: "evt_failed", type: "payment_intent.payment_failed" });
+      gatedRpc();
+
+      await processStripeEvent("raw-body", "sig");
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("skips the transition (with a warning) when a succeeded PI carries no order_ref", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue({
+        ...succeededEvent,
+        id: "evt_no_ref",
+        data: { object: { ...succeededEvent.data.object, metadata: { shop_id: "shop-1" } } },
+      });
+      gatedRpc();
+
+      const res = await processStripeEvent("raw-body", "sig");
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(h.emitPaidOrder).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/no order_ref/));
+      warn.mockRestore();
+    });
   });
 });
