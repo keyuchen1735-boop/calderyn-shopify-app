@@ -39,6 +39,9 @@ export default function StorefrontLayout() {
           <img src={settings.logoUrl} alt={settings.storeName} />
           <span>{settings.storeName}</span>
         </a>
+        <a className="cd-store__cart" href="/storefront/cart">
+          Cart
+        </a>
       </header>
       <main>
         <Outlet />

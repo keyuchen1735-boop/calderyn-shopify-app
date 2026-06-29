@@ -1,0 +1,204 @@
+// Cart build + line snapshot + pricing (platform pivot #2a). Server-only: reaches
+// Postgres through the service-role client (getSupabase, BYPASSRLS), threading shop_id
+// explicitly on every read/write exactly like buyer/identity.server.ts — the migration's
+// current_shop_id() RLS policies guard the PostgREST path; this is the application path.
+//
+// Unit price, currency, and title are SNAPSHOTTED from getCatalog() at add-to-cart time:
+// what the buyer saw is what is persisted on cart_line, so a later catalog price OR currency
+// change never silently re-prices or re-denominates an existing cart. Subtotal + currency are
+// computed in priceCart purely from those snapshots (no live catalog read). Cents are integers.
+
+import { getSupabase } from "~/lib/supabase.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
+import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
+
+export interface Cart {
+  id: string;
+  shopId: string;
+  buyerId: string | null;
+  state: string;
+  createdAt: string;
+}
+
+export interface CartLine {
+  id: string;
+  cartId: string;
+  variantId: string;
+  quantity: number;
+  unitPriceCents: number;
+  currency: string;
+  titleSnapshot: string;
+}
+
+const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot";
+
+export interface PricedCart {
+  cartId: string;
+  lines: CartLine[];
+  subtotalCents: number;
+  currency: string;
+}
+
+/** Compose the snapshotted line title from the catalog product + variant. */
+function snapshotTitle(product: StoreProduct, variant: StoreVariant): string {
+  const v = variant.title?.trim();
+  return v && v.toLowerCase() !== product.title.toLowerCase()
+    ? `${product.title} - ${v}`
+    : product.title;
+}
+
+/**
+ * Resolve a variant id against the shop's catalog. Returns the owning product + variant,
+ * or null if no product carries a variant with that id. Scans listProducts(shopId) because
+ * the catalog contract is keyed by product handle, not variant id.
+ */
+async function resolveVariant(
+  shopId: string,
+  variantId: string,
+): Promise<{ product: StoreProduct; variant: StoreVariant } | null> {
+  const products = await getCatalog().listProducts(shopId);
+  for (const product of products) {
+    for (const variant of product.variants) {
+      if (variant.id === variantId) return { product, variant };
+    }
+  }
+  return null;
+}
+
+/** Create an empty cart (state='cart', no buyer yet). */
+export async function buildCart(shopId: string): Promise<Cart> {
+  if (!shopId) throw new Error("shopId is required");
+  const { data, error } = await getSupabase()
+    .from("cart")
+    .insert({ shop_id: shopId, state: "cart" })
+    .select("id, shop_id, buyer_id, state, created_at")
+    .single();
+  if (error) throw error;
+  if (!data) throw new Error("cart insert returned no row");
+  return mapCart(data as Record<string, unknown>);
+}
+
+/**
+ * Add a line to a cart, snapshotting unit price + currency + title from the catalog. One line
+ * per variant (unique(shop_id, cart_id, variant_id)): a repeat add INCREMENTS the existing
+ * line's quantity rather than creating a duplicate row, preserving that line's ORIGINAL price/
+ * currency snapshot. Fails visibly (rule 12) when the variant does not exist or is unavailable
+ * — never silently drops or persists an unbuyable line. quantity must be a positive integer.
+ *
+ * ponytail: the read-existing-then-update path is two non-tx PostgREST calls (mirrors the
+ * non-atomic multi-write in buyer/identity.server.ts); the unique index is the hard guard
+ * against duplicate variant rows under a concurrent double-add. Atomic increment is the
+ * upgrade: a security-definer RPC doing `insert ... on conflict do update set quantity = ...`.
+ */
+export async function addCartLine(
+  shopId: string,
+  cartId: string,
+  variantId: string,
+  quantity: number,
+): Promise<CartLine> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!cartId) throw new Error("cartId is required");
+  if (!variantId) throw new Error("variantId is required");
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error(`quantity must be a positive integer, got ${quantity}`);
+  }
+
+  const resolved = await resolveVariant(shopId, variantId);
+  if (!resolved) {
+    throw new Error(`variant ${variantId} not found in catalog for shop ${shopId}`);
+  }
+  if (!resolved.variant.available) {
+    throw new Error(`variant ${variantId} is not available and cannot be added to a cart`);
+  }
+
+  const sb = getSupabase();
+  const existing = await sb
+    .from("cart_line")
+    .select(LINE_COLS)
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId)
+    .eq("variant_id", variantId)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+
+  if (existing.data) {
+    const line = mapLine(existing.data as Record<string, unknown>);
+    const bumped = await sb
+      .from("cart_line")
+      .update({ quantity: line.quantity + quantity }) // keep original price/currency snapshot
+      .eq("shop_id", shopId)
+      .eq("id", line.id)
+      .select(LINE_COLS)
+      .single();
+    if (bumped.error) throw bumped.error;
+    if (!bumped.data) throw new Error("cart_line update returned no row");
+    return mapLine(bumped.data as Record<string, unknown>);
+  }
+
+  const { data, error } = await sb
+    .from("cart_line")
+    .insert({
+      shop_id: shopId,
+      cart_id: cartId,
+      variant_id: variantId,
+      quantity,
+      unit_price_cents: resolved.variant.priceCents, // SNAPSHOT
+      currency: resolved.variant.currency.toLowerCase(), // SNAPSHOT
+      title_snapshot: snapshotTitle(resolved.product, resolved.variant), // SNAPSHOT
+    })
+    .select(LINE_COLS)
+    .single();
+  if (error) throw error;
+  if (!data) throw new Error("cart_line insert returned no row");
+  return mapLine(data as Record<string, unknown>);
+}
+
+/**
+ * Price a cart purely from the cart_line SNAPSHOTS — no live catalog read. Subtotal sums
+ * unit_price_cents * quantity in integer cents; currency is the single snapshotted currency
+ * across the lines. Because both come from the add-time snapshot, a later catalog price or
+ * currency change cannot re-price or re-denominate an existing cart. A cart whose lines mix
+ * currencies fails visibly (rule 12). An empty cart prices to 0 / 'usd'.
+ */
+export async function priceCart(shopId: string, cartId: string): Promise<PricedCart> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!cartId) throw new Error("cartId is required");
+
+  const { data, error } = await getSupabase()
+    .from("cart_line")
+    .select(LINE_COLS)
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId);
+  if (error) throw error;
+
+  const lines = ((data ?? []) as Record<string, unknown>[]).map(mapLine);
+  const subtotalCents = lines.reduce((sum, l) => sum + l.unitPriceCents * l.quantity, 0);
+  const currencies = new Set(lines.map((l) => l.currency));
+  if (currencies.size > 1) {
+    throw new Error(`cart ${cartId} mixes currencies: ${[...currencies].sort().join(", ")}`);
+  }
+  const currency = currencies.values().next().value ?? "usd";
+  return { cartId, lines, subtotalCents, currency };
+}
+
+function mapCart(row: Record<string, unknown>): Cart {
+  return {
+    id: String(row.id),
+    shopId: String(row.shop_id),
+    buyerId: row.buyer_id == null ? null : String(row.buyer_id),
+    state: String(row.state),
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapLine(row: Record<string, unknown>): CartLine {
+  return {
+    id: String(row.id),
+    cartId: String(row.cart_id),
+    variantId: String(row.variant_id),
+    quantity: Number(row.quantity),
+    unitPriceCents: Number(row.unit_price_cents),
+    currency: String(row.currency),
+    titleSnapshot: String(row.title_snapshot),
+  };
+}
