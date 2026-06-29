@@ -22,6 +22,13 @@
 
 ---
 
+### Security follow-ons (apply within the tasks below)
+
+- **Email verification (#5):** add `email_verified boolean not null default false` to the `users` table (Task 1); on signup (Task 6) mint a verification token (reuse the reset-token table with `purpose='verify'`) and email a link; a `/dashboard/verify` route flips the flag. Login is allowed while unverified, but gate sensitive actions on `email_verified` so nobody can act under an email they don't control.
+- **No-referrer on reset/set-password pages (#6):** the `dashboard.reset` and `dashboard.reset.confirm` responses (Task 8) include the header `Referrer-Policy: no-referrer` and load no third-party assets, so the `?t=` token can't leak via the `Referer` header.
+
+---
+
 ### Task 1: Schema — users, membership, reset tokens, owned shop identity, session user link
 
 **Files:**
@@ -165,16 +172,28 @@ Expected: FAIL — cannot find module `../password.server`.
 // format encodes the parameters so they can be tuned later without breaking old
 // hashes: `scrypt$<N>$<r>$<p>$<saltHex>$<derivedHex>`.
 
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
-const N = 16384; // CPU/memory cost
+const N = 65536; // CPU/memory cost — 2^16 (~50–100ms), stronger than the old 2^14
 const R = 8;
 const P = 1;
 const KEYLEN = 64;
+// scrypt needs ~128*N*r bytes; node's default maxmem (32MB) is too low at N=2^16, so set it.
+const MAXMEM = 128 * N * R * 2;
+
+// Server-side PEPPER: HMAC the password with a secret BEFORE scrypt, so a
+// database-only leak (hashes + salts, no env secret) is uncrackable. Dedicated
+// PASSWORD_PEPPER, falling back to the session pepper; both must be 32+ chars.
+// Add PASSWORD_PEPPER to .env.example.
+function peppered(plain: string): Buffer {
+  const secret = process.env.PASSWORD_PEPPER || process.env.DASHBOARD_SESSION_PEPPER;
+  if (!secret || secret.length < 32) throw new Error("PASSWORD_PEPPER must be set to a 32+ char secret");
+  return createHmac("sha256", secret).update(plain).digest();
+}
 
 export function hashPassword(plain: string): string {
   const salt = randomBytes(16);
-  const derived = scryptSync(plain, salt, KEYLEN, { N, r: R, p: P });
+  const derived = scryptSync(peppered(plain), salt, KEYLEN, { N, r: R, p: P, maxmem: MAXMEM });
   return `scrypt$${N}$${R}$${P}$${salt.toString("hex")}$${derived.toString("hex")}`;
 }
 
@@ -186,16 +205,18 @@ export function verifyPassword(plain: string, stored: string): boolean {
     const salt = Buffer.from(saltHex, "hex");
     const expected = Buffer.from(hashHex, "hex");
     if (expected.length === 0) return false;
-    const derived = scryptSync(plain, salt, expected.length, {
-      N: Number(nStr),
-      r: Number(rStr),
-      p: Number(pStr),
+    const n = Number(nStr);
+    const derived = scryptSync(peppered(plain), salt, expected.length, {
+      N: n, r: Number(rStr), p: Number(pStr), maxmem: 128 * n * Number(rStr) * 2,
     });
     return derived.length === expected.length && timingSafeEqual(derived, expected);
   } catch {
     return false;
   }
 }
+```
+
+> **Test note:** the Task 2 test (and any test that hashes) must set `process.env.PASSWORD_PEPPER = "x".repeat(32)` before importing, since hashing now requires the pepper — same as the session test sets `DASHBOARD_SESSION_PEPPER`.
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -864,7 +885,7 @@ Expected: FAIL — cannot find module `../dashboard.signin`.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
-import { verifyUserCredentials } from "~/lib/auth/users.server";
+import { verifyUserCredentials, normalizeEmail } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 
@@ -877,6 +898,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const fd = await request.formData();
   const email = String(fd.get("email") ?? "");
   const password = String(fd.get("password") ?? "");
+
+  // Per-account throttle (beyond the per-IP limit above): stops credential-
+  // stuffing a single account from rotating IPs. 5 attempts / 15 min per email.
+  if (!(await rateLimit(`signin-acct:${normalizeEmail(email)}`, 5, 15 * 60_000))) {
+    return jsonError(429, "rate_limited");
+  }
 
   const user = await verifyUserCredentials(email, password);
   if (!user) return jsonError(401, "invalid_credentials");
@@ -1062,6 +1089,10 @@ export async function setPasswordWithToken(raw: string, newPassword: string): Pr
     .update({ password_hash: hashPassword(newPassword), updated_at: new Date().toISOString() })
     .eq("id", consumed.userId);
   if (error) throw error;
+  // Security: a password reset must kill every existing session for this user,
+  // so a stolen/forgotten login can't survive the reset. (import
+  // revokeAllSessionsForUser from ~/lib/dashboard/session.server)
+  await revokeAllSessionsForUser(consumed.userId);
   return true;
 }
 ```

@@ -96,11 +96,15 @@ The **same button** delivers more as later slices land (Slice 9 / `#13.promote` 
 ## Security considerations (net-new attack surface)
 
 Email+password is the most security work of the options we considered; these are required, not optional:
-- **Password storage:** argon2id (preferred) or bcrypt. Never plaintext, never reversible.
-- **Reset flow:** single-use, short-TTL, hashed-at-rest reset tokens (reuse the opaque-token + HMAC pattern the dashboard session already uses).
-- **Rate limiting:** login, signup, reset, and set-password routes all behind the existing postgres rate limiter.
-- **Account enumeration:** login + reset responses must not reveal whether an email exists (uniform responses/timing).
+- **Password storage:** scrypt via `node:crypto` (no new dependency), cost tuned to ~50–100 ms (**N ≥ 2^16**); argon2id is the stronger option if a dependency is acceptable. Never plaintext, never reversible.
+- **Password pepper (defense-in-depth):** HMAC each password with a **server-side secret** (`PASSWORD_PEPPER`, a new env — add to `.env.example`) BEFORE the scrypt hash, so a **database-only leak can't be cracked** without the separate secret. Same idea as the session pepper.
+- **Reset flow:** single-use, short-TTL (1h), hashed-at-rest reset tokens (the opaque-token + HMAC pattern the session already uses). On a successful reset, **revoke ALL of the user's sessions** — a stolen/forgotten session is killed by the reset.
+- **Rate limiting — TWO layers:** per-IP **and per-account** on login / signup / reset / set-password. Per-IP alone is bypassed by IP rotation; a per-account throttle + temporary lockout after repeated failures stops credential-stuffing a single account.
+- **Account enumeration:** login + reset responses are uniform (no "email exists" signal); a dummy hash runs even when the email is unknown so timing doesn't leak.
+- **Email verification:** signup sends a verification link; the account is flagged unverified until confirmed, so nobody can sign up under someone else's email and use it for sensitive actions.
+- **Reset-link leakage:** the reset / set-password pages send `Referrer-Policy: no-referrer` and load no third-party resources, so the token in the URL can't leak via the `Referer` header.
 - **Set-password (Door A):** single-use, short-TTL link emailed to the Shopify store email; do not auto-set a known password.
+- **Hygiene:** never log passwords, tokens, or hashes; keep the `__Host-` + `Secure` + `SameSite=Lax` cookie and the `requireSameOrigin` CSRF guard.
 
 ---
 
