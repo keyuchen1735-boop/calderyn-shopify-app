@@ -27,8 +27,11 @@ export async function resolveRenderData(
   }
 
   // Template docs bind dynamic blocks to the current record; a collectionGrid needs the
-  // record collection's products. ponytail: add the record handle to the load set.
-  if (record?.collection) collectionHandles.add(record.collection.handle);
+  // record collection's products. Only load the record handle when a collectionGrid is
+  // present to consume it, so unrelated template docs skip the extra query.
+  if (record?.collection && doc.blocks.some((b) => b.type === "collectionGrid")) {
+    collectionHandles.add(record.collection.handle);
+  }
 
   const wantsCollectionsList = collectionHandles.delete("*");
   const collections = wantsCollectionsList ? await catalog.listCollections(shopId) : [];

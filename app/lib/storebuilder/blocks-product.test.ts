@@ -33,8 +33,11 @@ describe("template + functional blocks", () => {
     );
     for (const b of STARTER_PRODUCT_BLOCKS) expect(b.allowedDocKinds).toEqual(["template"]);
     const flavor = Object.fromEntries(STARTER_PRODUCT_BLOCKS.map((b) => [b.type, b.flavor]));
-    expect(flavor.addToCart).toBe("functional");
     expect(flavor.productGallery).toBe("dynamic");
+    expect(flavor.collectionGrid).toBe("dynamic");
+    expect(flavor.price).toBe("dynamic");
+    expect(flavor.variantPicker).toBe("dynamic");
+    expect(flavor.addToCart).toBe("functional");
   });
 
   it("productGallery renders the current record's product images", () => {
@@ -66,5 +69,8 @@ describe("template + functional blocks", () => {
   it("template blocks degrade to empty (never throw) with no record", () => {
     expect(() => html("productGallery", { data: ctxFor().data })).not.toThrow();
     expect(() => html("addToCart", { data: ctxFor().data })).not.toThrow();
+    expect(() => html("price", { data: ctxFor().data })).not.toThrow();
+    expect(() => html("variantPicker", { data: ctxFor().data })).not.toThrow();
+    expect(() => html("collectionGrid", { data: ctxFor().data })).not.toThrow();
   });
 });

@@ -2,9 +2,8 @@
 // Template/functional blocks for collection + PDP docs. Unlike the starter blocks,
 // these read the current record off ctx.record (set by the storefront route), so they
 // carry NO hardcoded catalog ids (catalogRefs always empty) and are allowedDocKinds:["template"].
-// ponytail: addToCart is the one wired buy-path block (a native <form> posting to the current
-// PDP route action, which already handles variantId — no JS, SSR-safe). price + variantPicker
-// are buy-path DISPLAY blocks; the required-on-PDP invariant guarantees the trio is always shown.
+// addToCart is the buy-path action block — a native <form method="post"> with no JS dependency.
+// price + variantPicker are the display pair; the required-on-PDP invariant ensures all three appear.
 import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
@@ -25,13 +24,13 @@ const productGallery: BlockMeta<GalleryProps> = {
     const p = recProduct(ctx);
     if (!p) return null;
     return createElement("div", { className: "cd-block cd-block--gallery" },
-      p.images.slice(0, props.maxImages).map((img, i) =>
-        createElement("img", { key: i, className: "cd-gallery__img", src: img.url, alt: img.alt ?? p.title })));
+      p.images.slice(0, props.maxImages).map((img) =>
+        createElement("img", { key: img.url, className: "cd-gallery__img", src: img.url, alt: img.alt ?? p.title })));
   },
 };
 
 const price: BlockMeta = {
-  type: "price", flavor: "functional", allowedDocKinds: ["template"],
+  type: "price", flavor: "dynamic", allowedDocKinds: ["template"],
   defaultProps: {}, defaultLayout: { x: 6, y: 0, w: 6, h: 1 },
   validateProps: () => ({}),
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
@@ -43,7 +42,7 @@ const price: BlockMeta = {
 };
 
 const variantPicker: BlockMeta = {
-  type: "variantPicker", flavor: "functional", allowedDocKinds: ["template"],
+  type: "variantPicker", flavor: "dynamic", allowedDocKinds: ["template"],
   defaultProps: {}, defaultLayout: { x: 6, y: 1, w: 6, h: 2 },
   validateProps: () => ({}),
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
