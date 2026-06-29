@@ -20,10 +20,17 @@ const { getCatalogMock, loaderDataRef } = vi.hoisted(() => ({
   loaderDataRef: { current: null as unknown },
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
-vi.mock("@remix-run/react", () => ({
-  useLoaderData: () => loaderDataRef.current,
-  Outlet: () => null,
-}));
+vi.mock("@remix-run/react", async () => {
+  // The real Remix <Form> needs router context; stub it as a plain <form> so the
+  // PDP's add-to-cart form (#2c-1) renders in the node test environment.
+  const { createElement } = await import("react");
+  return {
+    useLoaderData: () => loaderDataRef.current,
+    Outlet: () => null,
+    Form: ({ children, method, className }: { children?: unknown; method?: string; className?: string }) =>
+      createElement("form", { method, className }, children as never),
+  };
+});
 
 beforeEach(() => {
   getCatalogMock.mockReset();
@@ -148,7 +155,7 @@ describe("storefront PDP", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("renders an inert Add-to-cart button (no form, no submit)", () => {
+  it("renders a working Add-to-cart form that POSTs the variant", () => {
     loaderDataRef.current = {
       product: {
         id: "p-hoodie",
@@ -162,8 +169,10 @@ describe("storefront PDP", () => {
     };
     const html = renderToStaticMarkup(createElement(StorefrontProduct));
     expect(html).toContain("Add to cart");
-    expect(html).toContain('class="cd-pdp__buy"');
-    expect(html).not.toContain("<form");
+    // The button is no longer inert: it's a real POST form carrying the variant (#2c-1).
+    expect(html).toMatch(/<form[^>]*method="post"/i);
+    expect(html).toContain('name="variantId"');
+    expect(html).toContain('value="v1"');
   });
 });
 
