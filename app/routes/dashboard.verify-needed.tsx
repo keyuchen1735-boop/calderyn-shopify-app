@@ -22,7 +22,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
   const email = data?.email as string | null;
   const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
-  if (email) await sendVerificationEmail(session.userId, email, baseUrl);
+  if (email) await sendVerificationEmail(session.userId, email, baseUrl).catch(() => {});
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
 
