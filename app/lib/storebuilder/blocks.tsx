@@ -4,11 +4,17 @@
 // in app/lib/buyer/identity.server.ts. Validators are tolerant — fill defaults, coerce — and
 // throw only on irrecoverable shape (renderBlocks/validateDocument catch and skip).
 import { createElement } from "react";
-import type { BlockMeta, CatalogRefs, RenderContext } from "./types";
+import type { BlockMeta, RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+const safeHref = (v: unknown, fallback: string): string => {
+  const s = str(v, fallback);
+  // ponytail: allowlist absolute http(s) + root-relative only; anything else (javascript:,
+  // data:, etc.) falls back. AI/merchant-supplied hrefs are an untrusted XSS vector.
+  return /^(https?:\/\/|\/)/.test(s) ? s : fallback;
+};
 
 function money(p: StoreProduct): string {
   const v = p.variants[0];
@@ -30,16 +36,16 @@ const hero: BlockMeta<HeroProps> = {
       createElement("p", { className: "cd-hero__subhead" }, props.subhead)),
 };
 
-interface RichTextProps { html: string }
+interface RichTextProps { text: string }
 const richText: BlockMeta<RichTextProps> = {
   type: "richText", flavor: "static", allowedDocKinds: ["singleton", "template"],
-  defaultProps: { html: "Tell your story." },
+  defaultProps: { text: "Tell your story." },
   defaultLayout: { x: 0, y: 0, w: 12, h: 2 },
-  validateProps: (raw) => ({ html: str(asRecord(raw).html, "") }),
+  validateProps: (raw) => ({ text: str(asRecord(raw).text, "") }),
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   // ponytail: plain text only — NOT dangerouslySetInnerHTML. Rich formatting is the editor's
   // job later via a sanitized prop; rendering merchant/AI HTML raw would be an XSS sink.
-  Component: ({ props }) => createElement("div", { className: "cd-block cd-block--text" }, props.html),
+  Component: ({ props }) => createElement("div", { className: "cd-block cd-block--text" }, props.text),
 };
 
 interface ImageProps { url: string; alt: string }
@@ -58,7 +64,7 @@ const button: BlockMeta<ButtonProps> = {
   type: "button", flavor: "static", allowedDocKinds: ["singleton", "template"],
   defaultProps: { label: "Shop now", href: "/storefront" },
   defaultLayout: { x: 0, y: 0, w: 3, h: 1 },
-  validateProps: (raw) => { const r = asRecord(raw); return { label: str(r.label, "Shop now"), href: str(r.href, "/storefront") }; },
+  validateProps: (raw) => { const r = asRecord(raw); return { label: str(r.label, "Shop now"), href: safeHref(r.href, "/storefront") }; },
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   Component: ({ props }) =>
     createElement("a", { className: "cd-block cd-block--button", href: props.href }, props.label),
@@ -104,10 +110,14 @@ const collectionList: BlockMeta<CollectionListProps> = {
   defaultProps: { heading: "Collections" },
   defaultLayout: { x: 0, y: 0, w: 12, h: 1 },
   validateProps: (raw) => ({ heading: str(asRecord(raw).heading, "Collections") }),
+  // catalogRefs is empty: collectionList needs the FULL collection list, which CatalogRefs
+  // (productIds/collectionHandles) can't express. resolve-data (a later task) pre-fetches all
+  // collections by keying off this block's `type`. ponytail: block-type special-case in the
+  // resolver instead of adding a new contract sentinel.
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   Component: ({ props, ctx }) =>
     createElement("nav", { className: "cd-block cd-block--collections" },
-      props.heading ? createElement("h2", null, props.heading) : null,
+      props.heading ? createElement("h2", { className: "cd-collections__heading" }, props.heading) : null,
       ctx.data.collections.map((c) =>
         createElement("a", { key: c.handle, href: `/storefront/collections/${c.handle}` }, c.title))),
 };

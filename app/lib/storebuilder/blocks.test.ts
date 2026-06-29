@@ -50,4 +50,27 @@ describe("starter blocks", () => {
     expect(html).toContain("P1");
     expect(html).toContain("/i/1.jpg");
   });
+
+  it("validators tolerate null/undefined/non-object input without throwing", () => {
+    for (const b of STARTER_BLOCKS) {
+      expect(() => b.validateProps(null)).not.toThrow();
+      expect(() => b.validateProps(undefined)).not.toThrow();
+      expect(() => b.validateProps(42)).not.toThrow();
+      expect(() => b.validateProps("x")).not.toThrow();
+    }
+  });
+
+  it("button rejects a javascript: href, falling back to a safe default", () => {
+    const button = STARTER_BLOCKS.find((b) => b.type === "button")!;
+    const clean = button.validateProps({ label: "x", href: "javascript:alert(1)" }) as { href: string };
+    expect(clean.href).toBe("/storefront");
+    const ok = button.validateProps({ href: "/products" }) as { href: string };
+    expect(ok.href).toBe("/products");
+  });
+
+  it("renders collectionList against resolved data", () => {
+    const cl = STARTER_BLOCKS.find((b) => b.type === "collectionList")!;
+    const html = renderToStaticMarkup(createElement(cl.Component, { props: cl.validateProps({}), ctx: ctx() }));
+    expect(html).toContain("Summer");
+  });
 });
