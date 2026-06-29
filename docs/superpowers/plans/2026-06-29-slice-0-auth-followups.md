@@ -165,7 +165,7 @@ Add the imports `import { getSupabase } from "~/lib/supabase.server";` and ensur
 
 - [ ] **Step 4: Update `DashboardApp` + context**
 
-In `app/components/dashboard/context.ts`, add `storeLabel: string;` to the `DashboardCtx` type (keep `shopDomain: string | null` — change it from `string` to `string | null` if it is not already nullable).
+In `app/components/dashboard/context.ts`, add `storeLabel: string;` to the `DashboardCtx` type (keep `shopDomain: string | null`: change it from `string` to `string | null` if it is not already nullable).
 In `app/components/dashboard/DashboardApp.tsx`: change the prop to `{ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }`; put `storeLabel` into the `DashboardCtx` object (`app` at ~line 731); render `{storeLabel}` in `cd-brand-sub` (was `{shopDomain}`). Leave `shopDomain` flowing in the context for `Alerts.tsx` deep links.
 
 - [ ] **Step 5: Typecheck the ripple + run the test**
@@ -335,8 +335,8 @@ git commit -m "feat(auth): email-verification token lib (single-use, 24h, reuses
 - Produces:
   - `DashboardSession` gains `emailVerified: boolean` (true whenever `userId` is null).
   - `requireDashboardSession` now throws `403 email_unverified` for an unverified first-party session (the API choke point). Behavior unchanged for Shopify sessions and verified users.
-  - `getDashboardSessionAllowUnverified(request): Promise<DashboardSession>` — like `requireDashboardSession` but WITHOUT the verify check (401 only). For the verify-flow routes.
-  - `requireVerifiedSession(request): Promise<DashboardSession>` — page variant: redirects to `/dashboard/login` if no session, `/dashboard/verify-needed` if unverified first-party.
+  - `getDashboardSessionAllowUnverified(request): Promise<DashboardSession>`: like `requireDashboardSession` but WITHOUT the verify check (401 only). For the verify-flow routes.
+  - `requireVerifiedSession(request): Promise<DashboardSession>`: page variant: redirects to `/dashboard/login` if no session, `/dashboard/verify-needed` if unverified first-party.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -451,7 +451,7 @@ export async function requireDashboardSession(
 - [ ] **Step 4: Run test + typecheck**
 
 Run: `npx vitest run app/lib/dashboard/__tests__/session-verify-gate.test.ts` then `npm run typecheck`
-Expected: PASS; typecheck 0. Any existing code constructing a `DashboardSession` literal (tests, mocks) now needs `emailVerified` — add `emailVerified: true` to those Shopify-context mocks. Record the touched files in the commit body.
+Expected: PASS; typecheck 0. Any existing code constructing a `DashboardSession` literal (tests, mocks) now needs `emailVerified`: add `emailVerified: true` to those Shopify-context mocks. Record the touched files in the commit body.
 
 - [ ] **Step 5: Run the existing dashboard route + session suites to catch the enforcement ripple**
 
@@ -624,8 +624,8 @@ git commit -m "feat(auth): email verification gate (signup sends link, verify + 
 
 **Interfaces:**
 - Produces:
-  - `signGoogleSignup(payload: { sub: string; email: string }): string` — `base64url(JSON{sub,email,exp})` + `.` + HMAC-SHA256 signature (15 min `exp`)
-  - `verifyGoogleSignup(token: string): { sub: string; email: string } | null` — constant-time signature check + expiry check; null on tamper/expiry/malformed
+  - `signGoogleSignup(payload: { sub: string; email: string }): string`: `base64url(JSON{sub,email,exp})` + `.` + HMAC-SHA256 signature (15 min `exp`)
+  - `verifyGoogleSignup(token: string): { sub: string; email: string } | null`: constant-time signature check + expiry check; null on tamper/expiry/malformed
 
 - [ ] **Step 1: Write the failing test**
 
@@ -727,11 +727,11 @@ git commit -m "feat(auth): signed stateless token for the google signup intersti
 
 **Interfaces:**
 - Produces:
-  - `buildSigninAuthUrl(opts: { clientId: string; redirectUri: string; state: string }): string` — scope `openid email profile`, `response_type=code`
+  - `buildSigninAuthUrl(opts: { clientId: string; redirectUri: string; state: string }): string`: scope `openid email profile`, `response_type=code`
   - type `IdTokenFetcher = (url, init) => Promise<{ id_token?: string; access_token?: string; error?: string; error_description?: string }>`
-  - `exchangeCodeForIdToken(fetcher, opts: { clientId; clientSecret; redirectUri; code }): Promise<string>` — returns the raw `id_token`
+  - `exchangeCodeForIdToken(fetcher, opts: { clientId; clientSecret; redirectUri; code }): Promise<string>`: returns the raw `id_token`
   - type `TokenInfoFetcher = (url: string) => Promise<{ aud?: string; iss?: string; sub?: string; email?: string; email_verified?: string | boolean; exp?: string | number }>`
-  - `verifyIdToken(fetcher, idToken: string, clientId: string): Promise<{ sub: string; email: string; emailVerified: boolean }>` — validates via Google `tokeninfo` (`aud === clientId`, Google `iss`, not expired); throws on any failure
+  - `verifyIdToken(fetcher, idToken: string, clientId: string): Promise<{ sub: string; email: string; emailVerified: boolean }>`: validates via Google `tokeninfo` (`aud === clientId`, Google `iss`, not expired); throws on any failure
 
 - [ ] **Step 1: Write the failing test**
 
@@ -859,9 +859,9 @@ git commit -m "feat(auth): google sign-in oauth helpers (tokeninfo validation, n
 
 **Interfaces:**
 - Produces:
-  - `findUserByGoogleSub(sub: string): Promise<{ id: string; shopId: string | null } | null>` — joins membership to surface the user's shop (v1: at most one)
-  - `setGoogleSub(userId: string, sub: string): Promise<void>` — links a Google identity onto an existing user
-  - `createGoogleUser(email: string, sub: string): Promise<{ id: string }>` — inserts a user with `google_sub`, `email_verified=true`, no password
+  - `findUserByGoogleSub(sub: string): Promise<{ id: string; shopId: string | null } | null>`: joins membership to surface the user's shop (v1: at most one)
+  - `setGoogleSub(userId: string, sub: string): Promise<void>`: links a Google identity onto an existing user
+  - `createGoogleUser(email: string, sub: string): Promise<{ id: string }>`: inserts a user with `google_sub`, `email_verified=true`, no password
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1055,7 +1055,7 @@ git commit -m "feat(auth): google sign-in routes (start, callback dispatcher, na
 
 ### Task 10: Full gate, dual-run audit, em-dash + provenance sweep
 
-**Files:** none new — verification + any fixes surfaced.
+**Files:** none new: verification + any fixes surfaced.
 
 - [ ] **Step 1: Dual-run audit**
 
@@ -1063,7 +1063,7 @@ Confirm Shopify path untouched: `git diff --stat feat/de-shopify-auth -- app/rou
 
 - [ ] **Step 2: Em-dash + provenance sweep of ADDED files**
 
-`for f in $(git diff --name-only --diff-filter=A feat/de-shopify-auth); do grep -Hn $'—\|–' "$f"; done` -> none. Confirm no AI/provenance/dev-tool markers in any new browser-served route.
+`for f in $(git diff --name-only --diff-filter=A feat/de-shopify-auth); do grep -Hn $'-\|-' "$f"; done` -> none. Confirm no AI/provenance/dev-tool markers in any new browser-served route.
 
 - [ ] **Step 3: Full pre-commit gate**
 
@@ -1093,7 +1093,7 @@ git commit -m "chore(auth): dual-run audit + gate green for auth follow-ups"
 - Brand subtitle (display_name in cd-brand-sub, keep shopDomain for deep links) -> Task 2.
 - New env documented, full gate -> Tasks 9, 10.
 
-**Placeholder scan:** none — every step has concrete SQL/code/commands. The one external-pattern reference (Task 9 createOAuthState usage) points the implementer at the canonical existing file rather than guessing a signature; this is intentional and called out.
+**Placeholder scan:** none: every step has concrete SQL/code/commands. The one external-pattern reference (Task 9 createOAuthState usage) points the implementer at the canonical existing file rather than guessing a signature; this is intentional and called out.
 
 **Type consistency:** `DashboardSession` gains `emailVerified: boolean` (Task 4) and is used consistently by the gates and routes. `findUserByGoogleSub -> {id, shopId|null}`, `createGoogleUser -> {id}`, `verifyIdToken -> {sub,email,emailVerified}`, `signGoogleSignup/verifyGoogleSignup` payload `{sub,email}` are consistent across Tasks 6-9. `consumeVerifyToken -> {userId}|null` and `markEmailVerified(userId)` consistent across Tasks 3 and 5.
 
