@@ -419,6 +419,8 @@ git commit -m "feat(inventory): browser client (balances/transfer/locations/hist
 - Consumes: `app.toast`; `client.fetchVariantInventory`, `setOnHand`, `setVariantReorderPoint`, `markVariantUnavailable`, `fetchLocations`, `fetchInventoryHistory`.
 - Behavior: for a saved variant, show a row per location (on-hand / reserved / incoming / available / reorder point); edit on-hand and reorder point inline (→ engine); a "damaged" action (→ `markVariantUnavailable`); a link to the history. Only renders for existing products (a variant must exist to have stock).
 
+> **Supersedes the Slice 1 stock field:** Slice 1 B2's variant grid has a single "stock count" column writing `variant_dim.inventory_on_hand`. Once this per-location panel ships, `inventory_balance` is the authority. Remove that single column from the Slice 1 variant grid (or make it read-only showing the default-location available), so there is one stock editor, not two. The Slice 1 `inventory_on_hand` field stays only as the seed source for a brand-new product before its first balance row exists.
+
 - [ ] **Step 1: Write `InventoryPanel.tsx`**
 
 ```tsx

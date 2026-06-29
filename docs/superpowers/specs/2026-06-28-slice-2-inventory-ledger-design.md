@@ -27,7 +27,7 @@ Slice 2 is **done** when stock is tracked per (variant, location) with Shopify-s
 | Transfers | **Instant or in-transit** — a transfer can land immediately or be marked in-transit (shows as `incoming` at the destination until received) |
 | Merchant stock tools | **Simple** — edit the count per location + move stock; history recorded automatically (no required movement labels) |
 | Checkout wiring | **Out of scope** — reserve/commit/release built + unit-tested here; Slice 3's checkout calls them |
-| Opening balance | **Seed from Slice 1's `variant_dim.inventory_on_hand`** at the merchant's primary location |
+| Opening balance | **Seed from `inventory_level_fact`** — the authoritative per-location stock from the mirror/backfill (latest observation per variant+location). `variant_dim.inventory_on_hand` is 0 on promoted rows, so it's only the fallback for fresh-typed products with no observation. |
 
 ---
 
@@ -103,7 +103,7 @@ Extends the catalog surface from Slice 1 (`cd-*`, `dashboard.api.*`):
 5. `createTransfer` (instant + in-transit) and `receiveTransfer` move stock correctly; `markUnavailable` shifts available → unavailable.
 6. The merchant can edit per-location counts, set reorder points, and transfer stock; every change lands in `inventory_ledger`.
 7. The engine's stock reports still work (via the `inventory_level_fact` projection).
-8. Slice 1's `inventory_on_hand` seeds `inventory_balance` at the primary location.
+8. `inventory_balance` is seeded from `inventory_level_fact` (real per-location stock), with `inventory_on_hand` as the fallback only for fresh-typed products that have no observation — a migrated store shows its true stock, not zeros.
 
 ---
 

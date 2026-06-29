@@ -121,6 +121,8 @@ git commit -m "feat(import): import_run state table"
 **Interfaces:**
 - Produces: `promote_shop_from_mirror(p_shop_id uuid) returns jsonb` — promotes this shop's `sku_dim` → `product_dim`/`variant_dim` (+ options? no — facets only), collections, and seeds `inventory_balance` from the latest `inventory_level_fact` per (variant, location). Idempotent. Returns `{products, variants, collections, balances}` counts.
 
+> **Consolidation (no duplicate promote logic):** the catalog+collections half of this function MUST be the SAME logic as Slice 1 Plan A's backfill. Define it ONCE as `promote_shop_catalog(p_shop_id)` (in Slice 1 — its one-time migration calls it for every shop), and here `promote_shop_from_mirror` does `perform public.promote_shop_catalog(p_shop_id);` then only the `inventory_level_fact` seed below. Do NOT re-implement the catalog inserts in two places — they would drift.
+
 - [ ] **Step 1: Write the function** (the Slice 1 backfill SQL + Slice 2 seed, scoped to one shop)
 
 ```sql

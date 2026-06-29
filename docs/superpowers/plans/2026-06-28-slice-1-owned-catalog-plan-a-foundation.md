@@ -175,6 +175,11 @@ git commit -m "feat(catalog): owned product/variant/option/media/collection tabl
 -- Backfill owned tables from the existing sku_dim mirror. Idempotent via
 -- on-conflict guards. variant_dim.id is set to sku_dim.id so every order/refund/
 -- inventory reference to the variant survives unchanged.
+-- CONSOLIDATION: wrap the catalog+collections inserts below in a function
+-- `promote_shop_catalog(p_shop_id uuid)` (scoped to one shop) and have this
+-- migration call it for every shop (e.g. `select promote_shop_catalog(id) from shops`).
+-- The Shopify-import feature reuses the SAME function (see its plan) so the
+-- catalog-promote logic lives in exactly one place.
 
 -- 1) Products: one per distinct (shop_id, product_id GID). Product-level columns
 --    are denormalized identically across a product's sku_dim rows, so DISTINCT ON

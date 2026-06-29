@@ -81,6 +81,7 @@ A dashboard "Import from Shopify" surface (`cd-*`, `dashboard.api.*`):
 - Customer re-pull (`#13.customers`) + the buyer PII store (`#1`).
 - Theme / SEO regeneration (`#13.aesthetics-seo`).
 - Ongoing two-way Shopify **sync** — this is a one-time import (re-runnable), not a live mirror; owned tables are authoritative after import.
+- **Stock-refresh on re-import** — re-running is dedup-only (`on conflict do nothing`), so it will NOT overwrite a balance that changed in Shopify since the first import. That's intentional for a one-time migration; a true "refresh from Shopify" would be a separate `on conflict do update` mode, surfaced in the report. Noted so it's a known behavior, not a silent gap.
 
 ---
 

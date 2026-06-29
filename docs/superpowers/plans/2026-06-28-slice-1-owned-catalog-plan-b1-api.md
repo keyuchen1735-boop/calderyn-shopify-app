@@ -310,6 +310,7 @@ git commit -m "feat(catalog): read layer (listProducts, getProduct)"
   - `createProduct(shopId: string, input: ProductInput): Promise<{ id: string }>`
   - `updateProduct(shopId: string, productId: string, input: ProductInput): Promise<void>`
   - `setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void>`
+  - `writeOptions(sb, productId, options): Promise<Map<string, string>>` — extract the option/value-writing loop out of `writeProductChildren` into this helper (returns the label→value-id map) so both `createProduct` (via `writeProductChildren`) and `updateProduct` share one implementation.
   - All three call `projectProductToSkuDim` after writing.
 
 - [ ] **Step 1: Write the failing test**
@@ -453,8 +454,11 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
   return { id: productId };
 }
 
-// Replaces a product's children (options/variants/collections) wholesale, then
-// re-projects. Media is managed separately (Task 5) so it survives an edit.
+// Updates a product. Options + collections have no external references, so they
+// are wiped + rewritten. VARIANTS are referenced by order_line_fact (and by
+// sku_dim via the id==id invariant), so they are RECONCILED BY ID — never wiped
+// and re-inserted (that would mint new ids, orphan past orders, and break the
+// projection). Media is managed separately (Task 5) so it survives an edit.
 export async function updateProduct(shopId: string, productId: string, input: ProductInput): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
@@ -466,12 +470,45 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     .eq("shop_id", shopId).eq("id", productId);
   if (error) throw error;
 
-  // Wipe + rewrite children (options cascade to option_values + variant_option_value; variants cascade too).
-  await sb.from("product_option").delete().eq("product_id", productId);
-  await sb.from("variant_dim").delete().eq("product_id", productId);
+  // Options/values + collections: safe to wipe + rewrite (no external refs).
+  await sb.from("product_option").delete().eq("product_id", productId); // cascades option_values
   await sb.from("product_collection").delete().eq("product_id", productId);
+  const valueIdByLabel = await writeOptions(sb, productId, input.options ?? []); // extracted from writeProductChildren
 
-  await writeProductChildren(shopId, productId, input);
+  // Variants: delete only the ones the merchant removed; keep the rest by id.
+  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
+  let del = sb.from("variant_dim").delete().eq("product_id", productId);
+  if (keepIds.length) del = del.not("id", "in", `(${keepIds.map((i) => `'${i}'`).join(",")})`);
+  const { error: delErr } = await del;
+  if (delErr) throw delErr;
+
+  for (const [i, v] of input.variants.entries()) {
+    const fields = {
+      sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
+      unit_cost_cents: v.unitCostCents ?? null, inventory_policy: v.inventoryPolicy ?? null,
+      inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
+    };
+    let variantId = v.id ?? null;
+    if (variantId) {
+      const { error: uErr } = await sb.from("variant_dim").update(fields).eq("shop_id", shopId).eq("id", variantId);
+      if (uErr) throw uErr;
+    } else {
+      const { data: ins, error: iErr } = await sb.from("variant_dim").insert({ shop_id: shopId, product_id: productId, ...fields }).select("id").single();
+      if (iErr) throw iErr;
+      variantId = String(ins.id);
+    }
+    // Rebuild this variant's option-value links (option-value ids changed above).
+    await sb.from("variant_option_value").delete().eq("variant_id", variantId);
+    const links = (v.optionValues ?? []).map((l) => valueIdByLabel.get(l)).filter((x): x is string => Boolean(x))
+      .map((option_value_id) => ({ variant_id: variantId, option_value_id }));
+    if (links.length) { const { error: lErr } = await sb.from("variant_option_value").insert(links); if (lErr) throw lErr; }
+  }
+
+  if (input.collectionIds?.length) {
+    const { error: cErr } = await sb.from("product_collection").insert(input.collectionIds.map((collection_id) => ({ product_id: productId, collection_id })));
+    if (cErr) throw cErr;
+  }
+
   await projectProductToSkuDim(productId);
 }
 

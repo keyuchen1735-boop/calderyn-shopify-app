@@ -854,6 +854,13 @@ Expected: FAIL — cannot find module `../dashboard.signin`.
 // app/routes/dashboard.signin.tsx
 // Door B: first-party email + password sign-in. Lives next to the existing
 // Shopify-OAuth login (/dashboard/login), which is unchanged.
+//
+// REDIRECT FIX (Task 5 follow-on): `getSessionOrRedirect` in session.server.ts
+// currently sends expired/absent sessions to /dashboard/login (the SHOPIFY
+// page). Once first-party login exists, point its default redirect at
+// /dashboard/signin instead, so a first-party merchant whose session lapsed
+// lands on the email/password page, not the Shopify one. (The Shopify-OAuth
+// route itself stays; only the default redirect target moves.)
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
