@@ -1,12 +1,12 @@
 // app/lib/auth/password.server.ts
 //
-// Password hashing with node:crypto scrypt — no third-party dependency. Stored
+// Password hashing with node:crypto scrypt (no third-party dependency). Stored
 // format encodes the parameters so they can be tuned later without breaking old
 // hashes: `scrypt$<N>$<r>$<p>$<saltHex>$<derivedHex>`.
 
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
-const N = 65536; // CPU/memory cost — 2^16 (~50–100ms), stronger than the old 2^14
+const N = 65536; // CPU/memory cost: 2^16 (~50-100ms), stronger than the old 2^14
 const R = 8;
 const P = 1;
 const KEYLEN = 64;

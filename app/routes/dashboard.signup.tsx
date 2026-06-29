@@ -1,6 +1,6 @@
 // app/routes/dashboard.signup.tsx
 // Door B: first-party merchant signup (email + password). Creates the user, an
-// owned shop, the membership link, and a session — no Shopify involved.
+// owned shop, the membership link, and a session (no Shopify involved).
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
@@ -28,7 +28,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (await findUserByEmail(email)) return jsonError(409, "email_taken");
 
   // Race-safe: the check above plus the unique(email) constraint. If two signups
-  // for the same email collide, the loser's insert violates the constraint —
+  // for the same email collide, the loser's insert violates the constraint;
   // map that (Postgres 23505) to the same clean 409, not a 500.
   let userId: string;
   try {
