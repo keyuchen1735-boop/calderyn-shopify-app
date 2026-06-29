@@ -20,6 +20,7 @@ import type { DashboardCtx } from "../../context";
 const ctx: DashboardCtx = {
   t: {},
   shopDomain: "test.myshopify.com",
+  storeLabel: "test.myshopify.com",
   nav: { screen: "dashboard", param: null },
   navigate: () => {},
   alerts: [],
