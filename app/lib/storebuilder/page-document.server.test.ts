@@ -1,11 +1,12 @@
 // app/lib/storebuilder/page-document.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
-
 import { loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import type { BlockDocument } from "./types";
+
+// vi.mock is hoisted above the imports by vitest at transform time, so the supabase mock still
+// applies even though it is written below them (imports-first satisfies the import/first rule).
+const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const doc: BlockDocument = { kind: "singleton", pageKey: "home", blocks: [
