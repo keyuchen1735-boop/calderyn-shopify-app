@@ -6,6 +6,9 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { buildCart, addCartLine } from "~/lib/order/cart.server";
+import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
+import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
+import { renderBlocks } from "~/lib/storebuilder/render";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
   const title = data ? `${data.product.title} — Calderyn Demo Store` : "Product — Calderyn Demo Store";
@@ -20,10 +23,14 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
-  // Manual shop_id scoping: shopId is the first arg of the read.
-  const product = await getCatalog().getProduct(shopId, handle);
+  const catalog = getCatalog();
+  const product = await catalog.getProduct(shopId, handle);
   if (!product) throw new Response(null, { status: 404 });
-  return json({ product });
+  // Render the published PDP TEMPLATE bound to this product record. No doc → legacy PDP markup.
+  const doc = await loadPublishedDoc(shopId, "pdp");
+  const record = { product };
+  const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
+  return json({ product, doc, data, record });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -51,7 +58,11 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function StorefrontProduct() {
-  const { product } = useLoaderData<typeof loader>();
+  const { product, doc, data, record } = useLoaderData<typeof loader>();
+  if (doc && data) {
+    // The addToCart block renders a native <form method="post"> posting to THIS route's action.
+    return <article className="cd-pdp cd-pdp--blocks">{renderBlocks(doc, { data, record })}</article>;
+  }
   const buyable = product.variants.filter((v) => v.available);
   return (
     <article className="cd-pdp">

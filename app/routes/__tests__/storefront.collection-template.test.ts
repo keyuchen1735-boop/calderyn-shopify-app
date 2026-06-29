@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
+import StorefrontCollection, { loader } from "../storefront.collections.$handle";
 
 const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(), loadPublishedMock: vi.fn(), loaderDataRef: { current: null as unknown },
@@ -10,8 +11,6 @@ const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadPublishedDoc: loadPublishedMock }));
 vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current }));
-
-import StorefrontCollection, { loader } from "../storefront.collections.$handle";
 
 beforeEach(() => {
   getCatalogMock.mockReset().mockReturnValue(fixtureCatalog);

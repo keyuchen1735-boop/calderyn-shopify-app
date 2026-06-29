@@ -9,7 +9,6 @@ import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 
-const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
 const recProduct = (ctx: RenderContext): StoreProduct | undefined => ctx.record?.product;
 function money(cents: number, currency: string): string {
