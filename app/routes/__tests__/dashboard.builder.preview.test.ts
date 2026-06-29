@@ -5,13 +5,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
 import BuilderPreview, { loader } from "../dashboard.builder.preview";
 
-const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef } = vi.hoisted(() => ({
-  sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown },
+const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock } = vi.hoisted(() => ({
+  sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(),
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ getSessionOrRedirect: sessionMock }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
+vi.mock("~/lib/storegen/imagery/detector", () => ({ findImprovableListings: () => [{ productId: "1", handle: "h-1", title: "P1", reason: "No image", severity: 2 }] }));
+vi.mock("~/lib/storegen/imagery/asset.server", () => ({ enhanceListing: enhanceMock, applyAssetOverrides: async (_s: string, ps: unknown[]) => ps }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => {
@@ -35,5 +37,22 @@ describe("builder draft preview", () => {
     const data = await (await loader(req())).json();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No draft");
+  });
+
+  it("loader lists improvable-listing candidates", async () => {
+    loadDraftMock.mockResolvedValue(null);
+    const data = await (await loader(req())).json();
+    expect(data.candidates[0].productId).toBe("1");
+    loaderDataRef.current = data;
+    expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No image");
+  });
+
+  it("action enhances a selected listing", async () => {
+    // "p-tee" is the first product in fixtureCatalog; plan used "1" but fixture IDs are prefixed.
+    enhanceMock.mockResolvedValue({ productId: "p-tee", status: "ready", url: "https://img/n.png" });
+    const { action } = await import("../dashboard.builder.preview");
+    const res = await action({ request: new Request("https://app/dashboard/builder/preview", { method: "POST", body: new URLSearchParams({ productId: "p-tee" }) }), params: {}, context: {} } as never);
+    expect(enhanceMock).toHaveBeenCalled();
+    expect(res.status).toBe(302);
   });
 });

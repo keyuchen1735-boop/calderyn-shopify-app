@@ -2,21 +2,26 @@
 // Read-only preview of the generated DRAFT store across home/collection/PDP (no editor yet).
 // Uses the same renderBlocks as the live storefront; templates preview against a sample record.
 // Phase C adds the imagery-candidate list + enhance action here.
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, Form } from "@remix-run/react";
 import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import type { BlockDocument, RenderData, RenderContext } from "~/lib/storebuilder/types";
+import { findImprovableListings } from "~/lib/storegen/imagery/detector";
+import { enhanceListing, applyAssetOverrides } from "~/lib/storegen/imagery/asset.server";
+import type { ImprovableListing } from "~/lib/storegen/imagery/detector";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await getSessionOrRedirect(request);
   const shopId = session.shopId;
   const catalog = getCatalog();
-  const [products, collections] = [await catalog.listProducts(shopId), await catalog.listCollections(shopId)];
+  const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
+  const collections = await catalog.listCollections(shopId);
+  const candidates = findImprovableListings(products);
   const sample: RenderContext["record"] = { product: products[0], collection: collections[0] };
 
   async function previewFor(page: "home" | "collection" | "pdp") {
@@ -30,13 +35,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
     home: await previewFor("home"),
     collection: await previewFor("collection"),
     pdp: await previewFor("pdp"),
+    candidates,
   });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const session = await getSessionOrRedirect(request);
+  const form = await request.formData();
+  const productId = form.get("productId");
+  if (typeof productId !== "string" || !productId) throw new Response("productId required", { status: 400 });
+  const product = (await getCatalog().listProducts(session.shopId)).find((p) => p.id === productId);
+  if (!product) throw new Response("unknown product", { status: 404 });
+  await enhanceListing(session.shopId, product); // selected listing only — never the whole catalog
+  return redirect("/dashboard/builder/preview");
 }
 
 type Pane = { doc: BlockDocument; data: RenderData; record?: RenderContext["record"] } | null;
 
 export default function BuilderPreview() {
-  const { home, collection, pdp } = useLoaderData<typeof loader>() as { home: Pane; collection: Pane; pdp: Pane };
+  const { home, collection, pdp, candidates } = useLoaderData<typeof loader>() as {
+    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[];
+  };
   const panes: [string, Pane][] = [["Home", home], ["Collection", collection], ["PDP", pdp]];
   const any = panes.some(([, p]) => p);
   return (
@@ -51,6 +70,17 @@ export default function BuilderPreview() {
           </section>
         ) : null,
       )}
+      <section className="cd-builder-preview__candidates">
+        <h2>Improve these listings</h2>
+        {candidates.length === 0 ? <p>No listings need imagery help.</p> : null}
+        {candidates.map((c: { productId: string; title: string; reason: string }) => (
+          <Form method="post" key={c.productId} className="cd-candidate">
+            <span>{c.title} — {c.reason}</span>
+            <input type="hidden" name="productId" value={c.productId} />
+            <button type="submit">Enhance</button>
+          </Form>
+        ))}
+      </section>
     </div>
   );
 }

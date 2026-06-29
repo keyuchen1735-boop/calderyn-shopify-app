@@ -1,12 +1,12 @@
 // app/lib/storegen/imagery/asset.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
+import { enhanceListing, applyAssetOverrides } from "./asset.server";
 
 const { fromMock, providerMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 vi.mock("./provider", () => ({ getImageProvider: () => ({ name: "fake", generateListingImage: providerMock }) }));
 
-import { enhanceListing, applyAssetOverrides } from "./asset.server";
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string, url: string | null): StoreProduct => ({
   id, handle: `h-${id}`, title: `P${id}`, description: "", collections: [],
