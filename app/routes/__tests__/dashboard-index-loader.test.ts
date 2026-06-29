@@ -5,7 +5,7 @@ vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }) }),
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({
-  getSessionOrRedirect: vi.fn().mockResolvedValue({ shopId: "shop1", shopDomain: null, userId: "u1", sessionId: "s1", emailVerified: true }),
+  requireVerifiedSession: vi.fn().mockResolvedValue({ shopId: "shop1", shopDomain: null, userId: "u1", sessionId: "s1", emailVerified: true }),
 }));
 
 describe("dashboard index loader", () => {

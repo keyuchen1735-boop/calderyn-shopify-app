@@ -5,7 +5,7 @@
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { useLoaderData, useRouteError } from "@remix-run/react";
 
-import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
+import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";
 import DashboardApp from "~/components/dashboard/DashboardApp";
 import {
@@ -28,7 +28,7 @@ export const links: LinksFunction = () => [
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await getSessionOrRedirect(request);
+  const session = await requireVerifiedSession(request);
   const { data } = await getSupabase()
     .from("shops")
     .select("display_name, shop_domain")
