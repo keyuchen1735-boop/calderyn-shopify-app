@@ -29,6 +29,7 @@
 | **Slice 2 — inventory ledger** | [spec](./specs/2026-06-28-slice-2-inventory-ledger-design.md) | [A: engine](./plans/2026-06-29-slice-2-inventory-plan-a-engine.md) · [B: merchant tools](./plans/2026-06-29-slice-2-inventory-plan-b-ui.md) | ✅ yes |
 | **Store-action executor** | [spec](./specs/2026-06-29-slice-store-action-executor-design.md) | [plan](./plans/2026-06-29-store-action-executor-plan.md) | ✅ yes (after Slices 1–2) |
 | **Import from Shopify (data port)** | [spec](./specs/2026-06-29-import-from-shopify-promote-design.md) | [plan](./plans/2026-06-29-import-from-shopify-promote-plan.md) | ✅ yes (after Slices 1–2) |
+| **Shipping-as-product-data** (#5-shipping/#6.1) | [spec](./specs/2026-06-29-shipping-as-product-data-design.md) | [plan](./plans/2026-06-29-shipping-as-product-data-plan.md) | ✅ yes — **unblocks Eric's merged quote engine** (it feeds the size/weight/origin the rate quote needs) |
 
 **Build order:** Slice 0 → Slice 1 → Slice 2 → store-action executor / import (either order). All in isolated worktrees off `origin/main`.
 
