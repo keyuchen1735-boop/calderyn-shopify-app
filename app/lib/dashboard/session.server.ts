@@ -80,6 +80,7 @@ export type DashboardSession = {
   shopDomain: string | null;
   userId: string | null;
   sessionId: string;
+  emailVerified: boolean;
 };
 
 export async function getSessionFromRequest(
@@ -91,7 +92,7 @@ export async function getSessionFromRequest(
   const sb = getSupabase();
   const { data, error } = await sb
     .from("dashboard_sessions")
-    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at")
+    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at, user:users(email_verified)")
     .eq("token_hash", hashSessionToken(raw))
     .maybeSingle();
   if (error) throw error;
@@ -114,17 +115,45 @@ export async function getSessionFromRequest(
     shopDomain: data.shop_domain == null ? null : String(data.shop_domain),
     userId: data.user_id == null ? null : String(data.user_id),
     sessionId: String(data.id),
+    emailVerified: data.user_id == null ? true : Boolean((data.user as { email_verified?: boolean } | null)?.email_verified),
   };
 }
 
-/** Throws a 401 JSON Response when there is no live session. */
-export async function requireDashboardSession(
+function unverifiedFirstParty(s: DashboardSession): boolean {
+  return s.userId != null && !s.emailVerified;
+}
+
+export async function getDashboardSessionAllowUnverified(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     throw new Response(JSON.stringify({ error: "unauthenticated" }), {
       status: 401,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
+  return session;
+}
+
+export async function requireVerifiedSession(
+  request: Request,
+): Promise<DashboardSession> {
+  const session = await getSessionFromRequest(request);
+  if (!session) throw redirect("/dashboard/login");
+  if (unverifiedFirstParty(session)) throw redirect("/dashboard/verify-needed");
+  return session;
+}
+
+/** Throws a 401 JSON Response when there is no live session, or 403 when the
+ *  first-party user has not yet verified their email address. */
+export async function requireDashboardSession(
+  request: Request,
+): Promise<DashboardSession> {
+  const session = await getDashboardSessionAllowUnverified(request);
+  if (unverifiedFirstParty(session)) {
+    throw new Response(JSON.stringify({ error: "email_unverified" }), {
+      status: 403,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   }
