@@ -762,7 +762,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (await findUserByEmail(email)) return jsonError(409, "email_taken");
 
-  const { id: userId } = await createUser(email, password);
+  // Race-safe: the check above plus the unique(email) constraint. If two signups
+  // for the same email collide, the loser's insert violates the constraint —
+  // map that (Postgres 23505) to the same clean 409, not a 500.
+  let userId: string;
+  try {
+    ({ id: userId } = await createUser(email, password));
+  } catch (err) {
+    if ((err as { code?: string }).code === "23505") return jsonError(409, "email_taken");
+    throw err;
+  }
   const { shopId } = await provisionOwnedShop(store);
   await linkMembership(userId, shopId, "owner");
 

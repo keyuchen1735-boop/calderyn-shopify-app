@@ -437,17 +437,23 @@ function productHandle(title: string): string {
 // route surfaces it (no projection runs on a failed write).
 export async function createProduct(shopId: string, input: ProductInput): Promise<{ id: string }> {
   const sb = getSupabase();
-  const { data: prod, error: pErr } = await sb
-    .from("product_dim")
-    .insert({
-      shop_id: shopId, handle: productHandle(input.title), title: input.title, status: input.status,
-      vendor: input.vendor ?? null, category: input.category ?? null, description: input.description ?? null,
-      tags: input.tags ?? [],
-    })
-    .select("id")
-    .single();
-  if (pErr) throw pErr;
-  const productId = String(prod.id);
+  // Insert the product; retry with a fresh handle on the rare unique(shop_id,
+  // handle) collision (productHandle appends random bytes, so a clash is
+  // unlikely but possible). Throw on any other error or after 3 tries.
+  let productId = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: prod, error: pErr } = await sb
+      .from("product_dim")
+      .insert({
+        shop_id: shopId, handle: productHandle(input.title), title: input.title, status: input.status,
+        vendor: input.vendor ?? null, category: input.category ?? null, description: input.description ?? null,
+        tags: input.tags ?? [],
+      })
+      .select("id")
+      .single();
+    if (!pErr) { productId = String(prod.id); break; }
+    if ((pErr as { code?: string }).code !== "23505" || attempt === 2) throw pErr;
+  }
 
   await writeProductChildren(shopId, productId, input);
   await projectProductToSkuDim(productId);

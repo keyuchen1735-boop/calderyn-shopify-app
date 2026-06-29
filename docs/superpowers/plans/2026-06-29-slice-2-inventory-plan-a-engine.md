@@ -152,7 +152,7 @@ create or replace function public.inventory_reserve(
   p_shop_id uuid, p_variant_id uuid, p_qty int, p_location_ids uuid[],
   p_checkout_ref text, p_expires_at timestamptz, p_idempotency_key text, p_allow_backorder boolean
 ) returns jsonb language plpgsql as $$
-declare remaining int := p_qty; loc uuid; avail int; take int; alloc jsonb := '[]'::jsonb;
+declare remaining int := p_qty; loc uuid; avail int; take int; bo_loc uuid; alloc jsonb := '[]'::jsonb;
 begin
   -- Idempotent replay: existing holds for this checkout → return them unchanged.
   if exists (select 1 from inventory_reservation where shop_id = p_shop_id and checkout_ref = p_checkout_ref and state = 'held') then
@@ -179,8 +179,24 @@ begin
     remaining := remaining - take;
   end loop;
 
-  if remaining > 0 and not p_allow_backorder then
-    raise exception 'insufficient_stock' using errcode = 'P0001';
+  if remaining > 0 then
+    if not p_allow_backorder then
+      raise exception 'insufficient_stock' using errcode = 'P0001';
+    end if;
+    -- Backorder ('continue' policy): hold the SHORTFALL at the primary location,
+    -- driving available negative so (a) the owed units are tracked and (b) the
+    -- returned allocation sums to the FULL requested qty — checkout must never
+    -- think more was reserved than actually was. (Assumes a balance row exists at
+    -- the primary location; the seed/import creates one. If none, upsert it first.)
+    bo_loc := p_location_ids[1];
+    update public.inventory_balance set reserved = reserved + remaining, version = version + 1, updated_at = now()
+      where shop_id = p_shop_id and variant_id = p_variant_id and location_id = bo_loc;
+    insert into public.inventory_reservation (shop_id, variant_id, location_id, qty, state, checkout_ref, expires_at, idempotency_key)
+      values (p_shop_id, p_variant_id, bo_loc, remaining, 'held', p_checkout_ref, p_expires_at, p_idempotency_key || ':bo:' || bo_loc::text);
+    insert into public.inventory_ledger (shop_id, variant_id, location_id, entry_type, qty, order_ref, idempotency_key, source)
+      values (p_shop_id, p_variant_id, bo_loc, 'reserve', -remaining, p_checkout_ref, p_idempotency_key || ':reserve:bo', 'checkout');
+    alloc := alloc || jsonb_build_array(jsonb_build_object('locationId', bo_loc, 'qty', remaining, 'backorder', true));
+    remaining := 0;
   end if;
   return jsonb_build_object('ok', true, 'allocation', alloc);
 end $$;
