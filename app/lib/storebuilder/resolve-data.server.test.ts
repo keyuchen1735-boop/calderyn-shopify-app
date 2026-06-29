@@ -31,4 +31,12 @@ describe("resolveRenderData", () => {
     const data = await resolveRenderData(doc, "shop", fakeCatalog());
     expect(data.productsByCollection.summer).toHaveLength(1);
   });
+
+  it("loads the record collection's products for a collectionGrid template", async () => {
+    const doc: BlockDocument = { kind: "template", pageKey: "collection", blocks: [
+      { id: "cg", type: "collectionGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: {} },
+    ] };
+    const data = await resolveRenderData(doc, "shop", fakeCatalog(), { collection: { handle: "winter", title: "Winter" } });
+    expect(data.productsByCollection.winter).toHaveLength(1);
+  });
 });

@@ -2,11 +2,12 @@
 // Server-only: pre-load exactly the catalog data the document's blocks reference, so the pure
 // renderer (renderBlocks) needs no async/DB. Every read is shop-scoped (shopId first arg).
 import type { StorefrontCatalog } from "~/lib/storefront/catalog";
-import type { BlockDocument, RenderData } from "./types";
+import type { BlockDocument, RenderData, RenderContext } from "./types";
 import { getBlockMeta } from "./registry";
 
 export async function resolveRenderData(
   doc: BlockDocument, shopId: string, catalog: StorefrontCatalog,
+  record?: RenderContext["record"],
 ): Promise<RenderData> {
   // Gather refs across all blocks.
   const collectionHandles = new Set<string>();
@@ -24,6 +25,10 @@ export async function resolveRenderData(
     if (block.type === "productGrid" && source === "all") needsAll = true;
     if (block.type === "collectionList") collectionHandles.add("*"); // sentinel: needs the full list
   }
+
+  // Template docs bind dynamic blocks to the current record; a collectionGrid needs the
+  // record collection's products. ponytail: add the record handle to the load set.
+  if (record?.collection) collectionHandles.add(record.collection.handle);
 
   const wantsCollectionsList = collectionHandles.delete("*");
   const collections = wantsCollectionsList ? await catalog.listCollections(shopId) : [];
