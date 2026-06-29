@@ -42,9 +42,17 @@ describe("validateDocument", () => {
     expect(result.doc.blocks[0].props).toMatchObject({ headline: "Hi" });
   });
 
-  it("reports a pdp template missing required functional blocks (invariant hook)", () => {
-    // No functional blocks registered yet → required set empty → no error. Asserts the hook is wired.
+  it("reports a pdp template missing required functional blocks", () => {
     const result = validateDocument({ kind: "template", pageKey: "pdp", blocks: [] }, valid);
+    expect(result.missingFunctional.sort()).toEqual(["addToCart", "price", "variantPicker"]);
+  });
+
+  it("a pdp template with all functional blocks reports nothing missing", () => {
+    const block = (type: string) => ({ id: type, type, layout: { x: 0, y: 0, w: 6, h: 1 }, props: {} });
+    const result = validateDocument(
+      { kind: "template", pageKey: "pdp", blocks: [block("addToCart"), block("variantPicker"), block("price")] as never },
+      valid,
+    );
     expect(result.missingFunctional).toEqual([]);
   });
 });

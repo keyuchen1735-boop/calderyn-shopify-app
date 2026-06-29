@@ -11,11 +11,8 @@ export interface ValidIds { productIds: Set<string>; collectionHandles: Set<stri
 export interface DroppedRef { blockId: string; kind: "type" | "docKind" | "product" | "collection"; ref: string }
 export interface ValidationResult { doc: BlockDocument; dropped: DroppedRef[]; missingFunctional: BlockType[] }
 
-// Functional blocks required on a given page type. Empty until product/functional blocks
-// register (next slice). ponytail: vacuous now; the buy-path invariant slots in by adding
-// entries here — the call site below already enforces whatever this returns.
-export function requiredFunctionalBlocks(_pageKey: PageKey): BlockType[] {
-  return [];
+export function requiredFunctionalBlocks(pageKey: PageKey): BlockType[] {
+  return pageKey === "pdp" ? ["addToCart", "variantPicker", "price"] : [];
 }
 
 export function validateDocument(input: BlockDocument, valid: ValidIds): ValidationResult {
