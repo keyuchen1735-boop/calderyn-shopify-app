@@ -8,11 +8,11 @@ export type DocKind = "singleton" | "template";
 export type PageKey = "home" | "collection" | "pdp" | `page:${string}`;
 export type BlockFlavor = "static" | "dynamic" | "functional";
 
-// Starter set (sub-project 0). Product/functional types are added in the next slice
-// without changing this file's shapes.
 export type BlockType =
   | "hero" | "richText" | "image" | "button" // static
-  | "productGrid" | "collectionList"; // dynamic
+  | "productGrid" | "collectionList" // dynamic (singleton)
+  | "productGallery" | "collectionGrid" // dynamic (template, read ctx.record)
+  | "price" | "variantPicker" | "addToCart"; // functional (template, PDP buy-path)
 
 export interface GridCell { x: number; y: number; w: number; h: number }
 
