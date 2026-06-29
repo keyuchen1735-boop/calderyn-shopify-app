@@ -18,6 +18,8 @@ create table public.store_generation (
   source      text not null check (source in ('brief','catalog')),
   brief_text  text,
   model       text not null,
+  -- status: the generator emits 'draft' (always writes 3 fallback-safe docs) or 'no_products'
+  -- (empty catalog). 'failed' is reserved for a hard-failure path not yet emitted.
   status      text not null check (status in ('draft','failed','no_products')),
   token_cost  integer not null default 0,
   created_at  timestamptz not null default now()

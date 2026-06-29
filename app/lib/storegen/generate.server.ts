@@ -53,7 +53,8 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
       return textOf(msg);
-    } catch {
+    } catch (err) {
+      console.error("[storegen] Claude call failed; using deterministic fallback", err);
       return null; // API/timeout → caller uses the deterministic fallback
     }
   }
@@ -77,11 +78,16 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     const plan = text ? parseBlockPlan(text) : null;
     proposals[pageKey] = plan ?? { fallback: true };
     let doc: BlockDocument;
-    if (plan) {
-      const assembled = assembleDocument(pageKey, kind, plan, valid);
-      // A plan that validates down to nothing is a failure → fall back.
-      doc = assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline });
-    } else {
+    try {
+      if (plan) {
+        const assembled = assembleDocument(pageKey, kind, plan, valid);
+        // A plan that validates down to nothing is a failure → fall back.
+        doc = assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline });
+      } else {
+        doc = fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline });
+      }
+    } catch (err) {
+      console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
       doc = fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline });
     }
     docs[pageKey] = doc;

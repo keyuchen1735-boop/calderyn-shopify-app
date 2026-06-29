@@ -69,4 +69,15 @@ describe("generateStore", () => {
     expect(result.status).toBe("draft");
     expect(saveDraftMock).toHaveBeenCalledTimes(3); // all fallback docs
   });
+
+  it("stops calling Claude once the token budget is tripped, still writing all 3 drafts (rule 6)", async () => {
+    // The brand call alone exceeds STOREGEN_TOKEN_BUDGET, so no per-doc calls run.
+    createMock.mockResolvedValueOnce({
+      content: [{ type: "text", text: '{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}' }],
+      usage: { input_tokens: 99999, output_tokens: 0 },
+    });
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(createMock).toHaveBeenCalledTimes(1); // budget tripped after brand → no doc calls
+    expect(saveDraftMock).toHaveBeenCalledTimes(3); // every doc still written via fallback
+  });
 });

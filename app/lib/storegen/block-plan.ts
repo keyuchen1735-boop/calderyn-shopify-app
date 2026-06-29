@@ -37,9 +37,11 @@ export function parseBrandPlan(raw: string): BrandPlan | null {
   if (typeof p.storeName !== "string") return null;
   const pal = asRecord(p.palette);
   const hex = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  // Enforce the prompt's length limits here: brand text is model output derived from
+  // untrusted catalog text and flows on to saveStoreSettings/DB.
   return {
-    storeName: p.storeName,
+    storeName: p.storeName.slice(0, 60),
     palette: { primary: hex(pal.primary, "#0f766e"), background: hex(pal.background, "#ffffff"), text: hex(pal.text, "#111827") },
-    voiceTagline: typeof p.voiceTagline === "string" ? p.voiceTagline : "",
+    voiceTagline: typeof p.voiceTagline === "string" ? p.voiceTagline.slice(0, 120) : "",
   };
 }

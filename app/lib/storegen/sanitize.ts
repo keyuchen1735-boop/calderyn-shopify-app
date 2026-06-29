@@ -48,9 +48,11 @@ export function assembleDocument(
   const result = validateDocument({ kind, pageKey, blocks }, valid);
 
   // 3) PDP buy-path guarantee: inject any missing required functional block from its defaults.
+  // Inject in display order (price → variantPicker → addToCart) to match fallback.ts — the
+  // required list is ordered by importance, so reverse it for top-to-bottom stacking.
   const present = new Set(result.doc.blocks.map((b) => b.type));
   let y = result.doc.blocks.reduce((m, b) => Math.max(m, b.layout.y + b.layout.h), 0);
-  for (const type of requiredFunctionalBlocks(pageKey)) {
+  for (const type of [...requiredFunctionalBlocks(pageKey)].reverse()) {
     if (present.has(type)) continue;
     const meta = getBlockMeta(type);
     if (!meta) continue;
