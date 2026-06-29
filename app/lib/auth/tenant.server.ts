@@ -16,16 +16,28 @@ export async function provisionOwnedShop(
   displayName: string,
 ): Promise<{ shopId: string; orgSlug: string }> {
   const sb = getSupabase();
-  const orgSlug = slugify(displayName);
-  const { data, error } = await sb
-    .from("shops")
-    .insert({ org_slug: orgSlug, display_name: displayName })
-    .select("id, org_slug")
-    .single();
-  if (error) throw error;
-  const shopId = String(data.id);
-  await seedShippedAutopilotFeatures(shopId, sb);
-  return { shopId, orgSlug: String(data.org_slug) };
+  const MAX_SLUG_RETRIES = 3;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_SLUG_RETRIES; attempt++) {
+    const orgSlug = slugify(displayName);
+    const { data, error } = await sb
+      .from("shops")
+      .insert({ org_slug: orgSlug, display_name: displayName })
+      .select("id, org_slug")
+      .single();
+    if (error) {
+      // Unique-violation on org_slug: regenerate the slug and retry.
+      if ((error as { code?: string }).code === "23505") {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+    const shopId = String(data.id);
+    await seedShippedAutopilotFeatures(shopId, sb);
+    return { shopId, orgSlug: String(data.org_slug) };
+  }
+  throw lastError;
 }
 
 export async function linkMembership(

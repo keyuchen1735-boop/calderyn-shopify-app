@@ -42,6 +42,24 @@ describe("owned-tenant helpers", () => {
     expect(seedSpy).toHaveBeenCalledWith("shop1", expect.anything());
   });
 
+  it("provisionOwnedShop retries once on 23505 slug collision then succeeds", async () => {
+    single
+      .mockResolvedValueOnce({ data: null, error: { code: "23505", message: "duplicate key value" } })
+      .mockResolvedValueOnce({ data: { id: "shop2", org_slug: "acme-retry" }, error: null });
+    const { provisionOwnedShop } = await import("../tenant.server");
+    const res = await provisionOwnedShop("Acme");
+    expect(res.shopId).toBe("shop2");
+    expect(single).toHaveBeenCalledTimes(2);
+  });
+
+  it("provisionOwnedShop does not retry on a non-23505 error", async () => {
+    const dbError = { code: "42501", message: "permission denied" };
+    single.mockResolvedValueOnce({ data: null, error: dbError });
+    const { provisionOwnedShop } = await import("../tenant.server");
+    await expect(provisionOwnedShop("Acme")).rejects.toMatchObject({ code: "42501" });
+    expect(single).toHaveBeenCalledTimes(1);
+  });
+
   it("resolveShopForUser returns the membership shop_id", async () => {
     maybeSingle.mockResolvedValue({ data: { shop_id: "shop1" }, error: null });
     const { resolveShopForUser } = await import("../tenant.server");

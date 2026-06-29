@@ -8,7 +8,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 }));
 const verifyUserCredentials = vi.fn();
 const resolveShopForUser = vi.fn();
-vi.mock("~/lib/auth/users.server", () => ({ verifyUserCredentials }));
+vi.mock("~/lib/auth/users.server", () => ({ verifyUserCredentials, normalizeEmail: (e: string) => e.trim().toLowerCase() }));
 vi.mock("~/lib/auth/tenant.server", () => ({ resolveShopForUser }));
 vi.mock("~/lib/dashboard/session.server", () => ({
   createSessionForUser: vi.fn().mockResolvedValue({ raw: "dash_live_abc" }),

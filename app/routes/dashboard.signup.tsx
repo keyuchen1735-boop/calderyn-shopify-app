@@ -4,7 +4,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
-import { isValidEmail, findUserByEmail, createUser } from "~/lib/auth/users.server";
+import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 
@@ -22,6 +22,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const store = String(fd.get("store") ?? "").trim();
 
   if (!isValidEmail(email)) return jsonError(422, "invalid_email");
+
+  // Per-email limit after we know the address is syntactically valid. Keyed on
+  // the normalized form so casing variants share a bucket. 5 attempts / hour.
+  if (!(await rateLimit(`signup-acct:${normalizeEmail(email)}`, 5, 60 * 60_000))) {
+    return jsonError(429, "rate_limited");
+  }
+
   if (password.length < MIN_PASSWORD) return jsonError(422, "weak_password", `Use at least ${MIN_PASSWORD} characters`);
   if (!store) return jsonError(422, "missing_store");
 
@@ -37,13 +44,20 @@ export async function action({ request }: ActionFunctionArgs) {
     if ((err as { code?: string }).code === "23505") return jsonError(409, "email_taken");
     throw err;
   }
-  const { shopId } = await provisionOwnedShop(store);
-  await linkMembership(userId, shopId, "owner");
+  // Compensating cleanup: if anything after createUser fails, delete the just-
+  // created user so the email is not permanently locked and a retry can succeed.
+  try {
+    const { shopId } = await provisionOwnedShop(store);
+    await linkMembership(userId, shopId, "owner");
 
-  const { raw } = await createSessionForUser(userId, shopId);
-  return redirect("/dashboard", {
-    headers: { "Set-Cookie": sessionCookieHeader(raw) },
-  });
+    const { raw } = await createSessionForUser(userId, shopId);
+    return redirect("/dashboard", {
+      headers: { "Set-Cookie": sessionCookieHeader(raw) },
+    });
+  } catch (err) {
+    await deleteUser(userId).catch(() => {});
+    throw err;
+  }
 }
 
 export default function SignupRoute() {

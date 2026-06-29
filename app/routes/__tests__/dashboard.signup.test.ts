@@ -8,14 +8,17 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 }));
 const findUserByEmail = vi.fn();
 const createUser = vi.fn();
+const deleteUser = vi.fn();
 vi.mock("~/lib/auth/users.server", () => ({
   isValidEmail: (e: string) => /@/.test(e),
   normalizeEmail: (e: string) => e.toLowerCase(),
   findUserByEmail,
   createUser,
+  deleteUser,
 }));
+const provisionOwnedShop = vi.fn().mockResolvedValue({ shopId: "shop1", orgSlug: "acme-x" });
 vi.mock("~/lib/auth/tenant.server", () => ({
-  provisionOwnedShop: vi.fn().mockResolvedValue({ shopId: "shop1", orgSlug: "acme-x" }),
+  provisionOwnedShop,
   linkMembership: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({
@@ -23,7 +26,12 @@ vi.mock("~/lib/dashboard/session.server", () => ({
   sessionCookieHeader: () => "__Host-calderyn_dash=dash_live_abc; Path=/",
 }));
 
-beforeEach(() => { findUserByEmail.mockReset(); createUser.mockReset(); });
+beforeEach(() => {
+  findUserByEmail.mockReset();
+  createUser.mockReset();
+  deleteUser.mockReset();
+  provisionOwnedShop.mockResolvedValue({ shopId: "shop1", orgSlug: "acme-x" });
+});
 
 function form(fields: Record<string, string>) {
   const body = new URLSearchParams(fields).toString();
@@ -62,5 +70,17 @@ describe("signup action", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/dashboard");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=");
+  });
+
+  it("calls deleteUser with the created user id when provisionOwnedShop rejects", async () => {
+    findUserByEmail.mockResolvedValue(null);
+    createUser.mockResolvedValue({ id: "u2" });
+    provisionOwnedShop.mockRejectedValue(new Error("shop insert failed"));
+    deleteUser.mockResolvedValue(undefined);
+    const { action } = await import("../dashboard.signup");
+    await expect(
+      action({ request: form({ email: "a@b.co", password: "longenough12", store: "Acme" }) } as never),
+    ).rejects.toThrow("shop insert failed");
+    expect(deleteUser).toHaveBeenCalledWith("u2");
   });
 });

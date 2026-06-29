@@ -7,11 +7,14 @@ process.env.PASSWORD_PEPPER = "x".repeat(32);
 const maybeSingle = vi.fn();
 const single = vi.fn();
 const insert = vi.fn(() => ({ select: () => ({ single }) }));
+const deleteEq = vi.fn().mockResolvedValue({ error: null });
+const deleteFn = vi.fn(() => ({ eq: deleteEq }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: () => ({
       select: () => ({ eq: () => ({ maybeSingle }) }),
       insert,
+      delete: deleteFn,
     }),
   }),
 }));
@@ -19,6 +22,8 @@ vi.mock("~/lib/supabase.server", () => ({
 beforeEach(() => {
   maybeSingle.mockReset();
   single.mockReset();
+  deleteEq.mockReset().mockResolvedValue({ error: null });
+  deleteFn.mockClear();
 });
 
 describe("users data layer", () => {
@@ -44,5 +49,12 @@ describe("users data layer", () => {
     const { verifyUserCredentials } = await import("../users.server");
     expect(await verifyUserCredentials("a@b.co", "hunter2")).toEqual({ id: "u1" });
     expect(await verifyUserCredentials("a@b.co", "wrong")).toBeNull();
+  });
+
+  it("deleteUser calls delete().eq(id) and resolves without error", async () => {
+    const { deleteUser } = await import("../users.server");
+    await expect(deleteUser("u99")).resolves.toBeUndefined();
+    expect(deleteFn).toHaveBeenCalled();
+    expect(deleteEq).toHaveBeenCalledWith("id", "u99");
   });
 });

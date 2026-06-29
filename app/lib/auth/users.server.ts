@@ -42,6 +42,11 @@ export async function createUser(
   return { id: String(data.id) };
 }
 
+export async function deleteUser(id: string): Promise<void> {
+  const { error } = await getSupabase().from("users").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export async function verifyUserCredentials(
   email: string,
   password: string,

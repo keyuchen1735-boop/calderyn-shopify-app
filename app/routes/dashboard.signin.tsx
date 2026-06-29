@@ -4,7 +4,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
-import { verifyUserCredentials } from "~/lib/auth/users.server";
+import { verifyUserCredentials, normalizeEmail } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 
@@ -20,7 +20,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // Per-account throttle beyond the per-IP limit: stops credential-stuffing a
   // single account from rotating IPs. 5 attempts / 15 min per email.
-  if (!(await rateLimit(`signin-acct:${email.trim().toLowerCase()}`, 5, 15 * 60_000))) {
+  if (!(await rateLimit(`signin-acct:${normalizeEmail(email)}`, 5, 15 * 60_000))) {
     return jsonError(429, "rate_limited");
   }
 
