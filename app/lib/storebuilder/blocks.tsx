@@ -15,6 +15,12 @@ const safeHref = (v: unknown, fallback: string): string => {
   // data:, etc.) falls back. AI/merchant-supplied hrefs are an untrusted XSS vector.
   return /^(https?:\/\/|\/)/.test(s) ? s : fallback;
 };
+// Same allowlist for an <img src>: AI/merchant-supplied URLs are untrusted. Reject javascript:,
+// data:, and other schemes; an empty result renders no image rather than an unsafe src.
+const safeImageSrc = (v: unknown): string => {
+  const s = str(v, "");
+  return /^(https?:\/\/|\/)/.test(s) ? s : "";
+};
 
 function money(p: StoreProduct): string {
   const v = p.variants[0];
@@ -41,7 +47,10 @@ const richText: BlockMeta<RichTextProps> = {
   type: "richText", flavor: "static", allowedDocKinds: ["singleton", "template"],
   defaultProps: { text: "Tell your story." },
   defaultLayout: { x: 0, y: 0, w: 12, h: 2 },
-  validateProps: (raw) => ({ text: str(asRecord(raw).text, "") }),
+  // The generator contract emits richText copy under `html` (a plain-text string, bounded by
+  // COPY_BOUNDS); accept `html` first, falling back to `text`, so AI/merchant copy is not
+  // silently dropped to an empty block.
+  validateProps: (raw) => { const r = asRecord(raw); return { text: str(r.html, str(r.text, "")) }; },
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   // ponytail: plain text only — NOT dangerouslySetInnerHTML. Rich formatting is the editor's
   // job later via a sanitized prop; rendering merchant/AI HTML raw would be an XSS sink.
@@ -53,7 +62,7 @@ const image: BlockMeta<ImageProps> = {
   type: "image", flavor: "static", allowedDocKinds: ["singleton", "template"],
   defaultProps: { url: "", alt: "" },
   defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
-  validateProps: (raw) => { const r = asRecord(raw); return { url: str(r.url), alt: str(r.alt) }; },
+  validateProps: (raw) => { const r = asRecord(raw); return { url: safeImageSrc(r.url), alt: str(r.alt) }; },
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   Component: ({ props }) =>
     props.url ? createElement("img", { className: "cd-block cd-block--image", src: props.url, alt: props.alt }) : null,
