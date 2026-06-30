@@ -26,16 +26,25 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const order = token ? await findOrderByConfirmationToken(shopId, token) : null;
   if (!order) throw new Response("Order not found", { status: 404 });
 
-  // Clear the cart cookie now that the order is placed (idempotent — safe on a refresh).
-  const headers = new Headers();
-  headers.append("Set-Cookie", await clearCartId());
+  // A valid token only proves the checkout was ORIGINATED, not paid — the order sits in
+  // `checkout_pending` until the Stripe webhook confirms capture, then advances to `paid` and
+  // later `fulfilled`/`refunded`. "Captured" = payment was taken (paid or any state beyond it),
+  // keyed off the whole set rather than the exact `paid` state so the status stays honest after
+  // the order moves on (a `fulfilled` order must not read as "still confirming payment").
+  const captured =
+    order.state === "paid" || order.state === "fulfilled" || order.state === "refunded";
 
-  // The webhook may lag, so the order can still be `checkout_pending` here — reflect it
-  // gracefully ("received / processing") rather than hard-failing on not-yet-paid.
+  // Clear the cart cookie ONLY once payment is captured — never for an unpaid `checkout_pending`
+  // order, so a buyer who reaches this URL without paying keeps their cart. Idempotent on refresh.
+  const headers = new Headers();
+  if (captured) headers.append("Set-Cookie", await clearCartId());
+
+  // The webhook may lag, so a genuinely-paid order can still read `checkout_pending` here —
+  // reflect it gracefully ("received / processing") rather than hard-failing on not-yet-paid.
   return json(
     {
       ref: formatOrderRef(order.orderId),
-      paid: order.state === "paid",
+      paid: captured,
       totalCents: order.totalCents,
       currency: order.currency,
       lines: order.lines.map((l) => ({ title: l.title, quantity: l.quantity })),
