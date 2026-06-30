@@ -78,6 +78,11 @@ beforeEach(() => {
     orderId: "order-1",
     clientSecret: "pi_1_secret_abc",
     confirmationToken: "tok-abc",
+    subtotalCents: 3998,
+    shippingCents: 599,
+    taxCents: 360,
+    totalCents: 4957,
+    currency: "usd",
   });
 });
 
@@ -102,7 +107,7 @@ describe("checkout loader", () => {
     const res = await loader(loaderArgs(req));
     const body = await (res as Response).json();
     expect(body.publishableKey).toBe("pk_test_x");
-    expect(body.summary.totalCents).toBe(3998);
+    expect(body.summary.subtotalCents).toBe(3998);
     expect(body.summary.lines).toHaveLength(1);
     // No secret material leaks through the loader payload.
     expect(JSON.stringify(body)).not.toContain("sk_");
@@ -164,7 +169,15 @@ describe("checkout action happy path", () => {
     expect(buyer.consent.version).toBeTruthy();
 
     const body = await (res as Response).json();
-    expect(body).toEqual({ clientSecret: "pi_1_secret_abc", confirmationToken: "tok-abc" });
+    expect(body).toEqual({
+      clientSecret: "pi_1_secret_abc",
+      confirmationToken: "tok-abc",
+      subtotalCents: 3998,
+      shippingCents: 599,
+      taxCents: 360,
+      totalCents: 4957,
+      currency: "usd",
+    });
     // The cart is NOT cleared at the action — payment can still fail.
     expect((res as Response).headers.get("Set-Cookie")).toBeNull();
   });

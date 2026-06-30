@@ -48,6 +48,16 @@ export interface CheckoutResult {
    * order id — so the confirmation URL can never be turned into an IDOR.
    */
   confirmationToken: string;
+  /**
+   * The amounts the buyer is actually charged (integer cents), so the payment UI can display the
+   * real total — subtotal + quoted shipping + tax — instead of the subtotal-only figure shown
+   * before the shipping address was captured. `totalCents` equals the PaymentIntent amount.
+   */
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
 }
 
 /** A confirmed-order summary for the buyer-facing confirmation page. PII-free by construction. */
@@ -179,7 +189,16 @@ export async function createCheckout(
 
   const pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId);
 
-  return { orderId, clientSecret: pi.clientSecret, confirmationToken };
+  return {
+    orderId,
+    clientSecret: pi.clientSecret,
+    confirmationToken,
+    subtotalCents: priced.subtotalCents,
+    shippingCents,
+    taxCents,
+    totalCents,
+    currency: priced.currency,
+  };
 }
 
 const ORDER_SUMMARY_COLS =
