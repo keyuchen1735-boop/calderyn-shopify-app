@@ -14,10 +14,9 @@ Payment via Stripe is unchanged. Every placed order still requires buyer payment
 1. **Migration `20260630160000_frictionless_commerce_defaults.sql`** — flips `mcp_oauth_clients.commerce_scope` default to `true` and back-fills existing rows. `spend_cap_cents = 0` is re-documented as UNLIMITED (no ceiling); a positive value is still a hard per-order cap.
 
 2. **Guardrail semantics (`guardrail.server.ts`)** — `assertWithinCommerceCap` now:
-   - Allows commerce when the client row is absent (frictionless — new clients are in by default).
-   - Allows commerce when `commerce_scope` is `true` or absent.
-   - Throws `CommerceDisabledError` (code `COMMERCE_DISABLED`) only when a merchant has explicitly set `commerce_scope = false` for that client.
-   - Throws `SpendCapError` (code `SPEND_CAP_EXCEEDED`) only when `spend_cap_cents > 0` and `amountCents > cap`. Cap of `0` or absent = UNLIMITED.
+   - Allows commerce for a **registered** client whose `commerce_scope` is `true` (the new default) — frictionless: zero merchant setup.
+   - Throws `CommerceDisabledError` (code `COMMERCE_DISABLED`) when a merchant has explicitly set `commerce_scope = false`, **or** for a missing `clientId` (no principal), **or** for an **unregistered** client (no registry row). Frictionless lowers merchant setup; it does **not** authorize anonymous/unknown callers (closed per the commit security review).
+   - Throws `SpendCapError` (code `SPEND_CAP_EXCEEDED`) only when `spend_cap_cents > 0` and `amountCents > cap`. Cap of `0` or absent = UNLIMITED — the founder's explicit, surfaced tradeoff (payment via Stripe is always still required).
    - `CommerceNotAuthorizedError` is renamed to `CommerceDisabledError` throughout.
 
 3. **Dispatcher gate (`tools.server.ts`)** — commerce tools are no longer gated by an OAuth scope string. They route whenever `deps.commerceCtx` is present. If a commerce tool is called with no `commerceCtx`, the dispatcher returns `COMMERCE_UNAVAILABLE`. The in-app merchant assistant (no `commerceCtx`) is unaffected. `toolsForScopes` is replaced by `EXTERNAL_TOOLS` (the advertised toolset for external connected clients).

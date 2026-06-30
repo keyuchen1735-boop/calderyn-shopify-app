@@ -35,10 +35,17 @@ describe("assertWithinCommerceCap", () => {
     await expect(assertWithinCommerceCap("c1", 4999)).resolves.toBeUndefined();
   });
 
-  it("passes when no row exists (frictionless — new clients are in by default)", async () => {
+  it("throws COMMERCE_DISABLED for an UNREGISTERED client (no row) — frictionless ≠ anonymous", async () => {
     vi.resetModules();
     mockClient(null);
     const { assertWithinCommerceCap } = await import("./guardrail.server");
-    await expect(assertWithinCommerceCap("c1", 5000)).resolves.toBeUndefined();
+    await expect(assertWithinCommerceCap("c1", 5000)).rejects.toMatchObject({ code: "COMMERCE_DISABLED" });
+  });
+
+  it("throws COMMERCE_DISABLED when no clientId is supplied (missing principal)", async () => {
+    vi.resetModules();
+    mockClient({ commerce_scope: true, spend_cap_cents: 0 });
+    const { assertWithinCommerceCap } = await import("./guardrail.server");
+    await expect(assertWithinCommerceCap("", 5000)).rejects.toMatchObject({ code: "COMMERCE_DISABLED" });
   });
 });
