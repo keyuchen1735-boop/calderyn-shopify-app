@@ -2,6 +2,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
+import { useState } from "react";
+import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
@@ -59,11 +61,20 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontProduct() {
   const { product, doc, data, record } = useLoaderData<typeof loader>();
+  const firstVariantId = product.variants[0]?.id ?? "";
+  const [selectedVariantId, setSelectedVariantId] = useState(firstVariantId);
+
   if (doc && data) {
     // The addToCart block renders a native <form method="post"> posting to THIS route's action.
-    return <article className="cd-pdp cd-pdp--blocks">{renderBlocks(doc, { data, record })}</article>;
+    return (
+      <article className="cd-pdp cd-pdp--blocks">
+        {renderBlocks(doc, { data, record })}
+        {firstVariantId && <DeliveryPromise variantId={firstVariantId} />}
+      </article>
+    );
   }
   const buyable = product.variants.filter((v) => v.available);
+  const activeVariantId = selectedVariantId || buyable[0]?.id || firstVariantId;
   return (
     <article className="cd-pdp">
       <div className="cd-pdp__gallery">
@@ -88,7 +99,13 @@ export default function StorefrontProduct() {
         {buyable.length > 0 ? (
           <Form method="post" className="cd-pdp__add">
             {buyable.length > 1 ? (
-              <select name="variantId" className="cd-pdp__variant-select" aria-label="Choose an option">
+              <select
+                name="variantId"
+                className="cd-pdp__variant-select"
+                aria-label="Choose an option"
+                value={activeVariantId}
+                onChange={(e) => setSelectedVariantId(e.target.value)}
+              >
                 {buyable.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.title}
@@ -107,6 +124,7 @@ export default function StorefrontProduct() {
             Sold out
           </button>
         )}
+        {activeVariantId && <DeliveryPromise variantId={activeVariantId} />}
       </div>
     </article>
   );
