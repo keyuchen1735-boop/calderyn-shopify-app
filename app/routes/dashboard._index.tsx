@@ -28,7 +28,8 @@ export const links: LinksFunction = () => [
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await getSessionOrRedirect(request);
-  return { shopDomain: session.shopDomain };
+  const shopDomain = session.shopDomain ?? "";
+  return { shopDomain };
 }
 
 export default function DashboardRoute() {

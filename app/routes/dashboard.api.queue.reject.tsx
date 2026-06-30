@@ -43,7 +43,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!alertId) return jsonError(400, "missing_alert_id");
   if (!REJECT_REASONS.includes(reason)) return jsonError(400, "invalid_reason");
 
-  const client = calderynClient(session.shopDomain);
+  const client = calderynClient(session.shopId);
 
   return dashboardJson(async () => {
     // Re-derive from the TRUSTED alert — never trust form/body for detector/action/impact.

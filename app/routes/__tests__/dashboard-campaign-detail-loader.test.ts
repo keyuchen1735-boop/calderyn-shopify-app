@@ -103,9 +103,10 @@ describe("dashboard campaign detail loader — full-blend score", () => {
     };
 
     // Cache-only load: NO assumedSpendCents-from-Claude; the creatives loader is
-    // called with the session shop ids + the default spend basis.
+    // called with session.shopId (UUID) for both the shop identity args so first-party
+    // (null-domain) sessions work. The UUID fast-path in resolveShopId handles this.
     expect(loadCreativesSpy).toHaveBeenCalledWith(
-      "acme.myshopify.com", "shop-uuid-1", "c1", DEFAULT_SPEND_CENTS,
+      "shop-uuid-1", "shop-uuid-1", "c1", DEFAULT_SPEND_CENTS,
     );
     const s = body.campaign.calderynScore;
     expect(s.performance).toBe(100); // clamp(round(50*4/2),0,100)

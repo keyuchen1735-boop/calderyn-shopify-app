@@ -12,7 +12,7 @@ import { buildLiveEnginePageData } from "~/lib/calibration/live-engine-page.serv
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     return buildLiveEnginePageData(client, request.signal);
   });
 }

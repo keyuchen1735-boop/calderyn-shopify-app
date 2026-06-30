@@ -126,7 +126,7 @@ describe("getSessionFromRequest / requireDashboardSession", () => {
       { data: null, error: null }, // last_seen_at update
     ]);
     const s = await getSessionFromRequest(reqWithToken(newSessionToken()));
-    expect(s).toEqual({ shopId: "shop-1", shopDomain: "x.myshopify.com", sessionId: "sess-1" });
+    expect(s).toEqual({ shopId: "shop-1", shopDomain: "x.myshopify.com", userId: null, sessionId: "sess-1" });
   });
 
   it("returns null for expired sessions", async () => {

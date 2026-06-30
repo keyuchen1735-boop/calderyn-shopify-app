@@ -20,7 +20,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const parsed = await parseBugReportForm(form, {
-    shopDomain: session.shopDomain,
+    shopDomain: session.shopDomain ?? session.shopId,
     surface: "dashboard",
     userAgent: request.headers.get("user-agent") ?? "",
   });

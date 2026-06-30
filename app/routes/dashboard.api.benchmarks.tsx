@@ -5,5 +5,5 @@ import { getPeerBenchmarks } from "~/lib/benchmarks/peer-benchmarks.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
-  return dashboardJson(async () => getPeerBenchmarks(session.shopDomain));
+  return dashboardJson(async () => getPeerBenchmarks(session.shopId));
 }
