@@ -8,6 +8,7 @@ import {
   Ban,
   Bell,
   BellOff,
+  Bot,
   Box,
   Bug,
   AlignLeft,
@@ -60,6 +61,7 @@ export interface CDIconProps {
 // name -> Lucide component. Names are stable so the 14 call sites never change.
 export const CD_ICONS: Record<string, LucideIcon> = {
   archive: Archive,
+  bot: Bot,
   gauge: Gauge,
   bell: Bell,
   megaphone: Megaphone,

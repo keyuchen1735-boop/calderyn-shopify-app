@@ -3,6 +3,9 @@ import type { CalderynClient, CalderynError } from "../calderyn.server";
 import { ACTION_LABELS, DETECTOR_TO_ACTIONS } from "../labels";
 import type { ActionKind } from "../types";
 import type { DraftedAction } from "./types";
+import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
+
+const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
 
 export interface ToolDispatchResult {
   content: string; // JSON string handed back to the model as tool_result content
@@ -127,6 +130,19 @@ export interface ToolDispatcherDeps {
    * Surfaces that don't support flagging simply omit it.
    */
   flagAlert?: (alertId: string) => Promise<boolean>;
+  /** Scopes granted to this caller. Must include "commerce" to access commerce tools. */
+  scopes?: string[];
+  /** Shop + OAuth client context required by commerce tool handlers. */
+  commerceCtx?: CommerceCtx;
+}
+
+/**
+ * Returns the tool list appropriate for the given scope set.
+ * Commerce tools are surfaced only to callers carrying the "commerce" scope;
+ * the in-app merchant assistant (no "commerce" scope) never sees or runs them.
+ */
+export function toolsForScopes(scopes: string[] | undefined): Anthropic.Tool[] {
+  return scopes?.includes("commerce") ? [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS] : ASSISTANT_TOOLS;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
@@ -135,6 +151,12 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
     input: Record<string, unknown>,
   ): Promise<ToolDispatchResult> {
     try {
+      if (COMMERCE_NAME_SET.has(name)) {
+        if (!deps.scopes?.includes("commerce") || !deps.commerceCtx) {
+          return toolError("COMMERCE_SCOPE_REQUIRED", `${name} requires the commerce scope`);
+        }
+        return await handleCommerceTool(name, input, deps.commerceCtx);
+      }
       switch (name) {
         case "list_alerts": {
           const alerts = await client.alerts.list({
