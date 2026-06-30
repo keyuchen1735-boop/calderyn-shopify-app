@@ -1,11 +1,12 @@
 // Deterministic per-client commerce guard (rule 5: spend authority is code, not model
-// judgement). Checked BEFORE any charge. A client must carry commerce_scope and the order
-// total must be <= its spend_cap_cents, else the transaction is refused, visibly.
+// judgement). Checked BEFORE any charge. Commerce is ON by default (frictionless); a merchant
+// may explicitly disable a client (commerce_scope=false) or set a per-order cap
+// (spend_cap_cents > 0). spend_cap_cents = 0 means UNLIMITED — no ceiling enforced.
 import { getSupabase } from "~/lib/supabase.server";
 
-export class CommerceNotAuthorizedError extends Error {
-  code = "COMMERCE_NOT_AUTHORIZED";
-  constructor(clientId: string) { super(`client ${clientId} is not authorized for commerce`); }
+export class CommerceDisabledError extends Error {
+  code = "COMMERCE_DISABLED";
+  constructor(clientId: string) { super(`client ${clientId} has commerce disabled by the merchant`); }
 }
 export class SpendCapError extends Error {
   code = "SPEND_CAP_EXCEEDED";
@@ -15,7 +16,6 @@ export class SpendCapError extends Error {
 }
 
 export async function assertWithinCommerceCap(clientId: string, amountCents: number): Promise<void> {
-  if (!clientId) throw new CommerceNotAuthorizedError("(none)");
   const res = await getSupabase()
     .from("mcp_oauth_clients")
     .select("commerce_scope, spend_cap_cents")
@@ -23,7 +23,9 @@ export async function assertWithinCommerceCap(clientId: string, amountCents: num
     .maybeSingle();
   if (res.error) throw res.error;
   const row = res.data as { commerce_scope?: boolean; spend_cap_cents?: number } | null;
-  if (!row?.commerce_scope) throw new CommerceNotAuthorizedError(clientId);
-  const cap = Number(row.spend_cap_cents ?? 0);
-  if (amountCents > cap) throw new SpendCapError(clientId, amountCents, cap);
+  // No row = frictionless (client is in by default). Row with commerce_scope=false = merchant override.
+  if (row !== null && row.commerce_scope === false) throw new CommerceDisabledError(clientId);
+  // Cap of 0 or absent = UNLIMITED. Only enforce when a positive cap is set.
+  const cap = Number(row?.spend_cap_cents ?? 0);
+  if (cap > 0 && amountCents > cap) throw new SpendCapError(clientId, amountCents, cap);
 }
