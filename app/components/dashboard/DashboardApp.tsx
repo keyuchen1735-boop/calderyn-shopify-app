@@ -41,6 +41,7 @@ import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenSettings from "./screens/Settings";
 import ScreenLabs from "./screens/Labs";
+import { AgenticChannel } from "./screens/AgenticChannel";
 
 const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Overview", icon: "gauge" },
@@ -49,6 +50,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "audit", label: "Action history", icon: "clock" },
+  { id: "agentic", label: "Agentic", icon: "bot" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -75,6 +77,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
   audit: ScreenAudit,
+  agentic: () => <AgenticChannel />,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,

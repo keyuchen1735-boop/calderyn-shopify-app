@@ -18,6 +18,7 @@ export type Screen =
   | "analytics"
   | "inventory"
   | "audit"
+  | "agentic"
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
