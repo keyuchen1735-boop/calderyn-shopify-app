@@ -18,7 +18,7 @@ describe("ACP complete action", () => {
     const { action } = await import("../acp.checkout_sessions.$id.complete");
     const req = new Request("https://app/acp/checkout_sessions/acp_1/complete", { method: "POST", body: JSON.stringify({ payment: { shared_payment_token: "spt_1" }, buyer: { email: "b@x.com" } }) });
     const res = await action({ request: req, params: { id: "acp_1" }, context: {} } as never);
-    const data = await res.json();
+    const data = await res.json() as Record<string, unknown>;
     expect(order).toEqual(["cap", "place", "charge", "complete_session"]); // cap precedes charge (rule 5)
     expect(data.order_id).toBe("order1");
   });
