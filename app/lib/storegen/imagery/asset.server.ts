@@ -1,7 +1,8 @@
 // app/lib/storegen/imagery/asset.server.ts
 // store_asset repo + the catalog override. enhanceListing generates ONE conversion image for a
 // selected product via the seam and records it (ready/failed, rule 12). applyAssetOverrides swaps
-// a product's primary image with its latest ready asset, so storefront/preview show the new image.
+// a product's primary image with its latest ready asset. It is wired into the draft PREVIEW this
+// cycle; the live storefront read path adopts it with the publish flow (editor, sub-project 2).
 import { getSupabase } from "~/lib/supabase.server";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { getImageProvider } from "./provider.server";
