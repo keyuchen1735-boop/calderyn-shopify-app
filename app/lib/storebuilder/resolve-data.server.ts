@@ -37,12 +37,15 @@ export async function resolveRenderData(
   const collections = wantsCollectionsList ? await catalog.listCollections(shopId) : [];
   const allProducts = needsAll ? await catalog.listProducts(shopId) : [];
 
-  const productsByCollection: Record<string, Awaited<ReturnType<StorefrontCatalog["listProducts"]>>> = {};
+  // Null-prototype dictionaries: keys are catalog refs carried from the stored document (not
+  // re-validated at render time), so a ref like "__proto__" must land as a plain own key, never
+  // touch the prototype chain.
+  const productsByCollection: Record<string, Awaited<ReturnType<StorefrontCatalog["listProducts"]>>> = Object.create(null);
   await Promise.all([...collectionHandles].map(async (handle) => {
     productsByCollection[handle] = await catalog.listProducts(shopId, { collection: handle });
   }));
 
-  const productsById: Record<string, Awaited<ReturnType<StorefrontCatalog["getProduct"]>> & object> = {};
+  const productsById: Record<string, Awaited<ReturnType<StorefrontCatalog["getProduct"]>> & object> = Object.create(null);
   await Promise.all([...productIds].map(async (id) => {
     // ponytail: getProduct is keyed by handle; the fixture handle is `h-<id>`. The owned
     // catalog (#5) will expose id lookups — until then explicit-id grids resolve by that

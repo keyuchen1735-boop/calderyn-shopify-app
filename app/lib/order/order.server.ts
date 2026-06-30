@@ -78,15 +78,19 @@ export async function transitionOrder(
   if (inserted.error) throw inserted.error;
   if (!inserted.data) throw new Error("order_state_transition insert returned no row");
 
-  // `.select("id")` makes the UPDATE return its affected rows so we can assert exactly one
-  // moved. A 0-row update means the order vanished between the read and the update (e.g. a
-  // concurrent delete cascaded the audit row away too) — never report success on a no-op
-  // state change (rule 12).
+  // Compare-and-set on the state we validated against: `.eq("state", fromState)` makes the
+  // UPDATE apply ONLY if the row is still in `fromState`. Without it the move is enforced against
+  // the STALE read, so an order concurrently advanced between the read and the update (e.g.
+  // checkout_pending -> cancelled by an abandon job) would be illegally overwritten to `toState`,
+  // bypassing the state machine. `.select("id")` returns the affected rows so we can assert
+  // exactly one moved; a 0-row update means the order changed (or vanished) under us — never
+  // report success on a no-op state change (rule 12).
   const updated = await sb
     .from("orders")
     .update({ state: toState })
     .eq("shop_id", shopId)
     .eq("id", orderId)
+    .eq("state", fromState)
     .select("id");
   if (updated.error) throw updated.error;
   const affected = (updated.data as unknown[] | null)?.length ?? 0;

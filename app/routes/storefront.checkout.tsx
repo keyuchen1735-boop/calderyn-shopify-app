@@ -41,7 +41,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) throw new Error("STRIPE_PUBLISHABLE_KEY is not configured");
 
-  // Shipping + tax are flat-0 placeholders for the pilot (mirrors createCheckout); total == subtotal.
+  // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
+  // once the buyer's address is captured (createCheckout), and the real total is returned then.
   return json({
     publishableKey,
     origin: new URL(request.url).origin,
@@ -52,7 +53,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         quantity: l.quantity,
         unitPriceCents: l.unitPriceCents,
       })),
-      totalCents: priced.subtotalCents,
+      subtotalCents: priced.subtotalCents,
       currency: priced.currency,
     },
   });
@@ -128,9 +129,19 @@ export async function action({ request }: ActionFunctionArgs) {
     consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
   });
 
-  // Return the client secret + confirmation token to the page. The cart is NOT cleared here —
-  // payment can still fail at the Payment Element; the cart is cleared on the confirmation page.
-  return json({ clientSecret: result.clientSecret, confirmationToken: result.confirmationToken });
+  // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
+  // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.
+  // The cart is NOT cleared here — payment can still fail at the Payment Element; the cart is
+  // cleared on the confirmation page.
+  return json({
+    clientSecret: result.clientSecret,
+    confirmationToken: result.confirmationToken,
+    subtotalCents: result.subtotalCents,
+    shippingCents: result.shippingCents,
+    taxCents: result.taxCents,
+    totalCents: result.totalCents,
+    currency: result.currency,
+  });
 }
 
 function money(cents: number, currency: string): string {
@@ -187,7 +198,12 @@ export default function StorefrontCheckout() {
   const clientSecret = data && "clientSecret" in data ? data.clientSecret : undefined;
   const confirmationToken = data && "confirmationToken" in data ? data.confirmationToken : undefined;
   const formError = data && "error" in data ? data.error : undefined;
-  const total = money(summary.totalCents, summary.currency);
+  // Once the action has quoted shipping + tax, show the real charged amounts; before that only
+  // the subtotal is known.
+  const charged = data && "totalCents" in data ? data : null;
+  const total = charged
+    ? money(charged.totalCents, charged.currency)
+    : money(summary.subtotalCents, summary.currency);
 
   return (
     <section className="cd-checkout">
@@ -205,10 +221,31 @@ export default function StorefrontCheckout() {
             </li>
           ))}
         </ul>
-        <div className="cd-checkout__total">
-          <span>Total</span>
-          <span>{total}</span>
-        </div>
+        {charged ? (
+          <>
+            <div className="cd-checkout__row">
+              <span>Subtotal</span>
+              <span>{money(charged.subtotalCents, charged.currency)}</span>
+            </div>
+            <div className="cd-checkout__row">
+              <span>Shipping</span>
+              <span>{money(charged.shippingCents, charged.currency)}</span>
+            </div>
+            <div className="cd-checkout__row">
+              <span>Tax</span>
+              <span>{money(charged.taxCents, charged.currency)}</span>
+            </div>
+            <div className="cd-checkout__total">
+              <span>Total</span>
+              <span>{total}</span>
+            </div>
+          </>
+        ) : (
+          <div className="cd-checkout__total">
+            <span>Subtotal</span>
+            <span>{money(summary.subtotalCents, summary.currency)}</span>
+          </div>
+        )}
       </div>
 
       {!clientSecret ? (

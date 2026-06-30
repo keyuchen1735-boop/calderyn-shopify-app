@@ -48,6 +48,7 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .cd-checkout__line { display: grid; grid-template-columns: 1fr auto auto; gap: var(--cd-gap); align-items: center; padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
 .cd-checkout__line-qty { color: #6b7280; }
 .cd-checkout__line-total { font-weight: 600; }
+.cd-checkout__row { display: flex; justify-content: space-between; padding-top: 6px; color: #6b7280; }
 .cd-checkout__total { display: flex; justify-content: space-between; padding-top: 12px; font-weight: 600; }
 .cd-checkout__form { display: flex; flex-direction: column; gap: 12px; }
 .cd-checkout__form h2 { font-size: 16px; margin: 8px 0 0; }
