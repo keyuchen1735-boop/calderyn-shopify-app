@@ -14,16 +14,21 @@ export async function quoteCart(
   shopId: string,
   lines: QuoteLine[],
   destination: QuoteDestination,
+  opts: { subtotalCentsOverride?: number } = {},
 ): Promise<CartQuote> {
   if (!shopId) throw new Error("shopId is required");
   if (!lines.length) throw new Error("at least one line is required to quote");
 
   const priced = await priceLines(shopId, lines);
+  // Authoritative subtotal: callers holding a pre-priced/snapshot subtotal (checkout's cart)
+  // pass it so tax + total match what is actually charged; agentic callers omit it and use the
+  // live price. quoteCart remains the single composer either way.
+  const subtotalCents = opts.subtotalCentsOverride ?? priced.subtotalCents;
   const origin = await getShopOrigin(shopId); // throws ORIGIN_NOT_CONFIGURED if unset
 
   const req: ShippingQuoteRequest = {
     cart: priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-    cartSubtotalCents: priced.subtotalCents,
+    cartSubtotalCents: subtotalCents, // free-ship thresholds evaluate on the authoritative subtotal
     origin,
     destination,
     currency: priced.currency,
@@ -36,17 +41,17 @@ export async function quoteCart(
 
   const taxCents = await calculateTax({
     currency: priced.currency,
-    subtotalCents: priced.subtotalCents,
+    subtotalCents,
     shippingCents,
     destination,
   });
 
   return {
     lines: priced.lines,
-    subtotalCents: priced.subtotalCents,
+    subtotalCents,                       // authoritative subtotal
     shippingCents,
     taxCents,
-    totalCents: priced.subtotalCents + shippingCents + taxCents,
+    totalCents: subtotalCents + shippingCents + taxCents,
     currency: priced.currency,
     deliveryEarliest: cheapest.deliveryWindow?.earliest ?? null,
     deliveryLatest: cheapest.deliveryWindow?.latest ?? null,

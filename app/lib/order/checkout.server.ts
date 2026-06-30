@@ -92,6 +92,12 @@ export async function createCheckout(
   // the storefront and chat surfaces). When absent, 0/0 is explicit — cannot quote without a
   // destination. Errors from quoteCart (e.g. ORIGIN_NOT_CONFIGURED) propagate; they are never
   // swallowed into 0/0 (rule 12: fail visibly, never report success when something was bypassed).
+  // Fail fast on a missing street before calling quoteCart (which passes it to EasyPost).
+  // An empty street produces an opaque carrier error; reject here with a clear message, before
+  // any buyer/order DB write (no orphan order).
+  if (buyer.address && !buyer.address.line1) {
+    throw new Error("shipping address line1 is required to quote");
+  }
   let shippingCents = 0;
   let taxCents = 0;
   if (buyer.address) {
@@ -106,6 +112,9 @@ export async function createCheckout(
         zip: buyer.address.postal ?? "",
         country: buyer.address.country ?? "US",
       },
+      // Pin the authoritative subtotal so quoteCart computes tax on what Stripe will actually
+      // charge (the snapshot price), not on a potentially-drifted live catalog price.
+      { subtotalCentsOverride: priced.subtotalCents },
     );
     shippingCents = quoted.shippingCents;
     taxCents = quoted.taxCents;

@@ -20,9 +20,11 @@ create table if not exists public.commerce_quote_fact (
   currency         text        not null,
   destination_hash text        not null,
   source_version   integer     not null default 1,
-  low_confidence   boolean     not null default false,
-  fallback_used    boolean     not null default false,
-  expires_at       timestamptz not null,
+  low_confidence    boolean     not null default false,
+  fallback_used     boolean     not null default false,
+  delivery_earliest text,
+  delivery_latest   text,
+  expires_at        timestamptz not null,
   created_at       timestamptz not null default now(),
   primary key (quote_id, source_version)
 );

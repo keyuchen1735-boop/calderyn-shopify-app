@@ -32,6 +32,8 @@ export async function lockQuote(
       destination_hash: meta.destinationHash,
       low_confidence: quote.lowConfidence,
       fallback_used: quote.fallbackUsed,
+      delivery_earliest: quote.deliveryEarliest,
+      delivery_latest: quote.deliveryLatest,
       expires_at: expiresAt,
     })
     .select("quote_id, expires_at")
@@ -46,7 +48,7 @@ export async function getQuote(shopId: string, quoteId: string): Promise<LockedQ
   if (!quoteId) return null;
   const row = await getSupabase()
     .from("commerce_quote_fact")
-    .select("quote_id, line_items, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, low_confidence, fallback_used, expires_at")
+    .select("quote_id, line_items, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, low_confidence, fallback_used, delivery_earliest, delivery_latest, expires_at")
     .eq("shop_id", shopId)
     .eq("quote_id", quoteId)
     .maybeSingle();
@@ -62,8 +64,8 @@ export async function getQuote(shopId: string, quoteId: string): Promise<LockedQ
     taxCents: Number(r.tax_cents),
     totalCents: Number(r.total_cents),
     currency: String(r.currency),
-    deliveryEarliest: null,
-    deliveryLatest: null,
+    deliveryEarliest: r.delivery_earliest == null ? null : String(r.delivery_earliest),
+    deliveryLatest: r.delivery_latest == null ? null : String(r.delivery_latest),
     lowConfidence: Boolean(r.low_confidence),
     fallbackUsed: Boolean(r.fallback_used),
     expiresAt: String(r.expires_at),
