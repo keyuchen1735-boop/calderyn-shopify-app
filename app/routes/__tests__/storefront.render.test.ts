@@ -8,6 +8,7 @@ import StorefrontHome, { loader as homeLoader } from "../storefront._index";
 import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
 import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
 import type { StorefrontCatalog } from "~/lib/storefront/catalog";
+import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 
 // getCatalog is mocked file-wide; default returns the REAL fixture so the
 // criterion-1 loader tests exercise real fixture data, while the swap test
@@ -70,32 +71,39 @@ describe("storefront layout", () => {
 });
 
 describe("storefront home", () => {
-  it("loads all fixture collections and products (shopId-scoped)", async () => {
+  it("loads the home block document + resolved fixture data (shopId-scoped)", async () => {
     const res = await homeLoader({ request: req(), params: {}, context: {} });
     const data = await res.json();
-    expect(data.collections.length).toBe(2);
-    expect(data.products.length).toBe(4);
+    // The demo (non-uuid) shop has no published doc → the never-blank default doc.
+    expect(data.doc.blocks.map((b: { type: string }) => b.type)).toEqual(["hero", "productGrid"]);
+    // The default doc's product grid uses the `all` source → all 4 fixture products.
+    expect(data.data.allProducts.length).toBe(4);
   });
 
-  it("renders a product grid with collection nav", () => {
+  it("renders the home block document (hero + product grid)", () => {
     loaderDataRef.current = {
-      collections: [{ handle: "apparel", title: "Apparel" }],
-      products: [
-        {
-          id: "p1",
-          handle: "cotton-tee",
-          title: "Cotton Tee",
-          description: "",
-          images: [{ url: "https://img.example/1.jpg", alt: "Cotton tee" }],
-          variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
-          collections: ["apparel"],
-        },
-      ],
+      doc: defaultHomeDocument(),
+      data: {
+        collections: [],
+        productsByCollection: {},
+        productsById: {},
+        allProducts: [
+          {
+            id: "p1",
+            handle: "cotton-tee",
+            title: "Cotton Tee",
+            description: "",
+            images: [{ url: "https://img.example/1.jpg", alt: "Cotton tee" }],
+            variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
+            collections: ["apparel"],
+          },
+        ],
+      },
     };
     const html = renderToStaticMarkup(createElement(StorefrontHome));
+    expect(html).toContain("cd-block--hero");
     expect(html).toContain("cd-store__grid");
     expect(html).toContain("Cotton Tee");
-    expect(html).toContain("/storefront/collections/apparel");
   });
 });
 
@@ -201,8 +209,8 @@ describe("storefront swap seam (criterion 2)", () => {
     getCatalogMock.mockReturnValue(secondFake);
 
     const home = await (await homeLoader({ request: req(), params: {}, context: {} })).json();
-    expect(home.collections[0].handle).toBe("books");
-    expect(home.products[0].handle).toBe("novel");
+    // Home now returns { doc, data }; the default doc's `all` grid pulls products from the swapped catalog.
+    expect(home.data.allProducts[0].handle).toBe("novel");
 
     const collection = await (
       await collectionLoader({ request: req(), params: { handle: "books" }, context: {} })
