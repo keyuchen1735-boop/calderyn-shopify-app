@@ -25,6 +25,9 @@ vi.mock("~/lib/dashboard/session.server", () => ({
   createSessionForUser: vi.fn().mockResolvedValue({ raw: "dash_live_abc" }),
   sessionCookieHeader: () => "__Host-calderyn_dash=dash_live_abc; Path=/",
 }));
+vi.mock("~/lib/auth/verify.server", () => ({
+  sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
+}));
 
 beforeEach(() => {
   findUserByEmail.mockReset();

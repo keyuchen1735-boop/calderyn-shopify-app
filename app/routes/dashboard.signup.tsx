@@ -7,6 +7,7 @@ import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dash
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import { sendVerificationEmail } from "~/lib/auth/verify.server";
 
 const MIN_PASSWORD = 10;
 
@@ -51,6 +52,8 @@ export async function action({ request }: ActionFunctionArgs) {
     await linkMembership(userId, shopId, "owner");
 
     const { raw } = await createSessionForUser(userId, shopId);
+    const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+    await sendVerificationEmail(userId, normalizeEmail(email), baseUrl).catch(() => {});
     return redirect("/dashboard", {
       headers: { "Set-Cookie": sessionCookieHeader(raw) },
     });

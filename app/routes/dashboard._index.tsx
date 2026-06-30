@@ -5,7 +5,8 @@
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { useLoaderData, useRouteError } from "@remix-run/react";
 
-import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
+import { requireVerifiedSession } from "~/lib/dashboard/session.server";
+import { getSupabase } from "~/lib/supabase.server";
 import DashboardApp from "~/components/dashboard/DashboardApp";
 import {
   DashboardErrorBoundary,
@@ -27,18 +28,26 @@ export const links: LinksFunction = () => [
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await getSessionOrRedirect(request);
-  const shopDomain = session.shopDomain ?? "";
-  return { shopDomain };
+  const session = await requireVerifiedSession(request);
+  const { data } = await getSupabase()
+    .from("shops")
+    .select("display_name, shop_domain")
+    .eq("id", session.shopId)
+    .maybeSingle();
+  const storeLabel =
+    (data?.display_name as string | null) ||
+    (data?.shop_domain as string | null) ||
+    "Your store";
+  return { shopDomain: session.shopDomain, storeLabel };
 }
 
 export default function DashboardRoute() {
-  const { shopDomain } = useLoaderData<typeof loader>();
+  const { shopDomain, storeLabel } = useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
     <DashboardErrorBoundary>
-      <DashboardApp shopDomain={shopDomain} />
+      <DashboardApp shopDomain={shopDomain} storeLabel={storeLabel} />
     </DashboardErrorBoundary>
   );
 }

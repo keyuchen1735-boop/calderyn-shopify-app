@@ -58,3 +58,36 @@ export async function verifyUserCredentials(
   }
   return verifyPassword(password, user.passwordHash) ? { id: user.id } : null;
 }
+
+export async function findUserByGoogleSub(
+  sub: string,
+): Promise<{ id: string; shopId: string | null } | null> {
+  const { data, error } = await getSupabase()
+    .from("users")
+    .select("id, membership(shop_id)")
+    .eq("google_sub", sub)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const m = (data.membership as { shop_id?: string }[] | { shop_id?: string } | null);
+  const shopId = Array.isArray(m) ? (m[0]?.shop_id ?? null) : (m?.shop_id ?? null);
+  return { id: String(data.id), shopId: shopId == null ? null : String(shopId) };
+}
+
+export async function setGoogleSub(userId: string, sub: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("users")
+    .update({ google_sub: sub, updated_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) throw error;
+}
+
+export async function createGoogleUser(email: string, sub: string): Promise<{ id: string }> {
+  const { data, error } = await getSupabase()
+    .from("users")
+    .insert({ email: normalizeEmail(email), google_sub: sub, email_verified: true })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return { id: String(data.id) };
+}

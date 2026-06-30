@@ -94,7 +94,7 @@ function nextFeedId(): string {
   return "f" + feedSeq++;
 }
 
-export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
+export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }) {
   // Night mode (dark theme). Defaults to light; the merchant's choice persists in
   // localStorage. Initialised to false so the server render and first client render
   // agree (no hydration mismatch); the stored preference is applied post-mount.
@@ -731,6 +731,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const app: DashboardCtx = {
     t,
     shopDomain,
+    storeLabel,
     nav,
     navigate,
     alerts,
@@ -812,7 +813,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           </svg>
           <div>
             <div className="cd-brand-name">Calderyn</div>
-            <div className="cd-brand-sub">{shopDomain}</div>
+            <div className="cd-brand-sub">{storeLabel}</div>
           </div>
         </div>
         <nav className="cd-side-nav">
