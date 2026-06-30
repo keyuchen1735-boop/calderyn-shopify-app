@@ -1,0 +1,80 @@
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { getProduct, updateProduct, setProductStatus } from "~/lib/catalog/catalog.server";
+import { signMediaPaths } from "~/lib/catalog/sign-media.server";
+import { validateProductInput } from "~/lib/catalog/validate";
+
+export async function loader({ request, params }: LoaderFunctionArgs) {
+  const session = await requireDashboardSession(request);
+  const id = String(params.id);
+  return dashboardJson(async () => {
+    const product = await getProduct(session.shopId, id);
+    if (!product) throw jsonError(404, "not_found");
+    // Reshape the stored detail into the editor view-model:
+    //  - options are stored with value rows {id,value}; the editor wants string[]
+    //  - variants reference option VALUE IDS, but the editor, buildVariantMatrix,
+    //    and the write path all key off LABELS, so resolve ids -> labels here
+    //  - media storage paths -> short-lived signed URLs (private bucket)
+    //  - nullable scalars (vendor/category/description) -> undefined so an edit
+    //    that doesn't surface a field round-trips it instead of nulling it
+    const signed = await signMediaPaths(product.media.map((m) => m.storagePath));
+    const labelById = new Map<string, string>();
+    for (const o of product.options) for (const v of o.values) labelById.set(v.id, v.value);
+    return {
+      product: {
+        id: product.id,
+        title: product.title,
+        status: product.status,
+        vendor: product.vendor ?? undefined,
+        category: product.category ?? undefined,
+        description: product.description ?? undefined,
+        tags: product.tags,
+        options: product.options.map((o) => ({ name: o.name, values: o.values.map((v) => v.value) })),
+        variants: product.variants.map((v) => ({
+          id: v.id,
+          sku: v.sku ?? undefined,
+          title: v.title,
+          retailPriceCents: v.retailPriceCents ?? undefined,
+          unitCostCents: v.unitCostCents ?? undefined,
+          inventoryTracked: v.inventoryTracked ?? undefined,
+          inventoryOnHand: v.inventoryOnHand,
+          optionValues: v.optionValueIds
+            .map((vid) => labelById.get(vid))
+            .filter((s): s is string => Boolean(s)),
+        })),
+        media: product.media.map((m) => ({
+          id: m.id,
+          url: signed.get(m.storagePath) ?? "",
+          isPrimary: m.isPrimary,
+        })),
+        collectionIds: product.collectionIds,
+        updatedAt: product.updatedAt,
+      },
+    };
+  });
+}
+
+export async function action({ request, params }: ActionFunctionArgs) {
+  requireSameOrigin(request);
+  const session = await requireDashboardSession(request);
+  const id = String(params.id);
+
+  if (request.method === "DELETE") {
+    return dashboardJson(async () => {
+      await setProductStatus(session.shopId, id, "archived");
+      return { ok: true };
+    });
+  }
+  if (request.method === "PUT") {
+    let body: unknown;
+    try { body = await request.json(); } catch { return jsonError(422, "invalid_json"); }
+    const v = validateProductInput(body);
+    if (!v.ok) return jsonError(422, v.code);
+    return dashboardJson(async () => {
+      await updateProduct(session.shopId, id, v.value);
+      return { ok: true };
+    });
+  }
+  return jsonError(405, "method_not_allowed");
+}
