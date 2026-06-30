@@ -11,6 +11,7 @@ const store = vi.hoisted(() => {
   const db: Record<string, Row[]> = {
     cart_line: [],
     buyer_dim: [],
+    buyer_address: [],
     orders: [],
     order_line: [],
     payment_intent: [],
@@ -106,6 +107,7 @@ const store = vi.hoisted(() => {
 });
 
 const stripe = vi.hoisted(() => ({ piCreate: vi.fn() }));
+const quote = vi.hoisted(() => ({ quoteCart: vi.fn() }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("stripe", () => ({
@@ -113,6 +115,7 @@ vi.mock("stripe", () => ({
     paymentIntents = { create: stripe.piCreate };
   },
 }));
+vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: quote.quoteCart }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { createCheckout } from "./checkout.server";
@@ -221,5 +224,49 @@ describe("createCheckout", () => {
     expect(store.db.orders).toHaveLength(0);
     expect(store.db.order_line).toHaveLength(0);
     expect(stripe.piCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses quoteCart shipping+tax when the buyer supplies a shipping address", async () => {
+    // subtotal: 2 × 1999 = 3998; quoteCart returns 500 shipping + 80 tax → total 4578.
+    seedCartLine("shop-1", "cart-addr", { quantity: 2, unit_price_cents: 1999 });
+    quote.quoteCart.mockResolvedValueOnce({
+      shippingCents: 500,
+      taxCents: 80,
+      subtotalCents: 3998,
+      totalCents: 4578,
+      currency: "usd",
+      lines: [],
+      deliveryEarliest: null,
+      deliveryLatest: null,
+      lowConfidence: false,
+      fallbackUsed: false,
+    });
+
+    await createCheckout("shop-1", "cart-addr", {
+      email: "addr@example.com",
+      address: {
+        kind: "shipping",
+        line1: "123 Main St",
+        city: "Springfield",
+        region: "IL",
+        postal: "62701",
+        country: "US",
+      },
+    });
+
+    expect(store.db.orders).toHaveLength(1);
+    const order = store.db.orders[0];
+    expect(order).toMatchObject({
+      shop_id: "shop-1",
+      subtotal_cents: 3998,
+      shipping_cents: 500,
+      tax_cents: 80,
+      total_cents: 4578,
+      currency: "usd",
+    });
+    // PI opened for the real total (subtotal + shipping + tax).
+    expect(stripe.piCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 4578, currency: "usd" }),
+    );
   });
 });
