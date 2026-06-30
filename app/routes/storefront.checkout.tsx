@@ -112,36 +112,44 @@ export async function action({ request }: ActionFunctionArgs) {
     null;
   const ua = request.headers.get("user-agent");
 
-  const result = await createCheckout(shopId, cartId, {
-    email,
-    address: {
-      kind: "shipping",
-      name,
-      line1,
-      line2: str(form, "line2") || null,
-      city,
-      region,
-      postal,
-      country,
-      phone: str(form, "phone") || null,
-      isDefault: true,
-    },
-    consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
-  });
+  // Originating a checkout reaches Stripe + the DB; a transient failure must surface inline
+  // (rule 12) rather than throwing a 500 that discards the buyer's just-entered contact + shipping
+  // details. Validation errors above already 400; this catches the money/network path.
+  try {
+    const result = await createCheckout(shopId, cartId, {
+      email,
+      address: {
+        kind: "shipping",
+        name,
+        line1,
+        line2: str(form, "line2") || null,
+        city,
+        region,
+        postal,
+        country,
+        phone: str(form, "phone") || null,
+        isDefault: true,
+      },
+      consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
+    });
 
-  // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
-  // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.
-  // The cart is NOT cleared here — payment can still fail at the Payment Element; the cart is
-  // cleared on the confirmation page.
-  return json({
-    clientSecret: result.clientSecret,
-    confirmationToken: result.confirmationToken,
-    subtotalCents: result.subtotalCents,
-    shippingCents: result.shippingCents,
-    taxCents: result.taxCents,
-    totalCents: result.totalCents,
-    currency: result.currency,
-  });
+    // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
+    // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.
+    // The cart is NOT cleared here — payment can still fail at the Payment Element; the cart is
+    // cleared on the confirmation page.
+    return json({
+      clientSecret: result.clientSecret,
+      confirmationToken: result.confirmationToken,
+      subtotalCents: result.subtotalCents,
+      shippingCents: result.shippingCents,
+      taxCents: result.taxCents,
+      totalCents: result.totalCents,
+      currency: result.currency,
+    });
+  } catch (err) {
+    console.error(`[checkout] failed to originate checkout for shop ${shopId}, cart ${cartId}:`, err);
+    return json({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
+  }
 }
 
 function money(cents: number, currency: string): string {
@@ -169,7 +177,10 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
       elements,
       confirmParams: { return_url: confirmationUrl },
     });
-    setError(payError?.message ?? "Payment failed. Please try again.");
+    // confirmPayment only resolves HERE on an immediate error — a success redirects the browser
+    // to return_url. Set an error message ONLY when one is present: a resolve without an error
+    // must not flash a spurious "Payment failed" (and re-arm the pay button into a double-charge).
+    if (payError) setError(payError.message ?? "Payment failed. Please try again.");
     setSubmitting(false);
   }
 

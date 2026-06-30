@@ -236,7 +236,10 @@ export async function findOrderByConfirmationToken(
     .from("order_line")
     .select("title_snapshot, quantity, unit_price_cents")
     .eq("shop_id", shopId)
-    .eq("order_id", orderId);
+    .eq("order_id", orderId)
+    // Deterministic order: without an ORDER BY, PostgREST row order is unspecified, so the
+    // confirmation receipt would render its lines in an arbitrary (and shifting) order.
+    .order("title_snapshot", { ascending: true });
   if (lineRes.error) throw lineRes.error;
 
   const lines = ((lineRes.data ?? []) as Record<string, unknown>[]).map((l) => ({
