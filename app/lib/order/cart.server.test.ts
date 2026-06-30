@@ -141,7 +141,7 @@ vi.mock("~/lib/storefront/catalog.server", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { buildCart, addCartLine, priceCart } from "./cart.server";
+import { buildCart, addCartLine, priceCart, priceLines } from "./cart.server";
 
 beforeEach(() => {
   store.db.cart.length = 0;
@@ -250,5 +250,43 @@ describe("priceCart", () => {
     await addCartLine("shop-1", cart.id, "v-tee-s", 1); // USD
     await addCartLine("shop-1", cart.id, "v-cap", 1); // EUR
     await expect(priceCart("shop-1", cart.id)).rejects.toThrow(/mixes currencies/);
+  });
+});
+
+describe("priceLines", () => {
+  it("priceLines snapshots catalog price + currency + title for each variant", async () => {
+    const result = await priceLines("shop_test", [
+      { variantId: "v-tee-s", quantity: 2 },
+    ]);
+    expect(result.subtotalCents).toBe(result.lines[0].unitPriceCents * 2);
+    expect(result.currency).toBe(result.lines[0].currency);
+    expect(result.lines[0].titleSnapshot).toBeTruthy();
+  });
+
+  it("rejects an unavailable variant (fail visibly)", async () => {
+    await expect(
+      priceLines("shop_test", [{ variantId: "v-hoodie-l", quantity: 1 }]),
+    ).rejects.toThrow(/not available/);
+  });
+
+  it("rejects a variant not in the catalog (fail visibly)", async () => {
+    await expect(
+      priceLines("shop_test", [{ variantId: "v-missing", quantity: 1 }]),
+    ).rejects.toThrow(/not found in catalog/);
+  });
+
+  it("rejects a non-positive / non-integer quantity (fail visibly)", async () => {
+    await expect(
+      priceLines("shop_test", [{ variantId: "v-tee-s", quantity: 0 }]),
+    ).rejects.toThrow(/positive integer/);
+  });
+
+  it("fails visibly when lines mix currencies", async () => {
+    await expect(
+      priceLines("shop_test", [
+        { variantId: "v-tee-s", quantity: 1 }, // USD
+        { variantId: "v-cap", quantity: 1 },   // EUR
+      ]),
+    ).rejects.toThrow(/mix currencies/);
   });
 });

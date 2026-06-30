@@ -23,11 +23,7 @@ import {
   type BuyerAddressInput,
 } from "~/lib/buyer/identity.server";
 import { createPaymentIntent } from "~/lib/payments/stripe.server";
-
-// FLAT placeholders for the pilot — real shipping + tax calculation is a later step. The
-// orders / checkout_session columns default to 0 with the same note (20260629110000_order_spine).
-const PILOT_FLAT_SHIPPING_CENTS = 0;
-const PILOT_FLAT_TAX_CENTS = 0;
+import { quoteCart } from "~/lib/commerce/quote.server";
 
 export interface CheckoutBuyer {
   email: string;
@@ -92,8 +88,37 @@ export async function createCheckout(
   if (!buyer?.email) throw new Error("buyer.email is required to originate a checkout");
 
   const priced = await priceCart(shopId, cartId);
-  const shippingCents = PILOT_FLAT_SHIPPING_CENTS;
-  const taxCents = PILOT_FLAT_TAX_CENTS;
+  // When a shipping address is present, use the single source-of-truth quote engine (same as
+  // the storefront and chat surfaces). When absent, 0/0 is explicit — cannot quote without a
+  // destination. Errors from quoteCart (e.g. ORIGIN_NOT_CONFIGURED) propagate; they are never
+  // swallowed into 0/0 (rule 12: fail visibly, never report success when something was bypassed).
+  // Fail fast on a missing street before calling quoteCart (which passes it to EasyPost).
+  // An empty street produces an opaque carrier error; reject here with a clear message, before
+  // any buyer/order DB write (no orphan order).
+  if (buyer.address && !buyer.address.line1) {
+    throw new Error("shipping address line1 is required to quote");
+  }
+  let shippingCents = 0;
+  let taxCents = 0;
+  if (buyer.address) {
+    const quoted = await quoteCart(
+      shopId,
+      priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+      {
+        street1: buyer.address.line1 ?? "",
+        street2: buyer.address.line2 ?? undefined,
+        city: buyer.address.city ?? "",
+        state: buyer.address.region ?? "",
+        zip: buyer.address.postal ?? "",
+        country: buyer.address.country ?? "US",
+      },
+      // Pin the authoritative subtotal so quoteCart computes tax on what Stripe will actually
+      // charge (the snapshot price), not on a potentially-drifted live catalog price.
+      { subtotalCentsOverride: priced.subtotalCents },
+    );
+    shippingCents = quoted.shippingCents;
+    taxCents = quoted.taxCents;
+  }
   const totalCents = priced.subtotalCents + shippingCents + taxCents;
 
   // Fail visibly (rule 12) BEFORE any buyer/order write. Guard the computed TOTAL, not just an
