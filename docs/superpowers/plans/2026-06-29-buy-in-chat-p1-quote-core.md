@@ -395,41 +395,78 @@ git commit -m "commerce: ship-from origin (Shopify pull + require-setup) (buy-in
 
 ## Task 5: `getRateSource()` — EasyPost rate adapter
 
+**Real adapter contract (verified):** `easyPostRateAdapter.connect(shopId): Promise<RateQuoteSource | null>` — async, reads the shop's stored EasyPost credential from `integration_credentials`, decrypts it, and returns a `RateQuoteSource` (or `null` when the shop has no carrier connected). It is NOT a synchronous `.bind(apiKey)`.
+
+**Design decision (mirrors the origin require-setup):** a shop with no connected carrier cannot get an accurate rate, so `getRateSource` fails visibly (`RATE_SOURCE_NOT_CONFIGURED`) rather than invent one. The engine's static fallback still covers transient carrier OUTAGES (a `getRates` call throwing mid-quote → `fallbackUsed=true`).
+
 **Files:**
 - Create: `app/lib/commerce/rate-source.server.ts`
+- Test: `app/lib/commerce/rate-source.server.test.ts`
 
-- [ ] **Step 1: Implement**
+- [ ] **Step 1: Write failing tests**
+
+```typescript
+// app/lib/commerce/rate-source.server.test.ts
+import { describe, it, expect, vi } from "vitest";
+
+describe("getRateSource", () => {
+  it("returns the connected EasyPost RateQuoteSource", async () => {
+    vi.resetModules();
+    const src = { getRates: async () => ({ options: [], currency: "usd" }) };
+    vi.doMock("~/lib/ship-cost/adapters/easypost-rate.server", () => ({ easyPostRateAdapter: { connect: async () => src } }));
+    const { getRateSource } = await import("./rate-source.server");
+    expect(await getRateSource("shop_test")).toBe(src);
+  });
+  it("throws RATE_SOURCE_NOT_CONFIGURED when the shop has no connected carrier", async () => {
+    vi.resetModules();
+    vi.doMock("~/lib/ship-cost/adapters/easypost-rate.server", () => ({ easyPostRateAdapter: { connect: async () => null } }));
+    const { getRateSource } = await import("./rate-source.server");
+    await expect(getRateSource("shop_test")).rejects.toMatchObject({ code: "RATE_SOURCE_NOT_CONFIGURED" });
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run app/lib/commerce/rate-source.server.test.ts`
+Expected: FAIL — module does not exist.
+
+- [ ] **Step 3: Implement**
 
 ```typescript
 // app/lib/commerce/rate-source.server.ts
-// Builds the RateQuoteSource the shipping engine calls. v1 uses the existing EasyPost adapter
-// keyed by the shop's connected carrier credentials (or the platform EASYPOST_API_KEY for the
-// pilot). Single place to swap carriers later.
+// The RateQuoteSource the shipping engine calls, resolved from the shop's connected carrier
+// credential (EasyPost) via the existing adapter. Mirrors the origin require-setup discipline:
+// a shop with no connected carrier cannot get an accurate rate, so we fail visibly (rule 12)
+// rather than invent one. The engine's static fallback still covers transient carrier OUTAGES.
 import type { RateQuoteSource } from "~/lib/ship-cost/adapters/rate-quote";
 import { easyPostRateAdapter } from "~/lib/ship-cost/adapters/easypost-rate.server";
 
-export function getRateSource(shopId: string): RateQuoteSource {
+export class RateSourceNotConfiguredError extends Error {
+  code = "RATE_SOURCE_NOT_CONFIGURED" as const;
+  constructor(shopId: string) {
+    super(`shop ${shopId} has no connected shipping carrier; connect EasyPost before quoting`);
+  }
+}
+
+export async function getRateSource(shopId: string): Promise<RateQuoteSource> {
   if (!shopId) throw new Error("shopId is required");
-  // easyPostRateAdapter exposes a bind(apiKey) => RateQuoteSource (see
-  // app/lib/ship-cost/adapters/easypost-rate.server.ts:205). Use the same env key the
-  // adapter already reads. The engine degrades to a static fallback if getRates throws,
-  // so a missing key surfaces as fallbackUsed=true, not a crash (rule 12).
-  return easyPostRateAdapter.bind(process.env.EASYPOST_API_KEY);
+  const source = await easyPostRateAdapter.connect(shopId); // null = carrier not connected
+  if (!source) throw new RateSourceNotConfiguredError(shopId);
+  return source;
 }
 ```
 
-> Confirm the adapter's factory method name at `easypost-rate.server.ts:205` (it may be `.bind(...)`, `.create(...)`, or a direct `RateQuoteSource`). Match it exactly. If the adapter IS already a `RateQuoteSource`, return it directly.
+- [ ] **Step 4: Run to verify pass**
 
-- [ ] **Step 2: Typecheck**
+Run: `npx vitest run app/lib/commerce/rate-source.server.test.ts`
+Expected: PASS (2 tests).
 
-Run: `npx tsc --noEmit`
-Expected: PASS.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add app/lib/commerce/rate-source.server.ts
-git commit -m "commerce: EasyPost rate source factory (buy-in-chat P1)"
+git add app/lib/commerce/rate-source.server.ts app/lib/commerce/rate-source.server.test.ts
+git commit -m "commerce: EasyPost rate source (connect or require-setup) (buy-in-chat P1)"
 ```
 
 ---
@@ -546,7 +583,7 @@ function mockDeps() {
     }),
   }));
   vi.doMock("./origin.server", () => ({ getShopOrigin: async () => DEST }));
-  vi.doMock("./rate-source.server", () => ({ getRateSource: () => ({}) }));
+  vi.doMock("./rate-source.server", () => ({ getRateSource: async () => ({ getRates: async () => ({ options: [], currency: "usd" }) }) }));
   vi.doMock("./tax.server", () => ({ calculateTax: async () => 80 }));
   vi.doMock("~/lib/shipping/engine.server", () => ({
     getShippingEngine: () => async () => ({
@@ -625,7 +662,7 @@ export async function quoteCart(
     currency: priced.currency,
     options: { selection: "cheapest" },
   };
-  const shipQuote = await getShippingEngine()(req, getRateSource(shopId));
+  const shipQuote = await getShippingEngine()(req, await getRateSource(shopId));
   const cheapest = shipQuote.options[0];
   if (!cheapest) throw new Error("shipping engine returned no options");
   const shippingCents = cheapest.amountCents;
@@ -828,7 +865,9 @@ import { describe, it, expect, vi } from "vitest";
 describe("getAgenticCatalog", () => {
   it("maps v_agentic_catalog rows to feed items in cents", async () => {
     vi.resetModules();
-    const rows = [{ variant_id: "V1", product_title: "Widget", variant_title: "Large", retail_price_cents: 1999, currency: "usd", on_hand: 5, vendor: "Acme", category: "tools", tags: ["a"] }];
+    // v_agentic_catalog exposes a SINGLE `sku_title` (sku_dim has one `title` column, no
+    // product/variant split) and `variant_id` (aliased from sku_dim.external_id).
+    const rows = [{ variant_id: "V1", sku_title: "Widget - Large", retail_price_cents: 1999, currency: "usd", on_hand: 5, vendor: "Acme", category: "tools", tags: ["a"] }];
     vi.doMock("~/lib/supabase.server", () => ({
       getSupabase: () => ({ from: () => ({ select: () => ({ eq: async () => ({ data: rows, error: null }) }) }) }),
     }));
@@ -869,11 +908,9 @@ export async function getAgenticCatalog(shopId: string): Promise<CatalogFeedItem
   const res = await getSupabase().from("v_agentic_catalog").select("*").eq("shop_id", shopId);
   if (res.error) throw res.error;
   return ((res.data ?? []) as Record<string, unknown>[]).map((r) => {
-    const product = String(r.product_title);
-    const variant = r.variant_title ? String(r.variant_title) : "";
     return {
       variantId: String(r.variant_id),
-      title: variant && variant.toLowerCase() !== product.toLowerCase() ? `${product} - ${variant}` : product,
+      title: String(r.sku_title), // v_agentic_catalog exposes one sku_title (no product/variant split)
       priceCents: Number(r.retail_price_cents),
       currency: String(r.currency ?? "usd").toLowerCase(),
       availableQty: Number(r.on_hand ?? 0),
