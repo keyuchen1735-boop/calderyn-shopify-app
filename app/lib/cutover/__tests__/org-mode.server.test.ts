@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   ORG_MODES,
   writesToOwned,
@@ -12,6 +12,16 @@ import {
 // getSupabase is replaced per-test via this holder so each test supplies its own stub.
 let currentSb: unknown = null;
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => currentSb }));
+
+// Go-live gates are mocked as passing by default; individual tests flip `gateError`
+// to prove a failing gate blocks the transition before any write.
+let gateError: Error | null = null;
+const assertGoLiveGatesMock = vi.fn(async (_shopId: string) => {
+  if (gateError) throw gateError;
+});
+vi.mock("../go-live.server", () => ({
+  assertGoLiveGates: (shopId: string) => assertGoLiveGatesMock(shopId),
+}));
 
 /**
  * Purpose-built Supabase stub. `from("shops")` serves the initial
@@ -107,6 +117,11 @@ describe("getOrgMode", () => {
 });
 
 describe("transitionOrgMode", () => {
+  beforeEach(() => {
+    gateError = null;
+    assertGoLiveGatesMock.mockClear();
+  });
+
   it("legal transition writes exactly one audit row BEFORE updating shops", async () => {
     let insertedRow: Record<string, unknown> | null = null;
     let updatedSet: Record<string, unknown> | null = null;
@@ -160,5 +175,42 @@ describe("transitionOrgMode", () => {
     currentSb = makeSb({ shopFound: false, onInsert: () => (inserted = true) });
     await expect(transitionOrgMode("nope", "importing")).rejects.toThrow(/not found/);
     expect(inserted).toBe(false);
+  });
+
+  it("runs the go-live gates on dual_run -> live (with the shop id)", async () => {
+    currentSb = makeSb({
+      shopMode: "dual_run",
+      updateRows: [{ id: "shop-1" }],
+      transitionRow: {
+        id: "t2",
+        shop_id: "shop-1",
+        from_mode: "dual_run",
+        to_mode: "live",
+        reason: null,
+        occurred_at: "2026-07-01T00:00:00Z",
+      },
+    });
+    await transitionOrgMode("shop-1", "live");
+    expect(assertGoLiveGatesMock).toHaveBeenCalledWith("shop-1");
+  });
+
+  it("a failing go-live gate blocks the transition and writes NOTHING", async () => {
+    gateError = new Error("go-live blocked: 2 gate check(s) failing: paid_order");
+    let inserted = false;
+    let updated = false;
+    currentSb = makeSb({
+      shopMode: "dual_run",
+      onInsert: () => (inserted = true),
+      onUpdate: () => (updated = true),
+    });
+    await expect(transitionOrgMode("shop-1", "live")).rejects.toThrow(/go-live blocked/);
+    expect(inserted).toBe(false);
+    expect(updated).toBe(false);
+  });
+
+  it("does NOT run the gates on non-live transitions", async () => {
+    currentSb = makeSb({ shopMode: "mirror", updateRows: [{ id: "shop-1" }] });
+    await transitionOrgMode("shop-1", "importing");
+    expect(assertGoLiveGatesMock).not.toHaveBeenCalled();
   });
 });

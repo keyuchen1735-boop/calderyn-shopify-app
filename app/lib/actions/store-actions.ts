@@ -9,6 +9,7 @@ import {
 } from "~/lib/catalog/catalog.server";
 import {
   reserveStock,
+  commitReservation,
   releaseReservation,
 } from "~/lib/inventory/engine.server";
 import type { Allocation } from "~/lib/inventory/engine.server";
@@ -20,6 +21,7 @@ import type { Allocation } from "~/lib/inventory/engine.server";
 export type StoreActionKind =
   | "set_price"
   | "reserve_inventory"
+  | "commit_inventory"
   | "release_inventory"
   | "publish_product";
 
@@ -100,6 +102,14 @@ export interface StoreActionAdapter {
     checkoutRef: string,
   ): Promise<ReserveResult>;
 
+  /**
+   * Commit (decrement) a previously held reservation at payment success —
+   * converts the hold into a sale so on_hand actually drops. This is the seam
+   * contract's `decrement`: reserve at checkout, commit on payment, release on
+   * abandon/expiry. Idempotent on checkoutRef (the engine SQL is).
+   */
+  commitInventory(checkoutRef: string): Promise<void>;
+
   /** Release a previously held reservation (cancel / cart expiry). */
   releaseInventory(checkoutRef: string): Promise<void>;
 
@@ -134,6 +144,15 @@ export function storeActionAdapterForShop(shopId: string): StoreActionAdapter {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new StoreActionError("reserve_inventory", msg);
+      }
+    },
+
+    async commitInventory(checkoutRef) {
+      try {
+        await commitReservation(shopId, checkoutRef);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new StoreActionError("commit_inventory", msg);
       }
     },
 
