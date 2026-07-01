@@ -14,6 +14,10 @@ function mockDeps(engineResult: unknown) {
   }));
   vi.doMock("./origin.server", () => ({ getShopOrigin: async () => ORIGIN }));
   vi.doMock("./rate-source.server", () => ({ getRateSource: async () => ({}) }));
+  vi.doMock("~/lib/shipping/parcel.server", () => ({
+    buildParcel: async () => ({ weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }),
+    restrictedVariants: async () => [],
+  }));
   vi.doMock("~/lib/shipping/engine.server", () => ({
     getShippingEngine: () => async () => engineResult,
   }));

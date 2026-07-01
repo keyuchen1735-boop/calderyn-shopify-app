@@ -8,7 +8,8 @@ import { priceLines } from "~/lib/order/cart.server";
 import type { QuoteLine } from "./types";
 import { getShopOrigin } from "./origin.server";
 import { getRateSource } from "./rate-source.server";
-import { buildParcel } from "~/lib/shipping/parcel.server";
+import { buildParcel, restrictedVariants } from "~/lib/shipping/parcel.server";
+import { ShipRestrictedError } from "~/lib/shipping/errors";
 
 export interface CoarseDestination {
   zip: string;
@@ -55,6 +56,13 @@ export async function estimateShipping(
   if (!lines.length) throw new Error("at least one line is required to estimate");
 
   const priced = await priceLines(shopId, lines);
+
+  // Fail fast: don't promise a delivery date for an item we can't ship to the destination
+  // country. Same restriction rule as quoteCart so the pre-checkout estimate never contradicts
+  // what checkout will do.
+  const blocked = await restrictedVariants(priced.lines.map((l) => l.variantId), dest.country);
+  if (blocked.length) throw new ShipRestrictedError(dest.country, blocked);
+
   const origin = await getShopOrigin(shopId);
   // getRateSource is async (throws RATE_SOURCE_NOT_CONFIGURED when no carrier connected).
   const rateSource = await getRateSource(shopId);

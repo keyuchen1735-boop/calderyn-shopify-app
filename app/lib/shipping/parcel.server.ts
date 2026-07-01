@@ -52,3 +52,24 @@ export async function canShipTo(variantId: string, destCountryIso2: string): Pro
   const restricted = (Array.isArray(data.restricted_countries) ? (data.restricted_countries as string[]) : []).map((c) => c.toUpperCase());
   return !restricted.includes(destCountryIso2.toUpperCase());
 }
+
+// Batched restriction check for the quote path: given a set of variants and a destination
+// country (ISO-3166 alpha-2), returns the subset that CANNOT ship there. Order-preserving
+// on the input. A variant with no variant_shipping row is treated as unrestricted — never
+// block a sale on missing data (mirrors buildParcel's pre-migration tolerance).
+export async function restrictedVariants(variantIds: string[], destCountryIso2: string): Promise<string[]> {
+  if (!variantIds.length) return [];
+  const { data, error } = await getSupabase()
+    .from("variant_shipping")
+    .select("variant_id, restricted_countries")
+    .in("variant_id", variantIds);
+  if (error) throw error;
+
+  const dest = destCountryIso2.toUpperCase();
+  const restrictedByVariant = new Map<string, string[]>();
+  for (const row of data ?? []) {
+    const restricted = (Array.isArray(row.restricted_countries) ? (row.restricted_countries as string[]) : []).map((c) => c.toUpperCase());
+    restrictedByVariant.set(String(row.variant_id), restricted);
+  }
+  return variantIds.filter((v) => (restrictedByVariant.get(v) ?? []).includes(dest));
+}
