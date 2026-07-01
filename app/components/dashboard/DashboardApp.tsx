@@ -47,6 +47,7 @@ import ScreenCatalog from "./screens/Catalog";
 import ScreenProductEditor from "./screens/ProductEditor";
 import ScreenCollections from "./screens/Collections";
 import ScreenImportShopify from "./screens/ImportShopify";
+import ScreenCutover from "./screens/Cutover";
 
 const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Overview", icon: "gauge" },
@@ -58,6 +59,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "collections", label: "Collections", icon: "tag" },
   { id: "locations-settings", label: "Locations", icon: "globe" },
   { id: "import-shopify", label: "Import from Shopify", icon: "download" },
+  { id: "cutover", label: "Go live", icon: "rocket" },
   { id: "audit", label: "Action history", icon: "clock" },
   { id: "agentic", label: "Agentic", icon: "bot" },
   { id: "settings", label: "Settings", icon: "gear" },
@@ -92,6 +94,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   "product-editor": ScreenProductEditor,
   "locations-settings": ScreenLocations,
   "import-shopify": ScreenImportShopify,
+  cutover: ScreenCutover,
   audit: ScreenAudit,
   agentic: () => <AgenticChannel />,
   settings: ScreenSettings,
