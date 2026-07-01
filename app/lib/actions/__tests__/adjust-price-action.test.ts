@@ -20,6 +20,19 @@ vi.mock("../../po/draft.server", () => ({
   getCurrentUnitCostCents: (...a: never[]) => getCurrentUnitCostCents(...a),
 }));
 
+const getOrgMode = vi.fn();
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cutover/org-mode.server")>()),
+  getOrgMode: (...a: never[]) => getOrgMode(...a),
+}));
+
+const getOwnedVariantPricing = vi.fn();
+const setOwnedVariantPrice = vi.fn();
+vi.mock("../owned-writes.server", () => ({
+  getOwnedVariantPricing: (...a: never[]) => getOwnedVariantPricing(...a),
+  setOwnedVariantPrice: (...a: never[]) => setOwnedVariantPrice(...a),
+}));
+
 const ADMIN = { graphql: vi.fn() } as never;
 
 function alert(p: Partial<Alert>): Alert {
@@ -92,6 +105,9 @@ describe("executeAdjustPriceAlertAction", () => {
       priceCents: input.newPriceCents,
     }));
     getCurrentUnitCostCents.mockResolvedValue(800);
+    getOrgMode.mockResolvedValue("mirror");
+    getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
+    setOwnedVariantPrice.mockResolvedValue({ priorPriceCents: 1500 });
   });
 
   const okSb = () => sb({ id: "sku-1", external_id: VARIANT });
@@ -238,5 +254,96 @@ describe("executeAdjustPriceAlertAction", () => {
     expect(c.actions.execute).not.toHaveBeenCalledWith(
       expect.objectContaining({ triggerReason: expect.anything() }),
     );
+  });
+});
+
+describe("executeAdjustPriceAlertAction — org_mode routing", () => {
+  const base = {
+    shopId: "shop-1",
+    alertId: "a1",
+    kind: "adjust_price" as const,
+    idempotencyKey: "idem-1",
+  };
+  const okSb = () => sb({ id: "sku-1", external_id: VARIANT });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    acknowledgeAlert.mockResolvedValue(true);
+    readVariantPrice.mockResolvedValue({ priceCents: 1500, productGid: PRODUCT });
+    setVariantPrice.mockImplementation(async (_admin: unknown, input: { variantId: string; newPriceCents: number }) => ({
+      variantId: input.variantId,
+      priceCents: input.newPriceCents,
+    }));
+    getCurrentUnitCostCents.mockResolvedValue(800);
+    getOrgMode.mockResolvedValue("mirror");
+    getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
+    setOwnedVariantPrice.mockResolvedValue({ priorPriceCents: 1500 });
+  });
+
+  it("mirror: writes to Shopify, never the owned column", async () => {
+    getOrgMode.mockResolvedValue("mirror");
+    await executeAdjustPriceAlertAction({
+      ...base,
+      client: client(alert({})) as never,
+      admin: ADMIN,
+      sb: okSb(),
+    });
+    expect(setVariantPrice).toHaveBeenCalled(); // Shopify write
+    expect(setOwnedVariantPrice).not.toHaveBeenCalled();
+  });
+
+  it("live: writes the owned column, never Shopify, cap anchored on owned price", async () => {
+    getOrgMode.mockResolvedValue("live");
+    getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
+    const c = client(alert({}));
+    const res = await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: ADMIN,
+      sb: okSb(),
+    });
+    // Restored price = COGS $8 + baseline margin $9 = $17 on the owned variant id.
+    expect(setOwnedVariantPrice).toHaveBeenCalledWith("shop-1", "sku-1", 1700);
+    expect(setVariantPrice).not.toHaveBeenCalled(); // Shopify untouched
+    expect(readVariantPrice).not.toHaveBeenCalled();
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          variant_id: "sku-1",
+          prior_price_cents: 1500,
+          new_price_cents: 1700,
+        }),
+      }),
+    );
+    expect(res.outcome).toBe("succeeded");
+  });
+
+  it("live: rejects a merchant override beyond the ±cap of the owned price (422)", async () => {
+    getOrgMode.mockResolvedValue("live");
+    getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
+    await expect(
+      executeAdjustPriceAlertAction({
+        ...base,
+        client: client(alert({})) as never,
+        admin: ADMIN,
+        sb: okSb(),
+        newPriceCents: 2000, // > +15% of $15.00
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(setOwnedVariantPrice).not.toHaveBeenCalled();
+  });
+
+  it("live: rejects when the SKU has no owned price (422)", async () => {
+    getOrgMode.mockResolvedValue("live");
+    getOwnedVariantPricing.mockResolvedValue(null);
+    await expect(
+      executeAdjustPriceAlertAction({
+        ...base,
+        client: client(alert({})) as never,
+        admin: ADMIN,
+        sb: okSb(),
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(setOwnedVariantPrice).not.toHaveBeenCalled();
   });
 });
