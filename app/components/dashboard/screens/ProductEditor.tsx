@@ -534,6 +534,12 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                           />
                         </label>
                       </div>
+                      {(() => {
+                        const shippingIncomplete = !(Number(v.weightGrams) > 0 && Number(v.lengthMm) > 0 && Number(v.widthMm) > 0 && Number(v.heightMm) > 0);
+                        return shippingIncomplete ? (
+                          <span className="cd-caption" style={{ color: "var(--cd-warning, #b45309)" }}>Incomplete — rates estimated</span>
+                        ) : null;
+                      })()}
                       <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                         <input
                           type="checkbox"
