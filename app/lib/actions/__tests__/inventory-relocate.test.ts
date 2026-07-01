@@ -4,6 +4,7 @@ import {
   RelocationError,
 } from "../inventory-relocate.server";
 import type * as InventoryServer from "../../shopify/inventory.server";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
 const priorExecutionForKey = vi.fn();
 const insertAuditWithIdempotency = vi.fn();
@@ -20,7 +21,7 @@ vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
 
 const getOrgMode = vi.fn();
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../cutover/org-mode.server")>()),
+  ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: unknown[]) => getOrgMode(...a),
 }));
 

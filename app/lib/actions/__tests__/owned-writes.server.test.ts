@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  getOwnedVariantPricing,
+  setOwnedVariantPrice,
+  applyOwnedInventoryMove,
+} from "../owned-writes.server";
 
 const setVariantPrice = vi.fn();
 vi.mock("../../catalog/catalog.server", () => ({
@@ -25,12 +30,6 @@ vi.mock("~/lib/supabase.server", () => ({
     },
   }),
 }));
-
-import {
-  getOwnedVariantPricing,
-  setOwnedVariantPrice,
-  applyOwnedInventoryMove,
-} from "../owned-writes.server";
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -1,9 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-
-// getSupabase is replaced per-test via this holder so each test supplies its own stub.
-let currentSb: unknown = null;
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => currentSb }));
-
 import {
   ORG_MODES,
   writesToOwned,
@@ -13,6 +8,10 @@ import {
   transitionOrgMode,
   type OrgMode,
 } from "../org-mode.server";
+
+// getSupabase is replaced per-test via this holder so each test supplies its own stub.
+let currentSb: unknown = null;
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => currentSb }));
 
 /**
  * Purpose-built Supabase stub. `from("shops")` serves the initial

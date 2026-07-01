@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeAdjustPriceAlertAction } from "../adjust-price.server";
 import type { Alert, AuditEntry, GuardrailConfig } from "../../types";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
 const acknowledgeAlert = vi.fn();
 vi.mock("../../alerts.server", () => ({
@@ -22,7 +23,7 @@ vi.mock("../../po/draft.server", () => ({
 
 const getOrgMode = vi.fn();
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../cutover/org-mode.server")>()),
+  ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: never[]) => getOrgMode(...a),
 }));
 
