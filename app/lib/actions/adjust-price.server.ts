@@ -109,8 +109,7 @@ export async function executeAdjustPriceAlertAction(opts: {
   // carry the write handle for the branch we're on.
   let current: { priceCents: number };
   let ownedVariantId: string | null = null;
-  let shopifyTarget: { variantGid: string; productGid: string } | null = null;
-  let shopifySkuId: string | null = null;
+  let shopifyTarget: { variantGid: string; productGid: string; skuId: string } | null = null;
 
   if (owned) {
     const priced = await getOwnedVariantPricing(shopId, alert.sku);
@@ -145,8 +144,7 @@ export async function executeAdjustPriceAlertAction(opts: {
       });
     }
     current = { priceCents: live.priceCents };
-    shopifyTarget = { variantGid: target.variantGid, productGid: live.productGid };
-    shopifySkuId = target.skuId;
+    shopifyTarget = { variantGid: target.variantGid, productGid: live.productGid, skuId: target.skuId };
   }
 
   const capPct = guardrails.max_price_change_pct;
@@ -263,7 +261,7 @@ export async function executeAdjustPriceAlertAction(opts: {
       });
     }
     appliedPriceCents = applied.priceCents;
-    params.sku_id = shopifySkuId;
+    params.sku_id = shopifyTarget.skuId;
     params.variant_id = shopifyTarget.variantGid;
     params.product_id = shopifyTarget.productGid;
     params.new_price_cents = appliedPriceCents;

@@ -310,6 +310,7 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
       expect.objectContaining({
         params: expect.objectContaining({
           variant_id: "sku-1",
+          sku_id: "sku-1",
           prior_price_cents: 1500,
           new_price_cents: 1700,
         }),
@@ -331,6 +332,7 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
       }),
     ).rejects.toMatchObject({ status: 422 });
     expect(setOwnedVariantPrice).not.toHaveBeenCalled();
+    expect(setVariantPrice).not.toHaveBeenCalled();
   });
 
   it("live: rejects when the SKU has no owned price (422)", async () => {
