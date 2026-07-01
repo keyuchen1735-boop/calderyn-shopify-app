@@ -1,7 +1,12 @@
 // Tests for quoteCart's per-variant dims/weight wiring (#6.3 shipping seam)
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { priceLines } from "~/lib/order/cart.server";
+import { getShopOrigin } from "~/lib/commerce/origin.server";
+import { getRateSource } from "~/lib/commerce/rate-source.server";
+import { calculateTax } from "~/lib/commerce/tax.server";
+import { getShippingEngine } from "~/lib/shipping/engine.server";
+import { buildParcel } from "~/lib/shipping/parcel.server";
 
-// Mock upstream dependencies before importing the module under test
 vi.mock("~/lib/order/cart.server", () => ({
   priceLines: vi.fn(),
 }));
@@ -20,13 +25,6 @@ vi.mock("~/lib/shipping/engine.server", () => ({
 vi.mock("~/lib/shipping/parcel.server", () => ({
   buildParcel: vi.fn(),
 }));
-
-import { priceLines } from "~/lib/order/cart.server";
-import { getShopOrigin } from "~/lib/commerce/origin.server";
-import { getRateSource } from "~/lib/commerce/rate-source.server";
-import { calculateTax } from "~/lib/commerce/tax.server";
-import { getShippingEngine } from "~/lib/shipping/engine.server";
-import { buildParcel } from "~/lib/shipping/parcel.server";
 
 const mockPriceLines = vi.mocked(priceLines);
 const mockGetShopOrigin = vi.mocked(getShopOrigin);
