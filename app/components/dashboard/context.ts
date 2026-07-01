@@ -22,7 +22,12 @@ export type Screen =
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
-  | "labs";
+  | "labs"
+  // Owned catalog (Slice 1). "catalog" + "collections" ride the nav rail;
+  // "product-editor" is an inner flow reached via navigate("product-editor", id|"new").
+  | "catalog"
+  | "product-editor"
+  | "collections";
 
 export interface NavState {
   screen: Screen;

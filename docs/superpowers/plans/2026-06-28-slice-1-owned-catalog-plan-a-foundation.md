@@ -6,7 +6,7 @@
 
 **Architecture:** Add owned relational tables (`product_dim`, `variant_dim`, options, media, collections). Keep `sku_dim` as a **real table** (not a view) because `sku_dim.id` is a foreign-key target for orders/refunds/inventory and 7 views depend on it. The owned tables become the write authority; a re-projection function rebuilds a product's `sku_dim` rows from the owned tables **preserving `variant_dim.id` = `sku_dim.id`**, so every existing reference stays valid. The Shopify product-mirror write path is neutralized (catalog is now owned).
 
-**Tech Stack:** Postgres (Supabase) migrations, `@supabase/supabase-js` service-role client, vitest. Local engine test DB via `tests/engine/scripts/test-db.sh` (disposable Postgres on `:5433`).
+**Tech Stack:** Postgres (Supabase) migrations, `@supabase/supabase-js` service-role client, vitest. Migrations are applied + verified against the Supabase project (`ajgrmnvzxfxxlwrxcgnu`) via the Supabase MCP (`apply_migration` for DDL, `execute_sql` for the verification queries).
 
 ## Global Constraints
 
@@ -140,15 +140,15 @@ alter table public.collection_dim enable row level security;
 alter table public.product_collection enable row level security;
 ```
 
-- [ ] **Step 2: Apply to the local engine test DB and verify the tables exist**
+- [ ] **Step 2: Apply via the Supabase MCP and verify the tables exist**
 
-Run:
-```bash
-bash tests/engine/scripts/test-db.sh up
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260628130000_owned_catalog_tables.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "\dt public.product_dim public.variant_dim public.collection_dim"
+Apply the DDL with the Supabase MCP `apply_migration` tool (project `ajgrmnvzxfxxlwrxcgnu`, name `owned_catalog_tables`), then confirm with `execute_sql`:
+```sql
+select table_name from information_schema.tables
+where table_schema = 'public'
+  and table_name in ('product_dim','variant_dim','collection_dim');
 ```
-Expected: all three tables listed; the `psql -f` runs with no errors (re-running it is idempotent — every statement is `if not exists`).
+Expected: all three tables listed; `apply_migration` succeeds (re-running is idempotent — every statement is `if not exists`). DONE on prod 2026-06-29.
 
 - [ ] **Step 3: Commit**
 
@@ -263,21 +263,18 @@ select
   (select count(*) from public.product_dim) as product_rows;
 ```
 
-- [ ] **Step 3: Seed sample data, run the backfill, and verify parity**
+- [ ] **Step 3: Apply the backfill via the Supabase MCP and verify parity**
 
-Run:
-```bash
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "
-  insert into public.shops (id, shop_domain) values ('00000000-0000-0000-0000-0000000000aa','demo.myshopify.com') on conflict do nothing;
-  insert into public.sku_dim (id, shop_id, external_id, product_id, title, currency, tags, collections, retail_price_cents, product_status, vendor)
-  values
-   ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000aa','gid://v/1','gid://p/1','Tee S', 'USD', '{summer}', '{Summer}', 1999, 'active', 'Acme'),
-   ('00000000-0000-0000-0000-0000000000b2','00000000-0000-0000-0000-0000000000aa','gid://v/2','gid://p/1','Tee M', 'USD', '{summer}', '{Summer}', 1999, 'active', 'Acme')
-  on conflict do nothing;"
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260628130100_owned_catalog_backfill.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/checks/owned_catalog_backfill_check.sql
+Apply with `apply_migration` (name `owned_catalog_backfill`) — it defines `promote_shop_catalog(p_shop_id)` and calls it for every existing shop — then run the parity check (`tests/engine/schema/checks/owned_catalog_backfill_check.sql`) via `execute_sql`:
+```sql
+select
+  (select count(*) from public.sku_dim) as sku_rows,
+  (select count(*) from public.variant_dim) as variant_rows,
+  (select count(*) from public.sku_dim s left join public.variant_dim v on v.id = s.id where v.id is null) as orphan_sku_rows,
+  (select count(*) from (select distinct shop_id, product_id from public.sku_dim) t) as distinct_shop_products,
+  (select count(*) from public.product_dim) as product_rows;
 ```
-Expected: `orphan_sku_rows = 0`, `variant_rows = sku_rows`, `product_rows = distinct_products` (here: 2 variants, 1 product, 0 orphans).
+Expected: `orphan_sku_rows = 0`, `variant_rows = sku_rows`, `product_rows = distinct_shop_products`. VERIFIED on prod 2026-06-29: 363 = 363, 0 orphans, 127 products = 127 distinct (shop, product) pairs.
 
 - [ ] **Step 4: Commit**
 
@@ -465,26 +462,28 @@ git commit -m "feat(catalog): sku_dim re-projection sync + retire Shopify produc
 **Files:**
 - No new source. This task's deliverable is a green gate proving the engine still resolves against `sku_dim` after the migration + backfill, with ids preserved.
 
-- [ ] **Step 1: Re-run the backfill parity check on a fresh local DB**
+- [ ] **Step 1: Confirm the engine read model still resolves against `sku_dim`**
 
-Run:
-```bash
-bash tests/engine/scripts/test-db.sh reset
-bash tests/engine/scripts/test-db.sh up
-# the harness applies all tests/engine/schema/migrations in order, including the two new ones
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select 1 from public.v_skus_flat limit 1;"
+Via `execute_sql` on the Supabase project, confirm `v_skus_flat` resolves after the migration + backfill:
+```sql
+select count(*) from public.v_skus_flat;
 ```
-Expected: the migration chain applies cleanly; `v_skus_flat` resolves (returns 0 or more rows, no error) — proving the dependent views still bind to `sku_dim`.
+Expected: returns a count (no error) — proving the dependent views still bind to `sku_dim`. VERIFIED on prod: `v_skus_flat = 363 = sku_rows`.
 
 - [ ] **Step 2: Confirm the 7 dependent views still resolve**
 
-Run:
-```bash
-for v in v_skus_flat v_sku_affinity v_alerts_view v_autopilot_candidates v_peer_shop_niche v_sku_regional_demand v_sku_remediation_inputs; do
-  PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select 1 from public.$v limit 1;" || echo "FAILED: $v";
-done
+Via `execute_sql`, count each dependent view (an unresolved view would error):
+```sql
+select
+  (select count(*) from public.v_skus_flat) as v_skus_flat,
+  (select count(*) from public.v_sku_affinity) as v_sku_affinity,
+  (select count(*) from public.v_alerts_view) as v_alerts_view,
+  (select count(*) from public.v_autopilot_candidates) as v_autopilot_candidates,
+  (select count(*) from public.v_peer_shop_niche) as v_peer_shop_niche,
+  (select count(*) from public.v_sku_regional_demand) as v_sku_regional_demand,
+  (select count(*) from public.v_sku_remediation_inputs) as v_sku_remediation_inputs;
 ```
-Expected: no `FAILED:` lines.
+Expected: every view returns a count, none error. VERIFIED on prod 2026-06-29: all 7 resolve.
 
 - [ ] **Step 3: Run the full app gate**
 

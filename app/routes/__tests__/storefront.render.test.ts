@@ -119,10 +119,28 @@ describe("storefront collection", () => {
     ]);
   });
 
-  it("404s when the handle yields no products", async () => {
+  it("404s when the collection handle is unknown", async () => {
     await expect(
       collectionLoader({ request: req(), params: { handle: "nope" }, context: {} }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("renders a real but empty collection instead of 404ing", async () => {
+    getCatalogMock.mockReturnValue({
+      async listCollections() {
+        return [{ handle: "spring", title: "Spring" }];
+      },
+      async listProducts() {
+        return [];
+      },
+      async getProduct() {
+        return null;
+      },
+    });
+    const res = await collectionLoader({ request: req(), params: { handle: "spring" }, context: {} });
+    const data = await res.json();
+    expect(data.title).toBe("Spring");
+    expect(data.products).toEqual([]);
   });
 
   it("renders the collection grid", () => {

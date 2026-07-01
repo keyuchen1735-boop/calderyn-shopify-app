@@ -150,8 +150,8 @@ describe("transformPendingWebhooks — order write ordering", () => {
   });
 });
 
-describe("transformPendingWebhooks — product inventory settings", () => {
-  it("updates sku_dim from a PRODUCTS_UPDATE webhook", async () => {
+describe("transformPendingWebhooks — product webhook (catalog owned)", () => {
+  it("acknowledges a PRODUCTS_UPDATE webhook without overwriting the owned catalog (sku_dim)", async () => {
     store["raw_shopify_webhook"] = [{
       id: "wh-product",
       shop_id: SHOP_ID,
@@ -174,17 +174,13 @@ describe("transformPendingWebhooks — product inventory settings", () => {
 
     const result = await transformPendingWebhooks();
 
-    const skuUpsert = upserts.find((u) => u.table === "sku_dim");
-    expect(skuUpsert).toBeDefined();
-    expect(skuUpsert?.rows).toEqual([
-      expect.objectContaining({
-        shop_id: SHOP_ID,
-        external_id: "gid://shopify/ProductVariant/200",
-        inventory_policy: "deny",
-        inventory_tracked: true,
-      }),
-    ]);
-    expect(result.facts).toBe(1);
+    // Catalog is Calderyn-owned (Slice 1): the Shopify product mirror is retired.
+    // The webhook is acknowledged (stamped processed) so it does not loop, but it
+    // must NOT overwrite the owned catalog's sku_dim projection.
+    expect(upserts.find((u) => u.table === "sku_dim")).toBeUndefined();
+    expect(updates.some((u) => u.table === "raw_shopify_webhook")).toBe(true);
+    expect(result.facts).toBe(0);
+    expect(result.processed).toBe(1);
   });
 });
 

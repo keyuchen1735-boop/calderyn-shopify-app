@@ -112,13 +112,13 @@ create table if not exists public.inventory_transfer (
 alter table public.inventory_transfer enable row level security;
 ```
 
-- [ ] **Step 2: Apply locally + verify**
+- [ ] **Step 2: Apply via the Supabase MCP + verify**
 
-Run:
-```bash
-bash tests/engine/scripts/test-db.sh up
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260629120000_inventory_tables.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select column_name from information_schema.columns where table_name='inventory_balance' and column_name in ('available','reserved','incoming','unavailable');"
+Apply with `apply_migration` (project `ajgrmnvzxfxxlwrxcgnu`, name `inventory_tables`), then verify with `execute_sql`:
+```sql
+select column_name from information_schema.columns
+where table_name = 'inventory_balance'
+  and column_name in ('available','reserved','incoming','unavailable');
 ```
 Expected: the four columns listed; no errors (idempotent on re-run).
 
@@ -232,12 +232,13 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Apply locally + smoke the function**
+- [ ] **Step 2: Apply via the Supabase MCP + smoke the function**
 
-Run:
-```bash
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260629120100_inventory_reserve_fn.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select proname from pg_proc where proname in ('inventory_reserve','inventory_commit','inventory_release');"
+Apply with `apply_migration` (name `inventory_reserve_fn`), then verify with `execute_sql`:
+```sql
+select proname from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('inventory_reserve','inventory_commit','inventory_release');
 ```
 Expected: the three function names listed.
 
@@ -627,12 +628,11 @@ maybe("inventory_reserve concurrency", () => {
 });
 ```
 
-- [ ] **Step 2: Run it against the local DB**
+- [ ] **Step 2: Run it against a real Postgres**
 
-Run:
+This is a Postgres-integration test (it asserts the `select ... for update` row lock serializes two racing reservations), so it needs a live Postgres connection — point `TEST_DATABASE_URL` at one (e.g. a Supabase branch connection string, or any throwaway Postgres). No local test-DB harness required.
 ```bash
-bash tests/engine/scripts/test-db.sh up
-TEST_DATABASE_URL=postgres://postgres:test@localhost:5433/calderyn_test npx vitest run tests/engine/inventory/reserve-concurrency.test.ts
+TEST_DATABASE_URL=<postgres-connection-string> npx vitest run tests/engine/inventory/reserve-concurrency.test.ts
 ```
 Expected: PASS — exactly one win, one `insufficient_stock`, `reserved = 1`.
 
@@ -687,12 +687,11 @@ where coalesce(v.inventory_on_hand, 0) > 0
 on conflict (variant_id, location_id) do nothing;
 ```
 
-- [ ] **Step 2: Apply + verify on the seeded local sample**
+- [ ] **Step 2: Apply via the Supabase MCP + verify the seeded sample**
 
-Run:
-```bash
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260629120200_inventory_seed.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select count(*) as balances, count(*) filter (where on_hand > 0) as seeded from inventory_balance;"
+Apply with `apply_migration` (name `inventory_seed`), then verify with `execute_sql`:
+```sql
+select count(*) as balances, count(*) filter (where on_hand > 0) as seeded from inventory_balance;
 ```
 Expected: one balance row per variant that had a location; on-hand carried from `inventory_on_hand`.
 

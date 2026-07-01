@@ -3,7 +3,6 @@ import { writeDlq } from "./dlq.server";
 import {
   parseInventoryWebhook,
   parseOrderWebhook,
-  parseProductWebhook,
   parseRefundWebhook,
 } from "./mappers.server";
 import { applyAttribution } from "../attribution/apply.server";
@@ -77,14 +76,12 @@ export async function transformPendingWebhooks(): Promise<TransformResult> {
   return res;
 }
 
-async function applyProduct(shopId: string, payload: Record<string, unknown>): Promise<number> {
-  const rows = parseProductWebhook(payload).map((row) => ({ shop_id: shopId, ...row }));
-  if (!rows.length) return 0;
-  const { error } = await getSupabase()
-    .from("sku_dim")
-    .upsert(rows, { onConflict: "shop_id,external_id" });
-  if (error) throw error;
-  return rows.length;
+async function applyProduct(_shopId: string, _payload: Record<string, unknown>): Promise<number> {
+  // Catalog is Calderyn-owned (Slice 1). The Shopify product mirror is retired;
+  // products are authored in the dashboard and projected into sku_dim by
+  // projectProductToSkuDim. Inbound product webhooks are acknowledged (stamped
+  // processed) but no longer overwrite owned catalog data.
+  return 0;
 }
 
 async function applyInventory(shopId: string, payload: Record<string, unknown>): Promise<number> {

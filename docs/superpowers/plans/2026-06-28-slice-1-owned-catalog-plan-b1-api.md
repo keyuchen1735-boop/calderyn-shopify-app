@@ -77,14 +77,13 @@ values ('product-media', 'product-media', false)
 on conflict (id) do nothing;
 ```
 
-- [ ] **Step 2: Apply locally and verify**
+- [ ] **Step 2: Apply via the Supabase MCP and verify**
 
-Run:
-```bash
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -f tests/engine/schema/migrations/20260628140000_product_media_bucket.sql
-PGPASSWORD=test psql -h localhost -p 5433 -U postgres -d calderyn_test -c "select id, public from storage.buckets where id='product-media';"
+Apply with `apply_migration` (project `ajgrmnvzxfxxlwrxcgnu`, name `product_media_bucket`), then verify with `execute_sql`:
+```sql
+select id, public from storage.buckets where id = 'product-media';
 ```
-Expected: one row, `public = f`. (If the local test DB lacks the `storage` schema, this migration is a no-op there; the bucket is created on the real Supabase project where `storage` exists.)
+Expected: one row, `public = f`. (The `storage` schema only exists on the real Supabase project, which is where this bucket migration is applied.)
 
 - [ ] **Step 3: Commit**
 
