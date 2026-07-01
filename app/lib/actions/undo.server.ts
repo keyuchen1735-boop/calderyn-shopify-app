@@ -11,6 +11,7 @@ import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import { restoreProduct } from "../shopify/product.server";
 import { setVariantPrice } from "../shopify/price.server";
 import { setDoNotReorder } from "./discontinue.server";
+import { setOwnedVariantPrice, applyOwnedInventoryMove } from "./owned-writes.server";
 import type { MetaClient } from "../meta/campaigns.server";
 import type { MetaWriteConn } from "../meta/ad-create.server";
 import { deleteAd as realDeleteAd, metaWriteClientForShopId } from "../meta/ad-create.server";
@@ -218,46 +219,90 @@ export async function undoAction(
       await srcAdapter.setDailyBudget(String(rp.source_external_id ?? ""), rpre.source.daily_budget_cents);
     }
   } else if (orig.action_kind === "reallocate_inventory") {
-    // Reverse transfer: same inventory item, locations swapped. Refuse loudly
-    // without an admin client rather than record a success that never touched
-    // Shopify (rule 12).
-    if (!deps.admin) {
-      throw new Error("Shopify admin client unavailable; cannot undo an inventory transfer");
-    }
     const ip = (orig.params ?? {}) as {
       inventory_item_id?: string;
       from_location_id?: string;
       to_location_id?: string;
       delta?: number;
+      owned?: boolean;
+      dual_write?: string;
+      owned_variant_id?: string;
+      owned_from_location_id?: string;
+      owned_to_location_id?: string;
     };
     const delta = Number(ip.delta ?? 0);
-    if (!ip.inventory_item_id || !ip.from_location_id || !ip.to_location_id || !delta) {
-      throw new Error(`audit ${auditId} lacks a replayable transfer plan; cannot undo`);
-    }
-    // Fresh-availability guard. The reversal pulls `delta` OUT of the original
-    // destination (ip.to_location_id). Even inside the 24h window a fast-moving
-    // SKU in a previously starved region can sell through, so firing the fixed
-    // reverse delta would overdraw it. Refuse loudly (rule 12) instead — the
-    // forward path (executeInventoryRelocation) makes the same check before it
-    // moves stock; the reverse must be just as careful.
-    const destAvailable = await availableAtLocation(
-      sb,
-      shopId,
-      ip.inventory_item_id,
-      ip.to_location_id,
-    );
-    if (destAvailable < delta) {
-      throw new Error(
-        `cannot undo inventory transfer: ${ip.to_location_id} now holds ${destAvailable} unit${destAvailable === 1 ? "" : "s"}, fewer than the ${delta} the reverse would move back`,
+    if (ip.owned) {
+      // The original move ran on the OWNED engine (org_mode=live) — reverse it there,
+      // locations swapped, never through Shopify (whose stock this move never touched).
+      // The engine's atomic transfer is its own oversell guard: if the destination has
+      // since sold through, createTransfer rejects and the undo fails visibly (rule 12).
+      if (!ip.owned_variant_id || !ip.owned_from_location_id || !ip.owned_to_location_id || !delta) {
+        throw new Error(`audit ${auditId} lacks a replayable owned transfer plan; cannot undo`);
+      }
+      const reversal = await applyOwnedInventoryMove({
+        shopId,
+        variantId: ip.owned_variant_id,
+        fromLocationId: ip.owned_to_location_id,
+        toLocationId: ip.owned_from_location_id,
+        quantity: delta,
+      });
+      appliedInventoryOperationId = reversal.transferId;
+    } else {
+      // Reverse transfer: same inventory item, locations swapped. Refuse loudly
+      // without an admin client rather than record a success that never touched
+      // Shopify (rule 12).
+      if (!deps.admin) {
+        throw new Error("Shopify admin client unavailable; cannot undo an inventory transfer");
+      }
+      if (!ip.inventory_item_id || !ip.from_location_id || !ip.to_location_id || !delta) {
+        throw new Error(`audit ${auditId} lacks a replayable transfer plan; cannot undo`);
+      }
+      // Fresh-availability guard. The reversal pulls `delta` OUT of the original
+      // destination (ip.to_location_id). Even inside the 24h window a fast-moving
+      // SKU in a previously starved region can sell through, so firing the fixed
+      // reverse delta would overdraw it. Refuse loudly (rule 12) instead — the
+      // forward path (executeInventoryRelocation) makes the same check before it
+      // moves stock; the reverse must be just as careful.
+      const destAvailable = await availableAtLocation(
+        sb,
+        shopId,
+        ip.inventory_item_id,
+        ip.to_location_id,
       );
+      if (destAvailable < delta) {
+        throw new Error(
+          `cannot undo inventory transfer: ${ip.to_location_id} now holds ${destAvailable} unit${destAvailable === 1 ? "" : "s"}, fewer than the ${delta} the reverse would move back`,
+        );
+      }
+      const reversal = await inventoryAdjustQuantitiesForShop(shopId, deps.admin, {
+        inventoryItemId: ip.inventory_item_id,
+        fromLocationId: ip.to_location_id,
+        toLocationId: ip.from_location_id,
+        delta,
+      }, sb);
+      appliedInventoryOperationId = reversal.operationId;
+      // The original dual_run move mirrored into the owned engine — mirror the
+      // reversal too, best-effort (Shopify above stays authoritative; a mirror
+      // failure is logged, and the go-live parity gate holds the drift visible).
+      if (
+        ip.dual_write === "ok" &&
+        ip.owned_variant_id &&
+        ip.owned_from_location_id &&
+        ip.owned_to_location_id
+      ) {
+        try {
+          await applyOwnedInventoryMove({
+            shopId,
+            variantId: ip.owned_variant_id,
+            fromLocationId: ip.owned_to_location_id,
+            toLocationId: ip.owned_from_location_id,
+            quantity: delta,
+          });
+        } catch (err) {
+          console.error("[undo] dual_run owned mirror reversal failed", err);
+        }
+      }
     }
-    const reversal = await inventoryAdjustQuantitiesForShop(shopId, deps.admin, {
-      inventoryItemId: ip.inventory_item_id,
-      fromLocationId: ip.to_location_id,
-      toLocationId: ip.from_location_id,
-      delta,
-    }, sb);
-    appliedInventoryOperationId = reversal.operationId;
   } else if (orig.action_kind === "discontinue_sku") {
     // Reverse a discontinue: re-activate the product on Shopify, then clear the
     // internal flag. Refuse loudly without an admin client rather than record a
@@ -275,25 +320,46 @@ export async function undoAction(
     await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
     await setDoNotReorder(sb, shopId, dp.sku_id, false);
   } else if (orig.action_kind === "adjust_price") {
-    // Reverse a price change: write the recorded prior price back to the
-    // variant. Absolute-state (like the campaign reversals), so a retry is
-    // safe. Refuse loudly without an admin client rather than fake a success.
-    if (!deps.admin) {
-      throw new Error("Shopify admin client unavailable; cannot undo a price change");
-    }
     const pp = (orig.params ?? {}) as {
       variant_id?: string;
       product_id?: string;
       prior_price_cents?: number;
+      owned?: boolean;
+      dual_write?: string;
+      owned_variant_id?: string;
     };
-    if (!pp.variant_id || !pp.product_id || pp.prior_price_cents == null) {
-      throw new Error(`audit ${auditId} lacks the variant/prior price to restore; cannot undo`);
+    if (pp.owned) {
+      // The original change ran on the OWNED catalog (org_mode=live) — restore the
+      // recorded prior price there. Absolute-state, retry-safe, no Shopify involved.
+      if (!pp.variant_id || pp.prior_price_cents == null) {
+        throw new Error(`audit ${auditId} lacks the owned variant/prior price to restore; cannot undo`);
+      }
+      await setOwnedVariantPrice(shopId, pp.variant_id, Number(pp.prior_price_cents));
+    } else {
+      // Reverse a price change: write the recorded prior price back to the
+      // variant. Absolute-state (like the campaign reversals), so a retry is
+      // safe. Refuse loudly without an admin client rather than fake a success.
+      if (!deps.admin) {
+        throw new Error("Shopify admin client unavailable; cannot undo a price change");
+      }
+      if (!pp.variant_id || !pp.product_id || pp.prior_price_cents == null) {
+        throw new Error(`audit ${auditId} lacks the variant/prior price to restore; cannot undo`);
+      }
+      await setVariantPrice(deps.admin, {
+        productGid: pp.product_id,
+        variantId: pp.variant_id,
+        newPriceCents: Number(pp.prior_price_cents),
+      });
+      // The original dual_run change mirrored into the owned catalog — mirror the
+      // restore too, best-effort (Shopify above stays authoritative).
+      if (pp.dual_write === "ok" && pp.owned_variant_id && pp.prior_price_cents != null) {
+        try {
+          await setOwnedVariantPrice(shopId, pp.owned_variant_id, Number(pp.prior_price_cents));
+        } catch (err) {
+          console.error("[undo] dual_run owned mirror price restore failed", err);
+        }
+      }
     }
-    await setVariantPrice(deps.admin, {
-      productGid: pp.product_id,
-      variantId: pp.variant_id,
-      newPriceCents: Number(pp.prior_price_cents),
-    });
   } else if (orig.action_kind === "push_creative_draft") {
     // Reversal = delete the paused draft ad we created. MetaClient has no DELETE
     // verb, so deleteAd sets the writable status to DELETED. Absolute-state, so
