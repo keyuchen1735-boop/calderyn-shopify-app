@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop, syncProductInventorySettings } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
+import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
@@ -42,6 +43,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     inventorySettingsErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
+    ownedTransform: { processed: 0, facts: 0, dlq: 0 },
+    ownedTransformError: null as string | null,
     attributionErrors: [] as string[],
     shipCostErrors: [] as string[],
   };
@@ -100,6 +103,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (err) {
     summary.transformError = err instanceof Error ? err.message : String(err);
     console.error("[cron.ingest] transform phase failed", err);
+  }
+
+  // Phase 2b: transform queued OWNED checkout events (isolated like Phase 2, so an
+  // owned-transform failure doesn't abort the Shopify transform or the response).
+  try {
+    summary.ownedTransform = await transformPendingOwnedEvents();
+  } catch (err) {
+    summary.ownedTransformError = err instanceof Error ? err.message : String(err);
+    console.error("[cron.ingest] owned transform phase failed", err);
   }
 
   // Phase 3: reconcile attributed revenue for all active shops (per-shop isolation
