@@ -1065,6 +1065,10 @@ export interface VariantDraft {
   unitCostCents?: number;
   inventoryTracked?: boolean;
   inventoryOnHand?: number;
+  grams?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
   /** Option-value labels this variant represents, in option order. */
   optionValues?: string[];
 }

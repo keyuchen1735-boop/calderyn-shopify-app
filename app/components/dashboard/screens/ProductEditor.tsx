@@ -3,6 +3,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
+import { isShippingComplete } from "~/lib/catalog/shipping-dims";
 import { Card, Btn, Pill, Placeholder, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
 import InventoryPanel from "./InventoryPanel";
@@ -345,46 +346,87 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                 {showStock && !id && <span style={{ width: 90, textAlign: "right" }}>Stock</span>}
               </div>
               {variants.map((v, i) => (
-                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 120 }}>
-                    {variantLabel(v)}
-                  </span>
-                  <input
-                    className="cd-input"
-                    placeholder="SKU"
-                    aria-label={`SKU for ${variantLabel(v)}`}
-                    value={v.sku ?? ""}
-                    onChange={(e) => setVariantField(i, { sku: e.target.value })}
-                    style={{ width: 150 }}
-                  />
-                  <input
-                    className="cd-input tabular-nums"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    aria-label={`Price for ${variantLabel(v)}`}
-                    value={centsToDollars(v.retailPriceCents)}
-                    onChange={(e) => setVariantField(i, { retailPriceCents: dollarsToCents(e.target.value) })}
-                    style={{ width: 110, textAlign: "right" }}
-                  />
-                  {showStock && !id && (
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 120 }}>
+                      {variantLabel(v)}
+                    </span>
+                    <input
+                      className="cd-input"
+                      placeholder="SKU"
+                      aria-label={`SKU for ${variantLabel(v)}`}
+                      value={v.sku ?? ""}
+                      onChange={(e) => setVariantField(i, { sku: e.target.value })}
+                      style={{ width: 150 }}
+                    />
                     <input
                       className="cd-input tabular-nums"
                       type="number"
                       min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      aria-label={`Price for ${variantLabel(v)}`}
+                      value={centsToDollars(v.retailPriceCents)}
+                      onChange={(e) => setVariantField(i, { retailPriceCents: dollarsToCents(e.target.value) })}
+                      style={{ width: 110, textAlign: "right" }}
+                    />
+                    {showStock && !id && (
+                      <input
+                        className="cd-input tabular-nums"
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        aria-label={`Stock for ${variantLabel(v)}`}
+                        value={v.inventoryOnHand ?? ""}
+                        onChange={(e) =>
+                          setVariantField(i, {
+                            inventoryOnHand: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                          })
+                        }
+                        style={{ width: 90, textAlign: "right" }}
+                      />
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", paddingLeft: 4 }}>
+                    <span className="cd-caption" style={{ width: 66 }}>Shipping</span>
+                    <input
+                      className="cd-input tabular-nums"
+                      type="number"
+                      min="1"
                       step="1"
                       inputMode="numeric"
-                      aria-label={`Stock for ${variantLabel(v)}`}
-                      value={v.inventoryOnHand ?? ""}
+                      aria-label={`Weight in grams for ${variantLabel(v)}`}
+                      placeholder="Weight g"
+                      value={v.grams ?? ""}
                       onChange={(e) =>
-                        setVariantField(i, {
-                          inventoryOnHand: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
-                        })
+                        setVariantField(i, { grams: e.target.value === "" ? undefined : Math.trunc(Number(e.target.value)) || undefined })
                       }
-                      style={{ width: 90, textAlign: "right" }}
+                      style={{ width: 96, textAlign: "right" }}
                     />
-                  )}
+                    {(["lengthMm", "widthMm", "heightMm"] as const).map((axis) => (
+                      <input
+                        key={axis}
+                        className="cd-input tabular-nums"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        aria-label={`${axis.replace("Mm", "")} in millimetres for ${variantLabel(v)}`}
+                        placeholder={`${axis.replace("Mm", "").toUpperCase()} mm`}
+                        value={v[axis] ?? ""}
+                        onChange={(e) =>
+                          setVariantField(i, { [axis]: e.target.value === "" ? undefined : Math.trunc(Number(e.target.value)) || undefined })
+                        }
+                        style={{ width: 84, textAlign: "right" }}
+                      />
+                    ))}
+                    {!isShippingComplete({ grams: v.grams, lengthMm: v.lengthMm, widthMm: v.widthMm, heightMm: v.heightMm }) && (
+                      <span className="cd-caption" style={{ color: "var(--cd-warning, #b45309)" }}>
+                        Incomplete — rates estimated
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
