@@ -8,6 +8,8 @@ import {
   isRetriableFailure,
   storeActionAdapterForShop,
 } from "../store-actions";
+import * as catalogMod from "~/lib/catalog/catalog.server";
+import * as engineMod from "~/lib/inventory/engine.server";
 
 // --- mock owned primitives --------------------------------------------------
 
@@ -20,9 +22,6 @@ vi.mock("~/lib/inventory/engine.server", () => ({
   reserveStock: vi.fn(),
   releaseReservation: vi.fn(),
 }));
-
-import * as catalogMod from "~/lib/catalog/catalog.server";
-import * as engineMod from "~/lib/inventory/engine.server";
 
 const mockSetVariantPrice = vi.mocked(catalogMod.setVariantPrice);
 const mockSetProductStatus = vi.mocked(catalogMod.setProductStatus);
