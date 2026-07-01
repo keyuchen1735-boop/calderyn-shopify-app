@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- in-memory supabase fake */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as CatalogServer from "../catalog.server";
 
 const store: Record<string, any[]> = {};
 const inserts: Array<{ table: string; rows: any }> = [];
@@ -21,8 +22,8 @@ function builder(table: string): any {
 vi.mock("../../supabase.server", () => ({ getSupabase: () => ({ from: (t: string) => builder(t) }) }));
 vi.mock("../project-sku-dim.server", () => ({ projectProductToSkuDim: async () => {} }));
 
-let createProduct: typeof import("../catalog.server").createProduct;
-let getProduct: typeof import("../catalog.server").getProduct;
+let createProduct: typeof CatalogServer.createProduct;
+let getProduct: typeof CatalogServer.getProduct;
 beforeEach(async () => {
   vi.resetModules();
   inserts.length = 0;
