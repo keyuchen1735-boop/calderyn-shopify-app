@@ -48,6 +48,21 @@ export async function getAcpSession(sessionId: string): Promise<AcpSession | nul
   };
 }
 
+// Atomically claim an open session for completion. The `.eq("status", "open")`
+// predicate is the guard: only the first caller flips open->completing, so a
+// retried or concurrent `complete` can't place+charge the same session twice.
+// Returns true only for the caller that won the claim.
+export async function claimAcpSessionForCompletion(sessionId: string): Promise<boolean> {
+  const up = await getSupabase()
+    .from("acp_session")
+    .update({ status: "completing", updated_at: new Date().toISOString() })
+    .eq("session_id", sessionId)
+    .eq("status", "open")
+    .select("session_id");
+  if (up.error) throw up.error;
+  return (up.data?.length ?? 0) > 0;
+}
+
 export async function completeAcpSession(sessionId: string, orderId: string): Promise<void> {
   const up = await getSupabase()
     .from("acp_session")

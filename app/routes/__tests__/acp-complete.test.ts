@@ -9,6 +9,7 @@ describe("ACP complete action", () => {
     vi.doMock("~/lib/commerce/acp/signature.server", () => ({ verifyAcpSignature: () => true }));
     vi.doMock("~/lib/commerce/acp/session-store.server", () => ({
       getAcpSession: async () => ({ sessionId: "acp_1", shopId: "shop_test", clientId: "c1", quoteId: "q1", orderId: null, status: "open" }),
+      claimAcpSessionForCompletion: async () => true,
       completeAcpSession: async () => { order.push("complete_session"); },
     }));
     vi.doMock("~/lib/commerce/quote-store.server", () => ({ getQuote: async () => ({ quoteId: "q1", totalCents: 2660, currency: "usd" }) }));

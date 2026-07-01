@@ -43,7 +43,12 @@ export async function chargeSharedPaymentToken(
       off_session: true,
       metadata: { shop_id: shopId, order_ref: input.orderId },
     },
-    { logLabel: "ACP" },
+    {
+      logLabel: "ACP",
+      // Idempotency key: a retried `complete` for the same order must reuse the
+      // existing PaymentIntent rather than create+confirm a second real charge.
+      idempotencyKey: `acp_charge_${input.orderId}`,
+    },
   );
   // Mirror into payment_intent so the webhook + reconciliation can resolve the order
   // (same path as createPaymentIntent for the storefront flow). The buyer is already
