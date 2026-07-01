@@ -6,6 +6,7 @@ import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
+import { drainImports } from "~/lib/import/run.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
@@ -47,6 +48,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ownedTransformError: null as string | null,
     attributionErrors: [] as string[],
     shipCostErrors: [] as string[],
+    imports: { processed: 0 },
+    importError: null as string | null,
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -144,6 +147,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.shipCostErrors.push(`${shopId}: ${stringifyError(err)}`);
       console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
     }
+  }
+
+  // Phase 5: drain import-from-Shopify runs (pull 12 months + promote mirror -> owned).
+  // Isolated like the other phases so an import failure doesn't abort the response.
+  try {
+    summary.imports = await drainImports();
+  } catch (err) {
+    summary.importError = err instanceof Error ? err.message : String(err);
+    console.error("[cron.ingest] import drain failed", err);
   }
 
   return json(summary);

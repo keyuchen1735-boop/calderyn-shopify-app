@@ -28,7 +28,9 @@ export type Screen =
   // "product-editor" is an inner flow reached via navigate("product-editor", id|"new").
   | "catalog"
   | "product-editor"
-  | "collections";
+  | "collections"
+  // Import from Shopify (#13.promote) — one-click mirror → owned migration.
+  | "import-shopify";
 
 export interface NavState {
   screen: Screen;
