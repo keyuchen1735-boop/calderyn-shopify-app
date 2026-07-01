@@ -37,6 +37,7 @@ export async function consumeResetToken(raw: string): Promise<{ userId: string }
     .from("password_reset_token")
     .select("id, user_id, purpose, expires_at, used_at")
     .eq("token_hash", hashSessionToken(raw))
+    .in("purpose", ["reset", "set_password"]) // a verify token must never set a password
     .maybeSingle();
   if (error) throw error;
   if (!data || data.used_at) return null;
@@ -45,11 +46,17 @@ export async function consumeResetToken(raw: string): Promise<{ userId: string }
   // mailbox control. Without this, a leaked verify link is a full ATO primitive.
   if (data.purpose !== "reset" && data.purpose !== "set_password") return null;
   if (new Date(String(data.expires_at)).getTime() <= Date.now()) return null;
-  const { error: updateError } = await sb
+  // Atomic single-use claim: the UPDATE itself is the guard (used_at IS NULL), so
+  // two concurrent consumers of the same token can't both succeed.
+  const { data: claimed, error: updateError } = await sb
     .from("password_reset_token")
     .update({ used_at: new Date().toISOString() })
-    .eq("id", data.id);
+    .eq("id", data.id)
+    .is("used_at", null)
+    .select("id")
+    .maybeSingle();
   if (updateError) throw updateError;
+  if (!claimed) return null; // lost the race — already consumed
   return { userId: String(data.user_id) };
 }
 

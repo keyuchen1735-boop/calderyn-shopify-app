@@ -31,11 +31,17 @@ export async function consumeVerifyToken(raw: string): Promise<{ userId: string 
   if (error) throw error;
   if (!data || data.purpose !== "verify" || data.used_at) return null;
   if (new Date(String(data.expires_at)).getTime() <= Date.now()) return null;
-  const { error: ue } = await sb
+  // Atomic single-use claim: the UPDATE itself is the guard (used_at IS NULL), so
+  // two concurrent consumers of the same token can't both succeed.
+  const { data: claimed, error: ue } = await sb
     .from("password_reset_token")
     .update({ used_at: new Date().toISOString() })
-    .eq("id", data.id);
+    .eq("id", data.id)
+    .is("used_at", null)
+    .select("id")
+    .maybeSingle();
   if (ue) throw ue;
+  if (!claimed) return null; // lost the race — already consumed
   return { userId: String(data.user_id) };
 }
 
