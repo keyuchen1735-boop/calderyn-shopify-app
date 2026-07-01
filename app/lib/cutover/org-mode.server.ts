@@ -54,7 +54,7 @@ export function assertLegalOrgTransition(from: string, to: string): asserts to i
   if (!isOrgMode(to)) throw new Error(`unknown target org_mode: ${to}`);
   if (!isLegalOrgTransition(from, to)) {
     const allowed = LEGAL_ORG_TRANSITIONS[from];
-    const allowedText = allowed.length ? allowed.join(", ") : "(none — terminal state)";
+    const allowedText = allowed.length ? allowed.join(", ") : "(none; terminal state)";
     throw new Error(`illegal org_mode transition ${from} -> ${to}; allowed from ${from}: ${allowedText}`);
   }
 }
