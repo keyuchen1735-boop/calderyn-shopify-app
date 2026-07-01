@@ -5,7 +5,8 @@ import { getShopOrigin } from "~/lib/commerce/origin.server";
 import { getRateSource } from "~/lib/commerce/rate-source.server";
 import { calculateTax } from "~/lib/commerce/tax.server";
 import { getShippingEngine } from "~/lib/shipping/engine.server";
-import { buildParcel } from "~/lib/shipping/parcel.server";
+import { buildParcel, restrictedVariants } from "~/lib/shipping/parcel.server";
+import { ShipRestrictedError } from "~/lib/shipping/errors";
 
 vi.mock("~/lib/order/cart.server", () => ({
   priceLines: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("~/lib/shipping/engine.server", () => ({
 }));
 vi.mock("~/lib/shipping/parcel.server", () => ({
   buildParcel: vi.fn(),
+  restrictedVariants: vi.fn(),
 }));
 
 const mockPriceLines = vi.mocked(priceLines);
@@ -32,6 +34,7 @@ const mockGetRateSource = vi.mocked(getRateSource);
 const mockCalculateTax = vi.mocked(calculateTax);
 const mockGetShippingEngine = vi.mocked(getShippingEngine);
 const mockBuildParcel = vi.mocked(buildParcel);
+const mockRestrictedVariants = vi.mocked(restrictedVariants);
 
 const FAKE_ORIGIN = {
   street1: "1 Main St",
@@ -86,6 +89,7 @@ beforeEach(() => {
   mockGetShopOrigin.mockResolvedValue(FAKE_ORIGIN);
   mockGetRateSource.mockResolvedValue(FAKE_RATE_SOURCE as never);
   mockCalculateTax.mockResolvedValue(100);
+  mockRestrictedVariants.mockResolvedValue([]); // default: nothing restricted
 });
 
 describe("quoteCart — buildParcel wiring", () => {
@@ -143,6 +147,23 @@ describe("quoteCart — buildParcel wiring", () => {
     expect(req.cart[0].weightOz).toBeUndefined();
     expect(req.cart[0].lengthIn).toBeUndefined();
   });
+
+  it("throws ShipRestrictedError (no rate call) when a line cannot ship to the destination", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_ca") as never);
+    mockRestrictedVariants.mockResolvedValue(["var_ca"]);
+    mockBuildParcel.mockResolvedValue({ weightOz: 5, lengthIn: 1, widthIn: 1, heightIn: 1 });
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCart } = await import("~/lib/commerce/quote.server");
+    const err = await quoteCart("shop_1", [{ variantId: "var_ca", quantity: 1 }], FAKE_DESTINATION).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ShipRestrictedError);
+    expect(err.destinationCountry).toBe("US");
+    expect(err.variantIds).toEqual(["var_ca"]);
+    expect(mockRestrictedVariants).toHaveBeenCalledWith(["var_ca"], "US");
+    expect(fakeEngine).not.toHaveBeenCalled(); // fail fast — no wasted rate call
+  });
 });
 
 describe("estimateShipping — buildParcel wiring", () => {
@@ -193,5 +214,22 @@ describe("estimateShipping — buildParcel wiring", () => {
     expect(req.cart[0].lengthIn).toBeUndefined();
     expect(req.cart[0].widthIn).toBeUndefined();
     expect(req.cart[0].heightIn).toBeUndefined();
+  });
+
+  it("throws ShipRestrictedError (no rate call) when a line cannot ship to the destination", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_ca") as never);
+    mockRestrictedVariants.mockResolvedValue(["var_ca"]);
+    mockBuildParcel.mockResolvedValue({ weightOz: 5, lengthIn: 1, widthIn: 1, heightIn: 1 });
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { estimateShipping } = await import("~/lib/commerce/estimate.server");
+    const err = await estimateShipping("shop_1", [{ variantId: "var_ca", quantity: 1 }], { zip: "98101", country: "US" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ShipRestrictedError);
+    expect(err.destinationCountry).toBe("US");
+    expect(err.variantIds).toEqual(["var_ca"]);
+    expect(mockRestrictedVariants).toHaveBeenCalledWith(["var_ca"], "US");
+    expect(fakeEngine).not.toHaveBeenCalled(); // fail fast — no wasted rate call
   });
 });

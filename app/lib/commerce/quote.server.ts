@@ -9,7 +9,8 @@ import type { CartQuote, QuoteDestination, QuoteLine } from "./types";
 import { getShopOrigin } from "./origin.server";
 import { getRateSource } from "./rate-source.server";
 import { calculateTax } from "./tax.server";
-import { buildParcel } from "~/lib/shipping/parcel.server";
+import { buildParcel, restrictedVariants } from "~/lib/shipping/parcel.server";
+import { ShipRestrictedError } from "~/lib/shipping/errors";
 
 export async function quoteCart(
   shopId: string,
@@ -21,6 +22,13 @@ export async function quoteCart(
   if (!lines.length) throw new Error("at least one line is required to quote");
 
   const priced = await priceLines(shopId, lines);
+
+  // Fail fast before any rate work: an order containing an item we cannot ship to the
+  // destination country can never be fulfilled, so reject the whole quote with a typed
+  // error the caller surfaces to the buyer (which items to remove) rather than quoting it.
+  const blocked = await restrictedVariants(priced.lines.map((l) => l.variantId), destination.country);
+  if (blocked.length) throw new ShipRestrictedError(destination.country, blocked);
+
   // Authoritative subtotal: callers holding a pre-priced/snapshot subtotal (checkout's cart)
   // pass it so tax + total match what is actually charged; agentic callers omit it and use the
   // live price. quoteCart remains the single composer either way.
