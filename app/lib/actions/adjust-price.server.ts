@@ -18,6 +18,8 @@ import { readVariantPrice, setVariantPrice } from "../shopify/price.server";
 import type { AdminGraphqlClient } from "../shopify/inventory.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import type { AlertActionClient } from "./alert-action.server";
+import { getOrgMode, writesToOwned } from "../cutover/org-mode.server";
+import { getOwnedVariantPricing, setOwnedVariantPrice } from "./owned-writes.server";
 
 export interface ResolvedSkuVariant {
   skuId: string;
@@ -97,26 +99,52 @@ export async function executeAdjustPriceAlertAction(opts: {
     });
   }
 
-  const target = await resolveSkuVariant(sb, shopId, alert.sku);
-  if (!target) {
-    throw new CalderynError({
-      code: "sku_not_found",
-      status: 422,
-      message: "This SKU has no linked Shopify variant, so its price can't be changed here.",
-    });
-  }
+  // Route the price write by the shop's cutover mode: at `live` the target price lives in
+  // the owned catalog (no Shopify variant needed); every other mode reads + writes Shopify
+  // exactly as before. The guardrail cap is anchored on whichever current price we read, so
+  // the safety envelope is identical on both branches — only the WRITE target changes.
+  const owned = writesToOwned(await getOrgMode(shopId));
 
-  // Read the live current price (anchors both the suggestion and the cap). A
-  // read failure must not proceed blind.
-  let current: { priceCents: number; productGid: string };
-  try {
-    current = await readVariantPrice(admin, target.variantGid);
-  } catch (err) {
-    throw new CalderynError({
-      code: "action_failed",
-      status: 502,
-      message: err instanceof Error ? err.message : "Couldn't read the current Shopify price.",
-    });
+  // `current.priceCents` anchors the suggestion + cap; `ownedVariantId` / `shopifyTarget`
+  // carry the write handle for the branch we're on.
+  let current: { priceCents: number };
+  let ownedVariantId: string | null = null;
+  let shopifyTarget: { variantGid: string; productGid: string; skuId: string } | null = null;
+
+  if (owned) {
+    const priced = await getOwnedVariantPricing(shopId, alert.sku);
+    if (!priced) {
+      throw new CalderynError({
+        code: "sku_not_found",
+        status: 422,
+        message: "This SKU has no owned price to change.",
+      });
+    }
+    ownedVariantId = priced.variantId;
+    current = { priceCents: priced.currentPriceCents };
+  } else {
+    const target = await resolveSkuVariant(sb, shopId, alert.sku);
+    if (!target) {
+      throw new CalderynError({
+        code: "sku_not_found",
+        status: 422,
+        message: "This SKU has no linked Shopify variant, so its price can't be changed here.",
+      });
+    }
+    // Read the live current price (anchors both the suggestion and the cap). A read
+    // failure must not proceed blind.
+    let live: { priceCents: number; productGid: string };
+    try {
+      live = await readVariantPrice(admin, target.variantGid);
+    } catch (err) {
+      throw new CalderynError({
+        code: "action_failed",
+        status: 502,
+        message: err instanceof Error ? err.message : "Couldn't read the current Shopify price.",
+      });
+    }
+    current = { priceCents: live.priceCents };
+    shopifyTarget = { variantGid: target.variantGid, productGid: live.productGid, skuId: target.skuId };
   }
 
   const capPct = guardrails.max_price_change_pct;
@@ -191,36 +219,56 @@ export async function executeAdjustPriceAlertAction(opts: {
     capped = suggestion.capped;
   }
 
-  // Apply the price on Shopify. A failure throws — the audit row below is only
+  // Apply the price on the routed target. A failure throws — the audit row below is only
   // written on success (rule 12: no "succeeded" row for an unchanged price).
-  let applied: { priceCents: number };
-  try {
-    applied = await setVariantPrice(admin, {
-      productGid: current.productGid,
-      variantId: target.variantGid,
-      newPriceCents: finalPriceCents,
-    });
-  } catch (err) {
-    throw new CalderynError({
-      code: "action_failed",
-      status: 502,
-      message: err instanceof Error ? err.message : "Shopify price update failed.",
-    });
-  }
-
-  // ONE audit row. params carries what undo needs: variant + product to target,
-  // prior_price_cents to restore.
+  let appliedPriceCents: number;
   const params: Record<string, unknown> = {
     target: alert.sku,
     sku: alert.sku,
-    sku_id: target.skuId,
-    variant_id: target.variantGid,
-    product_id: current.productGid,
     prior_price_cents: current.priceCents,
-    new_price_cents: applied.priceCents,
     capped,
     estimate_cents: alert.dollar_impact,
   };
+
+  if (owned && ownedVariantId) {
+    try {
+      await setOwnedVariantPrice(shopId, ownedVariantId, finalPriceCents);
+    } catch (err) {
+      throw new CalderynError({
+        code: "action_failed",
+        status: 502,
+        message: err instanceof Error ? err.message : "Owned price update failed.",
+      });
+    }
+    appliedPriceCents = finalPriceCents;
+    // undo of an owned price change is a later Step-9 slice; record the ids it will need.
+    params.sku_id = ownedVariantId;
+    params.variant_id = ownedVariantId;
+    params.new_price_cents = appliedPriceCents;
+  } else if (shopifyTarget) {
+    let applied: { priceCents: number };
+    try {
+      applied = await setVariantPrice(admin, {
+        productGid: shopifyTarget.productGid,
+        variantId: shopifyTarget.variantGid,
+        newPriceCents: finalPriceCents,
+      });
+    } catch (err) {
+      throw new CalderynError({
+        code: "action_failed",
+        status: 502,
+        message: err instanceof Error ? err.message : "Shopify price update failed.",
+      });
+    }
+    appliedPriceCents = applied.priceCents;
+    params.sku_id = shopifyTarget.skuId;
+    params.variant_id = shopifyTarget.variantGid;
+    params.product_id = shopifyTarget.productGid;
+    params.new_price_cents = appliedPriceCents;
+  } else {
+    // Unreachable: exactly one of the two branches resolves a write handle above.
+    throw new CalderynError({ code: "action_failed", status: 500, message: "No price write target resolved." });
+  }
   const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);

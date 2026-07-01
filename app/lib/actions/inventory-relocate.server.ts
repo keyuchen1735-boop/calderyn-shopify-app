@@ -17,6 +17,8 @@ import {
   priorExecutionForKey,
   type ExecutedAudit,
 } from "./execute.server";
+import { getOrgMode, writesToOwned } from "../cutover/org-mode.server";
+import { applyOwnedInventoryMove } from "./owned-writes.server";
 
 export interface InventoryRelocationInput {
   alertId: string | null;
@@ -125,17 +127,39 @@ export async function executeInventoryRelocation(
     );
   }
 
-  // 6. Execute the Shopify mutation. Failure is recorded visibly (rule 12).
+  // 6. Execute the move on the routed target. At org_mode=live the move lands in the owned
+  // inventory engine (atomic, cannot-oversell) keyed by owned variant + owned location ids;
+  // every other mode adjusts Shopify exactly as before. A failure on either branch is
+  // recorded visibly as a failed audit row (rule 12), never a fake success.
+  const owned = writesToOwned(await getOrgMode(shopId));
   let outcome: ExecutedAudit["outcome"] = "succeeded";
   let lastError: string | null = null;
   let operationId: string | null = null;
   try {
-    ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
-      inventoryItemId: inventoryItemId,
-      fromLocationId: input.fromLocationId,
-      toLocationId: input.toLocationId,
-      delta: input.quantity,
-    }, sb));
+    if (owned) {
+      const { transferId } = await applyOwnedInventoryMove({
+        shopId,
+        variantId: input.skuId,
+        fromLocationId: from.id,
+        toLocationId: to.id,
+        quantity: input.quantity,
+      });
+      operationId = transferId;
+      // ponytail: owned undo is not wired yet (deferred to the undo/go-live slice). The audit
+      // params below still record Shopify GIDs (from/to_location_id, inventory_item_id) because
+      // the shape is shared with the alert-driven path; only shopify_operation_id carries the
+      // owned transfer id at live. Until owned undo lands, undoing a live move would target
+      // Shopify off those GIDs, not reverse the owned ledger — that slice must branch undo on
+      // the owned transfer id. No shop reaches live in this slice (default mirror), so it can't
+      // fire yet. Mirrors the price branch's deliberate owned-undo deferral (adjust-price.server.ts).
+    } else {
+      ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
+        inventoryItemId: inventoryItemId,
+        fromLocationId: input.fromLocationId,
+        toLocationId: input.toLocationId,
+        delta: input.quantity,
+      }, sb));
+    }
   } catch (err) {
     outcome = "failed";
     lastError = err instanceof Error ? err.message : String(err);
