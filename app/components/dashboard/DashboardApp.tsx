@@ -40,6 +40,7 @@ import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenSettings from "./screens/Settings";
+import ScreenLocations from "./screens/Locations";
 import ScreenLabs from "./screens/Labs";
 import { AgenticChannel } from "./screens/AgenticChannel";
 import ScreenCatalog from "./screens/Catalog";
@@ -54,6 +55,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "inventory", label: "Inventory", icon: "box" },
   { id: "catalog", label: "Products", icon: "bag" },
   { id: "collections", label: "Collections", icon: "tag" },
+  { id: "locations-settings", label: "Locations", icon: "globe" },
   { id: "audit", label: "Action history", icon: "clock" },
   { id: "agentic", label: "Agentic", icon: "bot" },
   { id: "settings", label: "Settings", icon: "gear" },
@@ -86,6 +88,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   // Inner flow off the product list — reached via navigate("product-editor",
   // id|"new"), not from NAV_ITEMS (like Campaigns' detail view).
   "product-editor": ScreenProductEditor,
+  "locations-settings": ScreenLocations,
   audit: ScreenAudit,
   agentic: () => <AgenticChannel />,
   settings: ScreenSettings,

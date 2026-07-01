@@ -1,0 +1,155 @@
+import { useEffect, useState } from "react";
+import type { DashboardCtx } from "../context";
+import { Btn } from "../ui";
+import * as client from "~/lib/dashboard/client";
+import { DashboardApiError } from "~/lib/dashboard/client";
+import TransferModal from "./TransferModal";
+
+// Per-(variant, location) stock editor for the product editor. Reads owned
+// balances and writes every change through the inventory engine (which journals
+// the ledger + projects the stock observation). on-hand and reorder point are
+// edited inline; "Move stock" opens the transfer modal; a per-row "Damaged"
+// control marks units unavailable; in-transit transfers are received from the
+// "In transit" list; "History" shows recent ledger entries.
+export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; variantId: string }) {
+  const [rows, setRows] = useState<client.VariantBalanceVM[]>([]);
+  const [pending, setPending] = useState<client.PendingTransferVM[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [moving, setMoving] = useState(false);
+  const [damaging, setDamaging] = useState<string | null>(null);
+  const [damageQty, setDamageQty] = useState(1);
+  const [history, setHistory] = useState<client.LedgerEntryVM[] | null>(null);
+
+  const reload = () =>
+    Promise.all([
+      client.fetchVariantInventory(variantId).then(setRows),
+      client.fetchPendingTransfers(variantId).then(setPending),
+    ]).then(() => undefined).catch(() => {});
+  useEffect(() => {
+    setLoading(true);
+    reload().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantId]);
+
+  const onSetOnHand = async (locationId: string, onHand: number) => {
+    try { await client.setOnHand(variantId, locationId, onHand); await reload(); }
+    catch (err) { app.toast(err instanceof DashboardApiError ? err.message : "Couldn't update stock.", "warn", "critical"); }
+  };
+  const onSetReorder = async (locationId: string, rp: number | null) => {
+    try { await client.setVariantReorderPoint(variantId, locationId, rp); await reload(); }
+    catch (err) { app.toast(err instanceof DashboardApiError ? err.message : "Couldn't set reorder point.", "warn", "critical"); }
+  };
+  const onConfirmDamage = async (locationId: string, qty: number) => {
+    try {
+      await client.markVariantUnavailable(variantId, locationId, qty, "damaged");
+      setDamaging(null); setDamageQty(1); await reload();
+      app.toast("Marked unavailable.", "check");
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't mark unavailable.", "warn", "critical");
+    }
+  };
+  const toggleHistory = async () => {
+    if (history) { setHistory(null); return; }
+    try { setHistory(await client.fetchInventoryHistory(variantId)); }
+    catch { app.toast("Couldn't load history.", "warn", "critical"); }
+  };
+  const onReceive = async (transferId: string) => {
+    try { await client.receiveTransfer(transferId); await reload(); app.toast("Received into stock.", "check"); }
+    catch (err) { app.toast(err instanceof DashboardApiError ? err.message : "Couldn't receive the transfer.", "warn", "critical"); }
+  };
+
+  if (loading) return <div className="cd-caption">Loading stock…</div>;
+  if (!rows.length) return <div className="cd-caption">No stock locations yet.</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <Btn small icon="swap" onClick={() => setMoving(true)}>Move stock</Btn>
+        <Btn small icon="clock" onClick={toggleHistory}>{history ? "Hide history" : "History"}</Btn>
+      </div>
+
+      <div className="cd-table-head">
+        <span style={{ flex: "1 1 0", minWidth: 120 }}>Location</span>
+        <span style={{ width: 92 }}>On hand</span>
+        <span style={{ width: 70, textAlign: "right" }}>Reserved</span>
+        <span style={{ width: 70, textAlign: "right" }}>Incoming</span>
+        <span style={{ width: 78, textAlign: "right" }}>Available</span>
+        <span style={{ width: 96 }}>Reorder at</span>
+        <span style={{ width: 96 }} />
+      </div>
+      <div className="cd-rows">
+        {rows.map((r) => {
+          const low = r.reorderPoint != null && r.available <= r.reorderPoint;
+          return (
+            <div className="cd-row" key={r.locationId}>
+              <span style={{ flex: "1 1 0", minWidth: 120 }}>
+                {r.locationName}
+                {low && <span style={{ color: "var(--red)", marginLeft: 8, fontWeight: 600 }}>Low</span>}
+              </span>
+              <span style={{ width: 92 }}>
+                <input
+                  className="cd-input tabular-nums" type="number" min={0} defaultValue={r.onHand}
+                  onBlur={(e) => onSetOnHand(r.locationId, Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
+                />
+              </span>
+              <span className="cd-caption tabular-nums" style={{ width: 70, textAlign: "right" }}>{r.reserved}</span>
+              <span className="cd-caption tabular-nums" style={{ width: 70, textAlign: "right" }}>{r.incoming}</span>
+              <span className="tabular-nums" style={{ width: 78, textAlign: "right", fontWeight: 600, color: low ? "var(--red)" : "var(--text-1)" }}>{r.available}</span>
+              <span style={{ width: 96 }}>
+                <input
+                  className="cd-input tabular-nums" type="number" min={0} defaultValue={r.reorderPoint ?? ""} placeholder="—"
+                  onBlur={(e) => onSetReorder(r.locationId, e.target.value === "" ? null : Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
+                />
+              </span>
+              <span style={{ width: 96 }}>
+                {damaging === r.locationId ? (
+                  <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input
+                      className="cd-input tabular-nums" type="number" min={1} value={damageQty} style={{ width: 48 }}
+                      onChange={(e) => setDamageQty(Math.max(1, Math.trunc(Number(e.target.value)) || 1))}
+                    />
+                    <Btn small kind="primary" onClick={() => onConfirmDamage(r.locationId, damageQty)}>Mark</Btn>
+                  </span>
+                ) : (
+                  <Btn small onClick={() => { setDamaging(r.locationId); setDamageQty(1); }}>Damaged</Btn>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {pending.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div className="cd-caption" style={{ marginBottom: 4 }}>In transit</div>
+          {pending.map((t) => (
+            <div key={t.id} className="cd-row" style={{ alignItems: "center" }}>
+              <span className="cd-caption" style={{ flex: "1 1 0" }}>
+                {t.qty} · {t.fromName} → {t.toName}
+              </span>
+              <Btn small kind="primary" onClick={() => onReceive(t.id)}>Receive</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {history && (
+        <div style={{ marginTop: 10 }}>
+          <div className="cd-caption" style={{ marginBottom: 4 }}>Recent changes</div>
+          {history.length === 0 ? (
+            <div className="cd-caption">No history yet.</div>
+          ) : (
+            history.slice(0, 12).map((h) => (
+              <div key={h.id} className="cd-caption" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span>{h.entry_type}{h.reason ? ` · ${h.reason}` : ""}</span>
+                <span className="tabular-nums">{h.qty > 0 ? `+${h.qty}` : h.qty}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {moving && <TransferModal app={app} variantId={variantId} onClose={() => setMoving(false)} onDone={reload} />}
+    </div>
+  );
+}

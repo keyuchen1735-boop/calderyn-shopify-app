@@ -5,6 +5,7 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
 import { Card, Btn, Pill, Placeholder, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
+import InventoryPanel from "./InventoryPanel";
 
 // Option values are edited as raw text (not a parsed array) so typing the comma
 // separator doesn't fight a controlled input. The array is derived on demand.
@@ -341,7 +342,7 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                 <span style={{ flex: "1 1 0", minWidth: 120 }}>Variant</span>
                 <span style={{ width: 150 }}>SKU</span>
                 <span style={{ width: 110, textAlign: "right" }}>Price ($)</span>
-                {showStock && <span style={{ width: 90, textAlign: "right" }}>Stock</span>}
+                {showStock && !id && <span style={{ width: 90, textAlign: "right" }}>Stock</span>}
               </div>
               {variants.map((v, i) => (
                 <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -367,7 +368,7 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                     onChange={(e) => setVariantField(i, { retailPriceCents: dollarsToCents(e.target.value) })}
                     style={{ width: 110, textAlign: "right" }}
                   />
-                  {showStock && (
+                  {showStock && !id && (
                     <input
                       className="cd-input tabular-nums"
                       type="number"
@@ -388,9 +389,27 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
               ))}
             </div>
             <p className="cd-caption" style={{ marginTop: 10 }}>
-              Stock is a starting on-hand count. Live availability arrives with the inventory ledger.
+              {id
+                ? "Manage live stock per location in the section below."
+                : "Stock is a starting on-hand count. Per-location availability opens once the product is saved."}
             </p>
           </Card>
+
+          {id && showStock && variants.some((v) => v.id) && (
+            <Card>
+              <SectionTitle>Stock by location</SectionTitle>
+              <div className="flex flex-col gap-4">
+                {variants
+                  .filter((v) => v.id)
+                  .map((v) => (
+                    <div key={v.id}>
+                      <div className="cd-row-title" style={{ marginBottom: 6 }}>{variantLabel(v)}</div>
+                      <InventoryPanel app={app} variantId={v.id as string} />
+                    </div>
+                  ))}
+              </div>
+            </Card>
+          )}
 
           <Card>
             <SectionTitle>Collections</SectionTitle>

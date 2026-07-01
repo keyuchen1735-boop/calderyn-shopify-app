@@ -1161,3 +1161,101 @@ export async function uploadProductImage(productId: string, file: File): Promise
 export async function deleteProductImage(mediaId: string): Promise<void> {
   await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
 }
+
+// --- inventory --------------------------------------------------------------
+
+export interface VariantBalanceVM {
+  locationId: string;
+  locationName: string;
+  onHand: number;
+  reserved: number;
+  incoming: number;
+  available: number;
+  reorderPoint: number | null;
+}
+export interface LocationVM {
+  id: string;
+  name: string;
+  priority: number;
+  lat: number | null;
+  lng: number | null;
+}
+export interface LedgerEntryVM {
+  id: number;
+  location_id: string;
+  entry_type: string;
+  qty: number;
+  reason: string | null;
+  created_at: string;
+}
+
+export async function fetchVariantInventory(variantId: string): Promise<VariantBalanceVM[]> {
+  const d = await apiGet<{ balances: VariantBalanceVM[] }>(
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
+  );
+  return d.balances;
+}
+export async function setOnHand(variantId: string, locationId: string, onHand: number): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "set_on_hand",
+    locationId,
+    onHand,
+  });
+}
+export async function setVariantReorderPoint(variantId: string, locationId: string, reorderPoint: number | null): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "set_reorder",
+    locationId,
+    reorderPoint,
+  });
+}
+export async function markVariantUnavailable(variantId: string, locationId: string, qty: number, reason: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "mark_unavailable",
+    locationId,
+    qty,
+    reason,
+  });
+}
+export async function createTransfer(input: {
+  variantId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  qty: number;
+  mode: "instant" | "in_transit";
+}): Promise<{ transferId: string }> {
+  return apiSend<{ transferId: string }>("POST", "/dashboard/api/catalog/inventory/transfer", input);
+}
+export async function receiveTransfer(transferId: string): Promise<void> {
+  await apiSend("POST", "/dashboard/api/catalog/inventory/transfer", { intent: "receive", transferId });
+}
+export interface PendingTransferVM {
+  id: string;
+  variantId: string;
+  qty: number;
+  fromName: string;
+  toName: string;
+  createdAt: string;
+}
+export async function fetchPendingTransfers(variantId: string): Promise<PendingTransferVM[]> {
+  const d = await apiGet<{ transfers: PendingTransferVM[] }>(
+    `/dashboard/api/catalog/inventory/transfer?variantId=${encodeURIComponent(variantId)}`,
+  );
+  return d.transfers;
+}
+export async function fetchInventoryHistory(variantId: string): Promise<LedgerEntryVM[]> {
+  const d = await apiGet<{ history: LedgerEntryVM[] }>(
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}/history`,
+  );
+  return d.history;
+}
+export async function fetchLocations(): Promise<LocationVM[]> {
+  const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
+  return d.locations;
+}
+export async function updateLocation(
+  id: string,
+  patch: { priority?: number; lat?: number | null; lng?: number | null },
+): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
+}

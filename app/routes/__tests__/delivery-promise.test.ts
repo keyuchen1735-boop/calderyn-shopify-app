@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader } from "../storefront.api.delivery-promise";
 
 const { resolveStorefrontShop, estimateShipping } = vi.hoisted(() => ({
   resolveStorefrontShop: vi.fn(),
@@ -13,8 +14,6 @@ const ESTIMATE = {
   currency: "usd",
   isEstimate: true,
 };
-
-import { loader } from "../storefront.api.delivery-promise";
 
 describe("delivery-promise loader", () => {
   beforeEach(() => {

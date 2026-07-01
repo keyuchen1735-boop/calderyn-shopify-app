@@ -17,6 +17,7 @@ export type Screen =
   | "campaigns"
   | "analytics"
   | "inventory"
+  | "locations-settings"
   | "audit"
   | "agentic"
   | "settings"
