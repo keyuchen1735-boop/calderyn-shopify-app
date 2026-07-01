@@ -72,7 +72,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   const [{ data: options }, { data: variants }, { data: vov }, { data: media }, { data: pc }] = await Promise.all([
     sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
-    sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
+    sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position, grams, length_mm, width_mm, height_mm").eq("product_id", productId).order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
     sb.from("product_media").select("id, storage_path, alt, position, is_primary").eq("product_id", productId).order("position"),
     sb.from("product_collection").select("collection_id").eq("product_id", productId),
@@ -123,6 +123,10 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
       unitCostCents: (v.unit_cost_cents as number | null) ?? null,
       inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
       inventoryOnHand: Number(v.inventory_on_hand ?? 0),
+      grams: (v.grams as number | null) ?? null,
+      lengthMm: (v.length_mm as number | null) ?? null,
+      widthMm: (v.width_mm as number | null) ?? null,
+      heightMm: (v.height_mm as number | null) ?? null,
       optionValueIds: (valuesByVariant.get(String(v.id)) ?? [])
         .slice()
         .sort((a, b) => (valueRank.get(a) ?? 0) - (valueRank.get(b) ?? 0)),

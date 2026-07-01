@@ -58,6 +58,10 @@ export interface ProductDetail {
     unitCostCents: number | null;
     inventoryTracked: boolean | null;
     inventoryOnHand: number;
+    grams: number | null;
+    lengthMm: number | null;
+    widthMm: number | null;
+    heightMm: number | null;
     optionValueIds: string[];
   }>;
   media: Array<{ id: string; storagePath: string; alt: string | null; position: number; isPrimary: boolean }>;
