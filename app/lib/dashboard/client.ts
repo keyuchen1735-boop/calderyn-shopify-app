@@ -1264,6 +1264,26 @@ export async function fetchInventoryHistory(variantId: string): Promise<LedgerEn
   );
   return d.history;
 }
+// ----- Import from Shopify (#13.promote) -----
+export interface ImportRunVM {
+  id: string;
+  state: "pulling" | "promoting" | "done" | "error";
+  counts: { products: number; variants: number; collections: number; balances: number } | null;
+  report: { imported: string[]; notIncluded: string[] } | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export async function fetchImportStatus(): Promise<ImportRunVM | null> {
+  const d = await apiGet<{ run: ImportRunVM | null }>("/dashboard/api/import");
+  return d.run;
+}
+
+export async function startShopifyImport(): Promise<{ importId: string }> {
+  return apiSend<{ importId: string }>("POST", "/dashboard/api/import");
+}
+
 export async function fetchLocations(): Promise<LocationVM[]> {
   const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
   return d.locations;

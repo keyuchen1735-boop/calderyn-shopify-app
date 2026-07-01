@@ -46,6 +46,7 @@ import { AgenticChannel } from "./screens/AgenticChannel";
 import ScreenCatalog from "./screens/Catalog";
 import ScreenProductEditor from "./screens/ProductEditor";
 import ScreenCollections from "./screens/Collections";
+import ScreenImportShopify from "./screens/ImportShopify";
 
 const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Overview", icon: "gauge" },
@@ -56,6 +57,7 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "catalog", label: "Products", icon: "bag" },
   { id: "collections", label: "Collections", icon: "tag" },
   { id: "locations-settings", label: "Locations", icon: "globe" },
+  { id: "import-shopify", label: "Import from Shopify", icon: "download" },
   { id: "audit", label: "Action history", icon: "clock" },
   { id: "agentic", label: "Agentic", icon: "bot" },
   { id: "settings", label: "Settings", icon: "gear" },
@@ -89,6 +91,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   // id|"new"), not from NAV_ITEMS (like Campaigns' detail view).
   "product-editor": ScreenProductEditor,
   "locations-settings": ScreenLocations,
+  "import-shopify": ScreenImportShopify,
   audit: ScreenAudit,
   agentic: () => <AgenticChannel />,
   settings: ScreenSettings,
