@@ -91,7 +91,7 @@ describe("validateProductInput caps + dedup", () => {
   it("de-dups values within an option but keeps a label shared across options", async () => {
     const { validateProductInput } = await import("../validate");
     const r = validateProductInput({
-      title: "T", status: "draft", variants: [{ sku: "a" }],
+      title: "T", status: "active", variants: [{ sku: "a", weightGrams: 100, lengthMm: 50, widthMm: 50, heightMm: 50 }],
       options: [{ name: "Size", values: ["M", "M", "L"] }, { name: "Trim", values: ["M"] }],
     });
     expect(r.ok).toBe(true);

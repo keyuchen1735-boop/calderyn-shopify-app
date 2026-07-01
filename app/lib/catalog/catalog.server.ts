@@ -236,7 +236,7 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
     if (vErr) throw vErr;
     const variantId = String(variant.id);
     // Persist shipping dimensions + requirements alongside the variant row.
-    await sb.from("variant_shipping").upsert({
+    const { error: shErr } = await sb.from("variant_shipping").upsert({
       variant_id: variantId, shop_id: shopId,
       weight_grams: v.weightGrams ?? 0,
       length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
@@ -246,6 +246,7 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       signature_required: v.signatureRequired ?? false,
       updated_at: new Date().toISOString(),
     }, { onConflict: "variant_id" });
+    if (shErr) throw shErr;
     const links = variantLinks(variantId, v.optionValues, perOption);
     if (links.length) {
       const { error: lErr } = await sb.from("variant_option_value").insert(links);
@@ -348,7 +349,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       variantId = String(ins.id);
     }
     // Persist shipping dimensions + requirements for this variant (update path).
-    await sb.from("variant_shipping").upsert({
+    const { error: shErr } = await sb.from("variant_shipping").upsert({
       variant_id: variantId, shop_id: shopId,
       weight_grams: v.weightGrams ?? 0,
       length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
@@ -358,6 +359,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       signature_required: v.signatureRequired ?? false,
       updated_at: new Date().toISOString(),
     }, { onConflict: "variant_id" });
+    if (shErr) throw shErr;
     // Rebuild this variant's option-value links (option-value ids changed above).
     await sb.from("variant_option_value").delete().eq("variant_id", variantId);
     const links = variantLinks(variantId, v.optionValues, perOption);
