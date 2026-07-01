@@ -12,6 +12,7 @@
 // cannot be bypassed from any surface (dashboard, API, script).
 
 import { getSupabase } from "~/lib/supabase.server";
+import { pagedRows, type PagedFilter } from "./paged.server";
 import { CutoverBlockedError } from "./errors";
 
 export interface GateCheck {
@@ -29,48 +30,22 @@ export interface GoLiveReport {
   checks: GateCheck[];
 }
 
-// PostgREST silently truncates unbounded selects at 1000 rows, so every id fetch pages
-// explicitly until a short page. The cap is a visible-failure backstop (rule 12), far
-// above any real shop, never a silent truncation.
-const PAGE = 1000;
-const MAX_PAGES = 200;
-
-interface IdFilter {
-  /** Column that must be non-null (e.g. external_id — the Shopify-originated rows). */
-  notNull?: string;
-  eq?: Record<string, string | boolean>;
-}
-
-/** Page through `select column from table where shop_id = ...` and return the distinct
- *  values as a Set. Ordered by the column so pages are stable. */
+/** Page through `select column from table where shop_id = ...` (shared pagedRows,
+ *  one PostgREST-truncation backstop for all cutover reads) and return the distinct
+ *  values as a Set. */
 async function pagedIds(
   shopId: string,
   table: string,
   column: string,
-  filter?: IdFilter,
+  filter?: PagedFilter,
 ): Promise<Set<string>> {
-  const sb = getSupabase();
+  const rows = await pagedRows(shopId, table, column, [column], filter);
   const ids = new Set<string>();
-  for (let page = 0; ; page++) {
-    if (page >= MAX_PAGES) {
-      throw new Error(
-        `go-live gate: ${table}.${column} exceeded ${MAX_PAGES * PAGE} rows for shop ${shopId}; refusing to verify a truncated set`,
-      );
-    }
-    let q = sb.from(table).select(column).eq("shop_id", shopId);
-    if (filter?.notNull) q = q.not(filter.notNull, "is", null);
-    for (const [col, val] of Object.entries(filter?.eq ?? {})) q = q.eq(col, val);
-    const { data, error } = await q
-      .order(column, { ascending: true })
-      .range(page * PAGE, page * PAGE + PAGE - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
-    for (const row of rows) {
-      const v = row[column];
-      if (v != null) ids.add(String(v));
-    }
-    if (rows.length < PAGE) return ids;
+  for (const row of rows) {
+    const v = row[column];
+    if (v != null) ids.add(String(v));
   }
+  return ids;
 }
 
 /** Exact head-count of rows in `table` matching the eq filters. */

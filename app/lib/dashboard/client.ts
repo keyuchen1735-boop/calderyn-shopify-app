@@ -1314,6 +1314,32 @@ export async function requestCutoverTransition(
   return apiSend<CutoverStatusVM>("POST", "/dashboard/api/cutover", { to, reason });
 }
 
+export interface DriftRowVM {
+  variantId: string;
+  label: string;
+  locationId?: string;
+  /** Cents for price rows, units for stock rows. */
+  owned: number;
+  shopify: number;
+}
+
+export interface DriftReportVM {
+  variantsChecked: number;
+  pass: boolean;
+  price: { count: number; rows: DriftRowVM[] };
+  stock: { count: number; rows: DriftRowVM[] };
+  shopifyOnly: { count: number; sample: string[] };
+  ownedOnly: { count: number; sample: string[] };
+  truncated: { count: number; sample: string[] };
+  unmatchedLocations: number;
+}
+
+/** On-demand dual-run drift check: live Shopify values diffed against Calderyn's own
+ *  tables. Shopify being unreachable surfaces as a DashboardApiError with plain copy. */
+export async function fetchCutoverDrift(): Promise<DriftReportVM> {
+  return apiGet<DriftReportVM>("/dashboard/api/cutover-drift");
+}
+
 export async function fetchLocations(): Promise<LocationVM[]> {
   const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
   return d.locations;
