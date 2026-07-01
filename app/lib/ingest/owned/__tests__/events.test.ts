@@ -48,6 +48,18 @@ describe("parseOwnedCheckoutCompleted", () => {
     expect(() => parseOwnedCheckoutCompleted(raw)).toThrow(/PII/i);
   });
 
+  it("throws when a PII key appears inside a line item (array recursion)", () => {
+    const raw = validEvent();
+    (raw.lines as Array<Record<string, unknown>>)[0].shipping_address = { address1: "1 Main St" };
+    expect(() => parseOwnedCheckoutCompleted(raw)).toThrow(/PII/i);
+  });
+
+  it("throws when a billing_address key is present on the order", () => {
+    const raw = validEvent();
+    (raw.order as Record<string, unknown>).billing_address = { address1: "1 Main St" };
+    expect(() => parseOwnedCheckoutCompleted(raw)).toThrow(/PII/i);
+  });
+
   it("throws when financial_status is not 'paid'", () => {
     const raw = validEvent();
     (raw.order as Record<string, unknown>).financial_status = "pending";

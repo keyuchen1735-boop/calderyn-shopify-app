@@ -56,7 +56,11 @@ describe("transformPendingOwnedEvents", () => {
     await load([rawRow("evt-3")]);
     const res = await transformPendingOwnedEvents();
     expect(res.dlq).toBe(1);
-    expect(fake.calls.inserts.some((i) => i.table === "ingestion_dlq")).toBe(true);
+    const dlq = fake.calls.inserts.find((i) => i.table === "ingestion_dlq");
+    expect(dlq).toBeTruthy();
+    const dlqRow = dlq!.rows as Record<string, unknown>;
+    expect(dlqRow.error_kind).toBeTruthy();
+    expect(dlqRow.shop_id).toBe(SHOP);
     expect(fake.calls.updates.some((u) => u.table === "raw_owned_event")).toBe(true);
   });
 });

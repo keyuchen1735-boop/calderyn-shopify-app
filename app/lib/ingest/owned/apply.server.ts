@@ -16,6 +16,9 @@ const EMPTY_SIGNALS: AttributionSignals = { utm: {}, clickIds: {}, referringSite
 export async function applyOwnedOrder(event: OwnedCheckoutCompleted): Promise<number> {
   const sb = getSupabase();
   const o = event.order;
+  // Owned source_version is the event's occurred_at as epoch-ms. Unlike the Shopify
+  // path (a Shopify updated_at/version), it is only meaningful for ordering owned-source
+  // rows — not for cross-source comparison. Falls back to 0 on an unparseable timestamp.
   const parsedVersion = Date.parse(event.occurred_at);
   const sourceVersion = Number.isFinite(parsedVersion) ? parsedVersion : 0;
   const signals = o.attribution ?? EMPTY_SIGNALS;
