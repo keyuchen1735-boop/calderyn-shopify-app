@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { loader } from "../dashboard.api.agentic._index";
+
 // Chainable Supabase query builder: .select().eq().eq() all return self,
 // then `await self` resolves to the per-table result. Needed because the orders
 // query chains two .eq() calls.
@@ -41,8 +43,6 @@ const { requireDashboardSession, getSupabase } = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase }));
-
-import { loader } from "../dashboard.api.agentic._index";
 
 describe("dashboard agentic channel loader", () => {
   beforeEach(() => {
