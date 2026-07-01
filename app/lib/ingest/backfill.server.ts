@@ -4,7 +4,7 @@ import { fetchLocations, fetchProducts, fetchRecentOrders } from "./shopify-admi
 import { mapLocation, mapVariantToSku, mapOrder, mapOrderLines } from "./mappers.server";
 import type { InventoryRow } from "./types";
 
-const BACKFILL_DAYS = 30;
+const DEFAULT_BACKFILL_DAYS = 30;
 
 export type BackfillResult = {
   shopDomain: string;
@@ -31,9 +31,13 @@ export async function syncProductInventorySettings(shopDomain: string): Promise<
   return synced;
 }
 
-export async function backfillShop(shopDomain: string): Promise<BackfillResult> {
+export async function backfillShop(
+  shopDomain: string,
+  opts: { sinceDays?: number } = {},
+): Promise<BackfillResult> {
   const sb = getSupabase();
   const shopId = await resolveShopId(shopDomain);
+  const sinceDays = opts.sinceDays ?? DEFAULT_BACKFILL_DAYS;
   const result: BackfillResult = { shopDomain, locations: 0, skus: 0, inventory: 0, orders: 0 };
 
   try {
@@ -100,8 +104,8 @@ export async function backfillShop(shopDomain: string): Promise<BackfillResult> 
     if (allSkuErr) throw allSkuErr;
     const variantToSku = new Map((allSkus ?? []).map((r) => [r.external_id as string, r.id as string]));
 
-    // 3. Orders (last 30 days)
-    const since = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
+    // 3. Orders (last `sinceDays` days; install uses the 30-day default, import passes 365)
+    const since = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
     for await (const order of fetchRecentOrders(shopDomain, since)) {
       const orderRow = mapOrder(shopId, order);
       // Slice-1 deviation from spec §7.1 ("newer source_version only"): plain
