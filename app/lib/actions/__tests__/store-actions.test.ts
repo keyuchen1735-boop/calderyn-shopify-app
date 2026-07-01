@@ -20,12 +20,14 @@ vi.mock("~/lib/catalog/catalog.server", () => ({
 
 vi.mock("~/lib/inventory/engine.server", () => ({
   reserveStock: vi.fn(),
+  commitReservation: vi.fn(),
   releaseReservation: vi.fn(),
 }));
 
 const mockSetVariantPrice = vi.mocked(catalogMod.setVariantPrice);
 const mockSetProductStatus = vi.mocked(catalogMod.setProductStatus);
 const mockReserveStock = vi.mocked(engineMod.reserveStock);
+const mockCommitReservation = vi.mocked(engineMod.commitReservation);
 const mockReleaseReservation = vi.mocked(engineMod.releaseReservation);
 
 // ---------------------------------------------------------------------------
@@ -127,6 +129,24 @@ describe("storeActionAdapterForShop", () => {
       await expect(adapter.reserveInventory("var-2", 1, "chk-err")).rejects.toMatchObject({
         name: "StoreActionError",
         kind: "reserve_inventory",
+      });
+    });
+  });
+
+  describe("commitInventory", () => {
+    it("delegates to commitReservation with shopId bound", async () => {
+      mockCommitReservation.mockResolvedValue(undefined);
+      const adapter = storeActionAdapterForShop(SHOP);
+      await adapter.commitInventory("chk-abc");
+      expect(mockCommitReservation).toHaveBeenCalledWith(SHOP, "chk-abc");
+    });
+
+    it("wraps a throw as StoreActionError with kind commit_inventory", async () => {
+      mockCommitReservation.mockRejectedValue(new Error("rpc fail"));
+      const adapter = storeActionAdapterForShop(SHOP);
+      await expect(adapter.commitInventory("chk-fail")).rejects.toMatchObject({
+        name: "StoreActionError",
+        kind: "commit_inventory",
       });
     });
   });
