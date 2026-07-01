@@ -1067,6 +1067,15 @@ export interface VariantDraft {
   inventoryOnHand?: number;
   /** Option-value labels this variant represents, in option order. */
   optionValues?: string[];
+  // Shipping fields — all optional so incomplete products remain saveable as drafts.
+  weightGrams?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  requiresShipping?: boolean;
+  handlingDays?: number;
+  signatureRequired?: boolean;
+  restrictedCountries?: string[];
 }
 
 export interface ProductDraft {
@@ -1179,6 +1188,12 @@ export interface LocationVM {
   priority: number;
   lat: number | null;
   lng: number | null;
+  street1?: string;
+  street2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  country?: string;
 }
 export interface LedgerEntryVM {
   id: number;
@@ -1255,7 +1270,17 @@ export async function fetchLocations(): Promise<LocationVM[]> {
 }
 export async function updateLocation(
   id: string,
-  patch: { priority?: number; lat?: number | null; lng?: number | null },
+  patch: {
+    priority?: number;
+    lat?: number | null;
+    lng?: number | null;
+    street1?: string;
+    street2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+    country?: string;
+  },
 ): Promise<void> {
   await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
 }
