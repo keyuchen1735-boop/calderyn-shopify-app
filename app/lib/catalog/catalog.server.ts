@@ -77,6 +77,20 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
     sb.from("product_collection").select("collection_id").eq("product_id", productId),
   ]);
 
+  // Fetch variant_shipping rows separately (child of variant_dim, not product_dim).
+  const variantIds = (variants ?? []).map((v: { id: string }) => String(v.id));
+  const shippingByVariant = new Map<string, Record<string, unknown>>();
+  if (variantIds.length) {
+    const { data: shippingRows, error: shErr } = await sb
+      .from("variant_shipping")
+      .select("variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping, handling_days, signature_required, restricted_countries")
+      .in("variant_id", variantIds);
+    if (shErr) throw shErr;
+    for (const row of (shippingRows ?? []) as Array<Record<string, unknown>>) {
+      shippingByVariant.set(String(row.variant_id), row);
+    }
+  }
+
   const valuesByVariant = new Map<string, string[]>();
   for (const row of (vov ?? []) as Array<{ variant_id: string; option_value_id: string }>) {
     const k = String(row.variant_id);
@@ -114,18 +128,29 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
         .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
         .map((v) => ({ id: String(v.id), value: String(v.value) })),
     })),
-    variants: (variants ?? []).map((v: Record<string, unknown>) => ({
-      id: String(v.id),
-      sku: (v.sku as string | null) ?? null,
-      title: String(v.title),
-      retailPriceCents: (v.retail_price_cents as number | null) ?? null,
-      unitCostCents: (v.unit_cost_cents as number | null) ?? null,
-      inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
-      inventoryOnHand: Number(v.inventory_on_hand ?? 0),
-      optionValueIds: (valuesByVariant.get(String(v.id)) ?? [])
-        .slice()
-        .sort((a, b) => (valueRank.get(a) ?? 0) - (valueRank.get(b) ?? 0)),
-    })),
+    variants: (variants ?? []).map((v: Record<string, unknown>) => {
+      const sh = shippingByVariant.get(String(v.id)) ?? {};
+      return {
+        id: String(v.id),
+        sku: (v.sku as string | null) ?? null,
+        title: String(v.title),
+        retailPriceCents: (v.retail_price_cents as number | null) ?? null,
+        unitCostCents: (v.unit_cost_cents as number | null) ?? null,
+        inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
+        inventoryOnHand: Number(v.inventory_on_hand ?? 0),
+        optionValueIds: (valuesByVariant.get(String(v.id)) ?? [])
+          .slice()
+          .sort((a, b) => (valueRank.get(a) ?? 0) - (valueRank.get(b) ?? 0)),
+        weightGrams: Number(sh.weight_grams ?? 0),
+        lengthMm: (sh.length_mm as number | null) ?? null,
+        widthMm: (sh.width_mm as number | null) ?? null,
+        heightMm: (sh.height_mm as number | null) ?? null,
+        requiresShipping: (sh.requires_shipping as boolean | null) ?? true,
+        handlingDays: Number(sh.handling_days ?? 0),
+        signatureRequired: Boolean(sh.signature_required ?? false),
+        restrictedCountries: (sh.restricted_countries as string[]) ?? [],
+      };
+    }),
     media: (media ?? []).map((m: Record<string, unknown>) => ({
       id: String(m.id), storagePath: String(m.storage_path), alt: (m.alt as string | null) ?? null,
       position: Number(m.position ?? 0), isPrimary: Boolean(m.is_primary),
@@ -209,7 +234,19 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .select("id")
       .single();
     if (vErr) throw vErr;
-    const links = variantLinks(String(variant.id), v.optionValues, perOption);
+    const variantId = String(variant.id);
+    // Persist shipping dimensions + requirements alongside the variant row.
+    await sb.from("variant_shipping").upsert({
+      variant_id: variantId, shop_id: shopId,
+      weight_grams: v.weightGrams ?? 0,
+      length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
+      requires_shipping: v.requiresShipping ?? true,
+      restricted_countries: v.restrictedCountries ?? [],
+      handling_days: v.handlingDays ?? 0,
+      signature_required: v.signatureRequired ?? false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "variant_id" });
+    const links = variantLinks(variantId, v.optionValues, perOption);
     if (links.length) {
       const { error: lErr } = await sb.from("variant_option_value").insert(links);
       if (lErr) throw lErr;
@@ -310,6 +347,17 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       if (iErr) throw iErr;
       variantId = String(ins.id);
     }
+    // Persist shipping dimensions + requirements for this variant (update path).
+    await sb.from("variant_shipping").upsert({
+      variant_id: variantId, shop_id: shopId,
+      weight_grams: v.weightGrams ?? 0,
+      length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
+      requires_shipping: v.requiresShipping ?? true,
+      restricted_countries: v.restrictedCountries ?? [],
+      handling_days: v.handlingDays ?? 0,
+      signature_required: v.signatureRequired ?? false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "variant_id" });
     // Rebuild this variant's option-value links (option-value ids changed above).
     await sb.from("variant_option_value").delete().eq("variant_id", variantId);
     const links = variantLinks(variantId, v.optionValues, perOption);

@@ -63,6 +63,14 @@ export interface ProductDetail {
     inventoryTracked: boolean | null;
     inventoryOnHand: number;
     optionValueIds: string[];
+    weightGrams: number;
+    lengthMm: number | null;
+    widthMm: number | null;
+    heightMm: number | null;
+    requiresShipping: boolean;
+    handlingDays: number;
+    signatureRequired: boolean;
+    restrictedCountries: string[];
   }>;
   media: Array<{ id: string; storagePath: string; alt: string | null; position: number; isPrimary: boolean }>;
   collectionIds: string[];

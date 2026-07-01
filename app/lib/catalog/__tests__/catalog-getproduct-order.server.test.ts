@@ -60,6 +60,9 @@ vi.mock("~/lib/supabase.server", () => ({
       if (table === "product_media") {
         return { select: () => ({ eq: () => ({ order: () => Promise.resolve(mediaRows) }) }) };
       }
+      if (table === "variant_shipping") {
+        return { select: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) };
+      }
       return { select: () => ({ eq: () => Promise.resolve(pcRows) }) }; // product_collection
     },
   }),

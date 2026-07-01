@@ -13,7 +13,7 @@ const insert = vi.fn(() => ({
 }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({ insert, delete: () => ({ eq: () => Promise.resolve({ error: null }) }) }),
+    from: () => ({ insert, upsert: () => Promise.resolve({ error: null }), delete: () => ({ eq: () => Promise.resolve({ error: null }) }) }),
   }),
 }));
 
