@@ -1,0 +1,101 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const backfillShop = vi.fn();
+vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
+const promoteShopFromMirror = vi.fn();
+vi.mock("../promote.server", () => ({
+  promoteShopFromMirror,
+  buildImportReport: (_counts: unknown, orders: number) => ({ imported: [`${orders} orders`], notIncluded: ["customers"] }),
+}));
+
+// Supabase query-builder mock: every builder method is chainable AND the builder is
+// awaitable (thenable), matching supabase-js where `.eq()` etc. both chain and resolve.
+type Row = Record<string, unknown>;
+let selectRows: Row[] = [];
+let singleReturn: { data: Row | null; error: unknown } = { data: null, error: null };
+const updates: Row[] = [];
+
+interface Chain {
+  select: () => Chain;
+  insert: (p: Row) => Chain;
+  update: (p: Row) => Chain;
+  eq: () => Chain;
+  in: () => Chain;
+  order: () => Chain;
+  limit: () => Chain;
+  single: () => Promise<{ data: Row | null; error: unknown }>;
+  maybeSingle: () => Promise<{ data: Row | null; error: unknown }>;
+  then: (resolve: (v: { data: Row[]; error: unknown }) => void) => void;
+}
+
+function chain(): Chain {
+  const c = {} as Chain;
+  Object.assign(c, {
+    select: () => c,
+    insert: () => c,
+    update: (p: Row) => { updates.push(p); return c; },
+    eq: () => c,
+    in: () => c,
+    order: () => c,
+    limit: () => c,
+    single: () => Promise.resolve(singleReturn),
+    maybeSingle: () => Promise.resolve({ data: selectRows[0] ?? null, error: null }),
+    then: (resolve: (v: { data: Row[]; error: unknown }) => void) => resolve({ data: selectRows, error: null }),
+  });
+  return c;
+}
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: () => chain() }) }));
+
+beforeEach(() => {
+  backfillShop.mockReset();
+  promoteShopFromMirror.mockReset();
+  selectRows = [];
+  singleReturn = { data: null, error: null };
+  updates.length = 0;
+});
+
+describe("drainImports", () => {
+  it("pulls sinceDays, promotes, and marks the run done", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockResolvedValue({ orders: 1100 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12 });
+
+    const { drainImports } = await import("../run.server");
+    const r = await drainImports();
+
+    expect(backfillShop).toHaveBeenCalledWith("d.myshopify.com", { sinceDays: 365 });
+    expect(promoteShopFromMirror).toHaveBeenCalledWith("shop1");
+    expect(r.processed).toBe(1);
+    expect(updates.some((u) => u.state === "promoting")).toBe(true);
+    expect(updates.some((u) => u.state === "done")).toBe(true);
+  });
+
+  it("marks the run error and skips promote when the pull throws", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockRejectedValue(new Error("shopify 500"));
+
+    const { drainImports } = await import("../run.server");
+    const r = await drainImports();
+
+    expect(promoteShopFromMirror).not.toHaveBeenCalled();
+    expect(r.processed).toBe(0);
+    expect(updates.some((u) => u.state === "error")).toBe(true);
+  });
+});
+
+describe("startImport", () => {
+  it("inserts a pulling run and returns its id", async () => {
+    selectRows = []; // no in-progress run
+    singleReturn = { data: { id: "imp_123" }, error: null };
+    const { startImport } = await import("../run.server");
+    const r = await startImport("shop1");
+    expect(r.importId).toBe("imp_123");
+  });
+
+  it("returns the existing run instead of starting a duplicate", async () => {
+    selectRows = [{ id: "in_progress" }]; // an in-progress run exists
+    const { startImport } = await import("../run.server");
+    const r = await startImport("shop1");
+    expect(r.importId).toBe("in_progress");
+  });
+});
