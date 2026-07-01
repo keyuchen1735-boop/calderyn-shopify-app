@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
+import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 
@@ -48,11 +49,54 @@ const MOVES: Record<string, MoveMeta> = {
   "live->dual_run": { label: "Roll back to dual run", primary: false, confirm: true },
 };
 
+function DriftList({
+  title,
+  count,
+  rows,
+  format,
+}: {
+  title: string;
+  count: number;
+  rows: client.DriftRowVM[];
+  format: (n: number) => string;
+}) {
+  if (count === 0) return null;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <p className="cd-caption" style={{ fontWeight: 650, margin: 0 }}>
+        {title}: {count}
+      </p>
+      <ul style={{ listStyle: "none", margin: "4px 0 0", padding: 0 }}>
+        {rows.map((r, i) => (
+          <li
+            key={`${r.variantId}:${r.locationId ?? i}`}
+            className="cd-caption"
+            style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0" }}
+          >
+            <CDIcon name="x" size={14} strokeWidth={2.2} style={{ marginTop: 1, flexShrink: 0 }} />
+            <span>
+              {r.label}: Calderyn {format(r.owned)}, Shopify {format(r.shopify)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {rows.length < count && (
+        <p className="cd-caption" style={{ opacity: 0.7, margin: "4px 0 0" }}>
+          Showing the first {rows.length} of {count}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function Cutover({ app }: { app: DashboardCtx }) {
   const [status, setStatus] = useState<client.CutoverStatusVM | null>(null);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState<client.CutoverMode | null>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
+  const [drift, setDrift] = useState<client.DriftReportVM | null>(null);
+  const [driftBusy, setDriftBusy] = useState(false);
+  const [driftError, setDriftError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -76,6 +120,10 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
       setArmed(null);
       setBusy(true);
       setBlocked(null);
+      // A mode move invalidates any drift comparison shown so far — never let a
+      // pre-move "Everything matches" survive into the new mode as if current.
+      setDrift(null);
+      setDriftError(null);
       try {
         setStatus(await client.requestCutoverTransition(to));
         app.toast(
@@ -94,6 +142,24 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
     },
     [app, armed, load, status],
   );
+
+  const runDrift = useCallback(async () => {
+    setDriftBusy(true);
+    setDriftError(null);
+    try {
+      setDrift(await client.fetchCutoverDrift());
+    } catch (err) {
+      setDrift(null);
+      // A bare 500 carries only the code string; show readable copy instead.
+      const msg =
+        err instanceof DashboardApiError && err.message && err.message !== "internal_error"
+          ? err.message
+          : "The comparison could not run. Try again shortly.";
+      setDriftError(msg);
+    } finally {
+      setDriftBusy(false);
+    }
+  }, []);
 
   if (!status) {
     return (
@@ -224,6 +290,104 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
           ))}
         </ul>
       </Card>
+
+      {status.mode === "dual_run" && (
+        <Card>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+            }}
+          >
+            <SectionTitle>Does everything still match?</SectionTitle>
+            <button
+              type="button"
+              className="cd-btn cd-btn-secondary cd-btn-sm"
+              onClick={runDrift}
+              disabled={driftBusy}
+            >
+              <CDIcon name="rotate" size={14} strokeWidth={1.9} />
+              <span>{driftBusy ? "Comparing…" : "Compare with Shopify"}</span>
+            </button>
+          </div>
+          <p className="cd-caption" style={{ margin: "8px 0 0" }}>
+            Changes made directly in Shopify admin do not flow into Calderyn during dual run.
+            This compares your live Shopify prices and stock with Calderyn's copy so you can
+            fix any differences before you go live.
+          </p>
+          {driftError && (
+            <p className="cd-caption" style={{ marginTop: 10 }}>
+              {driftError}
+            </p>
+          )}
+          {drift &&
+            (drift.pass ? (
+              <p
+                className="cd-caption"
+                style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}
+              >
+                <CDIcon name="check" size={15} strokeWidth={2.2} />
+                <span>
+                  Everything matches. {drift.variantsChecked} item
+                  {drift.variantsChecked === 1 ? "" : "s"} compared.
+                </span>
+              </p>
+            ) : (
+              <div style={{ marginTop: 4 }}>
+                <DriftList
+                  title="Prices that differ"
+                  count={drift.price.count}
+                  rows={drift.price.rows}
+                  format={money}
+                />
+                <DriftList
+                  title="Stock levels that differ"
+                  count={drift.stock.count}
+                  rows={drift.stock.rows}
+                  format={(n) => `${n} in stock`}
+                />
+                {drift.shopifyOnly.count > 0 && (
+                  <p className="cd-caption" style={{ marginTop: 10 }}>
+                    {drift.shopifyOnly.count} item
+                    {drift.shopifyOnly.count === 1 ? " exists" : "s exist"} only in Shopify
+                    (added after your import): {drift.shopifyOnly.sample.join("; ")}
+                    {drift.shopifyOnly.count > drift.shopifyOnly.sample.length ? "; and more" : ""}
+                  </p>
+                )}
+                {drift.ownedOnly.count > 0 && (
+                  <p className="cd-caption" style={{ marginTop: 10 }}>
+                    {drift.ownedOnly.count} item
+                    {drift.ownedOnly.count === 1 ? " is" : "s are"} still in Calderyn but no
+                    longer in Shopify (removed after your import):{" "}
+                    {drift.ownedOnly.sample.join("; ")}
+                    {drift.ownedOnly.count > drift.ownedOnly.sample.length ? "; and more" : ""}
+                  </p>
+                )}
+                {drift.truncated.count > 0 && (
+                  <p className="cd-caption" style={{ marginTop: 10 }}>
+                    {drift.truncated.count} product
+                    {drift.truncated.count === 1 ? " has" : "s have"} too many variants or
+                    stock locations to fully check: {drift.truncated.sample.join("; ")}
+                    {drift.truncated.count > drift.truncated.sample.length ? "; and more" : ""}
+                  </p>
+                )}
+                {drift.unmatchedLocations > 0 && (
+                  <p className="cd-caption" style={{ marginTop: 10 }}>
+                    {drift.unmatchedLocations} stock level
+                    {drift.unmatchedLocations === 1 ? " is" : "s are"} at Shopify locations
+                    Calderyn does not know about.
+                  </p>
+                )}
+                <p className="cd-caption" style={{ opacity: 0.7, marginTop: 10 }}>
+                  A checkout that is still in progress can show a small stock difference.
+                  Re-run the comparison if a difference looks temporary.
+                </p>
+              </div>
+            ))}
+        </Card>
+      )}
     </div>
   );
 }
