@@ -5,7 +5,6 @@ import { OWNED_CHECKOUT_COMPLETED } from "../events";
 const fake = makeFakeSupabase();
 vi.mock("../../../supabase.server", () => ({ getSupabase: () => fake.client }));
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 let emitOwnedEvent: typeof import("../emit.server").emitOwnedEvent;
 
 const SHOP = "00000000-0000-0000-0000-000000000001";

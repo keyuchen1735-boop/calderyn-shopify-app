@@ -51,5 +51,17 @@ export function makeFakeSupabase(opts?: {
     return api;
   }
 
-  return { client: { from: (t: string) => builder(t) } as any, calls, store };
+  return {
+    client: { from: (t: string) => builder(t) } as any,
+    calls,
+    store,
+    // Post-construction helpers (in addition to the constructor `seed`/`failRead`
+    // options): let a test seed rows or force a read failure on an existing instance.
+    seed(table: string, rows: Row[]) {
+      store[table] = [...(store[table] ?? []), ...rows];
+    },
+    failRead(table: string) {
+      failReadTables.add(table);
+    },
+  };
 }
