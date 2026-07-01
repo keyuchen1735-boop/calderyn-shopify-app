@@ -1,6 +1,7 @@
 // Import-from-Shopify (#13.promote): the import state machine. `startImport` records a
-// pending run; the ingest cron calls `drainImports` to do the pull + promote; the dashboard
-// polls `latestImport`. Kept small — the heavy lifting is backfillShop + promote_shop_from_mirror.
+// pending run; the /cron/import tick calls `drainImports` to do the pull + promote; the
+// dashboard polls `latestImport`. Kept small — the heavy lifting is backfillShop +
+// promote_shop_from_mirror.
 import { getSupabase } from "../supabase.server";
 import { backfillShop } from "../ingest/backfill.server";
 import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./promote.server";
@@ -8,6 +9,11 @@ import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./
 const IMPORT_WINDOW_DAYS = 365; // 12 months
 // A 12-month pull is heavy; bound how many imports one cron tick processes so the
 // serverless function stays under its timeout (mirrors Phase 1's MAX_BACKFILL_SHOPS).
+// Runs are selected by state with no claim step, so a tick that outlives the cron
+// interval can hand the same run to the next tick. Tolerated rather than locked:
+// the function ceiling equals the /cron/import interval (overlap is a boundary
+// second at worst) and the pull + promote are idempotent, so a double-processed
+// run converges to the same owned rows. Revisit if the cadence or ceiling changes.
 const IMPORT_DRAIN_PER_TICK = 2;
 
 export type ImportState = "pulling" | "promoting" | "done" | "error";
