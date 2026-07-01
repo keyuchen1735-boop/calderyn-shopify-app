@@ -11,7 +11,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const clientsRes = await sb
       .from("mcp_oauth_clients")
-      .select("name, spend_cap_cents")
+      .select("client_name, spend_cap_cents")
       .eq("commerce_scope", true);
     if (clientsRes.error) throw clientsRes.error;
 
@@ -31,7 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const orders = (ordersRes.data ?? []) as Array<Record<string, unknown>>;
     return {
       clients: (clientsRes.data ?? []).map((c: Record<string, unknown>) => ({
-        name: String(c.name),
+        name: String(c.client_name),
         spendCapCents: Number(c.spend_cap_cents ?? 0),
       })),
       quotesIssued: quotesRes.count ?? 0,

@@ -18,7 +18,7 @@ function makeChainable(result: TableResult) {
 
 const TABLES: Record<string, TableResult> = {
   mcp_oauth_clients: {
-    data: [{ name: "ChatGPT", spend_cap_cents: 50000 }],
+    data: [{ client_name: "ChatGPT", spend_cap_cents: 50000 }],
     error: null,
   },
   commerce_quote_fact: { count: 12, data: null, error: null },
