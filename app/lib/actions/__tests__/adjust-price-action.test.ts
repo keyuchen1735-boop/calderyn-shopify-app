@@ -317,6 +317,14 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
         }),
       }),
     );
+    // The owned branch deliberately omits product_id: undo.server.ts guards on its presence, so
+    // a live price change loudly refuses to undo (owned undo is a later slice) rather than
+    // mis-firing a Shopify reversal. Lock that contract so a future edit can't silently add it.
+    expect(c.actions.execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ product_id: expect.anything() }),
+      }),
+    );
     expect(res.outcome).toBe("succeeded");
   });
 

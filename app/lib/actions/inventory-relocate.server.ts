@@ -145,6 +145,13 @@ export async function executeInventoryRelocation(
         quantity: input.quantity,
       });
       operationId = transferId;
+      // ponytail: owned undo is not wired yet (deferred to the undo/go-live slice). The audit
+      // params below still record Shopify GIDs (from/to_location_id, inventory_item_id) because
+      // the shape is shared with the alert-driven path; only shopify_operation_id carries the
+      // owned transfer id at live. Until owned undo lands, undoing a live move would target
+      // Shopify off those GIDs, not reverse the owned ledger — that slice must branch undo on
+      // the owned transfer id. No shop reaches live in this slice (default mirror), so it can't
+      // fire yet. Mirrors the price branch's deliberate owned-undo deferral (adjust-price.server.ts).
     } else {
       ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
         inventoryItemId: inventoryItemId,
