@@ -3,6 +3,7 @@ import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { collectionHandle } from "./handle";
+import { validateVariantDims } from "./shipping-dims";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -198,6 +199,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
 
   // Variants + their option-value links.
   for (const [i, v] of input.variants.entries()) {
+    const dimCheck = validateVariantDims({ grams: v.grams, lengthMm: v.lengthMm, widthMm: v.widthMm, heightMm: v.heightMm });
+    if (!dimCheck.ok) throw new Error(dimCheck.error);
     const { data: variant, error: vErr } = await sb
       .from("variant_dim")
       .insert({
@@ -205,6 +208,10 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
         retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
         inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: v.inventoryTracked ?? null,
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
+        grams: v.grams ?? null,
+        length_mm: v.lengthMm ?? null,
+        width_mm: v.widthMm ?? null,
+        height_mm: v.heightMm ?? null,
       })
       .select("id")
       .single();
@@ -290,10 +297,16 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     // `v.inventoryPolicy ?? null` would null a stored/Shopify-imported value on every
     // edit and break the stockout-pause autopilot precondition. Omitting it preserves
     // the stored value on update; a brand-new variant defaults to null.
+    const dimCheck = validateVariantDims({ grams: v.grams, lengthMm: v.lengthMm, widthMm: v.widthMm, heightMm: v.heightMm });
+    if (!dimCheck.ok) throw new Error(dimCheck.error);
     const fields = {
       sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
       unit_cost_cents: v.unitCostCents ?? null,
       inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
+      grams: v.grams ?? null,
+      length_mm: v.lengthMm ?? null,
+      width_mm: v.widthMm ?? null,
+      height_mm: v.heightMm ?? null,
     };
     let variantId = v.id ?? null;
     if (variantId) {

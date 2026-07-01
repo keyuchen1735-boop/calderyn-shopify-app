@@ -16,6 +16,10 @@ export interface VariantInput {
   inventoryPolicy?: string;
   inventoryTracked?: boolean;
   inventoryOnHand?: number;
+  grams?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
   optionValues?: string[]; // option-value labels this variant represents, e.g. ["M","Red"]
 }
 export interface ProductInput {
