@@ -21,4 +21,13 @@ describe("shipping validation", () => {
     const r = validateProductInput({ ...base, status: "draft", variants: [{ sku: "M", requiresShipping: true }] });
     expect(r.ok).toBe(true);
   });
+  it("rejects a restricted country that is not ISO-3166 alpha-2", () => {
+    const r = validateProductInput({ ...base, variants: [{ sku: "M", requiresShipping: true, weightGrams: 340, lengthMm: 127, widthMm: 127, heightMm: 102, restrictedCountries: ["US", "GBR"] }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("invalid_country");
+  });
+  it("allows valid ISO-3166 alpha-2 restricted countries", () => {
+    const r = validateProductInput({ ...base, variants: [{ sku: "M", requiresShipping: true, weightGrams: 340, lengthMm: 127, widthMm: 127, heightMm: 102, restrictedCountries: ["US", "GB"] }] });
+    expect(r.ok).toBe(true);
+  });
 });
