@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as EmitServer from "../emit.server";
 import { makeFakeSupabase } from "./fake-supabase";
 import { OWNED_CHECKOUT_COMPLETED } from "../events";
 
 const fake = makeFakeSupabase();
 vi.mock("../../../supabase.server", () => ({ getSupabase: () => fake.client }));
 
-let emitOwnedEvent: typeof import("../emit.server").emitOwnedEvent;
+let emitOwnedEvent: typeof EmitServer.emitOwnedEvent;
 
 const SHOP = "00000000-0000-0000-0000-000000000001";
 function event() {

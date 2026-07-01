@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as ApplyServer from "../apply.server";
 import { makeFakeSupabase } from "./fake-supabase";
 import { OWNED_CHECKOUT_COMPLETED } from "../events";
 
@@ -8,7 +9,7 @@ vi.mock("../../../supabase.server", () => ({ getSupabase: () => fake.client }));
 const applyAttribution = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../../attribution/apply.server", () => ({ applyAttribution: (...a: unknown[]) => applyAttribution(...a) }));
 
-let applyOwnedOrder: typeof import("../apply.server").applyOwnedOrder;
+let applyOwnedOrder: typeof ApplyServer.applyOwnedOrder;
 const SHOP = "00000000-0000-0000-0000-000000000001";
 const VARIANT = "22222222-2222-2222-2222-222222222222";
 const BUYER = "11111111-1111-1111-1111-111111111111";

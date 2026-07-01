@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as DevSeedServer from "../dev-seed.server";
 
 const emitOwnedEvent = vi.fn().mockResolvedValue(undefined);
 vi.mock("../emit.server", () => ({ emitOwnedEvent: (...a: unknown[]) => emitOwnedEvent(...a) }));
 
-let seedOwnedCheckout: typeof import("../dev-seed.server").seedOwnedCheckout;
+let seedOwnedCheckout: typeof DevSeedServer.seedOwnedCheckout;
 beforeEach(async () => {
   emitOwnedEvent.mockClear();
   ({ seedOwnedCheckout } = await import("../dev-seed.server"));

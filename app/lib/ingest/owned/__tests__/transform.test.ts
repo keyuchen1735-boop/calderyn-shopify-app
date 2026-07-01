@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as TransformServer from "../transform.server";
 import { makeFakeSupabase } from "./fake-supabase";
 import { OWNED_CHECKOUT_COMPLETED } from "../events";
 
@@ -22,7 +23,7 @@ const applyOwnedOrder = vi.fn().mockResolvedValue(2);
 vi.mock("../apply.server", () => ({ applyOwnedOrder: (...a: unknown[]) => applyOwnedOrder(...a) }));
 
 let fake: ReturnType<typeof makeFakeSupabase>;
-let transformPendingOwnedEvents: typeof import("../transform.server").transformPendingOwnedEvents;
+let transformPendingOwnedEvents: typeof TransformServer.transformPendingOwnedEvents;
 
 async function load(seedRows: Row[]) {
   fake = makeFakeSupabase({ seed: { raw_owned_event: seedRows } });
