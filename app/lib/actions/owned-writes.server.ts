@@ -49,6 +49,42 @@ export async function setOwnedVariantPrice(
   return setVariantPrice(shopId, variantId, priceCents);
 }
 
+/**
+ * Resolve the owned handles for an inventory move that arrives keyed by Shopify refs
+ * (the alert-evidence shape): inventory item GID -> owned variant id (sku_dim keeps the
+ * inventory_item_id column, sku_dim.id == variant_dim.id), location GIDs -> owned
+ * location ids. Returns null when any piece isn't linked for this shop — the caller
+ * decides whether that blocks (live) or is recorded as a skipped mirror (dual_run).
+ */
+export async function resolveOwnedMoveTarget(
+  shopId: string,
+  opts: { inventoryItemId: string; fromLocationGid: string; toLocationGid: string },
+): Promise<{ variantId: string; fromLocationId: string; toLocationId: string } | null> {
+  const sb = getSupabase();
+
+  const { data: sku, error: sErr } = await sb
+    .from("sku_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("inventory_item_id", opts.inventoryItemId)
+    .maybeSingle();
+  if (sErr) throw sErr;
+  if (!sku?.id) return null;
+
+  const { data: locs, error: lErr } = await sb
+    .from("location_dim")
+    .select("id, external_id")
+    .eq("shop_id", shopId)
+    .in("external_id", [opts.fromLocationGid, opts.toLocationGid]);
+  if (lErr) throw lErr;
+  const rows = (locs ?? []) as Array<{ id: string; external_id: string }>;
+  const from = rows.find((l) => l.external_id === opts.fromLocationGid);
+  const to = rows.find((l) => l.external_id === opts.toLocationGid);
+  if (!from || !to) return null;
+
+  return { variantId: String(sku.id), fromLocationId: String(from.id), toLocationId: String(to.id) };
+}
+
 /** Owned inventory move: an instant location->location transfer through the atomic
  *  (cannot-oversell) inventory engine. Keyed by owned variant id + owned location ids. */
 export async function applyOwnedInventoryMove(opts: {

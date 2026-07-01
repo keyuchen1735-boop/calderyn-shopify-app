@@ -310,6 +310,7 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
     expect(c.actions.execute).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
+          owned: true, // routes undo to the owned catalog, never Shopify
           variant_id: "sku-1",
           sku_id: "sku-1",
           prior_price_cents: 1500,
@@ -317,15 +318,79 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
         }),
       }),
     );
-    // The owned branch deliberately omits product_id: undo.server.ts guards on its presence, so
-    // a live price change loudly refuses to undo (owned undo is a later slice) rather than
-    // mis-firing a Shopify reversal. Lock that contract so a future edit can't silently add it.
+    // The owned branch deliberately omits product_id (a Shopify handle it never touched);
+    // undo routes on `owned: true` instead. Lock that so a future edit can't silently add
+    // a Shopify handle to an owned-only audit row.
     expect(c.actions.execute).not.toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({ product_id: expect.anything() }),
       }),
     );
     expect(res.outcome).toBe("succeeded");
+  });
+
+  it("dual_run: writes Shopify AND mirrors the applied price into the owned catalog", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    const c = client(alert({}));
+    const res = await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: ADMIN,
+      sb: okSb(),
+    });
+    expect(setVariantPrice).toHaveBeenCalled(); // Shopify stays authoritative
+    expect(setOwnedVariantPrice).toHaveBeenCalledWith("shop-1", "sku-1", 1700);
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          dual_write: "ok",
+          owned_variant_id: "sku-1",
+          product_id: PRODUCT,
+        }),
+      }),
+    );
+    expect(res.outcome).toBe("succeeded");
+  });
+
+  it("dual_run: a failed owned mirror never fails the action, recorded on the audit", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    setOwnedVariantPrice.mockRejectedValue(new Error("owned write refused"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const c = client(alert({}));
+    try {
+      const res = await executeAdjustPriceAlertAction({
+        ...base,
+        client: c as never,
+        admin: ADMIN,
+        sb: okSb(),
+      });
+      expect(res.outcome).toBe("succeeded");
+    } finally {
+      consoleError.mockRestore();
+    }
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ dual_write: "failed: owned write refused" }),
+      }),
+    );
+  });
+
+  it("dual_run: a SKU with no owned price records a skipped mirror", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    getOwnedVariantPricing.mockResolvedValue(null);
+    const c = client(alert({}));
+    await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: ADMIN,
+      sb: okSb(),
+    });
+    expect(setOwnedVariantPrice).not.toHaveBeenCalled();
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ dual_write: "skipped_no_owned_price" }),
+      }),
+    );
   });
 
   it("live: rejects a merchant override beyond the ±cap of the owned price (422)", async () => {

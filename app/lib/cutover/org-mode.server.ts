@@ -66,11 +66,22 @@ export function assertLegalOrgTransition(from: string, to: string): asserts to i
 
 /**
  * Router predicate: only `live` routes the store-mutating autopilot writers to Calderyn's
- * own tables. mirror/importing/dual_run all keep writing to Shopify (binary routing; the
- * dual_run parity dual-write is a later Step-9 slice).
+ * own tables as the AUTHORITATIVE target. mirror/importing/dual_run keep Shopify as the
+ * authoritative write target.
  */
 export function writesToOwned(mode: OrgMode): boolean {
   return mode === "live";
+}
+
+/**
+ * Dual-write predicate: at `dual_run` the store writers apply their Shopify write
+ * (authoritative, unchanged) and then MIRROR it into the owned tables best-effort, so
+ * the owned store tracks reality during the side-by-side run and the go-live parity
+ * gate is checking a live system, not a stale import. A mirror failure never fails the
+ * merchant's action — it is recorded visibly on the audit row instead (rule 12).
+ */
+export function dualWrites(mode: OrgMode): boolean {
+  return mode === "dual_run";
 }
 
 /** Read a shop's current mode. Defaults to `mirror` when the column is null; throws if the

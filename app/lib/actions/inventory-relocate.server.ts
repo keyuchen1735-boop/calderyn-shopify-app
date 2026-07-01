@@ -17,7 +17,7 @@ import {
   priorExecutionForKey,
   type ExecutedAudit,
 } from "./execute.server";
-import { getOrgMode, writesToOwned } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
 import { applyOwnedInventoryMove } from "./owned-writes.server";
 
 export interface InventoryRelocationInput {
@@ -129,12 +129,19 @@ export async function executeInventoryRelocation(
 
   // 6. Execute the move on the routed target. At org_mode=live the move lands in the owned
   // inventory engine (atomic, cannot-oversell) keyed by owned variant + owned location ids;
-  // every other mode adjusts Shopify exactly as before. A failure on either branch is
-  // recorded visibly as a failed audit row (rule 12), never a fake success.
-  const owned = writesToOwned(await getOrgMode(shopId));
+  // every other mode adjusts Shopify exactly as before, and dual_run ALSO mirrors the move
+  // into the owned engine best-effort. A failure on the authoritative branch is recorded
+  // visibly as a failed audit row (rule 12), never a fake success; a dual_run mirror failure
+  // never fails the action — it is recorded on the audit row instead.
+  const orgMode = await getOrgMode(shopId);
+  const owned = writesToOwned(orgMode);
+  const dual = dualWrites(orgMode);
   let outcome: ExecutedAudit["outcome"] = "succeeded";
   let lastError: string | null = null;
   let operationId: string | null = null;
+  // Owned-side markers for the audit row: `owned` routes undo to the owned engine at live;
+  // `dual_write` (+ owned ids) lets undo mirror the reversal after a dual_run move.
+  const ownedParams: Record<string, unknown> = {};
   try {
     if (owned) {
       const { transferId } = await applyOwnedInventoryMove({
@@ -145,13 +152,11 @@ export async function executeInventoryRelocation(
         quantity: input.quantity,
       });
       operationId = transferId;
-      // ponytail: owned undo is not wired yet (deferred to the undo/go-live slice). The audit
-      // params below still record Shopify GIDs (from/to_location_id, inventory_item_id) because
-      // the shape is shared with the alert-driven path; only shopify_operation_id carries the
-      // owned transfer id at live. Until owned undo lands, undoing a live move would target
-      // Shopify off those GIDs, not reverse the owned ledger — that slice must branch undo on
-      // the owned transfer id. No shop reaches live in this slice (default mirror), so it can't
-      // fire yet. Mirrors the price branch's deliberate owned-undo deferral (adjust-price.server.ts).
+      ownedParams.owned = true;
+      ownedParams.owned_transfer_id = transferId;
+      ownedParams.owned_variant_id = input.skuId;
+      ownedParams.owned_from_location_id = from.id;
+      ownedParams.owned_to_location_id = to.id;
     } else {
       ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
         inventoryItemId: inventoryItemId,
@@ -159,6 +164,26 @@ export async function executeInventoryRelocation(
         toLocationId: input.toLocationId,
         delta: input.quantity,
       }, sb));
+      if (dual) {
+        try {
+          const { transferId } = await applyOwnedInventoryMove({
+            shopId,
+            variantId: input.skuId,
+            fromLocationId: from.id,
+            toLocationId: to.id,
+            quantity: input.quantity,
+          });
+          ownedParams.dual_write = "ok";
+          ownedParams.owned_transfer_id = transferId;
+          ownedParams.owned_variant_id = input.skuId;
+          ownedParams.owned_from_location_id = from.id;
+          ownedParams.owned_to_location_id = to.id;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ownedParams.dual_write = `failed: ${msg}`;
+          console.error("[inventory-relocate] dual_run owned mirror move failed", err);
+        }
+      }
     }
   } catch (err) {
     outcome = "failed";
@@ -185,6 +210,7 @@ export async function executeInventoryRelocation(
         to_location_name: to.name,
         delta: input.quantity,
         shopify_operation_id: operationId,
+        ...ownedParams,
       },
       outcome,
       pre_state: { from_location_available: fromAvailable },

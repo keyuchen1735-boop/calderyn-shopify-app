@@ -96,6 +96,13 @@ vi.mock("../../actions/snooze.server", () => ({
 vi.mock("../../../shopify.server", () => ({
   unauthenticated: { admin: (...a: unknown[]) => unauthenticatedAdmin(...a) },
 }));
+// The alert-action executor routes its write by org_mode; the supabase stub above
+// answers every read with "no row", which getOrgMode treats as shop-not-found.
+// Pin the default mode instead — routing itself is covered in alert-action.test.ts.
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getOrgMode: vi.fn(async () => "mirror"),
+}));
 
 // Mirrors the transfer plan the regional_spend_starved_stock detector emits
 // into alert evidence (engine commit e3238b5).

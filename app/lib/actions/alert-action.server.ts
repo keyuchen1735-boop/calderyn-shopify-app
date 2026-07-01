@@ -18,6 +18,8 @@ import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import type { ActionKind, Alert, AuditEntry, GuardrailConfig } from "../types";
 import { discontinueProduct } from "../shopify/product.server";
 import { resolveSkuForDiscontinue, setDoNotReorder } from "./discontinue.server";
+import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { resolveOwnedMoveTarget, applyOwnedInventoryMove } from "./owned-writes.server";
 
 export type InventoryAlertActionKind = "reallocate_inventory" | "snooze_alert";
 
@@ -104,15 +106,86 @@ export async function executeInventoryAlertAction(opts: {
           "Alert evidence is missing the inventory item, source/destination location, or delta.",
       });
     }
+    // Route the move by the shop's cutover mode, exactly like the dashboard relocate
+    // (inventory-relocate.server.ts): at `live` the move lands in the owned engine
+    // (atomic, cannot-oversell) keyed by owned ids resolved from the plan's Shopify
+    // refs; every other mode adjusts Shopify as before, and dual_run ALSO mirrors the
+    // move into the owned engine best-effort (recorded on the audit, never fatal).
+    const orgMode = await getOrgMode(shopId);
     let operationId: string;
-    try {
-      ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
-    } catch (err) {
-      throw new CalderynError({
-        code: "action_failed",
-        status: 502,
-        message: err instanceof Error ? err.message : "Shopify inventory adjustment failed.",
+    if (writesToOwned(orgMode)) {
+      const target = await resolveOwnedMoveTarget(shopId, {
+        inventoryItemId: plan.inventoryItemId,
+        fromLocationGid: plan.fromLocationId,
+        toLocationGid: plan.toLocationId,
       });
+      if (!target) {
+        throw new CalderynError({
+          code: "invalid_inventory_evidence",
+          status: 422,
+          message: "This alert's inventory item or locations aren't linked to the owned store.",
+        });
+      }
+      try {
+        const { transferId } = await applyOwnedInventoryMove({
+          shopId,
+          variantId: target.variantId,
+          fromLocationId: target.fromLocationId,
+          toLocationId: target.toLocationId,
+          quantity: plan.delta,
+        });
+        operationId = transferId;
+        params.owned = true;
+        params.owned_transfer_id = transferId;
+        params.owned_variant_id = target.variantId;
+        params.owned_from_location_id = target.fromLocationId;
+        params.owned_to_location_id = target.toLocationId;
+      } catch (err) {
+        throw new CalderynError({
+          code: "action_failed",
+          status: 502,
+          message: err instanceof Error ? err.message : "Owned inventory move failed.",
+        });
+      }
+    } else {
+      try {
+        ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
+      } catch (err) {
+        throw new CalderynError({
+          code: "action_failed",
+          status: 502,
+          message: err instanceof Error ? err.message : "Shopify inventory adjustment failed.",
+        });
+      }
+      if (dualWrites(orgMode)) {
+        try {
+          const target = await resolveOwnedMoveTarget(shopId, {
+            inventoryItemId: plan.inventoryItemId,
+            fromLocationGid: plan.fromLocationId,
+            toLocationGid: plan.toLocationId,
+          });
+          if (!target) {
+            params.dual_write = "skipped_unlinked";
+          } else {
+            const { transferId } = await applyOwnedInventoryMove({
+              shopId,
+              variantId: target.variantId,
+              fromLocationId: target.fromLocationId,
+              toLocationId: target.toLocationId,
+              quantity: plan.delta,
+            });
+            params.dual_write = "ok";
+            params.owned_transfer_id = transferId;
+            params.owned_variant_id = target.variantId;
+            params.owned_from_location_id = target.fromLocationId;
+            params.owned_to_location_id = target.toLocationId;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          params.dual_write = `failed: ${msg}`;
+          console.error("[alert-action] dual_run owned mirror move failed", err);
+        }
+      }
     }
     params.inventory_item_id = plan.inventoryItemId;
     params.from_location_id = plan.fromLocationId;

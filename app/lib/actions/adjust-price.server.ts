@@ -18,7 +18,7 @@ import { readVariantPrice, setVariantPrice } from "../shopify/price.server";
 import type { AdminGraphqlClient } from "../shopify/inventory.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import type { AlertActionClient } from "./alert-action.server";
-import { getOrgMode, writesToOwned } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
 import { getOwnedVariantPricing, setOwnedVariantPrice } from "./owned-writes.server";
 
 export interface ResolvedSkuVariant {
@@ -101,9 +101,12 @@ export async function executeAdjustPriceAlertAction(opts: {
 
   // Route the price write by the shop's cutover mode: at `live` the target price lives in
   // the owned catalog (no Shopify variant needed); every other mode reads + writes Shopify
-  // exactly as before. The guardrail cap is anchored on whichever current price we read, so
-  // the safety envelope is identical on both branches — only the WRITE target changes.
-  const owned = writesToOwned(await getOrgMode(shopId));
+  // exactly as before, and `dual_run` ALSO mirrors the applied price into the owned catalog
+  // best-effort. The guardrail cap is anchored on whichever current price we read, so the
+  // safety envelope is identical on both branches — only the WRITE target changes.
+  const orgMode = await getOrgMode(shopId);
+  const owned = writesToOwned(orgMode);
+  const dual = dualWrites(orgMode);
 
   // `current.priceCents` anchors the suggestion + cap; `ownedVariantId` / `shopifyTarget`
   // carry the write handle for the branch we're on.
@@ -241,7 +244,8 @@ export async function executeAdjustPriceAlertAction(opts: {
       });
     }
     appliedPriceCents = finalPriceCents;
-    // undo of an owned price change is a later Step-9 slice; record the ids it will need.
+    // `owned: true` routes undo to the owned catalog (undo.server.ts adjust_price branch).
+    params.owned = true;
     params.sku_id = ownedVariantId;
     params.variant_id = ownedVariantId;
     params.new_price_cents = appliedPriceCents;
@@ -265,6 +269,27 @@ export async function executeAdjustPriceAlertAction(opts: {
     params.variant_id = shopifyTarget.variantGid;
     params.product_id = shopifyTarget.productGid;
     params.new_price_cents = appliedPriceCents;
+
+    // dual_run: mirror the applied price into the owned catalog so it tracks reality
+    // during the side-by-side run. Shopify (above) stays authoritative — a mirror
+    // failure never fails the action; it is recorded on the audit row and the go-live
+    // parity gate will hold the divergence visible until reconciled (rule 12).
+    if (dual) {
+      try {
+        const mirror = await getOwnedVariantPricing(shopId, alert.sku);
+        if (!mirror) {
+          params.dual_write = "skipped_no_owned_price";
+        } else {
+          await setOwnedVariantPrice(shopId, mirror.variantId, appliedPriceCents);
+          params.dual_write = "ok";
+          params.owned_variant_id = mirror.variantId;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        params.dual_write = `failed: ${msg}`;
+        console.error("[adjust-price] dual_run owned mirror write failed", err);
+      }
+    }
   } else {
     // Unreachable: exactly one of the two branches resolves a write handle above.
     throw new CalderynError({ code: "action_failed", status: 500, message: "No price write target resolved." });
