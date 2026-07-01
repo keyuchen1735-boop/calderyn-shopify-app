@@ -29,12 +29,13 @@ export function buildImportReport(
     imported: [
       `${counts.products} products (${counts.variants} variants)`,
       `${counts.collections} collections`,
-      `${counts.balances} stock locations`,
+      // counts.balances is stock RECORDS (one per variant at each location), not locations.
+      `${counts.balances} stock records`,
       `${orderCount} past orders (last 12 months)`,
     ],
     notIncluded: [
-      "Your customer list — brought over separately, with consent (privacy rules).",
-      "Your store design / theme — re-created in Calderyn's builder later.",
+      "Your customer list, which is brought over separately, with consent (privacy rules).",
+      "Your store design / theme, which is re-created in Calderyn's builder later.",
     ],
   };
 }

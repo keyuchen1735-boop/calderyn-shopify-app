@@ -6,7 +6,6 @@ import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
-import { drainImports } from "~/lib/import/run.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
@@ -48,8 +47,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ownedTransformError: null as string | null,
     attributionErrors: [] as string[],
     shipCostErrors: [] as string[],
-    imports: { processed: 0 },
-    importError: null as string | null,
+    phaseMs: {} as Record<string, number>,
+  };
+
+  // This tick has been observed exhausting the 300s function ceiling (504), which
+  // silently starves whatever phases come after the slow one. Log each phase's
+  // elapsed time AS IT COMPLETES, so when a tick times out the log trail still
+  // names the phase that ate the budget (the one after the last logged mark).
+  let phaseStartedAt = Date.now();
+  const mark = (name: string) => {
+    const ms = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
+    summary.phaseMs[name] = ms;
+    console.log(`[cron.ingest] phase ${name} finished in ${ms}ms`);
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -68,6 +78,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.backfillErrors.push(domain); // detail already in ingestion_dlq
     }
   }
+  mark("backfill");
 
   // Existing shops predate the inventory-policy columns. Incrementally refresh
   // up to five catalogs per tick until every SKU has Shopify's safety settings.
@@ -98,6 +109,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.inventorySettingsErrors.push(`${domain}: ${stringifyError(err)}`);
     }
   }
+  mark("inventory_settings");
 
   // Phase 2: transform queued webhooks (isolated so a transform-query failure
   // doesn't abort the response).
@@ -107,6 +119,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     summary.transformError = err instanceof Error ? err.message : String(err);
     console.error("[cron.ingest] transform phase failed", err);
   }
+  mark("transform");
 
   // Phase 2b: transform queued OWNED checkout events (isolated like Phase 2, so an
   // owned-transform failure doesn't abort the Shopify transform or the response).
@@ -116,6 +129,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     summary.ownedTransformError = err instanceof Error ? err.message : String(err);
     console.error("[cron.ingest] owned transform phase failed", err);
   }
+  mark("owned_transform");
 
   // Phase 3: reconcile attributed revenue for all active shops (per-shop isolation
   // — one shop's failure is recorded in summary.attributionErrors and does not
@@ -134,6 +148,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.error("[cron.ingest] attribution reconcile failed for shop", shopId, err);
     }
   }
+  mark("attribution");
 
   // Phase 4: resolve ship-cost and roll into sku_pnl for all active shops (same
   // per-shop isolation as Phase 3 — one shop's failure does not abort others).
@@ -148,15 +163,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
     }
   }
+  mark("ship_cost");
 
-  // Phase 5: drain import-from-Shopify runs (pull 12 months + promote mirror -> owned).
-  // Isolated like the other phases so an import failure doesn't abort the response.
-  try {
-    summary.imports = await drainImports();
-  } catch (err) {
-    summary.importError = err instanceof Error ? err.message : String(err);
-    console.error("[cron.ingest] import drain failed", err);
-  }
+  // Import-from-Shopify runs are drained by /cron/import (their own cron), not here:
+  // a pending import is a merchant waiting on a progress screen, and this tick can
+  // exhaust its function budget on the phases above.
 
   return json(summary);
 };

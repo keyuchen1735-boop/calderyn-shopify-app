@@ -24,6 +24,10 @@ describe("buildImportReport", () => {
     const r = buildImportReport({ products: 5, variants: 12, collections: 2, balances: 12 }, 1100);
     expect(r.imported.join(" ")).toMatch(/5 products/);
     expect(r.imported.join(" ")).toMatch(/1100 past orders/);
+    // balances are stock RECORDS (variant x location), not locations — the copy
+    // must never call them locations (12 records here vs 2 locations would lie).
+    expect(r.imported.join(" ")).toMatch(/12 stock records/);
+    expect(r.imported.join(" ")).not.toMatch(/stock locations/);
     expect(r.notIncluded.join(" ")).toMatch(/customer/i);
     expect(r.notIncluded.join(" ")).toMatch(/store design|theme/i);
   });
