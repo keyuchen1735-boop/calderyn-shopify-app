@@ -64,7 +64,7 @@ describe("lookupOwnedId", () => {
     expect(await lookupOwnedId("s1", "variant", "gid://v/nope")).toBeNull();
   });
 
-  it("is shop-scoped — a foreign shop's mapping never leaks", async () => {
+  it("is shop-scoped: a foreign shop's mapping never leaks", async () => {
     const sb = makeSb([
       { shop_id: "other", entity_type: "variant", external_id: "gid://v/1", owned_id: "owned-x" },
     ]);
@@ -91,12 +91,21 @@ describe("recordImportMapEntry", () => {
     });
   });
 
-  it("is idempotent — re-recording replaces in place, never duplicates", async () => {
+  it("is idempotent: re-recording the same key replaces in place, never duplicates", async () => {
     const sb = makeSb();
     currentSb = sb.client;
     await recordImportMapEntry("s1", "product", "gid://p/1", "owned-p1");
     await recordImportMapEntry("s1", "product", "gid://p/1", "owned-p1");
     expect(sb.rows).toHaveLength(1);
+  });
+
+  it("re-recording the same key with a new owned_id updates in place (not ignore)", async () => {
+    const sb = makeSb();
+    currentSb = sb.client;
+    await recordImportMapEntry("s1", "product", "gid://p/1", "owned-p1");
+    await recordImportMapEntry("s1", "product", "gid://p/1", "owned-p1-v2");
+    expect(sb.rows).toHaveLength(1);
+    expect(sb.rows[0].owned_id).toBe("owned-p1-v2");
   });
 
   it("records a null source_version when omitted", async () => {

@@ -56,7 +56,7 @@ export async function recordImportMapEntry(
   if (error) throw error;
 }
 
-/** Per-entity mapped-row counts for a shop (0 for an entity with no rows) — the parity gate's
+/** Per-entity mapped-row counts for a shop (0 for an entity with no rows); the parity gate's
  *  owned-side input. */
 export async function getImportMapCounts(
   shopId: string,
