@@ -8,6 +8,7 @@ import { priceLines } from "~/lib/order/cart.server";
 import type { QuoteLine } from "./types";
 import { getShopOrigin } from "./origin.server";
 import { getRateSource } from "./rate-source.server";
+import { buildParcel } from "~/lib/shipping/parcel.server";
 
 export interface CoarseDestination {
   zip: string;
@@ -60,8 +61,24 @@ export async function estimateShipping(
 
   // Coarse destination: zip + country (+ state if known). Street/city blank — EasyPost rates
   // primarily on zip+country; the engine flags lowConfidence which we surface as isEstimate.
+  const cart = await Promise.all(
+    priced.lines.map(async (l) => {
+      const base = { variantId: l.variantId, quantity: l.quantity };
+      try {
+        const p = await buildParcel(l.variantId);
+        return { ...base, weightOz: p.weightOz, lengthIn: p.lengthIn, widthIn: p.widthIn, heightIn: p.heightIn };
+      } catch (err) {
+        // Missing variant_shipping row is expected before the migration is applied; log anything else.
+        if (!(err instanceof Error && err.message.startsWith("no shipping data"))) {
+          console.error("[estimateShipping] buildParcel failed, using low-confidence fallback:", err);
+        }
+        return base; // no variant_shipping row (e.g. pre-migration) -> engine low-confidence fallback
+      }
+    }),
+  );
+
   const req: ShippingQuoteRequest = {
-    cart: priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+    cart,
     cartSubtotalCents: priced.subtotalCents,
     origin,
     destination: { street1: "", city: "", state: dest.state ?? "", zip: dest.zip, country: dest.country },

@@ -29,6 +29,7 @@ vi.mock("~/lib/supabase.server", () => ({
         update: () => chain,
         delete: () => (table === "variant_option_value" ? { eq: vovDelete } : chain),
         insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: "x" }, error: null }) }) }),
+        upsert: () => Promise.resolve({ error: null }),
         select: () => chain,
       };
     },

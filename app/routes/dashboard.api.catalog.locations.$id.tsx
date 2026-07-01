@@ -15,6 +15,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (Number.isFinite(body.priority)) patch.priority = Math.trunc(Number(body.priority));
   if (body.lat === null || Number.isFinite(body.lat)) patch.lat = body.lat === null ? null : Number(body.lat);
   if (body.lng === null || Number.isFinite(body.lng)) patch.lng = body.lng === null ? null : Number(body.lng);
+  if (typeof body.street1 === "string") patch.street1 = body.street1;
+  if (typeof body.street2 === "string") patch.street2 = body.street2;
+  if (typeof body.city === "string") patch.city = body.city;
+  if (typeof body.region === "string") patch.region = body.region;
+  if (typeof body.postalCode === "string") patch.postal_code = body.postalCode;
+  if (typeof body.country === "string") patch.country = body.country;
   if (Object.keys(patch).length === 0) return jsonError(422, "empty_patch");
 
   return dashboardJson(async () => {

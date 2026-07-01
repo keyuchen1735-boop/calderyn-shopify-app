@@ -34,6 +34,17 @@ function dollarsToCents(text: string): number | undefined {
   return Number.isFinite(n) ? Math.round(n * 100) : undefined;
 }
 
+function parseRestrictedCountries(text: string): string[] {
+  return text
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s.length === 2);
+}
+
+function restrictedCountriesText(codes?: string[]): string {
+  return (codes ?? []).join(", ");
+}
+
 export default function ProductEditor({ app }: { app: DashboardCtx }) {
   const id = app.nav.param && app.nav.param !== "new" ? app.nav.param : null;
 
@@ -146,7 +157,11 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
       app.toast("Product saved.", "check");
       app.navigate("catalog");
     } catch (err) {
-      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't save the product.", "warn", "critical");
+      if (err instanceof DashboardApiError && err.code === "incomplete_shipping") {
+        app.toast("Add size and weight before this product can go live.", "warn", "critical");
+      } else {
+        app.toast(err instanceof DashboardApiError ? err.message : "Couldn't save the product.", "warn", "critical");
+      }
     } finally {
       setSaving(false);
     }
@@ -410,6 +425,147 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
               </div>
             </Card>
           )}
+
+          <Card>
+            <SectionTitle>Shipping</SectionTitle>
+            <p className="cd-caption" style={{ marginBottom: 10 }}>
+              Per-variant dimensions and weight are required before a variant can go live as a shippable product.
+            </p>
+            <div className="flex flex-col gap-4">
+              {variants.map((v, i) => (
+                <div key={i} className="flex flex-col gap-2" style={{ paddingBottom: i < variants.length - 1 ? 12 : 0, borderBottom: i < variants.length - 1 ? "1px solid var(--hairline)" : "none" }}>
+                  <div className="cd-row-title">{variantLabel(v)}</div>
+                  <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={v.requiresShipping !== false}
+                      onChange={(e) => setVariantField(i, { requiresShipping: e.target.checked })}
+                    />
+                    <span>Physical product (requires shipping)</span>
+                  </label>
+                  {v.requiresShipping !== false && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="cd-field">
+                          <span>Weight (g)</span>
+                          <input
+                            className="cd-input tabular-nums"
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            aria-label={`Weight for ${variantLabel(v)}`}
+                            value={v.weightGrams ?? ""}
+                            onChange={(e) =>
+                              setVariantField(i, {
+                                weightGrams: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="cd-field">
+                          <span>Handling days</span>
+                          <input
+                            className="cd-input tabular-nums"
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            aria-label={`Handling days for ${variantLabel(v)}`}
+                            value={v.handlingDays ?? ""}
+                            onChange={(e) =>
+                              setVariantField(i, {
+                                handlingDays: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <label className="cd-field">
+                          <span>Length (mm)</span>
+                          <input
+                            className="cd-input tabular-nums"
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            aria-label={`Length for ${variantLabel(v)}`}
+                            value={v.lengthMm ?? ""}
+                            onChange={(e) =>
+                              setVariantField(i, {
+                                lengthMm: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="cd-field">
+                          <span>Width (mm)</span>
+                          <input
+                            className="cd-input tabular-nums"
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            aria-label={`Width for ${variantLabel(v)}`}
+                            value={v.widthMm ?? ""}
+                            onChange={(e) =>
+                              setVariantField(i, {
+                                widthMm: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="cd-field">
+                          <span>Height (mm)</span>
+                          <input
+                            className="cd-input tabular-nums"
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            aria-label={`Height for ${variantLabel(v)}`}
+                            value={v.heightMm ?? ""}
+                            onChange={(e) =>
+                              setVariantField(i, {
+                                heightMm: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      {(() => {
+                        const shippingIncomplete = !(Number(v.weightGrams) > 0 && Number(v.lengthMm) > 0 && Number(v.widthMm) > 0 && Number(v.heightMm) > 0);
+                        return shippingIncomplete ? (
+                          <span className="cd-caption" style={{ color: "var(--cd-warning, #b45309)" }}>Incomplete — rates estimated</span>
+                        ) : null;
+                      })()}
+                      <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={v.signatureRequired === true}
+                          onChange={(e) => setVariantField(i, { signatureRequired: e.target.checked })}
+                        />
+                        <span>Signature required on delivery</span>
+                      </label>
+                      <label className="cd-field">
+                        <span>Restricted countries (ISO-2, comma-separated)</span>
+                        <input
+                          className="cd-input"
+                          placeholder="e.g. RU, KP, IR"
+                          aria-label={`Restricted countries for ${variantLabel(v)}`}
+                          value={restrictedCountriesText(v.restrictedCountries)}
+                          onChange={(e) =>
+                            setVariantField(i, { restrictedCountries: parseRestrictedCountries(e.target.value) })
+                          }
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
 
           <Card>
             <SectionTitle>Collections</SectionTitle>

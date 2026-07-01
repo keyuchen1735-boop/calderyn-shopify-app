@@ -17,6 +17,14 @@ export interface VariantInput {
   inventoryTracked?: boolean;
   inventoryOnHand?: number;
   optionValues?: string[]; // option-value labels this variant represents, e.g. ["M","Red"]
+  weightGrams?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  requiresShipping?: boolean;
+  handlingDays?: number;
+  signatureRequired?: boolean;
+  restrictedCountries?: string[];
 }
 export interface ProductInput {
   title: string;
@@ -55,6 +63,14 @@ export interface ProductDetail {
     inventoryTracked: boolean | null;
     inventoryOnHand: number;
     optionValueIds: string[];
+    weightGrams: number;
+    lengthMm: number | null;
+    widthMm: number | null;
+    heightMm: number | null;
+    requiresShipping: boolean;
+    handlingDays: number;
+    signatureRequired: boolean;
+    restrictedCountries: string[];
   }>;
   media: Array<{ id: string; storagePath: string; alt: string | null; position: number; isPrimary: boolean }>;
   collectionIds: string[];

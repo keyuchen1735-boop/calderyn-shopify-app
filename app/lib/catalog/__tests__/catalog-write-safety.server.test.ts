@@ -31,6 +31,7 @@ vi.mock("~/lib/supabase.server", () => ({
         if (table === "product_collection") { productCollections.push(...(rows as typeof productCollections)); return Promise.resolve({ error: null }); }
         return Promise.resolve({ error: null });
       },
+      upsert: () => Promise.resolve({ error: null }),
       // collection_dim ownership lookup: return only requested ids that are owned.
       select: () => ({ eq: () => ({ in: (_col: string, ids: string[]) => Promise.resolve({ data: ids.filter((i) => ownedSet.has(i)).map((id) => ({ id })), error: null }) }) }),
       delete: () => ({ eq: () => Promise.resolve({ error: null }) }),
@@ -90,7 +91,7 @@ describe("validateProductInput caps + dedup", () => {
   it("de-dups values within an option but keeps a label shared across options", async () => {
     const { validateProductInput } = await import("../validate");
     const r = validateProductInput({
-      title: "T", status: "active", variants: [{ sku: "a" }],
+      title: "T", status: "active", variants: [{ sku: "a", weightGrams: 100, lengthMm: 50, widthMm: 50, heightMm: 50 }],
       options: [{ name: "Size", values: ["M", "M", "L"] }, { name: "Trim", values: ["M"] }],
     });
     expect(r.ok).toBe(true);

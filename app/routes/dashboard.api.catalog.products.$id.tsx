@@ -42,6 +42,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           optionValues: v.optionValueIds
             .map((vid) => labelById.get(vid))
             .filter((s): s is string => Boolean(s)),
+          weightGrams: v.weightGrams ?? undefined,
+          lengthMm: v.lengthMm ?? undefined,
+          widthMm: v.widthMm ?? undefined,
+          heightMm: v.heightMm ?? undefined,
+          requiresShipping: v.requiresShipping ?? undefined,
+          handlingDays: v.handlingDays ?? undefined,
+          signatureRequired: v.signatureRequired ?? undefined,
+          restrictedCountries: v.restrictedCountries ?? undefined,
         })),
         media: product.media.map((m) => ({
           id: m.id,
