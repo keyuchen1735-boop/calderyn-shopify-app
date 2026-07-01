@@ -34,11 +34,28 @@ export function validateProductInput(
       inventoryTracked: typeof o.inventoryTracked === "boolean" ? o.inventoryTracked : undefined,
       inventoryOnHand: Number.isFinite(o.inventoryOnHand) ? Math.max(0, Math.trunc(Number(o.inventoryOnHand))) : 0,
       optionValues: Array.isArray(o.optionValues) ? (o.optionValues as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
+      weightGrams: Number.isFinite(o.weightGrams) ? Number(o.weightGrams) : undefined,
+      lengthMm: Number.isFinite(o.lengthMm) ? Number(o.lengthMm) : undefined,
+      widthMm: Number.isFinite(o.widthMm) ? Number(o.widthMm) : undefined,
+      heightMm: Number.isFinite(o.heightMm) ? Number(o.heightMm) : undefined,
+      requiresShipping: typeof o.requiresShipping === "boolean" ? o.requiresShipping : undefined,
+      handlingDays: Number.isFinite(o.handlingDays) ? Number(o.handlingDays) : undefined,
+      signatureRequired: typeof o.signatureRequired === "boolean" ? o.signatureRequired : undefined,
+      restrictedCountries: Array.isArray(o.restrictedCountries) ? (o.restrictedCountries as unknown[]).filter((c): c is string => typeof c === "string") : undefined,
     };
   });
+  const ISO2 = /^[A-Za-z]{2}$/;
   for (const v of variants) {
     if (v.retailPriceCents != null && v.retailPriceCents < 0) return { ok: false, code: "negative_price" };
     if (v.unitCostCents != null && v.unitCostCents < 0) return { ok: false, code: "negative_cost" };
+    if (v.restrictedCountries?.some((c) => !ISO2.test(c))) return { ok: false, code: "invalid_country" };
+    // Only ACTIVE products must ship-complete; drafts may be incomplete.
+    const physical = v.requiresShipping !== false;
+    if (status === "active" && physical) {
+      if (!(v.weightGrams && v.weightGrams > 0) || !(v.lengthMm && v.lengthMm > 0) || !(v.widthMm && v.widthMm > 0) || !(v.heightMm && v.heightMm > 0)) {
+        return { ok: false, code: "incomplete_shipping" };
+      }
+    }
   }
 
   const options = Array.isArray(r.options)
