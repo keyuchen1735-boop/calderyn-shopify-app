@@ -139,17 +139,17 @@ describe("makeToolDispatcher", () => {
     expect(flagAlert).not.toHaveBeenCalled();
   });
 
-  it("refuses a commerce tool when the caller lacks the commerce scope", async () => {
-    const dispatch = makeToolDispatcher({} as never, { scopes: ["read"] });
+  it("returns COMMERCE_UNAVAILABLE when a commerce tool is called with no commerceCtx", async () => {
+    const dispatch = makeToolDispatcher({} as never);
     const res = await dispatch("place_order", { quote_id: "q1", email: "b@x.com" });
     expect(res.isError).toBe(true);
-    expect(JSON.parse(res.content).code).toBe("COMMERCE_SCOPE_REQUIRED");
+    expect(JSON.parse(res.content).code).toBe("COMMERCE_UNAVAILABLE");
   });
 
-  it("routes a commerce tool to the handler when commerce scope + ctx present", async () => {
+  it("routes a commerce tool to the handler when commerceCtx is present (no scope needed)", async () => {
     vi.mocked(commerceTools.handleCommerceTool).mockClear();
     const ctx = { shopId: "s1", clientId: "c1" };
-    const dispatch = makeToolDispatcher({} as never, { scopes: ["commerce"], commerceCtx: ctx });
+    const dispatch = makeToolDispatcher({} as never, { commerceCtx: ctx });
     const res = await dispatch("place_order", { quote_id: "q1", email: "b@x.com" });
     expect(res.isError).toBeFalsy();
     expect(JSON.parse(res.content).pay_url).toBe("https://stripe/cs_1");

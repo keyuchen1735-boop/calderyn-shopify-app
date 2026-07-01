@@ -115,6 +115,12 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+/**
+ * Full toolset advertised to external connected buyer clients (the calderyn-mcp server).
+ * The in-app merchant assistant uses ASSISTANT_TOOLS only.
+ */
+export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS];
+
 function ok(obj: unknown): ToolDispatchResult {
   return { content: JSON.stringify(obj) };
 }
@@ -130,19 +136,9 @@ export interface ToolDispatcherDeps {
    * Surfaces that don't support flagging simply omit it.
    */
   flagAlert?: (alertId: string) => Promise<boolean>;
-  /** Scopes granted to this caller. Must include "commerce" to access commerce tools. */
-  scopes?: string[];
-  /** Shop + OAuth client context required by commerce tool handlers. */
+  /** Shop + OAuth client context required by commerce tool handlers. When present, commerce
+   *  tools are available to this caller (frictionless — no scope string required). */
   commerceCtx?: CommerceCtx;
-}
-
-/**
- * Returns the tool list appropriate for the given scope set.
- * Commerce tools are surfaced only to callers carrying the "commerce" scope;
- * the in-app merchant assistant (no "commerce" scope) never sees or runs them.
- */
-export function toolsForScopes(scopes: string[] | undefined): Anthropic.Tool[] {
-  return scopes?.includes("commerce") ? [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS] : ASSISTANT_TOOLS;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
@@ -152,8 +148,8 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
   ): Promise<ToolDispatchResult> {
     try {
       if (COMMERCE_NAME_SET.has(name)) {
-        if (!deps.scopes?.includes("commerce") || !deps.commerceCtx) {
-          return toolError("COMMERCE_SCOPE_REQUIRED", `${name} requires the commerce scope`);
+        if (!deps.commerceCtx) {
+          return toolError("COMMERCE_UNAVAILABLE", `${name} is only available to a connected commerce client`);
         }
         return await handleCommerceTool(name, input, deps.commerceCtx);
       }
