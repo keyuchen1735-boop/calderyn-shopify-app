@@ -48,6 +48,7 @@ export async function canShipTo(variantId: string, destCountryIso2: string): Pro
     .eq("variant_id", variantId)
     .maybeSingle();
   if (error) throw error;
-  const restricted = ((data?.restricted_countries as string[]) ?? []).map((c) => c.toUpperCase());
+  if (!data) throw new Error(`no shipping data for variant ${variantId}`);
+  const restricted = (Array.isArray(data.restricted_countries) ? (data.restricted_countries as string[]) : []).map((c) => c.toUpperCase());
   return !restricted.includes(destCountryIso2.toUpperCase());
 }
