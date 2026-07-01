@@ -9,6 +9,7 @@ import type { CartQuote, QuoteDestination, QuoteLine } from "./types";
 import { getShopOrigin } from "./origin.server";
 import { getRateSource } from "./rate-source.server";
 import { calculateTax } from "./tax.server";
+import { buildParcel } from "~/lib/shipping/parcel.server";
 
 export async function quoteCart(
   shopId: string,
@@ -26,8 +27,20 @@ export async function quoteCart(
   const subtotalCents = opts.subtotalCentsOverride ?? priced.subtotalCents;
   const origin = await getShopOrigin(shopId); // throws ORIGIN_NOT_CONFIGURED if unset
 
+  const cart = await Promise.all(
+    priced.lines.map(async (l) => {
+      const base = { variantId: l.variantId, quantity: l.quantity };
+      try {
+        const p = await buildParcel(l.variantId);
+        return { ...base, weightOz: p.weightOz, lengthIn: p.lengthIn, widthIn: p.widthIn, heightIn: p.heightIn };
+      } catch {
+        return base; // no variant_shipping row (e.g. pre-migration) -> engine low-confidence fallback
+      }
+    }),
+  );
+
   const req: ShippingQuoteRequest = {
-    cart: priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+    cart,
     cartSubtotalCents: subtotalCents, // free-ship thresholds evaluate on the authoritative subtotal
     origin,
     destination,
