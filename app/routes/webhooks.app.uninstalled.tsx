@@ -2,8 +2,9 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
-import { markShopUninstalled } from "~/lib/supabase.server";
+import { markShopUninstalled, resolveShopId } from "~/lib/supabase.server";
 import { revokeAllSessionsForShop } from "~/lib/dashboard/session.server";
+import { deactivateCarrierService } from "~/lib/shipping/carrier-service.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, topic, webhookId } = await authenticate.webhook(request);
@@ -28,6 +29,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await revokeAllSessionsForShop(shop);
   } catch (err) {
     console.error(`Failed to revoke dashboard sessions for ${shop}`, err);
+  }
+
+  // Deactivate the CarrierService registration (#6.4). Shopify drops the carrier
+  // service on uninstall; flipping our row to inactive makes the rate callback
+  // reject fail-closed (401) before reinstall re-registers. Best-effort + idempotent.
+  try {
+    await deactivateCarrierService(await resolveShopId(shop));
+  } catch (err) {
+    console.error(`Failed to deactivate CarrierService for ${shop}`, err);
   }
 
   try {

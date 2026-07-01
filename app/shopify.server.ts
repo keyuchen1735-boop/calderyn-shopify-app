@@ -9,6 +9,7 @@ import prisma from "./db.server";
 import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server";
 import { enqueueShopifyBackfill, shopifyNeverSynced } from "./lib/ingest/enqueue.server";
 import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
+import { registerCarrierService } from "./lib/shipping/carrier-service.server";
 
 // A failure in a fire-and-forget background task — e.g. the session-store table
 // poll the Prisma session storage starts in its constructor, which rejects if
@@ -42,9 +43,22 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   hooks: {
-    afterAuth: async ({ session }) => {
+    afterAuth: async ({ session, admin }) => {
       try {
         await provisionShop(session.shop);
+        // Register the Shopify CarrierService so a buyer's checkout computes shipping
+        // via Calderyn (#6.4). Idempotent (re-auth never duplicates). Best-effort and
+        // isolated: it requires the write_shipping scope + a qualifying store plan, so
+        // a userError/throw here (e.g. before re-consent) must never block install.
+        try {
+          const carrierShopId = await resolveShopId(session.shop);
+          await registerCarrierService(admin, {
+            shopId: carrierShopId,
+            baseUrl: process.env.SHOPIFY_APP_URL || "https://app.calderyncompany.com",
+          });
+        } catch (err) {
+          console.error(`[afterAuth] CarrierService registration failed for ${session.shop}`, err);
+        }
         // Snapshot first-install state BEFORE enqueue resets sync_status.
         const firstInstall = await shopifyNeverSynced(session.shop);
         await enqueueShopifyBackfill(session.shop);
