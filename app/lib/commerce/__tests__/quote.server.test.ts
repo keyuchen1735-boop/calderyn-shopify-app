@@ -176,7 +176,11 @@ describe("estimateShipping — buildParcel wiring", () => {
     mockPriceLines.mockResolvedValue(makePricedLines("var_noship") as never);
     mockBuildParcel.mockRejectedValue(new Error("no shipping data for variant var_noship"));
 
-    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    let capturedReq: unknown;
+    const fakeEngine = vi.fn(async (req: unknown) => {
+      capturedReq = req;
+      return FAKE_QUOTE_RESULT;
+    });
     mockGetShippingEngine.mockReturnValue(fakeEngine as never);
 
     const { estimateShipping } = await import("~/lib/commerce/estimate.server");
@@ -184,5 +188,12 @@ describe("estimateShipping — buildParcel wiring", () => {
 
     expect(result.isEstimate).toBe(true);
     expect(result.cheapest.amountCents).toBe(799);
+
+    const req = capturedReq as { cart: { variantId: string; quantity: number; weightOz?: number; lengthIn?: number; widthIn?: number; heightIn?: number }[] };
+    // Bare line — no dims attached (engine receives only variantId + quantity)
+    expect(req.cart[0].weightOz).toBeUndefined();
+    expect(req.cart[0].lengthIn).toBeUndefined();
+    expect(req.cart[0].widthIn).toBeUndefined();
+    expect(req.cart[0].heightIn).toBeUndefined();
   });
 });

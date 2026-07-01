@@ -67,7 +67,11 @@ export async function estimateShipping(
       try {
         const p = await buildParcel(l.variantId);
         return { ...base, weightOz: p.weightOz, lengthIn: p.lengthIn, widthIn: p.widthIn, heightIn: p.heightIn };
-      } catch {
+      } catch (err) {
+        // Missing variant_shipping row is expected before the migration is applied; log anything else.
+        if (!(err instanceof Error && err.message.startsWith("no shipping data"))) {
+          console.error("[estimateShipping] buildParcel failed, using low-confidence fallback:", err);
+        }
         return base; // no variant_shipping row (e.g. pre-migration) -> engine low-confidence fallback
       }
     }),
