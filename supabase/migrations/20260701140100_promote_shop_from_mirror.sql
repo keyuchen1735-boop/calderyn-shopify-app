@@ -20,9 +20,11 @@ begin
   -- Inventory: seed inventory_balance.on_hand from the LATEST observation per
   -- (variant, location). Guarded so an orphan fact (variant/location not present
   -- in the owned tables) is skipped rather than failing the whole import.
+  -- greatest(...,0): a negative observation (oversold mirror row) must not seed
+  -- negative physical stock (matches the canonical inventory_seed clamp).
   insert into public.inventory_balance (shop_id, variant_id, location_id, on_hand)
   select distinct on (f.sku_id, f.location_id)
-    f.shop_id, f.sku_id, f.location_id, f.available
+    f.shop_id, f.sku_id, f.location_id, greatest(f.available, 0)
   from public.inventory_level_fact f
   where f.shop_id = p_shop_id
     and exists (select 1 from public.variant_dim v where v.id = f.sku_id)

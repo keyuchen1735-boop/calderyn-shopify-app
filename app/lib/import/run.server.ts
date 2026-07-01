@@ -6,6 +6,9 @@ import { backfillShop } from "../ingest/backfill.server";
 import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./promote.server";
 
 const IMPORT_WINDOW_DAYS = 365; // 12 months
+// A 12-month pull is heavy; bound how many imports one cron tick processes so the
+// serverless function stays under its timeout (mirrors Phase 1's MAX_BACKFILL_SHOPS).
+const IMPORT_DRAIN_PER_TICK = 2;
 
 export type ImportState = "pulling" | "promoting" | "done" | "error";
 
@@ -54,7 +57,8 @@ export async function drainImports(): Promise<{ processed: number }> {
   const { data: rows, error } = await sb
     .from("import_run")
     .select("id, shop_id, since_days, shops!inner(shop_domain)")
-    .eq("state", "pulling");
+    .eq("state", "pulling")
+    .limit(IMPORT_DRAIN_PER_TICK);
   if (error) throw new Error(`drainImports query failed: ${error.message}`);
 
   let processed = 0;
