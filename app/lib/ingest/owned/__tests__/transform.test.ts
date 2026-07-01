@@ -5,7 +5,7 @@ import { OWNED_CHECKOUT_COMPLETED } from "../events";
 const SHOP = "00000000-0000-0000-0000-000000000001";
 const VARIANT = "22222222-2222-2222-2222-222222222222";
 
-function rawRow(id: string, type = OWNED_CHECKOUT_COMPLETED, overrides: Record<string, unknown> = {}) {
+function rawRow(id: string, type: string = OWNED_CHECKOUT_COMPLETED, overrides: Record<string, unknown> = {}) {
   const payload = {
     event_id: id, type, shop_id: SHOP, occurred_at: "2026-06-30T12:00:00.000Z",
     order: {
