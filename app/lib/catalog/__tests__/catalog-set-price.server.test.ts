@@ -14,5 +14,6 @@ describe("setVariantPrice", () => {
     const r = await setVariantPrice("shop1", "v1", 2499);
     expect(r).toEqual({ priorPriceCents: 1999 });
     expect(project).toHaveBeenCalledWith("p1");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ retail_price_cents: 2499 }));
   });
 });
