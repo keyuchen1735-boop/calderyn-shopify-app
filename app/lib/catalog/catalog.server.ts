@@ -396,3 +396,30 @@ export async function createCollection(shopId: string, title: string): Promise<{
   if (error) throw error;
   return { id: String(data.id) };
 }
+
+export async function setVariantPrice(
+  shopId: string,
+  variantId: string,
+  priceCents: number,
+): Promise<{ priorPriceCents: number | null }> {
+  const sb = getSupabase();
+  const { data: v, error } = await sb
+    .from("variant_dim")
+    .select("product_id, retail_price_cents")
+    .eq("shop_id", shopId)
+    .eq("id", variantId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!v) throw new Error(`variant ${variantId} not found for shop`);
+  const priorPriceCents = v.retail_price_cents == null ? null : Number(v.retail_price_cents);
+
+  const { error: upErr } = await sb
+    .from("variant_dim")
+    .update({ retail_price_cents: priceCents, updated_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
+    .eq("id", variantId);
+  if (upErr) throw upErr;
+
+  await projectProductToSkuDim(String(v.product_id));
+  return { priorPriceCents };
+}
