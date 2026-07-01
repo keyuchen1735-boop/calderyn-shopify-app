@@ -393,7 +393,7 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                     <input
                       className="cd-input tabular-nums"
                       type="number"
-                      min="1"
+                      min="0"
                       step="1"
                       inputMode="numeric"
                       aria-label={`Weight in grams for ${variantLabel(v)}`}
@@ -409,7 +409,7 @@ export default function ProductEditor({ app }: { app: DashboardCtx }) {
                         key={axis}
                         className="cd-input tabular-nums"
                         type="number"
-                        min="1"
+                        min="0"
                         step="1"
                         inputMode="numeric"
                         aria-label={`${axis.replace("Mm", "")} in millimetres for ${variantLabel(v)}`}
