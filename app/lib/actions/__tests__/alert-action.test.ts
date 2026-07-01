@@ -15,6 +15,17 @@ const snoozeAlert = vi.fn();
 vi.mock("../snooze.server", () => ({
   snoozeAlert: (...a: unknown[]) => snoozeAlert(...a),
 }));
+const getOrgMode = vi.fn();
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+}));
+const resolveOwnedMoveTarget = vi.fn();
+const applyOwnedInventoryMove = vi.fn();
+vi.mock("../owned-writes.server", () => ({
+  resolveOwnedMoveTarget: (...a: unknown[]) => resolveOwnedMoveTarget(...a),
+  applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
+}));
 
 const TRANSFER_EVIDENCE = {
   inventory_item_id: "gid://shopify/InventoryItem/1",
@@ -92,6 +103,103 @@ beforeEach(() => {
   actionsExecute.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
   acknowledgeAlert.mockResolvedValue(true);
   snoozeAlert.mockResolvedValue(true);
+  getOrgMode.mockResolvedValue("mirror");
+  resolveOwnedMoveTarget.mockResolvedValue({
+    variantId: "var-1",
+    fromLocationId: "loc-9",
+    toLocationId: "loc-2",
+  });
+  applyOwnedInventoryMove.mockResolvedValue({ transferId: "tr-1" });
+});
+
+describe("executeInventoryAlertAction — org_mode routing", () => {
+  it("mirror: never touches the owned engine", async () => {
+    await run("reallocate_inventory");
+    expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+    expect(resolveOwnedMoveTarget).not.toHaveBeenCalled();
+  });
+
+  it("live: moves stock via the owned engine, never Shopify, with owned undo markers", async () => {
+    getOrgMode.mockResolvedValue("live");
+    await run("reallocate_inventory");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith({
+      shopId: "shop-1",
+      variantId: "var-1",
+      fromLocationId: "loc-9",
+      toLocationId: "loc-2",
+      quantity: 21,
+    });
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          owned: true,
+          owned_transfer_id: "tr-1",
+          owned_variant_id: "var-1",
+          shopify_operation_id: "tr-1",
+        }),
+      }),
+    );
+  });
+
+  it("live: 422s when the plan's refs aren't linked to the owned store", async () => {
+    getOrgMode.mockResolvedValue("live");
+    resolveOwnedMoveTarget.mockResolvedValue(null);
+    await expect(run("reallocate_inventory")).rejects.toMatchObject({
+      code: "invalid_inventory_evidence",
+      status: 422,
+    });
+    expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+    expect(actionsExecute).not.toHaveBeenCalled();
+  });
+
+  it("dual_run: writes Shopify AND mirrors into the owned engine", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    await run("reallocate_inventory");
+    expect(inventoryAdjustQuantities).toHaveBeenCalled();
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith(
+      expect.objectContaining({ variantId: "var-1", quantity: 21 }),
+    );
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          dual_write: "ok",
+          owned_transfer_id: "tr-1",
+          shopify_operation_id: "gid://op/1",
+        }),
+      }),
+    );
+  });
+
+  it("dual_run: a failed owned mirror never fails the action, recorded on the audit", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    applyOwnedInventoryMove.mockRejectedValue(new Error("insufficient_stock"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await run("reallocate_inventory");
+      expect(res.outcome).toBe("succeeded");
+    } finally {
+      consoleError.mockRestore();
+    }
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ dual_write: "failed: insufficient_stock" }),
+      }),
+    );
+  });
+
+  it("dual_run: unlinked refs record a skipped mirror, action still succeeds", async () => {
+    getOrgMode.mockResolvedValue("dual_run");
+    resolveOwnedMoveTarget.mockResolvedValue(null);
+    const res = await run("reallocate_inventory");
+    expect(res.outcome).toBe("succeeded");
+    expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ dual_write: "skipped_unlinked" }),
+      }),
+    );
+  });
 });
 
 describe("executeInventoryAlertAction — reallocate_inventory", () => {

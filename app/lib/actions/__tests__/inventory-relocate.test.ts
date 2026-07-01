@@ -232,6 +232,46 @@ describe("executeInventoryRelocation", () => {
       expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
       const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
       expect(audit.params.shopify_operation_id).toBe("tr-1"); // owned transfer id in the operation slot
+      // Owned undo markers: undo.server.ts reverses through the owned engine off these.
+      expect(audit.params.owned).toBe(true);
+      expect(audit.params.owned_transfer_id).toBe("tr-1");
+      expect(audit.params.owned_variant_id).toBe("sku-1");
+      expect(audit.params.owned_from_location_id).toBe("loc-a");
+      expect(audit.params.owned_to_location_id).toBe("loc-b");
+    });
+
+    it("dual_run: writes Shopify AND mirrors the move into the owned engine", async () => {
+      getOrgMode.mockResolvedValue("dual_run");
+      const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+      expect(res.outcome).toBe("succeeded");
+      expect(inventoryAdjustQuantities).toHaveBeenCalled(); // Shopify stays authoritative
+      expect(applyOwnedInventoryMove).toHaveBeenCalledWith({
+        shopId: SHOP,
+        variantId: "sku-1",
+        fromLocationId: "loc-a",
+        toLocationId: "loc-b",
+        quantity: 40,
+      });
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
+      expect(audit.params.dual_write).toBe("ok");
+      expect(audit.params.owned_transfer_id).toBe("tr-1");
+      expect(audit.params.owned).toBeUndefined(); // Shopify was authoritative, not owned
+    });
+
+    it("dual_run: a failed owned mirror never fails the action, recorded on the audit", async () => {
+      getOrgMode.mockResolvedValue("dual_run");
+      applyOwnedInventoryMove.mockRejectedValue(new Error("insufficient_stock"));
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+        expect(res.outcome).toBe("succeeded");
+      } finally {
+        consoleError.mockRestore();
+      }
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
+      expect(audit.outcome).toBe("succeeded");
+      expect(audit.params.dual_write).toBe("failed: insufficient_stock");
+      expect(audit.params.owned_transfer_id).toBeUndefined();
     });
 
     it("live: records a FAILED audit row when the owned engine rejects (insufficient stock)", async () => {
