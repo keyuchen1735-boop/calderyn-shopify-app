@@ -17,6 +17,7 @@ vi.mock("~/lib/attribution/revenue.server", () => ({ reconcileAttributedRevenue 
 vi.mock("~/lib/ingest/transform.server", () => ({ transformPendingWebhooks }));
 vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
 vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
+vi.mock("~/lib/import/run.server", () => ({ drainImports: vi.fn(async () => ({ processed: 0 })) }));
 
 // Fake Supabase modelling the two cron.ingest query shapes against a fixed set
 // of active shops. The active Shopify state after backfill is sync_status="ready"

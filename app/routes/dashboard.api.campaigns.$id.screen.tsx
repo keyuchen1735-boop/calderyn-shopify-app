@@ -77,6 +77,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (urlError) return jsonError(422, "disallowed_media_url", urlError);
 
   return dashboardJson(async () => ({
-    run: await executeScreen({ shop: session.shopDomain, input, assumedSpendCents }),
+    run: await executeScreen({ shop: session.shopId, input, assumedSpendCents }),
   }));
 }

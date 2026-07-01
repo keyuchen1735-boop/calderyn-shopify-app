@@ -1,5 +1,8 @@
 import Stripe from "stripe";
 import { getSupabase } from "~/lib/supabase.server";
+import { transitionOrder } from "~/lib/order/order.server";
+import { emitPaidOrder } from "~/lib/order/emit.server";
+import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
 
 let _stripe: Stripe | null = null;
 
@@ -125,9 +128,52 @@ export async function processStripeEvent(
   if (error) throw error;
 
   const processed = data === true; // true = first delivery, false = duplicate no-op
-  if (processed && succeeded) {
-    // ponytail: STUBBED order step — no order table until #2. Upgrade: real order.state='paid' via #2's adapter.
-    console.info(`[stripe] would set order ${pi.metadata?.order_ref || "(none)"} to paid for PI ${pi.id}`);
+  if (succeeded) {
+    const orderRef = pi.metadata?.order_ref;
+    if (!orderRef) {
+      // A Calderyn PI without an order_ref can't be tied back to an order — surface it (rule 12)
+      // rather than silently dropping the paid signal.
+      console.warn(`[stripe] PI ${pi.id} succeeded but carries no order_ref metadata; no order transitioned`);
+    } else {
+      // STATE TRANSITION — first delivery ONLY (gated on record_stripe_event==true, the unique
+      // stripe_event row). Only checkout_pending -> paid is legal; the state machine REJECTS
+      // (throws) a force-pay of any other state, so an already-paid/cancelled order is never
+      // silently re-paid. The hard invariant: an order reaches `paid` ONLY here, after Stripe
+      // confirms capture. We do NOT re-transition on a redelivery (idempotency of the SoT).
+      if (processed) {
+        await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
+        // Keep the OLTP money table consistent with order_fact: stamp financial_status alongside
+        // the state move (the migration scopes financial_status to #2b). Scoped + shop-checked.
+        const upd = await getSupabase()
+          .from("orders")
+          .update({ financial_status: "paid" })
+          .eq("shop_id", shopId)
+          .eq("id", orderRef);
+        if (upd.error) throw upd.error;
+
+        // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
+        // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
+        // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
+        // can never break payment processing or trigger a Stripe retry storm.
+        await sendOrderConfirmation(shopId, orderRef);
+      }
+
+      // WAREHOUSE EMIT — runs on ANY succeeded delivery (including duplicates). emitPaidOrder is
+      // self-guarded (it emits only when the order is CURRENTLY paid) and idempotent (onConflict),
+      // so this is the self-healing path: if the first-delivery emit threw AFTER the order
+      // committed to paid, Stripe's at-least-once redelivery re-runs it and the order_fact /
+      // order_line_fact / ad_click_ref rows land on the retry. A stale succeeded redelivery for an
+      // order since moved to refunded is a guarded no-op. The event time is a stable source_version
+      // across redeliveries of the same event.
+      //
+      // ponytail: the transition is still NOT in the same transaction as the event record, so a
+      // crash AFTER record_stripe_event but BEFORE transitionOrder leaves a recorded event with an
+      // un-transitioned order (the redelivery is duplicate-gated, so it won't re-transition — emit
+      // then sees a non-paid order and no-ops). The GA upgrade folds the order CAS into the
+      // record_stripe_event security-definer RPC; gating-on-first-delivery + self-healing emit is
+      // the pilot guard.
+      await emitPaidOrder(shopId, orderRef, new Date(event.created * 1000).toISOString());
+    }
   }
   return { status: 200, processed, duplicate: !processed };
 }

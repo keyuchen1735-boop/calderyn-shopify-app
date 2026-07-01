@@ -10,7 +10,7 @@ import { resolveCampaignDirection } from "~/lib/actions/direction-reason.server"
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const id = String(params.id);
-  const client = calderynClient(session.shopDomain);
+  const client = calderynClient(session.shopId);
   const [campaign, openAlerts, guardrails] = await Promise.all([
     client.campaigns.get(id),
     client.alerts.list({ status: "open" }).catch(() => []),

@@ -3,8 +3,10 @@ import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop, syncProductInventorySettings } from "~/lib/ingest/backfill.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
+import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
+import { drainImports } from "~/lib/import/run.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
@@ -42,8 +44,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     inventorySettingsErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
+    ownedTransform: { processed: 0, facts: 0, dlq: 0 },
+    ownedTransformError: null as string | null,
     attributionErrors: [] as string[],
     shipCostErrors: [] as string[],
+    imports: { processed: 0 },
+    importError: null as string | null,
   };
 
   // Phase 1: backfill pending shops (bounded)
@@ -102,6 +108,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("[cron.ingest] transform phase failed", err);
   }
 
+  // Phase 2b: transform queued OWNED checkout events (isolated like Phase 2, so an
+  // owned-transform failure doesn't abort the Shopify transform or the response).
+  try {
+    summary.ownedTransform = await transformPendingOwnedEvents();
+  } catch (err) {
+    summary.ownedTransformError = err instanceof Error ? err.message : String(err);
+    console.error("[cron.ingest] owned transform phase failed", err);
+  }
+
   // Phase 3: reconcile attributed revenue for all active shops (per-shop isolation
   // — one shop's failure is recorded in summary.attributionErrors and does not
   // abort reconciliation for other shops).
@@ -132,6 +147,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.shipCostErrors.push(`${shopId}: ${stringifyError(err)}`);
       console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
     }
+  }
+
+  // Phase 5: drain import-from-Shopify runs (pull 12 months + promote mirror -> owned).
+  // Isolated like the other phases so an import failure doesn't abort the response.
+  try {
+    summary.imports = await drainImports();
+  } catch (err) {
+    summary.importError = err instanceof Error ? err.message : String(err);
+    console.error("[cron.ingest] import drain failed", err);
   }
 
   return json(summary);

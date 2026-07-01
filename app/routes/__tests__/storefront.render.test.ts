@@ -8,6 +8,7 @@ import StorefrontHome, { loader as homeLoader } from "../storefront._index";
 import StorefrontCollection, { loader as collectionLoader } from "../storefront.collections.$handle";
 import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
 import type { StorefrontCatalog } from "~/lib/storefront/catalog";
+import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 
 // getCatalog is mocked file-wide; default returns the REAL fixture so the
 // criterion-1 loader tests exercise real fixture data, while the swap test
@@ -20,10 +21,17 @@ const { getCatalogMock, loaderDataRef } = vi.hoisted(() => ({
   loaderDataRef: { current: null as unknown },
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
-vi.mock("@remix-run/react", () => ({
-  useLoaderData: () => loaderDataRef.current,
-  Outlet: () => null,
-}));
+vi.mock("@remix-run/react", async () => {
+  // The real Remix <Form> needs router context; stub it as a plain <form> so the
+  // PDP's add-to-cart form (#2c-1) renders in the node test environment.
+  const { createElement } = await import("react");
+  return {
+    useLoaderData: () => loaderDataRef.current,
+    Outlet: () => null,
+    Form: ({ children, method, className }: { children?: unknown; method?: string; className?: string }) =>
+      createElement("form", { method, className }, children as never),
+  };
+});
 
 beforeEach(() => {
   getCatalogMock.mockReset();
@@ -63,32 +71,39 @@ describe("storefront layout", () => {
 });
 
 describe("storefront home", () => {
-  it("loads all fixture collections and products (shopId-scoped)", async () => {
+  it("loads the home block document + resolved fixture data (shopId-scoped)", async () => {
     const res = await homeLoader({ request: req(), params: {}, context: {} });
     const data = await res.json();
-    expect(data.collections.length).toBe(2);
-    expect(data.products.length).toBe(4);
+    // The demo (non-uuid) shop has no published doc → the never-blank default doc.
+    expect(data.doc.blocks.map((b: { type: string }) => b.type)).toEqual(["hero", "productGrid"]);
+    // The default doc's product grid uses the `all` source → all 4 fixture products.
+    expect(data.data.allProducts.length).toBe(4);
   });
 
-  it("renders a product grid with collection nav", () => {
+  it("renders the home block document (hero + product grid)", () => {
     loaderDataRef.current = {
-      collections: [{ handle: "apparel", title: "Apparel" }],
-      products: [
-        {
-          id: "p1",
-          handle: "cotton-tee",
-          title: "Cotton Tee",
-          description: "",
-          images: [{ url: "https://img.example/1.jpg", alt: "Cotton tee" }],
-          variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
-          collections: ["apparel"],
-        },
-      ],
+      doc: defaultHomeDocument(),
+      data: {
+        collections: [],
+        productsByCollection: {},
+        productsById: {},
+        allProducts: [
+          {
+            id: "p1",
+            handle: "cotton-tee",
+            title: "Cotton Tee",
+            description: "",
+            images: [{ url: "https://img.example/1.jpg", alt: "Cotton tee" }],
+            variants: [{ id: "v1", sku: null, title: "Default", priceCents: 1999, currency: "USD", available: true }],
+            collections: ["apparel"],
+          },
+        ],
+      },
     };
     const html = renderToStaticMarkup(createElement(StorefrontHome));
+    expect(html).toContain("cd-block--hero");
     expect(html).toContain("cd-store__grid");
     expect(html).toContain("Cotton Tee");
-    expect(html).toContain("/storefront/collections/apparel");
   });
 });
 
@@ -104,10 +119,28 @@ describe("storefront collection", () => {
     ]);
   });
 
-  it("404s when the handle yields no products", async () => {
+  it("404s when the collection handle is unknown", async () => {
     await expect(
       collectionLoader({ request: req(), params: { handle: "nope" }, context: {} }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("renders a real but empty collection instead of 404ing", async () => {
+    getCatalogMock.mockReturnValue({
+      async listCollections() {
+        return [{ handle: "spring", title: "Spring" }];
+      },
+      async listProducts() {
+        return [];
+      },
+      async getProduct() {
+        return null;
+      },
+    });
+    const res = await collectionLoader({ request: req(), params: { handle: "spring" }, context: {} });
+    const data = await res.json();
+    expect(data.title).toBe("Spring");
+    expect(data.products).toEqual([]);
   });
 
   it("renders the collection grid", () => {
@@ -148,7 +181,7 @@ describe("storefront PDP", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("renders an inert Add-to-cart button (no form, no submit)", () => {
+  it("renders a working Add-to-cart form that POSTs the variant", () => {
     loaderDataRef.current = {
       product: {
         id: "p-hoodie",
@@ -162,8 +195,10 @@ describe("storefront PDP", () => {
     };
     const html = renderToStaticMarkup(createElement(StorefrontProduct));
     expect(html).toContain("Add to cart");
-    expect(html).toContain('class="cd-pdp__buy"');
-    expect(html).not.toContain("<form");
+    // The button is no longer inert: it's a real POST form carrying the variant (#2c-1).
+    expect(html).toMatch(/<form[^>]*method="post"/i);
+    expect(html).toContain('name="variantId"');
+    expect(html).toContain('value="v1"');
   });
 });
 
@@ -192,8 +227,8 @@ describe("storefront swap seam (criterion 2)", () => {
     getCatalogMock.mockReturnValue(secondFake);
 
     const home = await (await homeLoader({ request: req(), params: {}, context: {} })).json();
-    expect(home.collections[0].handle).toBe("books");
-    expect(home.products[0].handle).toBe("novel");
+    // Home now returns { doc, data }; the default doc's `all` grid pulls products from the swapped catalog.
+    expect(home.data.allProducts[0].handle).toBe("novel");
 
     const collection = await (
       await collectionLoader({ request: req(), params: { handle: "books" }, context: {} })

@@ -9,6 +9,7 @@ import { action as liveEngineToggleAction } from "../../../routes/dashboard.api.
 import { action as logoutAction } from "../../../routes/dashboard.api.logout";
 
 const requireDashboardSession = vi.fn();
+const getDashboardSessionAllowUnverified = vi.fn();
 const requireSameOrigin = vi.fn();
 const executeAction = vi.fn();
 const undoAction = vi.fn();
@@ -27,6 +28,7 @@ const unauthenticatedAdmin = vi.fn();
 vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
+  getDashboardSessionAllowUnverified: (...a: unknown[]) => getDashboardSessionAllowUnverified(...a),
   revokeSession: (...a: unknown[]) => revokeSession(...a),
 }));
 vi.mock("../http.server", async (importOriginal) => ({
@@ -124,6 +126,13 @@ beforeEach(() => {
     shopId: "shop-1",
     shopDomain: "x.myshopify.com",
     sessionId: "sess-1",
+    emailVerified: true,
+  });
+  getDashboardSessionAllowUnverified.mockResolvedValue({
+    shopId: "shop-1",
+    shopDomain: "x.myshopify.com",
+    sessionId: "sess-1",
+    emailVerified: true,
   });
   guardrailsGet.mockResolvedValue({ dollar_cap_cents: 100_000_000, cooldown_minutes: 30 });
   alertsGet.mockResolvedValue(makeAlert());

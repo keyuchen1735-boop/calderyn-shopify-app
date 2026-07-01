@@ -2,6 +2,15 @@ import { describe, it, expect, vi } from "vitest";
 import { ASSISTANT_TOOLS, makeToolDispatcher } from "../tools.server";
 import { CalderynError } from "../../calderyn.server";
 import type { CalderynClient } from "../../calderyn.server";
+import * as commerceTools from "../commerce-tools.server";
+
+vi.mock("../commerce-tools.server", () => ({
+  COMMERCE_TOOL_NAMES: ["get_catalog", "create_quote", "get_quote", "place_order"],
+  COMMERCE_TOOLS: [],
+  handleCommerceTool: vi.fn(async () => ({
+    content: JSON.stringify({ order_id: "ord1", pay_url: "https://stripe/cs_1", status: "awaiting_payment" }),
+  })),
+}));
 
 function fakeClient(): {
   client: CalderynClient;
@@ -128,5 +137,26 @@ describe("makeToolDispatcher", () => {
     expect(res.isError).toBe(true);
     expect(JSON.parse(res.content).code).toBe("ALERT_NOT_FOUND");
     expect(flagAlert).not.toHaveBeenCalled();
+  });
+
+  it("returns COMMERCE_UNAVAILABLE when a commerce tool is called with no commerceCtx", async () => {
+    const dispatch = makeToolDispatcher({} as never);
+    const res = await dispatch("place_order", { quote_id: "q1", email: "b@x.com" });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content).code).toBe("COMMERCE_UNAVAILABLE");
+  });
+
+  it("routes a commerce tool to the handler when commerceCtx is present (no scope needed)", async () => {
+    vi.mocked(commerceTools.handleCommerceTool).mockClear();
+    const ctx = { shopId: "s1", clientId: "c1" };
+    const dispatch = makeToolDispatcher({} as never, { commerceCtx: ctx });
+    const res = await dispatch("place_order", { quote_id: "q1", email: "b@x.com" });
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content).pay_url).toBe("https://stripe/cs_1");
+    expect(vi.mocked(commerceTools.handleCommerceTool)).toHaveBeenCalledWith(
+      "place_order",
+      { quote_id: "q1", email: "b@x.com" },
+      ctx,
+    );
   });
 });

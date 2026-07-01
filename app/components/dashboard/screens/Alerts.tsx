@@ -162,6 +162,7 @@ function AlertDetail({
   const campaign = alert.campaign_id
     ? app.campaigns.find((c) => c.id === alert.campaign_id) ?? null
     : null;
+  const deepLinkDomain = app.shopDomain; // string | null; narrowed to string by the guard below
 
   // Merchant-facing evidence: drop raw platform IDs and empty values, then map
   // each key/value through the shared labeler/formatter (see ../format).
@@ -477,10 +478,10 @@ function AlertDetail({
                     );
                   })}
                 </div>
-                {app.shopDomain && (alert.deepLinkKinds ?? []).length > 0 && (
+                {deepLinkDomain && (alert.deepLinkKinds ?? []).length > 0 && (
                   <div className="flex flex-col gap-2 mt-1">
                     {alert.deepLinkKinds!.map((kind) => {
-                      const dl = actionDeepLink(kind, app.shopDomain);
+                      const dl = actionDeepLink(kind, deepLinkDomain);
                       if (!dl) return null;
                       return (
                         <a

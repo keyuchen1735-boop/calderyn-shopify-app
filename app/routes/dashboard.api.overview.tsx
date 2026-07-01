@@ -6,7 +6,7 @@ import { calderynClient } from "~/lib/calderyn.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     const [roasSeries, campaigns, openAlerts] = await Promise.all([
       client.analytics.dailyRoasSeries(30),
       client.campaigns.list(),

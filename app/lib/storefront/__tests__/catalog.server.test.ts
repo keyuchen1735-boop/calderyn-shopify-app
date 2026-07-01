@@ -2,6 +2,8 @@
 import { describe, it, expect } from "vitest";
 import type { StorefrontCatalog } from "../catalog";
 import { getCatalog } from "../catalog.server";
+import { ownedCatalog } from "../catalog.owned.server";
+import { fixtureCatalog } from "../catalog.stub.server";
 
 const SHOP = "demo-shop";
 
@@ -15,46 +17,37 @@ async function loadHome(cat: StorefrontCatalog, shopId: string) {
 }
 
 describe("getCatalog", () => {
-  it("returns the fixture catalog by default", async () => {
-    const home = await loadHome(getCatalog(), SHOP);
-    expect(home.collections.length).toBe(2);
-    expect(home.products.length).toBe(4);
+  it("returns the owned (DB-bound) catalog now that Slice 1 has landed", () => {
+    // The one-line swap is flipped from the in-memory fixture to the owned impl,
+    // so the storefront reads real products. (Asserted by reference to avoid a DB
+    // call; the owned impl's behavior is covered in catalog.owned.server.test.ts.)
+    expect(getCatalog()).toBe(ownedCatalog);
   });
 
-  it("the seam holds: a second fake impl drives the same consumer unchanged", async () => {
+  it("the seam holds: any conforming impl drives the same consumer unchanged", async () => {
+    const novel = {
+      id: "f1",
+      handle: "novel",
+      title: "Novel",
+      description: "",
+      images: [],
+      variants: [{ id: "fv1", sku: null, title: "Default", priceCents: 1200, currency: "USD", available: true }],
+      collections: ["books"],
+    };
     const secondFake: StorefrontCatalog = {
       async listCollections() {
         return [{ handle: "books", title: "Books" }];
       },
       async listProducts() {
-        return [
-          {
-            id: "f1",
-            handle: "novel",
-            title: "Novel",
-            description: "",
-            images: [],
-            variants: [{ id: "fv1", sku: null, title: "Default", priceCents: 1200, currency: "USD", available: true }],
-            collections: ["books"],
-          },
-        ];
+        return [novel];
       },
       async getProduct(_shopId, handle) {
-        return handle === "novel"
-          ? {
-              id: "f1",
-              handle: "novel",
-              title: "Novel",
-              description: "",
-              images: [],
-              variants: [{ id: "fv1", sku: null, title: "Default", priceCents: 1200, currency: "USD", available: true }],
-              collections: ["books"],
-            }
-          : null;
+        return handle === "novel" ? novel : null;
       },
     };
 
-    const fromFixture = await loadHome(getCatalog(), SHOP);
+    // The fixture (no DB) and the fake drive the identical consumer shape.
+    const fromFixture = await loadHome(fixtureCatalog, SHOP);
     const fromFake = await loadHome(secondFake, SHOP);
 
     expect(fromFixture.products.map((p) => p.handle)).not.toContain("novel");

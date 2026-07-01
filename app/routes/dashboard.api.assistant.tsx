@@ -17,10 +17,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return dashboardJson(async () => {
     const url = new URL(request.url);
     const requested = url.searchParams.get("conversation_id");
-    const conversations = await listConversations(session.shopDomain);
+    const conversations = await listConversations(session.shopId);
     const conversationId = requested ?? conversations[0]?.id ?? null;
     const messages = conversationId
-      ? await getMessages(session.shopDomain, conversationId)
+      ? await getMessages(session.shopId, conversationId)
       : [];
     return { conversations, conversation_id: conversationId, messages };
   });
@@ -44,7 +44,7 @@ export async function action({ request }: ActionFunctionArgs) {
   return dashboardJson(async () => {
     try {
       const { conversationId, assistantMessage } = await runConversationTurn({
-        shopDomain: session.shopDomain,
+        shopDomain: session.shopId,
         message: parsed.value.message,
         conversationId: parsed.value.conversationId,
         deps: {

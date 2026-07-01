@@ -11,7 +11,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const skuId = String(params.id ?? "");
   return dashboardJson(async () => ({
     affinity: isUuid(skuId)
-      ? await calderynClient(session.shopDomain).skus.affinity(skuId)
+      ? await calderynClient(session.shopId).skus.affinity(skuId)
       : [],
   }));
 }

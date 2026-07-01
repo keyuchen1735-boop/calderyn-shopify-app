@@ -17,11 +17,20 @@ export type Screen =
   | "campaigns"
   | "analytics"
   | "inventory"
+  | "locations-settings"
   | "audit"
+  | "agentic"
   | "settings"
   // Hidden Calderyn Labs "Autopilot replay" demo. Not in the nav rail; reached
   // only via the secret hexagon dot in Settings. Masks itself as Campaigns.
-  | "labs";
+  | "labs"
+  // Owned catalog (Slice 1). "catalog" + "collections" ride the nav rail;
+  // "product-editor" is an inner flow reached via navigate("product-editor", id|"new").
+  | "catalog"
+  | "product-editor"
+  | "collections"
+  // Import from Shopify (#13.promote) — one-click mirror → owned migration.
+  | "import-shopify";
 
 export interface NavState {
   screen: Screen;
@@ -52,8 +61,10 @@ export type ActionKind =
 
 export interface DashboardCtx {
   t: DashboardTheme;
-  /** Shop myshopify domain — for building Shopify admin deep-links. */
-  shopDomain: string;
+  /** Shop myshopify domain, for building Shopify admin deep-links. Null for owned (non-Shopify) stores. */
+  shopDomain: string | null;
+  /** Human-readable store label: display_name, shop_domain, or "Your store" fallback. */
+  storeLabel: string;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; scrolls main to top. */

@@ -4,6 +4,7 @@ import {
   RelocationError,
 } from "../inventory-relocate.server";
 import type * as InventoryServer from "../../shopify/inventory.server";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
 const priorExecutionForKey = vi.fn();
 const insertAuditWithIdempotency = vi.fn();
@@ -16,6 +17,17 @@ const inventoryAdjustQuantities = vi.fn();
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
   ...(await importOriginal<typeof InventoryServer>()),
   inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
+}));
+
+const getOrgMode = vi.fn();
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof CutoverOrgMode>()),
+  getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+}));
+
+const applyOwnedInventoryMove = vi.fn();
+vi.mock("../owned-writes.server", () => ({
+  applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
 }));
 
 const SHOP = "shop-1";
@@ -60,6 +72,8 @@ beforeEach(() => {
     outcome: audit.outcome,
   }));
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
+  getOrgMode.mockResolvedValue("mirror");
+  applyOwnedInventoryMove.mockResolvedValue({ transferId: "tr-1" });
   skuRow = {
     id: "sku-1",
     title: "Widget",
@@ -192,5 +206,43 @@ describe("executeInventoryRelocation", () => {
     expect(audit.outcome).toBe("failed");
     expect(audit.last_error).toContain("location disabled");
     expect(audit.post_state).toBeNull();
+  });
+
+  describe("executeInventoryRelocation — org_mode routing", () => {
+    it("mirror: moves stock via Shopify, never the owned engine", async () => {
+      getOrgMode.mockResolvedValue("mirror");
+      const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+      expect(res.outcome).toBe("succeeded");
+      expect(inventoryAdjustQuantities).toHaveBeenCalled(); // Shopify path (underlying)
+      expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+    });
+
+    it("live: moves stock via the owned engine, never Shopify", async () => {
+      getOrgMode.mockResolvedValue("live");
+      const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+      expect(res.outcome).toBe("succeeded");
+      // owned engine keyed by owned variant id (input.skuId) + owned location ids (loc-a/loc-b).
+      expect(applyOwnedInventoryMove).toHaveBeenCalledWith({
+        shopId: SHOP,
+        variantId: "sku-1",
+        fromLocationId: "loc-a",
+        toLocationId: "loc-b",
+        quantity: 40,
+      });
+      expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
+      expect(audit.params.shopify_operation_id).toBe("tr-1"); // owned transfer id in the operation slot
+    });
+
+    it("live: records a FAILED audit row when the owned engine rejects (insufficient stock)", async () => {
+      getOrgMode.mockResolvedValue("live");
+      applyOwnedInventoryMove.mockRejectedValue(new Error("insufficient_stock"));
+      const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), ADMIN);
+      expect(res.outcome).toBe("failed");
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
+      expect(audit.outcome).toBe("failed");
+      expect(audit.last_error).toContain("insufficient_stock");
+      expect(audit.post_state).toBeNull();
+    });
   });
 });

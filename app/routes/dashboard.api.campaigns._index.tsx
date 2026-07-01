@@ -7,7 +7,7 @@ import { resolveCampaignScore } from "~/lib/campaign-score/resolve.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const client = calderynClient(session.shopDomain);
+    const client = calderynClient(session.shopId);
     const [campaigns, grades] = await Promise.all([
       client.campaigns.list(),
       client.analytics.campaignGrades(),
@@ -22,7 +22,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       campaigns.map(async (c) => ({
         ...c,
         calderynScore: await resolveCampaignScore(
-          session.shopDomain,
+          session.shopId,
           { id: c.id, ads: [] },
           gradeById.get(c.id),
         ),

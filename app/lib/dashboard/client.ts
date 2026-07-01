@@ -38,6 +38,7 @@ import type {
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
 import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { collectionHandle } from "~/lib/catalog/handle";
 import { hasActionDeepLink } from "~/lib/action-deeplinks";
 import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { gradeFromRow } from "~/lib/campaign-grade";
@@ -1039,4 +1040,267 @@ export async function screenCampaignCreative(
     payload,
   );
   return data.run;
+}
+
+// --- catalog (Slice 1, owned) ------------------------------------------------
+// Browser view-models for the owned catalog editor. The outbound `ProductDraft`
+// mirrors the server `ProductInput` (app/lib/catalog/types.ts) — variants carry
+// option-value LABELS (e.g. ["M","Red"]), which the write path resolves to ids.
+// The inbound detail VM is already label-shaped + signed by the $id loader.
+
+export interface ProductSummaryVM {
+  id: string;
+  title: string;
+  status: "draft" | "active" | "archived";
+  imageUrl: string | null;
+  variantCount: number;
+  updatedAt: string;
+}
+
+export interface VariantDraft {
+  id?: string;
+  sku?: string;
+  title?: string;
+  retailPriceCents?: number;
+  unitCostCents?: number;
+  inventoryTracked?: boolean;
+  inventoryOnHand?: number;
+  /** Option-value labels this variant represents, in option order. */
+  optionValues?: string[];
+  // Shipping fields — all optional so incomplete products remain saveable as drafts.
+  weightGrams?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  requiresShipping?: boolean;
+  handlingDays?: number;
+  signatureRequired?: boolean;
+  restrictedCountries?: string[];
+}
+
+export interface ProductDraft {
+  title: string;
+  status: "draft" | "active" | "archived";
+  vendor?: string;
+  category?: string;
+  description?: string;
+  tags?: string[];
+  options?: Array<{ name: string; values: string[] }>;
+  variants: VariantDraft[];
+  collectionIds?: string[];
+}
+
+export interface ProductDetailVM extends ProductDraft {
+  id: string;
+  media: Array<{ id: string; url: string; isPrimary: boolean }>;
+  updatedAt: string;
+}
+
+export interface CollectionVM {
+  id: string;
+  title: string;
+  handle: string;
+}
+
+export async function fetchProducts(
+  opts: { search?: string; status?: string; offset?: number } = {},
+): Promise<{ products: ProductSummaryVM[]; total: number }> {
+  const qs = new URLSearchParams();
+  if (opts.search) qs.set("search", opts.search);
+  if (opts.status) qs.set("status", opts.status);
+  if (opts.offset) qs.set("offset", String(opts.offset));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<{ products: ProductSummaryVM[]; total: number }>(
+    `/dashboard/api/catalog/products${suffix}`,
+  );
+}
+
+export async function fetchProduct(id: string): Promise<ProductDetailVM> {
+  const data = await apiGet<{ product: ProductDetailVM }>(
+    `/dashboard/api/catalog/products/${encodeURIComponent(id)}`,
+  );
+  return data.product;
+}
+
+/** POST to create (no id) or PUT to update (id). Returns the product id either
+ *  way — the PUT route replies `{ ok: true }`, so the caller's id is echoed. */
+export async function saveProduct(draft: ProductDraft, id?: string): Promise<{ id: string }> {
+  if (id) {
+    await apiSend("PUT", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`, draft);
+    return { id };
+  }
+  return apiSend<{ id: string }>("POST", "/dashboard/api/catalog/products", draft);
+}
+
+/** Archive (soft-delete) a product — the DELETE route flips status to archived. */
+export async function archiveProduct(id: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`);
+}
+
+export async function fetchCollections(): Promise<CollectionVM[]> {
+  const data = await apiGet<{ collections: CollectionVM[] }>("/dashboard/api/catalog/collections");
+  return data.collections;
+}
+
+export async function createCollection(title: string): Promise<CollectionVM> {
+  const data = await apiSend<{ id: string }>("POST", "/dashboard/api/catalog/collections", { title });
+  // Optimistic handle via the SAME shared helper the server uses, so the row
+  // labels itself with the authoritative slug immediately (no drift).
+  return { id: data.id, title, handle: collectionHandle(title) };
+}
+
+/** Upload one product image. Multipart, so this uses a raw fetch (apiSend forces
+ *  JSON): the browser sets the multipart boundary; do NOT set Content-Type. The
+ *  server signs the stored path and returns a ready-to-render URL. */
+export async function uploadProductImage(productId: string, file: File): Promise<{ id: string; url: string }> {
+  const fd = new FormData();
+  fd.set("productId", productId);
+  fd.set("file", file);
+  const res = await fetch("/dashboard/api/catalog/media", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Origin: location.origin },
+    body: fd,
+  });
+  if (res.status === 401) redirectToLogin();
+  if (!res.ok) throw await toApiError(res);
+  return (await res.json()) as { id: string; url: string };
+}
+
+export async function deleteProductImage(mediaId: string): Promise<void> {
+  await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
+}
+
+// --- inventory --------------------------------------------------------------
+
+export interface VariantBalanceVM {
+  locationId: string;
+  locationName: string;
+  onHand: number;
+  reserved: number;
+  incoming: number;
+  available: number;
+  reorderPoint: number | null;
+}
+export interface LocationVM {
+  id: string;
+  name: string;
+  priority: number;
+  lat: number | null;
+  lng: number | null;
+  street1?: string;
+  street2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  country?: string;
+}
+export interface LedgerEntryVM {
+  id: number;
+  location_id: string;
+  entry_type: string;
+  qty: number;
+  reason: string | null;
+  created_at: string;
+}
+
+export async function fetchVariantInventory(variantId: string): Promise<VariantBalanceVM[]> {
+  const d = await apiGet<{ balances: VariantBalanceVM[] }>(
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
+  );
+  return d.balances;
+}
+export async function setOnHand(variantId: string, locationId: string, onHand: number): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "set_on_hand",
+    locationId,
+    onHand,
+  });
+}
+export async function setVariantReorderPoint(variantId: string, locationId: string, reorderPoint: number | null): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "set_reorder",
+    locationId,
+    reorderPoint,
+  });
+}
+export async function markVariantUnavailable(variantId: string, locationId: string, qty: number, reason: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
+    intent: "mark_unavailable",
+    locationId,
+    qty,
+    reason,
+  });
+}
+export async function createTransfer(input: {
+  variantId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  qty: number;
+  mode: "instant" | "in_transit";
+}): Promise<{ transferId: string }> {
+  return apiSend<{ transferId: string }>("POST", "/dashboard/api/catalog/inventory/transfer", input);
+}
+export async function receiveTransfer(transferId: string): Promise<void> {
+  await apiSend("POST", "/dashboard/api/catalog/inventory/transfer", { intent: "receive", transferId });
+}
+export interface PendingTransferVM {
+  id: string;
+  variantId: string;
+  qty: number;
+  fromName: string;
+  toName: string;
+  createdAt: string;
+}
+export async function fetchPendingTransfers(variantId: string): Promise<PendingTransferVM[]> {
+  const d = await apiGet<{ transfers: PendingTransferVM[] }>(
+    `/dashboard/api/catalog/inventory/transfer?variantId=${encodeURIComponent(variantId)}`,
+  );
+  return d.transfers;
+}
+export async function fetchInventoryHistory(variantId: string): Promise<LedgerEntryVM[]> {
+  const d = await apiGet<{ history: LedgerEntryVM[] }>(
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}/history`,
+  );
+  return d.history;
+}
+// ----- Import from Shopify (#13.promote) -----
+export interface ImportRunVM {
+  id: string;
+  state: "pulling" | "promoting" | "done" | "error";
+  counts: { products: number; variants: number; collections: number; balances: number } | null;
+  report: { imported: string[]; notIncluded: string[] } | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export async function fetchImportStatus(): Promise<ImportRunVM | null> {
+  const d = await apiGet<{ run: ImportRunVM | null }>("/dashboard/api/import");
+  return d.run;
+}
+
+export async function startShopifyImport(): Promise<{ importId: string }> {
+  return apiSend<{ importId: string }>("POST", "/dashboard/api/import");
+}
+
+export async function fetchLocations(): Promise<LocationVM[]> {
+  const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
+  return d.locations;
+}
+export async function updateLocation(
+  id: string,
+  patch: {
+    priority?: number;
+    lat?: number | null;
+    lng?: number | null;
+    street1?: string;
+    street2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+    country?: string;
+  },
+): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
 }

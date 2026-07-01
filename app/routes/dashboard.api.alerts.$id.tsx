@@ -8,7 +8,7 @@ import { enrichRemediation } from "~/lib/remediation/enrich.server";
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
-    const raw = await calderynClient(session.shopDomain).alerts.get(String(params.id));
+    const raw = await calderynClient(session.shopId).alerts.get(String(params.id));
     // Enrich only on the detail read (lists skip it — per architecture seam).
     // Best-effort: enrichRemediation self-falls-back to advisory on any DB error.
     if (raw.remediation) {

@@ -3,6 +3,9 @@ import type { CalderynClient, CalderynError } from "../calderyn.server";
 import { ACTION_LABELS, DETECTOR_TO_ACTIONS } from "../labels";
 import type { ActionKind } from "../types";
 import type { DraftedAction } from "./types";
+import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
+
+const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
 
 export interface ToolDispatchResult {
   content: string; // JSON string handed back to the model as tool_result content
@@ -112,6 +115,12 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+/**
+ * Full toolset advertised to external connected buyer clients (the calderyn-mcp server).
+ * The in-app merchant assistant uses ASSISTANT_TOOLS only.
+ */
+export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS];
+
 function ok(obj: unknown): ToolDispatchResult {
   return { content: JSON.stringify(obj) };
 }
@@ -127,6 +136,9 @@ export interface ToolDispatcherDeps {
    * Surfaces that don't support flagging simply omit it.
    */
   flagAlert?: (alertId: string) => Promise<boolean>;
+  /** Shop + OAuth client context required by commerce tool handlers. When present, commerce
+   *  tools are available to this caller (frictionless — no scope string required). */
+  commerceCtx?: CommerceCtx;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
@@ -135,6 +147,12 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
     input: Record<string, unknown>,
   ): Promise<ToolDispatchResult> {
     try {
+      if (COMMERCE_NAME_SET.has(name)) {
+        if (!deps.commerceCtx) {
+          return toolError("COMMERCE_UNAVAILABLE", `${name} is only available to a connected commerce client`);
+        }
+        return await handleCommerceTool(name, input, deps.commerceCtx);
+      }
       switch (name) {
         case "list_alerts": {
           const alerts = await client.alerts.list({

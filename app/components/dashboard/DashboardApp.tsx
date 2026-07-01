@@ -40,7 +40,13 @@ import ScreenAnalytics from "./screens/Analytics";
 import ScreenInventory from "./screens/Inventory";
 import ScreenAudit from "./screens/Audit";
 import ScreenSettings from "./screens/Settings";
+import ScreenLocations from "./screens/Locations";
 import ScreenLabs from "./screens/Labs";
+import { AgenticChannel } from "./screens/AgenticChannel";
+import ScreenCatalog from "./screens/Catalog";
+import ScreenProductEditor from "./screens/ProductEditor";
+import ScreenCollections from "./screens/Collections";
+import ScreenImportShopify from "./screens/ImportShopify";
 
 const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Overview", icon: "gauge" },
@@ -48,7 +54,12 @@ const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
   { id: "campaigns", label: "Campaigns", icon: "megaphone" },
   { id: "analytics", label: "Analytics", icon: "chart" },
   { id: "inventory", label: "Inventory", icon: "box" },
+  { id: "catalog", label: "Products", icon: "bag" },
+  { id: "collections", label: "Collections", icon: "tag" },
+  { id: "locations-settings", label: "Locations", icon: "globe" },
+  { id: "import-shopify", label: "Import from Shopify", icon: "download" },
   { id: "audit", label: "Action history", icon: "clock" },
+  { id: "agentic", label: "Agentic", icon: "bot" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
@@ -74,7 +85,15 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   campaigns: ScreenCampaigns,
   analytics: ScreenAnalytics,
   inventory: ScreenInventory,
+  catalog: ScreenCatalog,
+  collections: ScreenCollections,
+  // Inner flow off the product list — reached via navigate("product-editor",
+  // id|"new"), not from NAV_ITEMS (like Campaigns' detail view).
+  "product-editor": ScreenProductEditor,
+  "locations-settings": ScreenLocations,
+  "import-shopify": ScreenImportShopify,
   audit: ScreenAudit,
+  agentic: () => <AgenticChannel />,
   settings: ScreenSettings,
   // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
   labs: ScreenLabs,
@@ -94,7 +113,7 @@ function nextFeedId(): string {
   return "f" + feedSeq++;
 }
 
-export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
+export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }) {
   // Night mode (dark theme). Defaults to light; the merchant's choice persists in
   // localStorage. Initialised to false so the server render and first client render
   // agree (no hydration mismatch); the stored preference is applied post-mount.
@@ -731,6 +750,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
   const app: DashboardCtx = {
     t,
     shopDomain,
+    storeLabel,
     nav,
     navigate,
     alerts,
@@ -812,7 +832,7 @@ export default function DashboardApp({ shopDomain }: { shopDomain: string }) {
           </svg>
           <div>
             <div className="cd-brand-name">Calderyn</div>
-            <div className="cd-brand-sub">{shopDomain}</div>
+            <div className="cd-brand-sub">{storeLabel}</div>
           </div>
         </div>
         <nav className="cd-side-nav">

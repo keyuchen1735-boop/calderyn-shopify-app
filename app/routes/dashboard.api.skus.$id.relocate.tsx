@@ -39,8 +39,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const skuId = String(params.id ?? "");
   if (!skuId) return jsonError(422, "missing_sku_id");
 
+  if (!session.shopDomain) {
+    return jsonError(422, "shopify_required", "Connect a Shopify store to relocate inventory.");
+  }
+  const shopDomain = session.shopDomain;
+
   return dashboardJson(async () => {
-    const { admin } = await unauthenticated.admin(session.shopDomain);
+    const { admin } = await unauthenticated.admin(shopDomain);
     try {
       const result = await executeInventoryRelocation(
         session.shopId,

@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import {
-  requireDashboardSession,
+  getDashboardSessionAllowUnverified,
   revokeSession,
   clearSessionCookieHeader,
 } from "~/lib/dashboard/session.server";
@@ -8,7 +8,7 @@ import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
-  const session = await requireDashboardSession(request);
+  const session = await getDashboardSessionAllowUnverified(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
 
   await revokeSession(session.sessionId);
