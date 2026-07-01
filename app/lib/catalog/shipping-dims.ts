@@ -61,7 +61,9 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 // Convert stored metric fields to the shipping engine's inches/ounces. A missing metric
 // field passes through as null (the engine treats null as "unknown" and falls back to an
-// estimated parcel).
+// estimated parcel). The quote engine's ShippingQuoteLine types these fields as
+// `number | undefined`; a null from here is handled the same way by assembleParcels
+// (its `== null` low-confidence check), so no bridge is required at the call site.
 export function toParcelDims(v: VariantShippingFields): ParcelDims {
   return {
     lengthIn: v.lengthMm == null ? null : round2(v.lengthMm / MM_PER_IN),
