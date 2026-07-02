@@ -15,6 +15,7 @@ vi.mock("../../supabase.server", () => ({
   }),
 }));
 
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { trackStorefrontEvent } from "../events.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";

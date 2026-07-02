@@ -7,6 +7,7 @@ const requireDashboardSession = vi.fn();
 const buildLiveSnapshot = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock's importOriginal generic requires the inline import() type (same as the sibling route tests)
   ...(await importOriginal<typeof import("../session.server")>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
