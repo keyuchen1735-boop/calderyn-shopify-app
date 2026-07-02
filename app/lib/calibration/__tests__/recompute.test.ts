@@ -92,35 +92,47 @@ describe("recomputeShopCalibration", () => {
 function makeStubSb(opts: {
   pairRows: Record<string, unknown>[];
   detectorFires: Record<string, number>;
+  detectorChallenges?: Record<string, number>;
   prevPct: number | null;
   onShopUpdate: (patch: Record<string, unknown>) => void;
-  onPairUpdate?: (patch: Record<string, unknown>, detector: string, action: string) => void;
+  onPairUpsert?: (rows: Array<Record<string, unknown>>) => void;
+  onRpc?: (name: string, args: unknown) => void;
+  /** Simulate the stats RPC being unavailable (migration skew / timeout). */
+  statsRpcError?: boolean;
 }) {
   return {
     from(table: string) {
+      if (table === "alerts") {
+        // Legacy fires fallback: select().eq().gte().limit()
+        const rows = Object.entries(opts.detectorFires).flatMap(([d, n]) =>
+          Array.from({ length: n }, () => ({ detector_id: d })),
+        );
+        return {
+          select: () => ({
+            eq: () => ({ gte: () => ({ limit: () => Promise.resolve({ data: rows, error: null }) }) }),
+          }),
+        };
+      }
+      if (table === "action_feedback") {
+        // Legacy challenge fallback: select().eq().eq().in().gte().limit()
+        const chain: Record<string, unknown> = {};
+        chain.eq = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = () => Promise.resolve({ data: [], error: null });
+        return { select: () => chain };
+      }
       if (table === "pair_calibration") {
         return {
           select: () => ({
             eq: () => Promise.resolve({ data: opts.pairRows, error: null }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: (_col1: string, _val1: string) => ({
-              eq: (_col2: string, detector: string) => ({
-                eq: (_col3: string, action: string) => {
-                  opts.onPairUpdate?.(patch, detector, action);
-                  return Promise.resolve({ error: null });
-                },
-              }),
-            }),
-          }),
+          // Batched cache write: ONE upsert with all rows (the N+1 fix).
+          upsert: (rows: Array<Record<string, unknown>>) => {
+            opts.onPairUpsert?.(rows);
+            return Promise.resolve({ error: null });
+          },
         };
-      }
-      if (table === "alerts") {
-        // recompute reads recent alerts to count detector fires
-        const rows = Object.entries(opts.detectorFires).flatMap(([d, n]) =>
-          Array.from({ length: n }, () => ({ detector_id: d })),
-        );
-        return { select: () => ({ eq: () => ({ gte: () => Promise.resolve({ data: rows, error: null }) }) }) };
       }
       if (table === "shops") {
         return {
@@ -131,66 +143,116 @@ function makeStubSb(opts: {
           },
         };
       }
-      // action_pair_prior is called via rpc, stubbed below
+      // loadPairOutcomeTallies (action_audit) — fail-safe empty in these tests.
       return { select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }) };
     },
-    rpc: () => Promise.resolve({ data: null, error: null }), // peer prior absent -> static seed
+    rpc: (name: string, args: unknown) => {
+      opts.onRpc?.(name, args);
+      if (name === "calibration_detector_stats" && opts.statsRpcError) {
+        return Promise.resolve({ data: null, error: { message: "function not found" } });
+      }
+      if (name === "calibration_detector_stats") {
+        const detectors = new Set([
+          ...Object.keys(opts.detectorFires),
+          ...Object.keys(opts.detectorChallenges ?? {}),
+        ]);
+        const rows = [...detectors].map((d) => ({
+          detector_id: d,
+          fired: opts.detectorFires[d] ?? 0,
+          challenged: (opts.detectorChallenges ?? {})[d] ?? 0,
+        }));
+        return Promise.resolve({ data: rows, error: null });
+      }
+      // action_pair_priors: no peer baselines → static seeds.
+      return Promise.resolve({ data: [], error: null });
+    },
   } as unknown as SupabaseClient;
 }
 
-// ─── skipPeerPrior option ─────────────────────────────────────────────────────
+// ─── peer-prior sourcing ─────────────────────────────────────────────────────
 
-describe("recomputeShopCalibration — skipPeerPrior option", () => {
-  it("does NOT call sb.rpc when skipPeerPrior=true and still returns display in [0,100]", async () => {
-    const rpcCalls: unknown[] = [];
+describe("recomputeShopCalibration — peer-prior sourcing", () => {
+  it("skipPeerPrior=true never fetches priors and still returns display in [0,100]", async () => {
+    const rpcNames: string[] = [];
     const sb = makeStubSb({
       pairRows: [],
       detectorFires: { campaign_below_breakeven: 3 },
       prevPct: null,
       onShopUpdate: () => {},
+      onRpc: (name) => rpcNames.push(name),
     });
-    // Wrap rpc to track calls.
-    const trackedSb = {
-      ...sb,
-      rpc: (...args: unknown[]) => {
-        rpcCalls.push(args);
-        return Promise.resolve({ data: null, error: null });
-      },
-    } as unknown as typeof sb;
 
-    const res = await recomputeShopCalibration("shop-skip-1", { sb: trackedSb }, { skipPeerPrior: true });
-    expect(rpcCalls).toHaveLength(0); // no rpc called
+    const res = await recomputeShopCalibration("shop-skip-1", { sb }, { skipPeerPrior: true });
+    expect(rpcNames).not.toContain("action_pair_priors");
     expect(res.display).toBeGreaterThanOrEqual(0);
     expect(res.display).toBeLessThanOrEqual(100);
   });
 
-  it("DOES call sb.rpc when skipPeerPrior is not set (default path)", async () => {
-    const rpcCalls: unknown[] = [];
+  it("fetches priors in exactly ONE bulk call on the default path (never per pair)", async () => {
+    const rpcNames: string[] = [];
     const sb = makeStubSb({
       pairRows: [],
       detectorFires: { campaign_below_breakeven: 3 },
       prevPct: null,
       onShopUpdate: () => {},
+      onRpc: (name) => rpcNames.push(name),
     });
-    const trackedSb = {
-      ...sb,
-      rpc: (...args: unknown[]) => {
-        rpcCalls.push(args);
-        return Promise.resolve({ data: null, error: null });
-      },
-    } as unknown as typeof sb;
 
-    await recomputeShopCalibration("shop-skip-2", { sb: trackedSb });
-    // rpc is called once per weight pair (many pairs for a real detector)
-    expect(rpcCalls.length).toBeGreaterThan(0);
+    await recomputeShopCalibration("shop-skip-2", { sb });
+    expect(rpcNames.filter((n) => n === "action_pair_priors")).toHaveLength(1);
+    expect(rpcNames).not.toContain("action_pair_prior"); // the retired per-pair fn
+  });
+
+  it("falls back to the legacy reads when the stats RPC is unavailable (fail-soft)", async () => {
+    const updates: Record<string, unknown>[] = [];
+    const sb = makeStubSb({
+      pairRows: [],
+      detectorFires: { campaign_below_breakeven: 3 },
+      prevPct: null,
+      onShopUpdate: (patch) => updates.push(patch),
+      statsRpcError: true,
+    });
+    // Same detector fires arrive via the legacy alerts read, so the headline
+    // still computes and writes — a stats hiccup never freezes calibration.
+    const res = await recomputeShopCalibration("shop-fallback-1", { sb }, { skipPeerPrior: true });
+    expect(res.display).toBeGreaterThan(0);
+    expect(updates[0]).toHaveProperty("calibration_pct", res.display);
+  });
+
+  it("uses a caller-provided shared prior map without fetching (the cron path)", async () => {
+    const rpcNames: string[] = [];
+    const sb = makeStubSb({
+      pairRows: [],
+      detectorFires: { campaign_below_breakeven: 3 },
+      prevPct: null,
+      onShopUpdate: () => {},
+      onRpc: (name) => rpcNames.push(name),
+    });
+
+    await recomputeShopCalibration(
+      "shop-skip-3",
+      { sb },
+      { peerPriors: new Map([["campaign_below_breakeven:pause_campaign", 0.8]]) },
+    );
+    expect(rpcNames).not.toContain("action_pair_priors");
   });
 });
 
 // ─── Slice 5 Task 2: graduated cache tests ───────────────────────────────────
 
 describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => {
-  it("keeps a shipped no-brainer graduated at cold start", async () => {
-    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+  // The cache write is ONE batched upsert; find a pair's row inside it.
+  const findRow = (
+    batches: Array<Array<Record<string, unknown>>>,
+    detector: string,
+    action: string,
+  ) =>
+    batches
+      .flat()
+      .find((r) => r.detector_id === detector && r.action_kind === action);
+
+  it("keeps a shipped no-brainer graduated at cold start (single batched upsert)", async () => {
+    const batches: Array<Array<Record<string, unknown>>> = [];
     // A pair with zero approvals (clean_approvals=0): should NOT graduate.
     const pairRow = {
       detector_id: "campaign_below_breakeven",
@@ -207,23 +269,25 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       detectorFires: { campaign_below_breakeven: 5 },
       prevPct: null,
       onShopUpdate: () => {},
-      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+      onPairUpsert: (rows) => batches.push(rows),
     });
     await recomputeShopCalibration("shop-grad-1", { sb });
-    // At least one pair update for campaign_below_breakeven:pause_campaign.
-    const targetUpdate = pairUpdates.find(
-      (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
-    );
-    expect(targetUpdate).toBeDefined();
-    expect(targetUpdate!.patch.graduated).toBe(true);
-    // last_conf must be a non-negative integer.
-    expect(typeof targetUpdate!.patch.last_conf).toBe("number");
-    expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);
-    expect(Number.isInteger(targetUpdate!.patch.last_conf)).toBe(true);
+    // The whole cache lands in ONE round trip (the N+1 fix).
+    expect(batches).toHaveLength(1);
+    const row = findRow(batches, "campaign_below_breakeven", "pause_campaign");
+    expect(row).toBeDefined();
+    expect(row!.graduated).toBe(true);
+    // last_conf must be a non-negative integer; alpha/beta must NOT be in the
+    // payload (the batch writes cache columns only, never the counters).
+    expect(typeof row!.last_conf).toBe("number");
+    expect(row!.last_conf as number).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(row!.last_conf)).toBe(true);
+    expect(row).not.toHaveProperty("alpha");
+    expect(row).not.toHaveProperty("beta");
   });
 
   it("writes graduated=true for a pair meeting ALL graduation gates", async () => {
-    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+    const batches: Array<Array<Record<string, unknown>>> = [];
     // A pair meeting all gates: high alpha (many approvals), clean_approvals>=3,
     // zero consecutive_undos, not disabled, threshold=0 (always meets bar).
     const pairRow = {
@@ -235,26 +299,25 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       consecutive_undos: 0,     // no recent undo
       merchant_disabled: false, // not disabled
       graduation_threshold: 0,  // conf always >= 0 → passes the bar
+      net_positive_outcomes: 5,
     };
     const sb = makeStubSb({
       pairRows: [pairRow],
       detectorFires: { campaign_below_breakeven: 5 },
       prevPct: null,
       onShopUpdate: () => {},
-      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+      onPairUpsert: (rows) => batches.push(rows),
     });
     await recomputeShopCalibration("shop-grad-2", { sb });
-    const targetUpdate = pairUpdates.find(
-      (u) => u.detector === "campaign_below_breakeven" && u.action === "pause_campaign",
-    );
-    expect(targetUpdate).toBeDefined();
+    const row = findRow(batches, "campaign_below_breakeven", "pause_campaign");
+    expect(row).toBeDefined();
     // pause_campaign is in GRADUATABLE, has undo branch, all gates pass → graduated.
-    expect(targetUpdate!.patch.graduated).toBe(true);
-    expect(targetUpdate!.patch.last_conf as number).toBeGreaterThanOrEqual(0);
+    expect(row!.graduated).toBe(true);
+    expect(row!.last_conf as number).toBeGreaterThanOrEqual(0);
   });
 
   it("writes graduated=false for increase_campaign_budget (not in GRADUATABLE)", async () => {
-    const pairUpdates: { patch: Record<string, unknown>; detector: string; action: string }[] = [];
+    const batches: Array<Array<Record<string, unknown>>> = [];
     // increase_campaign_budget cannot graduate (not in GRADUATABLE set, spec I7).
     const pairRow = {
       detector_id: "campaign_scaling_opportunity",
@@ -271,28 +334,26 @@ describe("recomputeShopCalibration — graduated cache (Slice 5 Task 2)", () => 
       detectorFires: { campaign_scaling_opportunity: 5 },
       prevPct: null,
       onShopUpdate: () => {},
-      onPairUpdate: (patch, detector, action) => pairUpdates.push({ patch, detector, action }),
+      onPairUpsert: (rows) => batches.push(rows),
     });
     await recomputeShopCalibration("shop-grad-3", { sb });
-    const targetUpdate = pairUpdates.find(
-      (u) => u.detector === "campaign_scaling_opportunity" && u.action === "increase_campaign_budget",
-    );
-    expect(targetUpdate).toBeDefined();
+    const row = findRow(batches, "campaign_scaling_opportunity", "increase_campaign_budget");
+    expect(row).toBeDefined();
     // Not in GRADUATABLE → never graduated.
-    expect(targetUpdate!.patch.graduated).toBe(false);
+    expect(row!.graduated).toBe(false);
   });
 
-  it("does NOT write a pair update for pairs with no row (cold start, no ev)", async () => {
-    // No pair rows → pairMap is empty → no update calls should happen.
-    const pairUpdates: unknown[] = [];
+  it("does NOT write any cache batch for pairs with no row (cold start, no ev)", async () => {
+    // No pair rows → pairMap is empty → the upsert must not run at all.
+    const batches: unknown[] = [];
     const sb = makeStubSb({
       pairRows: [],
       detectorFires: {},
       prevPct: null,
       onShopUpdate: () => {},
-      onPairUpdate: () => pairUpdates.push(1),
+      onPairUpsert: () => batches.push(1),
     });
     await recomputeShopCalibration("shop-grad-4", { sb });
-    expect(pairUpdates).toHaveLength(0);
+    expect(batches).toHaveLength(0);
   });
 });

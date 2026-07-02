@@ -4,6 +4,7 @@ import { loader } from "../cron.calibration-recompute";
 // Mock the recompute + organic sweep + supabase so the route is tested in isolation.
 vi.mock("../../lib/calibration/recompute.server", () => ({
   recomputeShopCalibration: vi.fn(async (id: string) => ({ shopId: id, pairs: 1, raw: 25, display: 25 })),
+  loadPeerPriors: vi.fn(async () => new Map<string, number>()),
 }));
 vi.mock("../../lib/calibration/organic.server", () => ({
   sweepOrganicSignals: vi.fn(async () => ({ implicitApprovals: 0, reversals: 0, errors: [] })),
@@ -36,12 +37,23 @@ describe("cron.calibration-recompute loader", () => {
 
   it("sweeps organic signals then recomputes each shop with the correct secret", async () => {
     const { sweepOrganicSignals } = await import("../../lib/calibration/organic.server");
+    const { recomputeShopCalibration, loadPeerPriors } = await import(
+      "../../lib/calibration/recompute.server"
+    );
     const res = await loader({ request: req("Bearer s3cret"), params: {}, context: {} } as never);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.shops).toBe(1);
     expect(vi.mocked(sweepOrganicSignals)).toHaveBeenCalledWith("shop-1", expect.anything());
+    // Peer priors are shop-independent: fetched ONCE for the whole run and
+    // shared with every shop's recompute (the per-shop N+1 fix).
+    expect(vi.mocked(loadPeerPriors)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recomputeShopCalibration)).toHaveBeenCalledWith(
+      "shop-1",
+      expect.anything(),
+      expect.objectContaining({ peerPriors: expect.any(Map) }),
+    );
   });
 
   it("skips the organic sweep for demo shops (seeded state would misfire the matchers)", async () => {
