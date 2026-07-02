@@ -119,6 +119,7 @@ describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-
       "campaign_below_breakeven",
       "pause_campaign",
       expect.anything(), // supabase client
+      expect.objectContaining({ auditId: "audit-uuid-1", alertId: ALERT_ID }),
     );
   });
 

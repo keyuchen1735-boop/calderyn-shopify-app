@@ -59,11 +59,14 @@ describe("recomputeShopCalibration", () => {
       },
     ];
 
+    // raw is 35 with the full executor catalog (exclude_geo/push_creative_draft
+    // pairs are real now, not zeros); prev 34 keeps the smoothed move inside the
+    // dead-band so the forced path is what makes it visible.
     const normal = await recomputeShopCalibration("shop-visible-1", {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 31,
+        prevPct: 34,
         onShopUpdate: (patch) => normalUpdates.push(patch),
       }),
     }, { skipPeerPrior: true });
@@ -72,16 +75,16 @@ describe("recomputeShopCalibration", () => {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 31,
+        prevPct: 34,
         onShopUpdate: (patch) => forcedUpdates.push(patch),
       }),
     }, { skipPeerPrior: true, forceVisibleStep: true });
 
-    expect(normal.raw).toBe(32);
-    expect(normal.display).toBe(31);
-    expect(forced.raw).toBe(32);
-    expect(forced.display).toBe(32);
-    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 32);
+    expect(normal.raw).toBe(35);
+    expect(normal.display).toBe(34);
+    expect(forced.raw).toBe(35);
+    expect(forced.display).toBe(35);
+    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 35);
   });
 });
 

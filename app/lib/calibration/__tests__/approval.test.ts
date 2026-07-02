@@ -20,6 +20,10 @@ function makeStub(opts?: {
   rpcError?: { message: string };
   readError?: { message: string };
   throwOnRpc?: boolean;
+  /** What the approve-ledger upsert(...).select("id") resolves with. Default:
+   * one inserted row (fresh approval). [] simulates a duplicate (replay). */
+  ledgerRows?: Array<{ id: string }>;
+  ledgerError?: { message: string };
 }) {
   const rows = opts?.rows ?? [null, null];
   let readIdx = 0;
@@ -32,7 +36,19 @@ function makeStub(opts?: {
   const eq2 = vi.fn().mockReturnValue({ eq: eq3 });
   const eq1 = vi.fn().mockReturnValue({ eq: eq2 });
   const select = vi.fn().mockReturnValue({ eq: eq1 });
-  const from = vi.fn().mockReturnValue({ select });
+
+  // action_feedback approve-ledger: upsert(...).select("id")
+  const ledgerSelect = vi
+    .fn()
+    .mockResolvedValue({
+      data: opts?.ledgerRows ?? [{ id: "af-1" }],
+      error: opts?.ledgerError ?? null,
+    });
+  const upsert = vi.fn().mockReturnValue({ select: ledgerSelect });
+
+  const from = vi.fn().mockImplementation((table: string) =>
+    table === "action_feedback" ? { upsert } : { select },
+  );
 
   const rpc = vi.fn().mockImplementation(async () => {
     if (opts?.throwOnRpc) throw new Error("rpc network error");
@@ -40,7 +56,7 @@ function makeStub(opts?: {
   });
 
   const sb = { from, rpc } as unknown as SupabaseClient;
-  return { sb, from, rpc, maybeSingle };
+  return { sb, from, rpc, maybeSingle, upsert };
 }
 
 const DETECTOR = "campaign_below_breakeven";
@@ -177,5 +193,54 @@ describe("recordApproval — trust receipt", () => {
     await expect(recordApproval("shop-1", DETECTOR, ACTION, sb)).resolves.toEqual(
       expect.objectContaining({ delta: 0 }),
     );
+  });
+});
+
+describe("recordApproval — once-per-audit dedup (approve ledger)", () => {
+  it("writes an approve ledger row keyed by audit id, then bumps alpha", async () => {
+    const { sb, rpc, upsert } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
+    await recordApproval("shop-1", DETECTOR, ACTION, sb, { auditId: "aud-9", alertId: "al-9" });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shop_id: "shop-1",
+        audit_id: "aud-9",
+        alert_id: "al-9",
+        detector_id: DETECTOR,
+        action_kind: ACTION,
+        decision: "approve",
+      }),
+      { onConflict: "shop_id,audit_id,decision", ignoreDuplicates: true },
+    );
+    expect(rpc).toHaveBeenCalledWith("calibration_record_approval", expect.anything());
+  });
+
+  it("a DUPLICATE ledger row (replay/double-submit) skips the alpha bump and returns a no-movement receipt", async () => {
+    const { sb, rpc } = makeStub({
+      rows: [{ alpha: 3, beta: 1, clean_approvals: 3, graduation_threshold: 75 }],
+      ledgerRows: [], // ON CONFLICT DO NOTHING → nothing inserted
+    });
+    const r = await recordApproval("shop-1", DETECTOR, ACTION, sb, { auditId: "aud-9" });
+    expect(rpc).not.toHaveBeenCalledWith("calibration_record_approval", expect.anything());
+    expect(r.delta).toBe(0);
+    expect(r.before).toBe(r.after);
+    expect(r.cleanApprovals).toBe(3);
+    expect(r.justGraduated).toBe(false);
+  });
+
+  it("a ledger WRITE ERROR still records the approval (dedup lost, signal kept)", async () => {
+    const { sb, rpc } = makeStub({
+      rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }],
+      ledgerError: { message: "column audit_id does not exist" },
+    });
+    const r = await recordApproval("shop-1", DETECTOR, ACTION, sb, { auditId: "aud-9" });
+    expect(rpc).toHaveBeenCalledWith("calibration_record_approval", expect.anything());
+    expect(r.delta).toBeGreaterThanOrEqual(0);
+  });
+
+  it("no auditId → no ledger write, straight to the bump (legacy behavior)", async () => {
+    const { sb, rpc, upsert } = makeStub({ rows: [{ alpha: 0, beta: 0 }, { alpha: 1, beta: 0 }] });
+    await recordApproval("shop-1", DETECTOR, ACTION, sb);
+    expect(upsert).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("calibration_record_approval", expect.anything());
   });
 });

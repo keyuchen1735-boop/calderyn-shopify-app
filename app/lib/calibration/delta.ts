@@ -11,10 +11,17 @@
 import type { ActionKind } from "../types";
 import { pairConfidence } from "./confidence";
 
-/** Beta counters for a pair. */
+/** Beta counters for a pair, plus the cached learned factors (both written by
+ * the recompute onto the pair row). The factors are optional: a cold pair or a
+ * legacy caller without them gets the cold defaults — identical to the
+ * pre-learned behavior. */
 export interface PairEv {
   alpha: number;
   beta: number;
+  /** pair_calibration.last_detection (learned detector reliability). */
+  lastDetection?: number | null;
+  /** pair_calibration.consecutive_clean_approvals (reversibility ratchet). */
+  consecutiveCleanApprovals?: number | null;
 }
 
 /** The before/after confidence change for a single approve or reject. */
@@ -55,7 +62,12 @@ export interface RejectReceipt {
   /** True if the reject reason produced a learned calibration_rule. */
   savedAsRule: boolean;
   /** Which rule kind was written, or null. */
-  ruleKind: "pair_dollar_cap" | "pair_probation_until" | "muted_pair" | null;
+  ruleKind:
+    | "pair_dollar_cap"
+    | "pair_probation_until"
+    | "muted_pair"
+    | "pair_blackout_hours"
+    | null;
 }
 
 /** Fail-safe zero receipt — returned whenever a read/compute fails. */
@@ -88,7 +100,10 @@ export function confFromEv(
   actionKind: ActionKind,
   ev: PairEv,
 ): number {
-  return pairConfidence(detectorId, actionKind, ev, null);
+  return pairConfidence(detectorId, actionKind, ev, null, {
+    detection: ev.lastDetection,
+    consecutiveCleanApprovals: ev.consecutiveCleanApprovals,
+  });
 }
 
 /**

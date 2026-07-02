@@ -162,6 +162,9 @@ describe("graduationVerdict — discontinue_sku (hard_to_reverse: 10-approval fl
     actionKind: "discontinue_sku",
     cleanApprovals: 10,
     netPositiveOutcomes: 5,
+    // hard_to_reverse pairs must clear the TIER floor (88, spec §3): the stored
+    // 75 threshold is floored up by effectiveGraduationThreshold.
+    lastConf: 90,
   };
 
   it("is in the graduatable set", () => {
@@ -193,5 +196,61 @@ describe("graduationVerdict — discontinue_sku (hard_to_reverse: 10-approval fl
     const v = graduationVerdict({ ...DISCONTINUE, hasUndoBranch: false });
     expect(v.graduated).toBe(false);
     expect(v.reason).toBe("no undo branch");
+  });
+});
+
+describe("effectiveGraduationThreshold — tier floors (spec section 3: 75/88/95)", () => {
+  it("floors each tier regardless of the stored default", async () => {
+    const { effectiveGraduationThreshold } = await import("../graduation");
+    expect(effectiveGraduationThreshold("pause_campaign", 75)).toBe(75);
+    expect(effectiveGraduationThreshold("discontinue_sku", 75)).toBe(88);
+    expect(effectiveGraduationThreshold("reallocate_inventory", 75)).toBe(95);
+  });
+  it("respects a reject-raised stored threshold above the floor, capped at 99", async () => {
+    const { effectiveGraduationThreshold } = await import("../graduation");
+    expect(effectiveGraduationThreshold("pause_campaign", 85)).toBe(85);
+    expect(effectiveGraduationThreshold("discontinue_sku", 93)).toBe(93);
+    expect(effectiveGraduationThreshold("reallocate_inventory", 120)).toBe(99);
+  });
+  it("treats a missing/zero stored threshold as the tier floor", async () => {
+    const { effectiveGraduationThreshold } = await import("../graduation");
+    expect(effectiveGraduationThreshold("pause_campaign", 0)).toBe(75);
+    expect(effectiveGraduationThreshold("reallocate_inventory", Number.NaN)).toBe(95);
+  });
+});
+
+describe("graduationVerdict — no-brainer demote-to-ask (I8)", () => {
+  const NB: Parameters<typeof graduationVerdict>[0] = {
+    ...PASSING,
+    detectorId: "campaign_below_breakeven",
+    actionKind: "pause_campaign",
+    // A cold no-brainer ships with zero synthetic approvals/outcomes — the
+    // short-circuit exempts it from those bars, NOT from the conf bar below.
+    cleanApprovals: 0,
+    netPositiveOutcomes: 0,
+  };
+
+  it("stays unlocked at cold-start confidence (~74)", () => {
+    const v = graduationVerdict({ ...NB, lastConf: 74 });
+    expect(v.graduated).toBe(true);
+    expect(v.reason).toBe("shipped no-brainer");
+  });
+
+  it("demotes to always-ask once rejects push confidence below the no-brainer bar", () => {
+    const v = graduationVerdict({ ...NB, lastConf: 69 });
+    expect(v.graduated).toBe(false);
+    expect(v.reason).toBe("below confidence bar");
+  });
+
+  it("re-unlocks when approvals earn confidence back", () => {
+    expect(graduationVerdict({ ...NB, lastConf: 70 }).graduated).toBe(true);
+    expect(graduationVerdict({ ...NB, lastConf: 90 }).graduated).toBe(true);
+  });
+
+  it("mute/probation/undo/measured-loss still demote a no-brainer regardless of confidence", () => {
+    expect(graduationVerdict({ ...NB, lastConf: 90, merchantDisabled: true }).graduated).toBe(false);
+    expect(graduationVerdict({ ...NB, lastConf: 90, onProbation: true }).graduated).toBe(false);
+    expect(graduationVerdict({ ...NB, lastConf: 90, consecutiveUndos: 1 }).graduated).toBe(false);
+    expect(graduationVerdict({ ...NB, lastConf: 90, lastOutcomeSign: -1 }).graduated).toBe(false);
   });
 });
