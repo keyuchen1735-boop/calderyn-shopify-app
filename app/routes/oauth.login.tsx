@@ -29,6 +29,8 @@ import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { getClient, verifyPendingOauth } from "~/lib/mcp_oauth.server";
 import { buildAppConnectUrl, SHOP_RE } from "~/lib/connect-deeplink";
 import { shopHintCookieHeader } from "~/lib/connect-deeplink.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
+import { requireSameOrigin } from "~/lib/dashboard/http.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
@@ -36,6 +38,9 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+  if (!(await rateLimit(clientIpKey(request, "oauth_login"), 30, 60_000))) {
+    return new Response("Too Many Requests", { status: 429 });
+  }
   const appUrl = process.env.SHOPIFY_APP_URL ?? "";
   const token = new URL(request.url).searchParams.get("t") ?? "";
   let ctx;
@@ -51,6 +56,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+  // Same-origin (CSRF) guard: without it a cross-site POST could plant the 90-day
+  // __Host-cala_shop hint, mirroring the dashboard.login shop-hint fix.
+  requireSameOrigin(request);
+  if (!(await rateLimit(clientIpKey(request, "oauth_login"), 30, 60_000))) {
+    return json({ error: "rate_limited" }, { status: 429 });
+  }
   const appUrl = process.env.SHOPIFY_APP_URL ?? "";
   const apiKey = process.env.SHOPIFY_API_KEY ?? "";
 

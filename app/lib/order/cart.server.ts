@@ -103,6 +103,10 @@ export async function buildCart(shopId: string): Promise<Cart> {
  * against duplicate variant rows under a concurrent double-add. Atomic increment is the
  * upgrade: a security-definer RPC doing `insert ... on conflict do update set quantity = ...`.
  */
+// Hard ceiling on a single cart line so a scripted client cannot inflate a cart
+// (and the downstream checkout total) without bound.
+const MAX_LINE_QUANTITY = 999;
+
 export async function addCartLine(
   shopId: string,
   cartId: string,
@@ -115,6 +119,9 @@ export async function addCartLine(
   if (!variantId) throw new Error("variantId is required");
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error(`quantity must be a positive integer, got ${quantity}`);
+  }
+  if (quantity > MAX_LINE_QUANTITY) {
+    throw new Error(`quantity ${quantity} exceeds the per-line maximum ${MAX_LINE_QUANTITY}`);
   }
 
   const resolved = await resolveVariant(shopId, variantId);
@@ -139,7 +146,7 @@ export async function addCartLine(
     const line = mapLine(existing.data as Record<string, unknown>);
     const bumped = await sb
       .from("cart_line")
-      .update({ quantity: line.quantity + quantity }) // keep original price/currency snapshot
+      .update({ quantity: Math.min(line.quantity + quantity, MAX_LINE_QUANTITY) }) // keep original price/currency snapshot
       .eq("shop_id", shopId)
       .eq("id", line.id)
       .select(LINE_COLS)

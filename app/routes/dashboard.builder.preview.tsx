@@ -5,7 +5,8 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";
-import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
+import { requireVerifiedSession } from "~/lib/dashboard/session.server";
+import { requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
@@ -16,7 +17,7 @@ import { enhanceListing, applyAssetOverrides } from "~/lib/storegen/imagery/asse
 import type { ImprovableListing } from "~/lib/storegen/imagery/detector";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await getSessionOrRedirect(request);
+  const session = await requireVerifiedSession(request);
   const shopId = session.shopId;
   const catalog = getCatalog();
   const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
@@ -42,7 +43,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const session = await getSessionOrRedirect(request);
+  // Match the dashboard.api.* convention: same-origin (CSRF) + email-verified.
+  // enhanceListing spends metered image-generation credits, so gate it.
+  requireSameOrigin(request);
+  const session = await requireVerifiedSession(request);
   const form = await request.formData();
   const productId = form.get("productId");
   if (typeof productId !== "string" || !productId) throw new Response("productId required", { status: 400 });

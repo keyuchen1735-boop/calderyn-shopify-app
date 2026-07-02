@@ -4,6 +4,9 @@ import { renderPilotEmail } from "~/lib/pilot-invite/email.server";
 import { appOrigin } from "~/lib/pilot-invite/origin.server";
 
 export async function loader({ request }: LoaderFunctionArgs): Promise<Response> {
+  // Internal email-preview harness (design/QA only): not reachable in production,
+  // so the branded template and its reflected params cannot be served publicly.
+  if (process.env.NODE_ENV === "production") throw new Response("Not Found", { status: 404 });
   const url = new URL(request.url);
   const base = appOrigin(request);
   const { html } = renderPilotEmail({

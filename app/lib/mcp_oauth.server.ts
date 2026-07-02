@@ -102,6 +102,7 @@ export interface DcrResponse {
 export async function registerClient(req: DcrRequest): Promise<DcrResponse> {
   const name = (req.client_name ?? "").trim();
   if (!name) throw err("INVALID_CLIENT_NAME", "client_name is required");
+  if (name.length > 200) throw err("INVALID_CLIENT_NAME", "client_name is too long");
   if (!Array.isArray(req.redirect_uris) || req.redirect_uris.length === 0) {
     throw err("INVALID_REDIRECT_URI", "redirect_uris must be a non-empty array");
   }
@@ -110,6 +111,7 @@ export async function registerClient(req: DcrRequest): Promise<DcrResponse> {
   }
   for (const u of req.redirect_uris) {
     if (!isHttpsUri(u)) throw err("INVALID_REDIRECT_URI", `redirect_uri must be https: ${u}`);
+    if (u.length > 2048) throw err("INVALID_REDIRECT_URI", "redirect_uri is too long");
   }
 
   const client_id = newClientId();

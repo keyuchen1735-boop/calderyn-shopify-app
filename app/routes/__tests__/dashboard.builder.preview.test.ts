@@ -8,7 +8,8 @@ import BuilderPreview, { loader, action } from "../dashboard.builder.preview";
 const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(),
 }));
-vi.mock("~/lib/dashboard/session.server", () => ({ getSessionOrRedirect: sessionMock }));
+vi.mock("~/lib/dashboard/session.server", () => ({ requireVerifiedSession: sessionMock }));
+vi.mock("~/lib/dashboard/http.server", () => ({ requireSameOrigin: () => {} }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));

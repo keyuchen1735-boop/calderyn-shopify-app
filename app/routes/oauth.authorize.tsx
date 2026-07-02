@@ -17,6 +17,7 @@ import oauthConnectStyles from "~/styles/oauth-connect.css?url";
 import { getClient, signPendingOauth } from "~/lib/mcp_oauth.server";
 import { buildAppConnectUrl, SHOP_RE } from "~/lib/connect-deeplink";
 import { readShopHintCookie } from "~/lib/connect-deeplink.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 
 const FLAG_ON = () => process.env.MCP_OAUTH_ENABLED === "true";
 
@@ -59,6 +60,11 @@ function redirectError(
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!FLAG_ON()) return new Response("Not Found", { status: 404 });
+  // Per-IP cap, mirroring oauth.token/register: damps client_id enumeration and
+  // pending-JWT minting on this unauthenticated endpoint.
+  if (!(await rateLimit(clientIpKey(request, "oauth_authorize"), 30, 60_000))) {
+    return new Response("Too Many Requests", { status: 429 });
+  }
 
   const url = new URL(request.url);
   const params = readParams(url);

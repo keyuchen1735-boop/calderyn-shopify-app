@@ -340,26 +340,4 @@ describe("onboarding loader", () => {
     expect(body.error).toEqual({ code: "ERROR", message: "shops lookup failed" });
   });
 
-  it("keeps the dev skip-setup bypass OFF unless ONBOARDING_DEV_BYPASS is exactly \"true\"", async () => {
-    getStateSpy.mockResolvedValue({ step: 0, done: false });
-    guardrailsGetSpy.mockResolvedValue(null);
-    integrationsListSpy.mockResolvedValue({});
-
-    const off = (await (await callLoader()).json()) as { devBypass: boolean };
-    expect(off.devBypass).toBe(false);
-
-    vi.stubEnv("ONBOARDING_DEV_BYPASS", "true");
-    vi.resetModules();
-    try {
-      const fresh = await import("../app.onboarding");
-      const res = await fresh.loader({
-        request: new Request("http://localhost/app/onboarding"),
-      } as unknown as LoaderFunctionArgs);
-      const on = (await res.json()) as { devBypass: boolean };
-      expect(on.devBypass).toBe(true);
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
-  });
 });

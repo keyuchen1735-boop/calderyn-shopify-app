@@ -16,6 +16,12 @@ const MAX_AGE_SEC = 60 * 60 * 24 * 30; // 30 days
 
 function cartCookie() {
   const secret = process.env.SHOPIFY_API_SECRET ?? "";
+  // Fail closed in production: an unsigned cart cookie would let a client hand us
+  // an arbitrary cart_id. The unconfigured (dev/shell) path stays permissive so
+  // the public store still renders before env is wired.
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("SHOPIFY_API_SECRET must be set to sign the cart cookie in production");
+  }
   return createCookie(COOKIE_NAME, {
     path: "/",
     httpOnly: true,

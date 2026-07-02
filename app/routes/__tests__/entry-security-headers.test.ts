@@ -45,20 +45,36 @@ describe("applySecurityHeaders", () => {
       "strict-origin-when-cross-origin",
     );
     expect(headers.get("Permissions-Policy")).toBe(
-      "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+      "camera=(), microphone=(), geolocation=(), browsing-topics=(), usb=(), interest-cohort=()",
     );
     expect(headers.get("X-Permitted-Cross-Domain-Policies")).toBe("none");
     expect(headers.get("X-DNS-Prefetch-Control")).toBe("off");
     expect(headers.get("Strict-Transport-Security")).toBe(
       "max-age=63072000; includeSubDomains; preload",
     );
+    expect(headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin-allow-popups");
+    expect(headers.get("Origin-Agent-Cluster")).toBe("?1");
   });
 
-  it("does not add a CSP when Shopify set none (non-embedded edge: leave as-is)", () => {
-    // When there is no CSP to augment, we must NOT invent a document-wide one
-    // (script-src would break App Bridge). Absence stays absence.
+  it("locks framing down on non-embedded surfaces when Shopify set no CSP", () => {
     const headers = new Headers();
-    applySecurityHeaders(headers);
+    applySecurityHeaders(headers, "/dashboard/signin");
+    expect(headers.get("X-Frame-Options")).toBe("DENY");
+    const csp = headers.get("Content-Security-Policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    // Must never invent a document-wide script-src/default-src: that would break
+    // inline hydration on the dashboard/storefront.
+    expect(csp).not.toContain("script-src");
+    expect(csp).not.toContain("default-src");
+  });
+
+  it("leaves embedded-path framing untouched even with no Shopify CSP", () => {
+    // Shopify frames /app and /auth; setting X-Frame-Options or frame-ancestors
+    // 'none' on an embedded error response would break the admin iframe.
+    const headers = new Headers();
+    applySecurityHeaders(headers, "/app/settings");
+    expect(headers.get("X-Frame-Options")).toBeNull();
     expect(headers.get("Content-Security-Policy")).toBeNull();
   });
 

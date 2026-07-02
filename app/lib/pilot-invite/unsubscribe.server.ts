@@ -15,6 +15,9 @@ export async function signUnsubToken(email: string): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(email.toLowerCase())
     .setIssuedAt()
+    // Long expiry so the "invalid or expired" copy on /pilot/unsubscribe is
+    // accurate, while staying well within RFC 8058 one-click-unsubscribe norms.
+    .setExpirationTime("180d")
     .sign(unsubKey());
 }
 
