@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   billingStatus: vi.fn(),
   startOnboarding: vi.fn(),
   syncAccountStatus: vi.fn(),
+  expressLoginLink: vi.fn(),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: h.requireDashboardSession }));
@@ -12,6 +13,7 @@ vi.mock("~/lib/payments/connect.server", () => ({
   billingStatus: h.billingStatus,
   startOnboarding: h.startOnboarding,
   syncAccountStatus: h.syncAccountStatus,
+  expressLoginLink: h.expressLoginLink,
   onboardingOrigin: () => "https://app.example.com",
 }));
 
@@ -26,7 +28,6 @@ const DTO = {
   feeBps: 0,
   feeFlatCents: 0,
   balance: null,
-  expressDashboardUrl: null,
 };
 
 function post(body: unknown) {
@@ -70,6 +71,20 @@ describe("action", () => {
     const res = await action({ request: post({ intent: "refresh-status" }), params: {}, context: {} } as never);
     expect(h.syncAccountStatus).toHaveBeenCalledWith("shop-1");
     expect(await res.json()).toEqual(DTO);
+  });
+
+  it("login-link mints an on-demand Express login link", async () => {
+    h.expressLoginLink.mockResolvedValue({ url: "https://connect.stripe.com/express/login" });
+    const res = await action({ request: post({ intent: "login-link" }), params: {}, context: {} } as never);
+    expect(await res.json()).toEqual({ url: "https://connect.stripe.com/express/login" });
+    expect(h.expressLoginLink).toHaveBeenCalledWith("shop-1");
+  });
+
+  it("login-link returns 409 when the account is not onboarded", async () => {
+    h.expressLoginLink.mockResolvedValue(null);
+    const res = await action({ request: post({ intent: "login-link" }), params: {}, context: {} } as never);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "not_onboarded" });
   });
 
   it("rejects an unknown intent with 422", async () => {

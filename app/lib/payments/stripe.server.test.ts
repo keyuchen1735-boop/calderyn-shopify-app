@@ -8,8 +8,7 @@ const h = vi.hoisted(() => ({
   rpc: vi.fn(),
   transitionOrder: vi.fn(),
   emitPaidOrder: vi.fn(),
-  destinationParamsFor: vi.fn(),
-  syncAccountStatus: vi.fn(),
+  routedCreate: vi.fn(),
 }));
 
 // Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks.
@@ -39,11 +38,11 @@ vi.mock("~/lib/supabase.server", () => ({
 vi.mock("~/lib/order/order.server", () => ({ transitionOrder: h.transitionOrder }));
 vi.mock("~/lib/order/emit.server", () => ({ emitPaidOrder: h.emitPaidOrder }));
 
-// Connect routing decision is unit-tested in connect.server.test.ts; here we assert
-// the WIRING — params spread into the create, row stamping, and the platform fallback.
+// Routing + fallback + decline semantics are unit-tested against
+// createRoutedPaymentIntent in connect.server.test.ts; here we assert the WIRING —
+// the base params handed to the seam and the row stamping of its outcome.
 vi.mock("~/lib/payments/connect.server", () => ({
-  destinationParamsFor: h.destinationParamsFor,
-  syncAccountStatus: h.syncAccountStatus,
+  createRoutedPaymentIntent: h.routedCreate,
 }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the stripe + supabase fakes are registered before the module under test loads
@@ -53,9 +52,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
-  // Default: no connected account -> platform charge (today's behavior).
-  h.destinationParamsFor.mockResolvedValue({ params: {}, stripeAccountId: null, applicationFeeCents: null });
-  h.syncAccountStatus.mockResolvedValue(null);
+  // Default: platform charge (today's behavior) — the seam echoes h.piCreate's PI.
+  h.routedCreate.mockImplementation(async (_shopId: string, base: Record<string, unknown>) => ({
+    pi: await h.piCreate(base),
+    stripeAccountId: null,
+    applicationFeeCents: null,
+  }));
   // Defaults: a successful checkout_pending -> paid transition, then a no-op emit.
   h.transitionOrder.mockResolvedValue({
     id: "t-1",
@@ -110,78 +112,31 @@ describe("createPaymentIntent", () => {
     expect(h.piCreate).not.toHaveBeenCalled();
   });
 
-  it("spreads destination params and stamps the routed acct + fee on the PI row", async () => {
-    h.destinationParamsFor.mockResolvedValue({
-      params: {
-        transfer_data: { destination: "acct_1" },
-        on_behalf_of: "acct_1",
-        application_fee_amount: 280,
-      },
+  it("hands the exact base params to the routing seam and stamps its routed outcome on the row", async () => {
+    h.routedCreate.mockResolvedValue({
+      pi: { id: "pi_2", client_secret: "s", status: "requires_payment_method" },
       stripeAccountId: "acct_1",
       applicationFeeCents: 280,
     });
-    h.piCreate.mockResolvedValue({ id: "pi_2", client_secret: "s", status: "requires_payment_method" });
     h.insert.mockResolvedValue({ error: null });
 
     await createPaymentIntent("shop-1", 10000, "usd", "order-2");
 
-    expect(h.piCreate).toHaveBeenCalledWith({
+    expect(h.routedCreate).toHaveBeenCalledWith("shop-1", {
       amount: 10000,
       currency: "usd",
       automatic_payment_methods: { enabled: true },
       metadata: { shop_id: "shop-1", order_ref: "order-2" },
-      transfer_data: { destination: "acct_1" },
-      on_behalf_of: "acct_1",
-      application_fee_amount: 280,
     });
     expect(h.insert).toHaveBeenCalledWith(
       expect.objectContaining({ stripe_account_id: "acct_1", application_fee_cents: 280 }),
     );
   });
 
-  it("falls back to a platform charge when the destination create is rejected (checkout never breaks)", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    h.destinationParamsFor.mockResolvedValue({
-      params: { transfer_data: { destination: "acct_1" }, on_behalf_of: "acct_1" },
-      stripeAccountId: "acct_1",
-      applicationFeeCents: null,
-    });
-    const stripeErr = Object.assign(new Error("account cannot receive transfers"), {
-      type: "StripeInvalidRequestError",
-    });
-    h.piCreate
-      .mockRejectedValueOnce(stripeErr)
-      .mockResolvedValueOnce({ id: "pi_3", client_secret: "s3", status: "requires_payment_method" });
-    h.insert.mockResolvedValue({ error: null });
-
-    const out = await createPaymentIntent("shop-1", 2500, "usd", "order-3");
-
-    expect(out.paymentIntentId).toBe("pi_3");
-    // Second attempt carries NO connect params.
-    expect(h.piCreate.mock.calls[1][0]).toEqual({
-      amount: 2500,
-      currency: "usd",
-      automatic_payment_methods: { enabled: true },
-      metadata: { shop_id: "shop-1", order_ref: "order-3" },
-    });
-    // Row records the truth: platform charge, no fee.
-    expect(h.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ stripe_account_id: null, application_fee_cents: null }),
-    );
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to platform charge/));
-    expect(h.syncAccountStatus).toHaveBeenCalledWith("shop-1"); // self-heal the stale flags
-    warn.mockRestore();
-  });
-
-  it("does NOT swallow non-destination errors (no blind retry)", async () => {
-    h.destinationParamsFor.mockResolvedValue({
-      params: { transfer_data: { destination: "acct_1" }, on_behalf_of: "acct_1" },
-      stripeAccountId: "acct_1",
-      applicationFeeCents: null,
-    });
-    h.piCreate.mockRejectedValue(Object.assign(new Error("rate limited"), { type: "StripeRateLimitError" }));
+  it("propagates a seam rejection (fallback/decline semantics live in connect.server.test.ts)", async () => {
+    h.routedCreate.mockRejectedValue(Object.assign(new Error("rate limited"), { type: "StripeRateLimitError" }));
     await expect(createPaymentIntent("shop-1", 2500, "usd")).rejects.toThrow(/rate limited/);
-    expect(h.piCreate).toHaveBeenCalledTimes(1);
+    expect(h.insert).not.toHaveBeenCalled(); // no row for a charge that never existed
   });
 });
 

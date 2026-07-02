@@ -52,7 +52,19 @@ export interface DestinationDecision {
  * a half-onboarded one; anything else charges the platform (today's behavior).
  */
 export async function destinationParamsFor(shopId: string, amountCents: number): Promise<DestinationDecision> {
-  const acct = await getConnectedAccount(shopId);
+  let acct: ConnectedAccountRow | null;
+  try {
+    acct = await getConnectedAccount(shopId);
+  } catch (err) {
+    // Routing is best-effort (spec §7: checkout never fails because of payout
+    // plumbing). A stripe_connected_account read error falls OPEN to a platform
+    // charge — today's manually-settleable behavior — instead of aborting a
+    // checkout that has already written its order rows. Logged, never silent.
+    console.warn(
+      `[stripe-connect] connected-account lookup failed for shop ${shopId} (${(err as Error).message}); using platform charge`,
+    );
+    return { params: {}, stripeAccountId: null, applicationFeeCents: null };
+  }
   if (!acct || !acct.charges_enabled || !acct.payouts_enabled || !acct.details_submitted) {
     return { params: {}, stripeAccountId: null, applicationFeeCents: null };
   }
@@ -68,13 +80,78 @@ export async function destinationParamsFor(shopId: string, amountCents: number):
   };
 }
 
-/** Base origin for the Stripe-hosted onboarding return/refresh redirects. */
+export interface RoutedPaymentIntent {
+  pi: Stripe.PaymentIntent;
+  /** null = platform charge (manual settlement); acct_... = destination-routed. */
+  stripeAccountId: string | null;
+  /** Fee actually attached at create; null = none. */
+  applicationFeeCents: number | null;
+}
+
+/**
+ * THE single PI-creation seam for routed charges — every PaymentIntent site
+ * (storefront checkout, ACP agentic checkout, future sites) calls this so the
+ * routing decision, the destination→platform fallback, and the row-stamping
+ * values cannot drift apart per call site.
+ *
+ * Fallback contract: ONLY a routed create rejected as StripeInvalidRequestError
+ * (HTTP 400/404 parameter validation — strictly pre-authorization, so a
+ * confirm:true create has moved no money) retries as a platform charge.
+ * A card decline (StripeCardError, 402) or any network/API error propagates
+ * untouched — NEVER retried, so a confirmed charge can never double-attempt.
+ */
+export async function createRoutedPaymentIntent(
+  shopId: string,
+  base: Stripe.PaymentIntentCreateParams,
+  opts: { logLabel?: string } = {},
+): Promise<RoutedPaymentIntent> {
+  const label = opts.logLabel ? `${opts.logLabel} ` : "";
+  const dest = await destinationParamsFor(shopId, base.amount as number);
+
+  let stripeAccountId = dest.stripeAccountId;
+  let applicationFeeCents = dest.applicationFeeCents;
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await getStripe().paymentIntents.create({ ...base, ...dest.params });
+  } catch (err) {
+    // Destination-specific rejection (half-onboarded/restricted account) must not
+    // break checkout: retry as a platform charge (= manually settleable) and
+    // re-sync the stale flags. The guard is deliberately NARROW — only invalid-
+    // requests whose code/param implicates the account/destination params fall
+    // back; an invalid-request WE caused (malformed fee/amount/etc.) propagates
+    // visibly (rule 12) instead of silently becoming a feeless platform charge.
+    const e = err as { type?: string; code?: string; param?: string };
+    const destinationRejected =
+      e.type === "StripeInvalidRequestError" &&
+      (e.code === "account_invalid" || /transfer_data|on_behalf_of/.test(e.param ?? ""));
+    if (stripeAccountId && destinationRejected) {
+      console.warn(
+        `[stripe-connect] ${label}destination charge for shop ${shopId} rejected (${(err as Error).message}); falling back to platform charge`,
+      );
+      void syncAccountStatus(shopId).catch((e) =>
+        console.warn(`[stripe-connect] status re-sync failed for shop ${shopId}: ${(e as Error).message}`),
+      );
+      stripeAccountId = null;
+      applicationFeeCents = null;
+      pi = await getStripe().paymentIntents.create(base);
+    } else {
+      throw err;
+    }
+  }
+  return { pi, stripeAccountId, applicationFeeCents };
+}
+
+/**
+ * Base origin for the Stripe-hosted onboarding return/refresh redirects.
+ * First NON-EMPTY env wins (`??` alone would accept ""); strips ALL trailing
+ * slashes. Mirrors appOrigin (pilot-invite/origin.server.ts) — kept local
+ * because the primary env knob differs per surface (dashboard vs pilot links).
+ */
 export function onboardingOrigin(request: Request): string {
-  return (
-    process.env.DASHBOARD_PUBLIC_URL ??
-    process.env.SHOPIFY_APP_URL ??
-    new URL(request.url).origin
-  ).replace(/\/$/, "");
+  const base =
+    [process.env.DASHBOARD_PUBLIC_URL, process.env.SHOPIFY_APP_URL].find(Boolean) ??
+    new URL(request.url).origin;
+  return base.replace(/\/+$/, "");
 }
 
 /**
@@ -84,8 +161,9 @@ export function onboardingOrigin(request: Request): string {
  * account (second insert loses on unique(shop_id)); harmless, not handled.
  */
 export async function startOnboarding(shopId: string, origin: string): Promise<{ url: string }> {
-  let acct = await getConnectedAccount(shopId);
-  if (!acct) {
+  const acct = await getConnectedAccount(shopId);
+  let stripeAccountId = acct?.stripe_account_id ?? null;
+  if (!stripeAccountId) {
     const created = await getStripe().accounts.create({
       type: "express",
       country: "US",
@@ -100,22 +178,10 @@ export async function startOnboarding(shopId: string, origin: string): Promise<{
       default_currency: created.default_currency ?? "usd",
     });
     if (ins.error) throw ins.error;
-    acct = {
-      shop_id: shopId,
-      stripe_account_id: created.id,
-      account_type: "express",
-      charges_enabled: false,
-      payouts_enabled: false,
-      details_submitted: false,
-      application_fee_bps: 0,
-      application_fee_flat_cents: 0,
-      country: created.country ?? "US",
-      default_currency: created.default_currency ?? "usd",
-      onboarded_at: null,
-    };
+    stripeAccountId = created.id;
   }
   const link = await getStripe().accountLinks.create({
-    account: acct.stripe_account_id,
+    account: stripeAccountId,
     type: "account_onboarding",
     return_url: `${origin}/dashboard/payouts/stripe/return`,
     refresh_url: `${origin}/dashboard/payouts/stripe/refresh`,
@@ -163,10 +229,9 @@ export interface BillingDTO {
     available: Array<{ amountCents: number; currency: string }>;
     pending: Array<{ amountCents: number; currency: string }>;
   } | null;
-  expressDashboardUrl: string | null;
 }
 
-/** Dashboard DTO (never the raw row). Live Stripe reads degrade to null; they never 500 the screen. */
+/** Dashboard DTO (never the raw row). The live balance read degrades to null; it never 500s the screen. */
 export async function billingStatus(shopId: string): Promise<BillingDTO> {
   const acct = await getConnectedAccount(shopId);
   if (!acct) {
@@ -178,22 +243,15 @@ export async function billingStatus(shopId: string): Promise<BillingDTO> {
       feeBps: 0,
       feeFlatCents: 0,
       balance: null,
-      expressDashboardUrl: null,
     };
   }
   let balance: BillingDTO["balance"] = null;
-  let expressDashboardUrl: string | null = null;
   if (acct.details_submitted) {
     try {
-      const stripe = getStripe();
-      const [bal, login] = await Promise.all([
-        stripe.balance.retrieve({}, { stripeAccount: acct.stripe_account_id }),
-        stripe.accounts.createLoginLink(acct.stripe_account_id),
-      ]);
+      const bal = await getStripe().balance.retrieve({}, { stripeAccount: acct.stripe_account_id });
       const shape = (rows: Array<{ amount: number; currency: string }>) =>
         rows.map((r) => ({ amountCents: r.amount, currency: r.currency }));
       balance = { available: shape(bal.available), pending: shape(bal.pending) };
-      expressDashboardUrl = login.url;
     } catch (err) {
       console.warn(`[stripe-connect] live balance read failed for shop ${shopId}: ${(err as Error).message}`);
     }
@@ -206,6 +264,17 @@ export async function billingStatus(shopId: string): Promise<BillingDTO> {
     feeBps: acct.application_fee_bps,
     feeFlatCents: acct.application_fee_flat_cents,
     balance,
-    expressDashboardUrl,
   };
+}
+
+/**
+ * Single-use Express-dashboard login link, minted ONLY on demand (a link is
+ * consumed by one click; minting it on every Settings load wasted a live
+ * Stripe call per view). null = no fully-submitted connected account.
+ */
+export async function expressLoginLink(shopId: string): Promise<{ url: string } | null> {
+  const acct = await getConnectedAccount(shopId);
+  if (!acct || !acct.details_submitted) return null;
+  const login = await getStripe().accounts.createLoginLink(acct.stripe_account_id);
+  return { url: login.url };
 }

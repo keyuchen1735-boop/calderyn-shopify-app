@@ -3,6 +3,7 @@ import { Card, SectionTitle, Pill, Btn } from "./ui";
 import { money } from "./format";
 import {
   fetchBilling,
+  fetchPayoutLoginLink,
   startPayoutOnboarding,
   refreshPayoutStatus,
   DashboardApiError,
@@ -14,21 +15,34 @@ import type { DashboardCtx } from "./context";
 /** Payouts (Stripe Connect, #11): onboarding CTA, status pill, live balance, fee line. */
 export function PayoutsCard({ app }: { app: DashboardCtx }) {
   const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setLoadFailed(false);
     fetchBilling()
       .then((d) => {
         if (active) setBilling(d);
       })
       .catch(() => {
-        /* card keeps its loading placeholder until the API is reachable */
+        // Surface the failure (rule 12) — a swallowed error would pin the card
+        // on the loading state forever with no recovery.
+        if (active) setLoadFailed(true);
       });
     return () => {
       active = false;
     };
   }, []);
+
+  const onRetryLoad = async () => {
+    setLoadFailed(false);
+    try {
+      setBilling(await fetchBilling());
+    } catch {
+      setLoadFailed(true);
+    }
+  };
 
   const onCta = async () => {
     if (busy) return;
@@ -38,6 +52,19 @@ export function PayoutsCard({ app }: { app: DashboardCtx }) {
       window.location.assign(url); // top-level hop to Stripe-hosted onboarding
     } catch (err) {
       const message = err instanceof DashboardApiError ? err.message : "Couldn't start payout setup.";
+      app.toast(message, "x", "critical");
+      setBusy(false);
+    }
+  };
+
+  const onOpenStripe = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { url } = await fetchPayoutLoginLink();
+      window.location.assign(url);
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Couldn't open the Stripe dashboard.";
       app.toast(message, "x", "critical");
       setBusy(false);
     }
@@ -65,7 +92,14 @@ export function PayoutsCard({ app }: { app: DashboardCtx }) {
     <section>
       <SectionTitle>Payouts</SectionTitle>
       <Card>
-        {!vm || !billing ? (
+        {loadFailed ? (
+          <div className="cd-caption">
+            Couldn't load payout status.{" "}
+            <button type="button" className="cd-link" onClick={onRetryLoad}>
+              Retry
+            </button>
+          </div>
+        ) : !vm || !billing ? (
           <div className="cd-caption">Loading payout status…</div>
         ) : (
           <>
@@ -97,11 +131,13 @@ export function PayoutsCard({ app }: { app: DashboardCtx }) {
                 </Btn>
               )}
             </div>
-            {vm.phase === "active" && billing.expressDashboardUrl && (
+            {vm.phase === "active" && (
               <div className="cd-caption">
-                <a href={billing.expressDashboardUrl} target="_blank" rel="noreferrer">
+                {/* Login links are single-use; mint on click (in-tab nav — an async
+                    window.open would trip popup blockers). */}
+                <button type="button" className="cd-link" onClick={onOpenStripe} disabled={busy}>
                   Open Stripe payout dashboard
-                </a>
+                </button>
               </div>
             )}
           </>

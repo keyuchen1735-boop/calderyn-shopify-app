@@ -1,50 +1,45 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Every test doMocks connect.server: the routing DECISION is unit-tested in
-// connect.server.test.ts; here we assert the wiring (spread, stamping, fallback).
-const platformDecision = { params: {}, stripeAccountId: null, applicationFeeCents: null };
-const destinationDecision = {
-  params: { transfer_data: { destination: "acct_1" }, on_behalf_of: "acct_1" },
-  stripeAccountId: "acct_1",
+// Routing + fallback + decline semantics are unit-tested against
+// createRoutedPaymentIntent in connect.server.test.ts; every test here doMocks
+// that seam and asserts the ACP wiring — base params, row stamping, and that
+// a charged-but-unpersisted PI can never return a false success (rule 12).
+const platformResult = (pi: Record<string, unknown>) => ({
+  pi,
+  stripeAccountId: null,
   applicationFeeCents: null,
-};
+});
 
-function mockConnect(decision: typeof platformDecision | typeof destinationDecision) {
-  const syncAccountStatus = vi.fn(async () => null);
-  vi.doMock("~/lib/payments/connect.server", () => ({
-    destinationParamsFor: async () => decision,
-    syncAccountStatus,
-  }));
-  return { syncAccountStatus };
+function mockSeam(impl: (shopId: string, base: Record<string, unknown>) => Promise<unknown>) {
+  const routedCreate = vi.fn(impl);
+  vi.doMock("~/lib/payments/connect.server", () => ({ createRoutedPaymentIntent: routedCreate }));
+  return routedCreate;
 }
 
 describe("chargeSharedPaymentToken", () => {
   it("creates a confirmed PaymentIntent for the order total using the SPT as payment_method", async () => {
     vi.resetModules();
-    mockConnect(platformDecision);
-    const created: Record<string, unknown>[] = [];
+    const routedCreate = mockSeam(async () => platformResult({ id: "pi_1", status: "succeeded" }));
     const inserted: Record<string, unknown>[] = [];
-    vi.doMock("~/lib/payments/stripe.server", () => ({
-      getStripe: () => ({ paymentIntents: { create: async (a: Record<string, unknown>) => { created.push(a); return { id: "pi_1", status: "succeeded" }; } } }),
-    }));
     vi.doMock("~/lib/supabase.server", () => ({
       getSupabase: () => ({ from: () => ({ insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: null }; } }) }),
     }));
     const { chargeSharedPaymentToken } = await import("./charge.server");
     const res = await chargeSharedPaymentToken("shop_test", { orderId: "order1", totalCents: 2660, currency: "usd", sharedPaymentToken: "spt_123" });
     expect(res.status).toBe("succeeded");
-    expect(created[0]).toMatchObject({ amount: 2660, currency: "usd", payment_method: "spt_123", confirm: true });
-    expect((created[0] as { metadata: { order_ref: string } }).metadata.order_ref).toBe("order1");
+    expect(routedCreate).toHaveBeenCalledWith(
+      "shop_test",
+      expect.objectContaining({ amount: 2660, currency: "usd", payment_method: "spt_123", confirm: true, off_session: true }),
+      { logLabel: "ACP" },
+    );
+    expect((routedCreate.mock.calls[0][1] as { metadata: { order_ref: string } }).metadata.order_ref).toBe("order1");
     // Platform charge -> null routing stamps on the mirror row.
     expect(inserted[0]).toMatchObject({ stripe_account_id: null, application_fee_cents: null });
   });
 
   it("surfaces a declined charge (rule 12) rather than reporting success", async () => {
     vi.resetModules();
-    mockConnect(platformDecision);
-    vi.doMock("~/lib/payments/stripe.server", () => ({
-      getStripe: () => ({ paymentIntents: { create: async () => ({ id: "pi_2", status: "requires_payment_method" }) } }),
-    }));
+    mockSeam(async () => platformResult({ id: "pi_2", status: "requires_payment_method" }));
     vi.doMock("~/lib/supabase.server", () => ({
       getSupabase: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }),
     }));
@@ -55,74 +50,48 @@ describe("chargeSharedPaymentToken", () => {
     ).rejects.toMatchObject({ code: "CHARGE_DECLINED" });
   });
 
-  it("spreads destination params into the SPT charge and stamps the routed acct on the row", async () => {
+  it("stamps the routed acct + fee from the seam's outcome on the mirror row", async () => {
     vi.resetModules();
-    mockConnect(destinationDecision);
-    const created: Record<string, unknown>[] = [];
-    const inserted: Record<string, unknown>[] = [];
-    vi.doMock("~/lib/payments/stripe.server", () => ({
-      getStripe: () => ({ paymentIntents: { create: async (a: Record<string, unknown>) => { created.push(a); return { id: "pi_spt", status: "succeeded" }; } } }),
+    mockSeam(async () => ({
+      pi: { id: "pi_spt", status: "succeeded" },
+      stripeAccountId: "acct_1",
+      applicationFeeCents: 280,
     }));
+    const inserted: Record<string, unknown>[] = [];
     vi.doMock("~/lib/supabase.server", () => ({
       getSupabase: () => ({ from: () => ({ insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: null }; } }) }),
     }));
     const { chargeSharedPaymentToken } = await import("./charge.server");
     await chargeSharedPaymentToken("shop_test", { orderId: "order9", totalCents: 5000, currency: "usd", sharedPaymentToken: "spt_1" });
-    expect(created[0]).toMatchObject({
-      transfer_data: { destination: "acct_1" },
-      on_behalf_of: "acct_1",
-      payment_method: "spt_1",
-      confirm: true,
-    });
-    expect(inserted[0]).toMatchObject({ stripe_account_id: "acct_1", application_fee_cents: null });
+    expect(inserted[0]).toMatchObject({ stripe_account_id: "acct_1", application_fee_cents: 280 });
   });
 
-  it("a card DECLINE (confirm:true) is NOT retried as a platform charge — declines propagate", async () => {
+  it("propagates a seam rejection (e.g. card decline) without inserting a row", async () => {
     vi.resetModules();
-    mockConnect(destinationDecision);
-    const create = vi.fn(async () => {
+    const routedCreate = mockSeam(async () => {
       throw Object.assign(new Error("card declined"), { type: "StripeCardError" });
     });
-    vi.doMock("~/lib/payments/stripe.server", () => ({ getStripe: () => ({ paymentIntents: { create } }) }));
+    const inserted: Record<string, unknown>[] = [];
     vi.doMock("~/lib/supabase.server", () => ({
-      getSupabase: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }),
+      getSupabase: () => ({ from: () => ({ insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: null }; } }) }),
     }));
     const { chargeSharedPaymentToken } = await import("./charge.server");
     await expect(
       chargeSharedPaymentToken("shop_test", { orderId: "order9", totalCents: 5000, currency: "usd", sharedPaymentToken: "spt_1" }),
     ).rejects.toThrow(/card declined/);
-    expect(create).toHaveBeenCalledTimes(1); // NEVER double-attempt a confirmed charge on a decline
+    expect(routedCreate).toHaveBeenCalledTimes(1);
+    expect(inserted).toHaveLength(0);
   });
 
-  it("falls back to platform on a destination-invalid rejection", async () => {
+  it("a failed mirror persist after a confirmed charge SURFACES — never a false success (rule 12)", async () => {
     vi.resetModules();
-    const { syncAccountStatus } = mockConnect(destinationDecision);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const created: Record<string, unknown>[] = [];
-    const inserted: Record<string, unknown>[] = [];
-    let calls = 0;
-    vi.doMock("~/lib/payments/stripe.server", () => ({
-      getStripe: () => ({
-        paymentIntents: {
-          create: async (a: Record<string, unknown>) => {
-            calls += 1;
-            if (calls === 1) throw Object.assign(new Error("no transfers"), { type: "StripeInvalidRequestError" });
-            created.push(a);
-            return { id: "pi_fb", status: "succeeded" };
-          },
-        },
-      }),
-    }));
+    mockSeam(async () => platformResult({ id: "pi_ok", status: "succeeded" }));
     vi.doMock("~/lib/supabase.server", () => ({
-      getSupabase: () => ({ from: () => ({ insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: null }; } }) }),
+      getSupabase: () => ({ from: () => ({ insert: async () => ({ error: { message: "connection reset" } }) }) }),
     }));
     const { chargeSharedPaymentToken } = await import("./charge.server");
-    const out = await chargeSharedPaymentToken("shop_test", { orderId: "order9", totalCents: 5000, currency: "usd", sharedPaymentToken: "spt_1" });
-    expect(out.paymentIntentId).toBe("pi_fb");
-    expect(created[0]).not.toHaveProperty("transfer_data");
-    expect(inserted[0]).toMatchObject({ stripe_account_id: null, application_fee_cents: null });
-    expect(syncAccountStatus).toHaveBeenCalledWith("shop_test");
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to platform charge/));
-    warn.mockRestore();
+    await expect(
+      chargeSharedPaymentToken("shop_test", { orderId: "order1", totalCents: 2660, currency: "usd", sharedPaymentToken: "spt_123" }),
+    ).rejects.toMatchObject({ message: "connection reset" });
   });
 });

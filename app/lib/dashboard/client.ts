@@ -653,7 +653,6 @@ export interface BillingStatus {
     available: Array<{ amountCents: number; currency: string }>;
     pending: Array<{ amountCents: number; currency: string }>;
   } | null;
-  expressDashboardUrl: string | null;
 }
 
 export async function fetchBilling(): Promise<BillingStatus> {
@@ -668,6 +667,11 @@ export async function startPayoutOnboarding(): Promise<{ url: string }> {
 /** Pull account status from Stripe (charges/payouts/details flags) and return a fresh DTO. */
 export async function refreshPayoutStatus(): Promise<BillingStatus> {
   return apiSend<BillingStatus>("POST", "/dashboard/api/billing", { intent: "refresh-status" });
+}
+
+/** Mint a single-use Express-dashboard login link on demand (409 when not onboarded). */
+export async function fetchPayoutLoginLink(): Promise<{ url: string }> {
+  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", { intent: "login-link" });
 }
 
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {

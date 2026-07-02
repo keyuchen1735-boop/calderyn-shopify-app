@@ -5,8 +5,10 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { CalderynError } from "~/lib/calderyn.server";
 import {
   billingStatus,
+  expressLoginLink,
   startOnboarding,
   syncAccountStatus,
   onboardingOrigin,
@@ -36,6 +38,17 @@ export async function action({ request }: ActionFunctionArgs) {
     return dashboardJson(async () => {
       await syncAccountStatus(session.shopId);
       return billingStatus(session.shopId);
+    });
+  }
+  if (body.intent === "login-link") {
+    // Minted on demand only — a login link is single-use and almost always
+    // discarded when fetched eagerly with the status DTO.
+    return dashboardJson(async () => {
+      const link = await expressLoginLink(session.shopId);
+      if (!link) {
+        throw new CalderynError({ status: 409, code: "not_onboarded", message: "Payouts account is not onboarded yet." });
+      }
+      return link;
     });
   }
   return jsonError(422, "invalid_intent");

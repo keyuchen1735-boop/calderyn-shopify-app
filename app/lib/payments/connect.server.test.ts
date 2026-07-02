@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   accountLinksCreate: vi.fn(),
   loginLinkCreate: vi.fn(),
   balanceRetrieve: vi.fn(),
+  piCreate: vi.fn(),
   maybeSingle: vi.fn(),
   insert: vi.fn(),
   updateEq: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("stripe", () => ({
     accounts = { create: h.accountsCreate, retrieve: h.accountsRetrieve, createLoginLink: h.loginLinkCreate };
     accountLinks = { create: h.accountLinksCreate };
     balance = { retrieve: h.balanceRetrieve };
+    paymentIntents = { create: h.piCreate };
   },
 }));
 
@@ -35,7 +37,9 @@ vi.mock("~/lib/supabase.server", () => ({
 // eslint-disable-next-line import/first -- import must follow vi.mock so the fakes are registered before the module under test loads
 import {
   computeApplicationFeeCents,
+  createRoutedPaymentIntent,
   destinationParamsFor,
+  expressLoginLink,
   startOnboarding,
   syncAccountStatus,
   billingStatus,
@@ -109,6 +113,111 @@ describe("destinationParamsFor", () => {
     const d = await destinationParamsFor("shop-1", 10000);
     expect(d.params.application_fee_amount).toBe(280);
     expect(d.applicationFeeCents).toBe(280);
+  });
+
+  it("fails OPEN to a platform charge when the connected-account read errors (spec §7)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    h.maybeSingle.mockResolvedValue({ data: null, error: { message: "relation missing" } });
+    expect(await destinationParamsFor("shop-1", 2500)).toEqual({
+      params: {},
+      stripeAccountId: null,
+      applicationFeeCents: null,
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/lookup failed .* using platform charge/));
+    warn.mockRestore();
+  });
+});
+
+describe("createRoutedPaymentIntent", () => {
+  const BASE = {
+    amount: 2500,
+    currency: "usd",
+    metadata: { shop_id: "shop-1", order_ref: "order-1" },
+  };
+  const destinationErr = (over: Record<string, unknown> = {}) =>
+    Object.assign(new Error("No such destination: 'acct_1'"), {
+      type: "StripeInvalidRequestError",
+      code: "resource_missing",
+      param: "transfer_data[destination]",
+      ...over,
+    });
+
+  it("platform path: no connected account -> create(base) verbatim, null stamps", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    h.piCreate.mockResolvedValue({ id: "pi_1", status: "requires_payment_method" });
+
+    const out = await createRoutedPaymentIntent("shop-1", BASE);
+
+    expect(h.piCreate).toHaveBeenCalledTimes(1);
+    expect(h.piCreate).toHaveBeenCalledWith(BASE);
+    expect(out).toMatchObject({ stripeAccountId: null, applicationFeeCents: null });
+    expect(out.pi.id).toBe("pi_1");
+  });
+
+  it("routed path: spreads destination params and returns the routed stamps", async () => {
+    h.maybeSingle.mockResolvedValue({
+      data: { ...ROW, application_fee_bps: 250, application_fee_flat_cents: 30 },
+      error: null,
+    });
+    h.piCreate.mockResolvedValue({ id: "pi_2", status: "requires_payment_method" });
+
+    const out = await createRoutedPaymentIntent("shop-1", { ...BASE, amount: 10000 });
+
+    expect(h.piCreate).toHaveBeenCalledWith({
+      ...BASE,
+      amount: 10000,
+      transfer_data: { destination: "acct_1" },
+      on_behalf_of: "acct_1",
+      application_fee_amount: 280,
+    });
+    expect(out).toMatchObject({ stripeAccountId: "acct_1", applicationFeeCents: 280 });
+  });
+
+  it("falls back to a platform charge ONLY on a destination-param invalid-request (narrow guard)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.accountsRetrieve.mockResolvedValue({ charges_enabled: false, payouts_enabled: false, details_submitted: true });
+    h.piCreate
+      .mockRejectedValueOnce(destinationErr())
+      .mockResolvedValueOnce({ id: "pi_fb", status: "requires_payment_method" });
+
+    const out = await createRoutedPaymentIntent("shop-1", BASE);
+
+    expect(h.piCreate).toHaveBeenCalledTimes(2);
+    expect(h.piCreate.mock.calls[1][0]).toEqual(BASE); // second attempt: NO connect params
+    expect(out).toMatchObject({ stripeAccountId: null, applicationFeeCents: null });
+    expect(out.pi.id).toBe("pi_fb");
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to platform charge/));
+    warn.mockRestore();
+  });
+
+  it("an invalid-request WE caused (non-destination param) propagates — never silently converted (rule 12)", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.piCreate.mockRejectedValue(
+      Object.assign(new Error("Amount must be at least 50 cents"), {
+        type: "StripeInvalidRequestError",
+        code: "amount_too_small",
+        param: "amount",
+      }),
+    );
+    await expect(createRoutedPaymentIntent("shop-1", BASE)).rejects.toThrow(/50 cents/);
+    expect(h.piCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a card DECLINE is NEVER retried — a confirm:true create cannot double-attempt the buyer", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.piCreate.mockRejectedValue(Object.assign(new Error("card declined"), { type: "StripeCardError" }));
+    await expect(
+      createRoutedPaymentIntent("shop-1", { ...BASE, payment_method: "spt_1", confirm: true }),
+    ).rejects.toThrow(/card declined/);
+    expect(h.piCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-Stripe-request errors (rate limit, network) propagate without retry", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.piCreate.mockRejectedValue(Object.assign(new Error("rate limited"), { type: "StripeRateLimitError" }));
+    await expect(createRoutedPaymentIntent("shop-1", BASE)).rejects.toThrow(/rate limited/);
+    expect(h.piCreate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -191,17 +300,15 @@ describe("billingStatus", () => {
       feeBps: 0,
       feeFlatCents: 0,
       balance: null,
-      expressDashboardUrl: null,
     });
   });
 
-  it("shapes the active DTO with live balance + Express login link", async () => {
+  it("shapes the active DTO with the live balance (login links are minted on demand, not here)", async () => {
     h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
     h.balanceRetrieve.mockResolvedValue({
       available: [{ amount: 5000, currency: "usd" }],
       pending: [{ amount: 1200, currency: "usd" }],
     });
-    h.loginLinkCreate.mockResolvedValue({ url: "https://connect.stripe.com/express/login" });
 
     expect(await billingStatus("shop-1")).toEqual({
       connected: true,
@@ -214,21 +321,34 @@ describe("billingStatus", () => {
         available: [{ amountCents: 5000, currency: "usd" }],
         pending: [{ amountCents: 1200, currency: "usd" }],
       },
-      expressDashboardUrl: "https://connect.stripe.com/express/login",
     });
+    expect(h.loginLinkCreate).not.toHaveBeenCalled(); // no per-load single-use link waste
   });
 
   it("degrades to balance:null when the live Stripe read fails (status still renders)", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
     h.balanceRetrieve.mockRejectedValue(new Error("stripe down"));
-    h.loginLinkCreate.mockRejectedValue(new Error("stripe down"));
 
     const dto = await billingStatus("shop-1");
     expect(dto.connected).toBe(true);
     expect(dto.balance).toBeNull();
-    expect(dto.expressDashboardUrl).toBeNull();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("expressLoginLink", () => {
+  it("returns null when there is no fully-submitted connected account", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { ...ROW, details_submitted: false }, error: null });
+    expect(await expressLoginLink("shop-1")).toBeNull();
+    expect(h.loginLinkCreate).not.toHaveBeenCalled();
+  });
+
+  it("mints a single-use login link for an onboarded account", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.loginLinkCreate.mockResolvedValue({ url: "https://connect.stripe.com/express/login" });
+    expect(await expressLoginLink("shop-1")).toEqual({ url: "https://connect.stripe.com/express/login" });
+    expect(h.loginLinkCreate).toHaveBeenCalledWith("acct_1");
   });
 });
