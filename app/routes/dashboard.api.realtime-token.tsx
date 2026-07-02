@@ -15,7 +15,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
 
   const secret = process.env.SUPABASE_JWT_SECRET;
-  if (!secret) return jsonError(503, "realtime_not_configured");
+  // The project URL is public (it ships in every supabase-js browser app) and
+  // the client needs it to open the Realtime socket.
+  const url = process.env.SUPABASE_URL;
+  if (!secret || !url) return jsonError(503, "realtime_not_configured");
 
   const exp = Math.floor(Date.now() / 1000) + TTL_SECONDS;
   const token = await new SignJWT({
@@ -28,5 +31,5 @@ export async function loader({ request }: LoaderFunctionArgs) {
     .setAudience("authenticated")
     .sign(new TextEncoder().encode(secret));
 
-  return jsonOk({ token, expires_at: new Date(exp * 1000).toISOString() });
+  return jsonOk({ token, url, expires_at: new Date(exp * 1000).toISOString() });
 }

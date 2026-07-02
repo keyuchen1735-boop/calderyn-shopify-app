@@ -12,6 +12,7 @@ vi.mock("../session.server", async (importOriginal) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.SUPABASE_JWT_SECRET = "super-secret-jwt-key-for-tests-32chars";
+  process.env.SUPABASE_URL = "https://test-project.supabase.co";
   requireDashboardSession.mockResolvedValue({
     shopId: "11111111-2222-3333-4444-555555555555",
     shopDomain: "x.myshopify.com",
@@ -27,7 +28,12 @@ describe("GET /dashboard/api/realtime-token", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(200);
-    const { token, expires_at } = (await res.json()) as { token: string; expires_at: string };
+    const { token, url, expires_at } = (await res.json()) as {
+      token: string;
+      url: string;
+      expires_at: string;
+    };
+    expect(url).toBe("https://test-project.supabase.co");
 
     const { payload } = await jwtVerify(
       token,
@@ -39,6 +45,16 @@ describe("GET /dashboard/api/realtime-token", () => {
     expect(ttlMs).toBeGreaterThan(55 * 60_000);
     expect(ttlMs).toBeLessThanOrEqual(60 * 60_000);
     expect(new Date(expires_at).getTime()).toBeCloseTo(payload.exp! * 1000, -3);
+  });
+
+  it("503s when SUPABASE_URL is not configured", async () => {
+    delete process.env.SUPABASE_URL;
+    const res = (await loader({
+      request: new Request("https://calderyncompany.com/dashboard/api/realtime-token"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(503);
   });
 
   it("503s when SUPABASE_JWT_SECRET is not configured", async () => {

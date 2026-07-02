@@ -792,13 +792,14 @@ export async function undoAudit(auditId: string): Promise<{ auditId: string }> {
 
 export async function getRealtimeToken(): Promise<{
   token: string;
+  url: string;
   expiresAt: string;
 } | null> {
   try {
-    const data = await apiGet<{ token: string; expires_at: string }>(
+    const data = await apiGet<{ token: string; url: string; expires_at: string }>(
       "/dashboard/api/realtime-token",
     );
-    return { token: data.token, expiresAt: data.expires_at };
+    return { token: data.token, url: data.url, expiresAt: data.expires_at };
   } catch (err) {
     if (err instanceof DashboardApiError && err.status === 503) return null;
     throw err;
