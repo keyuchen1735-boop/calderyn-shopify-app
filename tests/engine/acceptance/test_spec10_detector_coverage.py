@@ -78,6 +78,32 @@ _SKIP_REASONS: dict[str, str] = {
         "not the shared stockout seed; covered directly by "
         "test_detector_campaign_scaling_opportunity.py (seed_scale_scenario)"
     ),
+    # Catalog/margin detectors filter on sku_dim.product_status = 'active' plus
+    # catalog fields (retail_price_cents / unit_cost_cents / inventory_tracked)
+    # that the shared stockout seed leaves null, so they cannot fire on it. They
+    # need a seeded owned-catalog fixture (Phase A staging seeder). No dedicated
+    # unit test yet — TODO(engine): add per-detector catalog fixtures so these
+    # move out of the skip list.
+    "missing_cost": (
+        "needs an active-status sku_dim row with null unit_cost_cents; the shared "
+        "stockout seed sets neither product_status nor cost (Phase A catalog seed)"
+    ),
+    "inventory_untracked": (
+        "needs an active-status sku_dim row with inventory_tracked=false; not set "
+        "by the shared stockout seed (Phase A catalog seed)"
+    ),
+    "out_of_stock_live": (
+        "needs an active-status sku_dim row with zero available inventory; the "
+        "shared stockout seed leaves product_status null (Phase A catalog seed)"
+    ),
+    "priced_below_cost": (
+        "needs an active-status sku_dim row with retail_price_cents < "
+        "unit_cost_cents; neither set by the shared stockout seed (Phase A)"
+    ),
+    "thin_margin": (
+        "needs an active-status sku_dim row with retail_price_cents/unit_cost_cents "
+        "yielding a sub-threshold margin; not set by the shared seed (Phase A)"
+    ),
 }
 
 
