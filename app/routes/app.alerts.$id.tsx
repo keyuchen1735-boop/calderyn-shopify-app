@@ -233,7 +233,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       if (reason === "i_handle_this" && String(formData.get("confirmed") || "") !== "true") {
         const warning = muteConfirmationMessage(alert.detector_id, rejectAction);
         if (warning) {
-          return json<ActionPayload>(
+          return data<ActionPayload>(
             { ok: false, error: { code: "CONFIRM_REQUIRED", message: warning } },
             { status: 409 },
           );

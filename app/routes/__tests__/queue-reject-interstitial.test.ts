@@ -3,7 +3,7 @@
 // records NOTHING until re-sent with confirmed=true; normal pairs and other
 // reasons are unaffected.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 
 const { alertsGetSpy, recordRejectionSpy, requireDashboardSessionSpy } = vi.hoisted(() => ({
   alertsGetSpy: vi.fn(),
