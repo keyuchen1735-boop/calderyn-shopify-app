@@ -116,6 +116,14 @@ export async function action({ request }: ActionFunctionArgs) {
   const tosAccepted = form.get("tos") === "on" || form.get("tos") === "true";
   const privacyAccepted = form.get("privacy") === "on" || form.get("privacy") === "true";
   const marketingOptIn = form.get("marketing") === "on" || form.get("marketing") === "true";
+  const line2 = str(form, "line2");
+  const phone = str(form, "phone");
+
+  // Bound every free-text field so a public POST can't store oversized PII or bloat rows.
+  const FIELD_MAX = 500;
+  if ([email, name, line1, line2, city, region, postal, country, phone].some((v) => v.length > FIELD_MAX)) {
+    return json({ error: "One of your details is too long. Please shorten it and try again." }, { status: 400 });
+  }
 
   const missing: string[] = [];
   if (!EMAIL_RE.test(email)) missing.push("a valid email");
@@ -156,12 +164,12 @@ export async function action({ request }: ActionFunctionArgs) {
         kind: "shipping",
         name,
         line1,
-        line2: str(form, "line2") || null,
+        line2: line2 || null,
         city,
         region,
         postal,
         country,
-        phone: str(form, "phone") || null,
+        phone: phone || null,
         isDefault: true,
       },
       consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
