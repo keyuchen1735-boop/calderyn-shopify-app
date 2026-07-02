@@ -637,6 +637,39 @@ export async function fetchUnmatchedShipCharges(): Promise<UnmatchedShipCharges>
   return apiGet<UnmatchedShipCharges>("/dashboard/api/unmatched-ship");
 }
 
+// --- payouts (Stripe Connect, #11) -------------------------------------------
+// Browser-safe mirror of BillingDTO in ~/lib/payments/connect.server.ts (.server
+// modules can't be imported into client bundles). Keep in sync by hand when the
+// server type changes.
+
+export interface BillingStatus {
+  connected: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  feeBps: number;
+  feeFlatCents: number;
+  balance: {
+    available: Array<{ amountCents: number; currency: string }>;
+    pending: Array<{ amountCents: number; currency: string }>;
+  } | null;
+  expressDashboardUrl: string | null;
+}
+
+export async function fetchBilling(): Promise<BillingStatus> {
+  return apiGet<BillingStatus>("/dashboard/api/billing");
+}
+
+/** Create-or-reuse the shop's Express account and mint a hosted-onboarding link. */
+export async function startPayoutOnboarding(): Promise<{ url: string }> {
+  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", { intent: "start-onboarding" });
+}
+
+/** Pull account status from Stripe (charges/payouts/details flags) and return a fresh DTO. */
+export async function refreshPayoutStatus(): Promise<BillingStatus> {
+  return apiSend<BillingStatus>("POST", "/dashboard/api/billing", { intent: "refresh-status" });
+}
+
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
   const data = await apiGet<{ integrations: Record<string, Integration> }>(
     "/dashboard/api/integrations",
