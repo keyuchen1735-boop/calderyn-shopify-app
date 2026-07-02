@@ -18,16 +18,18 @@ import type { Candidate } from "../actions/autopilot-targeting.server";
 const STOCK_FRESH_MS = 60 * 60 * 1000; // 60 minutes
 const SPEND_FRESH_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/** Campaign statuses that mean "actively running and spending". */
-const ACTIVE_CAMPAIGN_STATUSES = new Set([
+/** Campaign statuses that mean "actively running and spending". Exported so
+ * the organic-signal sweep classifies platform state identically. */
+export const ACTIVE_CAMPAIGN_STATUSES = new Set([
   "active",
   "ACTIVE",
   "enabled",
   "ENABLED",
 ]);
 
-/** Campaign statuses that mean "paused or ended — precondition already gone". */
-const INACTIVE_CAMPAIGN_STATUSES = new Set([
+/** Campaign statuses that mean "paused or ended — precondition already gone".
+ * Exported so the organic-signal sweep classifies platform state identically. */
+export const INACTIVE_CAMPAIGN_STATUSES = new Set([
   "paused",
   "PAUSED",
   "ended",
