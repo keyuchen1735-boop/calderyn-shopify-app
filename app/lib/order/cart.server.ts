@@ -10,8 +10,19 @@
 
 import { getSupabase } from "~/lib/supabase.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
+import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
+
+/** The demo shell has no shop row; its sentinel id can never key the uuid cart
+ *  tables. Fail with a named error here (defense in depth) so any cart entry
+ *  point that forgets its route-level browse-only guard surfaces a clear
+ *  message instead of a Postgres uuid-cast 500. */
+function assertPersistableShop(shopId: string): void {
+  if (shopId === DEMO_SHOP_ID) {
+    throw new Error("demo shell is browse-only: carts cannot be persisted for the demo tenant");
+  }
+}
 
 export interface Cart {
   id: string;
@@ -69,6 +80,7 @@ async function resolveVariant(
 /** Create an empty cart (state='cart', no buyer yet). */
 export async function buildCart(shopId: string): Promise<Cart> {
   if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
   const { data, error } = await getSupabase()
     .from("cart")
     .insert({ shop_id: shopId, state: "cart" })
@@ -98,6 +110,7 @@ export async function addCartLine(
   quantity: number,
 ): Promise<CartLine> {
   if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
   if (!cartId) throw new Error("cartId is required");
   if (!variantId) throw new Error("variantId is required");
   if (!Number.isInteger(quantity) || quantity <= 0) {
@@ -163,6 +176,7 @@ export async function addCartLine(
  */
 export async function priceCart(shopId: string, cartId: string): Promise<PricedCart> {
   if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
   if (!cartId) throw new Error("cartId is required");
 
   const { data, error } = await getSupabase()

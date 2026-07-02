@@ -1,9 +1,11 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getDashboardSessionAllowUnverified } from "~/lib/dashboard/session.server";
 import { rateLimit, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
 import { getSupabase } from "~/lib/supabase.server";
+
+export const meta: MetaFunction = () => [{ title: "Verify your email — Calderyn" }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await getDashboardSessionAllowUnverified(request);
@@ -35,11 +37,11 @@ export default function VerifyNeeded() {
       <form method="post" action="/dashboard/verify-needed">
         <button type="submit" style={{ padding: ".6rem 1rem", fontWeight: 600 }}>Resend the email</button>
       </form>
-      <p style={{ marginTop: "1rem" }}>
-        <form method="post" action="/dashboard/api/logout">
-          <button type="submit" style={{ background: "none", border: "none", padding: 0, color: "inherit", cursor: "pointer", textDecoration: "underline" }}>Sign out</button>
-        </form>
-      </p>
+      {/* A form must not nest inside a p: the browser hoists it while parsing and
+          hydration then mismatches the server HTML. Keep it a sibling block. */}
+      <form method="post" action="/dashboard/api/logout" style={{ marginTop: "1rem" }}>
+        <button type="submit" style={{ background: "none", border: "none", padding: 0, color: "inherit", cursor: "pointer", textDecoration: "underline" }}>Sign out</button>
+      </form>
     </main>
   );
 }

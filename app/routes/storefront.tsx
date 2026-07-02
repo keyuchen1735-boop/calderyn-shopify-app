@@ -9,9 +9,9 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 
-export const meta: MetaFunction = () => {
-  const title = "Calderyn Demo Store";
-  const description = "Browse the Calderyn Demo Store.";
+export const meta: MetaFunction<typeof loader> = ({ data }) => {
+  const title = data?.settings.storeName || "Calderyn Store";
+  const description = `Browse ${title}.`;
   return [
     { title },
     { name: "description", content: description },

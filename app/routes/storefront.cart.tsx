@@ -6,12 +6,14 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { priceCart } from "~/lib/order/cart.server";
+import { formatMoney as money } from "~/lib/storefront/money";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 
-export const meta: MetaFunction = () => {
-  const title = "Cart — Calderyn Demo Store";
+export const meta: MetaFunction = ({ matches }) => {
+  const title = `Cart — ${storeNameFromMatches(matches)}`;
   return [
     { title },
     { name: "description", content: "Your cart." },
@@ -21,6 +23,9 @@ export const meta: MetaFunction = () => {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
+  // hold its sentinel id) — always an empty cart, never a DB read.
+  if (shopId === DEMO_SHOP_ID) return json({ cart: null });
   const cartId = await readCartId(request);
   // No cookie yet -> empty cart, no DB read.
   if (!cartId) return json({ cart: null });
@@ -29,13 +34,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ cart });
 }
 
-/** Format integer cents in the line's snapshotted currency for display only. */
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}
 
 export default function StorefrontCart() {
   const { cart } = useLoaderData<typeof loader>();

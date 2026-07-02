@@ -8,13 +8,14 @@ import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { renderBlocks } from "~/lib/storebuilder/render";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 
-export const meta: MetaFunction = () => {
-  const title = "Shop all — Calderyn Demo Store";
-  const description = "Browse every product in the Calderyn Demo Store.";
+export const meta: MetaFunction = ({ matches }) => {
+  const store = storeNameFromMatches(matches);
+  const title = `Shop all — ${store}`;
   return [
     { title },
-    { name: "description", content: description },
+    { name: "description", content: `Browse every product at ${store}.` },
     { property: "og:title", content: title },
   ];
 };

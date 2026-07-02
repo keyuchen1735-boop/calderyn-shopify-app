@@ -15,6 +15,7 @@ vi.mock("~/lib/order/cart.server", () => ({
 }));
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
+  DEMO_SHOP_ID: "demo-shop",
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => ({}) }));
 
@@ -43,7 +44,7 @@ const args = (request: Request) =>
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.SHOPIFY_API_SECRET = SECRET;
-  resolveStorefrontShop.mockResolvedValue("demo-shop");
+  resolveStorefrontShop.mockResolvedValue("shop-1");
   buildCart.mockResolvedValue({ id: "cart-new" });
   addCartLine.mockResolvedValue({});
 });
@@ -52,8 +53,8 @@ describe("PDP add-to-cart action", () => {
   it("mints a cart + sets the cookie when none exists, then adds the line", async () => {
     const res = await action(args(postForm({ variantId: "v-1" })));
 
-    expect(buildCart).toHaveBeenCalledWith("demo-shop");
-    expect(addCartLine).toHaveBeenCalledWith("demo-shop", "cart-new", "v-1", 1);
+    expect(buildCart).toHaveBeenCalledWith("shop-1");
+    expect(addCartLine).toHaveBeenCalledWith("shop-1", "cart-new", "v-1", 1);
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/storefront/cart");
     expect(res.headers.get("Set-Cookie") ?? "").toContain("cd_cart=");
@@ -64,7 +65,7 @@ describe("PDP add-to-cart action", () => {
     const res = await action(args(postForm({ variantId: "v-9" }, setCookie.split(";")[0])));
 
     expect(buildCart).not.toHaveBeenCalled();
-    expect(addCartLine).toHaveBeenCalledWith("demo-shop", "cart-existing", "v-9", 1);
+    expect(addCartLine).toHaveBeenCalledWith("shop-1", "cart-existing", "v-9", 1);
     expect(res.headers.get("Set-Cookie")).toBeNull();
     expect(res.headers.get("Location")).toBe("/storefront/cart");
   });
@@ -73,6 +74,18 @@ describe("PDP add-to-cart action", () => {
     const err = await action(args(postForm({}))).catch((e) => e);
     expect(err).toBeInstanceOf(Response);
     expect((err as Response).status).toBe(400);
+    expect(buildCart).not.toHaveBeenCalled();
+    expect(addCartLine).not.toHaveBeenCalled();
+  });
+
+  it("demo shell is browse-only: bounces back to the PDP without touching the cart", async () => {
+    // The demo sentinel is not a uuid, so a cart write for it can only 500 —
+    // the action must refuse before any cart helper runs.
+    resolveStorefrontShop.mockResolvedValue("demo-shop");
+    const res = await action(args(postForm({ variantId: "v-1" })));
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/storefront/products/tee");
     expect(buildCart).not.toHaveBeenCalled();
     expect(addCartLine).not.toHaveBeenCalled();
   });

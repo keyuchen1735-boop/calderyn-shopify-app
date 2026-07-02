@@ -4,15 +4,18 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { formatMoney } from "~/lib/storefront/money";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => {
-  const title = data ? `${data.title} — Calderyn Demo Store` : "Collection — Calderyn Demo Store";
+export const meta: MetaFunction<typeof loader> = ({ data, matches }) => {
+  const store = storeNameFromMatches(matches);
+  const title = data ? `${data.title} — ${store}` : `Collection — ${store}`;
   return [
     { title },
-    { name: "description", content: data ? `Browse ${data.title} at the Calderyn Demo Store.` : "Browse this collection." },
+    { name: "description", content: data ? `Browse ${data.title} at ${store}.` : "Browse this collection." },
     { property: "og:title", content: title },
   ];
 };
@@ -60,12 +63,7 @@ export default function StorefrontCollection() {
               ) : null}
               <span className="cd-product-card__title">{p.title}</span>
               <span className="cd-product-card__price">
-                {priced
-                  ? new Intl.NumberFormat(undefined, {
-                      style: "currency",
-                      currency: priced.currency,
-                    }).format(priced.priceCents / 100)
-                  : ""}
+                {priced ? formatMoney(priced.priceCents, priced.currency) : ""}
               </span>
             </a>
           );

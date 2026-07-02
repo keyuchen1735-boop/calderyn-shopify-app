@@ -5,15 +5,18 @@ import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
-import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { buildCart, addCartLine } from "~/lib/order/cart.server";
+import { formatMoney } from "~/lib/storefront/money";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => {
-  const title = data ? `${data.product.title} — Calderyn Demo Store` : "Product — Calderyn Demo Store";
+export const meta: MetaFunction<typeof loader> = ({ data, matches }) => {
+  const store = storeNameFromMatches(matches);
+  const title = data ? `${data.product.title} — ${store}` : `Product — ${store}`;
   const description = data?.product.description || "Product detail.";
   return [
     { title },
@@ -32,11 +35,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const doc = await loadPublishedDoc(shopId, "pdp");
   const record = { product };
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
-  return json({ product, doc, data, record });
+  // The demo shell has no shop row behind it, so carts (uuid shop_id) can't exist
+  // for it — the PDP renders browse-only instead of offering a cart that 500s.
+  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  // Browse-only guard: the demo shell can't own a cart row, so a crafted POST
+  // must bounce back to the page instead of 500ing on the uuid-keyed insert.
+  if (shopId === DEMO_SHOP_ID) {
+    const url = new URL(request.url);
+    return redirect(url.pathname);
+  }
   // Validate at the boundary — never trust the FormData shape.
   const form = await request.formData();
   const variantId = form.get("variantId");
@@ -60,10 +71,13 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function StorefrontProduct() {
-  const { product, doc, data, record } = useLoaderData<typeof loader>();
+  const { product, doc, data, record, demo } = useLoaderData<typeof loader>();
   const firstVariantId = product.variants[0]?.id ?? "";
   const [selectedVariantId, setSelectedVariantId] = useState(firstVariantId);
 
+  // NOTE: a published template renders its own addToCart block even for the demo
+  // shell (the template testbed) — the action's DEMO_SHOP_ID guard keeps that
+  // POST a safe no-op redirect rather than a uuid-cast 500.
   if (doc && data) {
     // The addToCart block renders a native <form method="post"> posting to THIS route's action.
     return (
@@ -88,15 +102,16 @@ export default function StorefrontProduct() {
         <ul className="cd-pdp__variants">
           {product.variants.map((v) => (
             <li key={v.id}>
-              {v.title} —{" "}
-              {new Intl.NumberFormat(undefined, { style: "currency", currency: v.currency }).format(
-                v.priceCents / 100,
-              )}
+              {v.title} — {formatMoney(v.priceCents, v.currency)}
               {v.available ? "" : " (sold out)"}
             </li>
           ))}
         </ul>
-        {buyable.length > 0 ? (
+        {demo ? (
+          <button className="cd-pdp__buy" type="button" disabled>
+            Demo store — browsing only
+          </button>
+        ) : buyable.length > 0 ? (
           <Form method="post" className="cd-pdp__add">
             {buyable.length > 1 ? (
               <select

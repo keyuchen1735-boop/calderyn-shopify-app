@@ -25,6 +25,24 @@ function form(fields: Record<string, string>) {
   });
 }
 
+describe("signin loader (Shopify-identity fallthrough)", () => {
+  it("forwards a visitor carrying the shop-hint cookie to the Shopify OAuth entry", async () => {
+    const { loader } = await import("../dashboard.signin");
+    const req = new Request("https://app.calderyncompany.com/dashboard/signin", {
+      headers: { Cookie: "__Host-dash_shop=acme.myshopify.com" },
+    });
+    const res = (await loader({ request: req } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard/login");
+  });
+
+  it("renders the first-party form for a visitor with no shop hint", async () => {
+    const { loader } = await import("../dashboard.signin");
+    const req = new Request("https://app.calderyncompany.com/dashboard/signin");
+    expect(await loader({ request: req } as never)).toBeNull();
+  });
+});
+
 describe("signin action", () => {
   it("returns 401 invalid_credentials on a bad password", async () => {
     verifyUserCredentials.mockResolvedValue(null);

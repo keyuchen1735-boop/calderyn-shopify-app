@@ -9,6 +9,7 @@ const createCheckout = vi.fn();
 
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
+  DEMO_SHOP_ID: "demo-shop",
 }));
 vi.mock("~/lib/order/cart.server", () => ({
   priceCart: (...a: unknown[]) => priceCart(...a),
@@ -186,5 +187,41 @@ describe("checkout action happy path", () => {
     const req = await postForm({ ...GOOD_FIELDS, marketing: "on" }, { cookie: await cartCookie() });
     await action(actionArgs(req));
     expect(createCheckout.mock.calls[0][2].consent.marketingOptIn).toBe(true);
+  });
+});
+
+describe("payments not configured (no Stripe keys)", () => {
+  it("loader returns a null publishableKey instead of a 500", async () => {
+    delete process.env.STRIPE_PUBLISHABLE_KEY;
+    const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
+    const res = await loader(loaderArgs(req));
+    const body = await (res as Response).json();
+    expect(body.publishableKey).toBeNull();
+    expect(body.summary.subtotalCents).toBe(3998);
+  });
+
+  it("action refuses with 503 before originating a checkout", async () => {
+    delete process.env.STRIPE_PUBLISHABLE_KEY;
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(503);
+    expect(createCheckout).not.toHaveBeenCalled();
+  });
+});
+
+describe("demo shell is browse-only at checkout", () => {
+  it("loader bounces the demo tenant to the cart without pricing", async () => {
+    resolveStorefrontShop.mockResolvedValue("demo-shop");
+    const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
+    const res = await loader(loaderArgs(req));
+    expect((res as Response).status).toBe(302);
+    expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
+    expect(priceCart).not.toHaveBeenCalled();
+  });
+
+  it("action bounces the demo tenant to the cart without originating", async () => {
+    resolveStorefrontShop.mockResolvedValue("demo-shop");
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(302);
+    expect(createCheckout).not.toHaveBeenCalled();
   });
 });
