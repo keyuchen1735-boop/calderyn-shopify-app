@@ -37,12 +37,8 @@ function makeStubSbWithOutcomes(opts: {
   auditRewardRows: AuditRewardRow[];
   /** Previous shops.calibration_pct (null = cold start). */
   prevPct: number | null;
-  /** Called with the pair_calibration update payload. */
-  onPairUpdate?: (
-    patch: Record<string, unknown>,
-    detector: string,
-    action: string,
-  ) => void;
+  /** Called with each batched pair_calibration cache upsert payload. */
+  onPairUpsert?: (rows: Array<Record<string, unknown>>) => void;
 }) {
   return {
     from(table: string) {
@@ -52,28 +48,11 @@ function makeStubSbWithOutcomes(opts: {
           select: () => ({
             eq: () => Promise.resolve({ data: opts.pairRows, error: null }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: (_col1: string, _val1: string) => ({
-              eq: (_col2: string, detector: string) => ({
-                eq: (_col3: string, action: string) => {
-                  opts.onPairUpdate?.(patch, detector, action);
-                  return Promise.resolve({ error: null });
-                },
-              }),
-            }),
-          }),
-        };
-      }
-
-      // ── alerts (90-day fire counts) ───────────────────────────────────────
-      if (table === "alerts") {
-        const rows = Object.entries(opts.detectorFires).flatMap(([d, n]) =>
-          Array.from({ length: n }, () => ({ detector_id: d })),
-        );
-        return {
-          select: () => ({
-            eq: () => ({ gte: () => Promise.resolve({ data: rows, error: null }) }),
-          }),
+          // Batched cache write: ONE upsert with all rows (the N+1 fix).
+          upsert: (rows: Array<Record<string, unknown>>) => {
+            opts.onPairUpsert?.(rows);
+            return Promise.resolve({ error: null });
+          },
         };
       }
 
@@ -117,7 +96,17 @@ function makeStubSbWithOutcomes(opts: {
         select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }),
       };
     },
-    rpc: () => Promise.resolve({ data: null, error: null }),
+    rpc: (name: string) => {
+      if (name === "calibration_detector_stats") {
+        const rows = Object.entries(opts.detectorFires).map(([d, n]) => ({
+          detector_id: d,
+          fired: n,
+          challenged: 0,
+        }));
+        return Promise.resolve({ data: rows, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -148,15 +137,17 @@ const ACTION = "reduce_campaign_budget";
 // Path A: positive outcomes → graduated=true, net_positive_outcomes=5
 // ---------------------------------------------------------------------------
 
+const findRow = (
+  batches: Array<Array<Record<string, unknown>>>,
+  detector: string,
+  action: string,
+) => batches.flat().find((r) => r.detector_id === detector && r.action_kind === action);
+
 describe("recompute-outcomes — positive path", () => {
   it(
     "writes net_positive_outcomes=5 and graduated=true when 5 positive rewards arrive",
     async () => {
-      const pairUpdates: {
-        patch: Record<string, unknown>;
-        detector: string;
-        action: string;
-      }[] = [];
+      const batches: Array<Array<Record<string, unknown>>> = [];
 
       // 5 positive closed rewards, all attributed to the same pair
       const auditRows: AuditRewardRow[] = Array.from({ length: 5 }, (_, i) => ({
@@ -171,20 +162,17 @@ describe("recompute-outcomes — positive path", () => {
         detectorFires: { campaign_below_breakeven: 5 },
         auditRewardRows: auditRows,
         prevPct: null,
-        onPairUpdate: (patch, detector, action) =>
-          pairUpdates.push({ patch, detector, action }),
+        onPairUpsert: (rows) => batches.push(rows),
       });
 
       await recomputeShopCalibration("shop-outcomes-1", { sb }, { skipPeerPrior: true });
 
-      const hit = pairUpdates.find(
-        (u) => u.detector === DETECTOR && u.action === ACTION,
-      );
+      const hit = findRow(batches, DETECTOR, ACTION);
       expect(hit).toBeDefined();
       // Task 8 assertion A: net_positive_outcomes from the tally
-      expect(hit!.patch.net_positive_outcomes).toBe(5);
+      expect(hit!.net_positive_outcomes).toBe(5);
       // All gates pass with 5 positive outcomes → graduated
-      expect(hit!.patch.graduated).toBe(true);
+      expect(hit!.graduated).toBe(true);
     },
   );
 });
@@ -197,11 +185,7 @@ describe("recompute-outcomes — demotion path", () => {
   it(
     "writes graduated=false and last_outcome_sign=-1 when the most recent reward is negative",
     async () => {
-      const pairUpdates: {
-        patch: Record<string, unknown>;
-        detector: string;
-        action: string;
-      }[] = [];
+      const batches: Array<Array<Record<string, unknown>>> = [];
 
       // 4 positive rewards followed by 1 NEGATIVE reward (latest closedAt)
       const auditRows: AuditRewardRow[] = [
@@ -224,19 +208,16 @@ describe("recompute-outcomes — demotion path", () => {
         detectorFires: { campaign_below_breakeven: 5 },
         auditRewardRows: auditRows,
         prevPct: null,
-        onPairUpdate: (patch, detector, action) =>
-          pairUpdates.push({ patch, detector, action }),
+        onPairUpsert: (rows) => batches.push(rows),
       });
 
       await recomputeShopCalibration("shop-outcomes-2", { sb }, { skipPeerPrior: true });
 
-      const hit = pairUpdates.find(
-        (u) => u.detector === DETECTOR && u.action === ACTION,
-      );
+      const hit = findRow(batches, DETECTOR, ACTION);
       expect(hit).toBeDefined();
       // Task 8 assertion B: demotion — most recent reward is negative
-      expect(hit!.patch.graduated).toBe(false);
-      expect(hit!.patch.last_outcome_sign).toBe(-1);
+      expect(hit!.graduated).toBe(false);
+      expect(hit!.last_outcome_sign).toBe(-1);
     },
   );
 });

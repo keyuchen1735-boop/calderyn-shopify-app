@@ -63,12 +63,37 @@ export function computeWeights(
 }
 
 export interface RecomputeOpts {
-  /** Skip the per-pair `action_pair_prior` RPC call.
-   * Use on the synchronous first-load path (loader lazy-compute) where peer
-   * baselines are not yet populated — avoids N+1 RPCs at request time. The
-   * nightly cron leaves this unset to keep peer-prior enrichment intact. */
+  /** Skip peer-prior enrichment entirely.
+   * Use on the synchronous approve/reject/loader paths where peer baselines
+   * are deliberately not consulted (the queue and receipts use the same
+   * peerless formula). The nightly cron leaves this unset. */
   skipPeerPrior?: boolean;
+  /** Pre-fetched peer-prior map keyed `detector:action` → p50. The baselines
+   * are shop-independent, so the nightly cron loads them ONCE per run (via
+   * loadPeerPriors) and shares the map across every shop — without this, each
+   * invocation fetches its own copy (still one bulk call, never per-pair). */
+  peerPriors?: Map<string, number>;
   forceVisibleStep?: boolean;
+}
+
+/** Fetch every qualifying peer baseline in one call (shop-independent).
+ * Best-effort: on any error returns an empty map — every pair falls back to
+ * its static seed prior, same as a shop with no peers. */
+export async function loadPeerPriors(sb: SupabaseClient): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const { data, error } = await sb.rpc("action_pair_priors");
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ detector_id: string; action_kind: string; p50: unknown }>) {
+      const p50 = Number(r.p50);
+      if (Number.isFinite(p50)) map.set(`${r.detector_id}:${r.action_kind}`, p50);
+    }
+  } catch (err) {
+    console.warn(
+      `[recompute] peer-prior bulk read failed (static seeds this run): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return map;
 }
 
 export async function recomputeShopCalibration(
@@ -119,38 +144,62 @@ export async function recomputeShopCalibration(
   // outcomes → no graduation on clicks alone, never a crash.
   const outcomeTallies = await loadPairOutcomeTallies(shopId, sb);
 
-  // 2. 90-day detector fire counts
+  // 2. 90-day detector stats — alert fires + detection-challenging rejects
+  // (not_enough_data / other) as EXACT GROUP BY counts from one RPC (no row
+  // cap, one round trip). FAIL-SOFT: if the RPC is unavailable (migration not
+  // applied yet, statement timeout), fall back to the legacy row-listing reads
+  // — exact pre-RPC behavior, including its explicit row bound — so a stats
+  // hiccup can never freeze the headline or the pair cache for a shop.
   const sinceIso = new Date(Date.now() - WINDOW_DAYS * 86400_000).toISOString();
-  const { data: alertRows, error: alertErr } = await sb
-    .from("alerts")
-    .select("detector_id")
-    .eq("shop_id", shopId)
-    .gte("first_seen_at", sinceIso);
-  if (alertErr) throw alertErr;
   const fires: Record<string, number> = {};
-  for (const r of alertRows ?? []) fires[r.detector_id] = (fires[r.detector_id] ?? 0) + 1;
-
-  // 2b. Detector-reliability inputs: rejects whose reason indicts the DETECTION
-  // itself (not_enough_data / other) over the same window. Best-effort — an
-  // unreadable ledger keeps every detector at the cold detection factor rather
-  // than failing the recompute.
   const challenged: Record<string, number> = {};
+  let statsViaRpc = false;
   try {
-    const { data: challengeRows, error: chErr } = await sb
-      .from("action_feedback")
-      .select("detector_id")
-      .eq("shop_id", shopId)
-      .eq("decision", "reject")
-      .in("reject_reason", ["not_enough_data", "other"])
-      .gte("created_at", sinceIso);
-    if (chErr) throw new Error(chErr.message);
-    for (const r of challengeRows ?? []) {
-      challenged[r.detector_id] = (challenged[r.detector_id] ?? 0) + 1;
+    const { data: statRows, error: statErr } = await sb.rpc("calibration_detector_stats", {
+      p_shop_id: shopId,
+      p_since: sinceIso,
+    });
+    if (statErr) throw new Error(statErr.message);
+    for (const r of (statRows ?? []) as Array<{ detector_id: string; fired: unknown; challenged: unknown }>) {
+      fires[r.detector_id] = Number(r.fired ?? 0);
+      challenged[r.detector_id] = Number(r.challenged ?? 0);
     }
+    statsViaRpc = true;
   } catch (err) {
     console.warn(
-      `[recompute] detection-challenge read failed (cold detection factors this run): ${err instanceof Error ? err.message : String(err)}`,
+      `[recompute] detector-stats rpc failed (legacy reads this run): ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+  if (!statsViaRpc) {
+    // Legacy fallback. The fires read is load-bearing (throws on error, as
+    // before); the challenge read stays best-effort. Both are bounded by the
+    // PostgREST row cap — the documented truncation tradeoff of this path.
+    const { data: alertRows, error: alertErr } = await sb
+      .from("alerts")
+      .select("detector_id")
+      .eq("shop_id", shopId)
+      .gte("first_seen_at", sinceIso)
+      .limit(1000);
+    if (alertErr) throw alertErr;
+    for (const r of alertRows ?? []) fires[r.detector_id] = (fires[r.detector_id] ?? 0) + 1;
+    try {
+      const { data: challengeRows, error: chErr } = await sb
+        .from("action_feedback")
+        .select("detector_id")
+        .eq("shop_id", shopId)
+        .eq("decision", "reject")
+        .in("reject_reason", ["not_enough_data", "other"])
+        .gte("created_at", sinceIso)
+        .limit(1000);
+      if (chErr) throw new Error(chErr.message);
+      for (const r of challengeRows ?? []) {
+        challenged[r.detector_id] = (challenged[r.detector_id] ?? 0) + 1;
+      }
+    } catch (err) {
+      console.warn(
+        `[recompute] detection-challenge read failed (cold detection factors this run): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   // Learned detection factor per detector — the same value feeds the nightly
   // AND sync paths (both run through here), so the queue/receipts read the
@@ -160,26 +209,26 @@ export async function recomputeShopCalibration(
     detectionByDetector[d] = detectionFactor(fires[d] ?? 0, challenged[d] ?? 0);
   }
 
-  // 3. conf per weighted pair; cache graduated + last_conf on pair_calibration rows
+  // Peer priors: shop-independent, so one bulk map serves every pair — either
+  // the cron's shared map (opts.peerPriors) or a single fetch here. The
+  // synchronous paths (skipPeerPrior) stay peerless by design.
+  const peerPriors = opts?.skipPeerPrior
+    ? new Map<string, number>()
+    : opts?.peerPriors ?? (await loadPeerPriors(sb));
+
+  // 3. conf per weighted pair; batch-cache graduated + last_conf on the
+  // existing pair_calibration rows (single upsert instead of one UPDATE per
+  // pair — the payload only contains rows read in step 1, so nothing is
+  // created that did not already exist, and only the cache columns move;
+  // alpha/beta are never in the payload).
   const weights = computeWeights(fires);
   const scored: { conf: number; weight: number }[] = [];
+  const nowIso = new Date().toISOString();
+  const cacheRows: Array<Record<string, unknown>> = [];
   for (const { detector, action, weight } of weights) {
     const key = `${detector}:${action}`;
-    let peerP50: number | null = null;
-    if (!opts?.skipPeerPrior) {
-      try {
-        const { data } = await sb.rpc("action_pair_prior", {
-          p_shop_id: shopId,
-          p_detector_id: detector,
-          p_action_kind: action,
-        });
-        peerP50 = data == null ? null : Number(data);
-      } catch {
-        peerP50 = null; // peer baselines optional; fall back to static seed
-      }
-    }
-    // skipPeerPrior=true: peerP50 stays null → static seed used (same outcome
-    // as a failed RPC, but without the network round-trip per pair).
+    const peerRaw = peerPriors.get(key);
+    const peerP50 = peerRaw == null || !Number.isFinite(peerRaw) ? null : peerRaw;
     const ev = pairMap.get(key);
     const detection = detectionByDetector[detector]; // undefined (no fires) → cold default
     const conf = pairConfidence(
@@ -214,28 +263,35 @@ export async function recomputeShopCalibration(
         netPositiveOutcomes,
         lastOutcomeSign,
       });
-      const { error: pairUpdErr } = await sb
-        .from("pair_calibration")
-        .update({
-          graduated: verdict.graduated,
-          last_conf: Math.round(conf),
-          // Cache the learned detection factor so the queue, receipts, and the
-          // live isGraduated gate read the SAME factor the recompute scored
-          // with (they have no access to the alert/feedback windows). The
-          // column is NOT NULL; a never-fired detector caches the cold factor
-          // (the exact value the scorer above used for it).
-          last_detection: detection ?? DETECTION_COLD,
-          net_positive_outcomes: netPositiveOutcomes,
-          last_outcome_sign: lastOutcomeSign,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("shop_id", shopId)
-        .eq("detector_id", detector)
-        .eq("action_kind", action);
-      if (pairUpdErr) {
-        // Non-fatal: the nightly cache is best-effort; the live gate is authoritative.
-        console.warn(`[recompute] pair_calibration update failed for ${detector}:${action}: ${pairUpdErr.message}`);
-      }
+      cacheRows.push({
+        shop_id: shopId,
+        detector_id: detector,
+        action_kind: action,
+        graduated: verdict.graduated,
+        last_conf: Math.round(conf),
+        // Cache the learned detection factor so the queue, receipts, and the
+        // live isGraduated gate read the SAME factor the recompute scored
+        // with (they have no access to the alert/feedback windows). The
+        // column is NOT NULL; a never-fired detector caches the cold factor
+        // (the exact value the scorer above used for it).
+        last_detection: detection ?? DETECTION_COLD,
+        net_positive_outcomes: netPositiveOutcomes,
+        last_outcome_sign: lastOutcomeSign,
+        updated_at: nowIso,
+      });
+    }
+  }
+
+  if (cacheRows.length > 0) {
+    // ONE round trip for the whole cache write. onConflict is the PK, and
+    // every row in the payload was read in step 1, so this never inserts a
+    // pair that did not exist — it is a batched UPDATE of the cache columns.
+    const { error: cacheErr } = await sb
+      .from("pair_calibration")
+      .upsert(cacheRows, { onConflict: "shop_id,detector_id,action_kind" });
+    if (cacheErr) {
+      // Non-fatal: the nightly cache is best-effort; the live gate is authoritative.
+      console.warn(`[recompute] pair_calibration cache upsert failed: ${cacheErr.message}`);
     }
   }
 
