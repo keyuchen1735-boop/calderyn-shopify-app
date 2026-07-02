@@ -20,13 +20,13 @@ vi.mock("stripe", () => ({
 }));
 
 // Service-role Supabase client. `from(...).insert` routes to h.insert (payment_intent persist);
-// `from("orders").update(...).eq(...).eq(...)` is the financial_status='paid' stamp — a chainable
-// no-op resolving { error: null }.
+// `from("orders").update(...).eq(shop).eq(id).eq(state)` is the financial_status='paid' stamp — a
+// chainable no-op resolving { error: null } (three .eq() calls: shop_id, id, and the state guard).
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: () => ({
       insert: h.insert,
-      update: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }),
+      update: () => ({ eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }),
     }),
     rpc: h.rpc,
   }),

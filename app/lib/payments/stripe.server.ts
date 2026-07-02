@@ -13,6 +13,16 @@ export { getStripe };
 const KNOWN_CURRENCIES = new Set(["usd", "eur", "gbp", "cad", "aud"]);
 
 /**
+ * True when `currency` is a Stripe currency this integration can charge. Exposed so the
+ * checkout origination path can reject an unsupported currency BEFORE writing the order —
+ * createPaymentIntent (the last step) rejects it too, but by then an orphan checkout_pending
+ * order + lines have already been persisted with no PaymentIntent.
+ */
+export function isSupportedCurrency(currency: string): boolean {
+  return KNOWN_CURRENCIES.has(currency.toLowerCase());
+}
+
+/**
  * Create a Stripe PaymentIntent and persist the shop-scoped payment_intent row.
  * shopId leads because the warehouse has no RLS to infer the tenant on the
  * service-role write path. Returns the client secret for the Payment Element.
@@ -140,14 +150,6 @@ export async function processStripeEvent(
       // confirms capture. We do NOT re-transition on a redelivery (idempotency of the SoT).
       if (processed) {
         await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
-        // Keep the OLTP money table consistent with order_fact: stamp financial_status alongside
-        // the state move (the migration scopes financial_status to #2b). Scoped + shop-checked.
-        const upd = await getSupabase()
-          .from("orders")
-          .update({ financial_status: "paid" })
-          .eq("shop_id", shopId)
-          .eq("id", orderRef);
-        if (upd.error) throw upd.error;
 
         // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
         // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
@@ -155,6 +157,19 @@ export async function processStripeEvent(
         // can never break payment processing or trigger a Stripe retry storm.
         await sendOrderConfirmation(shopId, orderRef);
       }
+
+      // Keep the OLTP money table consistent with order_fact: stamp financial_status='paid'. This
+      // runs on EVERY succeeded delivery (not just the first), like emitPaidOrder, so it self-heals
+      // — if a first-delivery stamp failed after the state committed to paid, the redelivery
+      // re-applies it (a duplicate is idempotent). Scoped by state='paid' so a stale succeeded
+      // redelivery for an order since moved to refunded is a guarded no-op, never re-asserting paid.
+      const upd = await getSupabase()
+        .from("orders")
+        .update({ financial_status: "paid" })
+        .eq("shop_id", shopId)
+        .eq("id", orderRef)
+        .eq("state", "paid");
+      if (upd.error) throw upd.error;
 
       // WAREHOUSE EMIT — runs on ANY succeeded delivery (including duplicates). emitPaidOrder is
       // self-guarded (it emits only when the order is CURRENTLY paid) and idempotent (onConflict),
