@@ -5,7 +5,7 @@
 // snake_case.
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, jsonOk, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, jsonOk, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
@@ -30,6 +30,10 @@ export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
+  // Each turn is a paid Anthropic call; cap per shop to bound LLM spend abuse.
+  if (!(await rateLimit(`assistant:${session.shopId}`, 10, 60_000))) {
+    return jsonError(429, "rate_limited", "Too many messages. Please wait a moment.");
+  }
 
   let body: Record<string, unknown>;
   try {

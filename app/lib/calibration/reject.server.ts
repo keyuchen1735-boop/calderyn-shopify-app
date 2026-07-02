@@ -10,9 +10,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, RejectReason } from "../types";
 import { rejectEffect, reflection } from "./feedback";
-import { trustDelta, type RejectReceipt } from "./delta";
+import { trustDelta, type PairEv, type RejectReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
 import { calibrationActionKind } from "./action-kind";
+
+/** wrong_timing rejects landing in the same UTC hour bin this many times learn
+ * a pair_blackout_hours veto for that hour (spec §5 reason-taxonomy table). */
+export const BLACKOUT_BIN_THRESHOLD = 3;
+const BLACKOUT_WINDOW_DAYS = 90;
 
 export interface RecordRejectionInput {
   alertId: string | null;
@@ -31,10 +36,10 @@ async function readPairEv(
   shopId: string,
   detectorId: string,
   actionKind: ActionKind,
-): Promise<{ alpha: number; beta: number }> {
+): Promise<PairEv> {
   const { data, error } = await sb
     .from("pair_calibration")
-    .select("alpha, beta")
+    .select("alpha, beta, last_detection, consecutive_clean_approvals")
     .eq("shop_id", shopId)
     .eq("detector_id", detectorId)
     .eq("action_kind", actionKind)
@@ -45,7 +50,106 @@ async function readPairEv(
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
   };
-  return { alpha: num(row?.alpha), beta: num(row?.beta) };
+  return {
+    alpha: num(row?.alpha),
+    beta: num(row?.beta),
+    lastDetection: row?.last_detection == null ? null : num(row?.last_detection),
+    consecutiveCleanApprovals: num(row?.consecutive_clean_approvals),
+  };
+}
+
+/** wrong_timing structural learning (spec §5): histogram this pair's
+ * wrong_timing reject hours (UTC) over the window; every hour bin reaching
+ * BLACKOUT_BIN_THRESHOLD becomes part of a pair_blackout_hours rule. The rule
+ * is superseded (not duplicated) when the learned hour set changes. Returns
+ * true when a rule was written. Best-effort: any failure just skips the
+ * structural learning for this reject. */
+async function learnBlackoutHours(
+  sb: SupabaseClient,
+  shopId: string,
+  detectorId: string,
+  actionKind: ActionKind,
+): Promise<boolean> {
+  try {
+    const sinceIso = new Date(Date.now() - BLACKOUT_WINDOW_DAYS * 86400_000).toISOString();
+    const { data: rows, error } = await sb
+      .from("action_feedback")
+      .select("created_at")
+      .eq("shop_id", shopId)
+      .eq("detector_id", detectorId)
+      .eq("action_kind", actionKind)
+      .eq("decision", "reject")
+      .eq("reject_reason", "wrong_timing")
+      .gte("created_at", sinceIso)
+      .limit(500);
+    if (error) throw new Error(error.message);
+
+    const bins = new Map<number, number>();
+    for (const r of rows ?? []) {
+      const t = Date.parse(String(r.created_at));
+      if (!Number.isFinite(t)) continue;
+      const h = new Date(t).getUTCHours();
+      bins.set(h, (bins.get(h) ?? 0) + 1);
+    }
+    const hours = [...bins.entries()]
+      .filter(([, n]) => n >= BLACKOUT_BIN_THRESHOLD)
+      .map(([h]) => h)
+      .sort((a, b) => a - b);
+    if (hours.length === 0) return false;
+
+    const { data: existing, error: exErr } = await sb
+      .from("calibration_rule")
+      .select("id, rule_value")
+      .eq("shop_id", shopId)
+      .eq("detector_id", detectorId)
+      .eq("action_kind", actionKind)
+      .eq("rule_kind", "pair_blackout_hours")
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle();
+    if (exErr) throw new Error(exErr.message);
+    const existingHours = Array.isArray(
+      ((existing?.rule_value ?? null) as Record<string, unknown> | null)?.hours,
+    )
+      ? ([...((existing?.rule_value as Record<string, unknown>).hours as number[])].sort(
+          (a, b) => a - b,
+        ) as number[])
+      : null;
+    if (existingHours && JSON.stringify(existingHours) === JSON.stringify(hours)) {
+      return true; // already learned exactly these hours — the veto is active
+    }
+
+    const { data: inserted, error: insErr } = await sb
+      .from("calibration_rule")
+      .insert({
+        shop_id: shopId,
+        detector_id: detectorId,
+        action_kind: actionKind,
+        rule_kind: "pair_blackout_hours",
+        rule_value: { hours },
+        source: "wrong_timing",
+        active: true,
+      })
+      .select("id")
+      .single();
+    if (insErr) throw new Error(insErr.message);
+    if (existing?.id) {
+      const { error: supErr } = await sb
+        .from("calibration_rule")
+        .update({ active: false, superseded_by: inserted?.id ?? null })
+        .eq("shop_id", shopId)
+        .eq("id", existing.id);
+      if (supErr) {
+        console.error(`[calibration] blackout supersede failed: ${supErr.message}`);
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error(
+      `[calibration] learnBlackoutHours failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }
 
 async function refreshShopCalibrationHeadline(
@@ -161,6 +265,20 @@ export async function recordRejection(
     console.error(`[calibration] recordRejection rpc threw: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // wrong_timing structural learning (spec §5): the reject hour just landed in
+  // the feedback ledger above; histogram the pair's wrong_timing hours and emit
+  // a pair_blackout_hours veto once any bin reaches the threshold. Runs AFTER
+  // the feedback insert so the current reject counts toward its own bin.
+  let blackoutRuleWritten = false;
+  if (input.reason === "wrong_timing") {
+    blackoutRuleWritten = await learnBlackoutHours(
+      sb,
+      shopId,
+      input.detectorId,
+      input.actionKind,
+    );
+  }
+
   // Read the pair's Beta counters AFTER the bump for the confidence diff.
   // A reject raises beta, so the delta is <= 0. Best-effort: on a read failure
   // we fall back to `before`, yielding delta 0 rather than failing the reject.
@@ -244,7 +362,7 @@ export async function recordRejection(
     delta,
     before: confBefore,
     after: confAfter,
-    savedAsRule: eff.ruleKind !== null,
-    ruleKind: eff.ruleKind,
+    savedAsRule: eff.ruleKind !== null || blackoutRuleWritten,
+    ruleKind: blackoutRuleWritten ? "pair_blackout_hours" : eff.ruleKind,
   };
 }

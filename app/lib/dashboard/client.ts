@@ -955,11 +955,14 @@ export interface RejectResult {
 
 /** Reject a proposal for an alert with a plain-language reason.
  *  Re-derives detector/action server-side from the trusted alert.
- *  NEVER executes any action. Returns the reject receipt (reflection + trust delta). */
+ *  NEVER executes any action. Returns the reject receipt (reflection + trust delta).
+ *  Muting a shipped no-brainer (reason i_handle_this) 409s with code
+ *  "confirm_required" until re-sent with confirmed=true — the I8 interstitial. */
 export async function rejectProposal(input: {
   alertId: string;
   reason: RejectReason;
   note?: string;
+  confirmed?: boolean;
 }): Promise<RejectResult> {
   return apiSend<RejectResult>("POST", "/dashboard/api/queue/reject", input);
 }

@@ -142,6 +142,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     "Set-Cookie",
     `${STATE_COOKIE_NAME}=${stateValue}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax`,
   );
-  headers.append("Set-Cookie", shopHintCookieHeader(shop));
+  // The shop hint is set only AFTER a successful OAuth callback (see
+  // dashboard.auth.callback), never here on an unauthenticated GET — otherwise a
+  // crafted /dashboard/login?shop=... link could plant a 90-day hint that diverts
+  // a victim's sign-in front door for the life of the cookie.
   return redirect(authorizeUrl, { headers });
 }

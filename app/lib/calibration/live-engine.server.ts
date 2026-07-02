@@ -71,6 +71,10 @@ export interface PairEvidence {
   beta: number;
   graduationThreshold: number;
   graduated: boolean;
+  /** Cached learned detection factor (pair_calibration.last_detection). */
+  lastDetection?: number | null;
+  /** Cached clean-approval streak — drives the reversibility ratchet. */
+  consecutiveCleanApprovals?: number | null;
 }
 
 export interface AutopilotAuditRow {

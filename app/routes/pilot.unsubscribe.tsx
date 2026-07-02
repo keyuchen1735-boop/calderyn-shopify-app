@@ -2,6 +2,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { escapeHtml } from "~/lib/pilot-invite/content";
 import { recordOptOut, verifyUnsubToken } from "~/lib/pilot-invite/unsubscribe.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 
 function page(title: string, bodyHtml: string, status = 200): Response {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" />
@@ -17,6 +18,9 @@ function tokenFrom(request: Request): string {
 }
 
 export async function loader({ request }: LoaderFunctionArgs): Promise<Response> {
+  if (!(await rateLimit(clientIpKey(request, "pilot-unsub"), 20, 60_000))) {
+    return page("Slow down", "<p>Too many requests. Please wait a moment.</p>", 429);
+  }
   const email = await verifyUnsubToken(tokenFrom(request));
   if (!email) return page("Invalid link", "<p>This unsubscribe link is invalid or expired.</p>", 400);
   return page(
@@ -30,6 +34,9 @@ export async function loader({ request }: LoaderFunctionArgs): Promise<Response>
 }
 
 export async function action({ request }: ActionFunctionArgs): Promise<Response> {
+  if (!(await rateLimit(clientIpKey(request, "pilot-unsub"), 20, 60_000))) {
+    return page("Slow down", "<p>Too many requests. Please wait a moment.</p>", 429);
+  }
   const email = await verifyUnsubToken(tokenFrom(request));
   if (!email) return page("Invalid link", "<p>This unsubscribe link is invalid or expired.</p>", 400);
   const res = await recordOptOut(email, "one-click");

@@ -39,6 +39,7 @@ export async function recordActionFailure(
     // non-enum gateway kind).
     const actionKind = calibrationActionKind(rawActionKind);
 
+    let ledgerRowId: string | null = null;
     if (opts?.auditId) {
       const { data: ledger, error: ledgerErr } = await sb
         .from("action_feedback")
@@ -65,6 +66,7 @@ export async function recordActionFailure(
         // replay on a later tick / a double-submit). No second beta bump.
         return;
       }
+      ledgerRowId = String((ledger ?? [])[0]?.id ?? "") || null;
     }
 
     const { error } = await sb.rpc("calibration_record_failure", {
@@ -76,6 +78,18 @@ export async function recordActionFailure(
       console.error(
         `[calibration] recordActionFailure failed for ${detectorId}:${actionKind}: ${error.message}`,
       );
+      // Compensate: a failed bump must not leave the ledger row behind, or the
+      // replay that retries this audit would dedup against it and the failure
+      // signal would be permanently lost. Best-effort delete.
+      if (ledgerRowId) {
+        try {
+          await sb.from("action_feedback").delete().eq("shop_id", shopId).eq("id", ledgerRowId);
+        } catch (delErr) {
+          console.error(
+            `[calibration] failure-ledger rollback failed for audit ${opts?.auditId}: ${delErr instanceof Error ? delErr.message : String(delErr)}`,
+          );
+        }
+      }
     }
   } catch (err) {
     console.error(

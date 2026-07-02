@@ -71,9 +71,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         });
         return undefined;
       }
-      return recordApproval(session.shopId, alert.detector_id, kindToRecord, sb).catch(
-        () => ZERO_APPROVE_RECEIPT,
-      );
+      return recordApproval(session.shopId, alert.detector_id, kindToRecord, sb, {
+        auditId,
+        alertId,
+      }).catch(() => ZERO_APPROVE_RECEIPT);
     };
 
     if (kind === "create_po_draft") {
