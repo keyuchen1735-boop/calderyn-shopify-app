@@ -217,6 +217,9 @@ export const easyPostRateAdapter: RateQuoteAdapter = {
     if (!data || !data.access_token_encrypted) return null; // shop not connected.
     const apiKey = decrypt(data.access_token_encrypted as string); // throws if ciphertext is broken (rule 12).
     return {
+      // Scope the shared quote cache to this shop+provider so no other tenant is
+      // ever served these rates (see RateQuoteSource.id / quote cache keying).
+      id: `easypost:${shopId}`,
       getRates: (req: RateRequest) => fetchEasyPostRates(apiKey, req),
     };
   },

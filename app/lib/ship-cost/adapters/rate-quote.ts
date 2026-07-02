@@ -65,6 +65,12 @@ export interface RateQuoteResult {
 
 /** Per-shop, already-authenticated handle that fetches live rate options. */
 export interface RateQuoteSource {
+  // Stable identity of the source (the shop + provider it authenticates as). Rates
+  // are a function of THIS source's carrier credentials/pricing, so any cache keyed
+  // on the request must also key on this id — otherwise two shops with a byte-identical
+  // request (e.g. a shared 3PL origin) collide on one cache entry and one is served the
+  // other's carrier rates. Optional so contract-only test sources can omit it.
+  readonly id?: string;
   // Runtime. NEVER throws on carrier slowness/down — degrades to the static
   // fallback table (fallbackUsed: true). See easypost-rate.server.ts.
   getRates(req: RateRequest): Promise<RateQuoteResult>;
