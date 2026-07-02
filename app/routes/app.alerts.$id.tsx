@@ -36,6 +36,7 @@ import type { RegionCode } from "~/lib/ads/actions";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
 import { recordActionFailure } from "~/lib/calibration/failure.server";
+import { muteConfirmationMessage } from "~/lib/calibration/mute-guard";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
@@ -225,6 +226,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           status: 400,
           message: "No recommended action for this alert.",
         });
+      }
+      // I8 interstitial: muting a shipped no-brainer requires an explicit
+      // second confirmation — the 409 hands the warning to the picker, which
+      // re-posts with confirmed=true. Same contract as the dashboard endpoint.
+      if (reason === "i_handle_this" && String(formData.get("confirmed") || "") !== "true") {
+        const warning = muteConfirmationMessage(alert.detector_id, rejectAction);
+        if (warning) {
+          return json<ActionPayload>(
+            { ok: false, error: { code: "CONFIRM_REQUIRED", message: warning } },
+            { status: 409 },
+          );
+        }
       }
       await client.calibration.recordRejection({
         alertId,
