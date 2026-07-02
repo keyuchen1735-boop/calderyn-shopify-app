@@ -29,9 +29,13 @@ function pushInto<T>(map: Map<string, T[]>, key: string, value: T): void {
   else map.set(key, [value]);
 }
 
-function toVariant(v: Row): StoreVariant {
+function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
   const tracked = (v.inventory_tracked as boolean | null) ?? false;
-  const onHand = Number(v.inventory_on_hand ?? 0);
+  // Stock truth is the Slice-2 inventory ledger — the same balances checkout
+  // reserves and commits against. A variant the ledger has never seen (no balance
+  // rows, e.g. editor-created before any stock was set) falls back to the editor's
+  // static inventory_on_hand so it doesn't flip to sold-out spuriously.
+  const stock = ledgerSellable ?? Number(v.inventory_on_hand ?? 0);
   // retail_price_cents is nullable and the write path doesn't require a price even
   // on an active product, so a variant can reach the storefront with no price. It
   // must NOT be sold as a free $0.00 line - treat a missing price as not-for-sale.
@@ -42,11 +46,53 @@ function toVariant(v: Row): StoreVariant {
     title: String(v.title ?? "Default"),
     priceCents: priced ? Number(v.retail_price_cents) : 0,
     currency: (v.currency as string | null) ?? DEFAULT_CURRENCY,
-    // Static Slice-1 availability: a tracked variant is available iff it has
-    // stock; an untracked variant is always available - but a price-less variant
-    // is never available. The smart inventory ledger (Slice 2) refines stock.
-    available: priced && (tracked ? onHand > 0 : true),
+    // A tracked variant is available iff it has sellable stock (on_hand minus
+    // reserved, summed across locations); an untracked variant is always
+    // available - but a price-less variant is never available.
+    available: priced && (tracked ? stock > 0 : true),
   };
+}
+
+// Sellable stock per variant from the inventory ledger, summed across locations.
+// Reads the generated `available` column (on_hand - reserved - unavailable), the
+// SAME formula inventory_reserve() enforces at checkout, so the storefront can
+// never show sellable what the reservation path would refuse. Chunks run in
+// parallel and each chunk pages internally: its row count is variants x locations,
+// which a single PostgREST page could silently truncate. Variants absent from the
+// map have no ledger rows at all.
+async function sellableByVariant(
+  sb: Supa,
+  shopId: string,
+  variantIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!variantIds.length) return map;
+  const CHUNK = 100;
+  const PAGE = 1000;
+  const chunks: string[][] = [];
+  for (let i = 0; i < variantIds.length; i += CHUNK) chunks.push(variantIds.slice(i, i + CHUNK));
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await sb
+          .from("inventory_balance")
+          .select("variant_id, available")
+          .eq("shop_id", shopId)
+          .in("variant_id", chunk)
+          .order("variant_id")
+          .order("location_id")
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const rows = (data ?? []) as Row[];
+        for (const r of rows) {
+          const id = String(r.variant_id);
+          map.set(id, (map.get(id) ?? 0) + Number(r.available ?? 0));
+        }
+        if (rows.length < PAGE) return;
+      }
+    }),
+  );
+  return map;
 }
 
 // Assemble full StoreProducts for a set of ALREADY shop-scoped product rows:
@@ -91,10 +137,20 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     for (const c of (colls ?? []) as Row[]) handleByCollectionId.set(String(c.id), String(c.handle));
   }
 
+  // Ledger stock needs the variant ids, so it starts right after the variant fetch
+  // and overlaps the image signing below (independent I/O).
+  const sellablePromise = sellableByVariant(
+    sb,
+    shopId,
+    ((variants ?? []) as Row[]).map((v) => String(v.id)),
+  );
+
   const signed = await signMediaPaths((media ?? []).map((m: Row) => String(m.storage_path)));
+  const sellable = await sellablePromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
-  for (const v of (variants ?? []) as Row[]) pushInto(variantsByProduct, String(v.product_id), toVariant(v));
+  for (const v of (variants ?? []) as Row[])
+    pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
 
   // Primary image leads, then by position; unsignable paths are dropped.
   const imagesByProduct = new Map<string, { url: string; alt: string | null }[]>();
