@@ -24,10 +24,14 @@ export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 // provider callback then lands on the standalone /auth/connected page (close this
 // tab + return) instead of an embedded-admin deep link, which can't render in a
 // bare top-level tab. Still non-secret — it only steers the final redirect.
+// `dashboard` flags a connect started from the standalone dashboard SPA: the
+// callback lands back on /dashboard?<provider>=connected|error (no embedded
+// admin involved). Same non-secret, redirect-steering-only role as `popup`.
 export type OAuthReturnContext = {
   host?: string | null;
   shop?: string | null;
   popup?: boolean;
+  dashboard?: boolean;
 };
 
 /**
@@ -36,8 +40,14 @@ export type OAuthReturnContext = {
  * context, so old callers/flows keep producing plain-nonce states.
  */
 export function packOAuthState(nonce: string, ctx?: OAuthReturnContext): string {
-  if (!ctx?.host && !ctx?.shop && !ctx?.popup) return nonce;
-  const payload = { n: nonce, h: ctx.host ?? null, s: ctx.shop ?? null, p: ctx.popup ? 1 : 0 };
+  if (!ctx?.host && !ctx?.shop && !ctx?.popup && !ctx?.dashboard) return nonce;
+  const payload = {
+    n: nonce,
+    h: ctx.host ?? null,
+    s: ctx.shop ?? null,
+    p: ctx.popup ? 1 : 0,
+    d: ctx.dashboard ? 1 : 0,
+  };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
@@ -52,6 +62,7 @@ export function parseOAuthState(state: string): {
   host: string | null;
   shop: string | null;
   popup: boolean;
+  dashboard: boolean;
 } {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
@@ -61,15 +72,22 @@ export function parseOAuthState(state: string): {
         h?: string | null;
         s?: string | null;
         p?: number;
+        d?: number;
       };
       if (o && typeof o.n === "string") {
-        return { nonce: o.n, host: o.h ?? null, shop: o.s ?? null, popup: o.p === 1 };
+        return {
+          nonce: o.n,
+          host: o.h ?? null,
+          shop: o.s ?? null,
+          popup: o.p === 1,
+          dashboard: o.d === 1,
+        };
       }
     }
   } catch {
     /* not a packed state — treat the whole value as the nonce */
   }
-  return { nonce: state, host: null, shop: null, popup: false };
+  return { nonce: state, host: null, shop: null, popup: false, dashboard: false };
 }
 
 /**
@@ -102,9 +120,21 @@ export function popupResultUrl(args: {
 export function embeddedReturnUrl(
   path: string,
   query: Record<string, string>,
-  ctx: { host: string | null; shop: string | null },
+  ctx: { host: string | null; shop: string | null; dashboard?: boolean },
 ): string {
   const params = new URLSearchParams(query);
+  // Dashboard-native connect: land back on the dashboard SPA with the same
+  // one-shot ?<provider>=connected|error params the embedded Settings reads
+  // (connectionNotice). `path` is an /app/* deep link with no meaning outside
+  // the Shopify admin, so it is deliberately dropped here. The URL must be
+  // ABSOLUTE on the public dashboard origin: the __Host- session cookie is
+  // host-only, and this callback runs on SHOPIFY_APP_URL — a relative
+  // redirect would strand the merchant on a host with no session (same base
+  // convention as dashboard.login / dashboard.auth.google.callback).
+  if (ctx.dashboard) {
+    const base = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+    return `${base}/dashboard?${params.toString()}`;
+  }
   const apiKey = process.env.SHOPIFY_API_KEY;
   if (ctx.shop && apiKey) {
     const handle = ctx.shop.replace(/\.myshopify\.com$/, "");

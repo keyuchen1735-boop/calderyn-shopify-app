@@ -1,7 +1,7 @@
 // Tips are shared with the screener engine; reuse its (string | {title,detail})
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
-import type { CostSource } from "~/lib/types";
+import type { CostSource, Integration } from "~/lib/types";
 import type { RegionCode } from "~/lib/ads/actions";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
 import type {
@@ -197,7 +197,9 @@ export interface OverviewVM {
 export interface IntegrationVM {
   key: string;
   name: string;
-  status: string;
+  // The domain union (not bare string) so pairing checks like isPaired are
+  // compiler-checked at every consumer instead of cast at the call site.
+  status: Integration["status"];
   detail: string;
   logoCls: string;
 }

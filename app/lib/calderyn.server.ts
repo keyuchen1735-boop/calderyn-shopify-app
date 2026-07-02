@@ -1762,6 +1762,9 @@ export function calderynClient(shop: string) {
         // popup=true (onboarding new-tab connect) makes the provider callback land
         // on the standalone /auth/connected page instead of an embedded deep link.
         popup?: boolean,
+        // dashboard=true (dashboard-native connect) makes the callback land back
+        // on /dashboard?<provider>=connected|error instead of the embedded admin.
+        dashboard?: boolean,
       ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
@@ -1778,7 +1781,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
@@ -1796,7 +1799,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/google`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/google.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
           return { redirectUrl: buildGoogleAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "tiktok") {
@@ -1814,7 +1817,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/tiktok`;
           // Same single-use nonce pattern as Meta; consumed once at /auth/tiktok.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
           return { redirectUrl: buildTikTokAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "quickbooks") {
@@ -1832,7 +1835,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/quickbooks`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/quickbooks.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
           return { redirectUrl: buildQuickbooksAuthUrl({ clientId, redirectUri, state }) };
         }
         if (provider === "shippo") {
@@ -1853,7 +1856,7 @@ export function calderynClient(shop: string) {
           const redirectUri = `${appUrl}/auth/shippo`;
           // Same single-use nonce pattern as Meta/Google; consumed once at /auth/shippo.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
           return { redirectUrl: buildShippoAuthUrl({ clientId, redirectUri, state }) };
         }
         // NOTE: ShipHero is intentionally NOT handled here. It is credential/token-based

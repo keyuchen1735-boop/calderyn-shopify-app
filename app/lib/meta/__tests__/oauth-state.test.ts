@@ -126,6 +126,7 @@ describe("packOAuthState / parseOAuthState", () => {
       host: "aHsdf==",
       shop: "demo.myshopify.com",
       popup: false,
+      dashboard: false,
     });
   });
 
@@ -139,6 +140,21 @@ describe("packOAuthState / parseOAuthState", () => {
       host: null,
       shop: null,
       popup: true,
+      dashboard: false,
+    });
+  });
+
+  it("round-trips the dashboard flag (dashboard-native connect)", () => {
+    // dashboard alone forces a packed state, so the callback can route back to
+    // /dashboard instead of the embedded admin or the popup result page.
+    const state = packOAuthState("nonce-1", { dashboard: true });
+    expect(state).not.toBe("nonce-1");
+    expect(parseOAuthState(state)).toEqual({
+      nonce: "nonce-1",
+      host: null,
+      shop: null,
+      popup: false,
+      dashboard: true,
     });
   });
 
@@ -147,6 +163,7 @@ describe("packOAuthState / parseOAuthState", () => {
     expect(packOAuthState("nonce-1", {})).toBe("nonce-1");
     expect(packOAuthState("nonce-1", { host: null, shop: null })).toBe("nonce-1");
     expect(packOAuthState("nonce-1", { popup: false })).toBe("nonce-1");
+    expect(packOAuthState("nonce-1", { dashboard: false })).toBe("nonce-1");
   });
 
   it("parses a plain nonce as the nonce with null context", () => {
@@ -155,6 +172,24 @@ describe("packOAuthState / parseOAuthState", () => {
       host: null,
       shop: null,
       popup: false,
+      dashboard: false,
+    });
+  });
+
+  // States minted BEFORE the dashboard flag shipped ({n,h,s,p} with no `d`
+  // key) stay in flight for up to OAUTH_STATE_TTL_MS across a deploy — they
+  // must keep parsing with dashboard:false, not fall back to bare-nonce.
+  it("parses a pre-dashboard packed state (no `d` key) as dashboard:false", () => {
+    const legacy = Buffer.from(
+      JSON.stringify({ n: "nonce-1", h: "b64host", s: "demo.myshopify.com", p: 1 }),
+      "utf8",
+    ).toString("base64url");
+    expect(parseOAuthState(legacy)).toEqual({
+      nonce: "nonce-1",
+      host: "b64host",
+      shop: "demo.myshopify.com",
+      popup: true,
+      dashboard: false,
     });
   });
 });
@@ -162,6 +197,8 @@ describe("packOAuthState / parseOAuthState", () => {
 describe("embeddedReturnUrl", () => {
   beforeEach(() => {
     delete process.env.SHOPIFY_API_KEY;
+    delete process.env.DASHBOARD_PUBLIC_URL;
+    delete process.env.SHOPIFY_APP_URL;
   });
 
   // The reliable way back into a SPECIFIC embedded page after a top-level OAuth
@@ -225,5 +262,46 @@ describe("embeddedReturnUrl", () => {
       { host: "realhost", shop: "demo.myshopify.com" },
     );
     expect(new URL(url, "https://x.example").searchParams.get("host")).toBe("realhost");
+  });
+
+  // Dashboard-native connects never re-enter the Shopify admin: the callback
+  // lands on the dashboard SPA with the same one-shot notice params, and the
+  // embedded /app/* path is dropped (it has no meaning outside the admin).
+  // The URL must be absolute on the PUBLIC dashboard origin — the __Host-
+  // session cookie is host-only and the callback runs on SHOPIFY_APP_URL, so
+  // a relative redirect would land on a host where the merchant has no session.
+  it("returns the absolute public-dashboard URL when the state carried the dashboard flag", () => {
+    process.env.SHOPIFY_API_KEY = "testapikey";
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { meta: "connected" },
+        { host: null, shop: "demo.myshopify.com", dashboard: true },
+      ),
+    ).toBe("https://calderyncompany.com/dashboard?meta=connected");
+  });
+
+  it("falls back to the app host, then a relative path, when the public URL is unset", () => {
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    expect(
+      embeddedReturnUrl("/app/settings", { meta: "connected" }, { host: null, shop: null, dashboard: true }),
+    ).toBe("https://app.calderyncompany.com/dashboard?meta=connected");
+    delete process.env.SHOPIFY_APP_URL;
+    expect(
+      embeddedReturnUrl("/app/settings", { meta: "connected" }, { host: null, shop: null, dashboard: true }),
+    ).toBe("/dashboard?meta=connected");
+  });
+
+  it("keeps the error reason on a dashboard return", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { google: "error", reason: "access_denied" },
+        { host: null, shop: null, dashboard: true },
+      ),
+    ).toBe("https://calderyncompany.com/dashboard?google=error&reason=access_denied");
   });
 });

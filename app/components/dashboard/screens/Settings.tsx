@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
+import { Btn, Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { money } from "../format";
 import {
   putConsent,
@@ -7,14 +7,24 @@ import {
   fetchShipCost,
   setShipCostMode,
   fetchUnmatchedShipCharges,
+  startIntegrationConnect,
+  connectIntegrationKey,
+  disconnectIntegration,
   fetchLearnedRules,
   undoRule,
   DashboardApiError,
   type UnmatchedShipCharges,
 } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
-import type { GuardrailVM, LearnedRuleVM } from "../view-models";
+import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
+import {
+  isApiKeyConnect,
+  isConnectable,
+  isOauthPending,
+  isPaired,
+  kindToProvider,
+} from "~/lib/integrations";
 import { McpGuide } from "../McpGuide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
@@ -76,6 +86,113 @@ const CONNECTION_ICON: Record<string, string> = {
   disconnected: "x",
   reauth: "warn",
 };
+
+// What the merchant pastes for each API-key connector (contract C8).
+const KEY_PLACEHOLDER: Record<string, string> = {
+  easypost: "EasyPost API key",
+  shipbob: "ShipBob token",
+  shiphero: "ShipHero refresh token",
+};
+
+/**
+ * Connect / Disconnect / key-paste affordance for one Connections row.
+ * OAuth providers round-trip a full page load (the callback returns to
+ * /dashboard?<provider>=connected); disconnect and key connects mutate in
+ * place and write the refreshed rows to the shared shell state, so every
+ * consumer of app.integrations sees the new pairing, not just this screen.
+ */
+function ConnectionActions({ it, app }: { it: IntegrationVM; app: DashboardCtx }) {
+  const provider = kindToProvider(it.key);
+  const paired = isPaired(it.status);
+  const [busy, setBusy] = useState(false);
+  const [key, setKey] = useState("");
+
+  const fail = (err: unknown, fallback: string) => {
+    app.toast(err instanceof DashboardApiError ? err.message : fallback, "x", "critical");
+  };
+
+  if (paired && (isConnectable(it.key) || isApiKeyConnect(it.key))) {
+    return (
+      <Btn
+        small
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            app.setIntegrations(await disconnectIntegration(provider));
+            app.toast(`Disconnected ${it.name}`, "check");
+          } catch (err) {
+            fail(err, `Couldn't disconnect ${it.name}.`);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Disconnect
+      </Btn>
+    );
+  }
+
+  if (isConnectable(it.key)) {
+    return (
+      <Btn
+        small
+        kind="primary"
+        disabled={busy || isOauthPending(it.key)}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const { url } = await startIntegrationConnect(provider);
+            window.location.assign(url);
+          } catch (err) {
+            fail(err, `Couldn't start the ${it.name} connection.`);
+            setBusy(false);
+          }
+        }}
+      >
+        {it.status === "reauth" ? "Reconnect" : "Connect"}
+      </Btn>
+    );
+  }
+
+  if (isApiKeyConnect(it.key)) {
+    return (
+      <div className="flex items-center gap-2">
+        <input
+          className="cd-input"
+          type="password"
+          placeholder={KEY_PLACEHOLDER[provider] ?? "API key"}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          disabled={busy}
+          aria-label={`${it.name} credential`}
+        />
+        <Btn
+          small
+          kind="primary"
+          disabled={busy || !key.trim()}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              app.setIntegrations(await connectIntegrationKey(provider, key));
+              setKey("");
+              app.toast(`${it.name} connected`, "check");
+            } catch (err) {
+              fail(err, `Couldn't connect ${it.name}.`);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Save
+        </Btn>
+      </div>
+    );
+  }
+
+  // No native connect mechanism from here (e.g. the Shopify row).
+  return null;
+}
 
 // Human-readable reason a carrier charge stayed unmatched (Phase 3 Part C, rule 12).
 const UNMATCHED_REASON_LABEL: Record<string, string> = {
@@ -703,9 +820,8 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       <section>
         <SectionTitle>Connections</SectionTitle>
         <Card pad={false}>
-          {/* Read-only here. TODO: connect/disconnect flows live in the embedded app. */}
           {integrations.length === 0 ? (
-            <Placeholder icon="bolt" title="No connections" sub="Connect Shopify and your ad accounts from the embedded app." />
+            <Placeholder icon="bolt" title="No connections" sub="Your ad, finance, and shipping accounts will appear here." />
           ) : (
             integrations.map((it) => {
               const tone = CONNECTION_TONE[it.status] ?? "neutral";
@@ -713,9 +829,12 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               const icon = CONNECTION_ICON[it.status] ?? "clock";
               return (
                 <SettingRow key={it.key} label={it.name} sub={it.detail}>
-                  <Pill tone={tone} icon={icon}>
-                    {label}
-                  </Pill>
+                  <div className="flex items-center gap-2">
+                    <Pill tone={tone} icon={icon}>
+                      {label}
+                    </Pill>
+                    <ConnectionActions it={it} app={app} />
+                  </div>
                 </SettingRow>
               );
             })

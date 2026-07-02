@@ -36,6 +36,7 @@ describe("EasyPost API-key connect routing", () => {
 
   it("surfaces a post-connect success notice for EasyPost (same channel as OAuth)", () => {
     expect(connectionNotice(new URLSearchParams("easypost=connected"))).toEqual({
+      key: "easypost",
       provider: "EasyPost",
       ok: true,
       reason: undefined,

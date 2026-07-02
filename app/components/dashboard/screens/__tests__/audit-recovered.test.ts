@@ -53,6 +53,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     audit,
     guardrails: null,
     integrations: [],
+    setIntegrations: () => {},
     consent: null,
     overview: null,
     calibration: null,
