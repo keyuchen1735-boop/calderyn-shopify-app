@@ -1,18 +1,22 @@
-// Go-live gates (platform pivot Step 9, slice 3). The two hard gates the spec puts in
+// Go-live gates (platform pivot Step 9, slice 3). The hard gates the spec puts in
 // front of dual_run -> live: the PARITY gate (everything the mirror holds made it into
-// the owned source-of-truth tables, bridged through import_map) and the PAYMENT-CLEARED
-// gate (a real test transaction reached `paid` with a captured Stripe charge). Parity is
-// an ID-LEVEL set diff, not a count comparison: a missing bridge and a stale bridge can
-// cancel out in a count, so each check names how many rows are unlinked and how many
-// links point at nothing. The report is honest by construction — every check states what
-// was expected and what was found, so a failing gate tells the merchant exactly what to
-// fix (rule 12: fail visibly).
+// the owned source-of-truth tables, bridged through import_map — an ID-LEVEL set diff,
+// not a count comparison: a missing bridge and a stale bridge can cancel out in a
+// count, so each check names how many rows are unlinked and how many links point at
+// nothing), the VALUE-PARITY gate (prices and stock must match the live Shopify store,
+// verified by the dual-run drift sweep — the divergence axis id-level linkage cannot
+// see), and the PAYMENT-CLEARED gate (a real test transaction reached `paid` with a
+// captured Stripe charge). The report is honest by construction — every check states
+// what was expected and what was found, so a failing gate tells the merchant exactly
+// what to fix (rule 12: fail visibly).
 //
 // transitionOrgMode calls assertGoLiveGates for every `-> live` move, so the gates
 // cannot be bypassed from any surface (dashboard, API, script).
 
+import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { pagedRows, type PagedFilter } from "./paged.server";
+import { checkDualRunDrift } from "./drift.server";
 import { CutoverBlockedError } from "./errors";
 
 export interface GateCheck {
@@ -218,17 +222,85 @@ export async function checkGoLiveGates(shopId: string): Promise<GoLiveReport> {
   return { pass: checks.every((c) => c.pass), checks };
 }
 
+const VALUES_LABEL = "Your prices and stock match your live Shopify store";
+
+/**
+ * Value-parity gate: prices and stock must MATCH the live Shopify store, verified by
+ * the dual-run drift sweep (checkDualRunDrift) — the id-level bridge checks cannot see
+ * a price edited directly in Shopify admin during dual_run. Three outcomes beyond a
+ * clean diff: a truly native shop (no Shopify side AND no import_map heritage) PASSES —
+ * a permanent state with nothing to diverge from, not a failure; an unreachable Shopify
+ * FAILS CLOSED (unverifiable parity must block a go-live, never wave it through); any
+ * other failure is a real system fault and propagates as one, never masquerading as a
+ * gate verdict.
+ */
+async function checkValuesGate(shopId: string): Promise<GateCheck> {
+  try {
+    const drift = await checkDualRunDrift(shopId);
+    return check(
+      "values_match_shopify",
+      VALUES_LABEL,
+      "0 differences",
+      `${drift.price.count} price, ${drift.stock.count} stock, ` +
+        `${drift.shopifyOnly.count} only in Shopify, ${drift.ownedOnly.count} only in Calderyn, ` +
+        `${drift.truncated.count} unverifiable, ${drift.unmatchedLocations} unmatched locations`,
+      drift.pass,
+    );
+  } catch (err) {
+    if (err instanceof CalderynError && err.code === "not_connected") {
+      // Only a shop with NO Shopify heritage may skip the value sweep. A shop that
+      // holds import_map bridges was imported FROM Shopify, so a missing shop_domain
+      // is a data anomaly, not a native shop — waving it through would skip value
+      // verification exactly where it matters most. Fail closed instead (rule 12).
+      const bridged = await countRows(shopId, "import_map", {});
+      if (bridged > 0) {
+        return check(
+          "values_match_shopify",
+          VALUES_LABEL,
+          "0 differences",
+          `not connected to Shopify but ${bridged} imported record link(s) exist; reconnect Shopify to verify values`,
+          false,
+        );
+      }
+      return check(
+        "values_match_shopify",
+        VALUES_LABEL,
+        "0 differences",
+        "not connected to Shopify; nothing to compare",
+        true,
+      );
+    }
+    if (err instanceof CalderynError && err.code === "shopify_unreachable") {
+      return check(
+        "values_match_shopify",
+        VALUES_LABEL,
+        "0 differences",
+        "could not reach Shopify to verify values",
+        false,
+      );
+    }
+    throw err;
+  }
+}
+
 /**
  * The hard gate: throws CutoverBlockedError (listing every failing check) unless ALL
  * go-live checks pass. Called by transitionOrgMode on any `-> live` move — the single
- * choke point, so no caller can flip a shop live past a failing parity or payment gate
- * (rule 12). The typed error lets the API layer answer 409 for a blocked move while a
- * genuine system failure still surfaces as a 500.
+ * choke point, so no caller can flip a shop live past a failing parity, value-parity,
+ * or payment gate (rule 12). The typed error lets the API layer answer 409 for a
+ * blocked move while a genuine system failure still surfaces as a 500.
+ *
+ * The value-parity sweep is network-bound and full-catalog, so it only runs once the
+ * cheap structural checks are all green — a structurally-blocked retry never touches
+ * the Shopify Admin API. (A value-blocked retry does re-run the sweep: it is an
+ * operator-triggered action at white-glove pilot scale, the same cost as the drift
+ * panel's "Compare with Shopify" button.)
  */
 export async function assertGoLiveGates(shopId: string): Promise<void> {
   const report = await checkGoLiveGates(shopId);
-  if (report.pass) return;
-  const failing = report.checks.filter((c) => c.pass === false);
+  const checks = report.pass ? [...report.checks, await checkValuesGate(shopId)] : report.checks;
+  const failing = checks.filter((c) => c.pass === false);
+  if (failing.length === 0) return;
   const detail = failing
     .map((c) => `${c.name} (expected ${c.expected}, found ${c.actual})`)
     .join("; ");

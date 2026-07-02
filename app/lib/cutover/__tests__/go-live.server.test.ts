@@ -1,10 +1,39 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { checkGoLiveGates, assertGoLiveGates } from "../go-live.server";
 import { CutoverBlockedError } from "../errors";
+import { CalderynError } from "~/lib/calderyn.server";
+import type { DriftReport } from "../drift.server";
 
 // getSupabase is replaced per-test via this holder so each test supplies its own stub.
 let currentSb: unknown = null;
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => currentSb }));
+
+// The value-parity gate rides checkDualRunDrift; mocked so gate tests control the
+// verdict without a Shopify sweep. Defaults green (beforeEach) so the pre-existing
+// assert tests keep proving the cheap checks on their own.
+const driftMock = vi.fn();
+vi.mock("../drift.server", () => ({
+  checkDualRunDrift: (shopId: string) => driftMock(shopId) as Promise<DriftReport>,
+}));
+
+function greenDrift(overrides: Partial<DriftReport> = {}): DriftReport {
+  return {
+    variantsChecked: 3,
+    pass: true,
+    price: { count: 0, rows: [] },
+    stock: { count: 0, rows: [] },
+    shopifyOnly: { count: 0, sample: [] },
+    ownedOnly: { count: 0, sample: [] },
+    truncated: { count: 0, sample: [] },
+    unmatchedLocations: 0,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  driftMock.mockReset();
+  driftMock.mockResolvedValue(greenDrift());
+});
 
 interface SbConfig {
   productAll: string[];
@@ -93,7 +122,9 @@ function makeSb(cfg: SbConfig) {
               ? cfg.paidOrders
               : table === "transaction_ledger" && eqCols.kind === "capture"
                 ? cfg.captures
-                : 0;
+                : table === "import_map"
+                  ? cfg.bridgeProduct.length + cfg.bridgeVariant.length + cfg.bridgeLocation.length
+                  : 0;
           return res({ data: null, count: n, error: null });
         }
         const rows = rowsFor(table, column, notNulled, eqCols)
@@ -278,5 +309,94 @@ describe("assertGoLiveGates", () => {
     expect((err as Error).message).toMatch(
       /go-live blocked: 2 gate check\(s\) failing:.*catalog_projection.*paid_order/,
     );
+  });
+});
+
+describe("assertGoLiveGates — value-parity (drift) gate", () => {
+  it("runs the drift check with the shop id and resolves when values match", async () => {
+    currentSb = makeSb(allGreen());
+    await expect(assertGoLiveGates("shop-1")).resolves.toBeUndefined();
+    expect(driftMock).toHaveBeenCalledWith("shop-1");
+  });
+
+  it("blocks when prices or stock diverge from live Shopify, naming the diff", async () => {
+    currentSb = makeSb(allGreen());
+    driftMock.mockResolvedValue(
+      greenDrift({ pass: false, price: { count: 2, rows: [] }, stock: { count: 1, rows: [] } }),
+    );
+    const err = await assertGoLiveGates("shop-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CutoverBlockedError);
+    expect((err as Error).message).toMatch(/values_match_shopify/);
+    expect((err as Error).message).toMatch(/2 price/);
+    expect((err as Error).message).toMatch(/1 stock/);
+  });
+
+  it("blocks when the sweep could not verify everything (truncated / unmatched)", async () => {
+    currentSb = makeSb(allGreen());
+    driftMock.mockResolvedValue(
+      greenDrift({ pass: false, truncated: { count: 1, sample: ["P"] }, unmatchedLocations: 2 }),
+    );
+    const err = await assertGoLiveGates("shop-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CutoverBlockedError);
+    expect((err as Error).message).toMatch(/1 unverifiable/);
+    expect((err as Error).message).toMatch(/2 unmatched locations/);
+  });
+
+  it("passes a native shop with no Shopify side (not_connected, zero bridges)", async () => {
+    // A truly native shop: owned catalog exists but nothing is Shopify-originated —
+    // no external_ids, no import_map bridges. There is no Shopify side to diverge from.
+    const cfg = allGreen();
+    cfg.productExt = [];
+    cfg.variantExt = [];
+    cfg.locationExt = [];
+    cfg.bridgeProduct = [];
+    cfg.bridgeVariant = [];
+    cfg.bridgeLocation = [];
+    currentSb = makeSb(cfg);
+    driftMock.mockRejectedValue(
+      new CalderynError({ code: "not_connected", status: 409, message: "no Shopify side" }),
+    );
+    await expect(assertGoLiveGates("shop-1")).resolves.toBeUndefined();
+  });
+
+  it("fails CLOSED when a bridged (Shopify-heritage) shop reports not_connected", async () => {
+    // allGreen HAS import_map bridges: this shop was imported from Shopify, so a
+    // missing shop_domain is a data anomaly, not a native shop — values must not
+    // skip verification.
+    currentSb = makeSb(allGreen());
+    driftMock.mockRejectedValue(
+      new CalderynError({ code: "not_connected", status: 409, message: "no Shopify side" }),
+    );
+    const err = await assertGoLiveGates("shop-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CutoverBlockedError);
+    expect((err as Error).message).toMatch(/values_match_shopify/);
+    expect((err as Error).message).toMatch(/imported record link/);
+  });
+
+  it("fails CLOSED when Shopify is unreachable", async () => {
+    currentSb = makeSb(allGreen());
+    driftMock.mockRejectedValue(
+      new CalderynError({ code: "shopify_unreachable", status: 502, message: "down" }),
+    );
+    const err = await assertGoLiveGates("shop-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CutoverBlockedError);
+    expect((err as Error).message).toMatch(/could not reach Shopify/i);
+  });
+
+  it("skips the Shopify sweep when a cheap gate already fails", async () => {
+    const cfg = allGreen();
+    cfg.paidOrders = 0;
+    currentSb = makeSb(cfg);
+    await expect(assertGoLiveGates("shop-1")).rejects.toThrow(/go-live blocked/);
+    expect(driftMock).not.toHaveBeenCalled();
+  });
+
+  it("rethrows an unexpected drift failure as a system error, not a gate block", async () => {
+    currentSb = makeSb(allGreen());
+    driftMock.mockRejectedValue(new Error("boom"));
+    const err = await assertGoLiveGates("shop-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(CutoverBlockedError);
+    expect((err as Error).message).toBe("boom");
   });
 });
