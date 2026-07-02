@@ -11,6 +11,8 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
+import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
 import { formatMoney as money } from "~/lib/storefront/money";
@@ -50,22 +52,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
     console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout for shop ${shopId}`);
   }
 
+  const track = await trackStorefrontEvent(request, shopId, "checkout_start");
+
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
-  return json({
-    publishableKey,
-    origin: new URL(request.url).origin,
-    summary: {
-      lines: priced.lines.map((l) => ({
-        id: l.id,
-        title: l.titleSnapshot,
-        quantity: l.quantity,
-        unitPriceCents: l.unitPriceCents,
-      })),
-      subtotalCents: priced.subtotalCents,
-      currency: priced.currency,
+  return json(
+    {
+      publishableKey,
+      origin: new URL(request.url).origin,
+      summary: {
+        lines: priced.lines.map((l) => ({
+          id: l.id,
+          title: l.titleSnapshot,
+          quantity: l.quantity,
+          unitPriceCents: l.unitPriceCents,
+        })),
+        subtotalCents: priced.subtotalCents,
+        currency: priced.currency,
+      },
     },
-  });
+    { headers: track },
+  );
 }
 
 function str(form: FormData, key: string): string {
@@ -136,23 +143,35 @@ export async function action({ request }: ActionFunctionArgs) {
   // Originating a checkout reaches Stripe + the DB; a transient failure must surface inline
   // (rule 12) rather than throwing a 500 that discards the buyer's just-entered contact + shipping
   // details. Validation errors above already 400; this catches the money/network path.
+  // Stamp the live-analytics session onto the order's attribution snapshot.
+  // The paid flip happens in the Stripe webhook (no browser cookies there), so
+  // this is the only moment the session id and the order meet — it anchors the
+  // Live View funnel's "purchased" count on paid orders instead of on the
+  // buyer happening to revisit the confirmation page.
+  const visitor = await ensureVisitorSession(request);
+
   try {
-    const result = await createCheckout(shopId, cartId, {
-      email,
-      address: {
-        kind: "shipping",
-        name,
-        line1,
-        line2: str(form, "line2") || null,
-        city,
-        region,
-        postal,
-        country,
-        phone: str(form, "phone") || null,
-        isDefault: true,
+    const result = await createCheckout(
+      shopId,
+      cartId,
+      {
+        email,
+        address: {
+          kind: "shipping",
+          name,
+          line1,
+          line2: str(form, "line2") || null,
+          city,
+          region,
+          postal,
+          country,
+          phone: str(form, "phone") || null,
+          isDefault: true,
+        },
+        consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
       },
-      consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
-    });
+      { live_session_id: visitor.sessionId },
+    );
 
     // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
     // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.

@@ -39,12 +39,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const UNINSTALL_GRACE_DAYS = 30;
 export const RETENTION_RAW_WEBHOOK_DAYS = 30;
+export const RETENTION_STOREFRONT_EVENT_DAYS = 30;
 
 export interface SweepResult {
   shopsRedacted: string[];
   /** Shops whose redact failed this run — surfaced, retried next tick. */
   shopsFailed: { id: string; error: string }[];
   rawWebhookRowsDeleted: number;
+  storefrontEventRowsDeleted: number;
 }
 
 /**
@@ -109,9 +111,24 @@ export async function runGdprAndRetentionSweep(
     throw new Error(`gdpr sweep: ad_click_ref trim failed: ${clickRefErr.message}`);
   }
 
+  // 3. Live-view event retention. storefront_event feeds the live view, not
+  //    the warehouse — rows past the window are dead weight (spec
+  //    2026-07-02-analytics-live-view-design.md).
+  const eventCutoff = new Date(
+    Date.now() - RETENTION_STOREFRONT_EVENT_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { error: evErr, count: evCount } = await sb
+    .from("storefront_event")
+    .delete({ count: "exact" })
+    .lt("created_at", eventCutoff);
+  if (evErr) {
+    throw new Error(`gdpr sweep: storefront_event trim failed: ${evErr.message}`);
+  }
+
   return {
     shopsRedacted,
     shopsFailed,
     rawWebhookRowsDeleted: count ?? 0,
+    storefrontEventRowsDeleted: evCount ?? 0,
   };
 }

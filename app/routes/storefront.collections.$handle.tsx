@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
@@ -40,7 +41,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const doc = await loadPublishedDoc(shopId, "collection");
   const record = { collection: { handle, title } };
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
-  return json({ handle, title, products, doc, data, record });
+  const track = await trackStorefrontEvent(request, shopId, "page_view");
+  return json({ handle, title, products, doc, data, record }, { headers: track });
 }
 
 export default function StorefrontCollection() {

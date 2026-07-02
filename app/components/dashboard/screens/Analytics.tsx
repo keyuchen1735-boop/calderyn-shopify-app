@@ -21,6 +21,7 @@ import {
   AttentionSection,
 } from "./overview-cards";
 import { PeerBenchmarks } from "./PeerBenchmarks";
+import AnalyticsLive from "./AnalyticsLive";
 import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 
 type Range = "7d" | "14d" | "30d";
@@ -54,6 +55,7 @@ function ScreenHeader({
 
 export default function Analytics({ app }: { app: DashboardCtx }) {
   const [range, setRange] = useState<Range>("30d");
+  const [view, setView] = useState<"performance" | "live">("performance");
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,10 +128,39 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     ? Math.max(6.5, ...grades.map((g) => g.roas), ...grades.map((g) => g.break_even_roas)) * 1.05
     : 6.5;
 
+  // The Performance ↔ Live subtab switch, present in every header state so the
+  // Live view stays reachable while Performance is still loading or errored.
+  const viewSwitch = (
+    <Segmented
+      small
+      value={view}
+      onChange={(v) => setView(v as "performance" | "live")}
+      options={[
+        { value: "performance", label: "Performance" },
+        { value: "live", label: "Live" },
+      ]}
+    />
+  );
+
+  // The Live subtab is fully independent of the performance fetch — bail out
+  // before the loading/error states so those never leak into (or block) it.
+  if (view === "live") {
+    return (
+      <div className="cd-screen">
+        <ScreenHeader title="Analytics" sub="Your storefront right now.">
+          {viewSwitch}
+        </ScreenHeader>
+        <AnalyticsLive />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="cd-screen">
-        <ScreenHeader title="Analytics" sub="Loading blended performance across your ad accounts…" />
+        <ScreenHeader title="Analytics" sub="Loading blended performance across your ad accounts…">
+          {viewSwitch}
+        </ScreenHeader>
         <Card pad={false}>
           <Placeholder icon="chart" title="Loading analytics" sub="Reading spend, revenue and campaign grades." />
         </Card>
@@ -140,7 +171,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   if (error) {
     return (
       <div className="cd-screen">
-        <ScreenHeader title="Analytics" />
+        <ScreenHeader title="Analytics">{viewSwitch}</ScreenHeader>
         <Card pad={false}>
           <Placeholder icon="warn" title="Couldn't load analytics" sub={error} />
         </Card>
@@ -153,6 +184,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen">
       <ScreenHeader title="Analytics" sub="Blended performance across Meta, Google and TikTok — margin-aware.">
+        {viewSwitch}
         <Segmented
           small
           value={range}

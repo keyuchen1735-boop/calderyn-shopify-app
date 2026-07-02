@@ -157,9 +157,15 @@ describe("checkout action happy path", () => {
 
     expect((res as Response).status).toBe(200);
     expect(createCheckout).toHaveBeenCalledTimes(1);
-    const [shopId, cartId, buyer] = createCheckout.mock.calls[0];
+    const [shopId, cartId, buyer, attribution] = createCheckout.mock.calls[0];
     expect(shopId).toBe("shop-1");
     expect(cartId).toBe("cart-1");
+    // The live-analytics session is stamped onto the order's attribution so
+    // the Live View funnel can anchor "purchased" on paid orders (the Stripe
+    // webhook has no browser cookies).
+    expect((attribution as { live_session_id?: string }).live_session_id).toMatch(
+      /^[0-9a-f-]{36}$/,
+    );
     expect(buyer.email).toBe("buyer@example.com"); // normalized to lowercase
     expect(buyer.address).toMatchObject({ kind: "shipping", line1: "1 Market St", country: "US", isDefault: true });
     expect(buyer.consent).toMatchObject({

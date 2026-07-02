@@ -8,6 +8,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
@@ -26,12 +27,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
   // hold its sentinel id) — always an empty cart, never a DB read.
   if (shopId === DEMO_SHOP_ID) return json({ cart: null });
+  const track = await trackStorefrontEvent(request, shopId, "page_view");
   const cartId = await readCartId(request);
   // No cookie yet -> empty cart, no DB read.
-  if (!cartId) return json({ cart: null });
+  if (!cartId) return json({ cart: null }, { headers: track });
   // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines.
   const cart = await priceCart(shopId, cartId);
-  return json({ cart });
+  return json({ cart }, { headers: track });
 }
 
 
