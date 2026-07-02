@@ -50,6 +50,8 @@ interface SbConfig {
   balances: string[];
   paidOrders: number;
   captures: number;
+  /** shops.demo_mode for the value gate's demo exemption; defaults false. */
+  demoMode?: boolean;
 }
 
 /**
@@ -115,6 +117,11 @@ function makeSb(cfg: SbConfig) {
         rangeTo = to;
         return b;
       },
+      maybeSingle: () =>
+        Promise.resolve({
+          data: table === "shops" ? { demo_mode: cfg.demoMode === true } : null,
+          error: null,
+        }),
       then: (res: (r: { data: unknown; count: number | null; error: null }) => unknown) => {
         if (isCount) {
           const n =
@@ -398,5 +405,19 @@ describe("assertGoLiveGates — value-parity (drift) gate", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(CutoverBlockedError);
     expect((err as Error).message).toBe("boom");
+  });
+
+  it("passes a demo shop without sweeping Shopify (simulated values diverge by design)", async () => {
+    // shops.demo_mode simulates action side effects, so owned values diverge from
+    // Shopify on purpose (seeded synthetic variants always fail drift). The gate must
+    // pass demo shops and never run the pointless Admin API sweep. Distinct shop id:
+    // isShowcaseShop caches demo_mode per shop for the process lifetime, and "shop-1"
+    // must stay cached as a real shop for the other gate tests.
+    const cfg = allGreen();
+    cfg.demoMode = true;
+    currentSb = makeSb(cfg);
+    driftMock.mockRejectedValue(new Error("sweep must not run for demo shops"));
+    await expect(assertGoLiveGates("shop-demo")).resolves.toBeUndefined();
+    expect(driftMock).not.toHaveBeenCalled();
   });
 });

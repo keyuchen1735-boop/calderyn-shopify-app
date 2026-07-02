@@ -15,6 +15,7 @@
 
 import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { isShowcaseShop } from "~/lib/demo/showcase.server";
 import { pagedRows, type PagedFilter } from "./paged.server";
 import { checkDualRunDrift } from "./drift.server";
 import { CutoverBlockedError } from "./errors";
@@ -227,14 +228,28 @@ const VALUES_LABEL = "Your prices and stock match your live Shopify store";
 /**
  * Value-parity gate: prices and stock must MATCH the live Shopify store, verified by
  * the dual-run drift sweep (checkDualRunDrift) — the id-level bridge checks cannot see
- * a price edited directly in Shopify admin during dual_run. Three outcomes beyond a
- * clean diff: a truly native shop (no Shopify side AND no import_map heritage) PASSES —
- * a permanent state with nothing to diverge from, not a failure; an unreachable Shopify
- * FAILS CLOSED (unverifiable parity must block a go-live, never wave it through); any
- * other failure is a real system fault and propagates as one, never masquerading as a
- * gate verdict.
+ * a price edited directly in Shopify admin during dual_run. Outcomes beyond a clean
+ * diff: a demo shop (shops.demo_mode) PASSES without sweeping — it simulates action
+ * side effects by design, so its owned values diverge from Shopify on purpose and its
+ * seeded synthetic variants would fail drift forever; a truly native shop (no Shopify
+ * side AND no import_map heritage) PASSES — a permanent state with nothing to diverge
+ * from, not a failure; an unreachable Shopify FAILS CLOSED (unverifiable parity must
+ * block a go-live, never wave it through); any other failure is a real system fault
+ * and propagates as one, never masquerading as a gate verdict.
  */
 async function checkValuesGate(shopId: string): Promise<GateCheck> {
+  // Shared demo_mode lookup (process-cached; fails safe toward "real shop", so a
+  // transient lookup error can never exempt a real merchant from the sweep).
+  if (await isShowcaseShop(shopId)) {
+    return check(
+      "values_match_shopify",
+      VALUES_LABEL,
+      "0 differences",
+      "demo store; values are simulated and not compared against Shopify",
+      true,
+    );
+  }
+
   try {
     const drift = await checkDualRunDrift(shopId);
     return check(
