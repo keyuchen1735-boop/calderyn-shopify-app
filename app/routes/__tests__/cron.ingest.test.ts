@@ -17,7 +17,6 @@ vi.mock("~/lib/attribution/revenue.server", () => ({ reconcileAttributedRevenue 
 vi.mock("~/lib/ingest/transform.server", () => ({ transformPendingWebhooks }));
 vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
 vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
-vi.mock("~/lib/import/run.server", () => ({ drainImports: vi.fn(async () => ({ processed: 0 })) }));
 
 // Fake Supabase modelling the two cron.ingest query shapes against a fixed set
 // of active shops. The active Shopify state after backfill is sync_status="ready"
@@ -103,6 +102,20 @@ describe("cron.ingest loader", () => {
     expect(runShipCostResolution).toHaveBeenCalledWith(expect.anything(), "s2", { shopCountry: null });
     expect(body).toHaveProperty("shipCostErrors");
     expect(body.shipCostErrors).toEqual([]);
+
+    // per-phase timing marks recorded for every phase, in ms
+    expect(Object.keys(body.phaseMs)).toEqual([
+      "backfill",
+      "inventory_settings",
+      "transform",
+      "owned_transform",
+      "attribution",
+      "ship_cost",
+    ]);
+    for (const ms of Object.values(body.phaseMs)) {
+      expect(typeof ms).toBe("number");
+      expect(ms).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("records a ship-cost resolution failure in shipCostErrors and does not abort other shops", async () => {

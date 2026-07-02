@@ -10,6 +10,12 @@ vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
 vi.mock("../../ads/action-registry.server", () => ({
   actionAdapterForShop: vi.fn(async () => null),
 }));
+const applyOwnedInventoryMove = vi.fn();
+const setOwnedVariantPrice = vi.fn();
+vi.mock("../owned-writes.server", () => ({
+  applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
+  setOwnedVariantPrice: (...a: unknown[]) => setOwnedVariantPrice(...a),
+}));
 
 const ORIG = {
   id: "audit-1",
@@ -71,6 +77,7 @@ const ADMIN = { graphql: vi.fn() };
 beforeEach(() => {
   vi.clearAllMocks();
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/undo" });
+  applyOwnedInventoryMove.mockResolvedValue({ transferId: "tr-undo-1" });
 });
 
 describe("undoAction for reallocate_inventory", () => {
@@ -141,5 +148,99 @@ describe("undoAction for reallocate_inventory", () => {
     // an inventory undo must still succeed.
     const res = await undoAction("shop-1", "audit-1", mockSb(ORIG), { admin: ADMIN });
     expect(res.id).toBe("audit-undo-1");
+  });
+
+  it("owned (live): reverses through the OWNED engine, no Shopify and no admin needed", async () => {
+    const ownedOrig = {
+      ...ORIG,
+      params: {
+        delta: 40,
+        owned: true,
+        owned_variant_id: "var-1",
+        owned_from_location_id: "loc-a",
+        owned_to_location_id: "loc-b",
+        owned_transfer_id: "tr-1",
+      },
+    };
+    const res = await undoAction("shop-1", "audit-1", mockSb(ownedOrig), {});
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith({
+      shopId: "shop-1",
+      variantId: "var-1",
+      fromLocationId: "loc-b", // original destination
+      toLocationId: "loc-a", // original source
+      quantity: 40,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(res.id).toBe("audit-undo-1");
+  });
+
+  it("owned (live): refuses when the owned plan is incomplete", async () => {
+    const ownedOrig = { ...ORIG, params: { delta: 40, owned: true } };
+    await expect(
+      undoAction("shop-1", "audit-1", mockSb(ownedOrig), {}),
+    ).rejects.toThrow(/owned transfer plan/i);
+    expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+  });
+
+  it("owned (live): an owned-engine rejection (sold through) propagates loudly", async () => {
+    applyOwnedInventoryMove.mockRejectedValue(new Error("insufficient_stock"));
+    const ownedOrig = {
+      ...ORIG,
+      params: {
+        delta: 40,
+        owned: true,
+        owned_variant_id: "var-1",
+        owned_from_location_id: "loc-a",
+        owned_to_location_id: "loc-b",
+      },
+    };
+    await expect(
+      undoAction("shop-1", "audit-1", mockSb(ownedOrig), {}),
+    ).rejects.toThrow(/insufficient_stock/);
+  });
+
+  it("dual_run original: reverses Shopify AND mirrors the reversal into the owned engine", async () => {
+    const dualOrig = {
+      ...ORIG,
+      params: {
+        ...ORIG.params,
+        dual_write: "ok",
+        owned_variant_id: "var-1",
+        owned_from_location_id: "loc-a",
+        owned_to_location_id: "loc-b",
+        owned_transfer_id: "tr-1",
+      },
+    };
+    const res = await undoAction("shop-1", "audit-1", mockSb(dualOrig), { admin: ADMIN });
+    expect(inventoryAdjustQuantities).toHaveBeenCalledTimes(1); // Shopify reversal (authoritative)
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith({
+      shopId: "shop-1",
+      variantId: "var-1",
+      fromLocationId: "loc-b",
+      toLocationId: "loc-a",
+      quantity: 40,
+    });
+    expect(res.id).toBe("audit-undo-1");
+  });
+
+  it("dual_run original: a failed owned mirror reversal never fails the undo", async () => {
+    applyOwnedInventoryMove.mockRejectedValue(new Error("owned engine down"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const dualOrig = {
+        ...ORIG,
+        params: {
+          ...ORIG.params,
+          dual_write: "ok",
+          owned_variant_id: "var-1",
+          owned_from_location_id: "loc-a",
+          owned_to_location_id: "loc-b",
+        },
+      };
+      const res = await undoAction("shop-1", "audit-1", mockSb(dualOrig), { admin: ADMIN });
+      expect(res.id).toBe("audit-undo-1");
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

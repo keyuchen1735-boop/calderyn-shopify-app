@@ -9,11 +9,36 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const sb = getSupabase();
     const shopId = session.shopId;
 
-    const clientsRes = await sb
-      .from("mcp_oauth_clients")
-      .select("client_name, spend_cap_cents")
-      .eq("commerce_scope", true);
-    if (clientsRes.error) throw clientsRes.error;
+    // mcp_oauth_clients is a GLOBAL registry (no shop_id): one row per OAuth
+    // client, shared across all merchants. Surface only the clients actually
+    // connected to THIS shop — those with a non-revoked token for the shop (the
+    // per-shop link lives in mcp_tokens) — so a merchant never sees other
+    // merchants' connected agents.
+    const tokensRes = await sb
+      .from("mcp_tokens")
+      .select("client_id")
+      .eq("shop_id", shopId)
+      .is("revoked_at", null);
+    if (tokensRes.error) throw tokensRes.error;
+
+    const clientIds = [
+      ...new Set(
+        (tokensRes.data ?? [])
+          .map((t: Record<string, unknown>) => t.client_id)
+          .filter((id): id is string => typeof id === "string"),
+      ),
+    ];
+
+    let clientRows: Array<Record<string, unknown>> = [];
+    if (clientIds.length > 0) {
+      const clientsRes = await sb
+        .from("mcp_oauth_clients")
+        .select("client_name, spend_cap_cents")
+        .eq("commerce_scope", true)
+        .in("client_id", clientIds);
+      if (clientsRes.error) throw clientsRes.error;
+      clientRows = clientsRes.data ?? [];
+    }
 
     const quotesRes = await sb
       .from("commerce_quote_fact")
@@ -30,7 +55,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const orders = (ordersRes.data ?? []) as Array<Record<string, unknown>>;
     return {
-      clients: (clientsRes.data ?? []).map((c: Record<string, unknown>) => ({
+      clients: clientRows.map((c: Record<string, unknown>) => ({
         name: String(c.client_name),
         spendCapCents: Number(c.spend_cap_cents ?? 0),
       })),

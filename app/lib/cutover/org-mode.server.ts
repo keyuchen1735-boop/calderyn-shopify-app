@@ -8,6 +8,8 @@
 // on: only `live` routes autopilot writes to Calderyn's own tables.
 
 import { getSupabase } from "~/lib/supabase.server";
+import { assertGoLiveGates } from "./go-live.server";
+import { CutoverBlockedError } from "./errors";
 
 export const ORG_MODES = ["mirror", "importing", "dual_run", "live"] as const;
 export type OrgMode = (typeof ORG_MODES)[number];
@@ -55,17 +57,31 @@ export function assertLegalOrgTransition(from: string, to: string): asserts to i
   if (!isLegalOrgTransition(from, to)) {
     const allowed = LEGAL_ORG_TRANSITIONS[from];
     const allowedText = allowed.length ? allowed.join(", ") : "(none; terminal state)";
-    throw new Error(`illegal org_mode transition ${from} -> ${to}; allowed from ${from}: ${allowedText}`);
+    // Typed: an illegal move is a merchant-correctable block (409), not a system fault.
+    throw new CutoverBlockedError(
+      `illegal org_mode transition ${from} -> ${to}; allowed from ${from}: ${allowedText}`,
+    );
   }
 }
 
 /**
  * Router predicate: only `live` routes the store-mutating autopilot writers to Calderyn's
- * own tables. mirror/importing/dual_run all keep writing to Shopify (binary routing; the
- * dual_run parity dual-write is a later Step-9 slice).
+ * own tables as the AUTHORITATIVE target. mirror/importing/dual_run keep Shopify as the
+ * authoritative write target.
  */
 export function writesToOwned(mode: OrgMode): boolean {
   return mode === "live";
+}
+
+/**
+ * Dual-write predicate: at `dual_run` the store writers apply their Shopify write
+ * (authoritative, unchanged) and then MIRROR it into the owned tables best-effort, so
+ * the owned store tracks reality during the side-by-side run and the go-live parity
+ * gate is checking a live system, not a stale import. A mirror failure never fails the
+ * merchant's action — it is recorded visibly on the audit row instead (rule 12).
+ */
+export function dualWrites(mode: OrgMode): boolean {
+  return mode === "dual_run";
 }
 
 /** Read a shop's current mode. Defaults to `mirror` when the column is null; throws if the
@@ -107,6 +123,12 @@ export async function transitionOrgMode(
   // Throws on an illegal/unknown transition before any write (rule 12).
   assertLegalOrgTransition(from, to);
 
+  // The hard go-live gates (Step 9 slice 3): EVERY move to `live` must pass parity
+  // (mirror fully bridged into the owned SoT) AND payment-cleared (a test transaction
+  // reached `paid` with a captured charge). Enforced here, the single choke point, so
+  // no surface can flip a shop live past a failing gate. Throws before any write.
+  if (to === "live") await assertGoLiveGates(shopId);
+
   const inserted = await sb
     .from("cutover_transition")
     .insert({ shop_id: shopId, from_mode: from, to_mode: to, reason: reason ?? null })
@@ -127,7 +149,8 @@ export async function transitionOrgMode(
   if (updated.error) throw updated.error;
   const affected = (updated.data as unknown[] | null)?.length ?? 0;
   if (affected !== 1) {
-    throw new Error(
+    // Typed: a concurrent transition is a retryable conflict (409), not a system fault.
+    throw new CutoverBlockedError(
       `transitionOrgMode updated ${affected} rows for shop ${shopId}; expected exactly 1 — the shop changed under us`,
     );
   }

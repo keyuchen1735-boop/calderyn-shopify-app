@@ -30,7 +30,9 @@ export type Screen =
   | "product-editor"
   | "collections"
   // Import from Shopify (#13.promote) — one-click mirror → owned migration.
-  | "import-shopify";
+  | "import-shopify"
+  // Go live (Step 9 slice 3) — cutover status, go-live checklist, mode transitions.
+  | "cutover";
 
 export interface NavState {
   screen: Screen;

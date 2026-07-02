@@ -1284,6 +1284,62 @@ export async function startShopifyImport(): Promise<{ importId: string }> {
   return apiSend<{ importId: string }>("POST", "/dashboard/api/import");
 }
 
+// ----- Cutover / go live (Step 9) -----
+export type CutoverMode = "mirror" | "importing" | "dual_run" | "live";
+
+export interface GateCheckVM {
+  name: string;
+  label: string;
+  expected: string;
+  actual: string;
+  pass: boolean;
+}
+
+export interface CutoverStatusVM {
+  mode: CutoverMode;
+  allowed: CutoverMode[];
+  gates: { pass: boolean; checks: GateCheckVM[] };
+}
+
+export async function fetchCutoverStatus(): Promise<CutoverStatusVM> {
+  return apiGet<CutoverStatusVM>("/dashboard/api/cutover");
+}
+
+/** Move the shop's cutover mode. A blocked move (failing gate, illegal step) surfaces
+ *  as a DashboardApiError whose message names exactly what is still failing. */
+export async function requestCutoverTransition(
+  to: CutoverMode,
+  reason?: string,
+): Promise<CutoverStatusVM> {
+  return apiSend<CutoverStatusVM>("POST", "/dashboard/api/cutover", { to, reason });
+}
+
+export interface DriftRowVM {
+  variantId: string;
+  label: string;
+  locationId?: string;
+  /** Cents for price rows, units for stock rows. */
+  owned: number;
+  shopify: number;
+}
+
+export interface DriftReportVM {
+  variantsChecked: number;
+  pass: boolean;
+  price: { count: number; rows: DriftRowVM[] };
+  stock: { count: number; rows: DriftRowVM[] };
+  shopifyOnly: { count: number; sample: string[] };
+  ownedOnly: { count: number; sample: string[] };
+  truncated: { count: number; sample: string[] };
+  unmatchedLocations: number;
+}
+
+/** On-demand dual-run drift check: live Shopify values diffed against Calderyn's own
+ *  tables. Shopify being unreachable surfaces as a DashboardApiError with plain copy. */
+export async function fetchCutoverDrift(): Promise<DriftReportVM> {
+  return apiGet<DriftReportVM>("/dashboard/api/cutover-drift");
+}
+
 export async function fetchLocations(): Promise<LocationVM[]> {
   const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
   return d.locations;

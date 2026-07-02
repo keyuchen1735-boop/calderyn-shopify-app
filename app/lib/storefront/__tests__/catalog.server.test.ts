@@ -1,11 +1,19 @@
 // app/lib/storefront/__tests__/catalog.server.test.ts
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { StorefrontCatalog } from "../catalog";
 import { getCatalog } from "../catalog.server";
-import { ownedCatalog } from "../catalog.owned.server";
 import { fixtureCatalog } from "../catalog.stub.server";
 
+vi.mock("../catalog.owned.server", () => ({
+  ownedCatalog: {
+    listProducts: vi.fn(async (shopId: string) => [{ handle: `owned-for-${shopId}` }]),
+    getProduct: vi.fn(async () => null),
+    listCollections: vi.fn(async () => [{ handle: "owned", title: "Owned" }]),
+  },
+}));
+
 const SHOP = "demo-shop";
+const UUID_SHOP = "11111111-1111-1111-1111-111111111111";
 
 // A consumer shaped exactly like the home loader: it only ever talks to the
 // StorefrontCatalog contract, so any conforming impl must drive it identically.
@@ -17,11 +25,17 @@ async function loadHome(cat: StorefrontCatalog, shopId: string) {
 }
 
 describe("getCatalog", () => {
-  it("returns the owned (DB-bound) catalog now that Slice 1 has landed", () => {
-    // The one-line swap is flipped from the in-memory fixture to the owned impl,
-    // so the storefront reads real products. (Asserted by reference to avoid a DB
-    // call; the owned impl's behavior is covered in catalog.owned.server.test.ts.)
-    expect(getCatalog()).toBe(ownedCatalog);
+  it("routes a real (uuid) tenant to the owned catalog", async () => {
+    const products = await getCatalog().listProducts(UUID_SHOP);
+    expect(products[0].handle).toBe(`owned-for-${UUID_SHOP}`);
+  });
+
+  it("routes exactly the demo sentinel to the in-memory stub, never the uuid-keyed DB", async () => {
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const products = await getCatalog().listProducts(SHOP);
+    const stubProducts = await fixtureCatalog.listProducts(SHOP);
+    expect(products.map((p) => p.handle)).toEqual(stubProducts.map((p) => p.handle));
+    expect(ownedCatalog.listProducts).not.toHaveBeenCalledWith(SHOP, undefined);
   });
 
   it("the seam holds: any conforming impl drives the same consumer unchanged", async () => {
