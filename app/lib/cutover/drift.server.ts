@@ -13,11 +13,13 @@
 // fine at pilot scale, but a multi-thousand-product shop will need a background run —
 // revisit before onboarding one.
 //
-// The report is informational, not a gate: transitionOrgMode is untouched. Every count
-// is exact for what the sweep can see; whatever it CANNOT see is itself counted —
-// bridged variants missing from Shopify land in ownedOnly, and products whose variant
-// or stock lists hit fetchProducts' single-page caps land in truncated — so nothing is
-// silently skipped and `pass` never overstates coverage (rule 12).
+// Two consumers: the on-demand dashboard report (informational) and the go-live
+// VALUE-PARITY gate (assertGoLiveGates runs this sweep on dual_run -> live and blocks
+// on any mismatch). Every count is exact for what the sweep can see; whatever it
+// CANNOT see is itself counted — bridged variants missing from Shopify land in
+// ownedOnly, and products whose variant or stock lists hit fetchProducts' single-page
+// caps land in truncated — so nothing is silently skipped and `pass` never overstates
+// coverage (rule 12).
 
 import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";

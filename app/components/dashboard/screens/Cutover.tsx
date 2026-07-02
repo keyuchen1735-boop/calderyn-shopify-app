@@ -120,12 +120,14 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
       setArmed(null);
       setBusy(true);
       setBlocked(null);
-      // A mode move invalidates any drift comparison shown so far — never let a
-      // pre-move "Everything matches" survive into the new mode as if current.
-      setDrift(null);
-      setDriftError(null);
       try {
         setStatus(await client.requestCutoverTransition(to));
+        // A COMPLETED mode move invalidates any drift comparison shown so far — never
+        // let a pre-move "Everything matches" survive into the new mode as if current.
+        // A blocked move changed nothing, so its comparison stays (it may be the very
+        // evidence explaining the block).
+        setDrift(null);
+        setDriftError(null);
         app.toast(
           to === "live" ? "Your store is live on Calderyn." : "Cutover step applied.",
           "rocket",
@@ -134,7 +136,9 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
         const msg =
           err instanceof DashboardApiError ? err.message : "That step could not be applied.";
         setBlocked(msg);
-        app.toast("That step is blocked. See the checklist below.", "warn", "critical");
+        // "details", not "checklist": a value-parity block arrives with an all-green
+        // structural checklist — the reason lives in the blocked text (and drift panel).
+        app.toast("That step is blocked. See the details below.", "warn", "critical");
         await load();
       } finally {
         setBusy(false);
@@ -315,7 +319,8 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
           <p className="cd-caption" style={{ margin: "8px 0 0" }}>
             Changes made directly in Shopify admin do not flow into Calderyn during dual run.
             This compares your live Shopify prices and stock with Calderyn's copy so you can
-            fix any differences before you go live.
+            fix any differences before you go live. Going live runs this same comparison and
+            is blocked until everything matches.
           </p>
           {driftError && (
             <p className="cd-caption" style={{ marginTop: 10 }}>
