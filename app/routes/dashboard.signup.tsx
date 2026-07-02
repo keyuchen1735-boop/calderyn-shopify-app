@@ -1,13 +1,15 @@
 // app/routes/dashboard.signup.tsx
 // Door B: first-party merchant signup (email + password). Creates the user, an
 // owned shop, the membership link, and a session (no Shopify involved).
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
+
+export const meta: MetaFunction = () => [{ title: "Create your account — Calderyn" }];
 
 const MIN_PASSWORD = 10;
 
@@ -67,6 +69,11 @@ export default function SignupRoute() {
   return (
     <main style={{ font: "16px/1.5 system-ui, sans-serif", maxWidth: "26rem", margin: "12vh auto", padding: "0 1.5rem" }}>
       <h1 style={{ fontSize: "1.25rem" }}>Create your Calderyn account</h1>
+      <p>
+        <a href="/dashboard/auth/google" style={{ display: "inline-block", padding: ".6rem 1rem", fontWeight: 600, border: "1px solid #cbd2e0", borderRadius: ".5rem", textDecoration: "none", color: "inherit" }}>
+          Continue with Google
+        </a>
+      </p>
       <form method="post" action="/dashboard/signup">
         <label htmlFor="store">Store name</label>
         <input id="store" name="store" type="text" required style={{ display: "block", width: "100%", margin: ".25rem 0 1rem", padding: ".6rem .75rem", boxSizing: "border-box" }} />

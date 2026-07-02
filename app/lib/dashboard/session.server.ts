@@ -140,7 +140,9 @@ export async function requireVerifiedSession(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
-  if (!session) throw redirect("/dashboard/login");
+  // Signed-out visitors land on the first-party signin page, which links out to
+  // the Shopify-OAuth entry (/dashboard/login) for embedded merchants.
+  if (!session) throw redirect("/dashboard/signin");
   if (unverifiedFirstParty(session)) throw redirect("/dashboard/verify-needed");
   return session;
 }
@@ -160,12 +162,12 @@ export async function requireDashboardSession(
   return session;
 }
 
-/** For HTML routes: redirect to the login page when there is no live session. */
+/** For HTML routes: redirect to the signin page when there is no live session. */
 export async function getSessionOrRedirect(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
-  if (!session) throw redirect("/dashboard/login");
+  if (!session) throw redirect("/dashboard/signin");
   return session;
 }
 

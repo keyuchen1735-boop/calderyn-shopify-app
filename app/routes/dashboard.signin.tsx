@@ -1,12 +1,30 @@
 // app/routes/dashboard.signin.tsx
 // Door B: first-party email + password sign-in. Lives next to the existing
 // Shopify-OAuth login (/dashboard/login), which is unchanged.
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { verifyUserCredentials, normalizeEmail } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import { SHOP_HINT_COOKIE_NAME } from "./dashboard.login";
+
+export const meta: MetaFunction = () => [{ title: "Sign in — Calderyn" }];
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  // Signed-out visitors now land here by default. A returning Shopify-identity
+  // merchant carries the __Host-dash_shop hint from their last OAuth login —
+  // keep their expired-session bounce flowing straight into Shopify authorize
+  // (via /dashboard/login) instead of stranding them on the password form.
+  const header = request.headers.get("Cookie") ?? "";
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === SHOP_HINT_COOKIE_NAME && rest.join("=").trim()) {
+      return redirect("/dashboard/login");
+    }
+  }
+  return null;
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -38,6 +56,11 @@ export default function SigninRoute() {
   return (
     <main style={{ font: "16px/1.5 system-ui, sans-serif", maxWidth: "26rem", margin: "12vh auto", padding: "0 1.5rem" }}>
       <h1 style={{ fontSize: "1.25rem" }}>Sign in to Calderyn</h1>
+      <p>
+        <a href="/dashboard/auth/google" style={{ display: "inline-block", padding: ".6rem 1rem", fontWeight: 600, border: "1px solid #cbd2e0", borderRadius: ".5rem", textDecoration: "none", color: "inherit" }}>
+          Continue with Google
+        </a>
+      </p>
       <form method="post" action="/dashboard/signin">
         <label htmlFor="email">Email</label>
         <input id="email" name="email" type="email" required autoComplete="email" style={{ display: "block", width: "100%", margin: ".25rem 0 1rem", padding: ".6rem .75rem", boxSizing: "border-box" }} />
@@ -46,6 +69,7 @@ export default function SigninRoute() {
         <button type="submit" style={{ padding: ".6rem 1rem", fontWeight: 600 }}>Sign in</button>
       </form>
       <p><a href="/dashboard/reset">Forgot password?</a> · <a href="/dashboard/signup">Create an account</a></p>
+      <p><a href="/dashboard/login">Sign in with Shopify instead</a></p>
     </main>
   );
 }

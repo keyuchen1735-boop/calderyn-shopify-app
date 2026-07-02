@@ -6,6 +6,7 @@
 import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
+import { formatMoney } from "~/lib/storefront/money";
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
@@ -25,7 +26,7 @@ const safeImageSrc = (v: unknown): string => {
 function money(p: StoreProduct): string {
   const v = p.variants[0];
   if (!v) return "";
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: v.currency }).format(v.priceCents / 100);
+  return formatMoney(v.priceCents, v.currency);
 }
 
 // ── static ────────────────────────────────────────────────────────────────

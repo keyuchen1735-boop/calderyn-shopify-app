@@ -7,12 +7,10 @@
 import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
+import { formatMoney as money } from "~/lib/storefront/money";
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
 const recProduct = (ctx: RenderContext): StoreProduct | undefined => ctx.record?.product;
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cents / 100);
-}
 
 interface GalleryProps { maxImages: number }
 const productGallery: BlockMeta<GalleryProps> = {

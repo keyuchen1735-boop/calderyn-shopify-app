@@ -7,6 +7,12 @@ import { meta as productMeta } from "../storefront.products.$handle";
 
 type Tag = Record<string, unknown>;
 
+// Child metas read the tenant's store name off the layout match (matches arg),
+// the way Remix supplies it at runtime.
+const MATCHES = [
+  { id: "routes/storefront", data: { settings: { storeName: "Acme Goods" } } },
+];
+
 function assertSeoTags(tags: Tag[]) {
   expect(tags.some((t) => "title" in t && typeof t.title === "string" && t.title.length > 0)).toBe(true);
   expect(tags.some((t) => t.name === "description")).toBe(true);
@@ -15,15 +21,20 @@ function assertSeoTags(tags: Tag[]) {
 
 describe("storefront SEO meta", () => {
   it("layout meta has title + description + og:title", () => {
-    assertSeoTags(layoutMeta({} as never) as Tag[]);
+    assertSeoTags(layoutMeta({ data: { settings: { storeName: "Acme Goods" } } } as never) as Tag[]);
   });
 
   it("home meta has title + description + og:title", () => {
-    assertSeoTags(homeMeta({} as never) as Tag[]);
+    const tags = homeMeta({ matches: MATCHES } as never) as Tag[];
+    assertSeoTags(tags);
+    expect(JSON.stringify(tags)).toContain("Acme Goods");
   });
 
   it("collection meta uses the collection title", () => {
-    const tags = collectionMeta({ data: { handle: "apparel", title: "Apparel", products: [] } } as never) as Tag[];
+    const tags = collectionMeta({
+      data: { handle: "apparel", title: "Apparel", products: [] },
+      matches: MATCHES,
+    } as never) as Tag[];
     assertSeoTags(tags);
     expect(JSON.stringify(tags)).toContain("Apparel");
   });
@@ -38,7 +49,7 @@ describe("storefront SEO meta", () => {
       variants: [],
       collections: ["apparel"],
     };
-    const tags = productMeta({ data: { product } } as never) as Tag[];
+    const tags = productMeta({ data: { product }, matches: MATCHES } as never) as Tag[];
     assertSeoTags(tags);
     expect(JSON.stringify(tags)).toContain("Zip Hoodie");
   });

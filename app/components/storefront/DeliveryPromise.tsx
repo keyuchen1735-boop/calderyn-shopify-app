@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatMoney as fmtMoney } from "~/lib/storefront/money";
 
 interface Estimate {
   cheapest: { amountCents: number; deliveryLatest: string | null; serviceName: string };
@@ -14,13 +15,6 @@ function fmtDate(iso: string | null): string {
     month: "short",
     day: "numeric",
   });
-}
-
-function fmtMoney(cents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
 }
 
 export function DeliveryPromise({ variantId }: { variantId: string }) {

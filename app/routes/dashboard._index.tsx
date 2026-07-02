@@ -1,6 +1,6 @@
 // app/routes/dashboard._index.tsx
 // The merchant dashboard SPA. Auth-gated by the loader (redirects to
-// /dashboard/login when unauthenticated); the client fetches all data on mount
+// /dashboard/signin when unauthenticated); the client fetches all data on mount
 // so no server-only module leaks into the browser bundle.
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { useLoaderData, useRouteError } from "@remix-run/react";

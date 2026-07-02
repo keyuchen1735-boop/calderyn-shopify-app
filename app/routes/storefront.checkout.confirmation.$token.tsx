@@ -11,9 +11,11 @@ import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { clearCartId } from "~/lib/storefront/cart-cookie.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
+import { formatMoney as money } from "~/lib/storefront/money";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 
-export const meta: MetaFunction = () => [
-  { title: "Order confirmation — Calderyn Demo Store" },
+export const meta: MetaFunction = ({ matches }) => [
+  { title: `Order confirmation — ${storeNameFromMatches(matches)}` },
   { name: "robots", content: "noindex" },
 ];
 
@@ -53,12 +55,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}
 
 export default function StorefrontCheckoutConfirmation() {
   const { ref, paid, totalCents, currency, lines } = useLoaderData<typeof loader>();

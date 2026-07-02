@@ -1,7 +1,7 @@
 // A 401 from any /dashboard/api/* call means the dashboard session is gone
 // (expired, revoked, or never sent). The client must treat that as "go log in
 // again" — not as a transient data error to toast or silently swallow. These
-// tests lock that: a 401 navigates to /dashboard/login (once, even under the
+// tests lock that: a 401 navigates to /dashboard/signin (once, even under the
 // live poller's parallel fan-out), while other failures keep throwing without
 // navigating.
 
@@ -36,12 +36,12 @@ describe("dashboard client 401 handling", () => {
     vi.restoreAllMocks();
   });
 
-  it("redirects to /dashboard/login when a GET returns 401", async () => {
+  it("redirects to /dashboard/signin when a GET returns 401", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(401, { error: "unauthenticated" })));
     const { apiGet, DashboardApiError } = await freshClient();
 
     await expect(apiGet("/dashboard/api/overview")).rejects.toBeInstanceOf(DashboardApiError);
-    expect(assign).toHaveBeenCalledWith("/dashboard/login");
+    expect(assign).toHaveBeenCalledWith("/dashboard/signin");
   });
 
   it("redirects only once when several calls 401 together", async () => {
@@ -71,6 +71,6 @@ describe("dashboard client 401 handling", () => {
     const { sendAssistantMessage } = await freshClient();
 
     await expect(sendAssistantMessage("hello", null)).rejects.toBeTruthy();
-    expect(assign).toHaveBeenCalledWith("/dashboard/login");
+    expect(assign).toHaveBeenCalledWith("/dashboard/signin");
   });
 });

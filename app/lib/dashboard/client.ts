@@ -103,7 +103,7 @@ function redirectToLogin(): void {
   // can't trip the guard and suppress a real later redirect.
   if (redirectingToLogin || typeof location === "undefined") return;
   redirectingToLogin = true;
-  location.assign("/dashboard/login");
+  location.assign("/dashboard/signin");
 }
 
 export async function apiGet<T>(path: string): Promise<T> {

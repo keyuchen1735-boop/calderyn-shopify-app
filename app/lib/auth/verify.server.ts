@@ -50,11 +50,17 @@ export async function markEmailVerified(userId: string): Promise<void> {
 export async function sendVerificationEmail(userId: string, email: string, baseUrl: string): Promise<void> {
   const { raw } = await createVerifyToken(userId);
   const link = `${baseUrl}/dashboard/verify?t=${encodeURIComponent(raw)}`;
-  await sendEmail({
+  const result = await sendEmail({
     apiKey: process.env.RESEND_API_KEY ?? "",
     from: process.env.PILOT_FROM ?? "Calderyn <onboarding@calderyncompany.com>",
     to: email,
     subject: "Verify your Calderyn email",
     text: `Confirm your email to unlock your dashboard (link valid for 24 hours):\n\n${link}\n\nIf you didn't create a Calderyn account, ignore this email.`,
   });
+  // Callers deliberately swallow rejections so signup never fails on email
+  // trouble — but an unverified user is locked out of the dashboard until this
+  // arrives, so a delivery failure must at least reach the server logs.
+  if (!result.sent) {
+    console.error(`[verify-email] delivery failed for user ${userId}: ${result.error ?? "unknown error"}`);
+  }
 }

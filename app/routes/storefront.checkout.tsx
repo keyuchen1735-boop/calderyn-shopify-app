@@ -9,10 +9,12 @@ import { useFetcher, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
+import { formatMoney as money } from "~/lib/storefront/money";
+import { storeNameFromMatches } from "~/lib/storefront/meta";
 
 // The policy text version the buyer accepts at checkout — recorded verbatim on buyer_consent as
 // the proof of WHICH ToS/privacy text was accepted (#1). Bump when the policy text changes.
@@ -20,8 +22,8 @@ const CHECKOUT_POLICY_VERSION = "2026-06-29";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export const meta: MetaFunction = () => {
-  const title = "Checkout — Calderyn Demo Store";
+export const meta: MetaFunction = ({ matches }) => {
+  const title = `Checkout — ${storeNameFromMatches(matches)}`;
   return [
     { title },
     { name: "description", content: "Complete your order." },
@@ -31,6 +33,8 @@ export const meta: MetaFunction = () => {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  // Demo shell is browse-only — no cart can exist for it (see storefront.cart.tsx).
+  if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
   // No cart -> nothing to check out; send the buyer back to the cart view.
   if (!cartId) return redirect("/storefront/cart");
@@ -38,8 +42,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const priced = await priceCart(shopId, cartId);
   if (priced.lines.length === 0) return redirect("/storefront/cart");
 
-  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
-  if (!publishableKey) throw new Error("STRIPE_PUBLISHABLE_KEY is not configured");
+  // A store without payment keys renders an honest "payments not set up" notice
+  // instead of a 500 — the buyer keeps their cart and the storefront stays usable.
+  // Still LOUD for operators: a checkout reached without keys is lost revenue.
+  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY ?? null;
+  if (!publishableKey) {
+    console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout for shop ${shopId}`);
+  }
 
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
@@ -66,8 +75,20 @@ function str(form: FormData, key: string): string {
 
 export async function action({ request }: ActionFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
   if (!cartId) return redirect("/storefront/cart");
+
+  // Mirror the loader's posture: without the publishable key the Payment Element
+  // can never render, so refuse up front instead of failing mid-flow inside
+  // Stripe. (A missing secret key still surfaces via the 502 catch below.)
+  if (!process.env.STRIPE_PUBLISHABLE_KEY) {
+    console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout action for shop ${shopId}`);
+    return json(
+      { error: "This store isn't accepting payments yet. Please check back soon." },
+      { status: 503 },
+    );
+  }
 
   const form = await request.formData();
 
@@ -152,13 +173,6 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}
-
 function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; total: string }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -203,7 +217,7 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
 export default function StorefrontCheckout() {
   const { publishableKey, origin, summary } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
-  const [stripePromise] = useState(() => loadStripe(publishableKey));
+  const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));
 
   const data = fetcher.data;
   const clientSecret = data && "clientSecret" in data ? data.clientSecret : undefined;
@@ -259,7 +273,11 @@ export default function StorefrontCheckout() {
         )}
       </div>
 
-      {!clientSecret ? (
+      {!publishableKey ? (
+        <p className="cd-checkout__error">
+          This store isn&apos;t accepting payments yet. Your cart is saved — please check back soon.
+        </p>
+      ) : !clientSecret ? (
         <fetcher.Form method="post" className="cd-checkout__form">
           <h2>Contact</h2>
           <label className="cd-checkout__field">
