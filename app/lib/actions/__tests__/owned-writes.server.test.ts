@@ -5,12 +5,12 @@ import {
   applyOwnedInventoryMove,
 } from "../owned-writes.server";
 
-const setVariantPrice = vi.fn();
+const setVariantPrice = vi.hoisted(() => vi.fn());
 vi.mock("../../catalog/catalog.server", () => ({
   setVariantPrice: (...a: unknown[]) => setVariantPrice(...a),
 }));
 
-const createTransfer = vi.fn();
+const createTransfer = vi.hoisted(() => vi.fn());
 vi.mock("../../inventory/engine.server", () => ({
   createTransfer: (...a: unknown[]) => createTransfer(...a),
 }));

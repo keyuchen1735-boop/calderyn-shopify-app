@@ -6,26 +6,26 @@ import {
 import type * as InventoryServer from "../../shopify/inventory.server";
 import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
-const priorExecutionForKey = vi.fn();
-const insertAuditWithIdempotency = vi.fn();
+const priorExecutionForKey = vi.hoisted(() => vi.fn());
+const insertAuditWithIdempotency = vi.hoisted(() => vi.fn());
 vi.mock("../execute.server", () => ({
   priorExecutionForKey: (...a: unknown[]) => priorExecutionForKey(...a),
   insertAuditWithIdempotency: (...a: unknown[]) => insertAuditWithIdempotency(...a),
 }));
 
-const inventoryAdjustQuantities = vi.fn();
+const inventoryAdjustQuantities = vi.hoisted(() => vi.fn());
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
   ...(await importOriginal<typeof InventoryServer>()),
   inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
 }));
 
-const getOrgMode = vi.fn();
+const getOrgMode = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: unknown[]) => getOrgMode(...a),
 }));
 
-const applyOwnedInventoryMove = vi.fn();
+const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
 vi.mock("../owned-writes.server", () => ({
   applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
 }));

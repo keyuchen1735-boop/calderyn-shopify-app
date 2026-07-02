@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { undoAction } from "../undo.server";
 
-const inventoryAdjustQuantities = vi.fn();
+const inventoryAdjustQuantities = vi.hoisted(() => vi.fn());
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
   // Spread keeps non-mocked exports (e.g. transferPlanFromEvidence) intact.
   ...(await importOriginal<Record<string, unknown>>()),
@@ -10,8 +10,8 @@ vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
 vi.mock("../../ads/action-registry.server", () => ({
   actionAdapterForShop: vi.fn(async () => null),
 }));
-const applyOwnedInventoryMove = vi.fn();
-const setOwnedVariantPrice = vi.fn();
+const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
+const setOwnedVariantPrice = vi.hoisted(() => vi.fn());
 vi.mock("../owned-writes.server", () => ({
   applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
   setOwnedVariantPrice: (...a: unknown[]) => setOwnedVariantPrice(...a),

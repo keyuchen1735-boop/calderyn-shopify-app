@@ -4,20 +4,20 @@ import { executeDiscontinueAlertAction } from "../alert-action.server";
 import type { Alert, AuditEntry, GuardrailConfig } from "../../types";
 
 // Mock acknowledgeAlert so it doesn't hit real DB — matches alert-action.test.ts pattern
-const acknowledgeAlert = vi.fn();
+const acknowledgeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: never[]) => acknowledgeAlert(...a),
 }));
 
 // Mock discontinueProduct so Shopify isn't called for real
-const discontinueProduct = vi.fn();
+const discontinueProduct = vi.hoisted(() => vi.fn());
 vi.mock("../../shopify/product.server", () => ({
   discontinueProduct: (...a: never[]) => discontinueProduct(...a),
 }));
 
 // Mock resolveSkuForDiscontinue and setDoNotReorder
-const resolveSkuForDiscontinue = vi.fn();
-const setDoNotReorder = vi.fn();
+const resolveSkuForDiscontinue = vi.hoisted(() => vi.fn());
+const setDoNotReorder = vi.hoisted(() => vi.fn());
 vi.mock("../discontinue.server", () => ({
   resolveSkuForDiscontinue: (...a: never[]) => resolveSkuForDiscontinue(...a),
   setDoNotReorder: (...a: never[]) => setDoNotReorder(...a),

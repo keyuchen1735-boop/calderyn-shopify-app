@@ -3,12 +3,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeCreatePoDraft } from "../po-action.server";
 import type { Alert, AuditEntry } from "../../types";
 
-const acknowledgeAlert = vi.fn();
+const acknowledgeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: never[]) => acknowledgeAlert(...a),
 }));
 
-const resolveSkuForDiscontinue = vi.fn();
+const resolveSkuForDiscontinue = vi.hoisted(() => vi.fn());
 vi.mock("../discontinue.server", () => ({
   resolveSkuForDiscontinue: (...a: never[]) => resolveSkuForDiscontinue(...a),
 }));
