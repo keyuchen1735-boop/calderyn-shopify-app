@@ -120,27 +120,36 @@ async function loadAutopilotConfig(
   };
 }
 
-/** Count today's succeeded autopilot actions (UTC day). */
-async function loadTodayAutopilotCount(shopId: string, sb: SupabaseClient): Promise<number> {
-  const { count } = await sb
+/** Count today's succeeded autopilot actions (UTC day). Exported so the SKU
+ * remediation guard shares the exact same cap accounting. THROWS on a read
+ * error: the daily action cap is a safety gate, and treating an unreadable
+ * count as 0 would fail OPEN (unlimited actions exactly when the accounting
+ * is unavailable). Callers treat a throw as a blocked/failed candidate. */
+export async function loadTodayAutopilotCount(shopId: string, sb: SupabaseClient): Promise<number> {
+  const { count, error } = await sb
     .from("action_audit")
     .select("id", { count: "exact", head: true })
     .eq("shop_id", shopId)
     .eq("actor_user_id", "autopilot")
     .eq("outcome", "succeeded")
     .gte("created_at", startOfUtcDayIso());
+  if (error) throw new Error(`today-action-count read failed: ${error.message}`);
   return count ?? 0;
 }
 
-/** Sum today's autonomous dollar impact in cents (DOLLARS in DB → cents). */
-async function loadTodayAutopilotDollarsCents(shopId: string, sb: SupabaseClient): Promise<number> {
-  const { data: dollarRows } = await sb
+/** Sum today's autonomous dollar impact in cents (DOLLARS in DB → cents).
+ * Exported so the SKU remediation guard enforces the same I2 aggregate ceiling.
+ * THROWS on a read error — an unreadable sum treated as 0 would fail OPEN and
+ * waive the daily dollar ceiling exactly when the accounting is unavailable. */
+export async function loadTodayAutopilotDollarsCents(shopId: string, sb: SupabaseClient): Promise<number> {
+  const { data: dollarRows, error } = await sb
     .from("action_audit")
     .select("dollar_impact_at_exec")
     .eq("shop_id", shopId)
     .eq("actor_user_id", "autopilot")
     .eq("outcome", "succeeded")
     .gte("created_at", startOfUtcDayIso());
+  if (error) throw new Error(`today-dollars read failed: ${error.message}`);
   return (dollarRows ?? []).reduce(
     (sum: number, r: { dollar_impact_at_exec: unknown }) =>
       sum + Math.round(Number(r.dollar_impact_at_exec ?? 0) * 100),

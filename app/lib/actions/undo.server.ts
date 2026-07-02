@@ -447,26 +447,46 @@ export async function undoAction(
     }
   }
 
-  // Record the undo as a negative calibration signal (graduation gate 5). Only
-  // autopilot actions feed trust; a merchant undoing their OWN click is not a
-  // veto of autonomy. Best-effort: log, never fail the recorded undo.
-  if (String(orig.actor_user_id ?? "") === "autopilot" && orig.alert_id) {
-    const { data: al } = await sb
-      .from("alerts")
-      .select("detector_id")
-      .eq("shop_id", shopId)
-      .eq("id", orig.alert_id)
-      .maybeSingle();
-    const detectorId = al?.detector_id ?? null;
-    if (detectorId) {
-      const { error: undoSigErr } = await sb.rpc("calibration_record_undo", {
-        p_shop_id: shopId,
-        p_detector_id: detectorId,
-        p_action_kind: orig.action_kind,
-      });
-      if (undoSigErr) {
-        console.error(`[undo] calibration_record_undo failed for ${detectorId}:${orig.action_kind}`, undoSigErr);
+  // Record the undo as a negative calibration signal (spec §7). BOTH trusted
+  // actors feed the Beta posterior: an undone AUTONOMOUS action is the
+  // strongest distrust signal (beta +1.5, consecutive_undos +1 — graduation
+  // gate 5); an undone MERCHANT APPROVAL is a revoked endorsement (beta +1.0
+  // and its clean_approval is taken back) — otherwise three approve-then-undo
+  // cycles would still satisfy the 3-clean-approvals graduation bar with
+  // evidence the merchant explicitly reversed. Actions by any OTHER actor
+  // (super-admin debugging round-trips, future system actors) carry no
+  // merchant judgment and record nothing. Best-effort: log, never fail the
+  // recorded undo.
+  const origActor = String(orig.actor_user_id ?? "");
+  const origIsAutonomous = origActor === "autopilot";
+  const origIsMerchant = origActor === "merchant" || origActor.startsWith("merchant:");
+  const origIsSuperAdmin = Boolean(
+    (orig as { actor_is_super_admin?: unknown }).actor_is_super_admin,
+  );
+  if (orig.alert_id && (origIsAutonomous || origIsMerchant) && !origIsSuperAdmin) {
+    try {
+      const { data: al } = await sb
+        .from("alerts")
+        .select("detector_id")
+        .eq("shop_id", shopId)
+        .eq("id", orig.alert_id)
+        .maybeSingle();
+      const detectorId = al?.detector_id ?? null;
+      if (detectorId) {
+        const { error: undoSigErr } = await sb.rpc("calibration_record_undo", {
+          p_shop_id: shopId,
+          p_detector_id: detectorId,
+          p_action_kind: orig.action_kind,
+          p_autonomous: origIsAutonomous,
+        });
+        if (undoSigErr) {
+          console.error(`[undo] calibration_record_undo failed for ${detectorId}:${orig.action_kind}`, undoSigErr);
+        }
       }
+    } catch (sigErr) {
+      // The platform reversal + undo row already landed; the learning signal is
+      // best-effort and must never fail the recorded undo.
+      console.error(`[undo] calibration undo signal threw for audit ${orig.id}`, sigErr);
     }
   }
 

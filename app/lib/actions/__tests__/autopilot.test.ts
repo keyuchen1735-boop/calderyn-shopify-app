@@ -1774,6 +1774,183 @@ describe("runAutopilotForShop", () => {
       expect(r.acted).toBe(1);
     });
   });
+
+  // ─── Remediation-path hardening: the engine-recommended pause/reduce cut runs
+  // the SAME autonomous gauntlet as the legacy campaign path — I1/I2 guardrail
+  // flags, learned calibration_rule enforcement, the I4 freshness re-check, a
+  // real executor-outcome check, and the I7 execution-time notification. ──────
+  describe("remediation-path hardening (I1/I2/I4/I7 + learned rules)", () => {
+    const econCampaign = {
+      alert_id: "al-rem", detector_id: "negative_unit_economics", dollar_impact: 120,
+      campaign_id: "camp-uuid", campaign_spend_cents: 60000, daily_budget_cents: 10000,
+      evidence: { gross_unit_margin_usd: 2, net_per_unit_usd: -4 }, sku: "Rem Tee", sku_id: "sku-rem",
+    };
+    // enrichRemediation flips the recommended cut's executor to a campaign kind
+    // so tryRemediation's pause/reduce branch (not the legacy loop) executes.
+    const remPlan = (executor: "pause_campaign" | "reduce_campaign_budget") => ({
+      moves: [
+        { kind: "cut_ads", dollarImpactCents: 12000, executor, label: "Cut the ad spend driving the loss" },
+        { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+      ],
+      recommended: "cut_ads",
+      structurallyDead: false,
+    });
+
+    it("I1/I2: the remediation pause calls checkGuardrails with bypass forced OFF and autonomous=true", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("pause_campaign"));
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(checkGuardrails).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "pause_campaign", campaignId: "camp-uuid", dollarImpactCents: 12000 }),
+        sb,
+        { forceBypassOff: true, autonomous: true },
+      );
+      expect(r.acted).toBe(1);
+    });
+
+    it("enforces learned calibration rules on the remediation path (veto → skipped, no execution)", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("pause_campaign"));
+      loadAndApplyRules.mockResolvedValue({ veto: "outside merchant-allowed hours" });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(loadAndApplyRules).toHaveBeenCalledWith(
+        SHOP,
+        "negative_unit_economics",
+        "pause_campaign",
+        expect.objectContaining({ dollarImpactCents: 12000, campaignSpendCents: 60000 }),
+        sb,
+      );
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(checkGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.skippedMoves).toBe(1);
+      const dec = r.decisions.find((d) => d.alertId === "al-rem");
+      expect(dec?.reason).toBe("rule: outside merchant-allowed hours");
+    });
+
+    it("clamps a remediation reduce with the learned pair_dollar_cap (cut ≤ cap, never bigger)", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("reduce_campaign_budget"));
+      // Cap the cut at $20: newBudget = max(5000, 10000 - 2000) = 8000.
+      loadAndApplyRules.mockResolvedValue({ cappedDollarCents: 2000 });
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(executeAction).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({ kind: "reduce_campaign_budget", dailyBudgetCents: 8000 }),
+        sb,
+      );
+    });
+
+    it("I4: skips the remediation pause when the freshness/live re-check fails (no execution)", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("pause_campaign"));
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      preconditionFresh.mockResolvedValue({ ok: false, reason: "precondition_stale: campaign already paused" });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(preconditionFresh).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "pause_campaign", candidate: expect.objectContaining({ campaign_id: "camp-uuid" }) }),
+      );
+      expect(executeAction).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.skippedMoves).toBe(1);
+    });
+
+    it("counts a non-landed remediation executor outcome as failed, not acted, and does not notify", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("pause_campaign"));
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      executeAction.mockResolvedValue({ id: "aud-rem", outcome: "failed" });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(r).toMatchObject({ acted: 0, failed: 1 });
+      expect(notifyAutonomousAction).not.toHaveBeenCalled();
+    });
+
+    it("I7: notifies the merchant when a remediation pause lands", async () => {
+      enrichRemediation.mockResolvedValueOnce(remPlan("pause_campaign"));
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [econCampaign] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopId: SHOP,
+          actionDescription: expect.stringContaining("Paused campaign"),
+        }),
+        null,
+      );
+    });
+
+    it("I7: notifies the merchant when an autonomous discontinue_sku lands", async () => {
+      const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(executeDiscontinueAlertAction).toHaveBeenCalledTimes(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopId: SHOP,
+          actionDescription: expect.stringContaining("Discontinued SKU"),
+        }),
+        null,
+      );
+    });
+
+    it("I7: notifies the merchant when an autonomous SKU spend-shift lands", async () => {
+      const reallocCandidate = {
+        alert_id: "al-realloc", detector_id: "ad_tax_overload", dollar_impact: 5305,
+        campaign_id: "camp-loser", campaign_spend_cents: 80000, daily_budget_cents: 20000,
+        evidence: { gross_unit_margin_usd: 3, ad_spend_7d_usd: 800 }, sku: "Tax Overload Tee", sku_id: "sku-3",
+      };
+      enrichRemediation.mockResolvedValueOnce({
+        moves: [
+          { kind: "reallocate_to_winner", dollarImpactCents: 530500, executor: "reallocate_spend_sku",
+            label: "Move ad budget to a higher-margin product",
+            target: { loserCampaignId: "camp-loser", winnerCampaignId: "camp-winner", amountCents: 530500 } },
+          { kind: "snooze", dollarImpactCents: 0, executor: "snooze_alert", label: "Snooze" },
+        ],
+        recommended: "reallocate_to_winner",
+        structurallyDead: false,
+      });
+      const sb = fakeSb({ enabled: true, alerts: [reallocCandidate] });
+      await runAutopilotForShop(SHOP, sb);
+      expect(executeReallocateSpendSku).toHaveBeenCalledTimes(1);
+      expect(notifyAutonomousAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shopId: SHOP,
+          actionDescription: expect.stringContaining("Shifted ad spend"),
+        }),
+        null,
+      );
+    });
+
+    it("enforces learned calibration rules on the inventory-relocation path (veto → skipped)", async () => {
+      const invAlert = {
+        alert_id: "al-inv-rule", detector_id: "regional_shortage_risk", dollar_impact: 90,
+        campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+        evidence: {
+          inventory_item_id: "gid://shopify/InventoryItem/1",
+          from_location_id: "gid://shopify/Location/1",
+          to_location_id: "gid://shopify/Location/2",
+          recommended_delta: 4,
+        },
+        sku: "Regional Tee", sku_id: "sku-inv",
+      };
+      loadAndApplyRules.mockResolvedValue({ veto: "below merchant min spend" });
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+      expect(loadAndApplyRules).toHaveBeenCalledWith(
+        SHOP,
+        "regional_shortage_risk",
+        "reallocate_inventory",
+        expect.objectContaining({ dollarImpactCents: 9000 }),
+        sb,
+      );
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      expect(checkPriceInventoryGuardrails).not.toHaveBeenCalled();
+      expect(r.acted).toBe(0);
+      expect(r.skippedMoves).toBe(1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -143,8 +143,14 @@ export async function preconditionFresh(input: PreconditionFreshInput): Promise<
     }
 
     if (kind === "reduce_campaign_budget") {
-      // The precondition: live daily_budget_cents must still match the snapshot.
-      // If live < snapshot, someone already cut it — abort to avoid double-cutting.
+      // The precondition: live daily_budget_cents must still MATCH the snapshot
+      // the cut was computed from. The target budget is an ABSOLUTE value
+      // derived from the snapshot, so any drift makes it wrong in one of two
+      // dangerous ways: live < snapshot means someone already cut it (a second
+      // cut double-punishes); live > snapshot means the merchant RAISED it, and
+      // applying the stale absolute target would be a far deeper cut than the
+      // cap the guardrails approved (e.g. snapshot $100 → target $80, merchant
+      // raised to $500 → an 84% cut). Either way: abort, let it re-queue.
       // If candidate.daily_budget_cents is null, we have no baseline → fail-safe.
       if (candidate.daily_budget_cents == null) {
         return { ok: false, reason: "precondition_stale: budget already at/below target (no snapshot)" };
@@ -153,10 +159,13 @@ export async function preconditionFresh(input: PreconditionFreshInput): Promise<
       const liveBudget = campaign.daily_budget_cents ?? 0;
       const snapshotBudget = candidate.daily_budget_cents;
 
-      if (liveBudget < snapshotBudget) {
+      if (liveBudget !== snapshotBudget) {
         return {
           ok: false,
-          reason: `precondition_stale: budget already at/below target (live=${liveBudget}c < snapshot=${snapshotBudget}c)`,
+          reason:
+            liveBudget < snapshotBudget
+              ? `precondition_stale: budget already at/below target (live=${liveBudget}c < snapshot=${snapshotBudget}c)`
+              : `precondition_stale: budget raised since alert (live=${liveBudget}c > snapshot=${snapshotBudget}c)`,
         };
       }
       return { ok: true };
