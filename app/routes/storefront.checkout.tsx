@@ -13,6 +13,7 @@ import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.serve
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 
@@ -78,6 +79,18 @@ export async function action({ request }: ActionFunctionArgs) {
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
   if (!cartId) return redirect("/storefront/cart");
+
+  // Each submission quotes live carrier rates and mints a Stripe PaymentIntent,
+  // so throttle per-IP and per-cart to blunt card-testing and cost abuse.
+  if (
+    !(await rateLimit(clientIpKey(request, "sf-checkout"), 5, 60_000)) ||
+    !(await rateLimit(`sf-checkout:${cartId}`, 10, 3_600_000))
+  ) {
+    return json(
+      { error: "Too many checkout attempts. Please wait a moment and try again." },
+      { status: 429 },
+    );
+  }
 
   // Mirror the loader's posture: without the publishable key the Payment Element
   // can never render, so refuse up front instead of failing mid-flow inside

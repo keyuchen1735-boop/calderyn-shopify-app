@@ -61,7 +61,6 @@ function loaderData(overrides: Record<string, unknown> = {}): Record<string, unk
     paired: NONE,
     consent: false,
     error: null,
-    devBypass: false,
     ...overrides,
   };
 }
@@ -143,12 +142,4 @@ describe("onboarding wizard — render", () => {
     expect(html).toContain("Open dashboard");
   });
 
-  it("hides the dev skip-setup shortcut unless the bypass flag is on", () => {
-    expect(render({ step: 0, devBypass: false })).not.toContain("Skip setup");
-    expect(render({ step: 0, devBypass: true })).toContain("Skip setup");
-  });
-
-  it("never shows the dev shortcut on the final step", () => {
-    expect(render({ step: 4, devBypass: true })).not.toContain("Skip setup");
-  });
 });

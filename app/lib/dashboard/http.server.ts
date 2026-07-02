@@ -14,6 +14,9 @@ export { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
+  // Dashboard API JSON is never legitimately embedded cross-origin; block
+  // no-cors subresource reads (Spectre-class side channels).
+  "Cross-Origin-Resource-Policy": "same-site",
 };
 
 export function jsonOk(body: unknown, init: ResponseInit = {}): Response {

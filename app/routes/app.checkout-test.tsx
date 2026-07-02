@@ -21,6 +21,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // Mutation: create the PaymentIntent (persists a payment_intent row) and return its client secret.
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
+  // Test-only harness: never reachable in production so it cannot write test PIs
+  // to live data. Remix runs only the action on POST, so this guard must be here
+  // too, not just on the loader.
+  if (process.env.NODE_ENV === "production") throw new Response("Not Found", { status: 404 });
   // Test-mode checkout resolves shop_id from the embedded-admin session; the
   // buyer-facing checkout will resolve the shop from the storefront host instead.
   const shopId = await resolveShopId(session.shop);

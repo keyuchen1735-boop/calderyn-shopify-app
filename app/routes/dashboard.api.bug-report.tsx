@@ -4,13 +4,17 @@
 // guard, mirroring dashboard.api.assistant.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { parseBugReportForm, submitBugReport } from "~/lib/bug-report/submit.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
+  // One email + screenshot upload per submit; cap per shop to blunt inbox/storage spam.
+  if (!(await rateLimit(`bug-report:${session.shopId}`, 5, 15 * 60_000))) {
+    return jsonError(429, "rate_limited", "Too many reports. Please wait a few minutes.");
+  }
 
   let form: FormData;
   try {

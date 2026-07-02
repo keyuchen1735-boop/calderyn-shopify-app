@@ -8,6 +8,7 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { buildCart, addCartLine } from "~/lib/order/cart.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
@@ -47,6 +48,10 @@ export async function action({ request }: ActionFunctionArgs) {
   if (shopId === DEMO_SHOP_ID) {
     const url = new URL(request.url);
     return redirect(url.pathname);
+  }
+  // Throttle add-to-cart so a scripted client cannot mint unbounded cart/line rows.
+  if (!(await rateLimit(clientIpKey(request, "cart-add"), 30, 60_000))) {
+    throw new Response("Too many requests", { status: 429 });
   }
   // Validate at the boundary — never trust the FormData shape.
   const form = await request.formData();

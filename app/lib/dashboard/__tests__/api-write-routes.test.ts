@@ -10,6 +10,7 @@ import { action as logoutAction } from "../../../routes/dashboard.api.logout";
 
 const requireDashboardSession = vi.fn();
 const getDashboardSessionAllowUnverified = vi.fn();
+const getSessionFromRequest = vi.fn();
 const requireSameOrigin = vi.fn();
 const executeAction = vi.fn();
 const undoAction = vi.fn();
@@ -29,6 +30,7 @@ vi.mock("../session.server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.server")>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
   getDashboardSessionAllowUnverified: (...a: unknown[]) => getDashboardSessionAllowUnverified(...a),
+  getSessionFromRequest: (...a: unknown[]) => getSessionFromRequest(...a),
   revokeSession: (...a: unknown[]) => revokeSession(...a),
 }));
 vi.mock("../http.server", async (importOriginal) => ({
@@ -136,6 +138,12 @@ beforeEach(() => {
     emailVerified: true,
   });
   getDashboardSessionAllowUnverified.mockResolvedValue({
+    shopId: "shop-1",
+    shopDomain: "x.myshopify.com",
+    sessionId: "sess-1",
+    emailVerified: true,
+  });
+  getSessionFromRequest.mockResolvedValue({
     shopId: "shop-1",
     shopDomain: "x.myshopify.com",
     sessionId: "sess-1",

@@ -6,6 +6,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { estimateShipping } from "~/lib/commerce/estimate.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -18,6 +19,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (!zip) return json({ error: "zip is required" }, { status: 400 });
 
   const shopId = await resolveStorefrontShop(request);
+  // Each miss hits a live carrier-rate API; throttle per-IP so zip/qty enumeration
+  // cannot burn the merchant's quota.
+  if (!(await rateLimit(clientIpKey(request, "delivery-promise"), 20, 60_000))) {
+    return json({ error: "RATE_LIMITED" }, { status: 429 });
+  }
   try {
     const est = await estimateShipping(shopId, [{ variantId, quantity: qty }], { zip, country });
     return json(est, { headers: { "Cache-Control": "private, max-age=120" } });

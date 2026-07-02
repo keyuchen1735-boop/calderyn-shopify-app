@@ -2,6 +2,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { rateLimit } from "~/lib/rate-limit.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
@@ -27,6 +28,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  // Each turn is a paid Anthropic call; cap per shop to bound LLM spend abuse.
+  if (!(await rateLimit(`assistant:${session.shop}`, 10, 60_000))) {
+    return json(
+      { error: { code: "RATE_LIMITED", message: "Too many messages. Please wait a moment." } },
+      { status: 429 },
+    );
+  }
   const form = await request.formData();
   const parsed = parseAssistantRequest(form);
   if (!parsed.ok) {

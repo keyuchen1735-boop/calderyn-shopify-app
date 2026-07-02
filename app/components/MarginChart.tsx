@@ -127,7 +127,7 @@ export function MarginChart({
         >
           <g transform={`translate(${PADDING.left},${PADDING.top})`}>
             {peer ? (
-              <g data-testid="peer-band">
+              <g>
                 <rect
                   x={0}
                   y={Math.min(peerY1, peerY2)}

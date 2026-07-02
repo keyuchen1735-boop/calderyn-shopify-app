@@ -76,7 +76,6 @@ type LoaderPayload = {
   paired: PairedMap;
   consent: boolean;
   error: { code: string; message: string } | null;
-  devBypass: boolean;
 };
 
 type ActionPayload = {
@@ -86,11 +85,6 @@ type ActionPayload = {
   // External OAuth URL the client opens in a NEW TAB (escaping the embedded iframe).
   redirectUrl?: string;
 };
-
-// ⚠️ TEMPORARY PRE-LAUNCH BYPASS — REMOVE BEFORE REAL MERCHANTS GET ACCESS ⚠️
-// Off by default; only enabled when ONBOARDING_DEV_BYPASS === "true" (preview/staging).
-// Must never be "true" in production. Tracked in agent memory: onboarding-prod-bypass.
-const ONBOARDING_DEV_BYPASS = process.env.ONBOARDING_DEV_BYPASS === "true";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -149,7 +143,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
       consent,
       error: null,
-      devBypass: ONBOARDING_DEV_BYPASS,
     });
   } catch (err) {
     const e = err as CalderynError;
@@ -162,7 +155,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       paired: { google: false, meta: false, tiktok: false, quickbooks: false },
       consent: false,
       error: { code: e.code ?? "ERROR", message: e.message },
-      devBypass: ONBOARDING_DEV_BYPASS,
     });
   }
 };
@@ -323,14 +315,6 @@ export default function Onboarding() {
           )}
           {key === "complete" && <CompleteStep submitting={submitting} onFinish={finish} />}
         </Card>
-
-        {data.devBypass && key !== "complete" && (
-          <InlineStack align="center">
-            <Button variant="plain" tone="critical" onClick={finish} disabled={submitting}>
-              Skip setup → dashboard (dev only)
-            </Button>
-          </InlineStack>
-        )}
       </BlockStack>
     </Page>
   );
