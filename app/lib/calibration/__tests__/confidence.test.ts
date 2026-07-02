@@ -116,3 +116,87 @@ describe("structural sets are internally consistent", () => {
     expect(reversibilityFactor("hard_to_reverse")).toBeGreaterThan(reversibilityFactor("irreversible"));
   });
 });
+
+describe("detectionFactor (learned detector reliability)", () => {
+  // Import here keeps the top-of-file import list untouched for older tests.
+  it("returns the cold default when the detector never fired", async () => {
+    const { detectionFactor, DETECTION_COLD: COLD } = await import("../confidence");
+    expect(detectionFactor(0, 0)).toBe(COLD);
+  });
+  it("is capped at the cold value until 10 alerts have fired", async () => {
+    const { detectionFactor, DETECTION_COLD: COLD } = await import("../confidence");
+    // Laplace (5-0+1)/(5+2) = 0.857 but n<10 -> capped at 0.6
+    expect(detectionFactor(5, 0)).toBe(COLD);
+    // heavy challenges below the sample floor still drop it below the cap
+    expect(detectionFactor(5, 5)).toBeLessThan(COLD);
+  });
+  it("rises above the cold cap once 10+ alerts fired with few challenges", async () => {
+    const { detectionFactor } = await import("../confidence");
+    // (10 - 0 + 10*0.6) / (10 + 10) = 0.8 — the cold-centered prior damps the climb
+    expect(detectionFactor(10, 0)).toBeCloseTo(0.8, 3);
+    expect(detectionFactor(100, 0)).toBeGreaterThan(0.95);
+  });
+  it("falls toward the floor when the merchant challenges most detections", async () => {
+    const { detectionFactor, DETECTION_FLOOR } = await import("../confidence");
+    // Symmetric damping: pessimistic small samples are blended too, not trusted raw
+    expect(detectionFactor(20, 18)).toBeCloseTo((2 + 6) / 30, 3);
+    expect(detectionFactor(20, 20)).toBe(DETECTION_FLOOR);
+    expect(detectionFactor(200, 200)).toBe(DETECTION_FLOOR);
+  });
+  it("one challenge on a tiny sample is damped, not trusted raw", async () => {
+    const { detectionFactor } = await import("../confidence");
+    // (1 - 1 + 6) / (1 + 10) = 0.545 — vs 0.33 under an undamped Laplace mean
+    expect(detectionFactor(1, 1)).toBeCloseTo(6 / 11, 3);
+  });
+  it("clamps challenged to fired and never exceeds 1", async () => {
+    const { detectionFactor } = await import("../confidence");
+    expect(detectionFactor(10, 999)).toBeGreaterThanOrEqual(0.2);
+    expect(detectionFactor(10_000, 0)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("ratchetedReversibility (earned reversibility, spec section 3)", () => {
+  it("starts at the tier base with no streak", async () => {
+    const { ratchetedReversibility } = await import("../confidence");
+    expect(ratchetedReversibility("reversible", 0)).toBe(1.0);
+    expect(ratchetedReversibility("hard_to_reverse", 0)).toBe(0.5);
+    expect(ratchetedReversibility("irreversible", 0)).toBe(0.2);
+  });
+  it("earns +0.10 per 10 consecutive clean approvals", async () => {
+    const { ratchetedReversibility } = await import("../confidence");
+    expect(ratchetedReversibility("irreversible", 9)).toBe(0.2);
+    expect(ratchetedReversibility("irreversible", 10)).toBeCloseTo(0.3, 6);
+    expect(ratchetedReversibility("irreversible", 25)).toBeCloseTo(0.4, 6);
+    expect(ratchetedReversibility("hard_to_reverse", 30)).toBeCloseTo(0.8, 6);
+  });
+  it("caps at 1.0 so even an irreversible pair can be fully earned up", async () => {
+    const { ratchetedReversibility } = await import("../confidence");
+    expect(ratchetedReversibility("irreversible", 80)).toBe(1.0);
+    expect(ratchetedReversibility("irreversible", 800)).toBe(1.0);
+  });
+});
+
+describe("pairConfidence — learned factors (opts)", () => {
+  it("a better learned detection factor raises confidence above the cold default", () => {
+    const cold = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 5, beta: 0 }, null);
+    const learned = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 5, beta: 0 }, null, { detection: 0.95 });
+    expect(learned).toBeGreaterThan(cold);
+  });
+  it("the clean-approval streak raises a risky pair via the ratchet", () => {
+    const base = pairConfidence("reorder_timing", "create_po_draft", { alpha: 10, beta: 0 }, null);
+    const earned = pairConfidence("reorder_timing", "create_po_draft", { alpha: 10, beta: 0 }, null, { consecutiveCleanApprovals: 20 });
+    expect(earned).toBeGreaterThan(base);
+  });
+  it("omitted/invalid opts reproduce the exact previous behavior", () => {
+    const a = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 2, beta: 1 }, null);
+    const b = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 2, beta: 1 }, null, {});
+    const c = pairConfidence("campaign_below_breakeven", "pause_campaign", { alpha: 2, beta: 1 }, null, { detection: Number.NaN, consecutiveCleanApprovals: Number.NaN });
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+  });
+  it("exclude_geo and push_creative_draft have executors now — no longer vetoed to 0", () => {
+    expect(HAS_EXECUTOR.has("exclude_geo")).toBe(true);
+    expect(HAS_EXECUTOR.has("push_creative_draft")).toBe(true);
+    expect(pairConfidence("regional_shortage_risk", "exclude_geo", { alpha: 0, beta: 0 }, null)).toBeGreaterThan(0);
+  });
+});

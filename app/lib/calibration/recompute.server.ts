@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, DetectorId } from "../types";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import {
-  calibrationPct, pairConfidence, smooth,
+  calibrationPct, DETECTION_COLD, detectionFactor, pairConfidence, smooth,
 } from "./confidence";
 import { graduationVerdict } from "./graduation";
 import { loadPairOutcomeTallies } from "./outcomes.server";
@@ -82,7 +82,7 @@ export async function recomputeShopCalibration(
   const { data: pairData, error: pairErr } = await sb
     .from("pair_calibration")
     .select(
-      "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, net_positive_outcomes, last_outcome_sign",
+      "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, net_positive_outcomes, last_outcome_sign",
     )
     .eq("shop_id", shopId);
   if (pairErr) throw pairErr;
@@ -92,6 +92,7 @@ export async function recomputeShopCalibration(
       alpha: number;
       beta: number;
       clean_approvals: number;
+      consecutive_clean_approvals: number;
       consecutive_undos: number;
       merchant_disabled: boolean;
       graduation_threshold: number;
@@ -104,6 +105,7 @@ export async function recomputeShopCalibration(
       alpha: Number(r.alpha ?? 0),
       beta: Number(r.beta ?? 0),
       clean_approvals: Number(r.clean_approvals ?? 0),
+      consecutive_clean_approvals: Number(r.consecutive_clean_approvals ?? 0),
       consecutive_undos: Number(r.consecutive_undos ?? 0),
       merchant_disabled: Boolean(r.merchant_disabled),
       graduation_threshold: Number(r.graduation_threshold ?? 75),
@@ -128,6 +130,36 @@ export async function recomputeShopCalibration(
   const fires: Record<string, number> = {};
   for (const r of alertRows ?? []) fires[r.detector_id] = (fires[r.detector_id] ?? 0) + 1;
 
+  // 2b. Detector-reliability inputs: rejects whose reason indicts the DETECTION
+  // itself (not_enough_data / other) over the same window. Best-effort — an
+  // unreadable ledger keeps every detector at the cold detection factor rather
+  // than failing the recompute.
+  const challenged: Record<string, number> = {};
+  try {
+    const { data: challengeRows, error: chErr } = await sb
+      .from("action_feedback")
+      .select("detector_id")
+      .eq("shop_id", shopId)
+      .eq("decision", "reject")
+      .in("reject_reason", ["not_enough_data", "other"])
+      .gte("created_at", sinceIso);
+    if (chErr) throw new Error(chErr.message);
+    for (const r of challengeRows ?? []) {
+      challenged[r.detector_id] = (challenged[r.detector_id] ?? 0) + 1;
+    }
+  } catch (err) {
+    console.warn(
+      `[recompute] detection-challenge read failed (cold detection factors this run): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // Learned detection factor per detector — the same value feeds the nightly
+  // AND sync paths (both run through here), so the queue/receipts read the
+  // identical cached last_detection.
+  const detectionByDetector: Record<string, number> = {};
+  for (const d of Object.keys(fires)) {
+    detectionByDetector[d] = detectionFactor(fires[d] ?? 0, challenged[d] ?? 0);
+  }
+
   // 3. conf per weighted pair; cache graduated + last_conf on pair_calibration rows
   const weights = computeWeights(fires);
   const scored: { conf: number; weight: number }[] = [];
@@ -149,7 +181,14 @@ export async function recomputeShopCalibration(
     // skipPeerPrior=true: peerP50 stays null → static seed used (same outcome
     // as a failed RPC, but without the network round-trip per pair).
     const ev = pairMap.get(key);
-    const conf = pairConfidence(detector, action, { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 }, peerP50);
+    const detection = detectionByDetector[detector]; // undefined (no fires) → cold default
+    const conf = pairConfidence(
+      detector,
+      action,
+      { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 },
+      peerP50,
+      { detection, consecutiveCleanApprovals: ev?.consecutive_clean_approvals ?? 0 },
+    );
     scored.push({ conf, weight });
 
     // Cache graduated + last_conf on the pair row (only when the row exists —
@@ -180,6 +219,12 @@ export async function recomputeShopCalibration(
         .update({
           graduated: verdict.graduated,
           last_conf: Math.round(conf),
+          // Cache the learned detection factor so the queue, receipts, and the
+          // live isGraduated gate read the SAME factor the recompute scored
+          // with (they have no access to the alert/feedback windows). The
+          // column is NOT NULL; a never-fired detector caches the cold factor
+          // (the exact value the scorer above used for it).
+          last_detection: detection ?? DETECTION_COLD,
           net_positive_outcomes: netPositiveOutcomes,
           last_outcome_sign: lastOutcomeSign,
           updated_at: new Date().toISOString(),

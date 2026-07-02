@@ -23,7 +23,7 @@ import { rankMoves, toNumericEvidence } from "./remediation/rank";
 import { synopsisFor } from "./remediation/synopsis";
 import type { RemediationInput } from "./remediation/types";
 import { buildActionQueue, inventoryOverCapAlertIds } from "./calibration/queue.server";
-import { recordApproval as _recordApproval } from "./calibration/approval.server";
+import { recordApproval as _recordApproval, type RecordApprovalOpts } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
 import { countNearGraduation } from "./calibration/graduation.server";
@@ -1408,12 +1408,15 @@ export function calderynClient(shop: string) {
       // Positive calibration signal. Resolves shopId internally so call sites
       // need only the (detectorId, actionKind) pair. Never throws -- a bump
       // failure must not surface as an action failure (see approval.server.ts).
+      // Pass opts.auditId whenever the approved audit row is known: it keys the
+      // once-per-audit dedup so replays/double-submits never double-bump alpha.
       async recordApproval(
         detectorId: string,
         actionKind: ActionKind,
+        opts?: RecordApprovalOpts,
       ): Promise<ApproveReceipt> {
         const shopId = await shopIdP;
-        return _recordApproval(shopId, detectorId, actionKind, supabase);
+        return _recordApproval(shopId, detectorId, actionKind, supabase, opts);
       },
       // Negative calibration signal. Never throws (pure UX bookkeeping).
       async recordRejection(
@@ -1451,7 +1454,9 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           const { data, error } = await supabase
             .from("pair_calibration")
-            .select("detector_id, action_kind, alpha, beta, graduation_threshold, graduated")
+            .select(
+              "detector_id, action_kind, alpha, beta, graduation_threshold, graduated, last_detection, consecutive_clean_approvals",
+            )
             .eq("shop_id", shopId);
           if (error) throw error;
           return (data ?? []).map((r) => ({
@@ -1461,6 +1466,10 @@ export function calderynClient(shop: string) {
             beta: Number(r.beta ?? 0),
             graduationThreshold: Number(r.graduation_threshold ?? 80),
             graduated: Boolean(r.graduated),
+            // Cached learned factors so the Live Engine pipeline/inspector show
+            // the SAME confidence the queue and the recompute score with.
+            lastDetection: r.last_detection == null ? null : Number(r.last_detection),
+            consecutiveCleanApprovals: Number(r.consecutive_clean_approvals ?? 0),
           }));
         } catch (err) {
           console.error("[calibration.pairEvidence] read failed", err);
@@ -1525,7 +1534,7 @@ export function calderynClient(shop: string) {
             fetchOpenAlerts(shopId),
             supabase
               .from("pair_calibration")
-              .select("detector_id, action_kind, alpha, beta")
+              .select("detector_id, action_kind, alpha, beta, last_detection, consecutive_clean_approvals")
               .eq("shop_id", shopId),
             // Alerts the merchant explicitly rejected — exclude from queue so
             // they don't keep resurfacing after a thumbs-down.
@@ -1572,7 +1581,14 @@ export function calderynClient(shop: string) {
           const map = new Map(
             (pairsRes.data ?? []).map((r) => [
               `${r.detector_id}:${r.action_kind}`,
-              { alpha: Number(r.alpha), beta: Number(r.beta) },
+              {
+                alpha: Number(r.alpha),
+                beta: Number(r.beta),
+                // Cached learned factors (written by the recompute) so the
+                // queue's confidence matches the recompute exactly.
+                lastDetection: r.last_detection == null ? null : Number(r.last_detection),
+                consecutiveCleanApprovals: Number(r.consecutive_clean_approvals ?? 0),
+              },
             ]),
           );
 

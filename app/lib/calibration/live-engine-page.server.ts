@@ -23,6 +23,7 @@
 import type { calderynClient } from "../calderyn.server";
 import type { ActionKind, AuditEntry } from "../types";
 import { pairConfidenceBreakdown } from "./confidence";
+import { effectiveGraduationThreshold } from "./graduation";
 import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
@@ -177,8 +178,23 @@ export async function buildLiveEnginePageData(
     const evMap = new Map(pairEv.map((p) => [`${p.detectorId}:${p.actionKind}`, p]));
     const breakdownFor = (detectorId: string, actionKind: ActionKind) => {
       const ev = evMap.get(`${detectorId}:${actionKind}`);
-      const bd = pairConfidenceBreakdown(detectorId, actionKind, { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 }, null);
-      return { bd, threshold: ev?.graduationThreshold ?? 80 };
+      // Same cached learned factors the queue/recompute score with, and the
+      // tier-floored bar the gate actually enforces — the inspector must never
+      // show a different number or a lower bar than the real gate.
+      const bd = pairConfidenceBreakdown(
+        detectorId,
+        actionKind,
+        { alpha: ev?.alpha ?? 0, beta: ev?.beta ?? 0 },
+        null,
+        {
+          detection: ev?.lastDetection,
+          consecutiveCleanApprovals: ev?.consecutiveCleanApprovals,
+        },
+      );
+      return {
+        bd,
+        threshold: effectiveGraduationThreshold(actionKind, ev?.graduationThreshold ?? 0),
+      };
     };
 
     /* features */

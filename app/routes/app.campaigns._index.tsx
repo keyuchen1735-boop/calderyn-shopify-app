@@ -365,9 +365,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           (scaleAlert as { detector_id?: string } | null)?.detector_id ?? null;
         if (scaleDetectorId) {
           if (outcome === "succeeded") {
-            await recordApproval(shopId, scaleDetectorId, "increase_campaign_budget", sb).catch(
-              () => undefined,
-            );
+            await recordApproval(shopId, scaleDetectorId, "increase_campaign_budget", sb, {
+              auditId: result.id,
+              alertId,
+            }).catch(() => undefined);
           } else {
             await recordActionFailure(shopId, scaleDetectorId, "increase_campaign_budget", sb, {
               auditId: result.id,

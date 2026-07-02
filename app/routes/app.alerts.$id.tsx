@@ -403,9 +403,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
       if (outcome === "failed") {
         await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
@@ -442,9 +443,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
       if (outcome === "failed") {
         await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
@@ -496,9 +498,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
       if (outcome === "failed") {
         await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
@@ -608,9 +611,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       let calibration: ApproveReceipt | undefined;
       if (result.outcome === "succeeded") {
         const sb1 = getSupabase();
-        calibration = await recordApproval(shopId, alert.detector_id, kind, sb1).catch(
-          () => ZERO_APPROVE_RECEIPT,
-        );
+        calibration = await recordApproval(shopId, alert.detector_id, kind, sb1, {
+          auditId: result.id,
+          alertId,
+        }).catch(() => ZERO_APPROVE_RECEIPT);
       } else if (result.outcome === "failed") {
         await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
           auditId: result.id,
@@ -653,7 +657,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    await client.actions.execute({
+    const legacyAudit = await client.actions.execute({
       alertId,
       kind,
       params: execParams,
@@ -675,9 +679,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Never blocks the action result (recordApproval never throws).
     let calibration: ApproveReceipt | undefined;
     if (kind !== "snooze_alert") {
-      calibration = await recordApproval(shopId, alert.detector_id, kind, sb).catch(
-        () => ZERO_APPROVE_RECEIPT,
-      );
+      calibration = await recordApproval(shopId, alert.detector_id, kind, sb, {
+        auditId: legacyAudit?.id,
+        alertId,
+      }).catch(() => ZERO_APPROVE_RECEIPT);
     }
     return json<ActionPayload>({
       ok: true,

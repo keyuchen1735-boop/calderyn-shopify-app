@@ -77,7 +77,17 @@ function queueActionRunnable(action: ActionKind, a: Alert): boolean {
  */
 export function buildActionQueue(
   alerts: Alert[],
-  pairRows: Map<string, { alpha: number; beta: number }>,
+  pairRows: Map<
+    string,
+    {
+      alpha: number;
+      beta: number;
+      /** Cached learned detection factor (pair_calibration.last_detection). */
+      lastDetection?: number | null;
+      /** Cached clean-approval streak — drives the reversibility ratchet. */
+      consecutiveCleanApprovals?: number | null;
+    }
+  >,
   rejectedAlertIds: Set<string> = new Set(),
   mutedPairs: Set<string> = new Set(),
   /** I5 / Slice C: pairs RUNNING autonomously (graduated AND merchant-enabled)
@@ -127,7 +137,10 @@ export function buildActionQueue(
       action_kind: action,
       title: a.title,
       dollar_impact: a.dollar_impact,
-      confidence: pairConfidence(a.detector_id, action, ev, null),
+      confidence: pairConfidence(a.detector_id, action, ev, null, {
+        detection: ev.lastDetection,
+        consecutiveCleanApprovals: ev.consecutiveCleanApprovals,
+      }),
       reasoning: a.narrative,
     };
     // Flag the proposal so the UI can render an "always ask" badge / skip

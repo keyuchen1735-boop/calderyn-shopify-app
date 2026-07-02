@@ -145,9 +145,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const client = calderynClient(session.shopId);
     const alert = await client.alerts.get(alertId).catch(() => null);
     if (alert) {
-      calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb).catch(
-        () => ZERO_APPROVE_RECEIPT,
-      );
+      calibration = await recordApproval(session.shopId, alert.detector_id, kind, sb, {
+        auditId: result.id,
+        alertId,
+      }).catch(() => ZERO_APPROVE_RECEIPT);
     }
   }
 

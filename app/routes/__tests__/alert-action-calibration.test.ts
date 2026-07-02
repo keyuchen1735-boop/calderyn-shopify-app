@@ -160,7 +160,7 @@ beforeEach(() => {
   clientExecuteSpy.mockReset();
   clientExecuteSpy.mockResolvedValue({ id: "aud-1", outcome: "succeeded" });
   executeSpy.mockReset();
-  executeSpy.mockResolvedValue({ outcome: "succeeded" });
+  executeSpy.mockResolvedValue({ id: "aud-exec-1", outcome: "succeeded" });
   executeReallocateSpendSkuSpy.mockReset();
   executeReallocateSpendSkuSpy.mockResolvedValue({ auditId: "aud-rs-1", outcome: "succeeded", acknowledged: true });
 });
@@ -177,6 +177,9 @@ describe("alert action — calibration signal fires on approval", () => {
       "campaign_below_breakeven",
       "pause_campaign",
       expect.anything(), // supabase client
+      // Once-per-audit dedup opts: the succeeded audit id keys the approve
+      // ledger so a double-submit never double-bumps alpha.
+      expect.objectContaining({ auditId: "aud-exec-1", alertId: ALERT.id }),
     );
   });
 
@@ -318,6 +321,7 @@ describe("alert action — calibration signal fires on approval", () => {
       "sku_stockout_cleared",
       "resume_campaign",
       expect.anything(),
+      expect.objectContaining({ auditId: "aud-exec-1", alertId: ALERT.id }),
     );
     // Resume is upside, not downside — the legacy phantom recorder must not run.
     expect(clientExecuteSpy).not.toHaveBeenCalled();
@@ -372,6 +376,7 @@ describe("alert action — calibration signal fires on approval", () => {
       "ad_tax_overload",
       "reallocate_spend_sku",
       expect.anything(),
+      expect.objectContaining({ auditId: "aud-rs-1", alertId: ALERT.id }),
     );
   });
 });
