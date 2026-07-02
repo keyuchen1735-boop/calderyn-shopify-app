@@ -232,7 +232,29 @@ Mirror `stripe.server.test.ts` / mocked-SDK conventions:
   multi-merchant carts (would force separate charges & transfers).
 - Feature-gating premium capability on billing state (meaningless while fee=0 comp).
 
-## 12. Assumptions locked at review
+## 12. Implementation deltas (review-hardened)
+
+Applied after a max-effort code review of the built slice; supersede §5 where they differ:
+
+- **One routing seam:** `createRoutedPaymentIntent(shopId, base, {logLabel})` in
+  `connect.server.ts` owns decision + destination→platform fallback + stamp values;
+  BOTH PI sites call it (no per-site fallback copies).
+- **Narrow fallback guard:** only `StripeInvalidRequestError` with
+  `code === 'account_invalid'` or `param` matching `transfer_data|on_behalf_of` falls
+  back — an invalid request we caused propagates visibly (rule 12).
+- **Fail-open reads:** `destinationParamsFor` catches its own connected-account read
+  error → warn + platform decision, so §7's "checkout never fails because of payout
+  plumbing" covers the lookup too.
+- **ACP mirror insert checked:** a failed persist after a `confirm:true` charge throws
+  (never a false success).
+- **Login link on demand:** `expressDashboardUrl` REMOVED from the billing DTO; a
+  `login-link` action intent mints the single-use link when clicked (was one wasted
+  live Stripe call per Settings load, coupled to the balance read).
+- **Onboarding legs hardened:** `return` degrades gracefully on a sync failure;
+  `refresh` never CREATEs an account on GET (no row → redirect home).
+- **Origin resolution:** skips empty-string envs, strips all trailing slashes.
+
+## 13. Assumptions locked at review
 
 Scope A (Connect + configurable fee, 0 in pilot); Express; destination charges;
 `on_behalf_of = merchant`; fallback-to-platform for un-onboarded merchants; fee knob as
