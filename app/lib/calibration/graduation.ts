@@ -44,6 +44,37 @@ export const MIN_OUTCOMES = {
   irreversible: 8,
 } as const;
 
+/** Tier confidence floors for graduation (spec §3 table: 75 / 88 / 95). The
+ *  stored pair_calibration.graduation_threshold defaults to 75 for every tier
+ *  and is raised by too_aggressive rejects; the tier floor guarantees a
+ *  hard_to_reverse or irreversible pair can never graduate at the reversible
+ *  bar regardless of the stored value. */
+export const TIER_GRADUATION_FLOOR = {
+  reversible: 75,
+  hard_to_reverse: 88,
+  irreversible: 95,
+} as const;
+
+/** The confidence bar a pair must actually clear: the stored (possibly
+ *  reject-raised) threshold, floored by its reversibility tier, capped at 99
+ *  (the same cap the rejection RPC applies to raises). */
+export function effectiveGraduationThreshold(
+  actionKind: ActionKind,
+  storedThreshold: number,
+): number {
+  const floor = TIER_GRADUATION_FLOOR[actionTier(actionKind)];
+  const stored = Number.isFinite(storedThreshold) && storedThreshold > 0 ? storedThreshold : floor;
+  return Math.min(99, Math.max(stored, floor));
+}
+
+/** No-brainer demote-to-ask bar (I8). The three shipped no-brainers unlock at
+ *  cold-start conf ~74 (below the 75 tier bar — that is the deliberate
+ *  exception), but they are NOT exempt from evidence: once real rejects push
+ *  conf below this bar the pair returns to queue-only ("always ask"), and
+ *  approvals earn it back. 70 sits under the ~74 cold start and above the
+ *  I8 floor of 20. */
+export const NO_BRAINER_MIN_CONF = 70;
+
 export interface GraduationVerdictInput {
   detectorId: string;
   actionKind: ActionKind;
@@ -108,7 +139,16 @@ export function graduationVerdict(
   // auto-unlocked from day one, but still sit behind the shop-level Autopilot
   // switch, per-feature merchant switch, live rules, undo support, guardrails,
   // freshness checks, and detector-specific execution preconditions.
+  //
+  // The unlock is NOT evidence-proof (I8): a cold no-brainer scores ~74 and
+  // stays unlocked, but once the merchant's rejects push conf below
+  // NO_BRAINER_MIN_CONF the pair demotes to queue-only ("always ask", never
+  // silent — the alert keeps firing and the I8 floor keeps it visible).
+  // Approvals raise conf and re-unlock it.
   if (NO_BRAINER.has(`${input.detectorId}:${input.actionKind}`)) {
+    if (input.lastConf < NO_BRAINER_MIN_CONF) {
+      return { graduated: false, reason: "below confidence bar" };
+    }
     return { graduated: true, reason: "shipped no-brainer" };
   }
   if (input.cleanApprovals < MIN_APPROVALS[actionTier(input.actionKind)]) {
@@ -118,7 +158,10 @@ export function graduationVerdict(
   if (input.netPositiveOutcomes < MIN_OUTCOMES[actionTier(input.actionKind)]) {
     return { graduated: false, reason: "needs proven results" };
   }
-  if (input.lastConf < input.gradThreshold) {
+  // The confidence bar: the stored (possibly reject-raised) threshold, floored
+  // by the reversibility tier (spec §3: 75 / 88 / 95) — a riskier kind can
+  // never graduate at the reversible bar.
+  if (input.lastConf < effectiveGraduationThreshold(input.actionKind, input.gradThreshold)) {
     return { graduated: false, reason: "below confidence bar" };
   }
   return { graduated: true, reason: "all gates passed" };

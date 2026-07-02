@@ -51,6 +51,11 @@ export const HAS_EXECUTOR: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "discontinue_sku",
   "adjust_price",
   "create_po_draft",
+  // Real shipped executors (Google + Meta exclude_geo; Meta draft push). These
+  // were vetoed to conf 0 long after their executors landed, dragging the
+  // headline down with zeros that no longer reflected reality.
+  "exclude_geo",
+  "push_creative_draft",
 ]);
 
 // Per-action reversibility tier. increase_campaign_budget is hard_to_reverse
@@ -65,6 +70,9 @@ const ACTION_TIER: Partial<Record<ActionKind, Tier>> = {
   snooze_alert: "reversible",
   increase_campaign_budget: "hard_to_reverse",
   create_po_draft: "hard_to_reverse",
+  // Reversible via its undo branch (unpublish), but a published ad creative is
+  // customer-visible — more consequential than a budget tweak.
+  push_creative_draft: "hard_to_reverse",
   // Reversible via its undo branch (re-publish + clear flag, 48h auto-undo) but
   // archiving a product is more consequential than a budget tweak.
   discontinue_sku: "hard_to_reverse",
@@ -94,6 +102,47 @@ export function actionTier(action: ActionKind): Tier {
 
 export function reversibilityFactor(tier: Tier): number {
   return REVERSIBILITY_FACTOR[tier];
+}
+
+/** Reversibility ratchet (spec §3): every 10 CONSECUTIVE clean approvals earn
+ * +0.10 on the reversibility factor, capping at 1.0 — so a riskier tier is a
+ * higher bar, never a permanent ceiling. A single undo resets the streak (the
+ * SQL fns zero consecutive_clean_approvals), dropping the factor back to base
+ * while keeping alpha/beta history. */
+export const RATCHET_STEP = 0.1;
+export const RATCHET_APPROVALS_PER_STEP = 10;
+export function ratchetedReversibility(tier: Tier, consecutiveCleanApprovals: number): number {
+  const streak = Number.isFinite(consecutiveCleanApprovals)
+    ? Math.max(0, Math.floor(consecutiveCleanApprovals))
+    : 0;
+  const steps = Math.floor(streak / RATCHET_APPROVALS_PER_STEP);
+  return Math.min(1, REVERSIBILITY_FACTOR[tier] + RATCHET_STEP * steps);
+}
+
+/** Detector-reliability factor (spec §2: "is the detector right?"), learned
+ * from how often the merchant's recorded rejects indict the DETECTION itself
+ * (reasons not_enough_data / other — too_aggressive and wrong_timing indict
+ * the action sizing/timing, not the detection; i_handle_this is neutral).
+ *
+ * Beta-mean over "fired and not challenged" with a prior of strength
+ * DETECTION_PRIOR_K centered on the cold value, so small samples are damped
+ * SYMMETRICALLY — one challenge on a detector that fired once must not crater
+ * the factor any more than one clean fire may inflate it:
+ *   (fired - challenged + K·DETECTION_COLD) / (fired + K)
+ * Cold start: additionally capped at DETECTION_COLD until the detector has
+ * fired DETECTION_MIN_SAMPLE times (spec: "capped at 0.6 until 10+ alerts
+ * seen"). Floored at 0.2 so a noisy detector still surfaces via the queue;
+ * clamped to 1.0. */
+export const DETECTION_MIN_SAMPLE = 10;
+export const DETECTION_FLOOR = 0.2;
+export const DETECTION_PRIOR_K = 10;
+export function detectionFactor(fired: number, challenged: number): number {
+  const n = Number.isFinite(fired) ? Math.max(0, Math.floor(fired)) : 0;
+  if (n === 0) return DETECTION_COLD;
+  const bad = Number.isFinite(challenged) ? Math.min(Math.max(0, Math.floor(challenged)), n) : 0;
+  const blended = (n - bad + DETECTION_PRIOR_K * DETECTION_COLD) / (n + DETECTION_PRIOR_K);
+  const capped = n < DETECTION_MIN_SAMPLE ? Math.min(DETECTION_COLD, blended) : blended;
+  return Math.min(1, Math.max(DETECTION_FLOOR, capped));
 }
 
 export function pairPrior(tier: Tier, isNoBrainer: boolean, peerP50: number | null): number {
@@ -129,6 +178,29 @@ export function confidence(i: {
 // Cold-start detection factor (capped until per-detector precision history exists).
 export const DETECTION_COLD = 0.6;
 
+/** Learned per-pair inputs beyond the Beta counters. Optional so every caller
+ * without them (cold seeds, tests) keeps the exact previous behavior:
+ * detection defaults to the cold cap, the ratchet defaults to base tier. */
+export interface PairConfidenceOpts {
+  /** Learned detector-reliability factor (detectionFactor(...) or the cached
+   * pair_calibration.last_detection). Defaults to DETECTION_COLD. */
+  detection?: number | null;
+  /** consecutive_clean_approvals — drives the reversibility ratchet. */
+  consecutiveCleanApprovals?: number | null;
+}
+
+function resolvedFactors(
+  actionKind: ActionKind,
+  opts?: PairConfidenceOpts,
+): { detection: number; reversibility: number } {
+  const tier = actionTier(actionKind);
+  const d = Number(opts?.detection);
+  return {
+    detection: Number.isFinite(d) && d > 0 ? clamp01(d) : DETECTION_COLD,
+    reversibility: ratchetedReversibility(tier, Number(opts?.consecutiveCleanApprovals ?? 0)),
+  };
+}
+
 // Convenience: full per-(detector, action) confidence from the pair's Beta
 // counters + optional peer prior. The single entry point used by both the
 // nightly recompute and the Action Queue, so the two never diverge.
@@ -137,6 +209,7 @@ export function pairConfidence(
   actionKind: ActionKind,
   ev: { alpha: number; beta: number },
   peerP50: number | null,
+  opts?: PairConfidenceOpts,
 ): number {
   const pairKey = `${detectorId}:${actionKind}`;
   const isNoBrainer = NO_BRAINER.has(pairKey);
@@ -144,11 +217,12 @@ export function pairConfidence(
   const veto: 0 | 1 = HAS_EXECUTOR.has(actionKind) ? 1 : 0;
   const prior = pairPrior(tier, isNoBrainer, peerP50);
   const hist = historical(ev.alpha, ev.beta, prior);
+  const factors = resolvedFactors(actionKind, opts);
   const raw = confidence({
     guardrailVeto: veto,
-    detection: DETECTION_COLD,
+    detection: factors.detection,
     historical: hist,
-    reversibility: reversibilityFactor(tier),
+    reversibility: factors.reversibility,
   });
   // I8: No-brainer pairs get a confidence floor so reject-spam can never drive
   // them to conf=0 (permanent self-disable). The floor ONLY applies to NO_BRAINER
@@ -222,18 +296,19 @@ export function pairConfidenceBreakdown(
   actionKind: ActionKind,
   ev: { alpha: number; beta: number },
   peerP50: number | null,
+  opts?: PairConfidenceOpts,
 ): ConfidenceBreakdown {
   const tier = actionTier(actionKind);
   const isNoBrainer = NO_BRAINER.has(`${detectorId}:${actionKind}`);
   const prior = pairPrior(tier, isNoBrainer, peerP50);
   const hist = historical(ev.alpha, ev.beta, prior);
-  const rev = reversibilityFactor(tier);
+  const factors = resolvedFactors(actionKind, opts);
   return {
     factors: [
-      { key: "detection", label: FACTOR_LABELS.detection, value: Math.round(DETECTION_COLD * 100), weight: WEIGHTS.detection },
+      { key: "detection", label: FACTOR_LABELS.detection, value: Math.round(factors.detection * 100), weight: WEIGHTS.detection },
       { key: "historical", label: FACTOR_LABELS.historical, value: Math.round(clamp01(hist) * 100), weight: WEIGHTS.historical },
-      { key: "reversibility", label: FACTOR_LABELS.reversibility, value: Math.round(rev * 100), weight: WEIGHTS.reversibility },
+      { key: "reversibility", label: FACTOR_LABELS.reversibility, value: Math.round(factors.reversibility * 100), weight: WEIGHTS.reversibility },
     ],
-    confidence: pairConfidence(detectorId, actionKind, ev, peerP50),
+    confidence: pairConfidence(detectorId, actionKind, ev, peerP50, opts),
   };
 }

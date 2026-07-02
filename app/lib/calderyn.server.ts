@@ -23,7 +23,7 @@ import { rankMoves, toNumericEvidence } from "./remediation/rank";
 import { synopsisFor } from "./remediation/synopsis";
 import type { RemediationInput } from "./remediation/types";
 import { buildActionQueue, inventoryOverCapAlertIds } from "./calibration/queue.server";
-import { recordApproval as _recordApproval } from "./calibration/approval.server";
+import { recordApproval as _recordApproval, type RecordApprovalOpts } from "./calibration/approval.server";
 import { recordRejection as _recordRejection } from "./calibration/reject.server";
 import { recomputeShopCalibration } from "./calibration/recompute.server";
 import { countNearGraduation } from "./calibration/graduation.server";
@@ -278,6 +278,19 @@ function ruleSummary(r: { detector_id: string; action_kind: ActionKind; rule_kin
       const iso = String(val?.until ?? "");
       const date = iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "a future date";
       return `Waiting for more proof on ${label} until ${date}`;
+    }
+    case "pair_blackout_hours": {
+      const hours = Array.isArray(val?.hours) ? (val.hours as number[]) : [];
+      const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
+      const windows = hours.map((h) => `${fmtHour(h)}–${fmtHour((h + 1) % 24)} UTC`).join(", ");
+      return windows
+        ? `I hold off on ${label} during ${windows}`
+        : `I hold off on ${label} during your learned quiet hours`;
+    }
+    case "pair_min_spend": {
+      const cents = Number(val?.cents ?? 0);
+      const dollars = (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+      return `I skip ${label} under ${dollars} of spend`;
     }
     default:
       return `Rule on ${label}`;
@@ -1408,12 +1421,15 @@ export function calderynClient(shop: string) {
       // Positive calibration signal. Resolves shopId internally so call sites
       // need only the (detectorId, actionKind) pair. Never throws -- a bump
       // failure must not surface as an action failure (see approval.server.ts).
+      // Pass opts.auditId whenever the approved audit row is known: it keys the
+      // once-per-audit dedup so replays/double-submits never double-bump alpha.
       async recordApproval(
         detectorId: string,
         actionKind: ActionKind,
+        opts?: RecordApprovalOpts,
       ): Promise<ApproveReceipt> {
         const shopId = await shopIdP;
-        return _recordApproval(shopId, detectorId, actionKind, supabase);
+        return _recordApproval(shopId, detectorId, actionKind, supabase, opts);
       },
       // Negative calibration signal. Never throws (pure UX bookkeeping).
       async recordRejection(
@@ -1451,7 +1467,9 @@ export function calderynClient(shop: string) {
           const shopId = await shopIdP;
           const { data, error } = await supabase
             .from("pair_calibration")
-            .select("detector_id, action_kind, alpha, beta, graduation_threshold, graduated")
+            .select(
+              "detector_id, action_kind, alpha, beta, graduation_threshold, graduated, last_detection, consecutive_clean_approvals",
+            )
             .eq("shop_id", shopId);
           if (error) throw error;
           return (data ?? []).map((r) => ({
@@ -1461,6 +1479,10 @@ export function calderynClient(shop: string) {
             beta: Number(r.beta ?? 0),
             graduationThreshold: Number(r.graduation_threshold ?? 80),
             graduated: Boolean(r.graduated),
+            // Cached learned factors so the Live Engine pipeline/inspector show
+            // the SAME confidence the queue and the recompute score with.
+            lastDetection: r.last_detection == null ? null : Number(r.last_detection),
+            consecutiveCleanApprovals: Number(r.consecutive_clean_approvals ?? 0),
           }));
         } catch (err) {
           console.error("[calibration.pairEvidence] read failed", err);
@@ -1491,9 +1513,60 @@ export function calderynClient(shop: string) {
         }
       },
       // Deactivate a specific rule by id (scoped to this shop for safety).
+      // "Hand it back any time from Learned rules" (spec §5): undoing a
+      // muted_pair must ALSO clear pair_calibration.merchant_disabled — the
+      // i_handle_this RPC set both, and graduationVerdict blocks on the flag,
+      // so flipping only the rule would leave the pair muted forever.
+      //
+      // Ordering + duplicates (no transaction available through PostgREST):
+      //  - Only an ACTIVE rule may be undone: a stale tab re-undoing an
+      //    already-inactive rule must not clear a mute a NEWER i_handle_this
+      //    just set.
+      //  - The unmute runs only when NO OTHER active muted_pair rule remains
+      //    for the pair (duplicates are possible under concurrent rejects).
+      //  - The unmute runs BEFORE deactivating the rule: if the second write
+      //    fails, the rule is still active and visible, so the merchant can
+      //    simply retry — never the invisible-permanent-mute dead end.
       async undoRule(ruleId: string): Promise<void> {
         try {
           const shopId = await shopIdP;
+          const { data: rule, error: readErr } = await supabase
+            .from("calibration_rule")
+            .select("id, detector_id, action_kind, rule_kind")
+            .eq("id", ruleId)
+            .eq("shop_id", shopId)
+            .eq("active", true)
+            .maybeSingle();
+          if (readErr) throw readErr;
+          if (!rule) {
+            throw new CalderynError({
+              code: "RULE_NOT_FOUND",
+              status: 404,
+              message: "That rule no longer exists.",
+            });
+          }
+          if (rule.rule_kind === "muted_pair") {
+            const { data: siblings, error: sibErr } = await supabase
+              .from("calibration_rule")
+              .select("id")
+              .eq("shop_id", shopId)
+              .eq("detector_id", rule.detector_id)
+              .eq("action_kind", rule.action_kind)
+              .eq("rule_kind", "muted_pair")
+              .eq("active", true)
+              .neq("id", ruleId)
+              .limit(1);
+            if (sibErr) throw sibErr;
+            if ((siblings ?? []).length === 0) {
+              const { error: unmuteErr } = await supabase
+                .from("pair_calibration")
+                .update({ merchant_disabled: false, updated_at: new Date().toISOString() })
+                .eq("shop_id", shopId)
+                .eq("detector_id", rule.detector_id)
+                .eq("action_kind", rule.action_kind);
+              if (unmuteErr) throw unmuteErr;
+            }
+          }
           const { error } = await supabase
             .from("calibration_rule")
             .update({ active: false })
@@ -1525,7 +1598,7 @@ export function calderynClient(shop: string) {
             fetchOpenAlerts(shopId),
             supabase
               .from("pair_calibration")
-              .select("detector_id, action_kind, alpha, beta")
+              .select("detector_id, action_kind, alpha, beta, last_detection, consecutive_clean_approvals")
               .eq("shop_id", shopId),
             // Alerts the merchant explicitly rejected — exclude from queue so
             // they don't keep resurfacing after a thumbs-down.
@@ -1572,7 +1645,14 @@ export function calderynClient(shop: string) {
           const map = new Map(
             (pairsRes.data ?? []).map((r) => [
               `${r.detector_id}:${r.action_kind}`,
-              { alpha: Number(r.alpha), beta: Number(r.beta) },
+              {
+                alpha: Number(r.alpha),
+                beta: Number(r.beta),
+                // Cached learned factors (written by the recompute) so the
+                // queue's confidence matches the recompute exactly.
+                lastDetection: r.last_detection == null ? null : Number(r.last_detection),
+                consecutiveCleanApprovals: Number(r.consecutive_clean_approvals ?? 0),
+              },
             ]),
           );
 

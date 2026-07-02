@@ -33,6 +33,7 @@ import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
 import { calibrationActionKind } from "../calibration/action-kind";
+import { recordActionFailure } from "../calibration/failure.server";
 import { preconditionFresh, stockoutPauseAllowed, stockoutClearedResumeAllowed } from "../calibration/preconditions.server";
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
@@ -125,11 +126,13 @@ interface Candidate {
 }
 
 // Maps a plan move's executor to a guarded execution. The `outcome` is one of
-// "acted" | "blocked" | "skipped" | "fell_through"; "fell_through" means "not an
-// executable remediation move — let the legacy campaign logic handle it". The
-// `reason` is a plain-language line for the structured decision / blockedReasons
-// histogram (rule 12: every blocked/skipped path is explained).
-type RemediationOutcome = "acted" | "blocked" | "skipped" | "fell_through";
+// "acted" | "blocked" | "skipped" | "failed" | "fell_through"; "fell_through"
+// means "not an executable remediation move — let the legacy campaign logic
+// handle it"; "failed" means the executor was called but the action did not
+// land (platform error / parked as retrying). The `reason` is a plain-language
+// line for the structured decision / blockedReasons histogram (rule 12: every
+// blocked/skipped path is explained).
+type RemediationOutcome = "acted" | "blocked" | "skipped" | "failed" | "fell_through";
 interface RemediationResult {
   outcome: RemediationOutcome;
   reason: string;
@@ -228,6 +231,37 @@ async function tryRemediation(
     return { outcome: "skipped", reason: "remediation pair not graduated" };
   }
 
+  // Learned-rule enforcement: the merchant's calibration_rule rows govern EVERY
+  // autonomous execute path, not just the legacy campaign loop. Keyed on the
+  // SAME normalized kind the pair is trained under (graduationKind), so a rule
+  // written by a reject always binds the path that fires. Fail-safe: an
+  // unloadable rule set returns { veto: "rules unavailable" } and we skip.
+  // pair_dollar_cap on reduce_campaign_budget downsizes instead of vetoing —
+  // the cap is stashed here and applied where newBudgetCents is computed below.
+  let remediationCappedDollarCents: number | undefined;
+  {
+    const nowUtc = new Date();
+    const ruleVerdict = await loadAndApplyRules(
+      shopId,
+      c.detector_id,
+      graduationKind,
+      {
+        dollarImpactCents,
+        campaignSpendCents: c.campaign_spend_cents ?? 0,
+        nowUtcHour: nowUtc.getUTCHours(),
+        nowIso: nowUtc.toISOString(),
+      },
+      sb,
+    );
+    if (ruleVerdict.veto) {
+      console.info(
+        `[autopilot] remediation rule veto on alert ${c.alert_id} (${c.detector_id}/${graduationKind}): ${ruleVerdict.veto}`,
+      );
+      return { outcome: "skipped", reason: `rule: ${ruleVerdict.veto}` };
+    }
+    remediationCappedDollarCents = ruleVerdict.cappedDollarCents;
+  }
+
   // SKU-scoped move (discontinue_sku): SKU guard, no campaign needed. The Phase-2
   // gateway takes a single opts object with a `client` (slice of calderynClient)
   // and a Shopify `admin` client; it re-derives the product GID from the alert's
@@ -244,7 +278,7 @@ async function tryRemediation(
     }
     const client = calderynClient(shopId);
     const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
-    await executeDiscontinueAlertAction({
+    const discontinueRes = await executeDiscontinueAlertAction({
       client,
       admin,
       sb,
@@ -255,6 +289,27 @@ async function tryRemediation(
       actor: "autopilot",
       triggerReason: reason,
     });
+    // The gateway resolves with { outcome } for platform failures it recorded
+    // (throws only cover pre-audit faults) — never notify or count a non-landed
+    // action as acted, and record the terminal failure as a beta signal (§7).
+    if (discontinueRes.outcome !== "succeeded") {
+      if (discontinueRes.outcome === "failed") {
+        notifyPromises.push(
+          recordActionFailure(shopId, c.detector_id, graduationKind, sb, {
+            auditId: discontinueRes.auditId,
+            alertId: c.alert_id,
+          }),
+        );
+      }
+      return { outcome: "failed", reason: `executor outcome: ${discontinueRes.outcome}` };
+    }
+    // I7: every autonomous action notifies the merchant at execution time.
+    notifyPromises.push(
+      notifyAutonomousAction(
+        { shopId, actionDescription: `Discontinued SKU ${c.sku ?? c.sku_id ?? "(unknown)"}` },
+        merchantEmail,
+      ).catch((e) => console.error("[autopilot-notify] unexpected error (discontinue_sku)", e)),
+    );
     return { outcome: "acted", reason };
   }
 
@@ -314,11 +369,12 @@ async function tryRemediation(
     }
 
     // The executor recomputes the identical suggestion (same live price + COGS +
-    // merchant cap) and applies the predicted price; it THROWS on any failure
-    // (caught by the loop and counted as `failed`), so a return here is a landed
-    // price change.
+    // merchant cap) and applies the predicted price. It throws on pre-audit
+    // faults, but a platform failure it recorded RESOLVES with { outcome } —
+    // never notify or count a non-landed price change as acted, and record the
+    // terminal failure as a beta signal (§7).
     const triggerReason = autopilotReason("Auto adjust price", c.detector_id, c.dollar_impact);
-    await executeAdjustPriceAlertAction({
+    const priceRes = await executeAdjustPriceAlertAction({
       client,
       admin,
       sb,
@@ -329,6 +385,17 @@ async function tryRemediation(
       actor: "autopilot",
       triggerReason,
     });
+    if (priceRes.outcome !== "succeeded") {
+      if (priceRes.outcome === "failed") {
+        notifyPromises.push(
+          recordActionFailure(shopId, c.detector_id, graduationKind, sb, {
+            auditId: priceRes.auditId,
+            alertId: c.alert_id,
+          }),
+        );
+      }
+      return { outcome: "failed", reason: `executor outcome: ${priceRes.outcome}` };
+    }
     notifyPromises.push(
       notifyAutonomousAction(
         { shopId, actionDescription: `Adjusted price for SKU ${c.sku}` },
@@ -359,7 +426,7 @@ async function tryRemediation(
       return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
     }
     const client = calderynClient(shopId);
-    await executeReallocateSpendSku({
+    const skuReallocRes = await executeReallocateSpendSku({
       client,
       sb,
       shopId,
@@ -368,6 +435,28 @@ async function tryRemediation(
       actor: "autopilot",
       triggerReason: reason,
     });
+    // executeReallocateSpendSku RESOLVES with the recorded outcome (it does not
+    // throw on a platform failure) — never notify or count a non-landed shift
+    // as acted, and record the terminal failure as a beta signal (§7). The
+    // pair is calibrated under reallocate_budget (graduationKind).
+    if (skuReallocRes.outcome !== "succeeded") {
+      if (skuReallocRes.outcome === "failed") {
+        notifyPromises.push(
+          recordActionFailure(shopId, c.detector_id, graduationKind, sb, {
+            auditId: skuReallocRes.auditId,
+            alertId: c.alert_id,
+          }),
+        );
+      }
+      return { outcome: "failed", reason: `executor outcome: ${skuReallocRes.outcome}` };
+    }
+    // I7: every autonomous action notifies the merchant at execution time.
+    notifyPromises.push(
+      notifyAutonomousAction(
+        { shopId, actionDescription: `Shifted ad spend${c.sku ? ` for SKU ${c.sku}` : ""} (campaign ${c.campaign_id})` },
+        merchantEmail,
+      ).catch((e) => console.error("[autopilot-notify] unexpected error (reallocate_spend_sku)", e)),
+    );
     return { outcome: "acted", reason };
   }
 
@@ -375,8 +464,10 @@ async function tryRemediation(
   // campaign executor seam executeAction(shopId, ExecuteInput, sb) + the
   // campaign guard. triggerReason flows through ExecuteInput.triggerReason.
   if (move.executor === "pause_campaign" || move.executor === "reduce_campaign_budget") {
+    // Non-null campaign_id captured so it survives the awaits below (guarded above).
+    const campaignId: string = c.campaign_id;
     const currentBudgetCents = c.daily_budget_cents ?? null;
-    const newBudgetCents =
+    let newBudgetCents =
       move.executor === "reduce_campaign_budget" && currentBudgetCents != null
         ? Math.round(currentBudgetCents * 0.5) // mirror DEFAULT_MAX_CUT_PCT (guard enforces the live value)
         : undefined;
@@ -384,34 +475,91 @@ async function tryRemediation(
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: no current budget to cut`);
       return { outcome: "blocked", reason: "remediation: no current budget to cut" };
     }
+    // pair_dollar_cap clamp (learned rule): the cut may not exceed the merchant's
+    // cap — raise the target budget so (current - new) <= cap. Same clamp as the
+    // legacy reduce path; never enlarges the cut.
+    if (
+      move.executor === "reduce_campaign_budget" &&
+      currentBudgetCents != null &&
+      newBudgetCents !== undefined &&
+      remediationCappedDollarCents !== undefined
+    ) {
+      newBudgetCents = Math.max(newBudgetCents, currentBudgetCents - remediationCappedDollarCents);
+      console.info(
+        `[autopilot] pair_dollar_cap clamped remediation reduce for ${campaignId}: newBudget=${newBudgetCents}c (cap=${remediationCappedDollarCents}c)`,
+      );
+    }
+    // I1 + I2: autonomous call — bypass forced OFF regardless of the DB setting,
+    // null daily action cap treated as 5, and the aggregate daily-dollar ceiling
+    // enforced. Same flags as every legacy autonomous checkGuardrails call.
     const verdict = await checkGuardrails(
       shopId,
       {
         kind: move.executor,
-        campaignId: c.campaign_id,
+        campaignId,
         dollarImpactCents,
         campaignSpendCents: c.campaign_spend_cents,
         currentBudgetCents: currentBudgetCents ?? undefined,
         newBudgetCents,
       },
       sb,
+      { forceBypassOff: true, autonomous: true },
     );
     if (!verdict.allowed) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${verdict.reason}`);
       return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by guardrails" };
     }
-    await executeAction(
+    // I4: freshness + live precondition re-check — the campaign must still be
+    // active (pause) / at the snapshot budget (reduce) and its sync facts fresh.
+    // Fail-safe: any doubt skips, the alert stays open for the merchant.
+    const precheck = await preconditionFresh({
+      kind: move.executor,
+      candidate: { ...c, campaign_id: campaignId },
+      sb,
+      nowMs: Date.now(),
+    });
+    if (!precheck.ok) {
+      console.info(
+        `[autopilot] remediation precondition re-check failed on alert ${c.alert_id}: ${precheck.reason}`,
+      );
+      return { outcome: "skipped", reason: precheck.reason ?? "precondition_failed" };
+    }
+    const res = await executeAction(
       shopId,
       {
         alertId: c.alert_id,
         kind: move.executor,
-        campaignId: c.campaign_id,
+        campaignId,
         idempotencyKey,
         dailyBudgetCents: newBudgetCents,
         actor: "autopilot",
         triggerReason: reason,
       },
       sb,
+    );
+    // executeAction reports failure via outcome (it does not throw for platform
+    // errors) — a non-landed action must not be counted or celebrated as acted.
+    // Terminal failure is a negative calibration signal (spec §7); retrying is
+    // transient and records nothing yet.
+    if (res.outcome !== "succeeded") {
+      if (res.outcome === "failed") {
+        notifyPromises.push(
+          recordActionFailure(shopId, c.detector_id, graduationKind, sb, {
+            auditId: res.id,
+            alertId: c.alert_id,
+          }),
+        );
+      }
+      return { outcome: "failed", reason: `executor outcome: ${res.outcome}` };
+    }
+    // I7: every autonomous action notifies the merchant at execution time.
+    const actionLabel =
+      move.executor === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";
+    notifyPromises.push(
+      notifyAutonomousAction(
+        { shopId, actionDescription: `${actionLabel} ${campaignId}` },
+        merchantEmail,
+      ).catch((e) => console.error("[autopilot-notify] unexpected error (remediation pause/reduce)", e)),
     );
     return { outcome: "acted", reason };
   }
@@ -471,6 +619,32 @@ async function tryInventoryRelocation(
   // keep the two boundaries consistent and do NOT double-convert here.)
   const dollarImpactCents = Math.round(Number(c.dollar_impact) * 100);
   const inventoryUnitsMoved = Math.abs(plan.delta);
+
+  // Learned-rule enforcement: the merchant's calibration_rule rows bind this
+  // path too (blackout hours / min spend / dollar cap). reallocate_inventory
+  // cannot be partially applied, so a dollar cap vetoes rather than downsizes.
+  // Fail-safe: unloadable rules veto.
+  {
+    const nowUtc = new Date();
+    const ruleVerdict = await loadAndApplyRules(
+      shopId,
+      c.detector_id,
+      "reallocate_inventory",
+      {
+        dollarImpactCents,
+        campaignSpendCents: c.campaign_spend_cents ?? 0,
+        nowUtcHour: nowUtc.getUTCHours(),
+        nowIso: nowUtc.toISOString(),
+      },
+      sb,
+    );
+    if (ruleVerdict.veto) {
+      console.info(
+        `[autopilot] inventory relocation rule veto on alert ${c.alert_id} (${c.detector_id}/reallocate_inventory): ${ruleVerdict.veto}`,
+      );
+      return { outcome: "skipped", reason: `rule: ${ruleVerdict.veto}` };
+    }
+  }
   const verdict = await checkPriceInventoryGuardrails(
     shopId,
     { kind: "reallocate_inventory", dollarImpactCents, inventoryUnitsMoved },
@@ -486,10 +660,11 @@ async function tryInventoryRelocation(
   const client = calderynClient(shopId);
   const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
   const triggerReason = autopilotReason("Auto move inventory", c.detector_id, c.dollar_impact);
-  // The executor re-derives the transfer plan + sku_id from the alert and THROWS
-  // on any failure (caught by the loop and counted as `failed`), so a return here
-  // is a landed stock move.
-  await executeInventoryAlertAction({
+  // The executor re-derives the transfer plan + sku_id from the alert. It
+  // throws on pre-audit faults, but a platform failure it recorded RESOLVES
+  // with { outcome } — never notify or count a non-landed stock move as acted,
+  // and record the terminal failure as a beta signal (§7).
+  const invRes = await executeInventoryAlertAction({
     client,
     admin,
     sb,
@@ -500,6 +675,17 @@ async function tryInventoryRelocation(
     actor: "autopilot",
     triggerReason,
   });
+  if (invRes.outcome !== "succeeded") {
+    if (invRes.outcome === "failed") {
+      notifyPromises.push(
+        recordActionFailure(shopId, c.detector_id, "reallocate_inventory", sb, {
+          auditId: invRes.auditId,
+          alertId: c.alert_id,
+        }),
+      );
+    }
+    return { outcome: "failed", reason: `executor outcome: ${invRes.outcome}` };
+  }
   notifyPromises.push(
     notifyAutonomousAction(
       { shopId, actionDescription: `Moved inventory${c.sku ? ` for SKU ${c.sku}` : ""}` },
@@ -738,10 +924,27 @@ export async function runAutopilotForShop(
   // Bucket an executor's REAL outcome: only a landed "succeeded" is an action
   // taken. "failed"/"retrying" (platform error, or parked for the retry cron)
   // did NOT change a budget this run, so they must not inflate `acted`.
-  const record = (c: Candidate, kind: ExecutableKind, outcome: ExecutedAudit["outcome"]) =>
-    outcome === "succeeded"
-      ? decide(c, kind, "acted", kind)
-      : decide(c, kind, "failed", `executor outcome: ${outcome}`);
+  // A terminal "failed" is also a negative calibration signal (spec §7: the
+  // pair proposed an action the platform could not land → beta +1); "retrying"
+  // is transient and records nothing yet. Keyed on the audit id so an
+  // idempotency REPLAY of the same failed audit on a later tick never
+  // double-bumps beta. Collected into notifyPromises so the write is awaited
+  // before the serverless response flushes.
+  const record = (c: Candidate, kind: ExecutableKind, res: ExecutedAudit) => {
+    if (res.outcome === "succeeded") {
+      decide(c, kind, "acted", kind);
+      return;
+    }
+    decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
+    if (res.outcome === "failed") {
+      notifyPromises.push(
+        recordActionFailure(shopId, c.detector_id, kind, sb, {
+          auditId: res.id,
+          alertId: c.alert_id,
+        }),
+      );
+    }
+  };
   for (const c of ordered) {
     // Isolate each candidate. The guardrail read and both executors THROW on
     // per-campaign faults — an ownership mismatch, a DB hiccup, or a
@@ -769,6 +972,10 @@ export async function runAutopilotForShop(
       if (relocation.outcome === "skipped") {
         skippedMoves += 1;
         decide(c, null, "skipped", relocation.reason, "none");
+        continue;
+      }
+      if (relocation.outcome === "failed") {
+        decide(c, null, "failed", relocation.reason);
         continue;
       }
       // relocation.outcome === "fell_through": not an inventory move — proceed.
@@ -800,6 +1007,13 @@ export async function runAutopilotForShop(
         // "none").
         skippedMoves += 1;
         decide(c, null, "skipped", rem.reason, "none");
+        continue;
+      }
+      if (rem.outcome === "failed") {
+        // The remediation executor was called but the action did not land
+        // (platform error / parked as retrying). Fully resolved — never fall
+        // through to the legacy path, which would double-evaluate the alert.
+        decide(c, null, "failed", rem.reason);
         continue;
       }
       // rem.outcome === "fell_through": defer to the legacy campaign logic so an
@@ -951,7 +1165,7 @@ export async function runAutopilotForShop(
           },
           sb,
         );
-        record(c, kind, res.outcome);
+        record(c, kind, res);
         if (res.outcome === "succeeded") {
           notifyPromises.push(
             notifyAutonomousAction(
@@ -1014,7 +1228,7 @@ export async function runAutopilotForShop(
           },
           sb,
         );
-        record(c, kind, res.outcome);
+        record(c, kind, res);
         if (res.outcome === "succeeded") {
           // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
           notifyPromises.push(
@@ -1144,6 +1358,17 @@ export async function runAutopilotForShop(
               res.outcome === "succeeded"
                 ? decide(c, kind, "acted", "reallocate_budget")
                 : decide(c, kind, "failed", `executor outcome: ${res.outcome}`);
+              // Terminal failure is a beta signal on the pair the action is
+              // CALIBRATED under — reallocate_budget, the same pair the
+              // isGraduated gate above read (this sub-branch bypasses record()).
+              if (res.outcome === "failed") {
+                notifyPromises.push(
+                  recordActionFailure(shopId, c.detector_id, "reallocate_budget", sb, {
+                    auditId: res.id,
+                    alertId: c.alert_id,
+                  }),
+                );
+              }
               if (res.outcome === "succeeded") {
                 // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
                 notifyPromises.push(
@@ -1238,7 +1463,7 @@ export async function runAutopilotForShop(
         },
         sb,
       );
-      record(c, kind, res.outcome);
+      record(c, kind, res);
       if (res.outcome === "succeeded") {
         // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
         const actionLabel = kind === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";

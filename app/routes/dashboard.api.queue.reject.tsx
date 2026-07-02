@@ -14,6 +14,7 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recommendedAction } from "~/lib/labels";
+import { muteConfirmationMessage } from "~/lib/calibration/mute-guard";
 import type { RejectReason } from "~/lib/types";
 
 const REJECT_REASONS: RejectReason[] = [
@@ -54,6 +55,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!actionKind) {
       throw jsonError(400, "no_recommended_action", "No recommended action for this alert");
+    }
+
+    // I8 interstitial: muting a shipped no-brainer requires an explicit second
+    // confirmation — a 409 hands the warning to the picker, which re-posts
+    // with confirmed=true. Enforced at the contract level so every surface
+    // behaves identically.
+    if (reason === "i_handle_this" && body.confirmed !== true) {
+      const warning = muteConfirmationMessage(detectorId, actionKind);
+      if (warning) throw jsonError(409, "confirm_required", warning);
     }
 
     // Record rejection — executes NOTHING; purely calibration bookkeeping.

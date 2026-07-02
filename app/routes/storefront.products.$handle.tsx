@@ -7,6 +7,7 @@ import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { buildCart, addCartLine } from "~/lib/order/cart.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
@@ -36,9 +37,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const doc = await loadPublishedDoc(shopId, "pdp");
   const record = { product };
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
+  const track = await trackStorefrontEvent(request, shopId, "page_view", {
+    productId: product.id,
+  });
   // The demo shell has no shop row behind it, so carts (uuid shop_id) can't exist
   // for it — the PDP renders browse-only instead of offering a cart that 500s.
-  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID });
+  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID }, { headers: track });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -70,6 +74,11 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   // addCartLine snapshots price/currency/title and increments on a repeat variant.
   await addCartLine(shopId, cartId, variantId, 1);
+
+  const track = await trackStorefrontEvent(request, shopId, "cart_add", {
+    productId: variantId,
+  });
+  for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 
   // redirect after the mutation to avoid a double-submit on refresh.
   return redirect("/storefront/cart", { headers });

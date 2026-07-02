@@ -7,6 +7,7 @@
 // This module is client-only: it uses fetch, crypto.randomUUID(), and
 // location.origin. It MUST NOT import any *.server.ts module.
 
+import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type {
   Alert,
   AuditEntry,
@@ -790,15 +791,34 @@ export async function undoAudit(auditId: string): Promise<{ auditId: string }> {
   return { auditId: data.audit_id };
 }
 
+export type { LiveAnalyticsSnapshot };
+
+export async function fetchLiveAnalytics(): Promise<LiveAnalyticsSnapshot> {
+  return apiGet<LiveAnalyticsSnapshot>("/dashboard/api/analytics-live");
+}
+
 export async function getRealtimeToken(): Promise<{
   token: string;
+  url: string;
+  publishableKey: string;
+  shopId: string;
   expiresAt: string;
 } | null> {
   try {
-    const data = await apiGet<{ token: string; expires_at: string }>(
-      "/dashboard/api/realtime-token",
-    );
-    return { token: data.token, expiresAt: data.expires_at };
+    const data = await apiGet<{
+      token: string;
+      url: string;
+      publishable_key: string;
+      shop_id: string;
+      expires_at: string;
+    }>("/dashboard/api/realtime-token");
+    return {
+      token: data.token,
+      url: data.url,
+      publishableKey: data.publishable_key,
+      shopId: data.shop_id,
+      expiresAt: data.expires_at,
+    };
   } catch (err) {
     if (err instanceof DashboardApiError && err.status === 503) return null;
     throw err;
@@ -901,11 +921,14 @@ export interface RejectResult {
 
 /** Reject a proposal for an alert with a plain-language reason.
  *  Re-derives detector/action server-side from the trusted alert.
- *  NEVER executes any action. Returns the reject receipt (reflection + trust delta). */
+ *  NEVER executes any action. Returns the reject receipt (reflection + trust delta).
+ *  Muting a shipped no-brainer (reason i_handle_this) 409s with code
+ *  "confirm_required" until re-sent with confirmed=true — the I8 interstitial. */
 export async function rejectProposal(input: {
   alertId: string;
   reason: RejectReason;
   note?: string;
+  confirmed?: boolean;
 }): Promise<RejectResult> {
   return apiSend<RejectResult>("POST", "/dashboard/api/queue/reject", input);
 }

@@ -25,8 +25,13 @@ import type { ActionKind, RejectReason } from "~/lib/types";
    The view posts to whatever route mounts it, so this mirrors that contract. */
 type ToggleResult = { ok: true; enabled: boolean } | { error: string };
 
-/* Reply shape of /app/alerts/$id for an approve (kind) or deny (intent=reject). */
-type AlertActionResult = { ok: boolean; toast?: { message: string; isError?: boolean } };
+/* Reply shape of /app/alerts/$id for an approve (kind) or deny (intent=reject).
+   A 409 CONFIRM_REQUIRED error carries the I8 mute-interstitial warning. */
+type AlertActionResult = {
+  ok: boolean;
+  toast?: { message: string; isError?: boolean };
+  error?: { code: string; message: string };
+};
 
 /* Quick deny reasons → real RejectReason codes (teaches the engine the same way
    the alert page's full picker does). */
@@ -320,7 +325,7 @@ function TraceRow({ t, selected, onSelect }: { t: TraceEventVM; selected: boolea
 /* A flagged proposal in the log: NEEDS YOU, with inline approve / deny. Approve
    executes via /app/alerts/$id; deny records a rejection (teaches, runs nothing).
    A real success removes the row, then the parent revalidates. */
-type PendingRowState = "idle" | "denying";
+type PendingRowState = "idle" | "denying" | "confirming_mute";
 
 function PendingRow({
   p,
@@ -336,8 +341,18 @@ function PendingRow({
   const fetcher = useFetcher<AlertActionResult>();
   const [state, setState] = useState<PendingRowState>("idle");
   const busy = fetcher.state !== "idle";
+  // I8 mute interstitial: the 409 CONFIRM_REQUIRED reply is a confirm step,
+  // not an error — it must never render on the generic error line.
+  const confirmRequired =
+    fetcher.state === "idle" &&
+    fetcher.data?.ok === false &&
+    fetcher.data.error?.code === "CONFIRM_REQUIRED";
+  const muteWarning = confirmRequired ? fetcher.data?.error?.message ?? null : null;
+  useEffect(() => {
+    if (confirmRequired) setState("confirming_mute");
+  }, [confirmRequired]);
   const error =
-    fetcher.state === "idle" && fetcher.data && fetcher.data.ok === false
+    fetcher.state === "idle" && fetcher.data && fetcher.data.ok === false && !confirmRequired
       ? fetcher.data.toast?.message ?? "Couldn't save that. Try the Alerts page."
       : null;
 
@@ -355,8 +370,11 @@ function PendingRow({
   const approve = () => {
     fetcher.submit({ kind: p.actionKind }, { method: "post", action: `/app/alerts/${p.alertId}` });
   };
-  const deny = (reason: RejectReason) => {
-    fetcher.submit({ intent: "reject", reason }, { method: "post", action: `/app/alerts/${p.alertId}` });
+  const deny = (reason: RejectReason, confirmed = false) => {
+    fetcher.submit(
+      { intent: "reject", reason, confirmed: String(confirmed) },
+      { method: "post", action: `/app/alerts/${p.alertId}` },
+    );
   };
 
   return (
@@ -397,6 +415,25 @@ function PendingRow({
                 {r.label}
               </button>
             ))}
+          </span>
+        </div>
+      )}
+
+      {state === "confirming_mute" && (
+        <div className="engx-deny-why">
+          <span className="engx-deny-why-lab">{muteWarning ?? "Take over this protection?"}</span>
+          <span className="engx-deny-chips">
+            <button
+              type="button"
+              className="engx-deny-chip"
+              disabled={busy}
+              onClick={() => deny("i_handle_this", true)}
+            >
+              {busy ? "Saving…" : "Yes, I'll handle it myself"}
+            </button>
+            <button type="button" className="engx-deny-chip" disabled={busy} onClick={() => setState("denying")}>
+              Keep protecting me
+            </button>
           </span>
         </div>
       )}

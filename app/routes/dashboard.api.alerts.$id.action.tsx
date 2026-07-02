@@ -25,6 +25,7 @@ import { executeCreatePoDraft } from "~/lib/actions/po-action.server";
 import { getSupabase } from "~/lib/supabase.server";
 import type { ActionKind } from "~/lib/types";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { recordActionFailure } from "~/lib/calibration/failure.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 
 const INVENTORY_KINDS: InventoryAlertActionKind[] = ["reallocate_inventory", "snooze_alert"];
@@ -52,13 +53,28 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const sb = getSupabase();
 
   return dashboardJson(async () => {
-    const recordCalibration = async (kindToRecord: ActionKind, outcome: string): Promise<ApproveReceipt | undefined> => {
-      if (kindToRecord === "snooze_alert" || outcome !== "succeeded") return undefined;
+    const recordCalibration = async (
+      kindToRecord: ActionKind,
+      outcome: string,
+      auditId?: string,
+    ): Promise<ApproveReceipt | undefined> => {
+      if (kindToRecord === "snooze_alert") return undefined;
+      // +alpha on success, +beta on a terminal platform failure (spec §7,
+      // once-per-audit via the failure ledger); `retrying` records nothing yet.
+      if (outcome !== "succeeded" && outcome !== "failed") return undefined;
       const alert = await client.alerts.get(alertId).catch(() => null);
       if (!alert) return undefined;
-      return recordApproval(session.shopId, alert.detector_id, kindToRecord, sb).catch(
-        () => ZERO_APPROVE_RECEIPT,
-      );
+      if (outcome === "failed") {
+        await recordActionFailure(session.shopId, alert.detector_id, kindToRecord, sb, {
+          auditId,
+          alertId,
+        });
+        return undefined;
+      }
+      return recordApproval(session.shopId, alert.detector_id, kindToRecord, sb, {
+        auditId,
+        alertId,
+      }).catch(() => ZERO_APPROVE_RECEIPT);
     };
 
     if (kind === "create_po_draft") {
@@ -76,7 +92,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         unitCost: String(body.po_unit_cost ?? ""),
         signal: request.signal,
       });
-      const calibration = await recordCalibration(kind, outcome);
+      const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "reallocate_spend_sku") {
@@ -89,7 +105,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         actor: "merchant:web-dashboard",
         signal: request.signal,
       });
-      const calibration = await recordCalibration(kind, outcome);
+      const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (!session.shopDomain) {
@@ -113,7 +129,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         actor: "merchant:web-dashboard",
         signal: request.signal,
       });
-      const calibration = await recordCalibration(kind, outcome);
+      const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "discontinue_sku") {
@@ -127,7 +143,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         idempotencyKey,
         signal: request.signal,
       });
-      const calibration = await recordCalibration(kind, outcome);
+      const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     const { auditId, outcome, acknowledged } = await executeInventoryAlertAction({
@@ -144,7 +160,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Calibration signal: bump approval confidence for the (detector, action) pair.
     // Only for real executed actions (snooze is not an approval of a fix).
     // Guarded: a signal failure must NEVER affect the action result.
-    const calibration = await recordCalibration(kind, outcome);
+    const calibration = await recordCalibration(kind, outcome, auditId);
 
     return { audit_id: auditId, outcome, acknowledged, calibration };
   });

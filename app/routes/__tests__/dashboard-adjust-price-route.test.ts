@@ -88,6 +88,7 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
       "margin_erosion",
       "adjust_price",
       expect.anything(),
+      expect.objectContaining({ auditId: "audit-px-1", alertId: "a1" }),
     );
   });
 
@@ -146,6 +147,7 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
       "reorder_timing",
       "create_po_draft",
       expect.anything(),
+      expect.objectContaining({ auditId: "audit-po-1", alertId: "a1" }),
     );
   });
 });
@@ -180,6 +182,7 @@ describe('POST /dashboard/api/alerts/:id/action — reallocate_spend_sku ("Move 
       "ad_tax_overload",
       "reallocate_spend_sku",
       expect.anything(),
+      expect.objectContaining({ auditId: "audit-rs-1", alertId: "a1" }),
     );
   });
 });

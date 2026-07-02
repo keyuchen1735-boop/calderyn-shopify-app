@@ -35,6 +35,8 @@ import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server
 import type { RegionCode } from "~/lib/ads/actions";
 import { resolveShopId, getSupabase } from "~/lib/supabase.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { recordActionFailure } from "~/lib/calibration/failure.server";
+import { muteConfirmationMessage } from "~/lib/calibration/mute-guard";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 // Google/TikTok execute live only once OAuth has stored credentials; if the adapter
 // resolves to null, executeAction records a failed audit with last_error set, and
@@ -225,6 +227,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           message: "No recommended action for this alert.",
         });
       }
+      // I8 interstitial: muting a shipped no-brainer requires an explicit
+      // second confirmation — the 409 hands the warning to the picker, which
+      // re-posts with confirmed=true. Same contract as the dashboard endpoint.
+      if (reason === "i_handle_this" && String(formData.get("confirmed") || "") !== "true") {
+        const warning = muteConfirmationMessage(alert.detector_id, rejectAction);
+        if (warning) {
+          return json<ActionPayload>(
+            { ok: false, error: { code: "CONFIRM_REQUIRED", message: warning } },
+            { status: 409 },
+          );
+        }
+      }
       await client.calibration.recordRejection({
         alertId,
         detectorId: alert.detector_id,
@@ -391,7 +405,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     if (kind === "reallocate_spend_sku") {
       const shopId = await resolveShopId(session.shop);
-      const { outcome } = await executeReallocateSpendSku({
+      const { auditId, outcome } = await executeReallocateSpendSku({
         client,
         sb: getSupabase(),
         shopId,
@@ -402,10 +416,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
+      if (outcome === "failed") {
+        await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
+          auditId,
+          alertId,
+        });
+      }
       return json<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
@@ -423,7 +444,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     if (kind === "discontinue_sku") {
       const shopId = await resolveShopId(session.shop);
-      const { outcome, acknowledged } = await executeDiscontinueAlertAction({
+      const { auditId, outcome, acknowledged } = await executeDiscontinueAlertAction({
         client,
         admin,
         sb: getSupabase(),
@@ -435,10 +456,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
+      if (outcome === "failed") {
+        await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
+          auditId,
+          alertId,
+        });
+      }
       return json<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
@@ -469,7 +497,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
         newPriceCents = Math.round(dollars * 100);
       }
-      const { outcome, acknowledged } = await executeAdjustPriceAlertAction({
+      const { auditId, outcome, acknowledged } = await executeAdjustPriceAlertAction({
         client,
         admin,
         sb: getSupabase(),
@@ -483,10 +511,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const calibration =
         outcome === "succeeded"
-          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase()).catch(
-              () => ZERO_APPROVE_RECEIPT,
-            )
+          ? await recordApproval(shopId, alert.detector_id, kind, getSupabase(), {
+              auditId,
+              alertId,
+            }).catch(() => ZERO_APPROVE_RECEIPT)
           : undefined;
+      if (outcome === "failed") {
+        await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
+          auditId,
+          alertId,
+        });
+      }
       return json<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
@@ -581,16 +616,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       ) {
         successMessage += " — alert couldn't be acknowledged";
       }
-      // Positive calibration signal on success only.
-      // Never blocks the response (recordApproval never throws). Capture the
-      // receipt so the Action Queue can render the approve confirmation +
-      // graduation moment.
+      // Calibration signal: +alpha on success, +beta on a terminal platform
+      // failure (spec §7 — the pair proposed an action the platform could not
+      // land). `retrying` is transient and records nothing yet. Neither call
+      // blocks the response (both never throw). Capture the approve receipt so
+      // the Action Queue can render the confirmation + graduation moment.
       let calibration: ApproveReceipt | undefined;
       if (result.outcome === "succeeded") {
         const sb1 = getSupabase();
-        calibration = await recordApproval(shopId, alert.detector_id, kind, sb1).catch(
-          () => ZERO_APPROVE_RECEIPT,
-        );
+        calibration = await recordApproval(shopId, alert.detector_id, kind, sb1, {
+          auditId: result.id,
+          alertId,
+        }).catch(() => ZERO_APPROVE_RECEIPT);
+      } else if (result.outcome === "failed") {
+        await recordActionFailure(shopId, alert.detector_id, kind, getSupabase(), {
+          auditId: result.id,
+          alertId,
+        });
       }
 
       return json<ActionPayload>({
@@ -628,7 +670,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    await client.actions.execute({
+    const legacyAudit = await client.actions.execute({
       alertId,
       kind,
       params: execParams,
@@ -650,9 +692,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     // Never blocks the action result (recordApproval never throws).
     let calibration: ApproveReceipt | undefined;
     if (kind !== "snooze_alert") {
-      calibration = await recordApproval(shopId, alert.detector_id, kind, sb).catch(
-        () => ZERO_APPROVE_RECEIPT,
-      );
+      calibration = await recordApproval(shopId, alert.detector_id, kind, sb, {
+        auditId: legacyAudit?.id,
+        alertId,
+      }).catch(() => ZERO_APPROVE_RECEIPT);
     }
     return json<ActionPayload>({
       ok: true,

@@ -7,11 +7,13 @@ import {
   fetchShipCost,
   setShipCostMode,
   fetchUnmatchedShipCharges,
+  fetchLearnedRules,
+  undoRule,
   DashboardApiError,
   type UnmatchedShipCharges,
 } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
-import type { GuardrailVM } from "../view-models";
+import type { GuardrailVM, LearnedRuleVM } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
 import { McpGuide } from "../McpGuide";
 import { GuardrailField } from "../GuardrailField";
@@ -180,6 +182,57 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       active = false;
     };
   }, []);
+
+  // Learned calibration rules — what Calderyn learned from this shop's rejects.
+  // Loaded like ship-cost above; removing one hands the decision back (the
+  // suggestion returns to the Action Queue, never silently re-enables autonomy).
+  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[] | null>(null);
+  const [removingRuleId, setRemovingRuleId] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetchLearnedRules()
+      .then((rules) => {
+        if (active) setLearnedRules(rules);
+      })
+      .catch(() => {
+        /* leave null → the section shows its unavailable state */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const removeRule = async (rule: LearnedRuleVM) => {
+    if (removingRuleId) return;
+    setRemovingRuleId(rule.id);
+    try {
+      await undoRule(rule.id);
+      setLearnedRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
+      // Refresh the shell so the Action Queue / Live Engine reflect the
+      // handed-back pair immediately — without this the queue keeps its
+      // pre-undo cache and the toast reads as a lie.
+      app.refresh();
+      app.toast(
+        rule.rule_kind === "muted_pair"
+          ? "Handed back — Calderyn will suggest this again"
+          : "Rule removed — Calderyn will bring this back for approval",
+        "check",
+      );
+    } catch (err) {
+      if (err instanceof DashboardApiError && err.code === "RULE_NOT_FOUND") {
+        // Already removed elsewhere (another tab / the embedded app): treat as
+        // done — drop the dead row instead of re-erroring forever.
+        setLearnedRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
+        app.refresh();
+        app.toast("That rule was already removed", "check");
+        return;
+      }
+      const message = err instanceof DashboardApiError ? err.message : "Couldn't remove that rule.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setRemovingRuleId(null);
+    }
+  };
 
   const commitShipMode = async (mode: string) => {
     if (savingMode || mode === shipMode) return;
@@ -584,6 +637,50 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             }
             onChangeWindow={(next) => commit("business_hours", next, "Business hours updated")}
           />
+        </Card>
+      </section>
+
+      <section>
+        <SectionTitle>Learned rules</SectionTitle>
+        <Card pad={false}>
+          {learnedRules === null ? (
+            <Placeholder
+              icon="shield"
+              title="Loading learned rules"
+              sub="Reading what Calderyn learned from your decisions."
+            />
+          ) : learnedRules.length === 0 ? (
+            <Placeholder
+              icon="shield"
+              title="Nothing learned yet"
+              sub="Reject a suggestion with a reason and the rule Calderyn learns appears here."
+            />
+          ) : (
+            learnedRules.map((r) => (
+              <SettingRow
+                key={r.id}
+                label={r.summary}
+                sub={`Learned ${new Date(r.created_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })} — remove to hand the decision back`}
+              >
+                <button
+                  type="button"
+                  className="cd-btn"
+                  disabled={removingRuleId !== null}
+                  onClick={() => removeRule(r)}
+                >
+                  {removingRuleId === r.id
+                    ? "Removing…"
+                    : r.rule_kind === "muted_pair"
+                      ? "Hand it back"
+                      : "Remove rule"}
+                </button>
+              </SettingRow>
+            ))
+          )}
         </Card>
       </section>
 

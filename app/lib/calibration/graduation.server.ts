@@ -5,7 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "../types";
-import { graduationVerdict, GRADUATABLE, MIN_OUTCOMES } from "./graduation";
+import { graduationVerdict, GRADUATABLE, MIN_OUTCOMES, effectiveGraduationThreshold } from "./graduation";
 import { pairConfidence, actionTier } from "./confidence";
 import { HAS_UNDO_BRANCH } from "./undo-branches";
 
@@ -128,7 +128,7 @@ export async function countNearGraduation(
       sb
         .from("pair_calibration")
         .select(
-          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign",
+          "detector_id, action_kind, alpha, beta, clean_approvals, consecutive_clean_approvals, consecutive_undos, merchant_disabled, graduation_threshold, graduated, net_positive_outcomes, last_outcome_sign, last_detection",
         )
         .eq("shop_id", shopId),
       sb
@@ -174,12 +174,17 @@ export async function countNearGraduation(
       const tier = actionTier(action);
       if (Number(row.net_positive_outcomes ?? 0) < MIN_OUTCOMES[tier]) continue;
       if (Number(row.last_outcome_sign ?? 0) < 0) continue;
-      const threshold = Number(row.graduation_threshold ?? 100) || 100;
+      // The tier-floored bar the pair must actually clear (spec §3: 75/88/95).
+      const threshold = effectiveGraduationThreshold(action, Number(row.graduation_threshold ?? 0));
       const conf = pairConfidence(
         detector,
         action,
         { alpha: Number(row.alpha ?? 0), beta: Number(row.beta ?? 0) },
         null,
+        {
+          detection: row.last_detection == null ? null : Number(row.last_detection),
+          consecutiveCleanApprovals: Number(row.consecutive_clean_approvals ?? 0),
+        },
       );
       if (conf >= threshold - NEAR_GRAD_WINDOW && conf < threshold) count++;
     }
