@@ -11,6 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   RETENTION_RAW_WEBHOOK_DAYS,
+  RETENTION_STOREFRONT_EVENT_DAYS,
   UNINSTALL_GRACE_DAYS,
   runGdprAndRetentionSweep,
 } from "../sweep.server";
@@ -21,6 +22,9 @@ describe("constants", () => {
   });
   it("raw webhook retention window is 30 days", () => {
     expect(RETENTION_RAW_WEBHOOK_DAYS).toBe(30);
+  });
+  it("storefront event retention window is 30 days", () => {
+    expect(RETENTION_STOREFRONT_EVENT_DAYS).toBe(30);
   });
 });
 
@@ -65,6 +69,17 @@ describe("runGdprAndRetentionSweep", () => {
       (c) => c.table === "ad_click_ref" && c.kind === "lt",
     );
     expect(adClickRefTrim).toHaveLength(1);
+  });
+
+  it("trims storefront_event rows older than the retention window", async () => {
+    const { sb, deleteCalls } = makeFakeSb({ candidates: [], rawDeleted: 0 });
+    const result = await runGdprAndRetentionSweep(sb);
+    // Exactly one lt-delete on storefront_event for created_at, counted.
+    const trim = deleteCalls.filter(
+      (c) => c.table === "storefront_event" && c.kind === "lt",
+    );
+    expect(trim).toHaveLength(1);
+    expect(result.storefrontEventRowsDeleted).toBe(0);
   });
 
   it("records a failed shop (does not throw or silently pass) and keeps going", async () => {
