@@ -296,7 +296,13 @@ export interface LearnedRuleVM {
   id: string;
   detector_id: string;
   action_kind: string;
-  rule_kind: "pair_dollar_cap" | "pair_probation_until" | "muted_pair";
+  rule_kind:
+    | "pair_dollar_cap"
+    | "pair_probation_until"
+    | "muted_pair"
+    | "pair_blackout_hours"
+    | "pair_min_spend"
+    | "pair_mu_override";
   summary: string;
   created_at: string;
 }
