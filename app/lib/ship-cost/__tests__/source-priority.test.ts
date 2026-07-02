@@ -16,8 +16,14 @@ interface UpdateRecord {
   filters: Record<string, unknown>;
 }
 
+interface RpcRecord {
+  fn: string;
+  args: Record<string, unknown>;
+}
+
 function makeSupabaseFake(tables: Record<string, any[]>) {
   const updates: UpdateRecord[] = [];
+  const rpcs: RpcRecord[] = [];
 
   function makeChain(table: string, rows: any[]) {
     let selectedRows = rows;
@@ -66,15 +72,28 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
   }
 
   return {
-    sb: { from: (table: string) => makeChain(table, tables[table] ?? []) } as any,
+    sb: {
+      from: (table: string) => makeChain(table, tables[table] ?? []),
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        rpcs.push({ fn, args });
+        return Promise.resolve({ data: null, error: null });
+      },
+    } as any,
     updates,
+    rpcs,
   };
 }
 
-function orderUpdate(updates: UpdateRecord[], id: string): UpdateRecord {
-  const u = updates.find((x) => x.table === "order_fact" && x.filters.id === id);
-  if (!u) throw new Error(`no order_fact update for ${id}`);
-  return u;
+// The runner lands order_fact writes through batched ship_cost_apply_order_updates
+// RPC calls (one round-trip per batch, not per row) — flatten them back to the
+// per-order row for assertion.
+function orderWrite(rpcs: RpcRecord[], id: string): any {
+  const rows = rpcs
+    .filter((c) => c.fn === "ship_cost_apply_order_updates")
+    .flatMap((c: any) => c.args.p_rows as any[]);
+  const row = rows.find((r) => r.id === id);
+  if (!row) throw new Error(`no ship-cost write for ${id}`);
+  return row;
 }
 
 describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)", () => {
@@ -100,9 +119,9 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
     };
     const a = makeSupabaseFake(tablesUploadFirst);
     await runShipCostResolution(a.sb, "s1", { shopCountry: "US" });
-    const u1 = orderUpdate(a.updates, "o1");
-    expect(u1.payload.ship_cost_source).toBe("actual_invoice");
-    expect(u1.payload.ship_cost_cents).toBe(1250);
+    const u1 = orderWrite(a.rpcs, "o1");
+    expect(u1.ship_cost_source).toBe("actual_invoice");
+    expect(u1.ship_cost_cents).toBe(1250);
 
     // Same data, connector line FIRST → identical result (proves order-independence).
     const tablesConnectorFirst = {
@@ -117,8 +136,8 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
     };
     const b = makeSupabaseFake(tablesConnectorFirst);
     await runShipCostResolution(b.sb, "s1", { shopCountry: "US" });
-    const u2 = orderUpdate(b.updates, "o1");
-    expect(u2.payload.ship_cost_cents).toBe(1250);
+    const u2 = orderWrite(b.rpcs, "o1");
+    expect(u2.ship_cost_cents).toBe(1250);
   });
 
   it("upload OUTRANKS typed for the same order (precedence connector > upload > typed)", async () => {
@@ -140,9 +159,9 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
       order_line_fact: [],
       sku_pnl: [],
     };
-    const { sb, updates } = makeSupabaseFake(tables);
+    const { sb, rpcs } = makeSupabaseFake(tables);
     await runShipCostResolution(sb, "s1", { shopCountry: "US" });
-    expect(orderUpdate(updates, "o1").payload.ship_cost_cents).toBe(900);
+    expect(orderWrite(rpcs, "o1").ship_cost_cents).toBe(900);
   });
 
   it("SUMS multiple connector lines for one order (one-line-per-charge model)", async () => {
@@ -163,11 +182,11 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
       order_line_fact: [],
       sku_pnl: [],
     };
-    const { sb, updates } = makeSupabaseFake(tables);
+    const { sb, rpcs } = makeSupabaseFake(tables);
     await runShipCostResolution(sb, "s1", { shopCountry: "US" });
-    const u = orderUpdate(updates, "o1");
-    expect(u.payload.ship_cost_source).toBe("actual_invoice");
-    expect(u.payload.ship_cost_cents).toBe(1251);
+    const u = orderWrite(rpcs, "o1");
+    expect(u.ship_cost_source).toBe("actual_invoice");
+    expect(u.ship_cost_cents).toBe(1251);
 
     // Order-independence: reversing the row order yields the same sum.
     const reversed = {
@@ -182,7 +201,7 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
     };
     const r = makeSupabaseFake(reversed);
     await runShipCostResolution(r.sb, "s1", { shopCountry: "US" });
-    expect(orderUpdate(r.updates, "o1").payload.ship_cost_cents).toBe(1251);
+    expect(orderWrite(r.rpcs, "o1").ship_cost_cents).toBe(1251);
   });
 
   it("SAME upload source keeps last-write-wins (unchanged pre-Phase-3 behavior)", async () => {
@@ -201,9 +220,9 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
       order_line_fact: [],
       sku_pnl: [],
     };
-    const { sb, updates } = makeSupabaseFake(tables);
+    const { sb, rpcs } = makeSupabaseFake(tables);
     await runShipCostResolution(sb, "s1", { shopCountry: "US" });
-    expect(orderUpdate(updates, "o1").payload.ship_cost_cents).toBe(222);
+    expect(orderWrite(rpcs, "o1").ship_cost_cents).toBe(222);
   });
 
   it("a manual override still wins over ANY invoice line (resolver tier order intact)", async () => {
@@ -219,10 +238,10 @@ describe("runShipCostResolution — source-priority reconciliation (Phase 3 #1)"
       order_line_fact: [],
       sku_pnl: [],
     };
-    const { sb, updates } = makeSupabaseFake(tables);
+    const { sb, rpcs } = makeSupabaseFake(tables);
     await runShipCostResolution(sb, "s1", { shopCountry: "US" });
-    const u = orderUpdate(updates, "o1");
-    expect(u.payload.ship_cost_source).toBe("manual");
-    expect(u.payload.ship_cost_cents).toBe(555);
+    const u = orderWrite(rpcs, "o1");
+    expect(u.ship_cost_source).toBe("manual");
+    expect(u.ship_cost_cents).toBe(555);
   });
 });
