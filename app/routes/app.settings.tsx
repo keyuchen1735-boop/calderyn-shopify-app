@@ -53,7 +53,7 @@ import {
 } from "~/lib/integrations";
 import { GuardrailMeter } from "~/components/calderyn";
 import { McpConnectGuide } from "~/components/McpConnectGuide";
-import type { GuardrailConfig, Integration } from "~/lib/types";
+import type { GuardrailConfig, Integration, LearnedRule } from "~/lib/types";
 import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
 import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "~/lib/ship-cost/inputs.server";
 import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
@@ -294,6 +294,8 @@ type LoaderPayload = {
   shipMode: string;
   missingWeightPct: number;
   unmatchedCharges: UnmatchedCharges;
+  /** Active learned calibration rules (what Calderyn learned from your rejects). */
+  learnedRules: LearnedRule[];
   /** Shopify-admin deep link the Uninstall button opens at the top level. */
   uninstallUrl: string;
 };
@@ -341,6 +343,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const missingWeight = missingWeightPct(
       (orderRows ?? []).map((o: { grams_sum: number | null }) => ({ gramsSum: o.grams_sum ?? null })),
     );
+    // Best-effort: a learned-rules read failure must not take Settings down —
+    // the section just renders its empty state.
+    let learnedRules: LearnedRule[] = [];
+    try {
+      learnedRules = await client.calibration.learnedRules();
+    } catch (rulesErr) {
+      console.error("[settings] learned-rules read failed", rulesErr);
+    }
     return json<LoaderPayload>({
       guardrails,
       integrations,
@@ -349,6 +359,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shipMode,
       missingWeightPct: missingWeight,
       unmatchedCharges,
+      learnedRules,
       uninstallUrl,
     });
   } catch (err) {
@@ -361,6 +372,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shipMode: "auto",
       missingWeightPct: 0,
       unmatchedCharges: { count: 0, items: [] },
+      learnedRules: [],
       uninstallUrl,
     });
   }
@@ -483,6 +495,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       await client.guardrails.update(patch, request.signal);
       return json<ActionPayload>({ ok: true, toast: { message: "Guardrails updated" } });
+    }
+
+    if (intent === "undo_learned_rule") {
+      // "Hand it back": deactivate a learned rule (and clear the mute flag for
+      // muted pairs — the facade pairs the two writes). Validated at the
+      // boundary; the facade scopes the write to the session's shop. ruleKind
+      // is display-only (toast copy) — the facade re-reads the real kind for
+      // every write decision.
+      const ruleId = String(formData.get("ruleId") || "").trim();
+      const ruleKind = String(formData.get("ruleKind") || "").trim();
+      if (!ruleId) {
+        return json<ActionPayload>(
+          {
+            ok: false,
+            error: { code: "MISSING_RULE_ID", message: "Missing rule." },
+            toast: { message: "Missing rule", isError: true },
+          },
+          { status: 400 },
+        );
+      }
+      await client.calibration.undoRule(ruleId);
+      return json<ActionPayload>({
+        ok: true,
+        toast: {
+          // Same meaning as the dashboard surface's confirmations (parity).
+          message:
+            ruleKind === "muted_pair"
+              ? "Handed back — Calderyn will suggest this again"
+              : "Rule removed — Calderyn will bring this back for approval",
+        },
+      });
     }
 
     if (intent === "connect_integration") {
@@ -705,7 +748,7 @@ const SETTINGS_TABS: { key: SettingsTab; label: string }[] = [
 
 export default function Settings() {
   const navigate = useEmbeddedNavigate();
-  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges, uninstallUrl } =
+  const { guardrails, integrations, consent, error, shipMode, missingWeightPct: missingWeight, unmatchedCharges, learnedRules, uninstallUrl } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   useActionToast(actionData);
@@ -775,15 +818,18 @@ export default function Settings() {
             title="Guardrails"
             description="The limits Calderyn always respects. It never spends or changes more than you allow here — and you can pause everything anytime."
           >
-            {guardrails ? (
-              <GuardrailsCard guardrails={guardrails} />
-            ) : (
-              <Card>
-                <Text as="p" tone="subdued">
-                  Guardrails are unavailable.
-                </Text>
-              </Card>
-            )}
+            <BlockStack gap="400">
+              {guardrails ? (
+                <GuardrailsCard guardrails={guardrails} />
+              ) : (
+                <Card>
+                  <Text as="p" tone="subdued">
+                    Guardrails are unavailable.
+                  </Text>
+                </Card>
+              )}
+              <LearnedRulesCard rules={learnedRules} />
+            </BlockStack>
           </SettingsSection>
         )}
 
@@ -1260,6 +1306,68 @@ function GuardrailsCard({ guardrails }: { guardrails: GuardrailConfig }) {
             </InlineStack>
           </BlockStack>
         </fetcher.Form>
+      </BlockStack>
+    </Card>
+  );
+}
+
+/** What Calderyn learned from your rejections, in plain language — visible,
+ *  attributable, and undoable (spec §7). Removing a rule hands the decision
+ *  back: the suggestion returns to the Action Queue for approval; it never
+ *  silently re-enables unattended autonomy. */
+function LearnedRulesCard({ rules }: { rules: LearnedRule[] }) {
+  const fetcher = useFetcher<ActionPayload>();
+  const busy = fetcher.state !== "idle";
+  useActionToast(fetcher.data ?? undefined);
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">
+          Learned rules
+        </Text>
+        <Text as="p" tone="subdued" variant="bodySm">
+          When you reject a suggestion, Calderyn turns your reason into a rule and follows it.
+          Remove a rule any time to hand the decision back.
+        </Text>
+        {rules.length === 0 ? (
+          <Text as="p" tone="subdued" variant="bodySm">
+            Nothing learned yet — reject a suggestion with a reason and the rule appears here.
+          </Text>
+        ) : (
+          <BlockStack gap="200">
+            {rules.map((r) => (
+              <div key={r.id} className="setx-row-between">
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodyMd">
+                    {r.summary}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Learned{" "}
+                    {new Date(r.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </Text>
+                </BlockStack>
+                <fetcher.Form method="post">
+                  <input type="hidden" name="intent" value="undo_learned_rule" />
+                  <input type="hidden" name="ruleId" value={r.id} />
+                  <input type="hidden" name="ruleKind" value={r.rule_kind} />
+                  <Button
+                    submit
+                    // Spinner only on the row being removed; every row stays
+                    // disabled during the submit so a second undo can't race.
+                    loading={busy && String(fetcher.formData?.get("ruleId") ?? "") === r.id}
+                    disabled={busy}
+                  >
+                    {r.rule_kind === "muted_pair" ? "Hand it back" : "Remove rule"}
+                  </Button>
+                </fetcher.Form>
+              </div>
+            ))}
+          </BlockStack>
+        )}
       </BlockStack>
     </Card>
   );
