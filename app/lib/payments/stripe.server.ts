@@ -6,6 +6,7 @@ import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
 import { getStripe } from "./stripe-client.server";
+import { destinationParamsFor, syncAccountStatus } from "./connect.server";
 
 export { getStripe };
 
@@ -31,12 +32,37 @@ export async function createPaymentIntent(
     throw new Error(`unsupported currency: ${currency}`);
   }
 
-  const pi = await getStripe().paymentIntents.create({
+  const dest = await destinationParamsFor(shopId, amountCents);
+  const base = {
     amount: amountCents,
     currency: cur,
-    automatic_payment_methods: { enabled: true },
+    automatic_payment_methods: { enabled: true as const },
     metadata: { shop_id: shopId, order_ref: orderRef ?? "" },
-  });
+  };
+
+  let routedAccountId = dest.stripeAccountId;
+  let appliedFeeCents = dest.applicationFeeCents;
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await getStripe().paymentIntents.create({ ...base, ...dest.params });
+  } catch (err) {
+    // Destination-specific rejection (half-onboarded/restricted account) must not
+    // break checkout: retry as a platform charge (= today's behavior, manually
+    // settleable) and re-sync the stale flags. Anything else propagates (rule 12).
+    if (routedAccountId && (err as { type?: string }).type === "StripeInvalidRequestError") {
+      console.warn(
+        `[stripe-connect] destination charge for shop ${shopId} rejected (${(err as Error).message}); falling back to platform charge`,
+      );
+      void syncAccountStatus(shopId).catch((e) =>
+        console.warn(`[stripe-connect] status re-sync failed for shop ${shopId}: ${(e as Error).message}`),
+      );
+      routedAccountId = null;
+      appliedFeeCents = null;
+      pi = await getStripe().paymentIntents.create(base);
+    } else {
+      throw err;
+    }
+  }
   if (!pi.client_secret) {
     throw new Error(`Stripe PaymentIntent ${pi.id} returned no client_secret`);
   }
@@ -48,6 +74,8 @@ export async function createPaymentIntent(
     amount_cents: amountCents,
     currency: cur,
     status: pi.status,
+    stripe_account_id: routedAccountId,
+    application_fee_cents: appliedFeeCents,
   });
   if (error) throw error;
 
