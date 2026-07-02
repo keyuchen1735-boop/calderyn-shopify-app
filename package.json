@@ -29,9 +29,9 @@
     "@anthropic-ai/sdk": "^0.100.1",
     "@gsap/react": "^2.1.2",
     "@prisma/client": "^6.19.3",
-    "@remix-run/node": "2.16.7",
-    "@remix-run/react": "2.16.7",
-    "@remix-run/serve": "2.16.7",
+    "@remix-run/node": "2.17.5",
+    "@remix-run/react": "2.17.5",
+    "@remix-run/serve": "2.17.5",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^12.27.0",
     "@shopify/shopify-app-remix": "^4.2.0",
@@ -75,7 +75,11 @@
     "vitest": "^4.1.7"
   },
   "overrides": {
-    "@remix-run/server-runtime": "2.16.7",
+    "@remix-run/server-runtime": "2.17.5",
+    "@remix-run/node": "2.17.5",
+    "@remix-run/router": "1.23.3",
+    "react-router": "6.30.4",
+    "react-router-dom": "6.30.4",
     "undici": "6.27.0",
     "@remix-run/dev": {
       "esbuild": "0.25.12",
