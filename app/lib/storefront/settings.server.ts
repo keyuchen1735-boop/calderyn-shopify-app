@@ -31,7 +31,16 @@ export async function getStoreSettings(shopId: string): Promise<StoreSettings> {
   const { data, error } = await getSupabase()
     .from("store_settings").select("store_name, palette, logo_url, voice_tagline").eq("shop_id", shopId).maybeSingle();
   if (error) throw error;
-  if (!data) return defaults(shopId);
+  if (!data) {
+    // A real shop that hasn't run the store generator yet still has a brand:
+    // the display_name it signed up with. Never label a merchant's storefront
+    // as the demo store.
+    const { data: shop, error: shopError } = await getSupabase()
+      .from("shops").select("display_name").eq("id", shopId).maybeSingle();
+    if (shopError) throw shopError;
+    const displayName = typeof shop?.display_name === "string" ? shop.display_name.trim() : "";
+    return { ...defaults(shopId), storeName: displayName || "Your store" };
+  }
   return {
     shopId,
     storeName: typeof data.store_name === "string" ? data.store_name : "Calderyn Demo Store",
