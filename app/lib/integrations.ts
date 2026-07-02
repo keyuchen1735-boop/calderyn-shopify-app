@@ -119,17 +119,21 @@ const PROVIDER_DISPLAY: Record<string, string> = {
  * Read the one-shot post-OAuth redirect param the connect callbacks append
  * (e.g. `?google=connected`, or `?meta=error&reason=...`) into a connection
  * notice for the settings page to confirm a pairing, or null when absent.
+ * `key` is the matched query param (the provider short name), so a consumer
+ * that strips the one-shot params from the URL can remove exactly what it
+ * consumed and leave unrelated params intact.
  */
 export function connectionNotice(
   params: URLSearchParams,
-): { provider: string; ok: boolean; reason?: string } | null {
+): { key: string; provider: string; ok: boolean; reason?: string } | null {
   for (const short of Object.keys(PROVIDER_DISPLAY)) {
     const value = params.get(short);
     if (value === "connected") {
-      return { provider: PROVIDER_DISPLAY[short], ok: true, reason: undefined };
+      return { key: short, provider: PROVIDER_DISPLAY[short], ok: true, reason: undefined };
     }
     if (value === "error") {
       return {
+        key: short,
         provider: PROVIDER_DISPLAY[short],
         ok: false,
         reason: params.get("reason") ?? undefined,

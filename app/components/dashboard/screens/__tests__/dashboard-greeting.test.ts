@@ -28,6 +28,7 @@ const ctx: DashboardCtx = {
   audit: [],
   guardrails: null,
   integrations: [],
+  setIntegrations: () => {},
   consent: null,
   overview: null,
   calibration: null,

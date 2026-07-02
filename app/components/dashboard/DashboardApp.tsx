@@ -9,6 +9,7 @@ import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
 import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
+import { connectionNotice } from "~/lib/integrations";
 import { useLiveFeed } from "./live";
 import { applyUndo } from "./undo";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
@@ -190,6 +191,38 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
   const pushFeed = useCallback((ev: Omit<FeedEvent, "id">) => {
     setFeed((f) => [{ id: nextFeedId(), ts: ev.ts ?? Date.now(), ...ev }, ...f].slice(0, 30));
   }, []);
+
+  // One-shot post-OAuth connect notice: provider callbacks land the browser on
+  // /dashboard?<provider>=connected|error (see oauth-state.server.ts). Open
+  // Settings, surface the result, and strip the params so a reload doesn't
+  // re-announce it. navigate/toast are stable, so this runs once per page load.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const notice = connectionNotice(params);
+    if (!notice) return;
+    navigate("settings");
+    if (notice.ok) {
+      toast(`${notice.provider} connected`, "check");
+    } else {
+      toast(
+        notice.reason
+          ? `Couldn't connect ${notice.provider} (${notice.reason})`
+          : `Couldn't connect ${notice.provider}`,
+        "x",
+        "critical",
+      );
+    }
+    // Strip ONLY the consumed one-shot params; unrelated query params and the
+    // hash survive for whoever reads them next.
+    params.delete(notice.key);
+    params.delete("reason");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }, [navigate, toast]);
 
   // Opening an alert detail: fetch the ENRICHED single alert and merge it into
   // shared state. The list (fetchAlerts) carries only the BASE remediation plan,
@@ -761,6 +794,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     audit,
     guardrails,
     integrations,
+    setIntegrations,
     consent,
     overview,
     calibration,

@@ -46,7 +46,7 @@ describe("integration pairing view", () => {
 describe("post-OAuth connection notice", () => {
   it("turns a successful provider redirect param into a confirmation", () => {
     const n = connectionNotice(new URLSearchParams("google=connected"));
-    expect(n).toEqual({ provider: "Google Ads", ok: true, reason: undefined });
+    expect(n).toEqual({ key: "google", provider: "Google Ads", ok: true, reason: undefined });
   });
 
   it("turns an error redirect into a failure notice carrying the reason", () => {

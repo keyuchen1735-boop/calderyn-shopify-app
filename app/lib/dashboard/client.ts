@@ -645,6 +645,40 @@ export async function fetchIntegrations(): Promise<IntegrationVM[]> {
   return adaptIntegrations(data.integrations);
 }
 
+/**
+ * Start a dashboard-native OAuth connect. Returns the provider consent-screen
+ * URL to navigate to; the callback lands back on /dashboard?<provider>=connected.
+ */
+export async function startIntegrationConnect(provider: string): Promise<{ url: string }> {
+  return apiSend<{ url: string }>("POST", "/dashboard/api/integrations", {
+    intent: "connect",
+    provider,
+  });
+}
+
+/** POST an integrations mutation; the route responds with the refreshed rows. */
+async function mutateIntegrations(body: Record<string, unknown>): Promise<IntegrationVM[]> {
+  const data = await apiSend<{ integrations: Record<string, Integration> }>(
+    "POST",
+    "/dashboard/api/integrations",
+    body,
+  );
+  return adaptIntegrations(data.integrations);
+}
+
+/** Connect an API-key provider (EasyPost/ShipBob/ShipHero) from a pasted credential. */
+export async function connectIntegrationKey(
+  provider: string,
+  apiKey: string,
+): Promise<IntegrationVM[]> {
+  return mutateIntegrations({ intent: "connect-key", provider, apiKey });
+}
+
+/** Disconnect a provider; returns the refreshed integrations list. */
+export async function disconnectIntegration(provider: string): Promise<IntegrationVM[]> {
+  return mutateIntegrations({ intent: "disconnect", provider });
+}
+
 interface AnalyticsEnvelope {
   roas_series: DailyRoasRow[];
   grades: CampaignGradeRow[];

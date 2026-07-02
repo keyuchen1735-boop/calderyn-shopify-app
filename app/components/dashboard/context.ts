@@ -78,6 +78,10 @@ export interface DashboardCtx {
   audit: AuditVM[];
   guardrails: GuardrailVM | null;
   integrations: IntegrationVM[];
+  /** Replace the shared Connections rows (used by dashboard-native connect /
+   *  disconnect mutations so every consumer sees the new state, not just the
+   *  Settings screen that ran the mutation). */
+  setIntegrations: (rows: IntegrationVM[]) => void;
   /** Peer-baseline consent (shops.peer_data_consent); null until loaded. */
   consent: boolean | null;
   overview: OverviewVM | null;
