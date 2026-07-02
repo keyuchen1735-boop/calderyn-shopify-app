@@ -2,7 +2,29 @@
 // Resolves an incoming public storefront request to an internal shop_id. This is
 // the unauthenticated, multi-tenant entry posture; the resolved shopId is then
 // passed as the first argument of every catalog read (manual scoping).
+import { getSupabase } from "~/lib/supabase.server";
+
 export const DEMO_SHOP_ID = "demo-shop";
+
+// Host labels only: anything else is not a routable tenant slug and gets the demo shell
+// (also keeps attacker-shaped slugs out of the DB filter below).
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+// Slugs that are never tenants: the demo shell, the platform's own hosts, and local dev.
+const FIXTURE_SLUGS = new Set(["demo", "app", "www", "calderyncompany", "localhost"]);
+
+// Short-TTL cache for hits AND misses. slug -> shop ownership CAN change (org_slug
+// rename, uninstall + GDPR delete + reinstall under a new id), so entries expire
+// instead of living for the process; the size cap keeps a Host-header sweep from
+// growing the map without bound.
+const CACHE_TTL_MS = 60_000;
+const CACHE_MAX_ENTRIES = 1_000;
+const slugCache = new Map<string, { id: string | null; expiresAt: number }>();
+
+/** Drop every cached slug resolution (shop uninstall/rename hooks, tests). */
+export function clearStorefrontShopCache(): void {
+  slugCache.clear();
+}
 
 /** Derive the tenant slug: ?shop= (dev fallback) wins, else the host subdomain. */
 export function storefrontSlug(request: Request): string {
@@ -15,13 +37,39 @@ export function storefrontSlug(request: Request): string {
   return host.split(":")[0].split(".")[0].toLowerCase();
 }
 
+async function lookupShopId(slug: string): Promise<string | null> {
+  // One roundtrip covers both identities; slug is SLUG_RE-validated, so it cannot
+  // smuggle PostgREST filter syntax into the or(). Uninstalled shops do not resolve
+  // (same posture as the resolver in admin-deeplink.server.ts).
+  const { data, error } = await getSupabase()
+    .from("shops")
+    .select("id, org_slug")
+    .or(`org_slug.eq.${slug},shop_domain.eq.${slug}.myshopify.com`)
+    .is("uninstalled_at", null)
+    .limit(2);
+  if (error) throw error;
+  if (!data || data.length === 0) return null;
+  // Owned identity wins when a native org_slug and a myshopify handle collide.
+  const native = data.find((row) => row.org_slug === slug);
+  return String((native ?? data[0]).id);
+}
+
 export async function resolveStorefrontShop(request: Request): Promise<string> {
   const slug = storefrontSlug(request);
-  // ponytail: single-tenant fixture pilot — an explicit (currently single-entry)
-  // registry maps the demo slug to the one demo shop_id, and every other slug also
-  // falls back to it, so the shell renders with no shops table / no DB. Upgrade:
-  // replace the fallback with resolveShopId(`${slug}.myshopify.com`) once the hosting
-  // module attaches real subdomains (app/lib/supabase.server.ts:37).
-  const known: Record<string, string> = { demo: DEMO_SHOP_ID };
-  return known[slug] ?? DEMO_SHOP_ID;
+  if (FIXTURE_SLUGS.has(slug) || !SLUG_RE.test(slug)) return DEMO_SHOP_ID;
+
+  const cached = slugCache.get(slug);
+  if (cached && cached.expiresAt > Date.now()) return cached.id ?? DEMO_SHOP_ID;
+
+  const id = await lookupShopId(slug);
+  if (slugCache.size >= CACHE_MAX_ENTRIES) {
+    // FIFO-evict the oldest entry (Map preserves insertion order) so a Host-header
+    // sweep displaces one entry at a time instead of wiping every hot tenant.
+    const oldest = slugCache.keys().next().value;
+    if (oldest !== undefined) slugCache.delete(oldest);
+  }
+  slugCache.set(slug, { id, expiresAt: Date.now() + CACHE_TTL_MS });
+
+  // Unknown slug: render the demo shell rather than blanking the storefront.
+  return id ?? DEMO_SHOP_ID;
 }
