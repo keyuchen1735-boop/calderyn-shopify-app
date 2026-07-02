@@ -4,7 +4,7 @@
 // Exchanges the code, fetches the member URN, and saves the connection.
 // Never throws past this loader — all failures render an error page (rule 12).
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { exchangeCode, fetchMemberUrn } from "~/lib/social/linkedin.server";
 import { saveConnection, verifyState } from "~/lib/social/linkedin-connection.server";
 

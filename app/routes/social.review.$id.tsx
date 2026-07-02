@@ -13,9 +13,9 @@
 //             single-post guard. Every result state carries igUrls + igCaption.
 //   reject  — GET shows reject form; POST calls regenerateDigest
 
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as dataResponse , Form, useActionData, useLoaderData } from "react-router";
+
 import { verifyActionToken } from "~/lib/social-digest/token.server";
 import { regenerateDigest } from "~/lib/social-digest/run.server";
 import { signedUrls, downloadSlide } from "~/lib/social-digest/store.server";
@@ -132,7 +132,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   const payload = verifyActionToken(token);
   if (!payload || payload.id !== id) {
-    return json<LoaderData>({ state: "invalid" });
+    return dataResponse<LoaderData>({ state: "invalid" });
   }
 
   const { data, error } = await getSupabase()
@@ -144,18 +144,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     .single();
 
   if (error || !data) {
-    return json<LoaderData>({ state: "invalid" });
+    return dataResponse<LoaderData>({ state: "invalid" });
   }
 
   const r = data as Record<string, unknown>;
   if (!validateRow(r)) {
-    return json<LoaderData>({ state: "invalid" });
+    return dataResponse<LoaderData>({ state: "invalid" });
   }
   const row = r as DigestRow;
 
   // Version mismatch — newer regeneration has superseded this token.
   if (payload.version !== row.regen_count) {
-    return json<LoaderData>({ state: "stale" });
+    return dataResponse<LoaderData>({ state: "stale" });
   }
 
   const { action } = payload;
@@ -166,7 +166,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // era (or any tampered token) lack `owner` and can't be acted on.
     const owner = payload.owner;
     if (!owner) {
-      return json<LoaderData>({ state: "stale_link" });
+      return dataResponse<LoaderData>({ state: "stale_link" });
     }
 
     // Per-(drop, founder) claim/result lives in social_link_post.
@@ -196,7 +196,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         status === "posted"
           ? { posted: true, postUrn: lr.post_urn ?? "" }
           : { posted: false, staged: true, reason: MAYBE_POSTED_WARNING };
-      return json<LoaderData>({
+      return dataResponse<LoaderData>({
         state: "li_result",
         linkedin,
         liUrls,
@@ -217,10 +217,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       signedUrls(row.ig_image_paths),
     ]);
   } catch {
-    return json<LoaderData>({ state: "invalid" });
+    return dataResponse<LoaderData>({ state: "invalid" });
   }
 
-  return json<LoaderData>({
+  return dataResponse<LoaderData>({
     state: "confirm",
     action,
     id,
@@ -246,7 +246,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   const payload = verifyActionToken(token);
   if (!payload || payload.id !== id) {
-    return json<ActionData>({ state: "invalid" });
+    return dataResponse<ActionData>({ state: "invalid" });
   }
 
   // Re-fetch row to verify version still matches.
@@ -259,18 +259,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
     .single();
 
   if (error || !data) {
-    return json<ActionData>({ state: "invalid" });
+    return dataResponse<ActionData>({ state: "invalid" });
   }
 
   const r = data as Record<string, unknown>;
   if (!validateRow(r)) {
-    return json<ActionData>({ state: "invalid" });
+    return dataResponse<ActionData>({ state: "invalid" });
   }
   const row = r as DigestRow;
 
   // Version must match.
   if (payload.version !== row.regen_count) {
-    return json<ActionData>({ state: "invalid" });
+    return dataResponse<ActionData>({ state: "invalid" });
   }
 
   // ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Re-verify the token names a founder; a missing owner means an outdated link.
     const owner = payload.owner;
     if (!owner) {
-      return json<ActionData>({ state: "stale_link" });
+      return dataResponse<ActionData>({ state: "stale_link" });
     }
 
     const getIgAssets = async (): Promise<{ igUrls: string[]; igCaption: string }> => {
@@ -321,13 +321,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const existing = existingRow as { status?: string; post_urn?: string | null } | null;
       const ig = await getIgAssets();
       if (existing?.status === "posted") {
-        return json<ActionData>({
+        return dataResponse<ActionData>({
           state: "li_posted",
           linkedin: { posted: true, postUrn: existing.post_urn ?? "" },
           ...ig,
         });
       }
-      return json<ActionData>({
+      return dataResponse<ActionData>({
         state: "li_failed",
         linkedin: { posted: false, error: MAYBE_POSTED_WARNING },
         liUrls: await getLiUrls(),
@@ -337,7 +337,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     if (claimError) {
-      return json<ActionData>({ state: "error", message: claimError.message });
+      return dataResponse<ActionData>({ state: "error", message: claimError.message });
     }
 
     // 2. Claim won — resolve THIS founder's own LinkedIn connection.
@@ -352,7 +352,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         .eq("owner_email", owner)
         .eq("platform", "linkedin");
       const ig = await getIgAssets();
-      return json<ActionData>({
+      return dataResponse<ActionData>({
         state: "li_not_connected",
         liUrls: await getLiUrls(),
         liCaption: row.li_caption,
@@ -380,7 +380,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         .eq("owner_email", owner)
         .eq("platform", "linkedin");
       const ig = await getIgAssets();
-      return json<ActionData>({ state: "li_posted", linkedin: { posted: true, postUrn }, ...ig });
+      return dataResponse<ActionData>({ state: "li_posted", linkedin: { posted: true, postUrn }, ...ig });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Unknown LinkedIn error";
 
@@ -395,7 +395,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           .eq("owner_email", owner)
           .eq("platform", "linkedin");
         const ig = await getIgAssets();
-        return json<ActionData>({
+        return dataResponse<ActionData>({
           state: "li_failed",
           linkedin: { posted: false, error: errMsg },
           liUrls: await getLiUrls(),
@@ -411,7 +411,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         .eq("owner_email", owner)
         .eq("platform", "linkedin");
       const ig = await getIgAssets();
-      return json<ActionData>({
+      return dataResponse<ActionData>({
         state: "li_failed",
         linkedin: { posted: false, error: MAYBE_POSTED_WARNING },
         liUrls: await getLiUrls(),
@@ -430,12 +430,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const result = await regenerateDigest(id, { reasons, note });
 
   if (result.capped) {
-    return json<ActionData>({ state: "capped" });
+    return dataResponse<ActionData>({ state: "capped" });
   }
   if (result.ok) {
-    return json<ActionData>({ state: "regenerated" });
+    return dataResponse<ActionData>({ state: "regenerated" });
   }
-  return json<ActionData>({ state: "error", message: result.error ?? "Regeneration failed." });
+  return dataResponse<ActionData>({ state: "error", message: result.error ?? "Regeneration failed." });
 }
 
 // ---------------------------------------------------------------------------
@@ -524,12 +524,12 @@ const pageStyle: React.CSSProperties = {
 
 function ImageRow({ urls }: { urls: string[] }) {
   return (
-    <div style={{ margin: "10px 0" }}>
+    (<div style={{ margin: "10px 0" }}>
       {urls.map((u, i) => (
         // eslint-disable-next-line jsx-a11y/img-redundant-alt
-        <img key={i} src={u} alt={`slide ${i + 1}`} style={imgStyle} />
+        (<img key={i} src={u} alt={`slide ${i + 1}`} style={imgStyle} />)
       ))}
-    </div>
+    </div>)
   );
 }
 

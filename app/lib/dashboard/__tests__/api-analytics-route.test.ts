@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 
 import { loader as analyticsLoader } from "../../../routes/dashboard.api.analytics";
 
@@ -42,11 +43,11 @@ describe("GET /dashboard/api/analytics", () => {
       new Response(JSON.stringify({ error: "unauthenticated" }), { status: 401 }),
     );
     await expect(
-      analyticsLoader({
+      analyticsLoader(routeArgs({
         request: new Request("https://calderyncompany.com/dashboard/api/analytics"),
         params: {},
         context: {},
-      }),
+      })),
     ).rejects.toMatchObject({ status: 401 });
   });
 
@@ -55,11 +56,11 @@ describe("GET /dashboard/api/analytics", () => {
     campaignGrades.mockResolvedValueOnce([{ campaign_id: "c1", grade: "winning", break_even_roas: 1.8 }]);
     topAdsByEngagement.mockResolvedValueOnce([{ ad_external_id: "ad1", engagement: 42 }]);
 
-    const res = (await analyticsLoader({
+    const res = (await analyticsLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/analytics"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");

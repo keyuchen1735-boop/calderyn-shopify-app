@@ -3,7 +3,7 @@
 // (spec 2026-07-02-analytics-live-view-design.md). cd_vid: 1-year visitor id.
 // cd_sid: 30-minute rolling session id carrying the is_returning flag frozen
 // at session start. Opaque UUIDs only — never PII. Mirrors cart-cookie.server.
-import { createCookie } from "@remix-run/node";
+import { createCookie } from "react-router";
 import { randomUUID } from "node:crypto";
 
 const VID_NAME = "cd_vid";

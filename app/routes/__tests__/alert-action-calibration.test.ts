@@ -1,5 +1,6 @@
 ﻿import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { action } from "../app.alerts.$id";
 
 // Hoisted spies
@@ -168,7 +169,7 @@ beforeEach(() => {
 describe("alert action — calibration signal fires on approval", () => {
   it("calls recordApproval with detector_id + kind on executeAction success", async () => {
     // pause_campaign with campaign_id in evidence hits the executeAction gateway path.
-    const res = await call(makeRequest("pause_campaign"));
+    const res = toResponse(await call(makeRequest("pause_campaign")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(recordApprovalSpy).toHaveBeenCalledTimes(1);
@@ -185,7 +186,7 @@ describe("alert action — calibration signal fires on approval", () => {
 
   it("does NOT call recordApproval when executeAction outcome is not succeeded", async () => {
     executeSpy.mockResolvedValue({ outcome: "failed" });
-    const res = await call(makeRequest("pause_campaign"));
+    const res = toResponse(await call(makeRequest("pause_campaign")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(false);
     expect(recordApprovalSpy).not.toHaveBeenCalled();
@@ -244,7 +245,7 @@ describe("alert action — calibration signal fires on approval", () => {
       campaign_external_id: null,
       evidence: {},
     });
-    const res = await call(makeRequest("raise_free_ship_threshold"));
+    const res = toResponse(await call(makeRequest("raise_free_ship_threshold")));
     const body = (await res.json()) as { ok: boolean; error?: { code: string } };
     expect(res.status).toBe(422);
     expect(body.ok).toBe(false);
@@ -264,7 +265,7 @@ describe("alert action — calibration signal fires on approval", () => {
       // daily_budget_usd (dollars), matching loadScaleOpportunity — NOT *_cents.
       evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 25 },
     });
-    const res = await call(makeRequest("increase_campaign_budget"));
+    const res = toResponse(await call(makeRequest("increase_campaign_budget")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -291,7 +292,7 @@ describe("alert action — calibration signal fires on approval", () => {
       dollar_impact: 500_000_00, // $500k upside, far above the $100k cap
       evidence: { campaign_id: "camp-dim-uuid", daily_budget_usd: 100, increase_pct: 20 },
     });
-    const res = await call(makeRequest("increase_campaign_budget"));
+    const res = toResponse(await call(makeRequest("increase_campaign_budget")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true); // not GUARDRAIL_DOLLAR_CAP 403
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -308,7 +309,7 @@ describe("alert action — calibration signal fires on approval", () => {
       dollar_impact: 5000, // cents; recovered upside, well under the cap
       evidence: { campaign_id: "camp-dim-uuid" },
     });
-    const res = await call(makeRequest("resume_campaign"));
+    const res = toResponse(await call(makeRequest("resume_campaign")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(executeSpy).toHaveBeenCalledWith(
@@ -335,7 +336,7 @@ describe("alert action — calibration signal fires on approval", () => {
       dollar_impact: 500_000_00, // far above the $100k cap
       evidence: { campaign_id: "camp-dim-uuid" },
     });
-    const res = await call(makeRequest("resume_campaign"));
+    const res = toResponse(await call(makeRequest("resume_campaign")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -350,7 +351,7 @@ describe("alert action — calibration signal fires on approval", () => {
       campaign_id: null,
     };
     alertsGetSpy.mockResolvedValue(alertWithSnooze);
-    const res = await call(makeRequest("snooze_alert"));
+    const res = toResponse(await call(makeRequest("snooze_alert")));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(recordApprovalSpy).not.toHaveBeenCalled();
@@ -366,7 +367,7 @@ describe("alert action — calibration signal fires on approval", () => {
     };
     alertsGetSpy.mockResolvedValue(alertWithSkuBudgetMove);
 
-    const res = await call(makeRequest("reallocate_spend_sku"));
+    const res = toResponse(await call(makeRequest("reallocate_spend_sku")));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);

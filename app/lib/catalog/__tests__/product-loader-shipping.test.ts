@@ -4,6 +4,7 @@
 // save-to-zero on the next PUT.
 
 import { describe, it, expect, vi } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
@@ -70,11 +71,11 @@ async function invokeLoader(productId = "prod-1") {
   const request = new Request(
     `https://app.example.com/dashboard/api/catalog/products/${productId}`,
   );
-  const response = await loader({
+  const response = await loader(routeArgs({
     request,
     params: { id: productId },
     context: {} as never,
-  });
+  }));
   return response.json() as Promise<{
     product: { variants: Array<Record<string, unknown>> };
   }>;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 // Importing the shared chain mock also registers its beforeEach state reset.
 import {
   setSupabaseResponses,
@@ -136,7 +137,7 @@ beforeEach(() => {
 
 describe("alert action — create_po_draft snapshots the PO into the audit params", () => {
   it("builds the PO from the alert + submitted qty/price and records it", async () => {
-    const res = await call(poRequest());
+    const res = toResponse(await call(poRequest()));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -170,7 +171,7 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
   });
 
   it("treats a blank unit cost as TBD (null), not $0", async () => {
-    const res = await call(poRequest({ po_unit_cost: "" }));
+    const res = toResponse(await call(poRequest({ po_unit_cost: "" })));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -183,7 +184,7 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
   it("rejects a non-positive or non-integer quantity with 422 and records nothing", async () => {
     for (const bad of ["0", "-5", "12.5", "abc"]) {
       executeSpy.mockClear();
-      const res = await call(poRequest({ po_quantity: bad }));
+      const res = toResponse(await call(poRequest({ po_quantity: bad })));
       expect(res.status).toBe(422);
       expect(executeSpy).not.toHaveBeenCalled();
     }
@@ -191,7 +192,7 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
 
   it("defaults a blank (one-click) quantity to the derived reorder qty", async () => {
     // derivePoQuantity: no shortfall_units -> velocity 5.71 over lead 14 -> ceil(5.71 * 14) = 80
-    const res = await call(poRequest({ po_quantity: "" }));
+    const res = toResponse(await call(poRequest({ po_quantity: "" })));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     const params = (executeSpy.mock.calls[0][0] as { params: { po: { lines: Array<{ quantity: number }> } } }).params;
@@ -200,19 +201,19 @@ describe("alert action — create_po_draft snapshots the PO into the audit param
 
   it("still 422s a blank quantity when the alert has no usable velocity", async () => {
     alertsGetSpy.mockResolvedValue({ ...ALERT, evidence: { title: "No velocity", lead_time_days: 14 } });
-    const res = await call(poRequest({ po_quantity: "" }));
+    const res = toResponse(await call(poRequest({ po_quantity: "" })));
     expect(res.status).toBe(422);
     expect(executeSpy).not.toHaveBeenCalled();
   });
 
   it("rejects an absurdly large quantity with 422 and records nothing", async () => {
-    const res = await call(poRequest({ po_quantity: "1000001" }));
+    const res = toResponse(await call(poRequest({ po_quantity: "1000001" })));
     expect(res.status).toBe(422);
     expect(executeSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a negative unit cost with 422 and records nothing", async () => {
-    const res = await call(poRequest({ po_unit_cost: "-1" }));
+    const res = toResponse(await call(poRequest({ po_unit_cost: "-1" })));
     expect(res.status).toBe(422);
     expect(executeSpy).not.toHaveBeenCalled();
   });
@@ -235,7 +236,7 @@ describe("alert action — exclude_geo", () => {
     fd.set("alertId", GEO_ALERT.id);
     fd.set("idempotencyKey", "k-geo-1");
     const req = new Request(`http://localhost/app/alerts/${GEO_ALERT.id}`, { method: "POST", body: fd });
-    const res = await call(req);
+    const res = toResponse(await call(req));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(executeActionMock).toHaveBeenCalledWith(
@@ -268,7 +269,7 @@ describe("alert action — reallocate_budget guard", () => {
       method: "POST",
       body: fd,
     });
-    const res = await call(req);
+    const res = toResponse(await call(req));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { ok: boolean; error: { code: string } };
     expect(body.ok).toBe(false);
@@ -279,7 +280,7 @@ describe("alert action — reallocate_budget guard", () => {
 
 describe("alert action — acknowledges the alert after success", () => {
   it("flips the alert open → acknowledged after a successful execution", async () => {
-    const res = await call(poRequest());
+    const res = toResponse(await call(poRequest()));
     const body = (await res.json()) as { ok: boolean; toast: { message: string } };
 
     expect(body.ok).toBe(true);
@@ -311,7 +312,7 @@ describe("alert action — acknowledges the alert after success", () => {
       // return ok:true and surface the failure in the toast message.
       { data: null, error: { message: "update blew up" } },
     ]);
-    const res = await call(poRequest());
+    const res = toResponse(await call(poRequest()));
     const body = (await res.json()) as { ok: boolean; toast: { message: string } };
 
     expect(body.ok).toBe(true);
@@ -328,9 +329,9 @@ describe("alert action — acknowledges the alert after success", () => {
     fd.set("kind", "snooze_alert");
     fd.set("alertId", ALERT.id);
     fd.set("idempotencyKey", "k-snooze-1");
-    const res = await call(
+    const res = toResponse(await call(
       new Request(`http://localhost/app/alerts/${ALERT.id}`, { method: "POST", body: fd }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean; toast: { message: string } };
 
     expect(body.ok).toBe(true);
@@ -365,7 +366,7 @@ describe("alert loader — duplicate PO draft warning", () => {
       { data: null, error: null }, // sku_dim lookup (getCurrentUnitCostCents) misses
       { data: [{ id: "d1", undo_of: null }], error: null },
     ]);
-    const body = (await (await loaderCall()).json()) as { existingPoDraft: boolean };
+    const body = (await toResponse(await loaderCall()).json()) as { existingPoDraft: boolean };
     expect(body.existingPoDraft).toBe(true);
   });
 
@@ -382,7 +383,7 @@ describe("alert loader — duplicate PO draft warning", () => {
         error: null,
       },
     ]);
-    const body = (await (await loaderCall()).json()) as { existingPoDraft: boolean };
+    const body = (await toResponse(await loaderCall()).json()) as { existingPoDraft: boolean };
     expect(body.existingPoDraft).toBe(false);
   });
 });

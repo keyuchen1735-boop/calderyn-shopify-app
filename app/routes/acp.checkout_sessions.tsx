@@ -1,8 +1,8 @@
 // ACP checkout_sessions — POST create. Dormant unless ACP_ENABLED=true.
 // Accepts a line-items + address body from the ChatGPT agent, quotes, locks, creates session.
 // Confirm exact wire field names against the onboarded ACP spec version before enabling.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { lockQuote, getQuote } from "~/lib/commerce/quote-store.server";

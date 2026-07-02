@@ -2,6 +2,7 @@
 // Live-analytics wiring: storefront loaders/actions emit exactly one event and
 // forward the visitor/session Set-Cookie headers on their responses.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs, toResponse } from "../../lib/__tests__/_route-test-helpers";
 
 const track = vi.fn(async (..._a: unknown[]) => {
   const h = new Headers();
@@ -47,18 +48,18 @@ beforeEach(() => track.mockClear());
 
 describe("storefront live-analytics wiring", () => {
   it("PDP loader emits page_view with the variant id and forwards Set-Cookie", async () => {
-    const res = (await pdpLoader({
+    const res = toResponse(await pdpLoader(routeArgs({
       request: new Request("https://x.example/storefront/products/mug"),
       params: { handle: "mug" },
       context: {},
-    })) as Response;
+    })));
     expect(track).toHaveBeenCalledTimes(1);
     expect(track.mock.calls[0][2]).toBe("page_view");
     expect(res.headers.getSetCookie().some((c) => c.startsWith("cd_sid="))).toBe(true);
   });
 
   it("PDP action emits cart_add and still redirects to the cart", async () => {
-    const res = (await pdpAction({
+    const res = (await pdpAction(routeArgs({
       request: new Request("https://x.example/storefront/products/mug", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -66,7 +67,7 @@ describe("storefront live-analytics wiring", () => {
       }),
       params: { handle: "mug" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(track).toHaveBeenCalledTimes(1);
     expect(track.mock.calls[0][2]).toBe("cart_add");
     expect(res.status).toBe(302);

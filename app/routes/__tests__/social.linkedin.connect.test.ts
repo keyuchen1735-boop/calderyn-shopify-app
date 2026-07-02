@@ -4,6 +4,7 @@
 // Mocks: getAuthorizeUrl (linkedin.server), signState (linkedin-connection.server).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { routeArgs } from "../../lib/__tests__/_route-test-helpers";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -57,11 +58,11 @@ describe("social.linkedin.connect — loader", () => {
 
   it("returns 401 JSON when ?key is missing", async () => {
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({}),
       params: {},
       context: {},
-    });
+    }));
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body).toEqual({ error: "unauthorized" });
@@ -71,11 +72,11 @@ describe("social.linkedin.connect — loader", () => {
 
   it("returns 401 JSON when ?key is wrong", async () => {
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({ key: "wrong-secret" }),
       params: {},
       context: {},
-    });
+    }));
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body).toEqual({ error: "unauthorized" });
@@ -86,11 +87,11 @@ describe("social.linkedin.connect — loader", () => {
   it("returns 401 JSON when LINKEDIN_SETUP_KEY is unset (even with a ?key present)", async () => {
     delete process.env.LINKEDIN_SETUP_KEY;
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({ key: "any-value" }),
       params: {},
       context: {},
-    });
+    }));
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body).toEqual({ error: "unauthorized" });
@@ -104,11 +105,11 @@ describe("social.linkedin.connect — loader", () => {
 
   it("renders a 200 info page when ?as= is missing", async () => {
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({ key: "test-setup-key-abc" }), // no ?as=
       params: {},
       context: {},
-    });
+    }));
     expect(res.status).toBe(200);
     expect(res.headers.get("Location")).toBeNull();
     const text = await res.text();
@@ -123,11 +124,11 @@ describe("social.linkedin.connect — loader", () => {
 
   it("redirects to the LinkedIn authorize URL when key is valid and LINKEDIN_CLIENT_ID is set", async () => {
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({ key: "test-setup-key-abc", as: "founder@example.com" }),
       params: {},
       context: {},
-    });
+    }));
 
     // Remix redirect() returns a 302 Response with a Location header
     expect(res.status).toBe(302);
@@ -151,11 +152,11 @@ describe("social.linkedin.connect — loader", () => {
   it("renders a 200 info page when LINKEDIN_CLIENT_ID is missing (does not crash or redirect)", async () => {
     delete process.env.LINKEDIN_CLIENT_ID;
     const { loader } = await import("../social.linkedin.connect");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: connectRequest({ key: "test-setup-key-abc", as: "founder@example.com" }),
       params: {},
       context: {},
-    });
+    }));
 
     expect(res.status).toBe(200);
     // Must not have redirected

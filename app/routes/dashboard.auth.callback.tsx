@@ -3,8 +3,8 @@
 // discarded — the grant only proves the requester controls the shop. The shop
 // must already exist in Supabase (app installed) to get a session.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import {
   isValidShopDomain,
   verifyShopifyHmac,

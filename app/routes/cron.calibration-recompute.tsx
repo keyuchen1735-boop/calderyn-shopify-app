@@ -17,7 +17,8 @@
 // `.data` client path (unlike page routes — see the note in
 // app.campaigns.$campaignId.score.tsx).
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { loadPeerPriors, recomputeShopCalibration } from "~/lib/calibration/recompute.server";
 import { sweepOrganicSignals } from "~/lib/calibration/organic.server";

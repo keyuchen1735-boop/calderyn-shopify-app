@@ -10,8 +10,8 @@
 // does not collide with the api/* Python or .well-known function paths behind the recent
 // prod 501 incidents (commits 551dabf / b486895). Registered in vercel.json `crons`.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 import { shipAdaptersForShops, type ShipWorkItem } from "~/lib/ship-cost/adapters/registry.server";

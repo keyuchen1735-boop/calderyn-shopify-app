@@ -1,4 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { processStripeEvent } from "~/lib/payments/stripe.server";
 
 // Public, unauthenticated Stripe webhook. Stripe signs the request; the signature

@@ -1,7 +1,7 @@
 // Daily reaper for expired mcp_oauth_codes rows (60s TTL each; old rows linger).
 // Authed with CRON_SECRET via the shared isAuthorizedCron helper.
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 

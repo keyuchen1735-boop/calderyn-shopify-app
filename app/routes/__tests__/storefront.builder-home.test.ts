@@ -1,5 +1,6 @@
 // app/routes/__tests__/storefront.builder-home.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
@@ -14,7 +15,7 @@ const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadPublishedDoc: loadPublishedMock }));
-vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current }));
+vi.mock("react-router", async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), useLoaderData: () => loaderDataRef.current }));
 
 beforeEach(() => {
   getCatalogMock.mockReset().mockReturnValue(fixtureCatalog);
@@ -26,7 +27,7 @@ const req = () => new Request("https://demo.calderyncompany.com/storefront");
 describe("storefront home on the block spine", () => {
   it("falls back to the default document when the shop has no published home doc", async () => {
     loadPublishedMock.mockResolvedValue(null);
-    const data = await (await loader({ request: req(), params: {}, context: {} } as never)).json();
+    const data = await toResponse(await loader({ request: req(), params: {}, context: {} } as never)).json();
     expect(data.doc.blocks.map((b: { type: string }) => b.type)).toEqual(["hero", "productGrid"]);
     loaderDataRef.current = data;
     const html = renderToStaticMarkup(createElement(StorefrontHome));
@@ -39,7 +40,7 @@ describe("storefront home on the block spine", () => {
       kind: "singleton", pageKey: "home",
       blocks: [{ id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "CUSTOM STORE", subhead: "" } }],
     });
-    const data = await (await loader({ request: req(), params: {}, context: {} } as never)).json();
+    const data = await toResponse(await loader({ request: req(), params: {}, context: {} } as never)).json();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontHome))).toContain("CUSTOM STORE");
   });

@@ -2,7 +2,7 @@
 // Dashboard mirror of app.campaigns.$campaignId.score.tsx: POST JSON for one ad,
 // cache-check + score + persist via loadOrScoreAdScorecards, return its
 // AdScorecard. requireSameOrigin (CSRF) + requireDashboardSession (shop scope).
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { loadOrScoreAdScorecards } from "~/lib/screener/campaign-ads.server";

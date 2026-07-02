@@ -3,7 +3,7 @@
 // app/lib/assistant/turn.server.ts); auth is the dashboard cookie session
 // instead of Shopify admin, and the envelope follows the dashboard API's
 // snake_case.
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, jsonOk, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";

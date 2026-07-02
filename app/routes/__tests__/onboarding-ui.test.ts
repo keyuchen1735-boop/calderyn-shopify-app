@@ -16,7 +16,7 @@ const fixture = vi.hoisted(() => ({
   data: {} as Record<string, unknown>,
 }));
 
-vi.mock("@remix-run/react", () => {
+vi.mock("react-router", () => {
   const Form = ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) =>
     createElement("form", rest, children);
   const noop = () => {};

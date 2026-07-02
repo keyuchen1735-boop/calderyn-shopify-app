@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
-import { StaticRouter } from "react-router-dom/server";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import { StaticRouter } from "react-router";
+import { EmbeddedAppProvider } from "../../components/EmbeddedAppProvider";
 import { ActionList, Button } from "@shopify/polaris";
 
 // Characterization tests for why the "Open web dashboard" header action
@@ -18,10 +18,9 @@ function render(children: ReturnType<typeof h>) {
     h(
       StaticRouter,
       { location: "/app" },
-      // isEmbeddedApp only toggles the app-bridge <script>; the link shim
-      // (RemixPolarisLink) is injected unconditionally, which is what these
-      // tests exercise.
-      h(AppProvider, { isEmbeddedApp: false, apiKey: "test-key" }, children),
+      // `embedded` only toggles the app-bridge <script>; the Polaris link
+      // shim is injected unconditionally, which is what these tests exercise.
+      h(EmbeddedAppProvider, { embedded: false, apiKey: "test-key" }, children),
     ),
   );
 }

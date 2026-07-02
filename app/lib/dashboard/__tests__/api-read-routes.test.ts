@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 
 import { CalderynError } from "../../calderyn.server";
 import { loader as campaignsLoader } from "../../../routes/dashboard.api.campaigns._index";
@@ -45,21 +46,21 @@ describe("GET /dashboard/api/campaigns", () => {
       new Response(JSON.stringify({ error: "unauthenticated" }), { status: 401 }),
     );
     await expect(
-      campaignsLoader({
+      campaignsLoader(routeArgs({
         request: new Request("https://calderyncompany.com/dashboard/api/campaigns"),
         params: {},
         context: {},
-      }),
+      })),
     ).rejects.toMatchObject({ status: 401 });
   });
 
   it("returns the shop's campaigns as JSON", async () => {
     campaignsList.mockResolvedValueOnce([{ id: "c1", name: "Spring" }]);
-    const res = (await campaignsLoader({
+    const res = (await campaignsLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/campaigns"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(await res.json()).toEqual({
@@ -89,11 +90,11 @@ describe("GET /dashboard/api/campaigns/:id", () => {
     campaignsGet.mockRejectedValueOnce(
       new CalderynError({ code: "CAMPAIGN_NOT_FOUND", status: 404, message: "nope" }),
     );
-    const res = (await campaignLoader({
+    const res = (await campaignLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/campaigns/c9"),
       params: { id: "c9" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "CAMPAIGN_NOT_FOUND", message: "nope" });
   });

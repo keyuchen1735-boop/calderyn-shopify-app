@@ -10,7 +10,7 @@
 // pattern in dashboard.api.alerts.$id.action.tsx.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 
 // Hoisted spies
 const { recordApprovalSpy, recordActionFailureSpy, alertsGetSpy, executeActionSpy, requireDashboardSessionSpy } =

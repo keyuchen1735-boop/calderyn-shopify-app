@@ -1,8 +1,8 @@
 // app/routes/dashboard.signin.tsx
 // Door B: first-party email + password sign-in. Lives next to the existing
 // Shopify-OAuth login (/dashboard/login), which is unchanged.
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "react-router";
+import { redirect } from "react-router";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { verifyUserCredentials, normalizeEmail } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";

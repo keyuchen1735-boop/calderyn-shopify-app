@@ -1,5 +1,6 @@
 // app/routes/__tests__/storefront.collection-template.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
@@ -10,7 +11,7 @@ const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadPublishedDoc: loadPublishedMock }));
-vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current }));
+vi.mock("react-router", async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), useLoaderData: () => loaderDataRef.current }));
 
 beforeEach(() => {
   getCatalogMock.mockReset().mockReturnValue(fixtureCatalog);
@@ -26,7 +27,7 @@ describe("collection route on the block spine", () => {
       kind: "template", pageKey: "collection",
       blocks: [{ id: "cg", type: "collectionGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: {} }],
     });
-    const data = await (await loader(args("apparel"))).json();
+    const data = await toResponse(await loader(args("apparel"))).json();
     expect(data.doc).toBeTruthy();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontCollection))).toContain("cd-store__grid");
@@ -34,7 +35,7 @@ describe("collection route on the block spine", () => {
 
   it("falls back to the legacy grid when there is no template doc", async () => {
     loadPublishedMock.mockResolvedValue(null);
-    const data = await (await loader(args("apparel"))).json();
+    const data = await toResponse(await loader(args("apparel"))).json();
     expect(data.doc).toBeNull();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontCollection))).toContain("cd-store__grid");

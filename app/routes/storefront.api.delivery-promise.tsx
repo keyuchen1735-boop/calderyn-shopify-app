@@ -2,8 +2,8 @@
 // The storefront is owned (not a Shopify theme), so a same-origin GET suffices — no App Proxy
 // HMAC. Returns a COARSE estimate; callers treat any non-200 as "no estimate available" and
 // hide the widget rather than showing a potentially wrong date (rule 12).
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { estimateShipping } from "~/lib/commerce/estimate.server";
 

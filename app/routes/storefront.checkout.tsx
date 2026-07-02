@@ -3,9 +3,9 @@
 // payment. PII is posted to OUR action (server) over the form; CARD DATA goes only to Stripe.js
 // (the Payment Element), never to our server. The loader exposes only the Stripe PUBLISHABLE key
 // — the secret stays server-side (lib/payments/stripe.server.ts).
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "react-router";
+import { data, redirect , useFetcher, useLoaderData } from "react-router";
+
 import { useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
@@ -56,7 +56,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
-  return json(
+  return data(
     {
       publishableKey,
       origin: new URL(request.url).origin,
@@ -91,7 +91,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // Stripe. (A missing secret key still surfaces via the 502 catch below.)
   if (!process.env.STRIPE_PUBLISHABLE_KEY) {
     console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout action for shop ${shopId}`);
-    return json(
+    return data(
       { error: "This store isn't accepting payments yet. Please check back soon." },
       { status: 503 },
     );
@@ -120,13 +120,13 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!postal) missing.push("postal code");
   if (!country) missing.push("country");
   if (missing.length > 0) {
-    return json({ error: `Please provide ${missing.join(", ")}.` }, { status: 400 });
+    return data({ error: `Please provide ${missing.join(", ")}.` }, { status: 400 });
   }
   // Consent is mandatory and must be EXPLICIT — reject (fail visibly) if not accepted, never
   // silently proceed (the buyer helper records tos/privacy as accepted=true unconditionally, so
   // the gate is here at the boundary).
   if (!tosAccepted || !privacyAccepted) {
-    return json(
+    return data(
       { error: "You must accept the Terms of Service and Privacy Policy to place an order." },
       { status: 400 },
     );
@@ -177,7 +177,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.
     // The cart is NOT cleared here — payment can still fail at the Payment Element; the cart is
     // cleared on the confirmation page.
-    return json({
+    return data({
       clientSecret: result.clientSecret,
       confirmationToken: result.confirmationToken,
       subtotalCents: result.subtotalCents,
@@ -188,7 +188,7 @@ export async function action({ request }: ActionFunctionArgs) {
     });
   } catch (err) {
     console.error(`[checkout] failed to originate checkout for shop ${shopId}, cart ${cartId}:`, err);
-    return json({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
+    return data({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
   }
 }
 

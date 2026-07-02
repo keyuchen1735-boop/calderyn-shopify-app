@@ -9,7 +9,7 @@
 // only). Campaign kinds stay on /dashboard/api/campaigns/:id/action; exclude_geo
 // still has no dashboard endpoint.
 
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";

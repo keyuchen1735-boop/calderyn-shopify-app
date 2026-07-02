@@ -31,3 +31,4 @@ __pycache__/
 .env*.local*
 *.bak
 .env.*.bak.*
+.react-router/

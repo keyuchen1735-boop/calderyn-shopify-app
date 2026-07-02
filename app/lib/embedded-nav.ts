@@ -12,7 +12,7 @@
 // token and retries — the reload self-heals instead of bouncing to login.
 
 import { useCallback, useEffect } from "react";
-import { useNavigate, useRouteLoaderData } from "@remix-run/react";
+import { useNavigate, useRouteLoaderData } from "react-router";
 
 type NavigateOptions = {
   replace?: boolean;

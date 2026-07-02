@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { action, loader } from "../app.onboarding";
 
 // Spies for the calderyn client boundaries; the real route logic runs against them.
@@ -111,7 +112,7 @@ beforeEach(() => {
 
 describe("onboarding action — step advancement", () => {
   it("advances to the requested step and reports ok", async () => {
-    const res = await callAction(postRequest({ intent: "advance", step: "3" }));
+    const res = toResponse(await callAction(postRequest({ intent: "advance", step: "3" })));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -124,14 +125,14 @@ describe("onboarding action — guardrails", () => {
   it("saves guardrails in cents, then advances, then confirms with a toast", async () => {
     guardrailsUpdateSpy.mockResolvedValue({});
 
-    const res = await callAction(
+    const res = toResponse(await callAction(
       postRequest({
         intent: "save_guardrails",
         step: "2",
         budget: "2500",
         cap: "1000",
       }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean; toast?: { message: string } };
 
     expect(body.ok).toBe(true);
@@ -163,7 +164,7 @@ describe("onboarding action — guardrails", () => {
     async (_label, fields) => {
       guardrailsUpdateSpy.mockResolvedValue({});
 
-      const res = await callAction(postRequest({ intent: "save_guardrails", step: "2", ...fields }));
+      const res = toResponse(await callAction(postRequest({ intent: "save_guardrails", step: "2", ...fields })));
       const body = (await res.json()) as { ok: boolean; error?: { code: string }; toast?: { isError?: boolean } };
 
       expect(res.status).toBe(400);
@@ -179,9 +180,9 @@ describe("onboarding action — guardrails", () => {
   it("patches only budget + cap (the step no longer carries cooldown)", async () => {
     guardrailsUpdateSpy.mockResolvedValue({});
 
-    const res = await callAction(
+    const res = toResponse(await callAction(
       postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50" }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -196,9 +197,9 @@ describe("onboarding action — guardrails", () => {
       Object.assign(new Error("guardrails.update: boom"), { code: "ERROR", status: 500 }),
     );
 
-    const res = await callAction(
+    const res = toResponse(await callAction(
       postRequest({ intent: "save_guardrails", step: "2", budget: "100", cap: "50", cooldown: "30" }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean; toast?: { isError?: boolean } };
 
     expect(res.status).toBe(500);
@@ -212,9 +213,9 @@ describe("onboarding action — integration connect", () => {
   it("returns the OAuth URL as data (no 302 — the iframe can't load provider pages)", async () => {
     startOAuthSpy.mockResolvedValue({ redirectUrl: "https://accounts.google.com/o/oauth2/auth?x=1" });
 
-    const res = await callAction(
+    const res = toResponse(await callAction(
       postRequest({ intent: "connect_integration", provider: "google", host: "abc123" }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean; redirectUrl?: string };
 
     // popup=true (3rd arg): the callback lands on /auth/connected; the client opens
@@ -241,7 +242,7 @@ describe("onboarding action — integration connect", () => {
       }),
     );
 
-    const res = await callAction(postRequest({ intent: "connect_integration", provider: "meta" }));
+    const res = toResponse(await callAction(postRequest({ intent: "connect_integration", provider: "meta" })));
     const body = (await res.json()) as {
       ok: boolean;
       error?: { code: string };
@@ -258,7 +259,7 @@ describe("onboarding action — integration connect", () => {
 describe("onboarding action — consent", () => {
   it("persists an opt-in then advances", async () => {
     // Consent is step index 3; Continue advances to "complete" (index 4).
-    const res = await callAction(postRequest({ intent: "save_consent", step: "4", consent: "true" }));
+    const res = toResponse(await callAction(postRequest({ intent: "save_consent", step: "4", consent: "true" })));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -280,7 +281,7 @@ describe("onboarding action — consent", () => {
 
 describe("onboarding action — finish and unknown intents", () => {
   it("marks onboarding complete and redirects to the dashboard", async () => {
-    const res = await callAction(postRequest({ intent: "finish" }));
+    const res = toResponse(await callAction(postRequest({ intent: "finish" })));
 
     // 5 steps total; advance clamps the submitted STEPS.length to "complete" server-side.
     expect(advanceSpy).toHaveBeenCalledWith(5, expect.anything());
@@ -289,7 +290,7 @@ describe("onboarding action — finish and unknown intents", () => {
   });
 
   it("rejects an unknown intent with 400 and touches nothing", async () => {
-    const res = await callAction(postRequest({ intent: "self_destruct" }));
+    const res = toResponse(await callAction(postRequest({ intent: "self_destruct" })));
     const body = (await res.json()) as { ok: boolean; error?: { code: string } };
 
     expect(res.status).toBe(400);
@@ -314,7 +315,7 @@ describe("onboarding loader", () => {
       google_ads: { status: "connected" },
     });
 
-    const res = await callLoader();
+    const res = toResponse(await callLoader());
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(body.step).toBe(2);
@@ -332,7 +333,7 @@ describe("onboarding loader", () => {
     guardrailsGetSpy.mockResolvedValue(null);
     integrationsListSpy.mockResolvedValue({});
 
-    const res = await callLoader();
+    const res = toResponse(await callLoader());
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(body.step).toBe(0);
@@ -345,16 +346,16 @@ describe("onboarding loader", () => {
     guardrailsGetSpy.mockResolvedValue(null);
     integrationsListSpy.mockResolvedValue({});
 
-    const off = (await (await callLoader()).json()) as { devBypass: boolean };
+    const off = (await toResponse(await callLoader()).json()) as { devBypass: boolean };
     expect(off.devBypass).toBe(false);
 
     vi.stubEnv("ONBOARDING_DEV_BYPASS", "true");
     vi.resetModules();
     try {
       const fresh = await import("../app.onboarding");
-      const res = await fresh.loader({
+      const res = toResponse(await fresh.loader({
         request: new Request("http://localhost/app/onboarding"),
-      } as unknown as LoaderFunctionArgs);
+      } as unknown as LoaderFunctionArgs));
       const on = (await res.json()) as { devBypass: boolean };
       expect(on.devBypass).toBe(true);
     } finally {

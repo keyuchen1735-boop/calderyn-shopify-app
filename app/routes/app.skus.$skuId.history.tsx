@@ -1,8 +1,8 @@
 // GET /app/skus/:skuId/history — per-SKU daily on-hand trend (90-day window) for
 // the inventory stock-trend sparkline. Loader-only resource route (no UI); the
 // SKUs page lazy-loads it via a fetcher when the relocate modal opens.
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import type { CalderynError } from "~/lib/calderyn.server";

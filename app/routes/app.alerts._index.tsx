@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+
 import { Banner, BlockStack, Box, Card, Page, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -48,10 +48,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const client = calderynClient(session.shop);
   try {
     const alerts = await client.alerts.list({}, request.signal);
-    return json<LoaderPayload>({ alerts, error: null });
+    return data<LoaderPayload>({ alerts, error: null });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       alerts: [],
       error: { code: e.code ?? "ERROR", message: e.message },
     });

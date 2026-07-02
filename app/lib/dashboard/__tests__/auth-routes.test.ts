@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 import { createHmac } from "node:crypto";
 import type * as SessionMod from "../session.server";
 import type * as ShopifyOauthMod from "../shopify-oauth.server";
@@ -47,22 +48,22 @@ function signedCallbackUrl(params: Record<string, string>): string {
 
 describe("dashboard.login loader", () => {
   it("422s on an invalid shop", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
   });
 
   it("redirects to the shop's authorize URL and sets a state cookie", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request(
         "https://calderyncompany.com/dashboard/login?shop=x.myshopify.com",
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     const loc = new URL(res.headers.get("Location")!);
     expect(loc.origin + loc.pathname).toBe("https://x.myshopify.com/admin/oauth/authorize");
@@ -78,13 +79,13 @@ describe("dashboard.login loader", () => {
   });
 
   it("auto-redirects to Shopify using the remembered shop when no ?shop is given", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/login", {
         headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
       }),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     const loc = new URL(res.headers.get("Location")!);
     expect(loc.origin + loc.pathname).toBe(
@@ -93,35 +94,35 @@ describe("dashboard.login loader", () => {
   });
 
   it("shows an HTML landing (not raw JSON) when no shop is known", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/login"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/html");
     expect(await res.text()).not.toContain("invalid_shop");
   });
 
   it("does not auto-redirect (loop) when bounced back with an error", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request(
         "https://calderyncompany.com/dashboard/login?error=oauth_failed",
         { headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" } },
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/html");
   });
 
   it("still 422s when an explicit ?shop is malformed", async () => {
-    const res = (await loginLoader({
+    const res = (await loginLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
   });
 });
@@ -138,11 +139,11 @@ describe("dashboard.auth.callback loader", () => {
       state: "nonce-1",
       timestamp: "1",
     });
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, "nonce-1:x.myshopify.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=dash_live_token");
@@ -158,11 +159,11 @@ describe("dashboard.auth.callback loader", () => {
       state: "nonce-WRONG",
       timestamp: "1",
     });
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, "nonce-1:x.myshopify.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("error=oauth_failed");
     expect(createSession).not.toHaveBeenCalled();
@@ -171,11 +172,11 @@ describe("dashboard.auth.callback loader", () => {
   it("rejects a bad HMAC", async () => {
     const url =
       "https://calderyncompany.com/dashboard/auth/callback?shop=x.myshopify.com&code=c&state=nonce-1&timestamp=1&hmac=deadbeef";
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, "nonce-1:x.myshopify.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.headers.get("Location")).toContain("error=oauth_failed");
   });
 
@@ -187,11 +188,11 @@ describe("dashboard.auth.callback loader", () => {
       timestamp: "1",
     });
     const returnTo = encodeURIComponent("/dashboard/connect?t=abc.def.ghi");
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, `nonce-1:x.myshopify.com:${returnTo}`),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(
       "https://calderyncompany.com/dashboard/connect?t=abc.def.ghi",
@@ -207,11 +208,11 @@ describe("dashboard.auth.callback loader", () => {
     });
     // A trailing '%' is not a valid percent-encoding; decodeURIComponent throws
     // and the consumer must swallow it rather than 500 the OAuth round-trip.
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, "nonce-1:x.myshopify.com:bad%"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard");
   });
@@ -224,11 +225,11 @@ describe("dashboard.auth.callback loader", () => {
       state: "nonce-1",
       timestamp: "1",
     });
-    const res = (await callbackLoader({
+    const res = (await callbackLoader(routeArgs({
       request: callbackRequest(url, "nonce-1:x.myshopify.com"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "app_not_installed" });
   });

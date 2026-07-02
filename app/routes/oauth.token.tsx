@@ -2,8 +2,8 @@
 // Public POST endpoint — OAuth 2.1 token endpoint.
 // Supports: authorization_code and refresh_token grant types.
 // Body must be application/x-www-form-urlencoded per RFC 6749 §4.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { consumeAuthCode, getClient } from "~/lib/mcp_oauth.server";
 import { mintAccessToken, rotateRefreshToken } from "~/lib/mcp_tokens.server";
 import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";

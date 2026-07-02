@@ -6,11 +6,11 @@ import {
   useNavigation,
   useRouteLoaderData,
   useSearchParams,
-} from "@remix-run/react";
+ data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import { actionDeepLink } from "~/lib/action-deeplinks";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Badge,
   BlockStack,
@@ -155,10 +155,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       existingPoDraft = rows.some((r) => !r.undo_of && !undone.has(r.id));
     }
 
-    return json<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
+    return data<LoaderPayload>({ alert, guardrails, poDefaults, existingPoDraft, error: null });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       alert: null,
       guardrails: null,
       poDefaults: null,
@@ -246,7 +246,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         reason,
         dollarImpactCents: alert.dollar_impact,
       });
-      return json<ActionPayload>({ ok: true });
+      return data<ActionPayload>({ ok: true });
     }
 
     // Only actions this detector exposes may run against this alert.
@@ -261,7 +261,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     const deepLink = DEEP_LINK_ACTIONS[kind];
     if (deepLink) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "UNSUPPORTED_HERE", message: deepLink.message },
@@ -427,7 +427,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           alertId,
         });
       }
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
         toast: {
@@ -467,7 +467,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           alertId,
         });
       }
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
         toast: {
@@ -522,7 +522,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           alertId,
         });
       }
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: outcome === "succeeded",
         calibration,
         toast: {
@@ -635,7 +635,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: result.outcome === "succeeded",
         calibration,
         toast: {
@@ -697,7 +697,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         alertId,
       }).catch(() => ZERO_APPROVE_RECEIPT);
     }
-    return json<ActionPayload>({
+    return data<ActionPayload>({
       ok: true,
       calibration,
       toast: {
@@ -708,7 +708,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
   } catch (err) {
     if (err instanceof CalderynError) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: err.code, message: err.message },
@@ -718,7 +718,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
     }
     const message = (err as Error).message || "Action failed";
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: "ACTION_FAILED", message },

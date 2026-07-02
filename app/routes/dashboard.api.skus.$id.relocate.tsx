@@ -5,7 +5,7 @@
 // re-derived server-side by executeInventoryRelocation, never trusted from
 // the request body.
 
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";

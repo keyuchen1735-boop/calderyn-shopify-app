@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { LoaderFunctionArgs } from "react-router";
 
 const { loginMock } = vi.hoisted(() => ({
   loginMock: vi.fn(),
@@ -83,16 +84,16 @@ describe("/auth/login embedded fallback guard", () => {
   });
 
   it("still allows a standalone login page request with no embedded context", async () => {
-    const res = (await callLoader("https://app.calderyncompany.com/auth/login")) as Response;
+    const res = toResponse(await callLoader("https://app.calderyncompany.com/auth/login"));
 
     expect(res.status).toBe(200);
     expect(loginMock).toHaveBeenCalledTimes(1);
   });
 
   it("still lets Shopify's normal login handler own a standalone shop query", async () => {
-    const res = (await callLoader(
+    const res = toResponse(await callLoader(
       "https://app.calderyncompany.com/auth/login?shop=calderyn-review-store.myshopify.com",
-    )) as Response;
+    ));
 
     expect(res.status).toBe(200);
     expect(loginMock).toHaveBeenCalledTimes(1);

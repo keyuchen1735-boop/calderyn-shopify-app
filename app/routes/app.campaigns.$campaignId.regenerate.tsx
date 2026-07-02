@@ -5,8 +5,8 @@
 // winning variants. Reuses the screener gate (gateScoreDeps), copy generator
 // (pickGenerator("copy")), and the DI orchestrator. Failures surface in the JSON
 // payload (rule 12), never the error boundary.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import {
   DEFAULT_SPEND_CENTS,

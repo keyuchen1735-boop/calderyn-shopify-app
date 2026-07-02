@@ -1,8 +1,8 @@
 // app/routes/storefront.tsx
 // Public storefront layout. No authenticate.admin — a genuinely public, SSR route.
-import type { LoaderFunctionArgs, LinksFunction, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, Outlet } from "@remix-run/react";
+import type { LoaderFunctionArgs, LinksFunction, MetaFunction } from "react-router";
+import { data , useLoaderData, Outlet } from "react-router";
+
 import storefrontCss from "~/styles/storefront.css?url";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
@@ -24,7 +24,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // every downstream read by this shopId (no Postgres RLS on this surface).
   const shopId = await resolveStorefrontShop(request);
   const settings = await getStoreSettings(shopId);
-  return json({ settings });
+  return data({ settings });
 }
 
 export default function StorefrontLayout() {

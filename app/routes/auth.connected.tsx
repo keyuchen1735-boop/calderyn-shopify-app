@@ -1,4 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 
 /**
  * Standalone OAuth result page for the onboarding NEW-TAB connect flow.

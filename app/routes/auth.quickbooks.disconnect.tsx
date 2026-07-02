@@ -1,4 +1,4 @@
-import type { MetaFunction } from "@remix-run/node";
+import type { MetaFunction } from "react-router";
 
 // Public landing page for Intuit's "Disconnect URL". When a merchant disconnects
 // Calderyn from inside QuickBooks, Intuit redirects them here. No auth, no loader

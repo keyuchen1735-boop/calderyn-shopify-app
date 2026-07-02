@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { LoaderFunctionArgs } from "react-router";
 
 // Fake the tenant resolver + the order lookup. clearCartId stays REAL (pure cookie) so the test
 // verifies the actual expiring Set-Cookie the confirmation page emits.
@@ -38,7 +39,7 @@ describe("confirmation loader — IDOR safety", () => {
     findOrderByConfirmationToken.mockResolvedValue(null);
     const err = await loader(args("unknown-token")).catch((e) => e);
     expect(err).toBeInstanceOf(Response);
-    expect((err as Response).status).toBe(404);
+    expect(toResponse(err).status).toBe(404);
     // The lookup is shop-scoped: the resolved shop id is passed as the first arg.
     expect(findOrderByConfirmationToken).toHaveBeenCalledWith("shop-1", "unknown-token");
   });
@@ -48,12 +49,12 @@ describe("confirmation loader — IDOR safety", () => {
     // shop resolves to null under this shop -> 404, exposing nothing.
     findOrderByConfirmationToken.mockResolvedValue(null);
     const err = await loader(args("a-foreign-shops-token")).catch((e) => e);
-    expect((err as Response).status).toBe(404);
+    expect(toResponse(err).status).toBe(404);
   });
 
   it("404s when the token is absent without hitting the DB", async () => {
     const err = await loader(args(undefined)).catch((e) => e);
-    expect((err as Response).status).toBe(404);
+    expect(toResponse(err).status).toBe(404);
     expect(findOrderByConfirmationToken).not.toHaveBeenCalled();
   });
 
@@ -70,14 +71,14 @@ describe("confirmation loader — IDOR safety", () => {
       lines: [{ title: "Tee", quantity: 2, unitPriceCents: 1999 }],
     });
     const res = await loader(args("good-token"));
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.ref).toBe("#11112222");
     expect(body.paid).toBe(true);
     expect(body.totalCents).toBe(3998);
     expect(body.lines).toEqual([{ title: "Tee", quantity: 2 }]);
 
     // Cart cookie is cleared on successful confirmation.
-    const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
+    const setCookie = toResponse(res).headers.get("Set-Cookie") ?? "";
     expect(setCookie).toContain("cd_cart=");
     expect(setCookie).toContain("Max-Age=0");
   });
@@ -95,7 +96,7 @@ describe("confirmation loader — IDOR safety", () => {
       lines: [],
     });
     const res = await loader(args("pending-token"));
-    expect((res as Response).status).toBe(200);
-    expect((await (res as Response).json()).paid).toBe(false);
+    expect(toResponse(res).status).toBe(200);
+    expect((await toResponse(res).json()).paid).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { LoaderFunctionArgs } from "react-router";
 // vitest hoists the vi.mock() calls below above this import, so the route module
 // loads with every boundary already mocked.
 import { loader } from "../app._index";
@@ -76,7 +77,7 @@ describe("app._index (Live Engine home) loader dashboardLoginUrl", () => {
     vi.stubEnv("DASHBOARD_PUBLIC_URL", "https://calderyncompany.com");
     buildEngineSpy.mockResolvedValue(EMPTY_ENGINE);
     const res = await loader(args());
-    const payload = await (res as Response).json();
+    const payload = await toResponse(res).json();
     expect(payload.error).toBeNull();
     expect(payload.dashboardLoginUrl).toBe(
       "https://calderyncompany.com/dashboard/login?shop=acme.myshopify.com",
@@ -87,7 +88,7 @@ describe("app._index (Live Engine home) loader dashboardLoginUrl", () => {
     vi.stubEnv("DASHBOARD_PUBLIC_URL", "https://calderyncompany.com");
     buildEngineSpy.mockRejectedValue(Object.assign(new Error("boom"), { code: "DOWN" }));
     const res = await loader(args());
-    const payload = await (res as Response).json();
+    const payload = await toResponse(res).json();
     expect(payload.error?.code).toBe("DOWN");
     expect(payload.dashboardLoginUrl).toContain("/dashboard/login?shop=acme.myshopify.com");
   });

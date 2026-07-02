@@ -4,7 +4,7 @@
 // migration 20260609140000_dashboard_realtime.sql. Polling the read API is the
 // fallback when this is unavailable.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { SignJWT } from "jose";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { jsonOk, jsonError } from "~/lib/dashboard/http.server";

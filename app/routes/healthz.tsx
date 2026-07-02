@@ -1,4 +1,5 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 

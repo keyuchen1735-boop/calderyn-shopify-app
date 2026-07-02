@@ -1,13 +1,8 @@
 import { Fragment, useEffect, useState } from "react";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   ActionList,
   Badge,
@@ -201,10 +196,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       campaignsWithScore = campaigns;
     }
 
-    return json<LoaderPayload>({ campaigns: campaignsWithScore, reallocation, scaleSuggestions, error: null });
+    return data<LoaderPayload>({ campaigns: campaignsWithScore, reallocation, scaleSuggestions, error: null });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       campaigns: [],
       reallocation: null,
       scaleSuggestions: [],
@@ -231,7 +226,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const amountCents = Math.round(Number(formData.get("amountCents") || 0));
     // Validate at the boundary — never trust FormData shapes.
     if (!campaignId || !destCampaignId || !Number.isFinite(amountCents) || amountCents <= 0) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "INVALID_REQUEST", message: "source, destination and a positive amount are required" },
@@ -259,7 +254,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? await resolveCampaignDimId(sb, shopId, "meta", destCampaignId)
         : destCampaignId;
     if (!sourceDim || !destDim) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "NOT_INGESTED", message: "Both campaigns must finish syncing before budget can be reallocated" },
@@ -275,7 +270,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         sb,
       );
       if (outcome === "failed") {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "ACTION_FAILED", message: `Could not reallocate budget from ${campaignName}` },
@@ -287,7 +282,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (outcome === "retrying") {
         // Source budget IS reduced; the dest increase is parked for the retry
         // cron. Not a success yet (rule 12).
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "ACTION_RETRYING", message: `Source budget reduced; the increase on ${destName} is queued and will retry automatically` },
@@ -296,13 +291,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           { status: 202 },
         );
       }
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: `Moved ${fmtMoneyDec(amountCents)}/day from ${campaignName} to ${destName}` },
       });
     } catch (err) {
       const e = err as CalderynError;
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: e.code ?? "ACTION_FAILED", message: e.message },
@@ -317,7 +312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const newCents = Math.round(Number(formData.get("dailyBudgetCents") || 0));
     const alertId = String(formData.get("alertId") || "") || null;
     if (!campaignId || !Number.isFinite(newCents) || newCents <= 0) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "INVALID_REQUEST", message: "campaign and a positive new budget are required" },
@@ -334,7 +329,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? await resolveCampaignDimId(sb, shopId, "meta", campaignId)
         : campaignId;
     if (!dimId) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "NOT_INGESTED", message: "This campaign is still syncing — try again shortly" },
@@ -378,7 +373,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
       if (outcome === "failed") {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "ACTION_FAILED", message: `Could not scale ${campaignName}` },
@@ -388,7 +383,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
       if (outcome === "retrying") {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "ACTION_RETRYING", message: `Couldn't reach the ad platform — scaling ${campaignName} is queued and will retry` },
@@ -397,13 +392,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           { status: 202 },
         );
       }
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: `Scaled ${campaignName} to ${fmtMoneyDec(newCents)}/day` },
       });
     } catch (err) {
       const e = err as CalderynError;
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: e.code ?? "ACTION_FAILED", message: e.message },
@@ -415,7 +410,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (!campaignId) {
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: "INVALID_REQUEST", message: "campaignId is required" },
@@ -446,7 +441,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // A $0 daily budget effectively pauses the campaign with no warning —
       // refuse it here; pausing has its own explicit, undoable action.
       if (!Number.isFinite(newCents) || newCents <= 0) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: {
@@ -462,7 +457,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     default:
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "INVALID_INTENT", message: `Unknown intent: ${intent}` },
@@ -509,7 +504,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sb,
         );
         if (outcome === "failed") {
-          return json<ActionPayload>(
+          return data<ActionPayload>(
             {
               ok: false,
               error: { code: "ACTION_FAILED", message: `Could not ${intent} ${campaignName}` },
@@ -521,7 +516,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (outcome === "retrying") {
           // Transient platform failure parked for the retry cron — the action
           // has NOT taken effect yet, so do not report success (rule 12).
-          return json<ActionPayload>(
+          return data<ActionPayload>(
             {
               ok: false,
               error: { code: "ACTION_RETRYING", message: `Couldn't reach the ad platform — ${intent} for ${campaignName} is queued and will retry automatically` },
@@ -535,13 +530,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           resume: `Resumed ${campaignName}`,
           edit_budget: `Updated budget for ${campaignName}`,
         };
-        return json<ActionPayload>({
+        return data<ActionPayload>({
           ok: true,
           toast: { message: messageByIntent[intent] ?? "Action executed" },
         });
       } catch (err) {
         const e = err as CalderynError;
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: e.code ?? "ACTION_FAILED", message: e.message },
@@ -558,7 +553,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const desired = intent === "pause" ? "PAUSED" : "ACTIVE";
     const meta = await metaClientForShop(session.shop);
     if (!meta) {
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: "META_NOT_CONNECTED", message: "Connect Meta in Settings first." },
@@ -575,7 +570,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         (c) => c.id === campaignId,
       );
       if (!owned) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "CAMPAIGN_NOT_FOUND", message: "Campaign not found for this ad account." },
@@ -599,13 +594,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         request.signal,
       );
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: intent === "pause" ? `Paused ${owned.name}` : `Resumed ${owned.name}` },
       });
     } catch (err) {
       const e = err as CalderynError;
-      return json<ActionPayload>(
+      return data<ActionPayload>(
         {
           ok: false,
           error: { code: e.code ?? "META_ACTION_FAILED", message: e.message },
@@ -626,13 +621,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       resume: `Resumed ${campaignName}`,
       edit_budget: `Updated budget for ${campaignName}`,
     };
-    return json<ActionPayload>({
+    return data<ActionPayload>({
       ok: true,
       toast: { message: messageByIntent[intent] ?? "Action executed" },
     });
   } catch (err) {
     const e = err as CalderynError;
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: e.code ?? "ERROR", message: e.message },

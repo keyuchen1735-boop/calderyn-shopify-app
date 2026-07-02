@@ -2,8 +2,8 @@
 // GET /dashboard/login?shop=x.myshopify.com → 302 to Shopify authorize.
 // The state nonce lives in a short-lived HttpOnly cookie as `nonce:shop`.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { randomBytes } from "node:crypto";
 import {
   isValidShopDomain,

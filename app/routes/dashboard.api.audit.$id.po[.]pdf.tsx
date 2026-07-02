@@ -3,7 +3,7 @@
 // only difference is the auth boundary (requireDashboardSession, which already
 // carries the shop_id) — the row is shop-scoped, so a cross-shop id 404s.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { renderPoPdf } from "~/lib/po/pdf.server";

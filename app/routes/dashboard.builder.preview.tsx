@@ -2,9 +2,9 @@
 // Read-only preview of the generated DRAFT store across home/collection/PDP (no editor yet).
 // Uses the same renderBlocks as the live storefront; templates preview against a sample record.
 // Phase C adds the imagery-candidate list + enhance action here.
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
+import { data, redirect , useLoaderData, Form } from "react-router";
+
 import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
@@ -32,7 +32,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const data = await resolveRenderData(doc, shopId, catalog, record);
     return { doc, data, record };
   }
-  return json({
+  return data({
     home: await previewFor("home"),
     collection: await previewFor("collection"),
     pdp: await previewFor("pdp"),

@@ -4,6 +4,7 @@
 // deep-links into the embedded /app/connect consent route. It must NOT write any
 // consumable pending state (no DB row, no cookie) — that pre-seed was the High.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -63,35 +64,35 @@ beforeEach(() => {
 describe("/oauth/authorize loader", () => {
   it("404 when MCP_OAUTH_ENABLED is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = await loader(reqWith(VALID_PARAMS) as never);
+    const r = toResponse(await loader(reqWith(VALID_PARAMS) as never));
     expect(r.status).toBe(404);
   });
 
   it("400 on missing required params (no redirect since redirect_uri unknown)", async () => {
-    const r = await loader(reqWith({ ...VALID_PARAMS, response_type: "" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, response_type: "" }) as never));
     expect(r.status).toBe(400);
   });
 
   it("400 on missing code_challenge", async () => {
-    const r = await loader(reqWith({ ...VALID_PARAMS, code_challenge: "" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, code_challenge: "" }) as never));
     expect(r.status).toBe(400);
   });
 
   it("400 on unknown client_id", async () => {
     getClientMock.mockResolvedValue(null);
-    const r = await loader(reqWith(VALID_PARAMS) as never);
+    const r = toResponse(await loader(reqWith(VALID_PARAMS) as never));
     expect(r.status).toBe(400);
   });
 
   it("400 when redirect_uri not in client whitelist (no redirect)", async () => {
     getClientMock.mockResolvedValue({ ...clientFixture(), redirect_uris: ["https://other.example/cb"] });
-    const r = await loader(reqWith(VALID_PARAMS) as never);
+    const r = toResponse(await loader(reqWith(VALID_PARAMS) as never));
     expect(r.status).toBe(400);
   });
 
   it("302 to redirect_uri with error=invalid_request on bad code_challenge_method", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith({ ...VALID_PARAMS, code_challenge_method: "plain" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, code_challenge_method: "plain" }) as never));
     expect(r.status).toBe(302);
     const loc = r.headers.get("location") ?? "";
     expect(loc).toMatch(/^https:\/\/claude\.ai\/cb\?/);
@@ -101,21 +102,21 @@ describe("/oauth/authorize loader", () => {
 
   it("302 to redirect_uri with error=unsupported_response_type when response_type != code", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith({ ...VALID_PARAMS, response_type: "token" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, response_type: "token" }) as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location") ?? "").toContain("error=unsupported_response_type");
   });
 
   it("302 to redirect_uri with error=invalid_request on a non-read scope", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith({ ...VALID_PARAMS, scope: "write" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, scope: "write" }) as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location") ?? "").toContain("error=invalid_request");
   });
 
   it("renders the interstitial (200, signed token, no cookie) for a valid request", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith(VALID_PARAMS) as never);
+    const r = toResponse(await loader(reqWith(VALID_PARAMS) as never));
     expect(r.status).toBe(200);
     // Crucially: no consumable pre-seed state is written.
     expect(r.headers.get("set-cookie")).toBeNull();
@@ -128,7 +129,7 @@ describe("/oauth/authorize loader", () => {
 
   it("passes a validated ?shop= through as a deep-link hint (no /auth/login redirect)", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "MyShop.myshopify.com" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, shop: "MyShop.myshopify.com" }) as never));
     expect(r.status).toBe(200);
     expect(r.headers.get("set-cookie")).toBeNull();
     const j = await r.json();
@@ -138,7 +139,7 @@ describe("/oauth/authorize loader", () => {
 
   it("drops a malformed ?shop= hint rather than trusting it", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWith({ ...VALID_PARAMS, shop: "not-a-shop" }) as never);
+    const r = toResponse(await loader(reqWith({ ...VALID_PARAMS, shop: "not-a-shop" }) as never));
     expect(r.status).toBe(200);
     const j = await r.json();
     expect(j.shop).toBeNull();
@@ -151,7 +152,7 @@ describe("/oauth/authorize loader", () => {
 
   it("uses the __Host-cala_shop cookie as the shop when there is no ?shop= hint", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=cookieshop.myshopify.com") as never);
+    const r = toResponse(await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=cookieshop.myshopify.com") as never));
     expect(r.status).toBe(200);
     // Invariant: authorize never writes consumable pre-seed state.
     expect(r.headers.get("set-cookie")).toBeNull();
@@ -161,9 +162,9 @@ describe("/oauth/authorize loader", () => {
 
   it("prefers an explicit ?shop= hint over the remembered cookie", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(
+    const r = toResponse(await loader(
       reqWithCookie({ ...VALID_PARAMS, shop: "hint.myshopify.com" }, "__Host-cala_shop=cookieshop.myshopify.com") as never,
-    );
+    ));
     // Invariant holds even when both shop sources are present.
     expect(r.headers.get("set-cookie")).toBeNull();
     const j = await r.json();
@@ -172,7 +173,7 @@ describe("/oauth/authorize loader", () => {
 
   it("ignores a malformed __Host-cala_shop cookie", async () => {
     getClientMock.mockResolvedValue(clientFixture());
-    const r = await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=not-a-shop") as never);
+    const r = toResponse(await loader(reqWithCookie(VALID_PARAMS, "__Host-cala_shop=not-a-shop") as never));
     const j = await r.json();
     expect(j.shop).toBeNull();
   });

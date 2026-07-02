@@ -1,5 +1,5 @@
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { data, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
+import { useFetcher, useLoaderData } from "react-router";
 import { useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
@@ -15,7 +15,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (process.env.NODE_ENV === "production") throw new Response("Not Found", { status: 404 });
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) throw new Error("STRIPE_PUBLISHABLE_KEY is not configured");
-  return json({ publishableKey });
+  return data({ publishableKey });
 }
 
 // Mutation: create the PaymentIntent (persists a payment_intent row) and return its client secret.
@@ -26,7 +26,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const shopId = await resolveShopId(session.shop);
   // Fixed test amount ($25.00); the production checkout reads the amount from the order.
   const { clientSecret } = await createPaymentIntent(shopId, 2500, "usd");
-  return json({ clientSecret });
+  return data({ clientSecret });
 }
 
 function CheckoutForm() {

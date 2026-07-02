@@ -5,7 +5,7 @@
 // rides on the destinationUrl UTM today (executeScreen has no campaignId arg);
 // the persisted run folds into the blended score only once the creative exists
 // as a Meta ad (Phase 3) — see phase note.
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";

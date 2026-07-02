@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { LoaderFunctionArgs } from "react-router";
 // vitest hoists the vi.mock() calls below above this import, so the route module
 // loads with every boundary already mocked.
 import { loader } from "../app.campaigns.$campaignId";
@@ -159,7 +160,7 @@ describe("campaign detail loader — non-uuid (Meta external) id", () => {
       { id: META_EXTERNAL_ID, name: "Retargeting", status: "ACTIVE" },
     ]);
 
-    const res = await loadDetail(META_EXTERNAL_ID);
+    const res = toResponse(await loadDetail(META_EXTERNAL_ID));
     const body = (await res.json()) as {
       error: { code: string } | null;
       detail: { name: string; metaExternalId: string | null } | null;

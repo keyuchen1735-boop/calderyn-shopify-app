@@ -2,8 +2,8 @@
 // Google sign-in callback dispatcher. Validates the CSRF state cookie, exchanges
 // the code for an id_token, verifies it, then routes the identity to either a
 // direct session (known user), or the name-your-store step (new user).
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import {
   exchangeCodeForIdToken,
   verifyIdToken,

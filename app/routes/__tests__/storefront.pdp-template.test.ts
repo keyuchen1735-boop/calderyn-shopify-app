@@ -1,5 +1,6 @@
 // app/routes/__tests__/storefront.pdp-template.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
@@ -10,7 +11,7 @@ const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadPublishedDoc: loadPublishedMock }));
-vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
+vi.mock("react-router", async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
 
 beforeEach(() => {
   getCatalogMock.mockReset().mockReturnValue(fixtureCatalog);
@@ -30,7 +31,7 @@ describe("PDP route on the block spine", () => {
         { id: "atc", type: "addToCart", layout: { x: 6, y: 3, w: 6, h: 1 }, props: {} },
       ],
     });
-    const data = await (await loader(args(handle))).json();
+    const data = await toResponse(await loader(args(handle))).json();
     expect(data.doc).toBeTruthy();
     loaderDataRef.current = data;
     const out = renderToStaticMarkup(createElement(StorefrontProduct));
@@ -41,7 +42,7 @@ describe("PDP route on the block spine", () => {
   it("falls back to the legacy PDP when there is no template doc", async () => {
     const handle = await firstHandle();
     loadPublishedMock.mockResolvedValue(null);
-    const data = await (await loader(args(handle))).json();
+    const data = await toResponse(await loader(args(handle))).json();
     expect(data.doc).toBeNull();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontProduct))).toContain("cd-pdp");

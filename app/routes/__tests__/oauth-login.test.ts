@@ -4,6 +4,7 @@
 // the shop, remembers it (__Host-cala_shop), and 302s to the admin deep link that
 // carries the signed ?t= token into /app/connect. No Shopify OAuth happens here.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 
 vi.mock("../../lib/mcp_oauth.server", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -56,16 +57,16 @@ beforeEach(() => {
 describe("/oauth/login loader", () => {
   it("404 when MCP_OAUTH_ENABLED is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = (await loader({
+    const r = toResponse(await loader({
       request: new Request("https://app.calderyncompany.com/oauth/login?t=x"),
-    } as never)) as Response;
+    } as never));
     expect(r.status).toBe(404);
   });
 
   it("redirects to /app when the token is invalid", async () => {
-    const r = (await loader({
+    const r = toResponse(await loader({
       request: new Request("https://app.calderyncompany.com/oauth/login?t=garbage"),
-    } as never)) as Response;
+    } as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe("https://app.calderyncompany.com/app");
   });
@@ -73,9 +74,9 @@ describe("/oauth/login loader", () => {
   it("renders (200) with the client name for a valid token", async () => {
     getClientMock.mockResolvedValue(clientFixture());
     const token = await signPendingOauth(CTX);
-    const r = (await loader({
+    const r = toResponse(await loader({
       request: new Request(`https://app.calderyncompany.com/oauth/login?t=${encodeURIComponent(token)}`),
-    } as never)) as Response;
+    } as never));
     expect(r.status).toBe(200);
     const j = await r.json();
     expect(j.client_name).toBe("Claude");
@@ -86,13 +87,13 @@ describe("/oauth/login loader", () => {
 describe("/oauth/login action", () => {
   it("404 when MCP_OAUTH_ENABLED is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = (await action(postReq({ t: "x", shop: "s.myshopify.com" }) as never)) as Response;
+    const r = toResponse(await action(postReq({ t: "x", shop: "s.myshopify.com" }) as never));
     expect(r.status).toBe(404);
   });
 
   it("302s to the admin deep link and remembers the shop on a valid submit", async () => {
     const token = await signPendingOauth(CTX);
-    const r = (await action(postReq({ t: token, shop: "MyShop.myshopify.com" }) as never)) as Response;
+    const r = toResponse(await action(postReq({ t: token, shop: "MyShop.myshopify.com" }) as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe(
       `https://admin.shopify.com/store/myshop/apps/apikey123/app/connect?t=${encodeURIComponent(token)}`,
@@ -102,7 +103,7 @@ describe("/oauth/login action", () => {
 
   it("422s without a cookie when the shop is invalid", async () => {
     const token = await signPendingOauth(CTX);
-    const r = (await action(postReq({ t: token, shop: "evil.com" }) as never)) as Response;
+    const r = toResponse(await action(postReq({ t: token, shop: "evil.com" }) as never));
     expect(r.status).toBe(422);
     expect(r.headers.get("set-cookie")).toBeNull();
     expect(r.headers.get("location")).toBeNull();
@@ -111,7 +112,7 @@ describe("/oauth/login action", () => {
   });
 
   it("400s when the token is invalid", async () => {
-    const r = (await action(postReq({ t: "garbage", shop: "myshop.myshopify.com" }) as never)) as Response;
+    const r = toResponse(await action(postReq({ t: "garbage", shop: "myshop.myshopify.com" }) as never));
     expect(r.status).toBe(400);
     expect(r.headers.get("set-cookie")).toBeNull();
   });

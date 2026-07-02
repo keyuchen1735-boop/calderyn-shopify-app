@@ -1,5 +1,5 @@
 // app/routes/pilot.api.preview.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { renderPilotEmail } from "~/lib/pilot-invite/email.server";
 import { appOrigin } from "~/lib/pilot-invite/origin.server";
 

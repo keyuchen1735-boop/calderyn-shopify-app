@@ -10,9 +10,9 @@
 //
 // Unlike the embedded route, the dashboard is top-level (not an iframe), so a
 // plain 302 to the client's redirect_uri is sufficient — no window.top dance.
-import type { ActionFunctionArgs, LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs, LinksFunction } from "react-router";
+import { data, redirect , Form, useLoaderData } from "react-router";
+
 
 import {
   getSessionFromRequest,
@@ -61,7 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const client = await getClient(ctx.client_id);
   if (!client) return redirect("/dashboard");
 
-  return json({
+  return data({
     token,
     client_name: client.client_name,
     destinationHost: destinationHost(ctx.redirect_uri),

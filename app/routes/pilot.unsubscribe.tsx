@@ -1,5 +1,5 @@
 // app/routes/pilot.unsubscribe.tsx
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { escapeHtml } from "~/lib/pilot-invite/content";
 import { recordOptOut, verifyUnsubToken } from "~/lib/pilot-invite/unsubscribe.server";
 

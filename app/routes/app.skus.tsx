@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Banner,
   BlockStack,
@@ -74,10 +74,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.alerts.list({}, request.signal),
       client.locations.list(request.signal),
     ]);
-    return json<LoaderPayload>({ skus, alerts, locations, error: null });
+    return data<LoaderPayload>({ skus, alerts, locations, error: null });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       skus: [],
       alerts: [],
       locations: [],
@@ -111,7 +111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     !/^\d+$/.test(qtyRaw) ||
     Number(qtyRaw) <= 0
   ) {
-    return json<RelocatePayload>(
+    return data<RelocatePayload>(
       {
         ok: false,
         error: { code: "INVALID_INPUT", message: "Quantity must be a positive whole number." },
@@ -137,7 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       admin,
     );
     const ok = result.outcome === "succeeded";
-    return json<RelocatePayload>({
+    return data<RelocatePayload>({
       ok,
       toast: ok
         ? { message: "Inventory transfer executed — see the audit log" }
@@ -145,7 +145,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   } catch (err) {
     if (err instanceof RelocationError) {
-      return json<RelocatePayload>(
+      return data<RelocatePayload>(
         {
           ok: false,
           error: { code: err.code, message: err.message },
@@ -155,7 +155,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
     const message = err instanceof Error ? err.message : "Inventory transfer failed.";
-    return json<RelocatePayload>(
+    return data<RelocatePayload>(
       { ok: false, error: { code: "ACTION_FAILED", message }, toast: { message, isError: true } },
       { status: 500 },
     );
@@ -186,7 +186,7 @@ async function alertAction(
   const idempotencyKey = String(formData.get("idempotency_key") ?? "").trim();
   if (!alertId || !idempotencyKey || !ALERT_ACTION_KINDS.includes(kind)) {
     const message = "Invalid alert action.";
-    return json<RelocatePayload>(
+    return data<RelocatePayload>(
       { ok: false, error: { code: "INVALID_INPUT", message }, toast: { message, isError: true } },
       { status: 422 },
     );
@@ -205,7 +205,7 @@ async function alertAction(
       signal,
     });
     const ok = outcome === "succeeded";
-    return json<RelocatePayload>({
+    return data<RelocatePayload>({
       ok,
       toast: ok
         ? {
@@ -218,7 +218,7 @@ async function alertAction(
     });
   } catch (err) {
     if (err instanceof CalderynError) {
-      return json<RelocatePayload>(
+      return data<RelocatePayload>(
         {
           ok: false,
           error: { code: err.code, message: err.message },
@@ -228,7 +228,7 @@ async function alertAction(
       );
     }
     const message = err instanceof Error ? err.message : "Alert action failed.";
-    return json<RelocatePayload>(
+    return data<RelocatePayload>(
       { ok: false, error: { code: "ACTION_FAILED", message }, toast: { message, isError: true } },
       { status: 500 },
     );

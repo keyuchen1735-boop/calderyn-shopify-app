@@ -5,8 +5,8 @@
 // Confirm exact wire field names (shared_payment_token, buyer fields) against the onboarded ACP
 // spec version before enabling. The charge path (SPT via Stripe) must also match the Stripe ACP
 // integration mode enabled during onboarding.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
 import { getAcpSession, completeAcpSession } from "~/lib/commerce/acp/session-store.server";
 import { getQuote } from "~/lib/commerce/quote-store.server";

@@ -13,9 +13,9 @@
 // can only ever consent for their own shop, so an attacker who knows the OAuth
 // request params still cannot get a code minted for a victim's shop.
 import { useEffect } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data, redirect , useFetcher, useLoaderData } from "react-router";
+
 import {
   AppProvider as PolarisAppProvider,
   Banner,
@@ -60,7 +60,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const client = await getClient(ctx.client_id);
   if (!client) return redirect("/app");
 
-  return json({
+  return data({
     token,
     client_name: client.client_name,
     destinationHost: destinationHost(ctx.redirect_uri),
@@ -81,17 +81,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     ctx = await verifyPendingOauth(token);
   } catch {
-    return json({ error: "invalid_token" }, { status: 400 });
+    return data({ error: "invalid_token" }, { status: 400 });
   }
 
   // Return JSON (not 302) so the client navigates the TOP window (the OAuth
   // popup) — a server 302 only moves the embedded iframe, and Claude.ai's
   // callback page expects to load in the popup with a valid window.opener.
   if (intent === "deny") {
-    return json({ redirect_url: buildDenyRedirect(ctx.redirect_uri, ctx.state) });
+    return data({ redirect_url: buildDenyRedirect(ctx.redirect_uri, ctx.state) });
   }
 
-  if (intent !== "allow") return json({ error: "invalid_intent" }, { status: 400 });
+  if (intent !== "allow") return data({ error: "invalid_intent" }, { status: 400 });
 
   // The crux of the fix: bind issuance to the authenticated session's shop.
   const shop_id = await resolveShopId(session.shop);
@@ -104,7 +104,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     state: ctx.state,
   });
 
-  return json({ redirect_url: buildAuthCodeRedirect(ctx.redirect_uri, code, ctx.state) });
+  return data({ redirect_url: buildAuthCodeRedirect(ctx.redirect_uri, code, ctx.state) });
 };
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];

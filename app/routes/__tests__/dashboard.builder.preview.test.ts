@@ -1,5 +1,6 @@
 // app/routes/__tests__/dashboard.builder.preview.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
@@ -11,7 +12,7 @@ const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock }
 vi.mock("~/lib/dashboard/session.server", () => ({ getSessionOrRedirect: sessionMock }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
-vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
+vi.mock("react-router", async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
 vi.mock("~/lib/storegen/imagery/detector", () => ({ findImprovableListings: () => [{ productId: "1", handle: "h-1", title: "P1", reason: "No image", severity: 2 }] }));
 vi.mock("~/lib/storegen/imagery/asset.server", () => ({ enhanceListing: enhanceMock, applyAssetOverrides: async (_s: string, ps: unknown[]) => ps }));
 
@@ -28,20 +29,20 @@ describe("builder draft preview", () => {
   it("renders the home draft when present", async () => {
     loadDraftMock.mockImplementation(async (_s: string, page: string) =>
       page === "home" ? { kind: "singleton", pageKey: "home", blocks: [{ id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "DRAFTED", subhead: "" } }] } : null);
-    const data = await (await loader(req())).json();
+    const data = await toResponse(await loader(req())).json();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("DRAFTED");
   });
   it("shows an empty-state when there is no draft yet", async () => {
     loadDraftMock.mockResolvedValue(null);
-    const data = await (await loader(req())).json();
+    const data = await toResponse(await loader(req())).json();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No draft");
   });
 
   it("loader lists improvable-listing candidates", async () => {
     loadDraftMock.mockResolvedValue(null);
-    const data = await (await loader(req())).json();
+    const data = await toResponse(await loader(req())).json();
     expect(data.candidates[0].productId).toBe("1");
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No image");
@@ -50,7 +51,7 @@ describe("builder draft preview", () => {
   it("loader surfaces enhanceError when the redirect param is set", async () => {
     loadDraftMock.mockResolvedValue(null);
     const r = { request: new Request("https://app/dashboard/builder/preview?enhanceError=1"), params: {}, context: {} } as never;
-    const data = await (await loader(r)).json();
+    const data = await toResponse(await loader(r)).json();
     expect(data.enhanceError).toBe(true);
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("Image generation failed");

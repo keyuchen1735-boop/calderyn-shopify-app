@@ -1,9 +1,9 @@
-import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
-} from "@shopify/shopify-app-remix/server";
+} from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server";
@@ -93,7 +93,6 @@ const shopify = shopifyApp({
   },
   distribution: AppDistribution.AppStore,
   future: {
-    unstable_newEmbeddedAuthStrategy: true,
     // Shopify rejects non-expiring offline tokens for new public apps
     // (enforced 2026-04-01): background Admin API calls 403 without this.
     // The library mints expiring offline tokens and auto-refreshes them.

@@ -9,7 +9,7 @@
 // restricted to @calderyncompany.com (see validate.ts) so a leaked secret can't
 // turn this into an open relay. Never throws; returns a per-email result array
 // so a partial delivery failure is visible rather than swallowed (rule 12).
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { isAuthorizedBearer } from "~/lib/cron-auth.server";
 import { parseDigestInput } from "~/lib/linkedin-digest/validate";
 import { sendEmail } from "~/lib/email/send.server";

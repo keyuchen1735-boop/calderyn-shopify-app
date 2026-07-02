@@ -4,7 +4,7 @@
 // cookie; only its peppered HMAC-SHA256 hash is stored (same pattern as
 // mcp_tokens.server.ts). Session identity is the SHOP, not a person (v1).
 
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
 import { resurfaceAllSnoozes } from "../actions/snooze.server";

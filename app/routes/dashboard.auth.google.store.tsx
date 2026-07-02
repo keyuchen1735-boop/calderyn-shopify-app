@@ -1,8 +1,8 @@
 // app/routes/dashboard.auth.google.store.tsx
 // "Name your store" step for brand-new Google sign-in users. GET renders the
 // form; POST validates the signup token, creates the user+shop atomically.
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { verifyGoogleSignup } from "~/lib/auth/google-signup-token.server";
 import { createGoogleUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";

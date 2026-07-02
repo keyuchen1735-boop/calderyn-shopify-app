@@ -9,7 +9,7 @@
 // no-ops on already-handled alerts. The engine itself returns { skipped:true }
 // when autopilot is disabled, so this route is a safe no-op in that case too.
 
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { runAutopilotForShop } from "~/lib/actions/autopilot.server";

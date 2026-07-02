@@ -3,8 +3,8 @@
 // "screen a new creative" for the campaign: parse the manual form, enforce the
 // mandatory-media + SSRF guards, run executeScreen (persists a creative_screen_run),
 // and return the run.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import { executeScreen } from "~/lib/screener/orchestrate.server";
 import { validateCreativeMedia, validateCreativeMediaUrls } from "~/lib/screener/media.server";

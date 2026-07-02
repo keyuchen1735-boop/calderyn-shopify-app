@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 // vitest hoists the vi.mock() calls below above this import, so the route module
 // loads with the session + data boundaries already mocked. resolveCampaignScore,
 // the aggregate/blend, and dashboardJson run for REAL — only Supabase/Meta/Claude

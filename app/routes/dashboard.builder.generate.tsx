@@ -1,8 +1,8 @@
 // app/routes/dashboard.builder.generate.tsx
 // Dashboard action that kicks off store generation, then redirects to the read-only draft
 // preview (no editor yet — sub-project 2). Validates FormData at the boundary (never trusts it).
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { getSessionOrRedirect } from "~/lib/dashboard/session.server";
 import { generateStore } from "~/lib/storegen/generate.server";
 

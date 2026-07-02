@@ -24,8 +24,8 @@
 //
 // Gated on MCP_OAUTH_ENABLED — when disabled, THIS ROUTE 404s (the static
 // .well-known asset above is not gated; see the header note).
-import { json } from "@remix-run/node";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 
 export const loader = async ({ request: _ }: LoaderFunctionArgs) => {
   if (process.env.MCP_OAUTH_ENABLED !== "true") {

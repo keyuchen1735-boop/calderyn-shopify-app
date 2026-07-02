@@ -14,8 +14,8 @@
 // from our own loader (Meta creatives we fetched), the score is advisory only,
 // and every read/write is shop-scoped via authenticate.admin → session.shop.
 // We still validate shapes and clamp spend rather than trusting the FormData.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import { loadOrScoreAdScorecards, type AdScorecard } from "~/lib/screener/campaign-ads.server";
 import {

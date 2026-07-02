@@ -1,6 +1,6 @@
 // Resource route (no UI): the slideout's backend. loader = history, action = one turn.
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";

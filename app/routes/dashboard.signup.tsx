@@ -1,8 +1,8 @@
 // app/routes/dashboard.signup.tsx
 // Door B: first-party merchant signup (email + password). Creates the user, an
 // owned shop, the membership link, and a session (no Shopify involved).
-import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, MetaFunction } from "react-router";
+import { redirect } from "react-router";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";

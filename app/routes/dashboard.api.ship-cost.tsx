@@ -8,7 +8,7 @@
 // dashboard fetch client is a follow-up); typed total + mode + override + the
 // missing-weight nudge are mirrored here.
 
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin, rateLimit } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";

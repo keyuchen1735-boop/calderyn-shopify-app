@@ -15,6 +15,7 @@
  *       never constructs a MetaClient, so a mocked count would be vacuous.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import type { MetaClient } from "~/lib/meta/campaigns.server";
 
 // The shop uuid appears inlined inside the vi.mock factories below — hoisting
@@ -151,11 +152,11 @@ function extensionPost(fields: Record<string, string>): Request {
 describe("Meta call budget per surface", () => {
   it("dashboard pause action costs exactly 1 Meta call", async () => {
     const { action } = await import("../dashboard.api.campaigns.$id.action");
-    const res = await action({
+    const res = toResponse(await action({
       request: dashboardPost({ type: "pause_campaign", idempotency_key: "k1" }),
       params: { id: CAMP },
       context: {},
-    } as never);
+    } as never));
     expect(res.status).toBe(200);
     expect(counts).toEqual({ get: 0, post: 1 });
   });
@@ -173,11 +174,11 @@ describe("Meta call budget per surface", () => {
 
   it("extension pause intent (ingested → orchestrated) costs exactly 1 Meta call", async () => {
     const { action } = await import("../app.campaigns._index");
-    const res = await action({
+    const res = toResponse(await action({
       request: extensionPost({ intent: "pause", campaignId: EXT, campaignName: "Ext One", platform: "Meta" }),
       params: {},
       context: {},
-    } as never);
+    } as never));
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
     expect(counts).toEqual({ get: 0, post: 1 });
   });
@@ -185,11 +186,11 @@ describe("Meta call budget per surface", () => {
   it("extension pause intent (NOT ingested → legacy direct-Meta) costs 3 Meta calls", async () => {
     resolveDimSpy.mockResolvedValue(null); // not in ad_campaign_dim yet
     const { action } = await import("../app.campaigns._index");
-    const res = await action({
+    const res = toResponse(await action({
       request: extensionPost({ intent: "pause", campaignId: EXT, campaignName: "Ext One", platform: "Meta" }),
       params: {},
       context: {},
-    } as never);
+    } as never));
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
     // ownership list + true-prior-status read + status write
     expect(counts).toEqual({ get: 2, post: 1 });
@@ -197,11 +198,11 @@ describe("Meta call budget per surface", () => {
 
   it("extension campaigns loader costs 0 Meta calls per load (sources ingested data, not the live list)", async () => {
     const { loader } = await import("../app.campaigns._index");
-    const res = await loader({
+    const res = toResponse(await loader({
       request: new Request("https://app.call-budget.invalid/app/campaigns"),
       params: {},
       context: {},
-    } as never);
+    } as never));
     expect(res.status).toBe(200);
     // Campaigns now come from the ingested view for EVERY platform (Meta included),
     // so the loader no longer hits the live Meta API — Campaigns matches Analytics

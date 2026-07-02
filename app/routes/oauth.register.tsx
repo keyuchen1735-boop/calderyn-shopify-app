@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { registerClient } from "~/lib/mcp_oauth.server";
 import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
 

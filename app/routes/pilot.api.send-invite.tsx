@@ -1,6 +1,6 @@
 // app/routes/pilot.api.send-invite.tsx
 // POST-only, bearer-protected. Suppress-check (fail closed) → validate → render → send → log.
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { isAuthorizedBearer } from "~/lib/cron-auth.server";
 import { parseInviteInput } from "~/lib/pilot-invite/validate";
 import { isOptedOut, signUnsubToken } from "~/lib/pilot-invite/unsubscribe.server";

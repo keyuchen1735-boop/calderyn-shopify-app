@@ -11,9 +11,9 @@
 // capture the shop and build the deep link. The shop is never put in the token;
 // /app/connect still issues the code against its authenticated session shop.
 import { useState } from "react";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { Form, useActionData, useLoaderData , data, redirect } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   AppProvider as PolarisAppProvider,
   BlockStack,
@@ -46,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   const client = await getClient(ctx.client_id);
   if (!client) return redirect(`${appUrl}/app`);
-  return json({ token, client_name: client.client_name, polarisTranslations });
+  return data({ token, client_name: client.client_name, polarisTranslations });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -63,13 +63,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     await verifyPendingOauth(token);
   } catch {
-    return json({ error: "invalid_token" }, { status: 400 });
+    return data({ error: "invalid_token" }, { status: 400 });
   }
 
   if (!SHOP_RE.test(shop)) {
     // Don't echo the token back — the form re-reads it from the loader, and a
     // response body is a needless extra place for the pending JWT to land.
-    return json({ error: "invalid_shop" }, { status: 422 });
+    return data({ error: "invalid_shop" }, { status: 422 });
   }
 
   return redirect(buildAppConnectUrl({ shop, apiKey, appUrl, token }), {

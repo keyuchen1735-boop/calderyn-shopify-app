@@ -1,4 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { uploadProductMedia, deleteProductMedia, ALLOWED_MEDIA_TYPES, MAX_MEDIA_BYTES } from "~/lib/catalog/media.server";

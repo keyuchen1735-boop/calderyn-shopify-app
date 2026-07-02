@@ -1,8 +1,8 @@
 // ACP checkout_sessions/$id — POST update / GET retrieve. Dormant unless ACP_ENABLED=true.
 // Update re-quotes with new line-items/address and refreshes the locked quote on the session.
 // Confirm exact wire field names against the onboarded ACP spec version before enabling.
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
 import { getAcpSession, updateAcpSessionQuote } from "~/lib/commerce/acp/session-store.server";
 import { getQuote, lockQuote } from "~/lib/commerce/quote-store.server";

@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs, HeadersFunction } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
+import { redirect } from "react-router";
 import { consumeVerifyToken, markEmailVerified } from "~/lib/auth/verify.server";
 
 export const headers: HeadersFunction = () => ({ "Referrer-Policy": "no-referrer" });

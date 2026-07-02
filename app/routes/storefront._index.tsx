@@ -1,7 +1,7 @@
 // app/routes/storefront._index.tsx
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
+import { data as dataResponse , useLoaderData } from "react-router";
+
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
@@ -29,7 +29,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Pre-resolve exactly the catalog data the doc's blocks reference (shopId scoping inside).
   const data = await resolveRenderData(doc, shopId, catalog);
   const track = await trackStorefrontEvent(request, shopId, "page_view");
-  return json({ doc, data }, { headers: track });
+  return dataResponse({ doc, data }, { headers: track });
 }
 
 export default function StorefrontHome() {

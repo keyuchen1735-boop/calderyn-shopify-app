@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 
 // Fakes for the tenant resolver + order helpers. The cart-cookie helpers stay REAL (pure, no DB)
 // so the action exercises the actual signed-cookie round-trip it relies on to read the cart id.
@@ -90,8 +91,8 @@ beforeEach(() => {
 describe("checkout loader", () => {
   it("redirects to the cart when there is no cart cookie", async () => {
     const res = await loader(loaderArgs(new Request("https://shop.example/storefront/checkout")));
-    expect((res as Response).status).toBe(302);
-    expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
+    expect(toResponse(res).status).toBe(302);
+    expect(toResponse(res).headers.get("Location")).toBe("/storefront/cart");
     expect(priceCart).not.toHaveBeenCalled();
   });
 
@@ -99,14 +100,14 @@ describe("checkout loader", () => {
     priceCart.mockResolvedValueOnce({ cartId: "cart-1", lines: [], subtotalCents: 0, currency: "usd" });
     const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
     const res = await loader(loaderArgs(req));
-    expect((res as Response).status).toBe(302);
-    expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
+    expect(toResponse(res).status).toBe(302);
+    expect(toResponse(res).headers.get("Location")).toBe("/storefront/cart");
   });
 
   it("returns the order summary + publishable key (never the secret key)", async () => {
     const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
     const res = await loader(loaderArgs(req));
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.publishableKey).toBe("pk_test_x");
     expect(body.summary.subtotalCents).toBe(3998);
     expect(body.summary.lines).toHaveLength(1);
@@ -118,31 +119,31 @@ describe("checkout loader", () => {
 describe("checkout action validation (fail visibly)", () => {
   it("rejects a missing/invalid email (400, no checkout)", async () => {
     const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, email: "not-an-email" }, { cookie: await cartCookie() })));
-    expect((res as Response).status).toBe(400);
-    expect((await (res as Response).json()).error).toMatch(/valid email/);
+    expect(toResponse(res).status).toBe(400);
+    expect((await toResponse(res).json()).error).toMatch(/valid email/);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 
   it("rejects a missing shipping field (400, no checkout)", async () => {
     const { postal: _omit, ...noPostal } = GOOD_FIELDS;
     const res = await action(actionArgs(await postForm(noPostal, { cookie: await cartCookie() })));
-    expect((res as Response).status).toBe(400);
-    expect((await (res as Response).json()).error).toMatch(/postal/);
+    expect(toResponse(res).status).toBe(400);
+    expect((await toResponse(res).json()).error).toMatch(/postal/);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 
   it("rejects when ToS or privacy is not accepted (400, no checkout)", async () => {
     const { tos: _t, ...noTos } = GOOD_FIELDS;
     const res = await action(actionArgs(await postForm(noTos, { cookie: await cartCookie() })));
-    expect((res as Response).status).toBe(400);
-    expect((await (res as Response).json()).error).toMatch(/Terms of Service|Privacy/);
+    expect(toResponse(res).status).toBe(400);
+    expect((await toResponse(res).json()).error).toMatch(/Terms of Service|Privacy/);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 
   it("redirects to the cart when there is no cart cookie (nothing to check out)", async () => {
     const res = await action(actionArgs(await postForm(GOOD_FIELDS)));
-    expect((res as Response).status).toBe(302);
-    expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
+    expect(toResponse(res).status).toBe(302);
+    expect(toResponse(res).headers.get("Location")).toBe("/storefront/cart");
     expect(createCheckout).not.toHaveBeenCalled();
   });
 });
@@ -155,7 +156,7 @@ describe("checkout action happy path", () => {
     });
     const res = await action(actionArgs(req));
 
-    expect((res as Response).status).toBe(200);
+    expect(toResponse(res).status).toBe(200);
     expect(createCheckout).toHaveBeenCalledTimes(1);
     const [shopId, cartId, buyer, attribution] = createCheckout.mock.calls[0];
     expect(shopId).toBe("shop-1");
@@ -175,7 +176,7 @@ describe("checkout action happy path", () => {
     });
     expect(buyer.consent.version).toBeTruthy();
 
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body).toEqual({
       clientSecret: "pi_1_secret_abc",
       confirmationToken: "tok-abc",
@@ -186,7 +187,7 @@ describe("checkout action happy path", () => {
       currency: "usd",
     });
     // The cart is NOT cleared at the action — payment can still fail.
-    expect((res as Response).headers.get("Set-Cookie")).toBeNull();
+    expect(toResponse(res).headers.get("Set-Cookie")).toBeNull();
   });
 
   it("captures the marketing opt-in when the box is checked", async () => {
@@ -201,7 +202,7 @@ describe("payments not configured (no Stripe keys)", () => {
     delete process.env.STRIPE_PUBLISHABLE_KEY;
     const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
     const res = await loader(loaderArgs(req));
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.publishableKey).toBeNull();
     expect(body.summary.subtotalCents).toBe(3998);
   });
@@ -209,7 +210,7 @@ describe("payments not configured (no Stripe keys)", () => {
   it("action refuses with 503 before originating a checkout", async () => {
     delete process.env.STRIPE_PUBLISHABLE_KEY;
     const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
-    expect((res as Response).status).toBe(503);
+    expect(toResponse(res).status).toBe(503);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 });
@@ -219,15 +220,15 @@ describe("demo shell is browse-only at checkout", () => {
     resolveStorefrontShop.mockResolvedValue("demo-shop");
     const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
     const res = await loader(loaderArgs(req));
-    expect((res as Response).status).toBe(302);
-    expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
+    expect(toResponse(res).status).toBe(302);
+    expect(toResponse(res).headers.get("Location")).toBe("/storefront/cart");
     expect(priceCart).not.toHaveBeenCalled();
   });
 
   it("action bounces the demo tenant to the cart without originating", async () => {
     resolveStorefrontShop.mockResolvedValue("demo-shop");
     const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
-    expect((res as Response).status).toBe(302);
+    expect(toResponse(res).status).toBe(302);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 });

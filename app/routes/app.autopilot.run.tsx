@@ -11,8 +11,8 @@
 // Resource route: action only (no loader/component). App Bridge session-token
 // auth via authenticate.admin replaces the dashboard route's cookie+CSRF guard.
 
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "~/shopify.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { runAutopilotForShop } from "~/lib/actions/autopilot.server";

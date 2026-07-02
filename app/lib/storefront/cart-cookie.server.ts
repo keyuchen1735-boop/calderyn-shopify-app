@@ -9,7 +9,7 @@
 // forged id that points at another tenant's cart. The cookie is built lazily so
 // the secret is read per request (mirrors cookieKey() in lib/mcp_oauth.server.ts),
 // keeping the public store renderable even before env is fully wired.
-import { createCookie } from "@remix-run/node";
+import { createCookie } from "react-router";
 
 const COOKIE_NAME = "cd_cart";
 const MAX_AGE_SEC = 60 * 60 * 24 * 30; // 30 days

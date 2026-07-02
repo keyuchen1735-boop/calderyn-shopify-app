@@ -3,9 +3,9 @@
 // read the signed cart cookie, price the cart purely from the line snapshots.
 // Checkout (payment + PII capture) is #2c-2 — the Checkout link points at its
 // future route, which 404s until that module lands.
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
+import { data , useLoaderData } from "react-router";
+
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
@@ -26,14 +26,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
   // hold its sentinel id) — always an empty cart, never a DB read.
-  if (shopId === DEMO_SHOP_ID) return json({ cart: null });
+  if (shopId === DEMO_SHOP_ID) return data({ cart: null });
   const track = await trackStorefrontEvent(request, shopId, "page_view");
   const cartId = await readCartId(request);
   // No cookie yet -> empty cart, no DB read.
-  if (!cartId) return json({ cart: null }, { headers: track });
+  if (!cartId) return data({ cart: null }, { headers: track });
   // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines.
   const cart = await priceCart(shopId, cartId);
-  return json({ cart }, { headers: track });
+  return data({ cart }, { headers: track });
 }
 
 

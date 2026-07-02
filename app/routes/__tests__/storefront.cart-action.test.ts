@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 
 // Fakes for the cart helpers + tenant resolver. The cart-cookie helpers stay REAL
 // (pure, no DB) so the test exercises the actual sign/parse round-trip the action

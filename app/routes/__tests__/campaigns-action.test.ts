@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { ActionFunctionArgs } from "react-router";
 import { action } from "../app.campaigns._index";
 
 // Spies for the boundaries; the real route `action` logic runs against them.
@@ -123,7 +124,7 @@ describe("campaigns action — Meta pause safety", () => {
     getStatusSpy.mockResolvedValue("ACTIVE");
     setStatusSpy.mockRejectedValue(new Error("Meta API error: Permission denied"));
 
-    const res = await call(pauseRequest());
+    const res = toResponse(await call(pauseRequest()));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(false);
@@ -138,7 +139,7 @@ describe("campaigns action — Meta pause safety", () => {
     setStatusSpy.mockResolvedValue(undefined);
     executeSpy.mockResolvedValue({});
 
-    const res = await call(pauseRequest());
+    const res = toResponse(await call(pauseRequest()));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -157,7 +158,7 @@ describe("campaigns action — orchestrator wiring", () => {
     resolveDimSpy.mockResolvedValue("dim-uuid-120");
     executeActionSpy.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
 
-    const res = await call(pauseRequest());
+    const res = toResponse(await call(pauseRequest()));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -187,9 +188,9 @@ describe("campaigns action — orchestrator wiring", () => {
     fd.set("campaignName", "Prospecting");
     fd.set("platform", "Meta");
     fd.set("idempotencyKey", "k2");
-    const res = await call(
+    const res = toResponse(await call(
       new Request("http://localhost/app/campaigns", { method: "POST", body: fd }),
-    );
+    ));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -207,7 +208,7 @@ describe("campaigns action — orchestrator wiring", () => {
     setStatusSpy.mockResolvedValue(undefined);
     executeSpy.mockResolvedValue({});
 
-    const res = await call(pauseRequest());
+    const res = toResponse(await call(pauseRequest()));
     const body = (await res.json()) as { ok: boolean };
 
     expect(body.ok).toBe(true);
@@ -241,7 +242,7 @@ describe("action · intent=reallocate", () => {
 
   it("runs the reallocation through the orchestrator and reports success", async () => {
     executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "succeeded" });
-    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    const res = toResponse(await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs));
     const body = (await res.json()) as { ok: boolean; toast?: { message: string }; error?: { code: string; message: string } };
     expect(executeReallocationSpy).toHaveBeenCalledWith(
       "shop-uuid",
@@ -259,20 +260,20 @@ describe("action · intent=reallocate", () => {
   });
 
   it("rejects a non-positive amount with 400 and never calls the orchestrator", async () => {
-    const res = await action({ request: reallocRequest({ amountCents: "0" }), params: {}, context: {} } as ActionFunctionArgs);
+    const res = toResponse(await action({ request: reallocRequest({ amountCents: "0" }), params: {}, context: {} } as ActionFunctionArgs));
     expect(res.status).toBe(400);
     expect(executeReallocationSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a missing destination with 400", async () => {
-    const res = await action({ request: reallocRequest({ destCampaignId: "" }), params: {}, context: {} } as ActionFunctionArgs);
+    const res = toResponse(await action({ request: reallocRequest({ destCampaignId: "" }), params: {}, context: {} } as ActionFunctionArgs));
     expect(res.status).toBe(400);
     expect(executeReallocationSpy).not.toHaveBeenCalled();
   });
 
   it("returns 202 (not success) when the dest increase is parked for retry", async () => {
     executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "retrying" });
-    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    const res = toResponse(await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs));
     const body = (await res.json()) as { ok: boolean; toast?: { message: string }; error?: { code: string; message: string } };
     expect(res.status).toBe(202);
     expect(body.ok).toBe(false);
@@ -281,15 +282,15 @@ describe("action · intent=reallocate", () => {
 
   it("returns 502 when the reallocation failed", async () => {
     executeReallocationSpy.mockResolvedValue({ id: "aud1", outcome: "failed" });
-    const res = await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs);
+    const res = toResponse(await action({ request: reallocRequest(), params: {}, context: {} } as ActionFunctionArgs));
     expect(res.status).toBe(502);
   });
 
   it("requires Meta-listed campaigns to be ingested (409 when dim resolve fails)", async () => {
     resolveDimSpy.mockResolvedValue(null);
-    const res = await action(
+    const res = toResponse(await action(
       { request: reallocRequest({ platform: "Meta", campaignId: "120" }), params: {}, context: {} } as ActionFunctionArgs,
-    );
+    ));
     expect(res.status).toBe(409);
     expect(executeReallocationSpy).not.toHaveBeenCalled();
   });

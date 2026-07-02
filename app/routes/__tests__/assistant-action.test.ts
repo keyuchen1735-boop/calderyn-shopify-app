@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 
 const { runTurnSpy, appendSpy, createConvSpy, getMessagesSpy } = vi.hoisted(() => ({
   runTurnSpy: vi.fn(),

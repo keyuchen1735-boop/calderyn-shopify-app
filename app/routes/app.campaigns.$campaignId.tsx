@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Badge,
   Banner,
@@ -146,7 +146,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const client = calderynClient(session.shop);
 
   if (!idFromUrl) {
-    return json<LoaderPayload>(
+    return data<LoaderPayload>(
       emptyPayload(idFromUrl, { code: "INVALID_REQUEST", message: "Missing campaign id" }),
     );
   }
@@ -216,7 +216,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     }
 
-    return json<LoaderPayload>(
+    return data<LoaderPayload>(
       emptyPayload(idFromUrl, {
         code: "CAMPAIGN_NOT_FOUND",
         message: `Campaign ${idFromUrl} not found`,
@@ -224,7 +224,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     );
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>(
+    return data<LoaderPayload>(
       emptyPayload(idFromUrl, { code: e.code ?? "ERROR", message: e.message }),
     );
   }
@@ -236,7 +236,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (String(form.get("intent")) === "push_creative_draft") {
     const campaignId = String(form.get("campaign_id") ?? "");
-    if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
+    if (!campaignId) return data({ ok: false, error: "missing_campaign_id" }, { status: 400 });
     const parsed = parsePushDraftCreative({
       headline: form.get("headline"),
       primaryText: form.get("primaryText"),
@@ -245,12 +245,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageUrl: form.get("imageUrl"),
       audience: form.get("audience"),
     });
-    if (!parsed.ok) return json({ ok: false, error: parsed.error }, { status: 400 });
+    if (!parsed.ok) return data({ ok: false, error: parsed.error }, { status: 400 });
     const shopId = await resolveShopId(session.shop);
     // Defense in depth: refuse before any Meta call if the stored token lacks
     // ads_management (the loader gate is advisory; a direct POST bypasses it).
     if (!(await metaDraftPushEnabled(getSupabase(), shopId))) {
-      return json({ ok: false, error: "meta_scope_insufficient" }, { status: 403 });
+      return data({ ok: false, error: "meta_scope_insufficient" }, { status: 403 });
     }
     const res = await executeAction(
       shopId,
@@ -264,25 +264,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
       getSupabase(),
     );
-    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+    return data({ ok: res.outcome !== "failed", outcome: res.outcome });
   }
 
   if (String(form.get("intent")) !== "apply_direction") {
-    return json({ ok: false, error: "unknown_intent" }, { status: 400 });
+    return data({ ok: false, error: "unknown_intent" }, { status: 400 });
   }
   const kind = String(form.get("action_kind")) as DirectionActionKind;
   const allowed: DirectionActionKind[] = ["pause_campaign", "reduce_campaign_budget", "increase_campaign_budget"];
-  if (!allowed.includes(kind)) return json({ ok: false, error: "invalid_action_kind" }, { status: 400 });
+  if (!allowed.includes(kind)) return data({ ok: false, error: "invalid_action_kind" }, { status: 400 });
   const dailyRaw = form.get("daily_budget_cents");
   const dailyBudgetCents = dailyRaw != null && dailyRaw !== "" ? Number(dailyRaw) : undefined;
   if (
     (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&
     (!dailyBudgetCents || !Number.isFinite(dailyBudgetCents) || dailyBudgetCents <= 0)
   ) {
-    return json({ ok: false, error: "missing_daily_budget_cents" }, { status: 400 });
+    return data({ ok: false, error: "missing_daily_budget_cents" }, { status: 400 });
   }
   const campaignId = String(form.get("campaign_id") ?? "");
-  if (!campaignId) return json({ ok: false, error: "missing_campaign_id" }, { status: 400 });
+  if (!campaignId) return data({ ok: false, error: "missing_campaign_id" }, { status: 400 });
   const shopId = await resolveShopId(session.shop);
   try {
     const res = await executeAction(
@@ -304,10 +304,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
       getSupabase(),
     );
-    return json({ ok: res.outcome !== "failed", outcome: res.outcome });
+    return data({ ok: res.outcome !== "failed", outcome: res.outcome });
   } catch (err) {
     console.error(`[campaign-direction] action failed for ${campaignId}`, err);
-    return json({ ok: false, error: "not_actionable" }, { status: 409 });
+    return data({ ok: false, error: "not_actionable" }, { status: 409 });
   }
 };
 
@@ -375,7 +375,7 @@ async function respondForDetail(
     // Reuse the scorecards already loaded above — no second cache read (D3).
     { loadCachedAdScorecards: async (_s, ids) => scorecards.filter((sc) => ids.includes(sc.adId)) },
   );
-  return json<LoaderPayload>({
+  return data<LoaderPayload>({
     detail,
     error: null,
     creatives,
@@ -647,7 +647,7 @@ export default function CampaignDetailPage() {
   const scorecardByAd = new Map(scorecards.map((s) => [s.adId, s]));
   const metricsByAd = new Map(adMetrics.map((m) => [m.adId, m]));
   return (
-    <Page
+    (<Page
       title={detail.name}
       titleMetadata={
         <InlineStack gap="200" blockAlign="center">
@@ -839,7 +839,7 @@ export default function CampaignDetailPage() {
             {creatives.length > 0 ? (
               // Tile creatives 2-up on wide screens so each ad's preview +
               // scorecard uses the horizontal space instead of a tall column.
-              <InlineGrid columns={{ xs: 1, lg: 2 }} gap="500">
+              (<InlineGrid columns={{ xs: 1, lg: 2 }} gap="500">
                 {creatives.map((c, i) => (
                   <CreativeWithScorecard
                     key={c.adId || `ad-${i}`}
@@ -851,7 +851,7 @@ export default function CampaignDetailPage() {
                     campaignIdParam={campaignIdParam}
                   />
                 ))}
-              </InlineGrid>
+              </InlineGrid>)
             ) : (
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd" tone="subdued">
@@ -876,7 +876,7 @@ export default function CampaignDetailPage() {
         )}
         {detail && <ScreenNewCreativeCard campaignIdParam={campaignIdParam} />}
       </BlockStack>
-    </Page>
+    </Page>)
   );
 }
 

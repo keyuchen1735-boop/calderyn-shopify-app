@@ -2,8 +2,8 @@
 // The merchant dashboard SPA. Auth-gated by the loader (redirects to
 // /dashboard/signin when unauthenticated); the client fetches all data on mount
 // so no server-only module leaks into the browser bundle.
-import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
-import { useLoaderData, useRouteError } from "@remix-run/react";
+import type { LoaderFunctionArgs, LinksFunction } from "react-router";
+import { useLoaderData, useRouteError } from "react-router";
 
 import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";

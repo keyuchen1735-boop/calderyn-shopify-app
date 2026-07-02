@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "react-router";
+import { useLoaderData } from "react-router";
 import { getDashboardSessionAllowUnverified } from "~/lib/dashboard/session.server";
 import { rateLimit, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";

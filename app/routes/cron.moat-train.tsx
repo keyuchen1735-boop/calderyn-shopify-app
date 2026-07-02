@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 import { acquireTrainLock, releaseTrainLock } from "~/lib/moat/train-lock.server";

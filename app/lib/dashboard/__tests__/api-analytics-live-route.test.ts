@@ -1,5 +1,6 @@
 // app/lib/dashboard/__tests__/api-analytics-live-route.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 
 import { loader as liveLoader } from "../../../routes/dashboard.api.analytics-live";
 
@@ -31,21 +32,21 @@ describe("GET /dashboard/api/analytics-live", () => {
       new Response(JSON.stringify({ error: "unauthenticated" }), { status: 401 }),
     );
     await expect(
-      liveLoader({
+      liveLoader(routeArgs({
         request: new Request("https://calderyncompany.com/dashboard/api/analytics-live"),
         params: {},
         context: {},
-      }),
+      })),
     ).rejects.toMatchObject({ status: 401 });
   });
 
   it("returns the snapshot DTO scoped to the shop", async () => {
     buildLiveSnapshot.mockResolvedValueOnce({ visitors_now: 3, sessions_today: 9 });
-    const res = (await liveLoader({
+    const res = (await liveLoader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/analytics-live"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(await res.json()).toEqual({ visitors_now: 3, sessions_today: 9 });

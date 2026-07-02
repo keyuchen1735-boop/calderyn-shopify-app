@@ -3,10 +3,9 @@
 // campaign_below_breakeven alert as the "next step". The lower section carries
 // the at-a-glance money tiles, today's focus, and peer benchmarks that used to
 // live on the home page (which is now the Live Engine).
-import { json } from "@remix-run/node";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { data, useLoaderData } from "react-router";
+import type { LoaderFunctionArgs } from "react-router";
 import { Fragment } from "react";
-import { useLoaderData } from "@remix-run/react";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import {
   Badge,
@@ -77,7 +76,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const sinceIso = new Date(
       Date.now() - RECOVERED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       roasSeries,
       grades,
       topAds,
@@ -89,7 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       roasSeries: [],
       grades: [],
       topAds: [],

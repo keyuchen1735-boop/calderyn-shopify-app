@@ -5,6 +5,7 @@
 // Mocks: exchangeCode, fetchMemberUrn, saveConnection, verifyState.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { routeArgs } from "../../lib/__tests__/_route-test-helpers";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -52,11 +53,11 @@ describe("social.linkedin.callback — loader", () => {
 
   it("renders a cancelled page when the error query param is present (user denied)", async () => {
     const { loader } = await import("../social.linkedin.callback");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: callbackRequest({ error: "access_denied" }),
       params: {},
       context: {},
-    });
+    }));
     const text = await res.text();
     expect(text).toMatch(/cancel/i);
     // Should NOT have called exchangeCode
@@ -67,11 +68,11 @@ describe("social.linkedin.callback — loader", () => {
     verifyState.mockReturnValue(null);
 
     const { loader } = await import("../social.linkedin.callback");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: callbackRequest({ code: "auth-code", state: "bad-state" }),
       params: {},
       context: {},
-    });
+    }));
     const text = await res.text();
     expect(text).toMatch(/invalid|expired/i);
     expect(exchangeCode).not.toHaveBeenCalled();
@@ -90,11 +91,11 @@ describe("social.linkedin.callback — loader", () => {
     saveConnection.mockResolvedValue(undefined);
 
     const { loader } = await import("../social.linkedin.callback");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: callbackRequest({ code: "valid-code", state: "good-state" }),
       params: {},
       context: {},
-    });
+    }));
     const text = await res.text();
 
     // exchangeCode called with correct args
@@ -132,11 +133,11 @@ describe("social.linkedin.callback — loader", () => {
     const { loader } = await import("../social.linkedin.callback");
 
     // Must not throw — rule 12: surface failures, never throw past a route loader
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: callbackRequest({ code: "bad-code", state: "good-state" }),
       params: {},
       context: {},
-    });
+    }));
     const text = await res.text();
     // Generic message shown on page; real detail goes to server logs only
     expect(text).toMatch(/error|fail/i);
@@ -154,11 +155,11 @@ describe("social.linkedin.callback — loader", () => {
     saveConnection.mockRejectedValue(new Error("DB write failed: unique constraint"));
 
     const { loader } = await import("../social.linkedin.callback");
-    const res = await loader({
+    const res = await loader(routeArgs({
       request: callbackRequest({ code: "c", state: "s" }),
       params: {},
       context: {},
-    });
+    }));
     const text = await res.text();
     // Generic message shown on page; real detail goes to server logs only
     expect(text).toMatch(/error|fail/i);

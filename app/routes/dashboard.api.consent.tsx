@@ -3,7 +3,7 @@
 // calderynClient.consent, which is the single writer of shops.peer_data_consent
 // that the engine's moat emitter reads.
 
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";

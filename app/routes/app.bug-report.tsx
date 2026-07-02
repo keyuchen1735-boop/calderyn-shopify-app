@@ -1,8 +1,8 @@
 // app/routes/app.bug-report.tsx
 // Resource route (no UI): backend for the embedded "Report a bug" launcher.
 // POST multipart form-data { description, email, screen, screenshots[] }.
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { authenticate } from "../shopify.server";
 import { parseBugReportForm, submitBugReport } from "~/lib/bug-report/submit.server";
 

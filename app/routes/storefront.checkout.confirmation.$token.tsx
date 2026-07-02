@@ -5,9 +5,9 @@
 // PII display is intentionally minimal (no address/email echo) — just the buyer's own lines +
 // total + a generic "received" message. The cart cookie is cleared here so a placed order starts
 // the buyer fresh.
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
+import { data , useLoaderData } from "react-router";
+
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { clearCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
@@ -54,7 +54,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // The webhook may lag, so a genuinely-paid order can still read `checkout_pending` here —
   // reflect it gracefully ("received / processing") rather than hard-failing on not-yet-paid.
-  return json(
+  return data(
     {
       ref: formatOrderRef(order.orderId),
       paid: captured,

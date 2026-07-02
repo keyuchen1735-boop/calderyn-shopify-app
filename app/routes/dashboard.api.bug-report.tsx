@@ -2,7 +2,7 @@
 // POST multipart form-data { description, email, screen, screenshots[] } -> files
 // the bug report (email + durable row). Dashboard cookie auth + same-origin CSRF
 // guard, mirroring dashboard.api.assistant.
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { parseBugReportForm, submitBugReport } from "~/lib/bug-report/submit.server";

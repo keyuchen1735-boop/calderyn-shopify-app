@@ -2,7 +2,7 @@
 // Dashboard mirror of the embedded regenerate route. Same orchestrator, same
 // copy gate; JSON in / JSON out with the dashboard envelope. The orchestrator's
 // typed {ok:false, reason} is returned as-is (200) so the dashboard UI can map it.
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import {

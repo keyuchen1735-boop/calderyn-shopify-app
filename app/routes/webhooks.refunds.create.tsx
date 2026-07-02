@@ -1,4 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { CalderynError, calderynClient } from "~/lib/calderyn.server";
 import { minimizeRefundWebhook } from "~/lib/ingest/mappers.server";

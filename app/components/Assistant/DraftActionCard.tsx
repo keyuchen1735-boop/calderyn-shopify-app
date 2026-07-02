@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { Badge, BlockStack, Button, ButtonGroup, InlineStack, Text } from "@shopify/polaris";
 import type { DraftedAction } from "~/lib/assistant/types";
 import { useEmbeddedNavigate } from "~/lib/embedded-nav";

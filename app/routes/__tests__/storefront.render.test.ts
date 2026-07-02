@@ -1,5 +1,6 @@
 // app/routes/__tests__/storefront.render.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs, toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
@@ -21,11 +22,14 @@ const { getCatalogMock, loaderDataRef } = vi.hoisted(() => ({
   loaderDataRef: { current: null as unknown },
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
-vi.mock("@remix-run/react", async () => {
-  // The real Remix <Form> needs router context; stub it as a plain <form> so the
-  // PDP's add-to-cart form (#2c-1) renders in the node test environment.
+vi.mock("react-router", async (importOriginal) => {
+  // The real router <Form> needs router context; stub it as a plain <form> so the
+  // PDP's add-to-cart form (#2c-1) renders in the node test environment. Server
+  // APIs (data, createCookie, ...) stay real via the original module.
+  const actual = await importOriginal<Record<string, unknown>>();
   const { createElement } = await import("react");
   return {
+    ...actual,
     useLoaderData: () => loaderDataRef.current,
     Outlet: () => null,
     Form: ({ children, method, className }: { children?: unknown; method?: string; className?: string }) =>
@@ -45,7 +49,7 @@ function req(url = "https://demo.calderyncompany.com/storefront") {
 
 describe("storefront layout", () => {
   it("loads demo store settings (read-only)", async () => {
-    const res = await layoutLoader({ request: req(), params: {}, context: {} });
+    const res = toResponse(await layoutLoader(routeArgs({ request: req(), params: {}, context: {} })));
     const data = await res.json();
     expect(data.settings.storeName.length).toBeGreaterThan(0);
     expect(data.settings.palette).toHaveProperty("primary");
@@ -72,7 +76,7 @@ describe("storefront layout", () => {
 
 describe("storefront home", () => {
   it("loads the home block document + resolved fixture data (shopId-scoped)", async () => {
-    const res = await homeLoader({ request: req(), params: {}, context: {} });
+    const res = toResponse(await homeLoader(routeArgs({ request: req(), params: {}, context: {} })));
     const data = await res.json();
     // The demo (non-uuid) shop has no published doc → the never-blank default doc.
     expect(data.doc.blocks.map((b: { type: string }) => b.type)).toEqual(["hero", "productGrid"]);
@@ -109,7 +113,7 @@ describe("storefront home", () => {
 
 describe("storefront collection", () => {
   it("loads only that collection's products (shopId-scoped)", async () => {
-    const res = await collectionLoader({ request: req(), params: { handle: "apparel" }, context: {} });
+    const res = toResponse(await collectionLoader(routeArgs({ request: req(), params: { handle: "apparel" }, context: {} })));
     const data = await res.json();
     expect(data.handle).toBe("apparel");
     expect(data.title).toBe("Apparel");
@@ -121,7 +125,7 @@ describe("storefront collection", () => {
 
   it("404s when the collection handle is unknown", async () => {
     await expect(
-      collectionLoader({ request: req(), params: { handle: "nope" }, context: {} }),
+      collectionLoader(routeArgs({ request: req(), params: { handle: "nope" }, context: {} })),
     ).rejects.toMatchObject({ status: 404 });
   });
 
@@ -137,7 +141,7 @@ describe("storefront collection", () => {
         return null;
       },
     });
-    const res = await collectionLoader({ request: req(), params: { handle: "spring" }, context: {} });
+    const res = toResponse(await collectionLoader(routeArgs({ request: req(), params: { handle: "spring" }, context: {} })));
     const data = await res.json();
     expect(data.title).toBe("Spring");
     expect(data.products).toEqual([]);
@@ -167,7 +171,7 @@ describe("storefront collection", () => {
 
 describe("storefront PDP", () => {
   it("loads the product with its variants (shopId-scoped)", async () => {
-    const res = await productLoader({ request: req(), params: { handle: "zip-hoodie" }, context: {} });
+    const res = toResponse(await productLoader(routeArgs({ request: req(), params: { handle: "zip-hoodie" }, context: {} })));
     const data = await res.json();
     expect(data.product.title).toBe("Zip Hoodie");
     expect(data.product.variants.length).toBe(2);
@@ -177,7 +181,7 @@ describe("storefront PDP", () => {
 
   it("404s when the product handle is unknown", async () => {
     await expect(
-      productLoader({ request: req(), params: { handle: "nope" }, context: {} }),
+      productLoader(routeArgs({ request: req(), params: { handle: "nope" }, context: {} })),
     ).rejects.toMatchObject({ status: 404 });
   });
 
@@ -226,17 +230,19 @@ describe("storefront swap seam (criterion 2)", () => {
     };
     getCatalogMock.mockReturnValue(secondFake);
 
-    const home = await (await homeLoader({ request: req(), params: {}, context: {} })).json();
+    const home = await toResponse(
+      await homeLoader(routeArgs({ request: req(), params: {}, context: {} })),
+    ).json();
     // Home now returns { doc, data }; the default doc's `all` grid pulls products from the swapped catalog.
     expect(home.data.allProducts[0].handle).toBe("novel");
 
-    const collection = await (
-      await collectionLoader({ request: req(), params: { handle: "books" }, context: {} })
+    const collection = await toResponse(
+      await collectionLoader(routeArgs({ request: req(), params: { handle: "books" }, context: {} })),
     ).json();
     expect(collection.products[0].handle).toBe("novel");
 
-    const pdp = await (
-      await productLoader({ request: req(), params: { handle: "novel" }, context: {} })
+    const pdp = await toResponse(
+      await productLoader(routeArgs({ request: req(), params: { handle: "novel" }, context: {} })),
     ).json();
     expect(pdp.product.handle).toBe("novel");
   });

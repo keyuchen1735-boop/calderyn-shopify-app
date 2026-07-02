@@ -1,14 +1,9 @@
 import { useMemo, useState } from "react";
-import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import { Banner, BlockStack, Box, Button, Card, Page, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient, type CalderynError } from "~/lib/calderyn.server";
@@ -36,10 +31,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const client = calderynClient(session.shop);
   try {
     const audit = await client.audit.list(request.signal);
-    return json<LoaderPayload>({ audit, error: null });
+    return data<LoaderPayload>({ audit, error: null });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       audit: [],
       error: { code: e.code ?? "ERROR", message: e.message },
     });
@@ -54,7 +49,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const auditId = String(formData.get("auditId") || "");
 
   if (intent !== "undo" || !auditId) {
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: "INVALID_INTENT", message: "Unknown intent" },
@@ -66,13 +61,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     await client.audit.undo(auditId, request.signal);
-    return json<ActionPayload>({
+    return data<ActionPayload>({
       ok: true,
       toast: { message: "Action undone" },
     });
   } catch (err) {
     const e = err as CalderynError;
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: e.code ?? "ERROR", message: e.message },

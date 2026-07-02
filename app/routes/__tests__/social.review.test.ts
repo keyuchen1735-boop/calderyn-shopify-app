@@ -10,6 +10,7 @@
 // "approve". The reject flow is unchanged.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs, toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { LinkedInPostError } from "~/lib/social/linkedin.server";
 import type * as LinkedInServer from "~/lib/social/linkedin.server";
 
@@ -211,11 +212,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "bad-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
@@ -226,11 +227,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "mismatched"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
@@ -245,11 +246,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "no-owner-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("stale_link");
@@ -265,11 +266,11 @@ describe("social.review.$id — loader", () => {
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("confirm");
@@ -294,11 +295,11 @@ describe("social.review.$id — loader", () => {
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png", "https://cdn.test/ig-0.png"]);
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("li_result");
@@ -321,11 +322,11 @@ describe("social.review.$id — loader", () => {
     signedUrls.mockResolvedValue(["https://cdn.test/li-0.png"]);
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("li_result");
@@ -340,11 +341,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow({ regen_count: 2 }) });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "old-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("stale");
@@ -355,11 +356,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: null, digestError: { message: "relation does not exist" } });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
@@ -370,11 +371,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow({ li_image_paths: null as unknown as string[] }) });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "valid-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
@@ -385,11 +386,11 @@ describe("social.review.$id — loader", () => {
     mockSupabase({ digestRow: makeRow() });
 
     const { loader } = await import("../social.review.$id");
-    const res = await loader({
+    const res = toResponse(await loader(routeArgs({
       request: loaderRequest(TEST_ID, "reject-token"),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("confirm");
@@ -424,11 +425,11 @@ describe("social.review.$id — action (approve)", () => {
     const { linkInsert, linkUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -485,11 +486,11 @@ describe("social.review.$id — action (approve)", () => {
     });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -513,11 +514,11 @@ describe("social.review.$id — action (approve)", () => {
     });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -538,11 +539,11 @@ describe("social.review.$id — action (approve)", () => {
     const { linkDelete } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -565,11 +566,11 @@ describe("social.review.$id — action (approve)", () => {
     const { linkDelete, linkUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -597,11 +598,11 @@ describe("social.review.$id — action (approve)", () => {
     const { linkDelete, linkUpdate } = mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -628,11 +629,11 @@ describe("social.review.$id — action (approve)", () => {
     const { linkInsert } = mockSupabase({ digestRow: makeRow(), linkInsertError: null });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token-bob" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -656,11 +657,11 @@ describe("social.review.$id — action (approve)", () => {
     });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "approve-token" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("error");
@@ -672,11 +673,11 @@ describe("social.review.$id — action (approve)", () => {
     mockSupabase({ digestRow: makeRow() });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "no-owner" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("stale_link");
@@ -687,11 +688,11 @@ describe("social.review.$id — action (approve)", () => {
     verifyActionToken.mockReturnValue(null);
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, { token: "bad" }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("invalid");
@@ -717,7 +718,7 @@ describe("social.review.$id — action (reject)", () => {
     regenerateDigest.mockResolvedValue({ ok: true, newVersion: 1 });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, {
         token: "reject-token",
         reasons: ["Tone too salesy", "Weak visuals"],
@@ -725,7 +726,7 @@ describe("social.review.$id — action (reject)", () => {
       }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
 
@@ -745,14 +746,14 @@ describe("social.review.$id — action (reject)", () => {
     regenerateDigest.mockResolvedValue({ ok: false, capped: true });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, {
         token: "reject-token",
         reasons: ["Captions need work"],
       }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("capped");
@@ -764,14 +765,14 @@ describe("social.review.$id — action (reject)", () => {
     regenerateDigest.mockResolvedValue({ ok: false, error: "render failed: chromium crash" });
 
     const { action } = await import("../social.review.$id");
-    const res = await action({
+    const res = toResponse(await action(routeArgs({
       request: actionRequest(TEST_ID, {
         token: "reject-token",
         reasons: ["Wrong feature highlighted"],
       }),
       params: { id: TEST_ID },
       context: {},
-    });
+    })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body = await res.json() as any;
     expect(body.state).toBe("error");

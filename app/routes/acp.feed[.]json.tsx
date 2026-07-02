@@ -1,8 +1,8 @@
 // ACP product feed. Dormant unless ACP_ENABLED=true. The shop is resolved from a signed feed
 // key issued at onboarding (one feed URL per merchant); confirm the key→shop resolution
 // mechanism against the onboarded ACP spec (path param vs query token vs signed JWT).
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { getAgenticCatalog } from "~/lib/commerce/catalog.server";
 import { toAcpFeedItem } from "~/lib/commerce/acp/map";
 

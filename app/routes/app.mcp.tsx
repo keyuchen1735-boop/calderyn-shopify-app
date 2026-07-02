@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation , data } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Badge,
   Banner,
@@ -55,10 +55,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       listMcpTokens(session.shop),
       listOauthGrants(session.shop),
     ]);
-    return json<LoaderPayload>({ tokens, oauthGrants, error: null });
+    return data<LoaderPayload>({ tokens, oauthGrants, error: null });
   } catch (err) {
     const e = err as { code?: string; message?: string };
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       tokens: [],
       oauthGrants: [],
       error: { code: e.code ?? "ERROR", message: e.message ?? String(err) },
@@ -75,7 +75,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "create") {
       const name = String(formData.get("name") || "").trim();
       if (!name) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             intent,
@@ -90,7 +90,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         name,
         createdByUser: null,
       });
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         intent,
         rawToken: created.raw,
@@ -102,7 +102,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "revoke") {
       const tokenId = String(formData.get("token_id") || "");
       if (!tokenId) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             intent,
@@ -113,7 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
       await revokeMcpToken({ shopDomain: session.shop, tokenId });
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         intent,
         toast: { message: "Token revoked" },
@@ -123,7 +123,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "oauth-revoke") {
       const tokenId = String(formData.get("token_id") || "");
       if (!tokenId) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             intent,
@@ -134,14 +134,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
       await revokeOauthGrant({ shopDomain: session.shop, tokenId });
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         intent,
         toast: { message: "Claude.ai workspace disconnected" },
       });
     }
 
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         intent: "unknown",
@@ -152,7 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   } catch (err) {
     const e = err as { code?: string; message?: string };
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         intent,

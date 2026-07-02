@@ -1,6 +1,6 @@
 // GET → the campaign's recommended direction + plain-English why (dashboard parity
 // with the embedded detail). Same shared recommender + reasoning + cache.
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";

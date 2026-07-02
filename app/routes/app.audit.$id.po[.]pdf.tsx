@@ -2,7 +2,7 @@
 // Re-renders the PO draft PDF from the PoDraft snapshot in
 // action_audit.params.po — no blob storage, reproducible forever.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import type { PoDraft } from "~/lib/po/draft.server";

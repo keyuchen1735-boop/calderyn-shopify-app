@@ -6,9 +6,10 @@
 // — never CRON_SECRET — so a key landing in access logs can't compromise the
 // cron auth. Remove/rotate LINKEDIN_SETUP_KEY after the one-time connect.
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { timingSafeEqual } from "node:crypto";
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { getAuthorizeUrl } from "~/lib/social/linkedin.server";
 import { signState } from "~/lib/social/linkedin-connection.server";
 

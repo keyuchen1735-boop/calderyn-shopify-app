@@ -10,9 +10,9 @@
 // what closes the pre-seed High. No DB row, no cookie, no /app auto-route.
 import { useMemo } from "react";
 import type { MouseEvent } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data, redirect , useLoaderData } from "react-router";
+
 import oauthConnectStyles from "~/styles/oauth-connect.css?url";
 import { getClient, signPendingOauth } from "~/lib/mcp_oauth.server";
 import { buildAppConnectUrl, SHOP_RE } from "~/lib/connect-deeplink";
@@ -111,7 +111,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     state: params.state,
   });
 
-  return json({
+  return data({
     client_name: client.client_name,
     token: jwt,
     apiKey: process.env.SHOPIFY_API_KEY ?? "",

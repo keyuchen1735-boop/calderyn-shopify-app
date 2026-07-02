@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
+import { useFetcher, useLoaderData, useRevalidator , data, redirect } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import { Banner, BlockStack, Button, Page, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { calderynClient } from "~/lib/calderyn.server";
@@ -87,7 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       client.guardrails.get(request.signal),
       client.campaigns.list(request.signal),
     ]);
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       engine,
       autopilotEnabled: Boolean(guardrails?.autopilot_enabled),
       campaigns,
@@ -99,7 +99,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // data-load failure.
     if (err instanceof Response) throw err;
     const e = err as { code?: string; message?: string };
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       engine: EMPTY_ENGINE,
       autopilotEnabled: false,
       campaigns: [],
@@ -124,14 +124,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const actionKind = String(formData.get("actionKind") ?? "").trim() as ActionKind;
     const enabled = String(formData.get("enabled") ?? "") === "true";
     if (!detectorId || !actionKind) {
-      return json<ActionPayload>({ error: "Missing feature" }, { status: 400 });
+      return data<ActionPayload>({ error: "Missing feature" }, { status: 400 });
     }
     const r = await client.calibration.setFeatureAutonomy(detectorId, actionKind, enabled);
-    if (!r.ok) return json<ActionPayload>({ error: "Could not update this feature" }, { status: 500 });
-    return json<ActionPayload>({ ok: true, enabled });
+    if (!r.ok) return data<ActionPayload>({ error: "Could not update this feature" }, { status: 500 });
+    return data<ActionPayload>({ ok: true, enabled });
   }
 
-  return json<ActionPayload>({ error: "Unknown intent" }, { status: 400 });
+  return data<ActionPayload>({ error: "Unknown intent" }, { status: 400 });
 };
 
 export default function Home() {

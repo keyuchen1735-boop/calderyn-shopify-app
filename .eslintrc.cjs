@@ -22,7 +22,7 @@ module.exports = {
           {
             paths: [
               {
-                name: "@remix-run/react",
+                name: "react-router",
                 importNames: ["useNavigate"],
                 message:
                   "Use useEmbeddedNavigate from app/lib/embedded-nav so embedded shop/host params survive document reloads.",

@@ -7,7 +7,7 @@
 // getUnmatchedCharges reader (the C.1 contract); sb + shopId resolved directly like the
 // other dashboard read routes (ship-cost, integrations).
 
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";

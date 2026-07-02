@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { LoaderFunctionArgs } from "react-router";
 import { loader } from "../app._index";
 
 // Spies for the calderyn client + OAuth-handoff boundaries; the real loader
@@ -100,9 +101,9 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
     );
 
     expect(thrown).toBeInstanceOf(Response);
-    expect((thrown as Response).status).toBe(302);
+    expect(toResponse(thrown).status).toBe(302);
     // shop/host/embedded must survive so the embedded document request re-auths.
-    expect((thrown as Response).headers.get("Location")).toBe(
+    expect(toResponse(thrown).headers.get("Location")).toBe(
       "/app/onboarding?shop=acme.myshopify.com&host=abc&embedded=1",
     );
   });
@@ -111,9 +112,9 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
     getStateSpy.mockResolvedValue({ step: 7, done: true });
 
     const res = await callLoader();
-    const body = (await (res as Response).json()) as Record<string, unknown>;
+    const body = (await toResponse(res).json()) as Record<string, unknown>;
 
-    expect((res as Response).status).toBe(200);
+    expect(toResponse(res).status).toBe(200);
     expect(body.error).toBeNull();
     expect(body).not.toHaveProperty("onboardingDone");
   });
@@ -132,8 +133,8 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
     );
 
     expect(thrown).toBeInstanceOf(Response);
-    expect((thrown as Response).status).toBe(302);
-    expect((thrown as Response).headers.get("Location")).toBe(
+    expect(toResponse(thrown).status).toBe(302);
+    expect(toResponse(thrown).headers.get("Location")).toBe(
       "/app/onboarding?shop=acme.myshopify.com&host=abc&embedded=1",
     );
   });
@@ -150,7 +151,7 @@ describe("dashboard loader — onboarding redirect (no client-side flash)", () =
       Object.assign(new Error("guardrails query failed"), { code: "ERROR", status: 500 }),
     );
 
-    const res = (await callLoader()) as Response;
+    const res = toResponse(await callLoader());
     const body = (await res.json()) as { error: { message: string } | null };
 
     expect(res.status).toBe(200);

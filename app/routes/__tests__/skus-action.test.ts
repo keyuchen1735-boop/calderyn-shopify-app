@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import type * as RelocateServer from "../../lib/actions/inventory-relocate.server";
 import type * as AlertActionServer from "../../lib/actions/alert-action.server";
 import type * as CalderynServer from "../../lib/calderyn.server";
@@ -86,7 +87,7 @@ beforeEach(() => {
 describe("app.skus action", () => {
   it("executes the relocation with form-derived input and returns ok", async () => {
     const res = await action({ request: postForm(FIELDS), params: {}, context: {} } as never);
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.ok).toBe(true);
     expect(executeInventoryRelocation).toHaveBeenCalledWith(
       "shop-1",
@@ -118,7 +119,7 @@ describe("app.skus action", () => {
       params: {},
       context: {},
     } as never);
-    expect((res as Response).status).toBe(422);
+    expect(toResponse(res).status).toBe(422);
     expect(executeInventoryRelocation).not.toHaveBeenCalled();
   });
 
@@ -130,8 +131,8 @@ describe("app.skus action", () => {
       new RelocationError("QTY_EXCEEDS_AVAILABLE", "Only 39 units available at NY."),
     );
     const res = await action({ request: postForm(FIELDS), params: {}, context: {} } as never);
-    const body = await (res as Response).json();
-    expect((res as Response).status).toBe(422);
+    const body = await toResponse(res).json();
+    expect(toResponse(res).status).toBe(422);
     expect(body.error.code).toBe("QTY_EXCEEDS_AVAILABLE");
     expect(body.toast.isError).toBe(true);
   });
@@ -139,7 +140,7 @@ describe("app.skus action", () => {
   it("surfaces a failed outcome as an error toast, not a success", async () => {
     executeInventoryRelocation.mockResolvedValue({ id: "audit-1", outcome: "failed" });
     const res = await action({ request: postForm(FIELDS), params: {}, context: {} } as never);
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.ok).toBe(false);
     expect(body.toast.isError).toBe(true);
   });
@@ -147,8 +148,8 @@ describe("app.skus action", () => {
   it("maps unexpected errors to a 500 with an error toast", async () => {
     executeInventoryRelocation.mockRejectedValue(new Error("supabase down"));
     const res = await action({ request: postForm(FIELDS), params: {}, context: {} } as never);
-    const body = await (res as Response).json();
-    expect((res as Response).status).toBe(500);
+    const body = await toResponse(res).json();
+    expect(toResponse(res).status).toBe(500);
     expect(body.ok).toBe(false);
     expect(body.toast.isError).toBe(true);
   });
@@ -176,7 +177,7 @@ describe("app.skus action — alert_action intent", () => {
       params: {},
       context: {},
     } as never);
-    const body = await (res as Response).json();
+    const body = await toResponse(res).json();
     expect(body.ok).toBe(true);
     expect(calderynClient).toHaveBeenCalledWith("s.myshopify.com");
     expect(executeInventoryAlertAction).toHaveBeenCalledWith(
@@ -202,7 +203,7 @@ describe("app.skus action — alert_action intent", () => {
       params: {},
       context: {},
     } as never);
-    expect((await (res as Response).json()).ok).toBe(true);
+    expect((await toResponse(res).json()).ok).toBe(true);
     expect(executeInventoryAlertAction).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "snooze_alert" }),
     );
@@ -219,7 +220,7 @@ describe("app.skus action — alert_action intent", () => {
       params: {},
       context: {},
     } as never);
-    expect((res as Response).status).toBe(422);
+    expect(toResponse(res).status).toBe(422);
     expect(executeInventoryAlertAction).not.toHaveBeenCalled();
   });
 
@@ -239,8 +240,8 @@ describe("app.skus action — alert_action intent", () => {
       params: {},
       context: {},
     } as never);
-    const body = await (res as Response).json();
-    expect((res as Response).status).toBe(403);
+    const body = await toResponse(res).json();
+    expect(toResponse(res).status).toBe(403);
     expect(body.error.code).toBe("guardrail_dollar_cap");
     expect(body.toast.isError).toBe(true);
   });
@@ -252,7 +253,7 @@ describe("app.skus action — alert_action intent", () => {
       params: {},
       context: {},
     } as never);
-    expect((res as Response).status).toBe(500);
-    expect((await (res as Response).json()).toast.isError).toBe(true);
+    expect(toResponse(res).status).toBe(500);
+    expect((await toResponse(res).json()).toast.isError).toBe(true);
   });
 });

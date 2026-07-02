@@ -5,6 +5,7 @@
 // session — NEVER from the signed token — so a merchant can only ever consent
 // for their own shop. These tests pin that invariant.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import type * as McpOauth from "../../lib/mcp_oauth.server";
 
 vi.mock("@shopify/polaris", () => {
@@ -106,13 +107,13 @@ function actionReq(fields: Record<string, string>): { request: Request } {
 describe("/app/connect loader", () => {
   it("404s when MCP_OAUTH_ENABLED is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(404);
   });
 
   it("redirects to /app on an invalid/expired token", async () => {
     verifyMock.mockRejectedValue(new Error("bad jwt"));
-    const r = (await loader(loaderReq("garbage") as never)) as Response;
+    const r = toResponse(await loader(loaderReq("garbage") as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe("/app");
   });
@@ -120,7 +121,7 @@ describe("/app/connect loader", () => {
   it("redirects to /app when the client is unknown", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
     getClientMock.mockResolvedValue(null);
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe("/app");
   });
@@ -128,7 +129,7 @@ describe("/app/connect loader", () => {
   it("renders consent data for a valid token + authenticated shop", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
     getClientMock.mockResolvedValue(clientFixture());
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(200);
     const j = await r.json();
     expect(j.client_name).toBe("Claude");
@@ -143,7 +144,7 @@ describe("/app/connect action", () => {
   it("Allow issues a code bound to the SESSION shop", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
     resolveMock.mockResolvedValue("session-shop-uuid");
-    const r = (await action(actionReq({ intent: "allow", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "allow", t: TOKEN }) as never));
     expect(r.status).toBe(200);
     // The shop_id passed to issueAuthCode must come from session.shop (SHOP),
     // never from the token's embedded shop field.
@@ -158,7 +159,7 @@ describe("/app/connect action", () => {
 
   it("Deny returns an access_denied redirect and issues no code", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
-    const r = (await action(actionReq({ intent: "deny", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "deny", t: TOKEN }) as never));
     expect(r.status).toBe(200);
     const j = (await r.json()) as { redirect_url?: string };
     expect(j.redirect_url ?? "").toContain("error=access_denied");
@@ -168,21 +169,21 @@ describe("/app/connect action", () => {
 
   it("400s on an invalid token without issuing a code", async () => {
     verifyMock.mockRejectedValue(new Error("bad jwt"));
-    const r = (await action(actionReq({ intent: "allow", t: "garbage" }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "allow", t: "garbage" }) as never));
     expect(r.status).toBe(400);
     expect(issueMock).not.toHaveBeenCalled();
   });
 
   it("400s on an unrecognized intent", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
-    const r = (await action(actionReq({ intent: "sideways", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "sideways", t: TOKEN }) as never));
     expect(r.status).toBe(400);
     expect(issueMock).not.toHaveBeenCalled();
   });
 
   it("404s when the flag is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = (await action(actionReq({ intent: "allow", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "allow", t: TOKEN }) as never));
     expect(r.status).toBe(404);
   });
 });

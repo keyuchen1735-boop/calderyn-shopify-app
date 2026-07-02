@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { routeArgs } from "../../lib/__tests__/_route-test-helpers";
 
 const sendEmail = vi.fn();
 const isOptedOut = vi.fn();
@@ -27,31 +28,31 @@ beforeEach(() => {
 describe("POST /pilot/api/send-invite", () => {
   it("401s without a valid bearer", async () => {
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }, "Bearer nope"), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }, "Bearer nope"), params: {}, context: {} }));
     expect(res.status).toBe(401);
   });
   it("400s an invalid body", async () => {
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "x" }), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "x" }), params: {}, context: {} }));
     expect(res.status).toBe(400);
   });
   it("409s a suppressed recipient", async () => {
     isOptedOut.mockResolvedValue({ optedOut: true });
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} }));
     expect(res.status).toBe(409);
     expect(sendEmail).not.toHaveBeenCalled();
   });
   it("fails closed (502) when the suppression check errors", async () => {
     isOptedOut.mockResolvedValue({ optedOut: false, error: "db down" });
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} }));
     expect(res.status).toBe(502);
     expect(sendEmail).not.toHaveBeenCalled();
   });
   it("sends, logs, and returns the resend id", async () => {
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B" }), params: {}, context: {} }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ sent: true, id: "email_1" });
     expect(sendEmail).toHaveBeenCalledTimes(1);
@@ -66,7 +67,7 @@ describe("POST /pilot/api/send-invite", () => {
   it("short-circuits with alreadyInvited when skip_if_invited and a prior send exists", async () => {
     hasSuccessfulInvite.mockResolvedValue({ invited: true });
     const { action } = await import("../pilot.api.send-invite");
-    const res = await action({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B", skip_if_invited: true }), params: {}, context: {} });
+    const res = await action(routeArgs({ request: POST({ email: "a@b.co", first_name: "A", store_name: "B", skip_if_invited: true }), params: {}, context: {} }));
     expect(await res.json()).toEqual({ sent: false, alreadyInvited: true });
     expect(sendEmail).not.toHaveBeenCalled();
   });

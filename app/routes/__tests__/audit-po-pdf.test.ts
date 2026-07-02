@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 // Importing the shared chain mock also registers its beforeEach state reset.
 import { setSupabaseResponse } from "../../lib/__tests__/_supabase_chain_mock";
 import { loader } from "../app.audit.$id.po[.]pdf";

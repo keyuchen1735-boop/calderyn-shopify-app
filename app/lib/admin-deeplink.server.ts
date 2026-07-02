@@ -1,4 +1,4 @@
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { isUuid } from "./ids";
 import { getSupabase } from "./supabase.server";
 

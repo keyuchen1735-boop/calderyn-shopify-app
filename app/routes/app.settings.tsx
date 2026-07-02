@@ -6,10 +6,10 @@ import {
   useLoaderData,
   useNavigation,
   useSearchParams,
-} from "@remix-run/react";
+ data, redirect } from "react-router";
 import { useEmbeddedNavigate } from "../lib/embedded-nav";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Badge,
   Banner,
@@ -351,7 +351,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } catch (rulesErr) {
       console.error("[settings] learned-rules read failed", rulesErr);
     }
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       guardrails,
       integrations,
       consent,
@@ -364,7 +364,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       guardrails: null,
       integrations: {},
       consent: false,
@@ -385,8 +385,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // CSV upload is multipart — handle before formData() consumes the stream.
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
-    const uploadHandler = unstable_createMemoryUploadHandler({ maxPartSize: 5_000_000 });
-    const mp = await unstable_parseMultipartFormData(request, uploadHandler);
+    // Native multipart parsing (the framework upload handlers were removed);
+    // the 5MB per-file cap is enforced explicitly below.
+    const MAX_UPLOAD_BYTES = 5_000_000;
+    const mp = await request.formData();
     if (String(mp.get("intent") || "") === "upload_invoice_csv") {
       try {
         const file = mp.get("file");
@@ -394,7 +396,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const periodStart = String(mp.get("period_start") || "").trim();
         const periodEnd = String(mp.get("period_end") || "").trim();
         if (!(file instanceof File) || file.size === 0) {
-          return json<ActionPayload>(
+          return data<ActionPayload>(
             {
               ok: false,
               error: { code: "NO_FILE", message: "Choose a CSV file to upload." },
@@ -403,8 +405,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             { status: 422 },
           );
         }
+        if (file.size > MAX_UPLOAD_BYTES) {
+          return data<ActionPayload>(
+            {
+              ok: false,
+              error: { code: "FILE_TOO_LARGE", message: "CSV must be 5MB or smaller." },
+              toast: { message: "CSV must be 5MB or smaller.", isError: true },
+            },
+            { status: 422 },
+          );
+        }
         if (!periodStart || !periodEnd) {
-          return json<ActionPayload>(
+          return data<ActionPayload>(
             {
               ok: false,
               error: { code: "INVALID_INPUT", message: "Enter the period dates the invoice covers." },
@@ -424,7 +436,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shopCountry: await getShopCountry(sb, shopId),
         });
         const unmatchedRefs = result.unmatched.map((u) => u.orderRef ?? u.trackingNo ?? "?");
-        return json<ActionPayload>({
+        return data<ActionPayload>({
           ok: true,
           uploadResult: {
             matched: result.matchedCount,
@@ -442,7 +454,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (err) {
         if (err instanceof Response) throw err;
         const e = err as CalderynError;
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: e.code ?? "ERROR", message: e.message },
@@ -464,7 +476,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // controls whether the shop contributes.
       const consent = String(formData.get("consent") || "") === "true";
       await client.consent.set(consent, request.signal);
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: {
           message: consent
@@ -481,10 +493,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const current = await client.guardrails.get(request.signal);
       const patch = changedGuardrailFields(submitted, current);
       if (Object.keys(patch).length === 0) {
-        return json<ActionPayload>({ ok: true, toast: { message: "No changes to save" } });
+        return data<ActionPayload>({ ok: true, toast: { message: "No changes to save" } });
       }
       if (validateGuardrailPatch(patch) !== null) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_GUARDRAILS", message: "Those guardrail values are out of range." },
@@ -494,7 +506,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
       await client.guardrails.update(patch, request.signal);
-      return json<ActionPayload>({ ok: true, toast: { message: "Guardrails updated" } });
+      return data<ActionPayload>({ ok: true, toast: { message: "Guardrails updated" } });
     }
 
     if (intent === "undo_learned_rule") {
@@ -506,7 +518,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const ruleId = String(formData.get("ruleId") || "").trim();
       const ruleKind = String(formData.get("ruleKind") || "").trim();
       if (!ruleId) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "MISSING_RULE_ID", message: "Missing rule." },
@@ -516,7 +528,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
       await client.calibration.undoRule(ruleId);
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: {
           // Same meaning as the dashboard surface's confirmations (parity).
@@ -544,7 +556,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const { redirectUrl } = await client.integrations.startOAuth(provider, host);
       // Don't 302 the iframe to the provider — third-party OAuth pages refuse to
       // be framed. Hand the URL back so the client opens it at the top level.
-      return json<ActionPayload>({ ok: true, redirectUrl });
+      return data<ActionPayload>({ ok: true, redirectUrl });
     }
 
     if (intent === "connect_apikey_integration") {
@@ -555,7 +567,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // success banner the OAuth callbacks use.
       const parsed = parseApiKeyConnectForm(formData);
       if (!parsed.ok) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_INPUT", message: parsed.message },
@@ -571,7 +583,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "disconnect_integration") {
       const provider = String(formData.get("provider") || "");
       await client.integrations.disconnect(provider, request.signal);
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: `Disconnected ${provider}` },
       });
@@ -599,7 +611,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       const verdict = manualSyncCooldown(lastActivity, Date.now());
       if (!verdict.allowed) {
-        return json<ActionPayload>({
+        return data<ActionPayload>({
           ok: false,
           toast: {
             message: `Just synced — try again in ${verdict.retryAfterSec}s.`,
@@ -609,13 +621,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       const result = await syncShopAds(sb, shopId);
       const toast = formatSyncToast(result);
-      return json<ActionPayload>({ ok: !toast.isError, toast });
+      return data<ActionPayload>({ ok: !toast.isError, toast });
     }
 
     if (intent === "set_ship_mode") {
       const mode = String(formData.get("ship_cost_mode") || "");
       if (!["auto", "force_measured", "force_reconciled"].includes(mode)) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_MODE", message: "Unknown mode." },
@@ -629,13 +641,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await sb
         .from("shop_settings")
         .upsert({ shop_id: shopId, ship_cost_mode: mode, updated_at: new Date().toISOString() });
-      return json<ActionPayload>({ ok: true, toast: { message: "Shipping cost mode saved" } });
+      return data<ActionPayload>({ ok: true, toast: { message: "Shipping cost mode saved" } });
     }
 
     if (intent === "add_period_total") {
       const parsed = parsePeriodTotalForm(formData);
       if (!parsed.ok) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_INPUT", message: parsed.message },
@@ -650,13 +662,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...parsed.value,
         shopCountry: await getShopCountry(sb, shopId),
       });
-      return json<ActionPayload>({ ok: true, toast: { message: "Shipping total saved — margins updated" } });
+      return data<ActionPayload>({ ok: true, toast: { message: "Shipping total saved — margins updated" } });
     }
 
     if (intent === "set_manual_override") {
       const parsed = parseManualOverrideForm(formData);
       if (!parsed.ok) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_INPUT", message: parsed.message },
@@ -671,7 +683,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...parsed.value,
         shopCountry: await getShopCountry(sb, shopId),
       });
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: parsed.value.cents == null ? "Override cleared" : "Override saved" },
       });
@@ -682,7 +694,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // order flips to actual_invoice and the unmatched count decrements.
       const parsed = parseMapShipChargeForm(formData);
       if (!parsed.ok) {
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "INVALID_INPUT", message: parsed.message },
@@ -699,7 +711,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // An unknown order number (or a stale line) is merchant-correctable input, not a
         // 500 — surface it visibly (rule 12) and change nothing.
         const message = mapErr instanceof Error ? mapErr.message : "Couldn't map that charge.";
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           {
             ok: false,
             error: { code: "MAP_FAILED", message },
@@ -714,7 +726,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return redirect("/app/settings?ship_charge=mapped");
     }
 
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: "INVALID_INTENT", message: `Unknown intent: ${intent}` },
@@ -725,7 +737,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (err) {
     if (err instanceof Response) throw err;
     const e = err as CalderynError;
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: e.code ?? "ERROR", message: e.message },
@@ -1430,7 +1442,7 @@ function IntegrationCard({
   const [apiKey, setApiKey] = useState("");
 
   return (
-    <Card>
+    (<Card>
       <BlockStack gap="300">
         <div className="setx-row-between">
           <BlockStack gap="100">
@@ -1462,7 +1474,7 @@ function IntegrationCard({
               </connectFetcher.Form>
             ) : oauthPending ? (
               // OAuth handshake not live yet — disabled affordance, not a Connect that 501s.
-              <Button disabled>Coming soon</Button>
+              (<Button disabled>Coming soon</Button>)
             ) : apiKeyConnect ? null : (
               <Badge>Managed by Shopify</Badge>
             )}
@@ -1512,7 +1524,7 @@ function IntegrationCard({
           </connectFetcher.Form>
         )}
       </BlockStack>
-    </Card>
+    </Card>)
   );
 }
 

@@ -1,8 +1,8 @@
 // app/routes/dashboard.auth.google.tsx
 // Google sign-in start: mints a state nonce, stores it in a double-submit cookie,
 // and redirects the browser to Google's OAuth consent page.
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { randomBytes } from "node:crypto";
 import { buildSigninAuthUrl } from "~/lib/auth/google-signin.server";
 import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";

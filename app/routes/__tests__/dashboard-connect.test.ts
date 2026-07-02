@@ -4,6 +4,7 @@
 // auth code is issued for the authenticated dashboard session's shop, NEVER for
 // any shop carried inside the signed token.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import type * as McpOauth from "../../lib/mcp_oauth.server";
 import type * as SessionMod from "../../lib/dashboard/session.server";
 import type * as HttpMod from "../../lib/dashboard/http.server";
@@ -98,13 +99,13 @@ beforeEach(() => {
 describe("/dashboard/connect loader", () => {
   it("404s when the flag is off", async () => {
     process.env.MCP_OAUTH_ENABLED = "false";
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(404);
   });
 
   it("redirects to login, preserving the connect URL, when unauthenticated", async () => {
     getSessionFromRequest.mockResolvedValue(null);
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(302);
     const loc = r.headers.get("location") ?? "";
     expect(loc).toContain("/dashboard/login");
@@ -115,7 +116,7 @@ describe("/dashboard/connect loader", () => {
 
   it("redirects to /dashboard on an invalid token", async () => {
     verifyMock.mockRejectedValue(new Error("bad"));
-    const r = (await loader(loaderReq("garbage") as never)) as Response;
+    const r = toResponse(await loader(loaderReq("garbage") as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe("/dashboard");
   });
@@ -123,7 +124,7 @@ describe("/dashboard/connect loader", () => {
   it("renders consent data for a valid token + dashboard session", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
     getClientMock.mockResolvedValue(clientFixture());
-    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    const r = toResponse(await loader(loaderReq(TOKEN) as never));
     expect(r.status).toBe(200);
     const j = await r.json();
     expect(j.client_name).toBe("Claude");
@@ -136,7 +137,7 @@ describe("/dashboard/connect loader", () => {
 describe("/dashboard/connect action", () => {
   it("Allow issues a code bound to the dashboard SESSION shop, then 302s to the client", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
-    const r = (await action(actionReq({ intent: "allow", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "allow", t: TOKEN }) as never));
     expect(requireSameOrigin).toHaveBeenCalledOnce();
     expect(issueMock).toHaveBeenCalledOnce();
     expect(issueMock.mock.calls[0][0]).toMatchObject({ shop_id: "session-shop-uuid" });
@@ -149,7 +150,7 @@ describe("/dashboard/connect action", () => {
 
   it("Deny 302s to the client with access_denied and issues no code", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
-    const r = (await action(actionReq({ intent: "deny", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "deny", t: TOKEN }) as never));
     expect(r.status).toBe(302);
     expect(r.headers.get("location") ?? "").toContain("error=access_denied");
     expect(issueMock).not.toHaveBeenCalled();
@@ -157,14 +158,14 @@ describe("/dashboard/connect action", () => {
 
   it("400s on an invalid token", async () => {
     verifyMock.mockRejectedValue(new Error("bad"));
-    const r = (await action(actionReq({ intent: "allow", t: "garbage" }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "allow", t: "garbage" }) as never));
     expect(r.status).toBe(400);
     expect(issueMock).not.toHaveBeenCalled();
   });
 
   it("400s on an unrecognized intent", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
-    const r = (await action(actionReq({ intent: "sideways", t: TOKEN }) as never)) as Response;
+    const r = toResponse(await action(actionReq({ intent: "sideways", t: TOKEN }) as never));
     expect(r.status).toBe(400);
     expect(issueMock).not.toHaveBeenCalled();
   });

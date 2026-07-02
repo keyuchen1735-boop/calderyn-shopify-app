@@ -1,4 +1,4 @@
-import type { ActionFunctionArgs, HeadersFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction } from "react-router";
 import { rateLimit, clientIpKey, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
 import { normalizeEmail } from "~/lib/auth/users.server";
 import { requestPasswordReset } from "~/lib/auth/reset.server";

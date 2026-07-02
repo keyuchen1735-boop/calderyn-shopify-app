@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 import { jwtVerify } from "jose";
 
 import { loader } from "../../../routes/dashboard.api.realtime-token";
@@ -23,11 +24,11 @@ beforeEach(() => {
 
 describe("GET /dashboard/api/realtime-token", () => {
   it("mints a 1h authenticated JWT carrying the shop_id claim", async () => {
-    const res = (await loader({
+    const res = (await loader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/realtime-token"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     const { token, url, publishable_key, shop_id, expires_at } = (await res.json()) as {
       token: string;
@@ -54,21 +55,21 @@ describe("GET /dashboard/api/realtime-token", () => {
 
   it("503s when SUPABASE_URL is not configured", async () => {
     delete process.env.SUPABASE_URL;
-    const res = (await loader({
+    const res = (await loader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/realtime-token"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(503);
   });
 
   it("503s when SUPABASE_JWT_SECRET is not configured", async () => {
     delete process.env.SUPABASE_JWT_SECRET;
-    const res = (await loader({
+    const res = (await loader(routeArgs({
       request: new Request("https://calderyncompany.com/dashboard/api/realtime-token"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(503);
   });
 });

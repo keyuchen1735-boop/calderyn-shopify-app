@@ -19,6 +19,7 @@
  * original status/budget in finally blocks.
  */
 import { describe, it, expect, vi } from "vitest";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
 import { metaActionAdapterForShop } from "~/lib/meta/actions.server";
 import { newIdempotencyKey } from "~/lib/ids";
 import {
@@ -81,7 +82,7 @@ describe.skipIf(!LIVE || !MUTATE_READY)("extension campaigns action surface (LIV
       const probeCents = originalCents === 650 ? 550 : 650;
 
       try {
-        const res = await action({
+        const res = toResponse(await action({
           request: formRequest({
             intent: "edit_budget",
             campaignId: sourceExternalId,
@@ -92,7 +93,7 @@ describe.skipIf(!LIVE || !MUTATE_READY)("extension campaigns action surface (LIV
           }),
           params: {},
           context: {},
-        } as never);
+        } as never));
         const body = (await res.json()) as { ok: boolean };
         expect(body.ok).toBe(true);
 
@@ -132,13 +133,13 @@ describe.skipIf(!LIVE || !MUTATE_READY)("extension campaigns action surface (LIV
         } as never);
 
       try {
-        const resumeBody = (await (await post("resume")).json()) as { ok: boolean };
+        const resumeBody = (await toResponse(await post("resume")).json()) as { ok: boolean };
         expect(resumeBody.ok).toBe(true);
         expect(await waitFor(async () => (await adapter.getState(sourceExternalId)).status, "active")).toBe(
           "active",
         );
 
-        const pauseBody = (await (await post("pause")).json()) as { ok: boolean };
+        const pauseBody = (await toResponse(await post("pause")).json()) as { ok: boolean };
         expect(pauseBody.ok).toBe(true);
         expect(await waitFor(async () => (await adapter.getState(sourceExternalId)).status, "paused")).toBe(
           "paused",
@@ -160,7 +161,7 @@ describe.skipIf(!LIVE || !MUTATE_READY)("extension campaigns action surface (LIV
       const amountCents = 150;
 
       try {
-        const res = await action({
+        const res = toResponse(await action({
           request: formRequest({
             intent: "reallocate",
             campaignId: sourceExternalId,
@@ -174,7 +175,7 @@ describe.skipIf(!LIVE || !MUTATE_READY)("extension campaigns action surface (LIV
           }),
           params: {},
           context: {},
-        } as never);
+        } as never));
         const body = (await res.json()) as { ok: boolean };
         expect(body.ok).toBe(true);
 

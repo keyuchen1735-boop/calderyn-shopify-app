@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 
 const fixture = vi.hoisted(() => ({ data: {} as Record<string, unknown> }));
-vi.mock("@remix-run/react", () => ({ useLoaderData: () => fixture.data }));
+vi.mock("react-router", () => ({ useLoaderData: () => fixture.data }));
 
 // eslint-disable-next-line import/first
 import AuthorizeInterstitial from "../oauth.authorize";

@@ -1,7 +1,7 @@
 // app/routes/storefront.products.$handle.tsx
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "react-router";
+import { data as dataResponse, redirect , Form, useLoaderData } from "react-router";
+
 import { useState } from "react";
 import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -41,7 +41,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   });
   // The demo shell has no shop row behind it, so carts (uuid shop_id) can't exist
   // for it — the PDP renders browse-only instead of offering a cart that 500s.
-  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID }, { headers: track });
+  return dataResponse({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID }, { headers: track });
 }
 
 export async function action({ request }: ActionFunctionArgs) {

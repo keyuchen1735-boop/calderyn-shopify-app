@@ -6,9 +6,9 @@ import {
   useNavigation,
   useSearchParams,
   useSubmit,
-} from "@remix-run/react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+ data, redirect } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Badge,
   Banner,
@@ -135,7 +135,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     }
 
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       step: state.step,
       shopDomain: session.shop,
       shopName,
@@ -153,7 +153,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   } catch (err) {
     const e = err as CalderynError;
-    return json<LoaderPayload>({
+    return data<LoaderPayload>({
       step: 0,
       shopDomain: session.shop,
       shopName: null,
@@ -177,7 +177,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "advance") {
       const step = Number(formData.get("step") || 0);
       await client.onboarding.advance(step, request.signal);
-      return json<ActionPayload>({ ok: true });
+      return data<ActionPayload>({ ok: true });
     }
     if (intent === "save_guardrails") {
       const budget = Number(formData.get("budget"));
@@ -188,7 +188,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // field, so an existing cooldown stays as the merchant last set it.
       if (!(budget > 0) || !(cap > 0)) {
         const message = "Enter a daily budget and per-action cap greater than $0.";
-        return json<ActionPayload>(
+        return data<ActionPayload>(
           { ok: false, error: { code: "INVALID_GUARDRAILS", message }, toast: { message, isError: true } },
           { status: 400 },
         );
@@ -200,7 +200,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await client.guardrails.update(patch, request.signal);
       const step = Number(formData.get("step") || 0);
       await client.onboarding.advance(step, request.signal);
-      return json<ActionPayload>({ ok: true, toast: { message: "Limits saved" } });
+      return data<ActionPayload>({ ok: true, toast: { message: "Limits saved" } });
     }
     if (intent === "connect_integration") {
       const provider = String(formData.get("provider") || "") as IntegrationProvider;
@@ -208,14 +208,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // popup=true: the provider callback lands on the standalone /auth/connected page,
       // and the client opens this URL in a NEW TAB (window.open _blank).
       const { redirectUrl } = await client.integrations.startOAuth(provider, host, true);
-      return json<ActionPayload>({ ok: true, redirectUrl });
+      return data<ActionPayload>({ ok: true, redirectUrl });
     }
     if (intent === "save_consent") {
       const consent = formData.get("consent") === "true";
       await client.consent.set(consent, request.signal);
       const step = Number(formData.get("step") || 0);
       await client.onboarding.advance(step, request.signal);
-      return json<ActionPayload>({
+      return data<ActionPayload>({
         ok: true,
         toast: { message: consent ? "Added to the comparison" : "Saved — not added to the comparison" },
       });
@@ -224,7 +224,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await client.onboarding.advance(STEPS.length, request.signal);
       return redirect("/app");
     }
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: "INVALID_INTENT", message: `Unknown intent: ${intent}` },
@@ -235,7 +235,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (err) {
     if (err instanceof Response) throw err;
     const e = err as CalderynError;
-    return json<ActionPayload>(
+    return data<ActionPayload>(
       {
         ok: false,
         error: { code: e.code ?? "ERROR", message: e.message },

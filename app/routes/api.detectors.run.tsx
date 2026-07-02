@@ -20,8 +20,8 @@
 // the UUIDs). The field is kept for cron.detect compatibility; a future pass
 // can query the upserted rows' IDs if the summary needs them.
 
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
+import { json } from "~/lib/response.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { runFreeShipLeakageDetect } from "~/lib/ship-cost/detect-free-ship-leakage.server";

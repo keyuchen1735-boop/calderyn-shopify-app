@@ -1,14 +1,8 @@
-﻿import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import {
-  Link,
-  Outlet,
-  useLoaderData,
-  useRevalidator,
-  useRouteError,
-} from "@remix-run/react";
-import { boundary } from "@shopify/shopify-app-remix/server";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { Link, Outlet, useLoaderData, useRevalidator, useRouteError } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { NavMenu } from "@shopify/app-bridge-react";
+import { EmbeddedAppProvider } from "../components/EmbeddedAppProvider";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import assistantStyles from "../components/Assistant/assistant.css?url";
 import bugReportStyles from "../components/BugReport/bug-report.css?url";
@@ -60,7 +54,7 @@ export default function App() {
   useRefreshOnFocus(revalidate);
 
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
+    <EmbeddedAppProvider embedded apiKey={apiKey}>
       <NavMenu>
         <Link to={withParams("/app")} rel="home">
           Dashboard
@@ -76,7 +70,7 @@ export default function App() {
       <Outlet />
       <AssistantSlideout />
       <BugReportButton />
-    </AppProvider>
+    </EmbeddedAppProvider>
   );
 }
 

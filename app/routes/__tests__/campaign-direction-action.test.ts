@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { toResponse } from "../../lib/__tests__/_route-test-helpers";
+import type { ActionFunctionArgs } from "react-router";
 import { action } from "../app.campaigns.$campaignId";
 
 // Spies hoisted so vi.mock factories can close over them.
@@ -90,11 +91,11 @@ describe("campaign detail action — apply_direction", () => {
   it("calls executeAction with the form-supplied dim uuid (not params.campaignId)", async () => {
     executeActionSpy.mockResolvedValue({ id: "aud-1", outcome: "succeeded" });
 
-    const res = await action({
+    const res = toResponse(await action({
       request: applyDirectionRequest(),
       params: { campaignId: "999extid" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     const body = (await res.json()) as { ok: boolean; outcome: string };
     expect(body.ok).toBe(true);
@@ -117,11 +118,11 @@ describe("campaign detail action — apply_direction", () => {
     // deliberately omit campaign_id
     const req = new Request("http://localhost/app/campaigns/999extid", { method: "POST", body: fd });
 
-    const res = await action({
+    const res = toResponse(await action({
       request: req,
       params: { campaignId: "999extid" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     expect(res.status).toBe(400);
     expect(executeActionSpy).not.toHaveBeenCalled();
@@ -130,11 +131,11 @@ describe("campaign detail action — apply_direction", () => {
   it("returns 409 and ok:false when executeAction throws (ownership miss)", async () => {
     executeActionSpy.mockRejectedValueOnce(new Error("ownership"));
 
-    const res = await action({
+    const res = toResponse(await action({
       request: applyDirectionRequest(),
       params: { campaignId: "999extid" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     expect(res.status).toBe(409);
     const body = (await res.json()) as { ok: boolean };
@@ -142,22 +143,22 @@ describe("campaign detail action — apply_direction", () => {
   });
 
   it("rejects an unknown intent with 400", async () => {
-    const res = await action({
+    const res = toResponse(await action({
       request: applyDirectionRequest({ intent: "nope" }),
       params: { campaignId: "cmp-1" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     expect(res.status).toBe(400);
     expect(executeActionSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a disallowed action_kind with 400", async () => {
-    const res = await action({
+    const res = toResponse(await action({
       request: applyDirectionRequest({ action_kind: "delete_campaign" }),
       params: { campaignId: "cmp-1" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     expect(res.status).toBe(400);
     expect(executeActionSpy).not.toHaveBeenCalled();
@@ -170,11 +171,11 @@ describe("campaign detail action — apply_direction", () => {
     // deliberately omit daily_budget_cents
     const req = new Request("http://localhost/app/campaigns/cmp-1", { method: "POST", body: fd });
 
-    const res = await action({
+    const res = toResponse(await action({
       request: req,
       params: { campaignId: "cmp-1" },
       context: {},
-    } as unknown as ActionFunctionArgs);
+    } as unknown as ActionFunctionArgs));
 
     expect(res.status).toBe(400);
     expect(executeActionSpy).not.toHaveBeenCalled();

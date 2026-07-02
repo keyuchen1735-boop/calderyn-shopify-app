@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { Form, useActionData, useLoaderData , data, redirect } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   AppProvider as PolarisAppProvider,
   BlockStack,
@@ -84,7 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (embeddedTarget) throw redirect(embeddedTarget);
 
   const errors = loginErrorMessage(await login(request));
-  return json({ errors, polarisTranslations });
+  return data({ errors, polarisTranslations });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -92,7 +92,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (embeddedTarget) throw redirect(embeddedTarget);
 
   const errors = loginErrorMessage(await login(request));
-  return json({ errors });
+  return data({ errors });
 };
 
 export default function Auth() {

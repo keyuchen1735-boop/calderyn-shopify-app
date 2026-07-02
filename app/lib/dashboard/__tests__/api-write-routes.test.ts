@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { routeArgs } from "../../__tests__/_route-test-helpers";
 
 import { action as campaignAction } from "../../../routes/dashboard.api.campaigns.$id.action";
 import { action as alertAction } from "../../../routes/dashboard.api.alerts.$id.action";
@@ -161,14 +162,14 @@ function post(url: string, body: unknown, method = "POST"): Request {
 describe("POST /dashboard/api/campaigns/:id/action", () => {
   it("executes a pause through the shared action pipeline", async () => {
     executeAction.mockResolvedValueOnce({ id: "audit-1", outcome: "succeeded" });
-    const res = (await campaignAction({
+    const res = (await campaignAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/campaigns/c1/action", {
         type: "pause_campaign",
         idempotency_key: "key-1",
       }),
       params: { id: "c1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ audit_id: "audit-1", outcome: "succeeded" });
     expect(executeAction).toHaveBeenCalledWith(
@@ -188,11 +189,11 @@ describe("POST /dashboard/api/campaigns/:id/action", () => {
       { type: "delete_campaign", idempotency_key: "k" },
       { type: "reduce_campaign_budget", idempotency_key: "k" },
     ]) {
-      const res = (await campaignAction({
+      const res = (await campaignAction(routeArgs({
         request: post("https://calderyncompany.com/dashboard/api/campaigns/c1/action", body),
         params: { id: "c1" },
         context: {},
-      })) as Response;
+      }))) as Response;
       expect(res.status).toBe(422);
     }
     expect(executeAction).not.toHaveBeenCalled();
@@ -200,14 +201,14 @@ describe("POST /dashboard/api/campaigns/:id/action", () => {
 
   it("returns 502 with the audit id when the platform call failed", async () => {
     executeAction.mockResolvedValueOnce({ id: "audit-2", outcome: "failed" });
-    const res = (await campaignAction({
+    const res = (await campaignAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/campaigns/c1/action", {
         type: "pause_campaign",
         idempotency_key: "k2",
       }),
       params: { id: "c1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(502);
     const failBody = await res.json();
     expect(failBody).toMatchObject({
@@ -226,11 +227,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
   const body = { type: "reallocate_inventory", idempotency_key: "key-inv-1" };
 
   it("executes the transfer Shopify mutation from the alert's evidence, audits, and acknowledges", async () => {
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     // toMatchObject (not toEqual): the approve path now also returns an additive
     // `calibration` receipt that drives the Action Queue's approve confirmation.
@@ -265,11 +266,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
   });
 
   it("defers via snooze — no Shopify mutation, no guardrail, hides instead of acknowledging", async () => {
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, { type: "snooze_alert", idempotency_key: "key-snooze-1" }),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       audit_id: "audit-inv-1",
@@ -288,11 +289,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
 
   it("422s with invalid_inventory_evidence when the alert lacks a transfer plan, without mutating", async () => {
     alertsGet.mockResolvedValueOnce(makeAlert({ evidence: { region: "US-TX" } }));
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_inventory_evidence");
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
@@ -301,11 +302,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
 
   it("403s when the alert's detector does not expose reallocate_inventory", async () => {
     alertsGet.mockResolvedValueOnce(makeAlert({ detector_id: "campaign_below_breakeven" }));
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("action_not_allowed");
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
@@ -313,11 +314,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
 
   it("403s when the alert's impact exceeds the guardrail dollar cap", async () => {
     guardrailsGet.mockResolvedValueOnce({ dollar_cap_cents: 1_000 });
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("guardrail_dollar_cap");
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
@@ -328,11 +329,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
       { type: "pause_campaign", idempotency_key: "k" },
       { type: "reallocate_inventory" },
     ]) {
-      const res = (await alertAction({
+      const res = (await alertAction(routeArgs({
         request: post(url, bad),
         params: { id: "a1" },
         context: {},
-      })) as Response;
+      }))) as Response;
       expect(res.status).toBe(422);
     }
     expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
@@ -340,11 +341,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
 
   it("502s as action_failed when the Shopify mutation throws, without writing an audit row", async () => {
     inventoryAdjustQuantities.mockRejectedValueOnce(new Error("THROTTLED: try later"));
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe("action_failed");
     expect(actionsExecute).not.toHaveBeenCalled();
@@ -352,11 +353,11 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
   });
 
   it("405s non-POST methods", async () => {
-    const res = (await alertAction({
+    const res = (await alertAction(routeArgs({
       request: post(url, body, "PUT"),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(405);
   });
 });
@@ -364,7 +365,7 @@ describe("POST /dashboard/api/alerts/:id/action", () => {
 describe("PUT /dashboard/api/guardrails", () => {
   it("applies the patch via calderynClient.guardrails.update", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 45 });
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { cooldown_minutes: 45 },
@@ -372,17 +373,17 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 45 });
   });
 
   it("405s non-PUT methods", async () => {
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/guardrails", {}, "PATCH"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(405);
   });
 
@@ -392,11 +393,11 @@ describe("PUT /dashboard/api/guardrails", () => {
     ["non-numeric budget", { daily_action_budget_cents: "lots" }],
     ["negative cooldown", { cooldown_minutes: -5 }],
   ])("422s on %s and never calls update (parity with onboarding guard)", async (_label, patch) => {
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_guardrails");
     expect(guardrailsUpdate).not.toHaveBeenCalled();
@@ -410,11 +411,11 @@ describe("PUT /dashboard/api/guardrails", () => {
       autopilot_max_budget_increase_pct: 25,
       autopilot_max_daily_budget_cents: 50_000,
     };
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
   });
@@ -422,17 +423,17 @@ describe("PUT /dashboard/api/guardrails", () => {
   it("forwards autopilot_bypass_guardrails through to update", async () => {
     guardrailsUpdate.mockResolvedValueOnce({});
     const patch = { autopilot_bypass_guardrails: true };
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/guardrails", patch, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith(patch);
   });
 
   it("422s on an out-of-range value above the sanity ceiling", async () => {
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { daily_action_budget_cents: 100_000_001 },
@@ -440,7 +441,7 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_guardrails");
     expect(guardrailsUpdate).not.toHaveBeenCalled();
@@ -448,7 +449,7 @@ describe("PUT /dashboard/api/guardrails", () => {
 
   it("accepts a zero cooldown and an autopilot-only patch (no budget/cap to validate)", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ cooldown_minutes: 0 });
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { cooldown_minutes: 0, autopilot_enabled: true },
@@ -456,14 +457,14 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ cooldown_minutes: 0, autopilot_enabled: true });
   });
 
   it("round-trips an Unlimited daily action cap (null) through to update", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: null });
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { autopilot_daily_action_cap: null },
@@ -471,14 +472,14 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: null });
   });
 
   it("round-trips a Custom daily action cap (integer) through to update", async () => {
     guardrailsUpdate.mockResolvedValueOnce({ autopilot_daily_action_cap: 25 });
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { autopilot_daily_action_cap: 25 },
@@ -486,13 +487,13 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(guardrailsUpdate).toHaveBeenCalledWith({ autopilot_daily_action_cap: 25 });
   });
 
   it("422s a zero daily action cap and never calls update", async () => {
-    const res = (await guardrailsAction({
+    const res = (await guardrailsAction(routeArgs({
       request: post(
         "https://calderyncompany.com/dashboard/api/guardrails",
         { autopilot_daily_action_cap: 0 },
@@ -500,7 +501,7 @@ describe("PUT /dashboard/api/guardrails", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_guardrails");
     expect(guardrailsUpdate).not.toHaveBeenCalled();
@@ -515,7 +516,7 @@ describe("POST /dashboard/api/live-engine/toggle", () => {
   });
 
   it("toggles feature autonomy through the shop-scoped calibration client", async () => {
-    const res = (await liveEngineToggleAction({
+    const res = (await liveEngineToggleAction(routeArgs({
       request: post(url, {
         detectorId: "campaign_below_breakeven",
         actionKind: "pause_campaign",
@@ -523,7 +524,7 @@ describe("POST /dashboard/api/live-engine/toggle", () => {
       }),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, enabled: false });
@@ -536,7 +537,7 @@ describe("POST /dashboard/api/live-engine/toggle", () => {
 
   it("returns an error when the autonomy update does not persist", async () => {
     setFeatureAutonomy.mockResolvedValueOnce({ ok: false });
-    const res = (await liveEngineToggleAction({
+    const res = (await liveEngineToggleAction(routeArgs({
       request: post(url, {
         detectorId: "campaign_below_breakeven",
         actionKind: "pause_campaign",
@@ -544,7 +545,7 @@ describe("POST /dashboard/api/live-engine/toggle", () => {
       }),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
 
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("feature_autonomy_update_failed");
@@ -554,43 +555,43 @@ describe("POST /dashboard/api/live-engine/toggle", () => {
 describe("PUT /dashboard/api/consent", () => {
   it("sets consent and echoes the new value (parity with embedded toggle)", async () => {
     consentSet.mockResolvedValueOnce(undefined);
-    const res = (await consentAction({
+    const res = (await consentAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ consent: true });
     expect(consentSet).toHaveBeenCalledWith(true);
   });
 
   it("422s when consent is not a boolean and never writes", async () => {
-    const res = (await consentAction({
+    const res = (await consentAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/consent", { consent: "yes" }, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_consent");
     expect(consentSet).not.toHaveBeenCalled();
   });
 
   it("405s non-PUT methods", async () => {
-    const res = (await consentAction({
+    const res = (await consentAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "POST"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(405);
   });
 
   it("returns a 500 JSON envelope when the write throws, not a raw rejection", async () => {
     consentSet.mockRejectedValueOnce(new Error("supabase down"));
-    const res = (await consentAction({
+    const res = (await consentAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/consent", { consent: true }, "PUT"),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("internal_error");
   });
@@ -599,11 +600,11 @@ describe("PUT /dashboard/api/consent", () => {
 describe("POST /dashboard/api/audit/:id/undo", () => {
   it("delegates to undoAction with the session's shop", async () => {
     undoAction.mockResolvedValueOnce({ id: "audit-3" });
-    const res = (await undoRoute({
+    const res = (await undoRoute(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/audit/a1/undo", {}),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ audit_id: "audit-3" });
     expect(undoAction).toHaveBeenCalledWith(
@@ -620,11 +621,11 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
     // executor refuses those loudly itself when admin is missing.
     unauthenticatedAdmin.mockRejectedValueOnce(new Error("no offline session"));
     undoAction.mockResolvedValueOnce({ id: "audit-4" });
-    const res = (await undoRoute({
+    const res = (await undoRoute(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/audit/a1/undo", {}),
       params: { id: "a1" },
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ audit_id: "audit-4" });
     expect(undoAction).toHaveBeenCalledWith("shop-1", "a1", expect.anything(), {
@@ -635,11 +636,11 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
 
 describe("POST /dashboard/api/logout", () => {
   it("revokes the session and clears the cookie", async () => {
-    const res = (await logoutAction({
+    const res = (await logoutAction(routeArgs({
       request: post("https://calderyncompany.com/dashboard/api/logout", {}),
       params: {},
       context: {},
-    })) as Response;
+    }))) as Response;
     expect(res.status).toBe(200);
     expect(revokeSession).toHaveBeenCalledWith("sess-1");
     expect(res.headers.get("Set-Cookie")).toContain("Max-Age=0");
