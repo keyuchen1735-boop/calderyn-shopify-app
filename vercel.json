@@ -1,5 +1,5 @@
 {
-  "framework": "remix",
+  "framework": "react-router",
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
   "regions": ["pdx1"],
