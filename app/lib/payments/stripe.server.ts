@@ -1,20 +1,14 @@
-import Stripe from "stripe";
+import type Stripe from "stripe";
 import { getSupabase } from "~/lib/supabase.server";
 import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
 import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
+// Singleton lives in stripe-client.server so connect.server can use it without
+// importing this module (which imports connect.server — would be a cycle).
+import { getStripe } from "./stripe-client.server";
+import { createRoutedPaymentIntent } from "./connect.server";
 
-let _stripe: Stripe | null = null;
-
-/** Server-only Stripe SDK singleton. Carries the secret key — never import this module client-side. */
-export function getStripe(): Stripe {
-  if (_stripe) return _stripe;
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) throw new Error("STRIPE_SECRET_KEY is not configured");
-  // ponytail: SDK pins its own apiVersion default; pin explicitly when the flow stabilizes.
-  _stripe = new Stripe(key);
-  return _stripe;
-}
+export { getStripe };
 
 const KNOWN_CURRENCIES = new Set(["usd", "eur", "gbp", "cad", "aud"]);
 
@@ -38,7 +32,9 @@ export async function createPaymentIntent(
     throw new Error(`unsupported currency: ${currency}`);
   }
 
-  const pi = await getStripe().paymentIntents.create({
+  // Routing decision + destination→platform fallback live in ONE seam
+  // (createRoutedPaymentIntent) shared with the ACP charge path.
+  const { pi, stripeAccountId, applicationFeeCents } = await createRoutedPaymentIntent(shopId, {
     amount: amountCents,
     currency: cur,
     automatic_payment_methods: { enabled: true },
@@ -55,6 +51,8 @@ export async function createPaymentIntent(
     amount_cents: amountCents,
     currency: cur,
     status: pi.status,
+    stripe_account_id: stripeAccountId,
+    application_fee_cents: applicationFeeCents,
   });
   if (error) throw error;
 

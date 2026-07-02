@@ -15,6 +15,9 @@ const store = vi.hoisted(() => {
     orders: [],
     order_line: [],
     payment_intent: [],
+    // Empty = no connected payout account -> createPaymentIntent takes the
+    // platform-charge path (the #11 routing decision is tested in connect.server.test.ts).
+    stripe_connected_account: [],
   };
 
   class Builder {

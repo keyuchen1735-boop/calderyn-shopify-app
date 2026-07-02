@@ -308,3 +308,38 @@ export interface LearnedRuleVM {
   summary: string;
   created_at: string;
 }
+
+/* ---------- Payouts (Stripe Connect, #11) ---------- */
+
+export interface PayoutsVM {
+  phase: "not_connected" | "onboarding" | "active";
+  pillTone: "neutral" | "warn" | "success";
+  pillLabel: string;
+  cta: "setup" | "resume" | null;
+  feeLabel: string;
+}
+
+/** Pure card-state derivation for the Settings Payouts card (JSX stays thin). */
+export function payoutsCardState(dto: {
+  connected: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  feeBps: number;
+  feeFlatCents: number;
+}): PayoutsVM {
+  const feeLabel =
+    dto.feeBps === 0 && dto.feeFlatCents === 0
+      ? "Platform fee: 0% — pilot"
+      : `Platform fee: ${dto.feeBps / 100}%${
+          dto.feeFlatCents > 0 ? ` + $${(dto.feeFlatCents / 100).toFixed(2)}` : ""
+        }`;
+  if (!dto.connected) {
+    return { phase: "not_connected", pillTone: "neutral", pillLabel: "Not set up", cta: "setup", feeLabel };
+  }
+  const active = dto.chargesEnabled && dto.payoutsEnabled && dto.detailsSubmitted;
+  if (!active) {
+    return { phase: "onboarding", pillTone: "warn", pillLabel: "Onboarding incomplete", cta: "resume", feeLabel };
+  }
+  return { phase: "active", pillTone: "success", pillLabel: "Payouts active", cta: null, feeLabel };
+}
