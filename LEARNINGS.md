@@ -3,6 +3,63 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-02
+
+### Triage result — LANDED code clean, zero fixes needed
+24h window `0c4ba8b` back through the day's merges (PRs #241, #245–#250, #252–#255).
+Read every substantive diff. **No high-confidence correctness bug found; no fix
+branch/PR opened.** All of tonight's landed work is fresh but visibly
+adversarially-reviewed (explicit edge-case handling, fail-closed logic,
+idempotency). Reviewed and cleared:
+- **`storefront/money.ts` + `meta.ts`** (faeaa8e, PR #253): locale pinned to en-US
+  via cached `Intl.NumberFormat` to kill SSR/hydration mismatch #425; per-currency
+  cache. Correct.
+- **`storefront/settings.server.ts`** (80f7ebc, PR #255): settings-less shop falls
+  back to `shops.display_name` then "Your store" instead of the demo label. Correct.
+- **`order/cart.server.ts`** (faeaa8e): `assertPersistableShop` blocks the
+  `DEMO_SHOP_ID` sentinel from the uuid cart tables on build/add/price. Correct;
+  route-level demo guards mirror it (cart/checkout/PDP loaders+actions).
+- **`storefront/shop.server.ts`** (b7bd823, PR #248): real tenant resolution,
+  `SLUG_RE`-validated `or()` (no PostgREST filter injection), 60s TTL hit+miss cache
+  w/ FIFO eviction, uninstalled shops excluded. Correct.
+- **`storefront/catalog.owned.server.ts`** (6b213f2, PR #252): availability now sums
+  the ledger `available` column (matches `inventory_reserve()`), chunked+paged past
+  the 1000-row cap, ledger-less variants keep the editor `inventory_on_hand`
+  fallback (`ledgerSellable ?? …`). Correct — a variant with ledger rows summing to 0
+  correctly reads sold-out; only *no* rows → fallback.
+- **`ship-cost/runner.server.ts`** (6acfe8f, PR #246): fixes /cron/ingest 504 by
+  diffing in-memory + set-based RPC batches; `fetchAllRows` now THROWS on page error
+  (was silently returning partial); `asError` unwraps PostgREST `[object Object]`;
+  sku_pnl now writes a zero over a stale nonzero cost (old `=== 0` skip left stale
+  margins). Correct.
+- **`cutover/go-live.server.ts`** (30c3d61 + f3cb0c2, PR #247/#249): value-parity
+  gate runs the drift sweep only after cheap structural checks pass; Shopify
+  unreachable FAILS CLOSED; native shop passes; demo shops exempted via
+  `isShowcaseShop` (fails safe toward real shop). Correct.
+- **`dashboard.api.agentic._index.tsx`** (e5b928b, PR #250): the loader was rewritten
+  to scope the client list to the shop's own non-revoked `mcp_tokens` — this
+  **supersedes** last night's `client_name` column fix AND resolves the
+  "not shop-scoped" item that 2026-07-01 left as a product/privacy question. Uses
+  `client_name` correctly. The global-registry note below is now moot for this route.
+
+### Open-PR review
+- **PR #235** (last night's own nightly fixes, still UNMERGED): posted one review
+  comment. Found a real **liveness bug in the ACP double-charge fix**:
+  `claimAcpSessionForCompletion` flips `open→completing`, then cap/place/charge run
+  with **no try/catch and no rollback** — a transient failure wedges the session in
+  `completing` forever (retries hit `409 in_progress`; nothing sweeps a stale
+  `completing`). Suggested persisting `orderId` after place (before the idempotent
+  charge) so retries resume at charge. Also flagged its `edccc80` agentic commit as
+  now-redundant vs merged #250. **IMPORTANT: #235's token-reuse + ACP double-charge +
+  swallowed-error fixes are STILL LIVE on main (PR never merged)** — worth a nudge to
+  merge (minus edccc80). PRs #47 (presentation) and #38 (test-only) are ~1mo stale,
+  low-risk → NONE, no comment.
+
+### Gate note
+- Ran **no** eval gate this run: zero code changes were made (no landed bug to fix),
+  so there was nothing to typecheck/build/test. The prisma-offline install recipe
+  below was therefore not exercised tonight — assume still valid.
+
 ## 2026-07-01
 
 ### Bug fixed tonight
