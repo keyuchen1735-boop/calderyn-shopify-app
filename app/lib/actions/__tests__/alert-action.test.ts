@@ -2,26 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeInventoryAlertAction } from "../alert-action.server";
 import { CalderynError } from "../../calderyn.server";
 
-const inventoryAdjustQuantities = vi.fn();
+const inventoryAdjustQuantities = vi.hoisted(() => vi.fn());
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
 }));
-const acknowledgeAlert = vi.fn();
+const acknowledgeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: unknown[]) => acknowledgeAlert(...a),
 }));
-const snoozeAlert = vi.fn();
+const snoozeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../snooze.server", () => ({
   snoozeAlert: (...a: unknown[]) => snoozeAlert(...a),
 }));
-const getOrgMode = vi.fn();
+const getOrgMode = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getOrgMode: (...a: unknown[]) => getOrgMode(...a),
 }));
-const resolveOwnedMoveTarget = vi.fn();
-const applyOwnedInventoryMove = vi.fn();
+const resolveOwnedMoveTarget = vi.hoisted(() => vi.fn());
+const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
 vi.mock("../owned-writes.server", () => ({
   resolveOwnedMoveTarget: (...a: unknown[]) => resolveOwnedMoveTarget(...a),
   applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),
@@ -52,9 +52,9 @@ function makeAlert(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const alertsGet = vi.fn();
-const guardrailsGet = vi.fn();
-const actionsExecute = vi.fn();
+const alertsGet = vi.hoisted(() => vi.fn());
+const guardrailsGet = vi.hoisted(() => vi.fn());
+const actionsExecute = vi.hoisted(() => vi.fn());
 const client = {
   alerts: { get: (...a: unknown[]) => alertsGet(...a) },
   guardrails: { get: (...a: unknown[]) => guardrailsGet(...a) },

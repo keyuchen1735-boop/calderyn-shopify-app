@@ -4,31 +4,31 @@ import { executeAdjustPriceAlertAction } from "../adjust-price.server";
 import type { Alert, AuditEntry, GuardrailConfig } from "../../types";
 import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
-const acknowledgeAlert = vi.fn();
+const acknowledgeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: never[]) => acknowledgeAlert(...a),
 }));
 
-const readVariantPrice = vi.fn();
-const setVariantPrice = vi.fn();
+const readVariantPrice = vi.hoisted(() => vi.fn());
+const setVariantPrice = vi.hoisted(() => vi.fn());
 vi.mock("../../shopify/price.server", () => ({
   readVariantPrice: (...a: never[]) => readVariantPrice(...a),
   setVariantPrice: (...a: never[]) => setVariantPrice(...a),
 }));
 
-const getCurrentUnitCostCents = vi.fn();
+const getCurrentUnitCostCents = vi.hoisted(() => vi.fn());
 vi.mock("../../po/draft.server", () => ({
   getCurrentUnitCostCents: (...a: never[]) => getCurrentUnitCostCents(...a),
 }));
 
-const getOrgMode = vi.fn();
+const getOrgMode = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: never[]) => getOrgMode(...a),
 }));
 
-const getOwnedVariantPricing = vi.fn();
-const setOwnedVariantPrice = vi.fn();
+const getOwnedVariantPricing = vi.hoisted(() => vi.fn());
+const setOwnedVariantPrice = vi.hoisted(() => vi.fn());
 vi.mock("../owned-writes.server", () => ({
   getOwnedVariantPricing: (...a: never[]) => getOwnedVariantPricing(...a),
   setOwnedVariantPrice: (...a: never[]) => setOwnedVariantPrice(...a),

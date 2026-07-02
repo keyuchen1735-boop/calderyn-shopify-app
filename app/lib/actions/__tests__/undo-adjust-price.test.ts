@@ -2,8 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { undoAction } from "../undo.server";
 
-const setOwnedVariantPrice = vi.fn();
-const applyOwnedInventoryMove = vi.fn();
+const setOwnedVariantPrice = vi.hoisted(() => vi.fn());
+const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
 vi.mock("../owned-writes.server", () => ({
   setOwnedVariantPrice: (...a: unknown[]) => setOwnedVariantPrice(...a),
   applyOwnedInventoryMove: (...a: unknown[]) => applyOwnedInventoryMove(...a),

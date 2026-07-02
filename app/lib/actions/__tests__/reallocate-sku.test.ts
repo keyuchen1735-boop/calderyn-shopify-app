@@ -2,15 +2,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeReallocateSpendSku } from "../reallocate-sku.server";
 
-const executeReallocation = vi.fn();
+const executeReallocation = vi.hoisted(() => vi.fn());
 vi.mock("../reallocate.server", () => ({
   executeReallocation: (...a: unknown[]) => executeReallocation(...a),
 }));
-const enrichRemediation = vi.fn();
+const enrichRemediation = vi.hoisted(() => vi.fn());
 vi.mock("../../remediation/enrich.server", () => ({
   enrichRemediation: (...a: unknown[]) => enrichRemediation(...a),
 }));
-const acknowledgeAlert = vi.fn();
+const acknowledgeAlert = vi.hoisted(() => vi.fn());
 vi.mock("../../alerts.server", () => ({
   acknowledgeAlert: (...a: never[]) => acknowledgeAlert(...a),
 }));

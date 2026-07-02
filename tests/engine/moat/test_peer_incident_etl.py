@@ -98,6 +98,15 @@ async def _clean_day_projection(conn, day: date) -> None:
         "AND (payload->>'day_bucket')::date = $1", day,
     )
     await conn.execute("DELETE FROM public.alerts WHERE day_bucket = $1", day)
+    # The incident ETL harvests confirmed-loss feedback day-globally (across ALL
+    # consenting shops), so an earlier same-session test's confirmed_loss dated to
+    # ``day`` would inflate this test's count. Clear the day's feedback too, using
+    # the same [day, day+1) predicate run_incident_library filters on.
+    await conn.execute(
+        "DELETE FROM public.alert_feedback "
+        "WHERE created_at >= $1::date AND created_at < ($1::date + interval '1 day')",
+        day,
+    )
 
 
 async def _seed_alert(conn, shop_id: str, *, day: date,
