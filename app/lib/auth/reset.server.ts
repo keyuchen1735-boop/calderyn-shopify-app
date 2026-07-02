@@ -35,11 +35,15 @@ export async function consumeResetToken(raw: string): Promise<{ userId: string }
   const sb = getSupabase();
   const { data, error } = await sb
     .from("password_reset_token")
-    .select("id, user_id, expires_at, used_at")
+    .select("id, user_id, purpose, expires_at, used_at")
     .eq("token_hash", hashSessionToken(raw))
     .maybeSingle();
   if (error) throw error;
   if (!data || data.used_at) return null;
+  // Scope guard: a password-set token must NOT be satisfiable by a verify-purpose
+  // token, which shares this table but has a longer (24h) TTL and only proves
+  // mailbox control. Without this, a leaked verify link is a full ATO primitive.
+  if (data.purpose !== "reset" && data.purpose !== "set_password") return null;
   if (new Date(String(data.expires_at)).getTime() <= Date.now()) return null;
   const { error: updateError } = await sb
     .from("password_reset_token")

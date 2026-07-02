@@ -39,7 +39,12 @@ function postReq(body: Record<string, string>): { request: Request } {
   return {
     request: new Request("https://app.calderyncompany.com/oauth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        // Same-origin: the real form posts from the app origin; requireSameOrigin
+        // checks this against SHOPIFY_APP_URL (set in beforeEach).
+        Origin: "https://app.calderyncompany.com",
+      },
       body: new URLSearchParams(body).toString(),
     }),
   };

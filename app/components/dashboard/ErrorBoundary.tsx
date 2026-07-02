@@ -10,8 +10,13 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 export function DashboardErrorFallback({ error }: { error?: unknown }) {
+  // Only surface raw error text in development. In production this backstop covers
+  // every route (incl. public storefront), so a future unsanitized server message
+  // must never render to end users.
   const detail =
-    error instanceof Error && error.message ? error.message : undefined;
+    import.meta.env?.DEV && error instanceof Error && error.message
+      ? error.message
+      : undefined;
   return (
     <div
       role="alert"

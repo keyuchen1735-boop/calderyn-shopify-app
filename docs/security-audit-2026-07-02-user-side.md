@@ -30,6 +30,14 @@ The app is fundamentally solid from the user side. The Fable auth sweep called t
 **Hygiene / vibecode**
 - Guarded the checkout-test action in prod; prod-gated the pilot email preview; 180-day expiry on the unsubscribe token (matches the "expired" copy); removed the onboarding dev-bypass button + loader field + retired env key; removed a stray `data-testid` from the shipped bundle.
 
+### Round 2 — verification-complete pass (error hygiene + token scope)
+
+A follow-up verified sweep of the 7 dimensions whose verification was cut short earlier surfaced 15 residuals (1 medium, 7 low, 7 info). Fixed:
+
+- **[Medium] Token-scope confusion:** `consumeResetToken` now rejects any token whose `purpose` is not `reset`/`set_password`, so a 24-hour email-verification token can no longer be replayed at `/dashboard/reset/confirm` to set the account password (closes an account-takeover-if-leaked primitive). Added regression tests.
+- **Error-message hygiene (CWE-209):** the public MCP OAuth `token` and `register` endpoints and the public `delivery-promise` endpoint no longer echo raw DB/PostgrestError text — typed errors keep their safe messages; unexpected errors log server-side and return a generic message (500 for the token endpoint). The dashboard/root `ErrorBoundary` renders raw error text only in development.
+- **CSRF parity:** `/oauth/login` now applies `requireSameOrigin`, matching the dashboard shop-hint fix, so the 90-day connector hint cookie can't be planted cross-site.
+
 ## Documented backlog (NOT fixed — needs a decision or a migration)
 
 | Severity | Item | Why deferred |
@@ -38,6 +46,13 @@ The app is fundamentally solid from the user side. The Fable auth sweep called t
 | Medium | `__manifest` DoS (GHSA-8x6r-g9mw-2r78, `v3_lazyRouteDiscovery`) | Downstream of the Remix pin. Mitigate at the edge (WAF size-cap on `p` params) or disable lazy route discovery (perf tradeoff) until the migration. |
 | Medium | turbo-stream single-fetch reflected DoS (GHSA-rxv8-25v2-qmq8, `v3_singleFetch`) | turbo-stream version is dictated by `@remix-run/react`; fixed only by the Remix upgrade. |
 | Info | Apex `Access-Control-Allow-Origin: *` on marketing HTML | Lives in the sibling `Mezoh/calderyn-waitlist` repo, not this codebase. |
+| Low | Stripe paid-transition not atomic with the dedup marker (crash window can strand a paid order in `checkout_pending`) | Acknowledged in-code as a pilot-scale guard with a planned GA fix (fold the order CAS into `record_stripe_event`); add a reconciliation sweep. Not attacker-inducible. |
+| Low | Order `confirmation_token` never expires + stored plaintext | DTO is PII-free and the token is 256-bit CSPRNG; add an expiry check / hash-at-rest. |
+| Low | 30-day dashboard session has no idle timeout / token rotation | Product decision — wire the already-recorded `last_seen_at` into an idle cutoff; a stolen cookie otherwise lives 30 days. |
+| Info | Authed-only raw `err.message` in the assistant, embedded-admin catch-alls, and social-review action | Only the shop's own logged-in user sees it; mirror the sanitized `dashboardJson` pattern. |
+| Info | Email verification consumed on a GET (mail-scanner prefetch auto-verifies) | Move the mutation to a POST confirm page (the social-digest pattern). |
+| Info | `claude_rank` DTO field + hidden "Calderyn Labs" demo ship in the client bundle | Both intentional product features, not provenance leaks; rename/gate only if strict vendor-neutral identifiers are wanted. |
+| Low/Info | Missing length/range caps on some public write fields (buyer identity, `oauth/register` client_name, inventory qty/lat-lng) | Finder-flagged; verification was cut off by the session limit, so treat as candidate hardening, not confirmed risk. |
 | Low/Info | `__Host-cd_cart` prefix rename + dedicated cart signing key; full `script-src` CSP with nonces; HSTS preload submission; a shared per-shop rate-limit helper across all `dashboard.api.*`; cart-row TTL cron sweep; ACP body schema validation (behind a disabled flag) | Larger or migration-shaped changes; safe to schedule. Each is a real hardening item, not a live risk. |
 
 ## Next steps

@@ -64,4 +64,27 @@ describe("password reset", () => {
     expect(result).toBeNull();
     expect(update).not.toHaveBeenCalled();
   });
+
+  it("consumeResetToken rejects a verify-purpose token (scope-confusion / ATO guard)", async () => {
+    // A 24h email-verify token shares this table but must never set a password.
+    maybeSingle.mockResolvedValue({
+      data: { id: "tok-verify", user_id: "u1", purpose: "verify", expires_at: new Date(Date.now() + 60_000).toISOString(), used_at: null },
+      error: null,
+    });
+    update.mockClear();
+    const { consumeResetToken } = await import("../reset.server");
+    expect(await consumeResetToken("dash_live_verify")).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("consumeResetToken accepts a valid reset-purpose token", async () => {
+    maybeSingle.mockResolvedValue({
+      data: { id: "tok-reset", user_id: "u1", purpose: "reset", expires_at: new Date(Date.now() + 60_000).toISOString(), used_at: null },
+      error: null,
+    });
+    update.mockClear();
+    const { consumeResetToken } = await import("../reset.server");
+    expect(await consumeResetToken("dash_live_reset")).toEqual({ userId: "u1" });
+    expect(update).toHaveBeenCalled();
+  });
 });

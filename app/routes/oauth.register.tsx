@@ -43,19 +43,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(out, { status: 201 });
   } catch (e) {
     const err = e as { code?: string; message?: string };
-    const code = err.code ?? "invalid_client_metadata";
-    const mapped =
-      code === "INVALID_REDIRECT_URI"
-        ? "invalid_redirect_uri"
-        : code === "TOO_MANY_REDIRECT_URIS"
-          ? "invalid_redirect_uri"
-          : code === "INVALID_CLIENT_NAME"
-            ? "invalid_client_metadata"
-            : "invalid_client_metadata";
-    return json(
-      { error: mapped, error_description: err.message ?? "registration failed" },
-      { status: 400 },
-    );
+    const code = err.code ?? "";
+    // Forward the message only for typed validation errors; raw DB errors would
+    // leak schema detail to this public, unauthenticated endpoint.
+    if (code === "INVALID_REDIRECT_URI" || code === "TOO_MANY_REDIRECT_URIS") {
+      return json({ error: "invalid_redirect_uri", error_description: err.message ?? "" }, { status: 400 });
+    }
+    if (code === "INVALID_CLIENT_NAME") {
+      return json({ error: "invalid_client_metadata", error_description: err.message ?? "" }, { status: 400 });
+    }
+    console.error("[oauth.register] unexpected error", err);
+    return json({ error: "invalid_client_metadata", error_description: "registration failed" }, { status: 400 });
   }
 };
 

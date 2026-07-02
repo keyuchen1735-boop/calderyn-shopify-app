@@ -30,7 +30,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (err) {
     const e = err as { code?: string; message?: string };
     // ORIGIN_NOT_CONFIGURED, RATE_SOURCE_NOT_CONFIGURED, or no options: the PDP hides the
-    // promise widget — never show a wrong date (rule 12).
-    return json({ error: e.code ?? "ESTIMATE_UNAVAILABLE", message: e.message }, { status: 422 });
+    // promise widget — never show a wrong date (rule 12). This is a public endpoint,
+    // so log the detail server-side and never echo raw error text (internal IDs / DB
+    // errors) to anonymous buyers.
+    console.error(`[delivery-promise] ${e.code ?? "ESTIMATE_UNAVAILABLE"}: ${e.message ?? ""}`);
+    return json({ error: e.code ?? "ESTIMATE_UNAVAILABLE" }, { status: 422 });
   }
 }

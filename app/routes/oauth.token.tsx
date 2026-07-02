@@ -79,8 +79,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "unsupported_grant_type", error_description: `grant_type '${grant_type}' is not supported` }, { status: 400 });
   } catch (e) {
     const err = e as { code?: string; message?: string };
-    const error = err.code === "invalid_grant" ? "invalid_grant" : "invalid_request";
-    return json({ error, error_description: err.message ?? "" }, { status: 400 });
+    // Only forward the message for typed OAuth errors; a raw DB/PostgrestError
+    // message would fingerprint the schema to an anonymous caller.
+    const OAUTH_CODES = ["invalid_grant", "invalid_request", "invalid_client", "unauthorized_client"];
+    if (err.code && OAUTH_CODES.includes(err.code)) {
+      return json({ error: err.code, error_description: err.message ?? "" }, { status: 400 });
+    }
+    console.error("[oauth.token] unexpected error", err);
+    return json({ error: "server_error", error_description: "token request failed" }, { status: 500 });
   }
 };
 
