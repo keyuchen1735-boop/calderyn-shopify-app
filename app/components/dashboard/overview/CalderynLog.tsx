@@ -34,7 +34,7 @@ function moneyPill(t: TraceEventVM): { text: string; tone: "good" | "muted" } | 
 }
 
 /* ---------- pending (NEEDS YOU) row ---------- */
-type PendingState = "idle" | "denying" | "approved" | "dismissed";
+type PendingState = "idle" | "denying" | "confirming_mute" | "approved" | "dismissed";
 
 function PendingRow({
   proposal,
@@ -99,16 +99,25 @@ function PendingRow({
     }
   };
 
-  const onDeny = async (reason: RejectReason) => {
+  // I8 interstitial: muting a shipped no-brainer 409s with the warning until
+  // re-sent with confirmed=true — the row swaps to an explicit confirm step.
+  const [muteWarning, setMuteWarning] = useState<string | null>(null);
+
+  const onDeny = async (reason: RejectReason, confirmed = false) => {
     if (busy) return;
     setBusy(true);
     try {
-      await client.rejectProposal({ alertId: proposal.alertId, reason });
+      await client.rejectProposal({ alertId: proposal.alertId, reason, confirmed });
       setState("dismissed");
       emitEngine("le-calibrate", { kind: "deny" });
       app.refreshCalibration();
       onResolved(proposal.alertId);
     } catch (err) {
+      if (err instanceof DashboardApiError && err.code === "confirm_required") {
+        setMuteWarning(err.message);
+        setState("confirming_mute");
+        return;
+      }
       const msg = err instanceof DashboardApiError ? err.message : "Could not save that.";
       app.toast(msg, "warn", "critical");
     } finally {
@@ -158,6 +167,33 @@ function PendingRow({
                 {r.label}
               </button>
             ))}
+          </span>
+        </div>
+      )}
+
+      {state === "confirming_mute" && (
+        <div className="cd-deny-why" style={{ marginLeft: 42 }}>
+          <span className="cd-deny-why-lab">{muteWarning ?? "Take over this protection?"}</span>
+          <span className="cd-deny-chips">
+            <button
+              type="button"
+              className="cd-deny-chip"
+              disabled={busy}
+              onClick={() => onDeny("i_handle_this", true)}
+            >
+              {busy ? "Saving…" : "Yes, I'll handle it myself"}
+            </button>
+            <button
+              type="button"
+              className="cd-deny-chip"
+              disabled={busy}
+              onClick={() => {
+                setMuteWarning(null);
+                setState("denying");
+              }}
+            >
+              Keep protecting me
+            </button>
           </span>
         </div>
       )}
