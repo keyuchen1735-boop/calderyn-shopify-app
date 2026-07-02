@@ -31,6 +31,16 @@ describe("store settings repo", () => {
     expect(s.palette).toEqual(DEFAULT_PALETTE);
   });
 
+  it("brands a settings-less real shop with its display_name, never the demo label", async () => {
+    const settingsMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const shopMaybeSingle = vi.fn().mockResolvedValue({ data: { display_name: "MVP Rehearsal Co" }, error: null });
+    fromMock.mockImplementation((table: string) => ({
+      select: () => ({ eq: () => ({ maybeSingle: table === "shops" ? shopMaybeSingle : settingsMaybeSingle }) }),
+    }));
+    const s = await getStoreSettings(realShop);
+    expect(s.storeName).toBe("MVP Rehearsal Co");
+  });
+
   it("saveStoreSettings upserts on shop_id", async () => {
     const upsert = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockReturnValue({ upsert });
