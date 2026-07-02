@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { it, expect, beforeEach, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   requireDashboardSession: vi.fn(),
