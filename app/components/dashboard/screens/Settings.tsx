@@ -16,6 +16,7 @@ import type { GuardrailConfig } from "~/lib/types";
 import { McpGuide } from "../McpGuide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
+import { PayoutsCard } from "../PayoutsCard";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -625,6 +626,8 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       </section>
+
+      <PayoutsCard app={app} />
 
       <section>
         <SectionTitle>Claude connector</SectionTitle>
