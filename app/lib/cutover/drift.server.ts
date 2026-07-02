@@ -23,7 +23,7 @@
 
 import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { fetchProducts, type AdminProduct } from "~/lib/ingest/shopify-admin.server";
+import type { AdminProduct } from "~/lib/ingest/shopify-admin.server";
 import { moneyToCents } from "~/lib/ingest/mappers.server";
 import { buildSkuTitle } from "~/lib/sku-title";
 import { pagedRows } from "./paged.server";
@@ -161,6 +161,12 @@ export async function checkDualRunDrift(shopId: string): Promise<DriftReport> {
   let unmatchedLocations = 0;
   let variantsChecked = 0;
   const seenOwnedIds = new Set<string>();
+
+  // Bound lazily: shopify-admin.server initializes the whole Shopify app at module
+  // scope (env-dependent), and this sweep is the cutover graph's ONLY Shopify
+  // consumer — a static import would make merely loading org-mode/go-live require
+  // Shopify env everywhere (tests, native-only deployments).
+  const { fetchProducts } = await import("~/lib/ingest/shopify-admin.server");
 
   // Only the Shopify TRANSPORT is wrapped: a failing page fetch is expected and
   // merchant-actionable (502-shaped), while a bug in the compare logic below must

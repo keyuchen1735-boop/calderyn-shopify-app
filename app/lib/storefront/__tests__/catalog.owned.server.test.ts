@@ -1,7 +1,8 @@
 // The owned StorefrontCatalog runs on a PUBLIC, unauthenticated surface with no
 // Postgres RLS, so these tests pin the tenancy-critical behavior: every read is
 // scoped by shop_id, only `active` products are exposed, availability is derived
-// from the static Slice-1 stock, and images come through signed URLs.
+// from the Slice-2 inventory ledger (falling back to the editor's static
+// inventory_on_hand for ledger-less variants), and images come through signed URLs.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -24,6 +25,7 @@ function builder(table: string) {
     in: chain,
     order: chain,
     limit: chain,
+    range: chain,
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
     then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: tableRows[table] ?? [], error: null }).then(resolve),
   });
@@ -74,6 +76,48 @@ describe("ownedCatalog.listProducts", () => {
     expect(p.collections).toEqual(["apparel"]);
     // collection-handle lookup is shop-scoped
     expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
+  });
+
+  it("derives availability from the inventory ledger when balance rows exist (import/checkout truth)", async () => {
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "board", title: "Board", description: "" }],
+      variant_dim: [
+        // Imported variant: editor snapshot says 0, but the ledger holds real stock.
+        { id: "v1", product_id: "p1", sku: "A", title: "A", retail_price_cents: 9900, currency: "USD", inventory_tracked: true, inventory_on_hand: 0, position: 0 },
+        // Fully reserved: on_hand exists but reservations consume it -> not sellable.
+        { id: "v2", product_id: "p1", sku: "B", title: "B", retail_price_cents: 9900, currency: "USD", inventory_tracked: true, inventory_on_hand: 9, position: 1 },
+      ],
+      inventory_balance: [
+        // v1 stock spread across two locations: 50 + 50 = 100 sellable. `available`
+        // is the DB's generated on_hand - reserved - unavailable column.
+        { variant_id: "v1", available: 50 },
+        { variant_id: "v1", available: 50 },
+        // v2: reservations/unavailable consume everything.
+        { variant_id: "v2", available: 0 },
+      ],
+      product_media: [],
+      product_collection: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const out = await ownedCatalog.listProducts("shop-1");
+    expect(out[0].variants.map((v) => v.available)).toEqual([true, false]);
+    // The ledger read is tenant-scoped like every other query on this surface.
+    expect(eqCalls.inventory_balance).toContainEqual(["shop_id", "shop-1"]);
+  });
+
+  it("falls back to the editor's inventory_on_hand for a variant the ledger has never seen", async () => {
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "tee", title: "Tee", description: "" }],
+      variant_dim: [
+        { id: "v1", product_id: "p1", sku: "S", title: "S", retail_price_cents: 1999, currency: "USD", inventory_tracked: true, inventory_on_hand: 4, position: 0 },
+      ],
+      inventory_balance: [],
+      product_media: [],
+      product_collection: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const out = await ownedCatalog.listProducts("shop-1");
+    expect(out[0].variants[0].available).toBe(true);
   });
 
   it("never sells a price-less variant: null retail_price_cents -> not available", async () => {
