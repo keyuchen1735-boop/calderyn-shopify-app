@@ -1,9 +1,8 @@
 // app/components/dashboard/screens/AnalyticsLive.tsx
-// Live subtab of the Analytics screen (spec
-// 2026-07-02-analytics-live-view-design.md). Data plumbing + plain cd-*
-// rendering only — final visual design is owned by the design pass; the
-// LiveAnalyticsSnapshot DTO is the handoff contract. Split into a pure view
-// (LiveSnapshotView, SSR-testable) and a thin fetching wrapper.
+// Live subtab of the Analytics screen: current visitors, today's sales and
+// sessions, the cart-to-purchase funnel, locations, and top products. Split
+// into a pure view (LiveSnapshotView, SSR-testable) and a thin fetching
+// wrapper around useLiveAnalytics.
 import { Card, CountMoney, CountNum, Meter, Placeholder } from "../ui";
 import { useLiveAnalytics } from "../use-live-analytics";
 import type { LiveAnalyticsSnapshot } from "~/lib/dashboard/client";
@@ -15,21 +14,19 @@ export function LiveSnapshotView({
   snapshot: LiveAnalyticsSnapshot | null;
   error: string | null;
 }) {
-  if (error) {
-    return (
-      <Card pad={false}>
-        <Placeholder icon="warn" title="Couldn't load live view" sub={error} />
-      </Card>
-    );
-  }
+  // A transient poll failure must not blank a working board: the placeholder
+  // only shows when there is no snapshot to keep rendering.
   if (!snapshot) {
+    const placeholder = error
+      ? ({ icon: "warn", title: "Couldn't load live view", sub: error } as const)
+      : ({
+          icon: "chart",
+          title: "Loading live view",
+          sub: "Reading current storefront activity.",
+        } as const);
     return (
       <Card pad={false}>
-        <Placeholder
-          icon="chart"
-          title="Loading live view"
-          sub="Reading current storefront activity."
-        />
+        <Placeholder {...placeholder} />
       </Card>
     );
   }
@@ -98,16 +95,18 @@ export function LiveSnapshotView({
           <Card>
             <h2 className="cd-h2">New vs returning</h2>
             <div className="cd-rows">
-              <div className="cd-row">
-                <span className="cd-row-title">New</span>
-                <Meter pct={(nvr.new / nvrTotal) * 100} />
-                <span className="cd-row-num tabular-nums">{nvr.new}</span>
-              </div>
-              <div className="cd-row">
-                <span className="cd-row-title">Returning</span>
-                <Meter pct={(nvr.returning / nvrTotal) * 100} />
-                <span className="cd-row-num tabular-nums">{nvr.returning}</span>
-              </div>
+              {(
+                [
+                  ["New", nvr.new],
+                  ["Returning", nvr.returning],
+                ] as const
+              ).map(([label, n]) => (
+                <div key={label} className="cd-row">
+                  <span className="cd-row-title">{label}</span>
+                  <Meter pct={(n / nvrTotal) * 100} />
+                  <span className="cd-row-num tabular-nums">{n}</span>
+                </div>
+              ))}
             </div>
           </Card>
         </div>

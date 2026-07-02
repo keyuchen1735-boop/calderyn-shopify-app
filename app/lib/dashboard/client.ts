@@ -7,6 +7,7 @@
 // This module is client-only: it uses fetch, crypto.randomUUID(), and
 // location.origin. It MUST NOT import any *.server.ts module.
 
+import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type {
   Alert,
   AuditEntry,
@@ -790,21 +791,7 @@ export async function undoAudit(auditId: string): Promise<{ auditId: string }> {
   return { auditId: data.audit_id };
 }
 
-/** Analytics Live subtab snapshot — the design handoff contract for Live View
- *  (spec 2026-07-02-analytics-live-view-design.md). Mirrors the server DTO in
- *  lib/dashboard/live-analytics.server.ts exactly. */
-export interface LiveAnalyticsSnapshot {
-  generated_at: string;
-  visitors_now: number;
-  sessions_today: number;
-  total_sales_today_cents: number;
-  currency: string;
-  orders_today: number;
-  funnel: { cart_sessions: number; checkout_sessions: number; purchased_sessions: number };
-  by_location: Array<{ country: string; sessions: number }>;
-  new_vs_returning: { new: number; returning: number };
-  top_products: Array<{ product_id: string; title: string; sales_cents: number; units: number }>;
-}
+export type { LiveAnalyticsSnapshot };
 
 export async function fetchLiveAnalytics(): Promise<LiveAnalyticsSnapshot> {
   return apiGet<LiveAnalyticsSnapshot>("/dashboard/api/analytics-live");
@@ -813,13 +800,25 @@ export async function fetchLiveAnalytics(): Promise<LiveAnalyticsSnapshot> {
 export async function getRealtimeToken(): Promise<{
   token: string;
   url: string;
+  publishableKey: string;
+  shopId: string;
   expiresAt: string;
 } | null> {
   try {
-    const data = await apiGet<{ token: string; url: string; expires_at: string }>(
-      "/dashboard/api/realtime-token",
-    );
-    return { token: data.token, url: data.url, expiresAt: data.expires_at };
+    const data = await apiGet<{
+      token: string;
+      url: string;
+      publishable_key: string;
+      shop_id: string;
+      expires_at: string;
+    }>("/dashboard/api/realtime-token");
+    return {
+      token: data.token,
+      url: data.url,
+      publishableKey: data.publishable_key,
+      shopId: data.shop_id,
+      expiresAt: data.expires_at,
+    };
   } catch (err) {
     if (err instanceof DashboardApiError && err.status === 503) return null;
     throw err;

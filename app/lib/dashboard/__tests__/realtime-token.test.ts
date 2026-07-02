@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.SUPABASE_JWT_SECRET = "super-secret-jwt-key-for-tests-32chars";
   process.env.SUPABASE_URL = "https://test-project.supabase.co";
+  process.env.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_test_key";
   requireDashboardSession.mockResolvedValue({
     shopId: "11111111-2222-3333-4444-555555555555",
     shopDomain: "x.myshopify.com",
@@ -28,12 +29,16 @@ describe("GET /dashboard/api/realtime-token", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(200);
-    const { token, url, expires_at } = (await res.json()) as {
+    const { token, url, publishable_key, shop_id, expires_at } = (await res.json()) as {
       token: string;
       url: string;
+      publishable_key: string;
+      shop_id: string;
       expires_at: string;
     };
     expect(url).toBe("https://test-project.supabase.co");
+    expect(publishable_key).toBe("sb_publishable_test_key");
+    expect(shop_id).toBe("11111111-2222-3333-4444-555555555555");
 
     const { payload } = await jwtVerify(
       token,

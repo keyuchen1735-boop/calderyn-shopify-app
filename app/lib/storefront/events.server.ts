@@ -5,10 +5,11 @@
 // render (rule 12: visible in logs, invisible to the buyer). No PII: opaque
 // ids + coarse Vercel geo only. The user-agent is checked for bots, never stored.
 import { getSupabase } from "../supabase.server";
+import { isUuid } from "../ids";
 import { ensureVisitorSession, type VisitorSession } from "./visitor-cookie.server";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// ponytail: naive UA screen; upgrade to real bot scoring only if numbers skew.
+// Deliberate simplification: naive UA screen; upgrade to real bot scoring
+// only if the numbers skew.
 const BOT_UA_RE = /bot|crawler|spider|crawling|preview|headless|lighthouse|slurp|curl\b/i;
 
 export type StorefrontEventType =
@@ -42,7 +43,7 @@ async function insertEvent(
 ): Promise<void> {
   try {
     // Fixture tenants (resolveStorefrontShop's "demo-shop") never reach the DB.
-    if (!UUID_RE.test(shopId)) return;
+    if (!isUuid(shopId)) return;
     const ua = request.headers.get("user-agent") ?? "";
     if (BOT_UA_RE.test(ua)) return;
     const { error } = await getSupabase().from("storefront_event").insert({

@@ -142,7 +142,20 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     />
   );
 
-  if (view === "performance" && loading) {
+  // The Live subtab is fully independent of the performance fetch — bail out
+  // before the loading/error states so those never leak into (or block) it.
+  if (view === "live") {
+    return (
+      <div className="cd-screen">
+        <ScreenHeader title="Analytics" sub="Your storefront right now.">
+          {viewSwitch}
+        </ScreenHeader>
+        <AnalyticsLive />
+      </div>
+    );
+  }
+
+  if (loading) {
     return (
       <div className="cd-screen">
         <ScreenHeader title="Analytics" sub="Loading blended performance across your ad accounts…">
@@ -155,7 +168,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     );
   }
 
-  if (view === "performance" && error) {
+  if (error) {
     return (
       <div className="cd-screen">
         <ScreenHeader title="Analytics">{viewSwitch}</ScreenHeader>
@@ -170,29 +183,16 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
 
   return (
     <div className="cd-screen">
-      <ScreenHeader
-        title="Analytics"
-        sub={
-          view === "live"
-            ? "Your storefront right now."
-            : "Blended performance across Meta, Google and TikTok — margin-aware."
-        }
-      >
+      <ScreenHeader title="Analytics" sub="Blended performance across Meta, Google and TikTok — margin-aware.">
         {viewSwitch}
-        {view === "performance" && (
-          <Segmented
-            small
-            value={range}
-            onChange={(v) => setRange(v as Range)}
-            options={["7d", "14d", "30d"]}
-          />
-        )}
+        <Segmented
+          small
+          value={range}
+          onChange={(v) => setRange(v as Range)}
+          options={["7d", "14d", "30d"]}
+        />
       </ScreenHeader>
 
-      {view === "live" ? (
-        <AnalyticsLive />
-      ) : (
-        <>
       <div className="cd-stat-grid">
         <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
           <span className="cd-stat-label">Ad spend ({range})</span>
@@ -365,8 +365,6 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       </div>
       <AttentionSection app={app} />
       {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
-        </>
-      )}
     </div>
   );
 }

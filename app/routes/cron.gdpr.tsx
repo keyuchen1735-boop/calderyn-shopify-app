@@ -14,6 +14,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopsRedacted: [] as string[],
     shopsFailed: [] as { id: string; error: string }[],
     rawWebhookRowsDeleted: 0,
+    storefrontEventRowsDeleted: 0,
     error: null as string | null,
   };
 
@@ -22,6 +23,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     summary.shopsRedacted = result.shopsRedacted;
     summary.shopsFailed = result.shopsFailed;
     summary.rawWebhookRowsDeleted = result.rawWebhookRowsDeleted;
+    summary.storefrontEventRowsDeleted = result.storefrontEventRowsDeleted;
   } catch (err) {
     // Surface the failure in the response — never silently pass (rule 12).
     summary.error = err instanceof Error ? err.message : String(err);

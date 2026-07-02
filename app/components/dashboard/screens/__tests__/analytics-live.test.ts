@@ -57,9 +57,15 @@ describe("LiveSnapshotView", () => {
     expect(html).not.toContain("Couldn&#x27;t load");
   });
 
-  it("error state renders the placeholder", () => {
+  it("error state renders the placeholder only when there is no snapshot", () => {
     const html = render(null, "boom");
     expect(html).toContain("Couldn&#x27;t load live view");
+  });
+
+  it("a transient error never blanks a board that has data", () => {
+    const html = render(SNAP, "boom");
+    expect(html).toContain("Visitors right now");
+    expect(html).not.toContain("Couldn&#x27;t load live view");
   });
 
   it("loading state renders the placeholder", () => {

@@ -6,27 +6,30 @@
 // (guardrail_config.timezone), deviating deliberately from the UTC-day budget
 // convention — a live merchant-facing "today" must reset at the store's
 // midnight. Same accepted DST rounding as business-hours.ts.
-// ponytail: no rollup tables; revisit past ~100k events/day per shop.
+// Deliberate simplification: no rollup tables or SQL-side aggregation;
+// revisit past ~100k events/day per shop.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { CalderynError } from "../calderyn.server";
 import { tzOffsetHours } from "./business-hours";
+import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 
-export interface LiveAnalyticsSnapshot {
-  generated_at: string;
-  visitors_now: number;
-  sessions_today: number;
-  total_sales_today_cents: number;
-  currency: string;
-  orders_today: number;
-  funnel: { cart_sessions: number; checkout_sessions: number; purchased_sessions: number };
-  by_location: Array<{ country: string; sessions: number }>;
-  new_vs_returning: { new: number; returning: number };
-  top_products: Array<{ product_id: string; title: string; sales_cents: number; units: number }>;
-}
+export type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 
 const VISITORS_NOW_WINDOW_MS = 5 * 60_000;
 const TOP_LOCATIONS = 8;
 const TOP_PRODUCTS = 5;
+const IN_CHUNK = 200; // PostgREST .in() rides the query string — keep URLs bounded
 const DEFAULT_TZ = "America/New_York"; // matches rowToGuardrails default
+
+/** Wrap upstream DB errors in the house error shape so dashboardJson emits
+ *  the standard SUPABASE_ERROR code instead of a bare internal_error. */
+function fail(step: string, err: { message?: string }): never {
+  throw new CalderynError({
+    code: "SUPABASE_ERROR",
+    status: 500,
+    message: `live-analytics ${step}: ${err.message ?? "unknown error"}`,
+  });
+}
 
 /** UTC instant of the most recent store-local midnight (offset sampled at `now`). */
 export function storeTodayStartIso(tz: string, now = new Date()): string {
@@ -43,7 +46,13 @@ type EventRow = {
   country: string | null;
   created_at: string;
 };
-type OrderRow = { id: string; total_cents: number; currency: string; created_at: string };
+type OrderRow = {
+  id: string;
+  total_cents: number;
+  currency: string;
+  created_at: string;
+  attribution: Record<string, unknown> | null;
+};
 type LineRow = {
   order_id: string;
   variant_id: string;
@@ -62,10 +71,10 @@ export async function buildLiveSnapshot(
     .select("timezone")
     .eq("shop_id", shopId)
     .maybeSingle();
-  if (tzRes.error) throw tzRes.error;
+  if (tzRes.error) fail("timezone read", tzRes.error);
   const tz = String((tzRes.data as { timezone?: string } | null)?.timezone ?? DEFAULT_TZ);
   const todayStart = storeTodayStartIso(tz, now);
-  const nowWindowStart = new Date(now.getTime() - VISITORS_NOW_WINDOW_MS).toISOString();
+  const nowWindowStartMs = now.getTime() - VISITORS_NOW_WINDOW_MS;
 
   const [eventsRes, ordersRes] = await Promise.all([
     sb
@@ -75,45 +84,50 @@ export async function buildLiveSnapshot(
       .gte("created_at", todayStart),
     sb
       .from("orders")
-      .select("id, total_cents, currency, created_at")
+      .select("id, total_cents, currency, created_at, attribution")
       .eq("shop_id", shopId)
       .eq("financial_status", "paid")
-      .gte("created_at", todayStart),
+      .gte("created_at", todayStart)
+      .order("created_at", { ascending: false }),
   ]);
-  if (eventsRes.error) throw eventsRes.error;
-  if (ordersRes.error) throw ordersRes.error;
+  if (eventsRes.error) fail("events read", eventsRes.error);
+  if (ordersRes.error) fail("orders read", ordersRes.error);
   const events = (eventsRes.data ?? []) as EventRow[];
   const orders = (ordersRes.data ?? []) as OrderRow[];
 
-  let lines: LineRow[] = [];
-  if (orders.length > 0) {
+  // Lines for today's paid orders, fetched in bounded id chunks.
+  const lines: LineRow[] = [];
+  const orderIds = orders.map((o) => String(o.id));
+  for (let i = 0; i < orderIds.length; i += IN_CHUNK) {
     const linesRes = await sb
       .from("order_line")
       .select("order_id, variant_id, quantity, unit_price_cents, title_snapshot")
       .eq("shop_id", shopId)
-      .in(
-        "order_id",
-        orders.map((o) => String(o.id)),
-      );
-    if (linesRes.error) throw linesRes.error;
-    lines = (linesRes.data ?? []) as LineRow[];
+      .in("order_id", orderIds.slice(i, i + IN_CHUNK));
+    if (linesRes.error) fail("order lines read", linesRes.error);
+    lines.push(...((linesRes.data ?? []) as LineRow[]));
   }
 
   // --- distinct-session aggregation ---
   const sessions = new Set<string>();
   const now5m = new Set<string>();
-  const byType: Record<string, Set<string>> = {
-    cart_add: new Set(),
-    checkout_start: new Set(),
-    checkout_complete: new Set(),
-  };
+  const cartSessions = new Set<string>();
+  const checkoutSessions = new Set<string>();
+  // Purchased is anchored on PAID ORDERS (authoritative — the Stripe webhook
+  // flips the state with no browser cookie in sight), via the live_session_id
+  // stamped into orders.attribution at checkout. The confirmation-page
+  // checkout_complete event is unioned in as a fallback for orders that
+  // predate the stamp.
+  const purchasedSessions = new Set<string>();
   const returningBySession = new Map<string, boolean>();
   const byCountry = new Map<string, Set<string>>();
   for (const e of events) {
     const sid = String(e.session_id);
     sessions.add(sid);
-    if (e.created_at >= nowWindowStart) now5m.add(sid);
-    byType[e.type]?.add(sid);
+    if (Date.parse(e.created_at) >= nowWindowStartMs) now5m.add(sid);
+    if (e.type === "cart_add") cartSessions.add(sid);
+    else if (e.type === "checkout_start") checkoutSessions.add(sid);
+    else if (e.type === "checkout_complete") purchasedSessions.add(sid);
     // The flag is frozen at session start, so first-seen wins is safe.
     if (!returningBySession.has(sid)) returningBySession.set(sid, Boolean(e.is_returning));
     const country = e.country ?? "Unknown";
@@ -123,6 +137,10 @@ export async function buildLiveSnapshot(
       byCountry.set(country, set);
     }
     set.add(sid);
+  }
+  for (const o of orders) {
+    const sid = o.attribution?.live_session_id;
+    if (typeof sid === "string" && sid.length > 0) purchasedSessions.add(sid);
   }
 
   const locations = [...byCountry.entries()]
@@ -154,15 +172,17 @@ export async function buildLiveSnapshot(
     generated_at: now.toISOString(),
     visitors_now: now5m.size,
     sessions_today: sessions.size,
-    // ponytail: orders.created_at, not a paid-at timestamp (none exists) — an
-    // order created before midnight but paid after lands on yesterday.
+    // Deliberate simplifications, acceptable for the single-currency pilot:
+    // sales use orders.created_at (no paid-at timestamp exists), and mixed
+    // currencies would be summed as-is with the most recent order's currency
+    // label — revisit when a multi-currency tenant onboards.
     total_sales_today_cents: orders.reduce((n, o) => n + Number(o.total_cents), 0),
     currency: orders[0]?.currency ?? "usd",
     orders_today: orders.length,
     funnel: {
-      cart_sessions: byType.cart_add.size,
-      checkout_sessions: byType.checkout_start.size,
-      purchased_sessions: byType.checkout_complete.size,
+      cart_sessions: cartSessions.size,
+      checkout_sessions: checkoutSessions.size,
+      purchased_sessions: purchasedSessions.size,
     },
     by_location: topLocations,
     new_vs_returning: { new: returningBySession.size - returning, returning },
