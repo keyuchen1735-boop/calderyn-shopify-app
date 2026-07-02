@@ -72,7 +72,7 @@ describe("confirmation loader — IDOR safety", () => {
     const res = await loader(args("good-token"));
     const body = await (res as Response).json();
     expect(body.ref).toBe("#11112222");
-    expect(body.paid).toBe(true);
+    expect(body.status).toBe("confirmed");
     expect(body.totalCents).toBe(3998);
     expect(body.lines).toEqual([{ title: "Tee", quantity: 2 }]);
 
@@ -82,7 +82,7 @@ describe("confirmation loader — IDOR safety", () => {
     expect(setCookie).toContain("Max-Age=0");
   });
 
-  it("reflects an unpaid (webhook-lagging) order as not-yet-paid without failing", async () => {
+  it("reflects an unpaid (webhook-lagging) order as processing without failing", async () => {
     findOrderByConfirmationToken.mockResolvedValue({
       orderId: "aaaa1111-0000-0000-0000-000000000000",
       state: "checkout_pending",
@@ -96,6 +96,28 @@ describe("confirmation loader — IDOR safety", () => {
     });
     const res = await loader(args("pending-token"));
     expect((res as Response).status).toBe(200);
-    expect((await (res as Response).json()).paid).toBe(false);
+    expect((await (res as Response).json()).status).toBe("processing");
+  });
+
+  it("surfaces a cancelled/refunded order with its terminal status, never the reassuring copy", async () => {
+    for (const [state, expected] of [
+      ["cancelled", "cancelled"],
+      ["refunded", "refunded"],
+    ] as const) {
+      findOrderByConfirmationToken.mockResolvedValue({
+        orderId: "bbbb2222-0000-0000-0000-000000000000",
+        state,
+        subtotalCents: 1000,
+        shippingCents: 0,
+        taxCents: 0,
+        totalCents: 1000,
+        currency: "usd",
+        createdAt: "2026-06-29T00:00:00Z",
+        lines: [],
+      });
+      const res = await loader(args("terminal-token"));
+      expect((res as Response).status).toBe(200);
+      expect((await (res as Response).json()).status).toBe(expected);
+    }
   });
 });
