@@ -66,7 +66,9 @@ describe("PDP add-to-cart action", () => {
 
     expect(buildCart).not.toHaveBeenCalled();
     expect(addCartLine).toHaveBeenCalledWith("shop-1", "cart-existing", "v-9", 1);
-    expect(res.headers.get("Set-Cookie")).toBeNull();
+    // No new CART cookie on reuse. (The live-analytics visitor/session cookies
+    // legitimately ride every storefront response — see events.server.)
+    expect(res.headers.get("Set-Cookie") ?? "").not.toContain("cd_cart=");
     expect(res.headers.get("Location")).toBe("/storefront/cart");
   });
 

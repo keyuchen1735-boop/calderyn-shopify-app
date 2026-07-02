@@ -11,6 +11,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
 import { formatMoney as money } from "~/lib/storefront/money";
@@ -50,22 +51,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
     console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout for shop ${shopId}`);
   }
 
+  const track = await trackStorefrontEvent(request, shopId, "checkout_start");
+
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
-  return json({
-    publishableKey,
-    origin: new URL(request.url).origin,
-    summary: {
-      lines: priced.lines.map((l) => ({
-        id: l.id,
-        title: l.titleSnapshot,
-        quantity: l.quantity,
-        unitPriceCents: l.unitPriceCents,
-      })),
-      subtotalCents: priced.subtotalCents,
-      currency: priced.currency,
+  return json(
+    {
+      publishableKey,
+      origin: new URL(request.url).origin,
+      summary: {
+        lines: priced.lines.map((l) => ({
+          id: l.id,
+          title: l.titleSnapshot,
+          quantity: l.quantity,
+          unitPriceCents: l.unitPriceCents,
+        })),
+        subtotalCents: priced.subtotalCents,
+        currency: priced.currency,
+      },
     },
-  });
+    { headers: track },
+  );
 }
 
 function str(form: FormData, key: string): string {

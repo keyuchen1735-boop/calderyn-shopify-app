@@ -10,6 +10,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { clearCartId } from "~/lib/storefront/cart-cookie.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
@@ -40,6 +41,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // order, so a buyer who reaches this URL without paying keeps their cart. Idempotent on refresh.
   const headers = new Headers();
   if (captured) headers.append("Set-Cookie", await clearCartId());
+
+  // Funnel terminal: the buyer's browser is back from Stripe with a captured
+  // payment. Refresh duplicates are harmless — the funnel counts distinct
+  // sessions. An unpaid (webhook-lagged) visit stays an ordinary page view.
+  const track = await trackStorefrontEvent(
+    request,
+    shopId,
+    captured ? "checkout_complete" : "page_view",
+  );
+  for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 
   // The webhook may lag, so a genuinely-paid order can still read `checkout_pending` here —
   // reflect it gracefully ("received / processing") rather than hard-failing on not-yet-paid.

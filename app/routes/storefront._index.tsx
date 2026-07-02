@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
@@ -27,7 +28,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const doc = (await loadPublishedDoc(shopId, "home")) ?? defaultHomeDocument();
   // Pre-resolve exactly the catalog data the doc's blocks reference (shopId scoping inside).
   const data = await resolveRenderData(doc, shopId, catalog);
-  return json({ doc, data });
+  const track = await trackStorefrontEvent(request, shopId, "page_view");
+  return json({ doc, data }, { headers: track });
 }
 
 export default function StorefrontHome() {
