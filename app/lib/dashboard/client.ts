@@ -790,6 +790,26 @@ export async function undoAudit(auditId: string): Promise<{ auditId: string }> {
   return { auditId: data.audit_id };
 }
 
+/** Analytics Live subtab snapshot — the design handoff contract for Live View
+ *  (spec 2026-07-02-analytics-live-view-design.md). Mirrors the server DTO in
+ *  lib/dashboard/live-analytics.server.ts exactly. */
+export interface LiveAnalyticsSnapshot {
+  generated_at: string;
+  visitors_now: number;
+  sessions_today: number;
+  total_sales_today_cents: number;
+  currency: string;
+  orders_today: number;
+  funnel: { cart_sessions: number; checkout_sessions: number; purchased_sessions: number };
+  by_location: Array<{ country: string; sessions: number }>;
+  new_vs_returning: { new: number; returning: number };
+  top_products: Array<{ product_id: string; title: string; sales_cents: number; units: number }>;
+}
+
+export async function fetchLiveAnalytics(): Promise<LiveAnalyticsSnapshot> {
+  return apiGet<LiveAnalyticsSnapshot>("/dashboard/api/analytics-live");
+}
+
 export async function getRealtimeToken(): Promise<{
   token: string;
   url: string;
