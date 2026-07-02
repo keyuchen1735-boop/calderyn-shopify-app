@@ -8,6 +8,24 @@ import type { OrderSignals } from "./types";
 
 interface RunnerOpts { shopCountry: string | null; }
 
+// Payload rows for the two set-based apply RPCs. Field names must match the
+// jsonb_to_recordset column lists in 20260702000000_ship_cost_batch_apply.sql
+// exactly — a mismatched key would silently land as NULL server-side, which is
+// why these are typed interfaces rather than Record<string, unknown>.
+interface OrderShipCostUpdate {
+  id: string;
+  ship_cost_cents: number;
+  ship_cost_source: string;
+  ship_cost_confidence: string;
+  ship_cost_reconciled_at: string;
+}
+
+interface SkuPnlUpdate {
+  id: string;
+  ship_cost_cents: number;
+  contribution_margin_cents: number;
+}
+
 // PostgREST silently truncates an uncapped select at 1000 rows by default, so a
 // shop with more orders than that would only be partially resolved per tick
 // (proven in prod: a cron tick stopped at exactly 1000 orders/shop). Page through
@@ -15,13 +33,62 @@ interface RunnerOpts { shopCountry: string | null; }
 // than betting on a fixed .limit() that a high-volume shop could still outgrow.
 const PAGE_SIZE = 1000;
 
+// Writes go through set-based RPCs in batches of this many rows. One round-trip
+// per row was the prod 504: ~11k serial order_fact updates per tick across the
+// active shops exhausted the cron's 300s function ceiling and starved every
+// phase after ship-cost. 1000 rows ≈ ~100KB of jsonb per call — one statement,
+// well under any payload or statement-timeout limit.
+const RPC_BATCH = 1000;
+
+// Turn a PostgREST/Supabase `{ message, details, hint, code }` failure into a real
+// Error with a readable message. Throwing the raw object propagates a non-Error
+// that String()s to "[object Object]" at call sites that only handle Error
+// instances (e.g. cron.ingest-ship-costs' merchant-visible sync_error write).
+// Same rationale as asError in attribution/revenue.server.ts.
+function asError(context: string, err: unknown): Error {
+  const e = (err ?? {}) as { message?: unknown; details?: unknown; code?: unknown };
+  const parts = [e.message, e.details, e.code != null && `code=${e.code}`].filter(
+    (p): p is string => typeof p === "string" && p.length > 0,
+  );
+  return new Error(`${context}: ${parts.join(" ") || "unknown Supabase error"}`);
+}
+
+async function applyInBatches<T extends { id: string }>(
+  sb: SupabaseClient,
+  fn: string,
+  shopId: string,
+  rows: T[],
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += RPC_BATCH) {
+    const batch = rows.slice(i, i + RPC_BATCH);
+    const { data, error } = await sb.rpc(fn, { p_shop_id: shopId, p_rows: batch });
+    // Throw a real Error so the cron route's per-shop catch records a readable
+    // message in summary.shipCostErrors.
+    if (error) throw asError(`${fn} batch failed`, error);
+    // The SQL function returns the updated-row count; fewer than sent means some
+    // ids no longer matched (e.g. order deleted between the paged read and this
+    // write). Not fatal — those rows re-diff as changed next tick — but silent
+    // partial application must at least leave a trace.
+    if (typeof data === "number" && data !== batch.length) {
+      console.warn(
+        `[ship-cost] ${fn}: batch updated ${data}/${batch.length} rows for shop ${shopId}`,
+      );
+    }
+  }
+}
+
 async function fetchAllRows<T>(
+  label: string,
   build: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
 ): Promise<T[]> {
   const all: T[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const to = from + PAGE_SIZE - 1;
-    const { data } = await build(from, to);
+    const { data, error } = await build(from, to);
+    // A failed page must be loud: swallowing it returns a partial (or empty) row
+    // set, which silently skips resolution — or worse, allocates a period total
+    // over a truncated order list, inflating every order that WAS read.
+    if (error) throw asError(`${label} read failed`, error);
     const page = (data ?? []) as T[];
     all.push(...page);
     if (page.length < PAGE_SIZE) break;
@@ -36,6 +103,11 @@ interface OrderFeatureRow {
   item_count: number | null;
   fulfillment_count: number | null;
   ship_cost_manual_cents: number | null;
+  // Currently-stored resolution (exposed on the view) — compared against this
+  // tick's resolution so unchanged orders cost zero writes.
+  ship_cost_cents: number | null;
+  ship_cost_source: string | null;
+  ship_cost_confidence: string | null;
 }
 
 export async function runShipCostResolution(
@@ -43,10 +115,12 @@ export async function runShipCostResolution(
   shopId: string,
   opts: RunnerOpts,
 ): Promise<void> {
-  const orderRows = await fetchAllRows<OrderFeatureRow>((from, to) =>
+  const orderRows = await fetchAllRows<OrderFeatureRow>("v_order_ship_features", (from, to) =>
     sb
       .from("v_order_ship_features")
-      .select("id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents")
+      .select(
+        "id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents, ship_cost_cents, ship_cost_source, ship_cost_confidence",
+      )
       .eq("shop_id", shopId)
       .range(from, to),
   );
@@ -136,7 +210,13 @@ export async function runShipCostResolution(
   const nowIso = new Date().toISOString();
 
   // All of the shop's orders are processed per tick (fetchAllRows pages past the
-  // PostgREST 1000-row cap); if this serial-update loop grows hot, batch via an RPC.
+  // PostgREST 1000-row cap). Orders whose resolution is identical to what is
+  // already stored are skipped — so a steady-state tick issues zero writes — and
+  // the rows that DID change land in set-based RPC batches, not one round-trip
+  // per order (the serial loop here is what 504'd the cron in prod).
+  // ship_cost_reconciled_at is informational and read nowhere; it now advances
+  // only when an order's resolution actually changes.
+  const changed: OrderShipCostUpdate[] = [];
   for (const o of orderRows) {
     const r = resolveOrderShipCost({
       manualOverrideCents: o.ship_cost_manual_cents ?? null,
@@ -152,13 +232,22 @@ export async function runShipCostResolution(
       fallbackCents: fallbackFlat,
       allocationCoverage: coverage,
     });
-    await sb.from("order_fact").update({
+    if (
+      r.cents === o.ship_cost_cents &&
+      r.source === o.ship_cost_source &&
+      r.confidence === o.ship_cost_confidence
+    ) {
+      continue;
+    }
+    changed.push({
+      id: o.id,
       ship_cost_cents: r.cents,
       ship_cost_source: r.source,
       ship_cost_confidence: r.confidence,
       ship_cost_reconciled_at: nowIso,
-    }).eq("id", o.id).eq("shop_id", shopId);
+    });
   }
+  await applyInBatches(sb, "ship_cost_apply_order_updates", shopId, changed);
 
   await rollShipCostIntoSkuPnl(sb, shopId);
 }
@@ -185,6 +274,8 @@ interface SkuPnlRow {
   cogs_cents: number;
   ad_spend_attrib_cents: number;
   return_cents: number;
+  ship_cost_cents: number | null;
+  contribution_margin_cents: number | null;
 }
 
 export async function rollShipCostIntoSkuPnl(
@@ -192,7 +283,7 @@ export async function rollShipCostIntoSkuPnl(
   shopId: string,
 ): Promise<void> {
   // Load orders that have a resolved ship cost
-  const orderFacts = await fetchAllRows<OrderFactRow>((from, to) =>
+  const orderFacts = await fetchAllRows<OrderFactRow>("order_fact", (from, to) =>
     sb
       .from("order_fact")
       .select("id, created_at_source, ship_cost_cents")
@@ -203,7 +294,7 @@ export async function rollShipCostIntoSkuPnl(
   if (orderFacts.length === 0) return;
 
   // Load all order lines for the shop
-  const orderLines = await fetchAllRows<OrderLineRow>((from, to) =>
+  const orderLines = await fetchAllRows<OrderLineRow>("order_line_fact", (from, to) =>
     sb
       .from("order_line_fact")
       .select("id, order_id, sku_id, grams, quantity")
@@ -241,28 +332,45 @@ export async function rollShipCostIntoSkuPnl(
   }
 
   // Load existing sku_pnl rows and update ship_cost_cents + contribution_margin_cents
-  const pnlRows = await fetchAllRows<SkuPnlRow>((from, to) =>
+  const pnlRows = await fetchAllRows<SkuPnlRow>("sku_pnl", (from, to) =>
     sb
       .from("sku_pnl")
-      .select("id, sku_id, day, revenue_cents, cogs_cents, ad_spend_attrib_cents, return_cents")
+      .select(
+        "id, sku_id, day, revenue_cents, cogs_cents, ad_spend_attrib_cents, return_cents, ship_cost_cents, contribution_margin_cents",
+      )
       .eq("shop_id", shopId)
       .range(from, to),
   );
 
+  // Same write discipline as the order loop above: skip rows already carrying
+  // this tick's numbers, batch the rest through one set-based RPC per RPC_BATCH.
+  const changed: SkuPnlUpdate[] = [];
   for (const row of pnlRows) {
     const key = `${row.sku_id}|${row.day}`;
     const shipCostCents = shipCostBySkuDay.get(key) ?? 0;
-    if (shipCostCents === 0) continue;
+    // A (sku, day) with no computed ship cost is skipped ONLY when it also has
+    // none stored. When a previously-written cost drops back to zero (invoice
+    // line unmapped, period deleted, manual override removed), the zero must be
+    // written — the old unconditional `=== 0` skip left the stale cost and stale
+    // margin in place forever.
+    if (shipCostCents === 0 && (row.ship_cost_cents ?? 0) === 0) continue;
     const contributionMarginCents =
       row.revenue_cents -
       row.cogs_cents -
       row.ad_spend_attrib_cents -
       row.return_cents -
       shipCostCents;
-    await sb
-      .from("sku_pnl")
-      .update({ ship_cost_cents: shipCostCents, contribution_margin_cents: contributionMarginCents })
-      .eq("id", row.id)
-      .eq("shop_id", shopId);
+    if (
+      shipCostCents === row.ship_cost_cents &&
+      contributionMarginCents === row.contribution_margin_cents
+    ) {
+      continue;
+    }
+    changed.push({
+      id: row.id,
+      ship_cost_cents: shipCostCents,
+      contribution_margin_cents: contributionMarginCents,
+    });
   }
+  await applyInBatches(sb, "ship_cost_apply_sku_pnl_updates", shopId, changed);
 }
