@@ -99,7 +99,7 @@ const merchantPauseAudit = {
 describe("undoAction · calibration demote signal", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("calls calibration_record_undo when an autopilot action is successfully undone", async () => {
+  it("records an undone autopilot action as an autonomous undo (beta +1.5 flavor)", async () => {
     const { sb, rpc } = fakeDemoteSb(autopilotPauseAudit, {
       detector_id: "campaign_below_breakeven",
     });
@@ -110,19 +110,26 @@ describe("undoAction · calibration demote signal", () => {
       p_shop_id: SHOP,
       p_detector_id: "campaign_below_breakeven",
       p_action_kind: "pause_campaign",
+      p_autonomous: true,
     });
   });
 
-  it("does NOT call calibration_record_undo when a merchant action is undone", async () => {
+  // Spec §7: an undone merchant APPROVAL is a revoked endorsement — it must
+  // write the +1 beta / clean_approvals-take-back flavor, or three
+  // approve-then-undo cycles would still satisfy the 3-clean-approvals
+  // graduation bar with evidence the merchant explicitly reversed.
+  it("records an undone merchant-approved action as a non-autonomous undo (beta +1 flavor)", async () => {
     const { sb, rpc } = fakeDemoteSb(merchantPauseAudit, {
       detector_id: "campaign_below_breakeven",
     });
 
     await undoAction(SHOP, "aud-merch-1", sb);
 
-    expect(rpc).not.toHaveBeenCalledWith(
-      "calibration_record_undo",
-      expect.anything(),
-    );
+    expect(rpc).toHaveBeenCalledWith("calibration_record_undo", {
+      p_shop_id: SHOP,
+      p_detector_id: "campaign_below_breakeven",
+      p_action_kind: "pause_campaign",
+      p_autonomous: false,
+    });
   });
 });

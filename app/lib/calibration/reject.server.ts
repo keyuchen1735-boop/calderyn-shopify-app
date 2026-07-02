@@ -12,6 +12,7 @@ import type { ActionKind, RejectReason } from "../types";
 import { rejectEffect, reflection } from "./feedback";
 import { trustDelta, type RejectReceipt } from "./delta";
 import { recomputeShopCalibration } from "./recompute.server";
+import { calibrationActionKind } from "./action-kind";
 
 export interface RecordRejectionInput {
   alertId: string | null;
@@ -62,9 +63,17 @@ async function refreshShopCalibrationHeadline(
 
 export async function recordRejection(
   shopId: string,
-  input: RecordRejectionInput,
+  rawInput: RecordRejectionInput,
   sb: SupabaseClient,
 ): Promise<{ reflection: string } & RejectReceipt> {
+  // Normalize to the kind the pair is CALIBRATED under (mirrors recordApproval):
+  // reallocate_spend_sku is not an action_kind enum member and would 22P02 on
+  // both the action_feedback insert and the RPC param; it trains the
+  // reallocate_budget pair — the same pair the autopilot graduation gate reads.
+  const input: RecordRejectionInput = {
+    ...rawInput,
+    actionKind: calibrationActionKind(rawInput.actionKind),
+  };
   const eff = rejectEffect(input.reason);
 
   // Read the pair's Beta counters BEFORE the bump (best-effort, so the
@@ -78,8 +87,36 @@ export async function recordRejection(
 
   // Build the jsonb rule value for this reason.
   let appliedRule: Record<string, unknown> | null = null;
+  let capRuleWritten = false;
   if (eff.ruleKind === "pair_dollar_cap") {
-    appliedRule = { cents: Math.max(1, Math.round(0.75 * input.dollarImpactCents)) };
+    // Tighten-only (compounding): the candidate cap is 75% of the rejected
+    // impact, but a learning write may NEVER loosen an existing cap — a later
+    // reject of a larger proposal must not widen what autopilot may cut. The
+    // whole supersede runs atomically in SQL (calibration_tighten_dollar_cap:
+    // lock all active caps → LEAST(candidate, existing) → insert + link
+    // superseded_by), so concurrent rejects can't race a looser cap in. Runs
+    // BEFORE the action_feedback insert so the frozen applied_rule carries the
+    // cents that actually landed.
+    const candidateCents = Math.max(1, Math.round(0.75 * input.dollarImpactCents));
+    try {
+      const { data: finalCents, error: capErr } = await sb.rpc("calibration_tighten_dollar_cap", {
+        p_shop_id: shopId,
+        p_detector_id: input.detectorId,
+        p_action_kind: input.actionKind,
+        p_candidate_cents: candidateCents,
+        p_source: input.reason,
+      });
+      if (capErr) throw new Error(capErr.message);
+      appliedRule = { cents: Number(finalCents ?? candidateCents) };
+      capRuleWritten = true;
+    } catch (err) {
+      // Best-effort: if the atomic write failed, freeze the candidate cap into
+      // the feedback row and let the legacy write path below try the insert.
+      console.error(
+        `[calibration] recordRejection tighten-cap rpc failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      appliedRule = { cents: candidateCents };
+    }
   } else if (eff.ruleKind === "pair_probation_until") {
     const until = new Date();
     until.setDate(until.getDate() + 14);
@@ -135,23 +172,15 @@ export async function recordRejection(
   }
 
   // 3. Write calibration_rule if the effect produces one.
-  if (eff.ruleKind !== null) {
+  if (eff.ruleKind !== null && !capRuleWritten) {
     try {
       if (eff.ruleKind === "pair_dollar_cap") {
-        // Supersede any existing active pair_dollar_cap for this (shop, detector, action) pair
-        // (tighten-only: the new cap is always 75% of the rejected impact).
-        const { error: supErr } = await sb
-          .from("calibration_rule")
-          .update({ active: false })
-          .eq("shop_id", shopId)
-          .eq("detector_id", input.detectorId)
-          .eq("action_kind", input.actionKind)
-          .eq("rule_kind", "pair_dollar_cap")
-          .eq("active", true);
-        if (supErr) {
-          console.error(`[calibration] recordRejection supersede failed: ${supErr.message}`);
-        }
-        // Insert the new active rule.
+        // Fallback only: the atomic calibration_tighten_dollar_cap RPC above is
+        // the normal writer (supersede + tighten in one transaction). Reaching
+        // here means the RPC errored — insert the candidate cap WITHOUT
+        // deactivating existing rows: rule enforcement vetoes on the tightest
+        // matching cap, so an extra (possibly looser) row is harmless, whereas
+        // deactivating a tighter cap here would loosen the merchant's limit.
         const { error: insErr } = await sb.from("calibration_rule").insert({
           shop_id: shopId,
           detector_id: input.detectorId,
@@ -208,7 +237,10 @@ export async function recordRejection(
   await refreshShopCalibrationHeadline(shopId, sb);
 
   return {
-    reflection: reflection(input.reason, input.detectorId, input.actionKind),
+    // The reflection names the action the merchant actually clicked (raw kind),
+    // while every write above trained the normalized pair — so the confirmation
+    // copy matches the button, and the learning lands where autopilot reads it.
+    reflection: reflection(input.reason, input.detectorId, rawInput.actionKind),
     delta,
     before: confBefore,
     after: confAfter,

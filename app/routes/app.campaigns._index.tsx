@@ -46,6 +46,8 @@ import { campaignBudgetLabel, campaignRoasLabel } from "~/lib/campaign-display";
 // page still works pre-ingest.
 import { executeAction, type ExecutableKind } from "~/lib/actions/execute.server";
 import { executeReallocation } from "~/lib/actions/reallocate.server";
+import { recordApproval } from "~/lib/calibration/approval.server";
+import { recordActionFailure } from "~/lib/calibration/failure.server";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { suggestReallocation } from "~/lib/actions/reallocation-suggest.server";
@@ -342,11 +344,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
     try {
-      const { outcome } = await executeAction(
+      const result = await executeAction(
         shopId,
         { alertId, kind: "increase_campaign_budget", campaignId: dimId, idempotencyKey, dailyBudgetCents: newCents },
         sb,
       );
+      const { outcome } = result;
+      // Calibration signal for alert-driven scales (the campaigns page is an
+      // approve surface too): +alpha when the merchant's approved scale lands,
+      // +beta (once per audit) on a terminal platform failure. Best-effort —
+      // never affects the action result.
+      if (alertId && (outcome === "succeeded" || outcome === "failed")) {
+        const { data: scaleAlert } = await sb
+          .from("alerts")
+          .select("detector_id")
+          .eq("shop_id", shopId)
+          .eq("id", alertId)
+          .maybeSingle();
+        const scaleDetectorId =
+          (scaleAlert as { detector_id?: string } | null)?.detector_id ?? null;
+        if (scaleDetectorId) {
+          if (outcome === "succeeded") {
+            await recordApproval(shopId, scaleDetectorId, "increase_campaign_budget", sb).catch(
+              () => undefined,
+            );
+          } else {
+            await recordActionFailure(shopId, scaleDetectorId, "increase_campaign_budget", sb, {
+              auditId: result.id,
+              alertId,
+            });
+          }
+        }
+      }
       if (outcome === "failed") {
         return json<ActionPayload>(
           {

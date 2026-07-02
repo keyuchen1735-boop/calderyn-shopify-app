@@ -13,9 +13,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
 
 // Hoisted spies
-const { recordApprovalSpy, alertsGetSpy, executeActionSpy, requireDashboardSessionSpy } =
+const { recordApprovalSpy, recordActionFailureSpy, alertsGetSpy, executeActionSpy, requireDashboardSessionSpy } =
   vi.hoisted(() => ({
     recordApprovalSpy: vi.fn(),
+    recordActionFailureSpy: vi.fn(),
     alertsGetSpy: vi.fn(),
     executeActionSpy: vi.fn(),
     requireDashboardSessionSpy: vi.fn(),
@@ -34,6 +35,10 @@ vi.mock("~/lib/calderyn.server", () => ({
 
 vi.mock("~/lib/calibration/approval.server", () => ({
   recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
+}));
+
+vi.mock("~/lib/calibration/failure.server", () => ({
+  recordActionFailure: (...a: unknown[]) => recordActionFailureSpy(...a),
 }));
 
 vi.mock("~/lib/actions/execute.server", () => ({
@@ -90,6 +95,7 @@ beforeEach(() => {
   executeActionSpy.mockResolvedValue({ id: "audit-uuid-1", outcome: "succeeded" });
   alertsGetSpy.mockResolvedValue(ALERT);
   recordApprovalSpy.mockResolvedValue(undefined);
+  recordActionFailureSpy.mockResolvedValue(undefined);
 });
 
 describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-safe)", () => {
@@ -116,7 +122,7 @@ describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-
     );
   });
 
-  it("does NOT call recordApproval when outcome=failed", async () => {
+  it("records a failure signal (not an approval) when outcome=failed", async () => {
     executeActionSpy.mockResolvedValue({ id: "audit-uuid-2", outcome: "failed" });
 
     const res = await call({
@@ -125,10 +131,19 @@ describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-
       alert_id: ALERT_ID,
     });
 
-    // Failed outcome returns a 502
+    // Failed outcome returns a 502, records NO approval — but it IS a negative
+    // calibration signal (spec §7): the pair proposed an action the platform
+    // could not land, so beta must move.
     expect(res.status).toBe(502);
     expect(recordApprovalSpy).not.toHaveBeenCalled();
-    expect(alertsGetSpy).not.toHaveBeenCalled();
+    expect(recordActionFailureSpy).toHaveBeenCalledWith(
+      SHOP_ID,
+      "campaign_below_breakeven",
+      "pause_campaign",
+      expect.anything(),
+      // Once-per-audit dedup: the failed audit id keys the signal.
+      expect.objectContaining({ auditId: "audit-uuid-2", alertId: ALERT_ID }),
+    );
   });
 
   it("does NOT call recordApproval when there is no alert_id (standalone campaign action)", async () => {

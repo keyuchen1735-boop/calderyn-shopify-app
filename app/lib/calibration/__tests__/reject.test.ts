@@ -108,22 +108,58 @@ describe("recordRejection", () => {
     }));
   });
 
-  it("too_aggressive writes a pair_dollar_cap rule with cents = round(0.75 * dollarImpactCents)", async () => {
-    const { sb, ruleInsert, upUpdate } = makeStub();
+  it("too_aggressive tightens the pair_dollar_cap atomically via RPC with cents = round(0.75 * dollarImpactCents)", async () => {
+    const { sb, rpc, ruleInsert } = makeStub();
     await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 8000 }, sb);
-    expect(upUpdate).toHaveBeenCalledWith({ active: false });
-    expect(ruleInsert).toHaveBeenCalledTimes(1);
-    const ruleRow = ruleInsert.mock.calls[0][0] as Record<string, unknown>;
-    expect(ruleRow.rule_kind).toBe("pair_dollar_cap");
-    expect((ruleRow.rule_value as Record<string, unknown>).cents).toBe(6000);
-    expect(ruleRow.active).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("calibration_tighten_dollar_cap", {
+      p_shop_id: "shop-1",
+      p_detector_id: "campaign_below_breakeven",
+      p_action_kind: "pause_campaign",
+      p_candidate_cents: 6000,
+      p_source: "too_aggressive",
+    });
+    // The RPC owns the supersede + insert — no JS-side rule write.
+    expect(ruleInsert).not.toHaveBeenCalled();
   });
 
-  it("floors pair_dollar_cap cents to minimum 1", async () => {
-    const { sb, ruleInsert } = makeStub();
+  it("freezes the RPC's tightened cents (not the candidate) into applied_rule", async () => {
+    // Existing cap $5 is tighter than 0.75 × $80 = $60: the atomic RPC returns
+    // 500 and that is what must land in action_feedback.applied_rule.
+    const { sb, fbInsert, rpc } = makeStub();
+    rpc.mockImplementation(async (name: string) =>
+      name === "calibration_tighten_dollar_cap"
+        ? { data: 500, error: null }
+        : { error: null },
+    );
+    await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 8000 }, sb);
+    const row = fbInsert.mock.calls[0][0] as Record<string, unknown>;
+    expect((row.applied_rule as Record<string, unknown>).cents).toBe(500);
+  });
+
+  it("floors pair_dollar_cap candidate cents to minimum 1", async () => {
+    const { sb, rpc } = makeStub();
     await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 0 }, sb);
+    expect(rpc).toHaveBeenCalledWith(
+      "calibration_tighten_dollar_cap",
+      expect.objectContaining({ p_candidate_cents: 1 }),
+    );
+  });
+
+  it("falls back to a plain rule insert (no supersede) when the tighten RPC errors", async () => {
+    const { sb, rpc, ruleInsert, upUpdate } = makeStub();
+    rpc.mockImplementation(async (name: string) =>
+      name === "calibration_tighten_dollar_cap"
+        ? { data: null, error: { message: "fn missing" } }
+        : { error: null },
+    );
+    await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 8000 }, sb);
+    // Candidate cap still lands so the merchant's reject is not lost…
+    expect(ruleInsert).toHaveBeenCalledTimes(1);
     const ruleRow = ruleInsert.mock.calls[0][0] as Record<string, unknown>;
-    expect((ruleRow.rule_value as Record<string, unknown>).cents).toBe(1);
+    expect((ruleRow.rule_value as Record<string, unknown>).cents).toBe(6000);
+    // …but existing rows are NOT deactivated: enforcement vetoes on the
+    // tightest cap, and deactivating a tighter cap here could loosen it.
+    expect(upUpdate).not.toHaveBeenCalled();
   });
 
   it("i_handle_this writes a muted_pair rule and calls rpc with mute=true, betaDelta=0", async () => {

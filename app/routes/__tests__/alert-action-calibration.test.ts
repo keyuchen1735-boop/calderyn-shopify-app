@@ -3,9 +3,10 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { action } from "../app.alerts.$id";
 
 // Hoisted spies
-const { recordApprovalSpy, alertsGetSpy, guardrailsGetSpy, executeSpy, clientExecuteSpy, executeReallocateSpendSkuSpy } =
+const { recordApprovalSpy, recordActionFailureSpy, alertsGetSpy, guardrailsGetSpy, executeSpy, clientExecuteSpy, executeReallocateSpendSkuSpy } =
   vi.hoisted(() => ({
     recordApprovalSpy: vi.fn(),
+    recordActionFailureSpy: vi.fn(),
     alertsGetSpy: vi.fn(),
     guardrailsGetSpy: vi.fn(),
     executeSpy: vi.fn(),     // executeAction (gateway)
@@ -74,6 +75,9 @@ vi.mock("~/lib/calderyn.server", () => {
 // Mock the calibration approval — this is what we are asserting.
 vi.mock("~/lib/calibration/approval.server", () => ({
   recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
+}));
+vi.mock("~/lib/calibration/failure.server", () => ({
+  recordActionFailure: (...a: unknown[]) => recordActionFailureSpy(...a),
 }));
 
 vi.mock("~/lib/actions/execute.server", () => ({
@@ -147,6 +151,8 @@ function call(request: Request) {
 beforeEach(() => {
   recordApprovalSpy.mockReset();
   recordApprovalSpy.mockResolvedValue(undefined);
+  recordActionFailureSpy.mockReset();
+  recordActionFailureSpy.mockResolvedValue(undefined);
   alertsGetSpy.mockReset();
   alertsGetSpy.mockResolvedValue(ALERT);
   guardrailsGetSpy.mockReset();
@@ -179,6 +185,48 @@ describe("alert action — calibration signal fires on approval", () => {
     const res = await call(makeRequest("pause_campaign"));
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(false);
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+
+  it("records a negative failure signal when executeAction outcome is failed (spec §7)", async () => {
+    executeSpy.mockResolvedValue({ id: "aud-fail-1", outcome: "failed" });
+    await call(makeRequest("pause_campaign"));
+    expect(recordActionFailureSpy).toHaveBeenCalledTimes(1);
+    expect(recordActionFailureSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "campaign_below_breakeven",
+      "pause_campaign",
+      expect.anything(),
+      // Once-per-audit dedup: the failed audit id keys the signal so an
+      // idempotency replay can never double-bump beta.
+      expect.objectContaining({ auditId: "aud-fail-1", alertId: ALERT.id }),
+    );
+  });
+
+  it("does NOT record a failure signal for a transient retrying outcome", async () => {
+    executeSpy.mockResolvedValue({ outcome: "retrying" });
+    await call(makeRequest("pause_campaign"));
+    expect(recordActionFailureSpy).not.toHaveBeenCalled();
+    expect(recordApprovalSpy).not.toHaveBeenCalled();
+  });
+
+  it("records a failure signal on the reallocate_spend_sku gateway path when the executor fails", async () => {
+    alertsGetSpy.mockResolvedValue({
+      ...ALERT,
+      detector_id: "ad_tax_overload",
+      campaign_id: null,
+      campaign_external_id: null,
+      evidence: {},
+    });
+    executeReallocateSpendSkuSpy.mockResolvedValue({ auditId: "aud-rs-1", outcome: "failed", acknowledged: false });
+    await call(makeRequest("reallocate_spend_sku"));
+    expect(recordActionFailureSpy).toHaveBeenCalledWith(
+      "shop-uuid-1",
+      "ad_tax_overload",
+      "reallocate_spend_sku",
+      expect.anything(),
+      expect.objectContaining({ auditId: "aud-rs-1", alertId: ALERT.id }),
+    );
     expect(recordApprovalSpy).not.toHaveBeenCalled();
   });
 

@@ -10,6 +10,7 @@ import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { getSupabase } from "~/lib/supabase.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { recordApproval } from "~/lib/calibration/approval.server";
+import { recordActionFailure } from "~/lib/calibration/failure.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 
 const KINDS: ExecutableKind[] = [
@@ -106,6 +107,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   );
 
   if (result.outcome === "failed") {
+    // Negative calibration signal (spec §7): the pair proposed an action the
+    // platform could not land. Only when a real alert drove it; never affects
+    // the response (recordActionFailure never throws).
+    if (alertId) {
+      const failClient = calderynClient(session.shopId);
+      const failAlert = await failClient.alerts.get(alertId).catch(() => null);
+      if (failAlert) {
+        await recordActionFailure(session.shopId, failAlert.detector_id, kind, sb, {
+          auditId: result.id,
+          alertId,
+        });
+      }
+    }
     // Human `message` so the dashboard toast reads sensibly instead of the raw
     // "action_failed" code; the raw provider error stays in the audit row.
     return new Response(
