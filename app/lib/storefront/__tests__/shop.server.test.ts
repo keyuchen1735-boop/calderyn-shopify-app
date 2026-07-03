@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   storefrontSlug,
   resolveStorefrontShop,
+  resolveTenantShopId,
   clearStorefrontShopCache,
   DEMO_SHOP_ID,
 } from "../shop.server";
@@ -63,6 +64,33 @@ describe("storefrontSlug", () => {
 
   it("strips a port from the host", () => {
     expect(storefrontSlug(new Request("http://localhost:3000/storefront"))).toBe("localhost");
+  });
+});
+
+describe("resolveTenantShopId", () => {
+  it("is null for fixture/platform hosts without touching the DB", async () => {
+    for (const host of [
+      "https://app.calderyncompany.com/",
+      "https://www.calderyncompany.com/",
+      "http://localhost:3000/",
+    ]) {
+      expect(await resolveTenantShopId(new Request(host))).toBeNull();
+    }
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("is null for a slug that matches no live shop", async () => {
+    fromMock.mockReturnValue(shopsTable([]));
+    expect(
+      await resolveTenantShopId(new Request("https://shopify-9abc123de.vercel.app/")),
+    ).toBeNull();
+  });
+
+  it("returns the shop id for a real tenant host", async () => {
+    fromMock.mockReturnValue(shopsTable([{ id: realShop, org_slug: "acme" }]));
+    expect(await resolveTenantShopId(new Request("https://acme.calderyncompany.com/"))).toBe(
+      realShop,
+    );
   });
 });
 

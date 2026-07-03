@@ -54,12 +54,19 @@ async function lookupShopId(slug: string): Promise<string | null> {
   return String((native ?? data[0]).id);
 }
 
-export async function resolveStorefrontShop(request: Request): Promise<string> {
+/**
+ * The real tenant shop for this request's host, or null when the host is a
+ * platform/fixture host or the slug matches no live shop. Lets callers
+ * distinguish "an actual store's domain" from "something that merely falls
+ * back to the demo shell" (e.g. the root route deciding whether the homepage
+ * is a storefront).
+ */
+export async function resolveTenantShopId(request: Request): Promise<string | null> {
   const slug = storefrontSlug(request);
-  if (FIXTURE_SLUGS.has(slug) || !SLUG_RE.test(slug)) return DEMO_SHOP_ID;
+  if (FIXTURE_SLUGS.has(slug) || !SLUG_RE.test(slug)) return null;
 
   const cached = slugCache.get(slug);
-  if (cached && cached.expiresAt > Date.now()) return cached.id ?? DEMO_SHOP_ID;
+  if (cached && cached.expiresAt > Date.now()) return cached.id;
 
   const id = await lookupShopId(slug);
   if (slugCache.size >= CACHE_MAX_ENTRIES) {
@@ -70,6 +77,10 @@ export async function resolveStorefrontShop(request: Request): Promise<string> {
   }
   slugCache.set(slug, { id, expiresAt: Date.now() + CACHE_TTL_MS });
 
+  return id;
+}
+
+export async function resolveStorefrontShop(request: Request): Promise<string> {
   // Unknown slug: render the demo shell rather than blanking the storefront.
-  return id ?? DEMO_SHOP_ID;
+  return (await resolveTenantShopId(request)) ?? DEMO_SHOP_ID;
 }
