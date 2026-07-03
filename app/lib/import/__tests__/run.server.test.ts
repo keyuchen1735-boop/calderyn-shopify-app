@@ -100,6 +100,8 @@ describe("drainImports", () => {
     const r = await drainImports();
 
     expect(promoteShopFromMirror).not.toHaveBeenCalled();
+    // A failed pull must short-circuit the customer stage too (same offline token).
+    expect(importCustomers).not.toHaveBeenCalled();
     expect(r.processed).toBe(0);
     expect(updates.some((u) => u.state === "error")).toBe(true);
   });
