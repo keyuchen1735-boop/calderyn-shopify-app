@@ -61,8 +61,9 @@ const TODAY = "2026-07-03";
 
 describe("SHOWCASE_WIPE_ORDER", () => {
   it("deletes every FK child before its parent", () => {
+    const order: readonly string[] = SHOWCASE_WIPE_ORDER;
     const idx = (t: string) => {
-      const i = SHOWCASE_WIPE_ORDER.indexOf(t);
+      const i = order.indexOf(t);
       expect(i, `${t} missing from wipe order`).toBeGreaterThanOrEqual(0);
       return i;
     };

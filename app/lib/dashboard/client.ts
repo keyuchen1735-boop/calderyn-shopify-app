@@ -592,6 +592,21 @@ export async function runAutopilot(): Promise<AutopilotRunDTO> {
   return apiSend<AutopilotRunDTO>("POST", "/dashboard/api/autopilot");
 }
 
+export interface DemoResetSummary {
+  wiped: string[];
+  inserted: Record<string, number>;
+  promoted: Record<string, unknown>;
+}
+
+/** Wipe a DEMO shop back to its seeded opening scene (409 on real shops). */
+export async function resetDemoData(): Promise<DemoResetSummary> {
+  const data = await apiSend<{ ok: boolean; summary: DemoResetSummary }>(
+    "POST",
+    "/dashboard/api/demo-reset",
+  );
+  return data.summary;
+}
+
 export async function fetchConsent(): Promise<boolean> {
   const data = await apiGet<{ consent: boolean }>("/dashboard/api/consent");
   return Boolean(data.consent);

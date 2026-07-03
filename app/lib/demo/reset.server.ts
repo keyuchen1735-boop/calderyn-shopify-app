@@ -13,13 +13,15 @@
 import { CalderynError } from "../calderyn.server";
 import { generateSeedDataset } from "../seed/dataset";
 import { writeSeedDataset } from "../seed/writer";
-import type { SeedWriterClient } from "../seed/writer";
 import { generateShowcaseLayer } from "./showcase-seed";
 import type { ShowcaseLayer } from "./showcase-seed";
 
-/** Superset of the seed writer's client: adds the reads/updates/rpc the
- *  orchestrator needs. supabase-js satisfies it structurally. */
-export interface ShowcaseResetClient extends SeedWriterClient {
+/** Superset of the seed writer's client shape: adds the reads/updates/rpc the
+ *  orchestrator needs. Standalone (not `extends SeedWriterClient`) and
+ *  satisfied via an explicit cast at the call sites — supabase-js's generics
+ *  recurse past TS's instantiation depth when checked structurally here, but
+ *  every method below is a plain PostgREST builder the client guarantees. */
+export interface ShowcaseResetClient {
   from(table: string): {
     select(columns: string): {
       eq(column: string, value: string): {

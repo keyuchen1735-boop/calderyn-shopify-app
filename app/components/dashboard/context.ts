@@ -82,6 +82,8 @@ export interface DashboardCtx {
   shopDomain: string | null;
   /** Human-readable store label: display_name, shop_domain, or "Your store" fallback. */
   storeLabel: string;
+  /** True for seeded demo shops (shops.demo_mode) — gates the Settings demo-reset card. */
+  demoMode: boolean;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; pushes the dedicated URL and scrolls main to top.

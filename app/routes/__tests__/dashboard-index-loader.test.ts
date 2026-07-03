@@ -20,6 +20,16 @@ describe("dashboard splat loader", () => {
     maybeSingle.mockResolvedValue({ data: { display_name: null, shop_domain: "acme.myshopify.com" }, error: null });
     const { loader } = await import("../dashboard.$");
     const res = await loader({ request: new Request("https://app.x/dashboard") } as never);
-    expect(res).toMatchObject({ storeLabel: "acme.myshopify.com" });
+    expect(res).toMatchObject({ storeLabel: "acme.myshopify.com", demoMode: false });
+  });
+
+  it("flags demo shops so the shell can show the demo-reset card", async () => {
+    maybeSingle.mockResolvedValue({
+      data: { display_name: "Peak & Pine Outfitters", shop_domain: null, demo_mode: true },
+      error: null,
+    });
+    const { loader } = await import("../dashboard.$");
+    const res = await loader({ request: new Request("https://app.x/dashboard") } as never);
+    expect(res).toMatchObject({ demoMode: true });
   });
 });
