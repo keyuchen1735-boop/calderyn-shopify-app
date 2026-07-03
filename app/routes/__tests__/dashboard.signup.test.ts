@@ -7,6 +7,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   checkSameOrigin: vi.fn(() => null),
   wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
+  publicBaseUrl: () => "https://app.calderyncompany.com",
 }));
 const findUserByEmail = vi.fn();
 const createUser = vi.fn();

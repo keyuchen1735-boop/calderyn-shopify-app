@@ -9,7 +9,7 @@ import {
   revokeSession,
   clearSessionCookieHeader,
 } from "~/lib/dashboard/session.server";
-import { rateLimit, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
+import { rateLimit, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { AuthShell, AuthError, AuthNotice, AuthForm, useAuthFormPending } from "~/components/auth/AuthCard";
@@ -63,7 +63,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(`verify-resend:${session.userId}`, 3, 15 * 60_000))) return fail(429, "rate_limited");
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
   const email = data?.email as string | null;
-  const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const baseUrl = publicBaseUrl();
   // Honest result: "Email sent" only when the mailer accepted it.
   const delivery = email
     ? await sendVerificationEmail(session.userId, email, baseUrl).catch(() => ({ sent: false }))

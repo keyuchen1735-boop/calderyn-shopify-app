@@ -132,7 +132,7 @@ export function embeddedReturnUrl(
   // redirect would strand the merchant on a host with no session (same base
   // convention as dashboard.login / dashboard.auth.google.callback).
   if (ctx.dashboard) {
-    const base = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+    const base = process.env.DASHBOARD_PUBLIC_URL || process.env.SHOPIFY_APP_URL || "";
     return `${base}/dashboard?${params.toString()}`;
   }
   const apiKey = process.env.SHOPIFY_API_KEY;

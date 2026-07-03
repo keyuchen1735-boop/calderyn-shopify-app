@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
+import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { normalizeEmail } from "~/lib/auth/users.server";
 import { requestPasswordReset } from "~/lib/auth/reset.server";
 
@@ -32,7 +32,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return fail(429, "rate_limited");
   }
 
-  const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const baseUrl = publicBaseUrl();
   await requestPasswordReset(email, baseUrl);
   if (wantsJson(request)) {
     return new Response(JSON.stringify({ ok: true }), {

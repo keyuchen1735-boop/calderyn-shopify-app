@@ -57,6 +57,20 @@ function allowedOrigins(): string[] {
 }
 
 /**
+ * Absolute public origin the first-party dashboard is served from — the base for
+ * every absolute URL we hand out (OAuth redirect_uri, verification / reset email
+ * links, cross-host redirects). Prefer DASHBOARD_PUBLIC_URL (the apex host where
+ * the __Host- session and CSRF cookies live); fall back to SHOPIFY_APP_URL.
+ *
+ * Uses `||`, not `??`: a present-but-empty env var (a real Vercel failure mode)
+ * must fall through to the next option instead of yielding "" and a broken
+ * *relative* URL. Returns "" only when neither is set.
+ */
+export function publicBaseUrl(): string {
+  return (process.env.DASHBOARD_PUBLIC_URL || process.env.SHOPIFY_APP_URL || "").trim();
+}
+
+/**
  * CSRF origin check for POST/PUT/DELETE. Returns the 403 response when the
  * Origin (or Referer origin) is not ours, null when the request is fine.
  * Page routes must RETURN this (a thrown Response walks up to the root
