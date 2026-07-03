@@ -16,8 +16,52 @@ import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
+import { getBuyerSession } from "~/lib/buyer/session.server";
+import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
+
+interface CheckoutPrefill {
+  email: string;
+  name: string;
+  line1: string;
+  line2: string;
+  city: string;
+  region: string;
+  postal: string;
+  country: string;
+  phone: string;
+}
+
+/**
+ * Prefill the checkout form for a SIGNED-IN buyer from their saved email + default shipping
+ * address (#1b). Best-effort and fails OPEN: a buyer-session/DB hiccup must never break checkout,
+ * so any error yields no prefill rather than a 500. Guest checkout (no buyer session) is unchanged.
+ */
+async function buyerCheckoutPrefill(request: Request, shopId: string): Promise<CheckoutPrefill | null> {
+  try {
+    const session = await getBuyerSession(request, shopId);
+    if (!session) return null;
+    const [email, addr] = await Promise.all([
+      getBuyerEmail(shopId, session.buyerId),
+      defaultShippingAddress(shopId, session.buyerId),
+    ]);
+    return {
+      email: email ?? "",
+      name: addr?.name ?? "",
+      line1: addr?.line1 ?? "",
+      line2: addr?.line2 ?? "",
+      city: addr?.city ?? "",
+      region: addr?.region ?? "",
+      postal: addr?.postal ?? "",
+      country: addr?.country ?? "",
+      phone: addr?.phone ?? "",
+    };
+  } catch (err) {
+    console.error(`[checkout] buyer prefill failed for shop ${shopId} (continuing as guest):`, err);
+    return null;
+  }
+}
 
 // The policy text version the buyer accepts at checkout — recorded verbatim on buyer_consent as
 // the proof of WHICH ToS/privacy text was accepted (#1). Bump when the policy text changes.
@@ -55,12 +99,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const track = await trackStorefrontEvent(request, shopId, "checkout_start");
 
+  // Prefill from the buyer's saved profile when signed in (#1b); guest checkout is unchanged.
+  const prefill = await buyerCheckoutPrefill(request, shopId);
+
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
   return json(
     {
       publishableKey,
       origin: new URL(request.url).origin,
+      prefill,
       summary: {
         lines: priced.lines.map((l) => ({
           id: l.id,
@@ -255,7 +303,7 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
 }
 
 export default function StorefrontCheckout() {
-  const { publishableKey, origin, summary } = useLoaderData<typeof loader>();
+  const { publishableKey, origin, summary, prefill } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));
 
@@ -319,44 +367,47 @@ export default function StorefrontCheckout() {
         </p>
       ) : !clientSecret ? (
         <fetcher.Form method="post" className="cd-checkout__form">
+          {prefill ? (
+            <p className="cd-checkout__signedin">Using your saved details — edit any field below if needed.</p>
+          ) : null}
           <h2>Contact</h2>
           <label className="cd-checkout__field">
             <span>Email</span>
-            <input type="email" name="email" autoComplete="email" required />
+            <input type="email" name="email" autoComplete="email" defaultValue={prefill?.email} required />
           </label>
 
           <h2>Shipping address</h2>
           <label className="cd-checkout__field">
             <span>Full name</span>
-            <input type="text" name="name" autoComplete="name" required />
+            <input type="text" name="name" autoComplete="name" defaultValue={prefill?.name} required />
           </label>
           <label className="cd-checkout__field">
             <span>Address</span>
-            <input type="text" name="line1" autoComplete="address-line1" required />
+            <input type="text" name="line1" autoComplete="address-line1" defaultValue={prefill?.line1} required />
           </label>
           <label className="cd-checkout__field">
             <span>Apartment, suite, etc. (optional)</span>
-            <input type="text" name="line2" autoComplete="address-line2" />
+            <input type="text" name="line2" autoComplete="address-line2" defaultValue={prefill?.line2} />
           </label>
           <label className="cd-checkout__field">
             <span>City</span>
-            <input type="text" name="city" autoComplete="address-level2" required />
+            <input type="text" name="city" autoComplete="address-level2" defaultValue={prefill?.city} required />
           </label>
           <label className="cd-checkout__field">
             <span>State / region</span>
-            <input type="text" name="region" autoComplete="address-level1" required />
+            <input type="text" name="region" autoComplete="address-level1" defaultValue={prefill?.region} required />
           </label>
           <label className="cd-checkout__field">
             <span>Postal code</span>
-            <input type="text" name="postal" autoComplete="postal-code" required />
+            <input type="text" name="postal" autoComplete="postal-code" defaultValue={prefill?.postal} required />
           </label>
           <label className="cd-checkout__field">
             <span>Country</span>
-            <input type="text" name="country" autoComplete="country-name" required />
+            <input type="text" name="country" autoComplete="country-name" defaultValue={prefill?.country} required />
           </label>
           <label className="cd-checkout__field">
             <span>Phone (optional)</span>
-            <input type="tel" name="phone" autoComplete="tel" />
+            <input type="tel" name="phone" autoComplete="tel" defaultValue={prefill?.phone} />
           </label>
 
           <label className="cd-checkout__consent">

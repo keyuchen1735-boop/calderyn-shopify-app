@@ -12,7 +12,9 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .cd-store__header { display: flex; align-items: center; padding: var(--cd-gap) 0; border-bottom: 1px solid #e5e7eb; }
 .cd-store__logo { display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit; font-weight: 600; }
 .cd-store__logo img { height: 32px; width: auto; }
-.cd-store__cart { margin-left: auto; text-decoration: none; color: inherit; font-weight: 600; }
+.cd-store__cart { text-decoration: none; color: inherit; font-weight: 600; }
+.cd-store__account-nav { margin-left: auto; display: flex; align-items: center; gap: var(--cd-gap); }
+.cd-store__account { text-decoration: none; color: inherit; font-weight: 600; }
 .cd-store__nav { display: flex; gap: var(--cd-gap); padding: var(--cd-gap) 0; }
 .cd-store__nav a { text-decoration: none; color: inherit; }
 .cd-store__footer { padding: var(--cd-gap) 0; border-top: 1px solid #e5e7eb; color: #6b7280; }
@@ -60,6 +62,7 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .cd-checkout__submit { padding: 12px 20px; border: 0; border-radius: var(--cd-radius); background: #111827; color: #fff; font-size: 16px; cursor: pointer; }
 .cd-checkout__submit:disabled { background: #9ca3af; cursor: not-allowed; }
 .cd-checkout__error { color: #b91c1c; font-size: 14px; margin: 0; }
+.cd-checkout__signedin { color: #065f46; font-size: 14px; margin: 0; }
 
 .cd-confirm { padding: calc(var(--cd-gap) * 2) 0; max-width: 560px; }
 .cd-confirm__status { color: #374151; }
@@ -69,3 +72,42 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .cd-confirm__line-qty { color: #6b7280; }
 .cd-confirm__total { display: flex; justify-content: space-between; padding: 12px 0; font-weight: 600; border-top: 1px solid #e5e7eb; }
 .cd-confirm__continue { display: inline-block; margin-top: var(--cd-gap); padding: 12px 20px; border-radius: var(--cd-radius); background: #111827; color: #fff; text-decoration: none; }
+
+/* Buyer account surface (#1b): login, account home, saved cards. Same minimal, product-neutral
+   vocabulary as the rest of the storefront — not Polaris. */
+.cd-account { padding: var(--cd-gap) 0; max-width: 720px; }
+.cd-account--narrow { max-width: 480px; }
+.cd-account__head { display: flex; align-items: center; justify-content: space-between; }
+.cd-account__lead { color: #374151; }
+.cd-account__muted { color: #6b7280; }
+.cd-account__notice { color: #065f46; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--cd-radius); padding: 12px; }
+.cd-account__error { color: #b91c1c; font-size: 14px; margin: 0; }
+.cd-account__section { padding: var(--cd-gap) 0; border-top: 1px solid #e5e7eb; }
+.cd-account__section-head { display: flex; align-items: center; justify-content: space-between; }
+.cd-account__form { display: flex; flex-direction: column; gap: 12px; max-width: 480px; margin-top: 12px; }
+.cd-account__field { display: flex; flex-direction: column; gap: 4px; }
+.cd-account__field span { font-size: 13px; color: #374151; }
+.cd-account__field input, .cd-account__field select { padding: 10px; border: 1px solid #e5e7eb; border-radius: var(--cd-radius); font-size: 16px; }
+.cd-account__consent { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #374151; }
+.cd-account__submit { display: inline-block; padding: 12px 20px; border: 0; border-radius: var(--cd-radius); background: #111827; color: #fff; font-size: 16px; text-decoration: none; text-align: center; cursor: pointer; }
+.cd-account__submit:disabled { background: #9ca3af; cursor: not-allowed; }
+.cd-account__link { color: inherit; }
+.cd-account__link-btn { border: 0; background: none; color: #b91c1c; font-size: 14px; cursor: pointer; padding: 0; }
+.cd-account__delete { padding: 10px 16px; border: 1px solid #b91c1c; border-radius: var(--cd-radius); background: #fff; color: #b91c1c; cursor: pointer; }
+.cd-account__danger h2 { color: #b91c1c; }
+.cd-account__orders { list-style: none; padding: 0; margin: 0; }
+.cd-account__order { display: grid; grid-template-columns: 1fr auto auto auto; gap: var(--cd-gap); align-items: center; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+.cd-account__order-date, .cd-account__order-status { color: #6b7280; font-size: 14px; }
+.cd-account__order-total { font-weight: 600; }
+.cd-account__addresses { list-style: none; padding: 0; margin: 0; }
+.cd-account__address { display: flex; justify-content: space-between; gap: var(--cd-gap); padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
+.cd-account__address-kind { font-weight: 600; text-transform: capitalize; }
+.cd-account__badge { display: inline-block; margin-left: 8px; padding: 1px 8px; font-size: 12px; border-radius: 999px; background: #eef2ff; color: #3730a3; }
+.cd-account__address-lines { color: #374151; font-size: 14px; margin-top: 4px; }
+.cd-account__add { margin-top: var(--cd-gap); }
+.cd-account__add summary { cursor: pointer; color: #111827; font-weight: 600; }
+.cd-account__cards { list-style: none; padding: 0; margin: 0 0 var(--cd-gap); }
+.cd-account__card { display: flex; align-items: center; gap: var(--cd-gap); padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
+.cd-account__card-brand { font-weight: 600; text-transform: capitalize; }
+.cd-account__card-exp { color: #6b7280; font-size: 14px; margin-left: auto; }
+.cd-account__pay { display: flex; flex-direction: column; gap: var(--cd-gap); margin-top: var(--cd-gap); }
