@@ -14,13 +14,18 @@ let currentSb: unknown = null;
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => currentSb }));
 
 // Go-live gates are mocked as passing by default; individual tests flip `gateError`
-// to prove a failing gate blocks the transition before any write.
+// to prove a failing gate blocks the transition before any write. A passing gate
+// returns the durable migration_run id, which transitionOrgMode stamps on cutover.
 let gateError: Error | null = null;
 const assertGoLiveGatesMock = vi.fn(async (_shopId: string) => {
   if (gateError) throw gateError;
+  return { runId: "mr-1" };
 });
+const stampMigrationRunCutoverMock = vi.fn(async (_shopId: string, _runId: string) => {});
 vi.mock("../go-live.server", () => ({
   assertGoLiveGates: (shopId: string) => assertGoLiveGatesMock(shopId),
+  stampMigrationRunCutover: (shopId: string, runId: string) =>
+    stampMigrationRunCutoverMock(shopId, runId),
 }));
 
 /**
@@ -120,6 +125,7 @@ describe("transitionOrgMode", () => {
   beforeEach(() => {
     gateError = null;
     assertGoLiveGatesMock.mockClear();
+    stampMigrationRunCutoverMock.mockClear();
   });
 
   it("legal transition writes exactly one audit row BEFORE updating shops", async () => {
@@ -192,6 +198,8 @@ describe("transitionOrgMode", () => {
     });
     await transitionOrgMode("shop-1", "live");
     expect(assertGoLiveGatesMock).toHaveBeenCalledWith("shop-1");
+    // The committed ->live move stamps cutover_at on the gate's migration_run.
+    expect(stampMigrationRunCutoverMock).toHaveBeenCalledWith("shop-1", "mr-1");
   });
 
   it("a failing go-live gate blocks the transition and writes NOTHING", async () => {
@@ -206,11 +214,13 @@ describe("transitionOrgMode", () => {
     await expect(transitionOrgMode("shop-1", "live")).rejects.toThrow(/go-live blocked/);
     expect(inserted).toBe(false);
     expect(updated).toBe(false);
+    expect(stampMigrationRunCutoverMock).not.toHaveBeenCalled();
   });
 
   it("does NOT run the gates on non-live transitions", async () => {
     currentSb = makeSb({ shopMode: "mirror", updateRows: [{ id: "shop-1" }] });
     await transitionOrgMode("shop-1", "importing");
     expect(assertGoLiveGatesMock).not.toHaveBeenCalled();
+    expect(stampMigrationRunCutoverMock).not.toHaveBeenCalled();
   });
 });

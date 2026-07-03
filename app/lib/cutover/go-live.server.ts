@@ -35,6 +35,54 @@ export interface GoLiveReport {
   checks: GateCheck[];
 }
 
+/** The two payment-cleared checks whose conjunction is the "money was proven" verdict
+ *  persisted as migration_run.payment_ok. */
+const PAYMENT_CHECK_NAMES = ["paid_order", "captured_charge"] as const;
+
+/** True iff both payment-cleared checks passed (a test order reached paid AND a Stripe
+ *  charge captured). Missing checks read as not-ok — never assume payment on absence. */
+function paymentCleared(checks: GateCheck[]): boolean {
+  return PAYMENT_CHECK_NAMES.every((name) => checks.find((c) => c.name === name)?.pass === true);
+}
+
+/**
+ * Persist ONE durable go-live gate fact (migration_run) for a hard evaluation and return
+ * its id. Records the full check set (parity_json), the lifted payment verdict, and the
+ * overall verdict ('pass' when every check passed, else 'blocked'). cutover_at is left null
+ * here — transitionOrgMode stamps it only when the gated ->live move actually commits.
+ */
+export async function recordMigrationRun(
+  shopId: string,
+  checks: GateCheck[],
+  opts: { operator?: string | null } = {},
+): Promise<string> {
+  const verdict = checks.every((c) => c.pass) ? "pass" : "blocked";
+  const { data, error } = await getSupabase()
+    .from("migration_run")
+    .insert({
+      shop_id: shopId,
+      parity_json: checks,
+      payment_ok: paymentCleared(checks),
+      verdict,
+      operator: opts.operator ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return String((data as { id: string }).id);
+}
+
+/** Stamp cutover_at=now() on a migration_run row after its gated ->live move commits.
+ *  Scoped to the shop so a stray id can't stamp another tenant's run. */
+export async function stampMigrationRunCutover(shopId: string, runId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("migration_run")
+    .update({ cutover_at: new Date().toISOString() })
+    .eq("id", runId)
+    .eq("shop_id", shopId);
+  if (error) throw error;
+}
+
 /** Page through `select column from table where shop_id = ...` (shared pagedRows,
  *  one PostgREST-truncation backstop for all cutover reads) and return the distinct
  *  values as a Set. */
@@ -311,11 +359,17 @@ async function checkValuesGate(shopId: string): Promise<GateCheck> {
  * operator-triggered action at white-glove pilot scale, the same cost as the drift
  * panel's "Compare with Shopify" button.)
  */
-export async function assertGoLiveGates(shopId: string): Promise<void> {
+export async function assertGoLiveGates(
+  shopId: string,
+  opts: { operator?: string | null } = {},
+): Promise<{ runId: string }> {
   const report = await checkGoLiveGates(shopId);
   const checks = report.pass ? [...report.checks, await checkValuesGate(shopId)] : report.checks;
+  // Persist the durable gate fact for EVERY hard evaluation — pass or blocked — before
+  // deciding (rule 12: the verdict the operator saw is auditable even when it blocks).
+  const runId = await recordMigrationRun(shopId, checks, { operator: opts.operator ?? null });
   const failing = checks.filter((c) => c.pass === false);
-  if (failing.length === 0) return;
+  if (failing.length === 0) return { runId };
   const detail = failing
     .map((c) => `${c.name} (expected ${c.expected}, found ${c.actual})`)
     .join("; ");
