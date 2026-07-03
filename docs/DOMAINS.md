@@ -19,29 +19,28 @@ The user flow: **calderyncompany.com → Sign in → app.calderyncompany.com/log
 | **calderyn-test.vercel.app** | Storefront of the `calderyn-test` demo shop (tenant storefront). Now a **project domain**, so it follows every production deploy automatically — no more manual re-aliasing. |
 | **mvp-rehearsal-co-36ea83.vercel.app** | Storefront of the MVP first-sale rehearsal shop. Also an auto-following project domain now. |
 
-Tenant storefronts use vercel.app subdomains because wildcard DNS
-(`*.calderyncompany.com`) isn't set up yet; adding a wildcard record at the DNS
-host would give every shop `shopname.calderyncompany.com`.
+### Pretty tenant URLs — LIVE (2026-07-03)
 
-### Pretty tenant URLs — one step left (owner of the Squarespace account)
-
-DNS for calderyncompany.com lives in **Squarespace Domains** (the registrar; its
+Wildcard DNS is in place: `*.calderyncompany.com → A 76.76.21.21` (added in
+**Squarespace Domains**, where the zone lives — the registrar's
 `ns-cloud-e*.googledomains.com` nameservers are Squarespace's Google-inherited
-infrastructure — the zone is NOT in any of our GCP projects). The Squarespace
-account that owns the domain is not john@calderyncompany.com.
+infrastructure; the zone is NOT in any of our GCP projects, and the owning
+Squarespace login is Eric's, not john@calderyncompany.com).
 
-Whoever has that login: Squarespace → Domains → calderyncompany.com → DNS →
-add ONE custom record:
+Live and verified over HTTPS with correct per-tenant routing:
+`calderyn-test.calderyncompany.com/storefront` and
+`mvp-rehearsal-co-36ea83.calderyncompany.com/storefront`. The old vercel.app
+aliases keep working as fallbacks.
 
-    Host: *        Type: A        TTL: default        Data: 76.76.21.21
+**Launching a new shop's storefront URL is now one command** (the wildcard
+already resolves; this attaches the host to the project and issues the cert):
 
-Everything else is already wired: `calderyn-test.calderyncompany.com` and
-`mvp-rehearsal-co-36ea83.calderyncompany.com` are attached to the `shopify-app`
-Vercel project (pending DNS) and will auto-verify + get certificates the moment
-the record exists. The storefront resolver already routes by the first host
-label, so any future shop is just one `vercel domains add <slug>.calderyncompany.com`.
-The wildcard cannot break mail or existing hosts: `app`, `send`, `_dmarc`,
-`resend._domainkey` all have explicit records, which always win over `*`.
+    vercel domains add <shop-slug>.calderyncompany.com
+
+The storefront resolver routes by the first host label (org_slug or
+myshopify handle). Mail and existing hosts are unaffected: `app`, `send`,
+`_dmarc`, `resend._domainkey` all have explicit records, which always win
+over the wildcard.
 
 ## Noise you can safely ignore
 
