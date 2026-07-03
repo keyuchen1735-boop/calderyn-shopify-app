@@ -1,10 +1,13 @@
 // app/routes/dashboard.auth.callback.tsx
-// Finishes the dashboard OAuth round-trip. The exchanged access token is
-// discarded — the grant only proves the requester controls the shop. The shop
-// must already exist in Supabase (app installed) to get a session.
+// Finishes the dashboard OAuth round-trip. Approve IS the install: the
+// exchanged offline token is persisted (the import/ingest pipelines run on
+// it), the tenant is provisioned/reactivated, the shared install routine runs
+// (parity with the embedded afterAuth), and a first connect auto-starts the
+// data port before landing the merchant on the native store.
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
+import { Session } from "@shopify/shopify-api";
 import {
   isValidShopDomain,
   verifyShopifyHmac,
@@ -21,6 +24,7 @@ import {
 import { resolveShopId } from "~/lib/supabase.server";
 import {
   STATE_COOKIE_NAME,
+  SHOPLESS_STATE_SHOP,
   shopHintCookieHeader,
   expireCookieHeader,
 } from "~/lib/dashboard/cookies.server";
@@ -69,32 +73,86 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const state = url.searchParams.get("state") ?? "";
 
   const cookieState = readStateCookie(request);
+  // A shop-less initiation (no ?shop= at /dashboard/login) pins the sentinel
+  // instead of a shop: identity then comes from the HMAC-verified callback
+  // params — signed with our app secret — plus the code exchange below proving
+  // shop control. A pinned real shop must still match exactly.
   if (
     !isValidShopDomain(shop) ||
     !code ||
     !cookieState ||
     cookieState.nonce !== state ||
-    cookieState.shop !== shop ||
+    (cookieState.shop !== shop && cookieState.shop !== SHOPLESS_STATE_SHOP) ||
     !verifyShopifyHmac(url.searchParams, process.env.SHOPIFY_API_SECRET ?? "")
   ) {
     return failure;
   }
 
-  const accepted = await exchangeCodeForToken({
+  const grant = await exchangeCodeForToken({
     shop,
     code,
     clientId: process.env.SHOPIFY_API_KEY ?? "",
     clientSecret: process.env.SHOPIFY_API_SECRET ?? "",
   });
-  if (!accepted) return failure;
+  if (!grant) return failure;
 
-  // Gate: only shops with the app installed (provisioned in Supabase) may sign
-  // in — the import pipeline runs on the offline token minted at install, so an
-  // uninstalled shop has nothing to port. Friendly page, not raw JSON.
+  // Keep the offline token: the import/ingest pipelines read this session row
+  // (unauthenticated.admin), and for a shop that connects here before ever
+  // opening the embedded app this grant IS the install. Stored through the
+  // library (not a hand-rolled row) so the shape — including the expiry and
+  // refresh token that expiringOfflineAccessTokens needs — can't drift from
+  // what PrismaSessionStorage reads back. Lazy-loaded like run.server below —
+  // keep shopify.server's module graph out of this auth route's.
+  try {
+    const { sessionStorage } = await import("../shopify.server");
+    await sessionStorage.storeSession(
+      new Session({
+        // The library's stable offline-session id format (Session.getOfflineId
+        // needs a full api config object, so the literal is used here).
+        id: `offline_${shop}`,
+        shop,
+        state: "",
+        isOnline: false,
+        scope: grant.scope,
+        accessToken: grant.accessToken,
+        ...(grant.expiresIn ? { expires: new Date(Date.now() + grant.expiresIn * 1000) } : {}),
+        ...(grant.refreshToken ? { refreshToken: grant.refreshToken } : {}),
+        ...(grant.refreshTokenExpiresIn
+          ? { refreshTokenExpires: new Date(Date.now() + grant.refreshTokenExpiresIn * 1000) }
+          : {}),
+      }),
+    );
+  } catch (err) {
+    // Without the token the "your data comes with you" promise can't be kept —
+    // fail the round-trip visibly instead of minting a session that can't port.
+    console.error("[dashboard.auth.callback] offline session write failed", err);
+    return failure;
+  }
+
+  // The shared install routine — the same one the embedded afterAuth runs —
+  // provisions/reactivates the tenant (clearing uninstalled_at so a
+  // re-connecting shop escapes the GDPR sweep), registers the CarrierService,
+  // and enqueues the ingest pipeline. Best-effort: only the tenant is
+  // load-bearing, and that's gated by resolveShopId below; the rest retries on
+  // the next embedded open or re-connect. (The token row above intentionally
+  // precedes this — the install routine's admin client reads it.)
+  try {
+    const { unauthenticated } = await import("../shopify.server");
+    const { admin } = await unauthenticated.admin(shop);
+    const { completeShopInstall } = await import("~/lib/install.server");
+    await completeShopInstall({ shop, admin, inlineBackfill: false });
+  } catch (err) {
+    console.error("[dashboard.auth.callback] install routine failed", err);
+  }
+
+  // Tenant gate: without a provisioned shop there is nothing to sign in to.
+  // Reached only when the install routine failed at provisioning (e.g. a
+  // Supabase outage) — the error page copy is a retry, not an install ask.
   let shopId: string;
   try {
     shopId = await resolveShopId(shop);
-  } catch {
+  } catch (err) {
+    console.error("[dashboard.auth.callback] tenant unresolved after install", err);
     return redirect(`${publicUrl}/dashboard/login?error=app_not_installed&shop=${encodeURIComponent(shop)}`, {
       headers: { "Set-Cookie": expireCookieHeader(STATE_COOKIE_NAME) },
     });
@@ -103,24 +161,41 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { raw } = await createSession(shop);
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookieHeader(raw));
-  // Remember the shop so a future visit to /dashboard/login pre-fills the
-  // store-domain form (it no longer triggers any automatic redirect).
+  // Remember the shop so a bounce-back error page can offer a retry that
+  // targets the right store (there is no store-domain form anymore).
   headers.append("Set-Cookie", shopHintCookieHeader(shop));
   headers.append("Set-Cookie", expireCookieHeader(STATE_COOKIE_NAME));
-  // Destination: an explicit validated return_to wins (connector consent flow);
-  // otherwise a shop that never finished a data port lands on the import screen
-  // (the "Continue with Shopify" promise), and everyone else on the home.
+  // The port runs itself: a first connect (no run on record) queues one right
+  // here and nudges the drain so the pull starts before the next cron tick.
+  // A shop whose last run ERRORED is deliberately not re-queued — restarting a
+  // deterministically-failing 12-month pull on every sign-in would starve the
+  // drain — it lands on the import screen, which owns the error + manual
+  // retry. Destination: an explicit validated return_to wins (connector
+  // consent flow); done → home; error → import screen; otherwise the native
+  // store while the data streams in.
   let dest = safeDashboardReturnTo(cookieState.returnTo);
-  if (!dest) {
-    try {
-      // Lazy-loaded: run.server pulls the ingest/shopify.server chain — keep
-      // that out of this auth route's module graph (module-load env coupling).
-      const { latestImport } = await import("~/lib/import/run.server");
-      const last = await latestImport(shopId);
-      dest = last?.state === "done" ? "/dashboard" : "/dashboard/settings/import";
-    } catch {
-      dest = "/dashboard"; // a broken poll must not break sign-in
+  try {
+    // Lazy-loaded: run.server pulls the ingest/shopify.server chain — keep
+    // that out of this auth route's module graph (module-load env coupling).
+    const { latestImport, startImport, kickDrainSoon } = await import("~/lib/import/run.server");
+    const last = await latestImport(shopId);
+    if (!last) {
+      await startImport(shopId);
+      await kickDrainSoon();
     }
+    if (!dest) {
+      dest =
+        last?.state === "done"
+          ? "/dashboard"
+          : last?.state === "error"
+            ? "/dashboard/settings/import"
+            : "/dashboard/store";
+    }
+  } catch (err) {
+    // Auto-port failed: land on the import screen, where the state is honest
+    // and a manual retry lives — never a silent empty home.
+    console.error("[dashboard.auth.callback] auto-port failed", err);
+    if (!dest) dest = "/dashboard/settings/import";
   }
   return redirect(`${publicUrl}${dest}`, { headers });
 }

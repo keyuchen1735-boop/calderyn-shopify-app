@@ -1378,6 +1378,13 @@ export interface ImportRunVM {
   finishedAt: string | null;
 }
 
+/** The run states that mean "the port is still working" — shared by every
+ *  surface that polls it (Store watcher, Import screen) so they can't drift. */
+export const IMPORT_IN_PROGRESS: ReadonlySet<ImportRunVM["state"]> = new Set([
+  "pulling",
+  "promoting",
+]);
+
 export async function fetchImportStatus(): Promise<ImportRunVM | null> {
   const d = await apiGet<{ run: ImportRunVM | null }>("/dashboard/api/import");
   return d.run;

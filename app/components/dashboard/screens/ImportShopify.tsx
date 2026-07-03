@@ -4,9 +4,7 @@ import { Card, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
 import { SettingsSubTabs } from "../subtabs";
 import * as client from "~/lib/dashboard/client";
-import { DashboardApiError } from "~/lib/dashboard/client";
-
-const IN_PROGRESS = new Set(["pulling", "promoting"]);
+import { DashboardApiError, IMPORT_IN_PROGRESS } from "~/lib/dashboard/client";
 
 // Import from Shopify (#13.promote): a one-click, re-runnable migration that pulls the last
 // 12 months of the merchant's Shopify store into Calderyn's owned tables. Starts a background
@@ -30,7 +28,7 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
 
   // Poll only while a run is in progress; stop at a terminal state / on unmount.
   useEffect(() => {
-    const running = !!run && IN_PROGRESS.has(run.state);
+    const running = !!run && IMPORT_IN_PROGRESS.has(run.state);
     if (running && !timer.current) {
       timer.current = setInterval(load, 3000);
     } else if (!running && timer.current) {
@@ -72,12 +70,12 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
         <SettingsSubTabs app={app} />
         <Card>
           <p className="cd-caption">
-            Connect your Shopify store first, then come back here to bring your products,
-            collections, stock, and order history into Calderyn.
+            Connect your Shopify store and your products, collections, stock, and order
+            history come with you — no store domain to type, no import button to press.
           </p>
           <a
             className="cd-btn cd-btn-primary"
-            href="/dashboard/connect"
+            href="/dashboard/login"
             style={{ marginTop: 12, display: "inline-flex" }}
           >
             Connect Shopify
@@ -87,7 +85,7 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
     );
   }
 
-  const running = !!run && IN_PROGRESS.has(run.state);
+  const running = !!run && IMPORT_IN_PROGRESS.has(run.state);
   const listStyle = { margin: "6px 0 0", paddingLeft: 18 } as const;
 
   return (

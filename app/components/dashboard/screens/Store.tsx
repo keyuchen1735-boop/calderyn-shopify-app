@@ -11,7 +11,12 @@ import {
 import { Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, timeAgo } from "../format";
-import { DashboardApiError } from "~/lib/dashboard/client";
+import {
+  DashboardApiError,
+  fetchImportStatus,
+  IMPORT_IN_PROGRESS,
+  type ImportRunVM,
+} from "~/lib/dashboard/client";
 import {
   fetchStudio,
   saveStudioHero,
@@ -138,6 +143,52 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const s = await fetchStudio();
     if (aliveRef.current) setData(s);
   }, []);
+
+  // Shopify port watcher: the OAuth callback auto-starts an import and lands
+  // the merchant here, so the studio shows the pull streaming in, reloads
+  // itself once when the run finishes, and says so when it fails. Polls only
+  // while a run is in progress; a transient poll failure retries rather than
+  // silently killing the watch mid-import.
+  const [porting, setPorting] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let sawRun = false;
+    let misses = 0;
+    const tick = async () => {
+      let run: ImportRunVM | null;
+      try {
+        run = await fetchImportStatus();
+        misses = 0;
+      } catch {
+        if (!alive) return;
+        misses += 1;
+        // ponytail: 5 consecutive misses ends the watch; a page reload restarts it.
+        if (misses <= 5) timer = setTimeout(() => void tick(), 3000);
+        else setPorting(false);
+        return;
+      }
+      if (!alive) return;
+      if (run && IMPORT_IN_PROGRESS.has(run.state)) {
+        sawRun = true;
+        setPorting(true);
+        timer = setTimeout(() => void tick(), 3000);
+        return;
+      }
+      setPorting(false);
+      if (sawRun && run?.state === "done") {
+        toast("Your Shopify data is in", "download");
+        void refresh().catch(() => {});
+      } else if (sawRun && run?.state === "error") {
+        toast("Import didn't finish — retry from Settings → Import.", "warn", "critical");
+      }
+    };
+    void tick();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [refresh, toast]);
 
   useEffect(() => {
     setLoading(true);
@@ -372,6 +423,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
           <span className="cd-build-state" data-state={stateAttr}>
             {stateLabel}
           </span>
+          {porting && (
+            <span className="cd-build-state" data-state="building">
+              Importing data
+            </span>
+          )}
           <div className="cd-studio-tools">
             {TOOLS.map((t) => (
               <button

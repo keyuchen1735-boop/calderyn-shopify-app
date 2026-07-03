@@ -8,7 +8,8 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 }));
 const latestImport = vi.fn();
 const startImport = vi.fn();
-vi.mock("~/lib/import/run.server", () => ({ latestImport, startImport }));
+const kickDrainSoon = vi.fn(async () => undefined);
+vi.mock("~/lib/import/run.server", () => ({ latestImport, startImport, kickDrainSoon }));
 
 describe("import route", () => {
   it("GET returns the latest run for the shop", async () => {
@@ -27,6 +28,8 @@ describe("import route", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ importId: "imp_9" });
     expect(startImport).toHaveBeenCalledWith("shop1");
+    // The manual button gets the same instant-drain nudge as the OAuth connect.
+    expect(kickDrainSoon).toHaveBeenCalled();
   });
 
   it("rejects a non-POST method", async () => {

@@ -11,12 +11,17 @@ import { relinkOrdersToBuyers } from "./relink.server";
 const IMPORT_WINDOW_DAYS = 365; // 12 months
 // A 12-month pull is heavy; bound how many imports one cron tick processes so the
 // serverless function stays under its timeout (mirrors Phase 1's MAX_BACKFILL_SHOPS).
-// Runs are selected by state with no claim step, so a tick that outlives the cron
-// interval can hand the same run to the next tick. Tolerated rather than locked:
-// the function ceiling equals the /cron/import interval (overlap is a boundary
-// second at worst) and the pull + promote are idempotent, so a double-processed
-// run converges to the same owned rows. Revisit if the cadence or ceiling changes.
+// Runs are selected by state with no claim step, so overlapping drains (the cron
+// tick plus kickDrainSoon fired from connect/import at arbitrary times) routinely
+// process the same run. Tolerated rather than locked: the pull + promote are
+// idempotent, so a double-processed run converges to the same owned rows, and the
+// state transitions below are guarded so a slow duplicate can never regress a
+// terminal `done`. Revisit with a claim step if drain concurrency grows further.
 const IMPORT_DRAIN_PER_TICK = 2;
+
+// A drain killed at the function ceiling can strand a run in either in-progress
+// state; selecting both lets the next drain self-heal it (idempotent re-pull).
+const IN_PROGRESS_STATES = ["pulling", "promoting"] as const;
 
 export type ImportState = "pulling" | "promoting" | "done" | "error";
 
@@ -65,7 +70,7 @@ export async function drainImports(): Promise<{ processed: number }> {
   const { data: rows, error } = await sb
     .from("import_run")
     .select("id, shop_id, since_days, shops!inner(shop_domain)")
-    .eq("state", "pulling")
+    .in("state", [...IN_PROGRESS_STATES])
     .limit(IMPORT_DRAIN_PER_TICK);
   if (error) throw new Error(`drainImports query failed: ${error.message}`);
 
@@ -78,7 +83,13 @@ export async function drainImports(): Promise<{ processed: number }> {
     try {
       await backfillShop(domain, { sinceDays });
       const customers = await importCustomers(domain, shopId);
-      await sb.from("import_run").update({ state: "promoting" }).eq("id", id);
+      // Guarded: a slow duplicate drain must never flip a finished run back
+      // into an in-progress state.
+      await sb
+        .from("import_run")
+        .update({ state: "promoting" })
+        .eq("id", id)
+        .in("state", [...IN_PROGRESS_STATES]);
 
       // The promote materializes order/refund history into imported_*; the report reads
       // its counts (what actually landed), so `backfill.orders` (the raw pull) is unused.
@@ -100,13 +111,37 @@ export async function drainImports(): Promise<{ processed: number }> {
       processed += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Guarded: if a duplicate drain already finished this run, its `done`
+      // must survive — an error from the losing copy is not the run's outcome.
       await sb
         .from("import_run")
         .update({ state: "error", error: message.slice(0, 500), finished_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", id)
+        .in("state", [...IN_PROGRESS_STATES]);
     }
   }
   return { processed };
+}
+
+/**
+ * Nudge the drain to run right after the current response instead of at the
+ * next /cron/import tick (up to 5 minutes away). waitUntil keeps the function
+ * alive on Vercel — an un-anchored promise would be frozen with the lambda;
+ * outside Vercel it no-ops and the promise just runs on the event loop.
+ * Best-effort: the cron remains the guarantee, and a double drain is safe
+ * (runs are re-selected by state and the pull + promote are idempotent).
+ */
+export async function kickDrainSoon(): Promise<void> {
+  try {
+    const { waitUntil } = await import("@vercel/functions");
+    waitUntil(
+      drainImports().catch((err) => {
+        console.error("[import] post-response drain kick failed", err);
+      }),
+    );
+  } catch (err) {
+    console.error("[import] drain kick could not be scheduled", err);
+  }
 }
 
 /** The latest import run for a shop, shaped for the dashboard poll. */

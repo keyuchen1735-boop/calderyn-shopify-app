@@ -29,13 +29,16 @@ type Row = Record<string, unknown>;
 let selectRows: Row[] = [];
 let singleReturn: { data: Row | null; error: unknown } = { data: null, error: null };
 const updates: Row[] = [];
+// Filter calls recorded per-chain so tests can pin the state guards; each entry
+// carries the update payload the chain started with (null for selects).
+const filters: { method: "eq" | "in"; args: unknown[]; update: Row | null }[] = [];
 
 interface Chain {
   select: () => Chain;
   insert: (p: Row) => Chain;
   update: (p: Row) => Chain;
-  eq: () => Chain;
-  in: () => Chain;
+  eq: (...args: unknown[]) => Chain;
+  in: (...args: unknown[]) => Chain;
   order: () => Chain;
   limit: () => Chain;
   single: () => Promise<{ data: Row | null; error: unknown }>;
@@ -45,12 +48,13 @@ interface Chain {
 
 function chain(): Chain {
   const c = {} as Chain;
+  let pendingUpdate: Row | null = null;
   Object.assign(c, {
     select: () => c,
     insert: () => c,
-    update: (p: Row) => { updates.push(p); return c; },
-    eq: () => c,
-    in: () => c,
+    update: (p: Row) => { updates.push(p); pendingUpdate = p; return c; },
+    eq: (...args: unknown[]) => { filters.push({ method: "eq", args, update: pendingUpdate }); return c; },
+    in: (...args: unknown[]) => { filters.push({ method: "in", args, update: pendingUpdate }); return c; },
     order: () => c,
     limit: () => c,
     single: () => Promise.resolve(singleReturn),
@@ -71,6 +75,7 @@ beforeEach(() => {
   selectRows = [];
   singleReturn = { data: null, error: null };
   updates.length = 0;
+  filters.length = 0;
 });
 
 describe("drainImports", () => {
@@ -151,6 +156,38 @@ describe("drainImports", () => {
     expect(importCustomers).not.toHaveBeenCalled();
     expect(r.processed).toBe(0);
     expect(updates.some((u) => u.state === "error")).toBe(true);
+  });
+
+  it("re-selects stranded promoting runs and guards terminal writes against duplicate drains", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockRejectedValue(new Error("shopify 500"));
+
+    const { drainImports } = await import("../run.server");
+    await drainImports();
+
+    // The drain picks up BOTH in-progress states — a run stranded in
+    // 'promoting' by a killed function self-heals on the next drain.
+    expect(
+      filters.some(
+        (f) =>
+          f.method === "in" &&
+          f.update === null &&
+          f.args[0] === "state" &&
+          JSON.stringify(f.args[1]) === JSON.stringify(["pulling", "promoting"]),
+      ),
+    ).toBe(true);
+    // The error write is state-guarded: overlapping drains (cron + kick) may
+    // process the same run, and the losing copy must never stamp 'error' over
+    // a 'done' the winner already wrote.
+    expect(
+      filters.some(
+        (f) =>
+          f.method === "in" &&
+          (f.update as Row | null)?.state === "error" &&
+          f.args[0] === "state" &&
+          JSON.stringify(f.args[1]) === JSON.stringify(["pulling", "promoting"]),
+      ),
+    ).toBe(true);
   });
 });
 

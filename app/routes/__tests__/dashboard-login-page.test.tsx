@@ -1,6 +1,7 @@
-// The store-domain page is the "Continue with Shopify" landing — it must render
-// with the dashboard design system (AuthShell), carry return_to, and surface
-// error states as friendly copy instead of raw JSON.
+// /dashboard/login GETs redirect straight into Shopify OAuth (shop-less when
+// no ?shop=), so this page only ever renders the bounce-back error states —
+// with the dashboard design system (AuthShell) and friendly copy, never a
+// store-domain form and never raw JSON.
 import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -12,29 +13,34 @@ vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current 
 import DashboardLoginPage from "../dashboard.login";
 
 describe("/dashboard/login page", () => {
-  it("renders the store-domain form on the auth card, pre-filled from the hint", () => {
-    loaderDataRef.current = { mode: "form", hintShop: "myshop.myshopify.com", returnTo: "/dashboard/connect?t=abc", errorCode: null };
+  it("never renders a store-domain input — Shopify owns store identity", () => {
+    loaderDataRef.current = { mode: "error", hintShop: null, returnTo: null, errorCode: "oauth_failed", shop: null };
     const html = renderToStaticMarkup(createElement(DashboardLoginPage));
     expect(html).toContain("cd-auth-card");
-    expect(html).toContain('name="shop"');
-    expect(html).toContain('value="myshop.myshopify.com"');
-    expect(html).toContain('name="return_to"');
-    expect(html).toContain('value="/dashboard/connect?t=abc"');
+    expect(html).not.toContain('name="shop"');
   });
 
-  it("renders the app_not_installed error with install guidance and no retry loop", () => {
-    loaderDataRef.current = { mode: "error", hintShop: null, returnTo: null, errorCode: "app_not_installed", shop: "myshop.myshopify.com" };
+  it("renders the app_not_installed error as a retryable setup failure, not an install ask", () => {
+    loaderDataRef.current = { mode: "error", returnTo: null, errorCode: "app_not_installed", shop: "myshop.myshopify.com" };
     const html = renderToStaticMarkup(createElement(DashboardLoginPage));
     expect(html).toContain("cd-auth-banner--error");
-    expect(html).toContain("Install the Calderyn app");
-    expect(html).toContain("Try again"); // retry link back into the form
+    // The code fires after a successful grant when our side couldn't finish —
+    // telling the merchant to go install the app would be wrong twice over.
+    expect(html).toContain("finish setting it up");
+    expect(html).toContain("Try again");
   });
 
   it("renders oauth_failed with a retry link for the known shop", () => {
-    loaderDataRef.current = { mode: "error", hintShop: null, returnTo: null, errorCode: "oauth_failed", shop: "myshop.myshopify.com" };
+    loaderDataRef.current = { mode: "error", returnTo: null, errorCode: "oauth_failed", shop: "myshop.myshopify.com" };
     const html = renderToStaticMarkup(createElement(DashboardLoginPage));
     expect(html).toContain("cd-auth-banner--error");
     expect(html).toContain("/dashboard/login?shop=myshop.myshopify.com");
+  });
+
+  it("carries the connector destination through the retry link", () => {
+    loaderDataRef.current = { mode: "error", returnTo: "/dashboard/connect?t=abc", errorCode: "oauth_failed", shop: null };
+    const html = renderToStaticMarkup(createElement(DashboardLoginPage));
+    expect(html).toContain(`return_to=${encodeURIComponent("/dashboard/connect?t=abc").replace(/&/g, "&amp;")}`);
   });
 
   it("renders invalid_shop with domain-format guidance", () => {

@@ -2,8 +2,8 @@
 // First-party email + password sign-in ENDPOINT. The user-facing page lives at
 // /login; GETs here redirect there (params preserved). This is the default
 // signed-out entry and never redirects into Shopify OAuth — the Shopify entry
-// (/dashboard/login) serves the embedded-app "Open dashboard" button and the
-// store-domain form for merchants who sign in with Shopify.
+// (/dashboard/login) serves the embedded-app "Open dashboard" button and goes
+// straight into shop-less Shopify OAuth for "Continue with Shopify".
 //
 // The POST contract is stable for programmatic clients (Accept:
 // application/json → JSON error codes); plain form posts get a redirect back

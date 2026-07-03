@@ -71,20 +71,33 @@ describe("verifyShopifyHmac", () => {
 describe("exchangeCodeForToken", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("POSTs the code to the shop and returns ok on 200", async () => {
+  it("POSTs the code to the shop and returns the full offline grant on 200", async () => {
     const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ access_token: "tok", scope: "read_products" }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({
+          access_token: "tok",
+          scope: "read_products",
+          expires_in: 86399,
+          refresh_token: "rt",
+          refresh_token_expires_in: 7775999,
+        }),
+        { status: 200 },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const ok = await exchangeCodeForToken({
+    const granted = await exchangeCodeForToken({
       shop: "x.myshopify.com",
       code: "abc",
       clientId: "client-1",
       clientSecret: "shh",
     });
-    expect(ok).toBe(true);
+    expect(granted).toEqual({
+      accessToken: "tok",
+      scope: "read_products",
+      expiresIn: 86399,
+      refreshToken: "rt",
+      refreshTokenExpiresIn: 7775999,
+    });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://x.myshopify.com/admin/oauth/access_token");
     expect(init.method).toBe("POST");
@@ -92,17 +105,65 @@ describe("exchangeCodeForToken", () => {
       client_id: "client-1",
       client_secret: "shh",
       code: "abc",
+      // Requests an expiring offline token — required for new public apps.
+      expiring: "1",
     });
   });
 
-  it("returns false on a non-200 response", async () => {
+  it("tolerates a legacy non-expiring grant (no expiry/refresh fields)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ access_token: "tok", scope: "read_products" }), {
+          status: 200,
+        }),
+      ),
+    );
+    const granted = await exchangeCodeForToken({
+      shop: "x.myshopify.com",
+      code: "abc",
+      clientId: "c",
+      clientSecret: "s",
+    });
+    expect(granted).toEqual({
+      accessToken: "tok",
+      scope: "read_products",
+      expiresIn: null,
+      refreshToken: null,
+      refreshTokenExpiresIn: null,
+    });
+  });
+
+  it("returns null instead of throwing when the token endpoint stalls or drops", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("network down"))));
+    const granted = await exchangeCodeForToken({
+      shop: "x.myshopify.com",
+      code: "abc",
+      clientId: "c",
+      clientSecret: "s",
+    });
+    expect(granted).toBeNull();
+  });
+
+  it("returns null on a non-200 response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 400 })));
-    const ok = await exchangeCodeForToken({
+    const granted = await exchangeCodeForToken({
       shop: "x.myshopify.com",
       code: "bad",
       clientId: "c",
       clientSecret: "s",
     });
-    expect(ok).toBe(false);
+    expect(granted).toBeNull();
+  });
+
+  it("returns null when the 200 body carries no token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    const granted = await exchangeCodeForToken({
+      shop: "x.myshopify.com",
+      code: "abc",
+      clientId: "c",
+      clientSecret: "s",
+    });
+    expect(granted).toBeNull();
   });
 });
