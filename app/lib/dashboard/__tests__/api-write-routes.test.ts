@@ -642,7 +642,7 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
 });
 
 describe("POST /dashboard/api/logout", () => {
-  it("revokes the session and clears the cookie", async () => {
+  it("revokes the session and clears both the session cookie and the shop hint", async () => {
     const res = (await logoutAction({
       request: post("https://calderyncompany.com/dashboard/api/logout", {}),
       params: {},
@@ -650,6 +650,11 @@ describe("POST /dashboard/api/logout", () => {
     })) as Response;
     expect(res.status).toBe(200);
     expect(revokeSession).toHaveBeenCalledWith("sess-1");
-    expect(res.headers.get("Set-Cookie")).toContain("Max-Age=0");
+    const cookies = res.headers.getSetCookie();
+    expect(cookies.some((c) => c.startsWith("__Host-calderyn_dash=") && c.includes("Max-Age=0"))).toBe(true);
+    // The Shopify shop hint must die with the session — leaving it meant
+    // "Sign out" bounced straight back through Shopify OAuth and silently
+    // re-signed the merchant in.
+    expect(cookies.some((c) => c.startsWith("__Host-dash_shop=") && c.includes("Max-Age=0"))).toBe(true);
   });
 });

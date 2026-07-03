@@ -1,47 +1,101 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { getDashboardSessionAllowUnverified } from "~/lib/dashboard/session.server";
-import { rateLimit, requireSameOrigin, jsonError } from "~/lib/dashboard/http.server";
+import dashboard from "~/styles/dashboard.css?url";
+import {
+  getDashboardSessionAllowUnverified,
+  getSessionFromRequest,
+  revokeSession,
+  clearSessionCookieHeader,
+} from "~/lib/dashboard/session.server";
+import { rateLimit, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { AuthShell, AuthError, AuthNotice } from "~/components/auth/AuthCard";
+import { SHOP_HINT_COOKIE_NAME } from "./dashboard.login";
 
 export const meta: MetaFunction = () => [{ title: "Verify your email — Calderyn" }];
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await getDashboardSessionAllowUnverified(request);
+  const url = new URL(request.url);
+  // Signed-out visitors (stale bookmark, expired session) go to the login
+  // page — not a raw 401 JSON error.
+  const session = await getSessionFromRequest(request);
+  if (!session) return redirect("/login");
+  const params = {
+    error: url.searchParams.get("error"),
+    notice: url.searchParams.get("notice"),
+  };
   if (session.emailVerified || session.userId == null) {
-    return { email: null as string | null };
+    return { email: null as string | null, ...params };
   }
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
-  return { email: (data?.email as string | null) ?? null };
+  return { email: (data?.email as string | null) ?? null, ...params };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  requireSameOrigin(request);
+  const badOrigin = checkSameOrigin(request);
+  if (badOrigin) return badOrigin;
   const session = await getDashboardSessionAllowUnverified(request);
-  if (session.userId == null) return jsonError(400, "not_first_party");
-  if (!(await rateLimit(`verify-resend:${session.userId}`, 3, 15 * 60_000))) return jsonError(429, "rate_limited");
+  const fd = await request.formData();
+
+  // "Sign out" from the verification gate: revoke + clear cookies + land on
+  // /login. (A form posting to the JSON logout API would paint {"ok":true}
+  // into the tab instead.)
+  if (String(fd.get("intent") ?? "") === "signout") {
+    await revokeSession(session.sessionId).catch(() => {});
+    const headers = new Headers();
+    headers.append("Set-Cookie", clearSessionCookieHeader());
+    headers.append(
+      "Set-Cookie",
+      `${SHOP_HINT_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    );
+    return redirect("/login?notice=signed_out", { headers });
+  }
+
+  const fail = (status: number, code: string) =>
+    wantsJson(request)
+      ? jsonError(status, code)
+      : redirect(`/dashboard/verify-needed?error=${code}`);
+
+  if (session.userId == null) return fail(400, "not_first_party");
+  if (!(await rateLimit(`verify-resend:${session.userId}`, 3, 15 * 60_000))) return fail(429, "rate_limited");
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
   const email = data?.email as string | null;
   const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
   if (email) await sendVerificationEmail(session.userId, email, baseUrl).catch(() => {});
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  if (wantsJson(request)) {
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
+  return redirect("/dashboard/verify-needed?notice=sent");
 }
 
 export default function VerifyNeeded() {
-  const { email } = useLoaderData<typeof loader>();
+  const { email, error, notice } = useLoaderData<typeof loader>();
   return (
-    <main style={{ font: "16px/1.5 system-ui, sans-serif", maxWidth: "28rem", margin: "12vh auto", padding: "0 1.5rem" }}>
-      <h1 style={{ fontSize: "1.25rem" }}>Verify your email</h1>
-      <p>We sent a verification link{email ? ` to ${email}` : ""}. Click it to unlock your dashboard.</p>
+    <AuthShell>
+      <h1 className="cd-auth-title">Check your email</h1>
+      <p className="cd-auth-sub">
+        We sent a verification link{email ? ` to ${email}` : ""}. Click it to open your
+        dashboard. It can take a minute to arrive — check spam too.
+      </p>
+      <AuthError code={error} />
+      <AuthNotice notice={notice} />
       <form method="post" action="/dashboard/verify-needed">
-        <button type="submit" style={{ padding: ".6rem 1rem", fontWeight: 600 }}>Resend the email</button>
+        <button className="cd-auth-submit" type="submit">
+          Resend the email
+        </button>
       </form>
-      {/* A form must not nest inside a p: the browser hoists it while parsing and
-          hydration then mismatches the server HTML. Keep it a sibling block. */}
-      <form method="post" action="/dashboard/api/logout" style={{ marginTop: "1rem" }}>
-        <button type="submit" style={{ background: "none", border: "none", padding: 0, color: "inherit", cursor: "pointer", textDecoration: "underline" }}>Sign out</button>
+      <form method="post" action="/dashboard/verify-needed" style={{ marginTop: 16 }}>
+        <input type="hidden" name="intent" value="signout" />
+        <button className="cd-auth-linkbtn" type="submit">
+          Sign out
+        </button>
       </form>
-    </main>
+    </AuthShell>
   );
 }

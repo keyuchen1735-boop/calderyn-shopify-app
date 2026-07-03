@@ -1,7 +1,11 @@
-import type { LoaderFunctionArgs, HeadersFunction } from "@remix-run/node";
+import type { HeadersFunction, LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
+import dashboard from "~/styles/dashboard.css?url";
 import { consumeVerifyToken, markEmailVerified } from "~/lib/auth/verify.server";
+import { AuthShell } from "~/components/auth/AuthCard";
 
+export const meta: MetaFunction = () => [{ title: "Verify your email — Calderyn" }];
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
 export const headers: HeadersFunction = () => ({ "Referrer-Policy": "no-referrer" });
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -14,9 +18,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function VerifyRoute() {
   return (
-    <main style={{ font: "16px/1.5 system-ui, sans-serif", maxWidth: "26rem", margin: "12vh auto", padding: "0 1.5rem" }}>
-      <h1 style={{ fontSize: "1.25rem" }}>Link expired</h1>
-      <p>That verification link is invalid or has expired. <a href="/dashboard/verify-needed">Request a new one</a>.</p>
-    </main>
+    <AuthShell>
+      <h1 className="cd-auth-title">Link expired</h1>
+      <p className="cd-auth-sub">
+        That verification link is invalid or has expired.
+      </p>
+      <div className="cd-auth-links">
+        <a href="/dashboard/verify-needed">Request a new one</a>
+        <a href="/login">Back to sign in</a>
+      </div>
+    </AuthShell>
   );
 }
