@@ -29,6 +29,7 @@ import { McpGuide } from "../McpGuide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
 import { PayoutsCard } from "../PayoutsCard";
+import { SettingsSubTabs } from "../subtabs";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -386,6 +387,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   }
 
   const integrations = app.integrations;
+  const sub = app.nav.screen === "settings" ? (app.nav.sub ?? "general") : "general";
 
   return (
     <div className="cd-screen" style={{ maxWidth: 760 }}>
@@ -394,6 +396,10 @@ export default function Settings({ app }: { app: DashboardCtx }) {
         sub="Guardrails keep every automated action small, slow, and reversible."
       />
 
+      <SettingsSubTabs app={app} />
+
+      {sub === "general" && (
+      <>
       <section>
         <SectionTitle>Shipping cost</SectionTitle>
         <Card pad={false}>
@@ -817,7 +823,11 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           </SettingRow>
         </Card>
       </section>
+      </>
+      )}
 
+      {sub === "connectors" && (
+      <>
       <section>
         <SectionTitle>Connections</SectionTitle>
         <Card pad={false}>
@@ -844,13 +854,17 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       </section>
 
       <PayoutsCard app={app} />
+      </>
+      )}
 
+      {sub === "mcp" && (
       <section>
         <SectionTitle>Claude connector</SectionTitle>
         <Card>
           <McpGuide />
         </Card>
       </section>
+      )}
 
       {/* Secret Calderyn Labs trigger — the dimmed hexagon next to the build
           string opens the hidden "Autopilot replay" demo (screens/Labs). The

@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
   const db: Record<string, Row[]> = {
+    // createCheckout flags the source cart consumed (state -> checkout_pending).
+    cart: [],
     cart_line: [],
     buyer_dim: [],
     buyer_address: [],
@@ -124,6 +126,9 @@ vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: quote.quoteCart }));
 import { createCheckout } from "./checkout.server";
 
 function seedCartLine(shopId: string, cartId: string, line: Partial<Record<string, unknown>>) {
+  if (!store.db.cart.some((c) => c.id === cartId)) {
+    store.db.cart.push({ id: cartId, shop_id: shopId, state: "cart" });
+  }
   store.db.cart_line.push({
     id: `cart_line-${store.db.cart_line.length + 1}`,
     shop_id: shopId,
@@ -191,6 +196,10 @@ describe("createCheckout", () => {
     );
     expect(store.db.payment_intent[0]).toMatchObject({ order_ref: out.orderId, amount_cents: 3998 });
     expect(out.clientSecret).toBe("pi_1_secret_abc");
+
+    // The source cart is consumed (cart -> checkout_pending) so open-basket
+    // surfaces stop listing it; the order is the record from here on.
+    expect(store.db.cart[0]).toMatchObject({ id: "cart-1", state: "checkout_pending" });
   });
 
   it("persists the attribution snapshot verbatim on the order (empty default)", async () => {

@@ -21,7 +21,7 @@ const ctx: DashboardCtx = {
   t: {},
   shopDomain: "test.myshopify.com",
   storeLabel: "test.myshopify.com",
-  nav: { screen: "dashboard", param: null },
+  nav: { screen: "dashboard", param: null, sub: null },
   navigate: () => {},
   alerts: [],
   campaigns: [],

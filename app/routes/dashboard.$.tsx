@@ -1,7 +1,14 @@
-// app/routes/dashboard._index.tsx
-// The merchant dashboard SPA. Auth-gated by the loader (redirects to
-// /dashboard/signin when unauthenticated); the client fetches all data on mount
-// so no server-only module leaks into the browser bundle.
+// The merchant dashboard SPA, served for /dashboard and every dedicated
+// sub-URL (/dashboard/campaigns, /dashboard/orders/labels, …) by one splat
+// route. One route id on purpose: back/forward between any two dashboard URLs
+// stays inside this route, so React Router revalidates the loader instead of
+// remounting the shell (which would drop all fetched state). The SPA reads the
+// path to pick the screen (app/components/dashboard/routes.ts) and drives
+// history itself. Specific dashboard.* routes (api.*, login, signin,
+// builder.*, payouts.*, connect, auth.*) rank higher and are unaffected.
+// Auth-gated by the loader (redirects to /dashboard/signin when
+// unauthenticated); the client fetches all data on mount so no server-only
+// module leaks into the browser bundle.
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { useLoaderData, useRouteError } from "@remix-run/react";
 
@@ -28,6 +35,11 @@ export const links: LinksFunction = () => [
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  // An unmatched /dashboard/api/* path is a wrong or removed endpoint — fail
+  // fast with a 404 instead of serving 200 HTML that breaks a JSON caller.
+  if (new URL(request.url).pathname.startsWith("/dashboard/api/")) {
+    throw new Response("Not found", { status: 404 });
+  }
   const session = await requireVerifiedSession(request);
   const { data } = await getSupabase()
     .from("shops")

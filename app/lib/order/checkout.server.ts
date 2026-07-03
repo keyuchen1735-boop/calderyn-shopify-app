@@ -187,6 +187,22 @@ export async function createCheckout(
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) throw lineIns.error;
 
+  // Mark the source cart consumed (cart → checkout_pending, the shared state
+  // vocabulary) so open-basket surfaces (Orders → Draft carts, Customers →
+  // "In cart now") stop presenting it as an open basket — the order created
+  // above is the record from here on. Best-effort: a failed flag must not
+  // fail a checkout that already has its order + lines written.
+  const cartUpd = await sb
+    .from("cart")
+    .update({ state: "checkout_pending" })
+    .eq("shop_id", shopId)
+    .eq("id", cartId);
+  if (cartUpd.error) {
+    console.warn(
+      `[checkout] could not mark cart ${cartId} consumed (shop ${shopId}): ${cartUpd.error.message}`,
+    );
+  }
+
   const pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId);
 
   return {
