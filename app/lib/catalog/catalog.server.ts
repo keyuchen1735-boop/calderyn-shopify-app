@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
-import { collectionHandle } from "./handle";
+import { collectionHandle, productHandleBase } from "./handle";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -232,8 +232,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 }
 
 function productHandle(title: string): string {
-  const base = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "product";
-  return `${base}-${randomBytes(3).toString("hex")}`;
+  return `${productHandleBase(title)}-${randomBytes(3).toString("hex")}`;
 }
 
 // Writes a product's options + their values, returning ONE label->value-id map

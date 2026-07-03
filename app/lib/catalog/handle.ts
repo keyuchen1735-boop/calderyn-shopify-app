@@ -11,3 +11,16 @@ export function collectionHandle(title: string): string {
       .slice(0, 60) || "collection"
   );
 }
+
+// Base slug of a product handle — the server's authoritative handle is this
+// plus a random suffix (catalog.server.ts productHandle), so previews built
+// from it share the exact slug rules and can't drift.
+export function productHandleBase(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 50) || "product"
+  );
+}
