@@ -6,6 +6,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   requireSameOrigin: vi.fn(),
   wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
+  publicBaseUrl: () => "https://app.calderyncompany.com",
 }));
 const revokeSession = vi.fn().mockResolvedValue(undefined);
 vi.mock("~/lib/dashboard/session.server", () => ({

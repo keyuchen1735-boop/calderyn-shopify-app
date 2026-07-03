@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Btn, Card, Placeholder } from "../ui";
+import { Btn, Card, Placeholder, TableSkeleton } from "../ui";
 import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -103,16 +103,16 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       />
 
       {!page ? (
-        <Card>
-          <Placeholder
-            icon="doc"
-            title={loading ? "Loading orders" : "Orders unavailable"}
-            sub={
-              loading
-                ? "Reading your owned order spine."
-                : "Could not load orders just now. Refresh to try again."
-            }
-          />
+        <Card pad={false}>
+          {loading ? (
+            <TableSkeleton />
+          ) : (
+            <Placeholder
+              icon="doc"
+              title="Orders unavailable"
+              sub="Could not load orders just now. Refresh to try again."
+            />
+          )}
         </Card>
       ) : sub === "orders" ? (
         <Card pad={false}>
@@ -120,7 +120,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
             <Placeholder
               icon="doc"
               title="No orders yet"
-              sub="Orders placed on your storefront or through the agentic channel land here."
+              sub="Orders from your storefront and from AI shopping assistants land here."
             />
           ) : (
             <>

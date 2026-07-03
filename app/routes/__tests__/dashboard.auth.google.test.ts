@@ -303,15 +303,22 @@ describe("google store action", () => {
     expect(mockLinkMembership).toHaveBeenCalledWith("u1", "shop1", "owner");
   });
 
-  it("deletes the created user and rethrows when provisionOwnedShop fails", async () => {
+  it("deletes the created user and returns a retryable error when provisionOwnedShop fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
     mockCreateGoogleUser.mockResolvedValue({ id: "u2" });
     mockProvisionOwnedShop.mockRejectedValue(new Error("shop insert failed"));
 
     const { action } = await import("../dashboard.auth.google.store");
-    await expect(
-      action({ request: storePost({ t: "valid.token", store: "Acme" }), params: {}, context: {} } as never),
-    ).rejects.toThrow("shop insert failed");
+    const res = (await action({
+      request: storePost({ t: "valid.token", store: "Acme" }),
+      params: {},
+      context: {},
+    } as never)) as Response;
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: "account_creation_failed" });
     expect(mockDeleteUser).toHaveBeenCalledWith("u2");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

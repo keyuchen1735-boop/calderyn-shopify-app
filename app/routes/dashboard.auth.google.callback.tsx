@@ -18,7 +18,7 @@ import {
 } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
-import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
+import { safeDashboardReturnTo, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { GOAUTH_COOKIE, expireCookieHeader } from "~/lib/dashboard/cookies.server";
 
 const CLEAR_GOAUTH = expireCookieHeader(GOAUTH_COOKIE);
@@ -48,7 +48,7 @@ function readGoauthCookie(request: Request): { nonce: string; returnTo: string |
 }
 
 function redirectUri(): string {
-  const base = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const base = publicBaseUrl();
   return `${base}/dashboard/auth/google/callback`;
 }
 

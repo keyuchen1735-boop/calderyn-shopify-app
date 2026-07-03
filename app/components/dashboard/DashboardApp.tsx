@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "@remix-run/react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -123,9 +125,8 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
   dark: false,
-  // Design tokens: near-black accent + the 1.06 type scale the fresh design
-  // ships with (its root sets --type-scale:1.06).
-  accent: "#16181D",
+  // Design tokens: the 1.06 type scale the fresh design ships with (its root
+  // sets --type-scale:1.06). Accent lives in the CSS token blocks per theme.
   density: "balanced",
   radius: 14,
   glass: 0.72,
@@ -386,12 +387,15 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
   }, [nav.screen, nav.param, campaigns]);
 
   // ----- initial load + refresh -----
-  // Campaigns first so fetchAlerts(filters, campaigns) can derive campaign_id.
+  // Everything runs concurrently. Only fetchAlerts needs campaigns (to derive
+  // campaign_id), so it chains off the in-flight campaigns promise instead of
+  // the whole batch waiting a full round-trip for it (same shape as live.ts).
   const load = useCallback(async () => {
-    const camps = await client.fetchCampaigns();
-    const [ov, al, au, gr, integ, co, cal, aq, le] = await Promise.all([
+    const campsP = client.fetchCampaigns();
+    const [camps, ov, al, au, gr, integ, co, cal, aq, le] = await Promise.all([
+      campsP,
       client.fetchOverview(),
-      client.fetchAlerts(undefined, camps),
+      campsP.then((c) => client.fetchAlerts(undefined, c)),
       client.fetchAudit(),
       client.fetchGuardrails(),
       client.fetchIntegrations(),
@@ -879,7 +883,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
       // Either way NEVER fake a success (rule 12): leave the alert unresolved
       // and surface a visible toast, no phantom audit row.
       toast(
-        `${label} isn't available on the dashboard yet — open it on the alert to review.`,
+        `${label} isn't available on the dashboard yet. Open it on the alert to review.`,
         "warn",
         "critical",
       );
@@ -895,7 +899,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
         // Insert the undo row (with the server's id) so the "Recovered" total
         // claws this action's dollars back immediately, not 15s later.
         setAudit((au) => applyUndo(au, entry, auditId));
-        toast("Action undone — previous state restored.", "undo");
+        toast("Action undone. Previous state restored.", "undo");
       } catch (err) {
         const msg = err instanceof DashboardApiError ? err.message : "Undo failed.";
         toast(msg, "warn", "critical");
@@ -926,7 +930,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
         marginBasis: "none",
         marginBasisLabel: "No booked margin",
         costLineage: [],
-        why: "Manual — dashboard",
+        why: "Manual (dashboard)",
         stateDiff: [],
       };
       setAudit((au) => [entry, ...au]);
@@ -938,7 +942,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
         tone: "accent",
         cents: 0,
       });
-      toast("Draft pushed to Meta — created paused for your review.", "check");
+      toast("Draft pushed to Meta, created paused for your review.", "check");
     },
     [pushFeed, toast],
   );
@@ -975,22 +979,46 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     loading,
   };
 
-  // CSS tokens, applied on .cd-root exactly as the prototype does.
+  // CSS tokens applied on .cd-root. --accent is deliberately NOT set here: an
+  // inline custom property would override the .cd-dark token block and lock
+  // night mode to the light accent (invisible icons/buttons).
   const vars = useMemo(() => {
     const density =
       ({ compact: 0.82, balanced: 1, comfy: 1.18 } as Record<string, number>)[
         String(t.density)
       ] ?? 1;
     return {
-      "--accent": String(t.accent),
       "--radius": t.radius + "px",
       "--glass": t.glass,
       "--density": density,
       "--type-scale": t.typeScale,
     } as React.CSSProperties;
-  }, [t.accent, t.radius, t.glass, t.density, t.typeScale]);
+  }, [t.radius, t.glass, t.density, t.typeScale]);
 
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
+
+  // Screen-swap feedback: the incoming screen rises in over ~200ms. Skipped on
+  // the very first paint (loading into a task shouldn't choreograph) and under
+  // prefers-reduced-motion. clearProps drops the transform afterwards so no
+  // containing block lingers for fixed/absolute descendants.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const firstScreenPaint = useRef(true);
+  useGSAP(
+    () => {
+      if (firstScreenPaint.current) {
+        firstScreenPaint.current = false;
+        return;
+      }
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      gsap.fromTo(
+        ".cd-screen",
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.22, ease: "power3.out", clearProps: "opacity,transform" },
+      );
+    },
+    { dependencies: [nav.screen], scope: mainRef },
+  );
+
   const openCount = alerts.filter((a) => a.status === "open").length;
   // Umbrella screens (subtab families, inner flows, the Labs mask) keep their
   // nav item lit (sidebar, tab bar, and the "More" active state read off this).
@@ -1170,7 +1198,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
       </aside>
 
       {/* Main */}
-      <main id="cd-main" className="cd-main">
+      <main id="cd-main" className="cd-main" ref={mainRef}>
         <Screen app={app} />
       </main>
 

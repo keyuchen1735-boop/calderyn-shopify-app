@@ -5,7 +5,7 @@
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
-import { AuthShell, AuthError, AuthNotice } from "~/components/auth/AuthCard";
+import { AuthShell, AuthError, AuthNotice, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
 export const meta: MetaFunction = () => [{ title: "Reset your password — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
@@ -26,7 +26,7 @@ export default function ResetPage() {
       <p className="cd-auth-sub">We'll email you a link.</p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
-      <form method="post" action="/dashboard/reset">
+      <AuthForm action="/dashboard/reset">
         <label className="cd-auth-label" htmlFor="email">
           Email
         </label>
@@ -37,11 +37,10 @@ export default function ResetPage() {
           type="email"
           required
           autoComplete="email"
+          autoFocus
         />
-        <button className="cd-auth-submit" type="submit">
-          Send reset link
-        </button>
-      </form>
+        <AuthSubmit label="Send reset link" pendingLabel="Sending…" />
+      </AuthForm>
       <div className="cd-auth-links">
         <a href="/login">Back to sign in</a>
         <a href="/signup">Create an account</a>

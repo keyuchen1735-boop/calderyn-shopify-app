@@ -1,7 +1,10 @@
 // Shared shell for the standalone auth pages (/login, /signup, /reset, the
 // verify screens). Renders the design-system card on the dashboard background;
-// pages supply the form. Server-rendered, no client state.
-import type { ReactNode } from "react";
+// pages supply the form. Forms are plain document POSTs, so everything here
+// must keep working with JS disabled; the pending/toggle state below is a
+// hydration-only enhancement on top of that.
+import { createContext, useContext, useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { authErrorMessage, AUTH_NOTICE_MESSAGES } from "~/lib/auth/messages";
 import { CDIcon } from "~/components/dashboard/icons";
 
@@ -51,6 +54,106 @@ export function AuthNotice({ notice }: { notice: string | null }) {
     <p className="cd-auth-banner cd-auth-banner--ok" role="status">
       {message}
     </p>
+  );
+}
+
+const AuthPendingContext = createContext(false);
+
+/**
+ * Plain document-POST form with a submit latch: after the first submit the
+ * enclosed AuthSubmit disables and swaps to its pending label, and a repeat
+ * submit (double click, Enter re-fire) is suppressed. Without JS the latch
+ * never engages and the form submits normally.
+ */
+export function AuthForm({
+  action,
+  children,
+  style,
+}: {
+  action: string;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    // A back/forward-cache restore keeps component state; re-enable the form
+    // so returning to the page never strands a disabled submit button.
+    const onPageShow = () => setPending(false);
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+  return (
+    <form
+      method="post"
+      action={action}
+      style={style}
+      onSubmit={(event) => {
+        if (pending) {
+          event.preventDefault();
+          return;
+        }
+        setPending(true);
+      }}
+    >
+      <AuthPendingContext.Provider value={pending}>{children}</AuthPendingContext.Provider>
+    </form>
+  );
+}
+
+/** True while the enclosing AuthForm is submitting. Always false before hydration. */
+export function useAuthFormPending(): boolean {
+  return useContext(AuthPendingContext);
+}
+
+export function AuthSubmit({ label, pendingLabel }: { label: string; pendingLabel: string }) {
+  const pending = useAuthFormPending();
+  return (
+    <button className="cd-auth-submit" type="submit" disabled={pending}>
+      {pending ? pendingLabel : label}
+    </button>
+  );
+}
+
+/**
+ * Password input with an inline show/hide toggle. The toggle is type="button"
+ * so it can never submit the form; without JS it is inert and the field stays
+ * a normal password input.
+ */
+export function PasswordField({
+  id,
+  name = "password",
+  autoComplete,
+  minLength,
+  autoFocus,
+}: {
+  id: string;
+  name?: string;
+  autoComplete: string;
+  minLength?: number;
+  autoFocus?: boolean;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="cd-auth-pwwrap">
+      <input
+        className="cd-auth-input"
+        id={id}
+        name={name}
+        type={visible ? "text" : "password"}
+        required
+        minLength={minLength}
+        autoComplete={autoComplete}
+        autoFocus={autoFocus}
+      />
+      <button
+        type="button"
+        className="cd-auth-pwtoggle"
+        aria-label={visible ? "Hide password" : "Show password"}
+        onClick={() => setVisible((v) => !v)}
+      >
+        {visible ? "Hide" : "Show"}
+      </button>
+    </div>
   );
 }
 

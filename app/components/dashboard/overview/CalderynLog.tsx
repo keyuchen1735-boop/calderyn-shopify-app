@@ -71,7 +71,7 @@ function PendingRow({
       setState("approved");
       app.refreshCalibration();
       if (receipt?.justGraduated) {
-        app.toast(`${actionLabel} just graduated — Calderyn can run it on its own now.`, "bolt", "accent");
+        app.toast(`${actionLabel} just graduated. Calderyn can run it on its own now.`, "bolt", "accent");
       }
       // Optimistic calibration nudge for instant feedback; the authoritative
       // shop-level value is reconciled by refreshCalibration/refreshLiveEngine

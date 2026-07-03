@@ -24,6 +24,7 @@ import {
   rateLimit,
   clientIpKey,
   safeDashboardReturnTo,
+  publicBaseUrl,
 } from "~/lib/dashboard/http.server";
 import { STATE_COOKIE_NAME, readShopHint } from "~/lib/dashboard/cookies.server";
 
@@ -74,7 +75,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const state = randomBytes(16).toString("hex");
-  const publicUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const publicUrl = publicBaseUrl();
   const authorizeUrl = buildAuthorizeUrl({
     shop,
     clientId: process.env.SHOPIFY_API_KEY ?? "",

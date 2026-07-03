@@ -290,6 +290,7 @@ export function Btn({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={`cd-btn cd-btn-${kind} ${small ? "cd-btn-sm" : ""} ${className}`}
@@ -717,15 +718,36 @@ export function ToastHost({ toasts }: { toasts: Toast[] }) {
   );
 }
 
+/* ---------- Loading skeleton ---------- */
+// Shimmering table-shaped rows for list screens while their fetch is in
+// flight. Reads as "content is coming" instead of a bare centered spinner.
+export function TableSkeleton({ rows = 7 }: { rows?: number }) {
+  return (
+    <div className="cd-skel" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="cd-skel-row">
+          <span className="cd-skel-bar" style={{ width: "34%" }} />
+          <span className="cd-skel-bar" style={{ width: "12%" }} />
+          <span className="cd-skel-bar" style={{ width: "9%", marginLeft: "auto" }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ---------- Empty / placeholder ---------- */
 export function Placeholder({
   icon = "scan",
   title,
   sub,
+  actionLabel,
+  onAction,
 }: {
   icon?: string;
   title?: ReactNode;
   sub?: ReactNode;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-12 gap-2">
@@ -736,6 +758,13 @@ export function Placeholder({
       {sub && (
         <div className="cd-caption" style={{ maxWidth: 320 }}>
           {sub}
+        </div>
+      )}
+      {actionLabel && onAction && (
+        <div style={{ marginTop: 6 }}>
+          <Btn small kind="primary" onClick={onAction}>
+            {actionLabel}
+          </Btn>
         </div>
       )}
     </div>

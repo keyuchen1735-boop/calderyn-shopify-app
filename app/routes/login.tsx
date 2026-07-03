@@ -7,7 +7,16 @@ import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run
 import { redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
-import { AuthShell, AuthError, AuthNotice, GoogleButton, ShopifyButton } from "~/components/auth/AuthCard";
+import {
+  AuthShell,
+  AuthError,
+  AuthNotice,
+  AuthForm,
+  AuthSubmit,
+  PasswordField,
+  GoogleButton,
+  ShopifyButton,
+} from "~/components/auth/AuthCard";
 import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
 
@@ -40,7 +49,7 @@ export default function LoginPage() {
       <GoogleButton label="Continue with Google" returnTo={returnTo} />
       <ShopifyButton label="Continue with Shopify" returnTo={returnTo} />
       <div className="cd-auth-divider">or</div>
-      <form method="post" action="/dashboard/signin">
+      <AuthForm action="/dashboard/signin">
         <label className="cd-auth-label" htmlFor="email">
           Email
         </label>
@@ -52,23 +61,15 @@ export default function LoginPage() {
           required
           autoComplete="email"
           defaultValue={email}
+          autoFocus
         />
         <label className="cd-auth-label" htmlFor="password">
           Password
         </label>
-        <input
-          className="cd-auth-input"
-          id="password"
-          name="password"
-          type="password"
-          required
-          autoComplete="current-password"
-        />
+        <PasswordField id="password" autoComplete="current-password" />
         {returnTo ? <input type="hidden" name="return_to" value={returnTo} /> : null}
-        <button className="cd-auth-submit" type="submit">
-          Sign in
-        </button>
-      </form>
+        <AuthSubmit label="Sign in" pendingLabel="Signing in…" />
+      </AuthForm>
       <div className="cd-auth-links">
         <a href="/reset">Forgot password?</a>
         <a href="/signup">Create an account</a>

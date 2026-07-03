@@ -1,5 +1,6 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { Btn, Card, Placeholder, TickGauge } from "../ui";
+import { hasEngineSignals } from "../first-run";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
@@ -252,7 +253,7 @@ function CalibrationTrainer({
 
           {queue.length === 0 && (
             <div className="cd-nc-empty" style={{ flex: 1 }}>
-              Nothing waiting — Calderyn is scanning
+              Nothing waiting. Calderyn is scanning.
             </div>
           )}
 
@@ -482,6 +483,10 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
   const running = !!data && data.autopilotEnabled && featureOn > 0;
   const flagged = useMemo(() => flaggedGroups(app.actionQueue), [app.actionQueue]);
   const pct = data?.calibrationPct ?? null;
+  // A store the engine has never seen anything from has no meaningful
+  // calibration score yet; showing one would be noise. Gated on data being
+  // loaded so a transient in-flight refresh can't flip the screen.
+  const standingBy = !!data && !app.loading && !hasEngineSignals(app);
 
   return (
     <div className="cd-screen">
@@ -491,11 +496,19 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
         </div>
         <span className="cd-live-pill" data-on={running ? "1" : "0"}>
           <span className={"cd-live-dot" + (running ? " on" : "")} />
-          {pct === null ? "Calibrating" : pct >= 100 ? "Live" : `${Math.round(pct)}% calibrated`}
+          {standingBy ? "Standing by" : pct === null ? "Calibrating" : pct >= 100 ? "Live" : `${Math.round(pct)}% calibrated`}
         </span>
       </header>
 
-      {data ? (
+      {standingBy ? (
+        <Card>
+          <Placeholder
+            icon="bolt"
+            title="Autopilot is standing by"
+            sub="It trains on your store's real orders and campaigns. Add products or connect an ad account, and calibration starts on its own."
+          />
+        </Card>
+      ) : data ? (
         data.calibrationPct !== null && data.calibrationPct < 100 ? (
           <CalibrationTrainer
             app={app}
