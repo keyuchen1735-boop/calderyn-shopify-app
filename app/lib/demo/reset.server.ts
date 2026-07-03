@@ -12,7 +12,7 @@
 
 import { CalderynError } from "../calderyn.server";
 import { generateSeedDataset } from "../seed/dataset";
-import { writeSeedDataset } from "../seed/writer";
+import { writeSeedDataset, wipeShopTables, insertRowsBatched } from "../seed/writer";
 import { generateShowcaseLayer } from "./showcase-seed";
 import type { ShowcaseLayer } from "./showcase-seed";
 
@@ -110,26 +110,10 @@ export const SHOWCASE_WIPE_ORDER = [
   "cutover_transition",
 ] as const;
 
-const BATCH_SIZE = 500;
-
 export interface ResetSummary {
   wiped: string[];
   inserted: Record<string, number>;
   promoted: Record<string, unknown>;
-}
-
-async function insertBatched(
-  sb: ShowcaseResetClient,
-  table: string,
-  rows: Record<string, unknown>[],
-  inserted: Record<string, number>,
-): Promise<void> {
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await sb.from(table).insert(batch);
-    if (error) throw new Error(`showcase insert ${table}: ${error.message}`);
-  }
-  inserted[table] = rows.length;
 }
 
 /** Owned-layer tables in insert order (parents → children). */
@@ -172,12 +156,7 @@ export async function resetDemoShowcase(
   const today = opts?.today ?? new Date().toISOString().slice(0, 10);
 
   // 1) Extended wipe (children of the writer's tables must go first).
-  const wiped: string[] = [];
-  for (const table of SHOWCASE_WIPE_ORDER) {
-    const { error } = await sb.from(table).delete().eq("shop_id", shopId);
-    if (error) throw new Error(`showcase wipe ${table}: ${error.message}`);
-    wiped.push(table);
-  }
+  const wiped = await wipeShopTables(sb, SHOWCASE_WIPE_ORDER, shopId);
 
   // 2) Deterministic facts (wipes + reinserts the warehouse/alert tables).
   const dataset = generateSeedDataset({ shopId, today });
@@ -193,13 +172,14 @@ export async function resetDemoShowcase(
   const layer = generateShowcaseLayer({ shopId, today, dataset });
   const inserted: Record<string, number> = { ...writerSummary.inserted };
   for (const [table, rows] of layerInserts(layer)) {
-    await insertBatched(sb, table, rows, inserted);
+    await insertRowsBatched(sb, table, rows);
+    inserted[table] = rows.length;
   }
 
   // 5) Branding + config restore.
   const { error: settingsErr } = await sb
     .from("store_settings")
-    .upsert({ ...layer.storeSettings }, { onConflict: "shop_id" });
+    .upsert(layer.storeSettings, { onConflict: "shop_id" });
   if (settingsErr) throw new Error(`demo reset: store_settings upsert: ${settingsErr.message}`);
   const { error: guardrailErr } = await sb
     .from("guardrail_config")
@@ -210,7 +190,8 @@ export async function resetDemoShowcase(
   if (shopUpdateErr) throw new Error(`demo reset: shops update: ${shopUpdateErr.message}`);
 
   return {
-    wiped: [...wiped],
+    // Both wipe passes — this list is what operators audit after a reset.
+    wiped: [...wiped, ...writerSummary.wiped],
     inserted,
     promoted: (promoted as Record<string, unknown>) ?? {},
   };

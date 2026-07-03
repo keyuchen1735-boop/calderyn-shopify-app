@@ -3,6 +3,8 @@
 // not_demo_shop refusal as the 409 the Settings button renders verbatim.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CalderynError } from "../../lib/calderyn.server";
+// vi.mock calls are hoisted above imports, so the route picks up the mocks.
+import { action } from "../dashboard.api.demo-reset";
 
 const requireDashboardSession = vi.fn();
 const requireSameOrigin = vi.fn();
@@ -10,11 +12,11 @@ const rateLimit = vi.fn();
 const resetDemoShowcase = vi.fn();
 
 vi.mock("../../lib/dashboard/session.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../lib/dashboard/session.server")>()),
+  ...((await importOriginal()) as object),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
 }));
 vi.mock("../../lib/dashboard/http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../lib/dashboard/http.server")>()),
+  ...((await importOriginal()) as object),
   requireSameOrigin: (...a: unknown[]) => requireSameOrigin(...a),
 }));
 vi.mock("../../lib/rate-limit.server", () => ({
@@ -24,8 +26,6 @@ vi.mock("../../lib/supabase.server", () => ({ getSupabase: () => ({}) }));
 vi.mock("../../lib/demo/reset.server", () => ({
   resetDemoShowcase: (...a: unknown[]) => resetDemoShowcase(...a),
 }));
-
-import { action } from "../dashboard.api.demo-reset";
 
 function post(method = "POST"): Request {
   return new Request("https://app.example.com/dashboard/api/demo-reset", { method });

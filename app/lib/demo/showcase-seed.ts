@@ -179,6 +179,8 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
   const ownedOrderLines: Row[] = [];
   const orderTransitions: Row[] = [];
   const catalogPool = dataset.skus;
+  // The VIP buys from the high-ticket end so their lifetime spend clears $5k.
+  const highTicketPool = catalogPool.filter((s) => s.retail_price_cents >= 8900);
 
   for (let i = 0; i < buyers.length; i++) {
     const n = ordersPerBuyer(i);
@@ -192,10 +194,7 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
       const lineCount = i === 0 ? 3 : 1 + Math.floor(rng() * 2);
       let subtotal = 0;
       for (let l = 0; l < lineCount; l++) {
-        // The VIP buys from the high-ticket end so their lifetime spend clears $5k.
-        const pool = i === 0
-          ? catalogPool.filter((s) => s.retail_price_cents >= 8900)
-          : catalogPool;
+        const pool = i === 0 ? highTicketPool : catalogPool;
         const pick = pool[Math.floor(rng() * pool.length)];
         const quantity = i === 0 ? 1 + Math.floor(rng() * 3) : 1;
         ownedOrderLines.push({
@@ -436,9 +435,14 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
       created_at: firstSeen,
     });
   }
-  const alertByDetectorBucket = new Map(alerts.map((a) => [`${a.detector_id}|${a.day_bucket}`, a]));
+  // Resolved rows only: open alerts all share day_bucket = today, so a map
+  // over every alert would collide keys and could silently hand an audit row
+  // an OPEN alert.
+  const resolvedByDetectorBucket = new Map(
+    alerts.filter((a) => a.status === "resolved").map((a) => [`${a.detector_id}|${a.day_bucket}`, a]),
+  );
   const resolvedAlert = (detector: string, bucket: string) => {
-    const row = alertByDetectorBucket.get(`${detector}|${bucket}`);
+    const row = resolvedByDetectorBucket.get(`${detector}|${bucket}`);
     if (!row) throw new Error(`showcase seed: missing resolved alert ${detector}@${bucket}`);
     return row;
   };

@@ -82,18 +82,20 @@ const { error: flagErr } = await sb
   .eq("id", shopId);
 if (flagErr) throw new Error(`demo flags failed: ${flagErr.message}`);
 
-// 4) Membership (idempotent — ignore the unique-violation on re-runs).
+// 4) Membership (idempotent — linkMembership rethrows the raw PostgrestError,
+// so the unique-violation is detectable by its structured code, not message).
 try {
   await linkMembership(userId, shopId, "owner");
   console.log("membership linked (owner)");
 } catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
-  if (!/duplicate|23505|unique/i.test(message)) throw err;
+  if ((err as { code?: string }).code !== "23505") throw err;
   console.log("membership already linked");
 }
 
 // 5) Full showcase reset (wipe + facts + promote + owned layer).
 console.log("seeding showcase…");
+// Cast justified in ShowcaseResetClient's doc: supabase-js's generics exceed
+// TS's structural-check depth; the runtime builder shape matches.
 const summary = await resetDemoShowcase(shopId, sb as unknown as ShowcaseResetClient);
 console.log(`wiped ${summary.wiped.length} extra tables; promote:`, summary.promoted);
 for (const [table, count] of Object.entries(summary.inserted)) {

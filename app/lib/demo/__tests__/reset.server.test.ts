@@ -139,7 +139,10 @@ describe("resetDemoShowcase", () => {
     expect(sb.ops).toContain("upd:guardrail_config");
     expect(sb.ops).toContain("upd:shops");
 
-    expect(summary.wiped).toEqual([...SHOWCASE_WIPE_ORDER]);
+    // Both wipe passes are reported: the extended list, then the writer's own.
+    expect(summary.wiped.slice(0, SHOWCASE_WIPE_ORDER.length)).toEqual([...SHOWCASE_WIPE_ORDER]);
+    expect(summary.wiped.length).toBeGreaterThan(SHOWCASE_WIPE_ORDER.length);
+    expect(summary.wiped).toContain("action_audit");
     expect(summary.inserted.sku_dim).toBeGreaterThan(0);
     expect(summary.inserted.orders).toBeGreaterThan(0);
     expect(summary.inserted.alerts).toBeGreaterThan(0);
