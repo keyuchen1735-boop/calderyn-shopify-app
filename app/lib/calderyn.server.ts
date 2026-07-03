@@ -1984,30 +1984,22 @@ export function calderynClient(shop: string) {
             .eq("shop_id", shopId)
             .eq("kind", kind);
           if (error) throw error;
-          // Ship-cost connectors store their credential in integration_credentials
-          // (EasyPost/ShipBob = pasted key; ShipHero = pasted refresh token; Shippo = OAuth
-          // token). Disconnect
-          // means the merchant wants that credential gone too — so the cron's connect()
-          // finds no credential and marks the shop skipped, not errored. Shippo's
-          // co-branded OAuth token NEVER expires (Plan 02 §11 #6), so leaving it orphaned
-          // would keep a forever-valid token at rest — the delete is mandatory here, not
-          // optional like the rotating ad/QBO tokens (those keep their bytea token row on
-          // shop_integrations; re-connect overwrites it). Surface a failure here rather
-          // than leaving an orphaned credential silently behind (rule 12).
-          const SHIP_COST_CRED_KINDS = new Set([
-            "easypost_ship",
-            "shippo_ship",
-            "shipbob_ship",
-            "shiphero_ship",
-          ]);
-          if (SHIP_COST_CRED_KINDS.has(kind)) {
-            const { error: credErr } = await supabase
-              .from("integration_credentials")
-              .delete()
-              .eq("shop_id", shopId)
-              .eq("kind", kind);
-            if (credErr) throw credErr;
-          }
+          // Every credential-bearing connector stores its token in integration_credentials:
+          // ship-cost providers (EasyPost/ShipBob = pasted key; ShipHero = pasted refresh
+          // token; Shippo = non-expiring co-branded OAuth token) and the ad/QuickBooks
+          // connectors (meta_ads/google_ads/tiktok_ads/quickbooks all upsert their encrypted
+          // OAuth token into integration_credentials.access_token_encrypted). Disconnect must
+          // delete that credential so no valid token is left encrypted-at-rest — Google's
+          // refresh token never expires and Meta/QBO/TikTok tokens stay valid for weeks to
+          // months. The delete is keyed on (shop_id, kind); a provider with no credential row
+          // simply matches zero rows. Surface a failure here rather than leaving an orphaned
+          // credential silently behind (rule 12).
+          const { error: credErr } = await supabase
+            .from("integration_credentials")
+            .delete()
+            .eq("shop_id", shopId)
+            .eq("kind", kind);
+          if (credErr) throw credErr;
         } catch (err) {
           rethrow("integrations.disconnect", err);
         }
