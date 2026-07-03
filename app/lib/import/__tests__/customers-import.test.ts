@@ -55,6 +55,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
+// eslint-disable-next-line import/first -- must follow the vi.mock factories above
 import { importCustomers } from "../customers.server";
 
 function customer(over: Partial<AdminCustomer>): AdminCustomer {
