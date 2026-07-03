@@ -137,6 +137,14 @@ const PRODUCTS: ProductSpec[] = [
   { handle: "switchback-cap", title: "Switchback Cap", category: "accessories", priceCents: 2800, costCents: 900, variants: ["one-size"], velocityPerDay: 3 },
 ];
 
+/** Shipping weight per category — feeds sku_dim.grams (quotes + labels). */
+const GRAMS_BY_CATEGORY: Record<string, number> = {
+  apparel: 300,
+  outerwear: 650,
+  gear: 950,
+  accessories: 180,
+};
+
 /** Demo vendor per category — gives the inventory vendor facet a few values. */
 const VENDOR_BY_CATEGORY: Record<string, string> = {
   apparel: "Summit Apparel Co",
@@ -300,6 +308,11 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
         category: p.category,
         price_tier: priceTier(p.priceCents),
         unit_cost_cents: p.costCents,
+        retail_price_cents: p.priceCents,
+        product_status: "active",
+        inventory_policy: "deny",
+        inventory_tracked: true,
+        grams: GRAMS_BY_CATEGORY[p.category] ?? 400,
         currency: "USD",
         vendor: VENDOR_BY_CATEGORY[p.category] ?? null,
         tags: [p.category, priceTier(p.priceCents)],

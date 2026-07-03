@@ -228,6 +228,13 @@ export interface SkuRow {
   category: string;
   price_tier: string;
   unit_cost_cents: number;
+  /** List price. promote_shop_catalog copies this into variant_dim, where a
+   *  NULL renders the variant "not for sale" on the owned storefront. */
+  retail_price_cents: number;
+  product_status: string;
+  inventory_policy: string;
+  inventory_tracked: boolean;
+  grams: number;
   currency: string;
   vendor: string | null;
   tags: string[];
