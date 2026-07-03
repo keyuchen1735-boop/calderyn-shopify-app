@@ -29,6 +29,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
         variantCount: p.variantCount,
         updatedAt: p.updatedAt,
         imageUrl: p.primaryImagePath ? signed.get(p.primaryImagePath) ?? null : null,
+        priceCents: p.priceCents,
+        shipDataOk: p.shipDataOk,
+        shipWeightGrams: p.shipWeightGrams,
       })),
     };
   });

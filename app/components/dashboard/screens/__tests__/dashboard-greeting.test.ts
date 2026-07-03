@@ -23,6 +23,7 @@ const ctx: DashboardCtx = {
   storeLabel: "test.myshopify.com",
   nav: { screen: "dashboard", param: null, sub: null },
   navigate: () => {},
+  setNightMode: () => {},
   alerts: [],
   campaigns: [],
   audit: [],

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Btn, Card, SectionTitle, Toggle, Segmented, Pill, Placeholder } from "../ui";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import { Btn, Card, Toggle, Segmented, Pill, Placeholder } from "../ui";
+import { CDIcon } from "../icons";
 import { money } from "../format";
 import {
   putConsent,
@@ -12,11 +13,16 @@ import {
   disconnectIntegration,
   fetchLearnedRules,
   undoRule,
+  fetchBilling,
+  startPayoutOnboarding,
+  fetchPayoutLoginLink,
   DashboardApiError,
   type UnmatchedShipCharges,
+  type BillingStatus,
 } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
+import { payoutsCardState } from "../view-models";
 import type { GuardrailConfig } from "~/lib/types";
 import {
   isApiKeyConnect,
@@ -25,23 +31,52 @@ import {
   isPaired,
   kindToProvider,
 } from "~/lib/integrations";
-import { McpGuide } from "../McpGuide";
+import {
+  MCP_CONNECTOR_URL,
+  CLI_COMMAND,
+  CLI_NOTE,
+  CONNECTOR_STEPS,
+} from "~/lib/mcp-connect-guide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
-import { PayoutsCard } from "../PayoutsCard";
 import { SettingsSubTabs } from "../subtabs";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
 /* ---------- Header ---------- */
-function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
+function ScreenHeader({ title }: { title: ReactNode }) {
   return (
     <header className="cd-screen-head" data-screen-label={title}>
       <div>
         <h1 className="cd-h1">{title}</h1>
-        {sub && <p className="cd-sub">{sub}</p>}
       </div>
     </header>
+  );
+}
+
+/* ---------- Card shells (settings design language) ---------- */
+function SettingsCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="cd-card" style={{ overflow: "hidden" }}>
+      {children}
+    </div>
+  );
+}
+
+/** Uppercase in-card group label ("Connected" / "Available"). */
+function CardLabel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="cd-caption"
+      style={{
+        padding: "16px 20px 4px",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        fontWeight: 650,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -70,6 +105,40 @@ function SettingRow({
   );
 }
 
+/** Connection mechanism caption on a connector row ("OAuth", "API key", …). */
+function Mech({ children }: { children: ReactNode }) {
+  return (
+    <span className="cd-caption" style={{ flexShrink: 0 }}>
+      {children}
+    </span>
+  );
+}
+
+/** Fold opener with proper disclosure semantics. */
+function FoldBtn({
+  open,
+  controls,
+  onClick,
+  children,
+}: {
+  open: boolean;
+  controls: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className="cd-btn cd-btn-secondary cd-btn-sm"
+      aria-expanded={open}
+      aria-controls={controls}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
 const CONNECTION_TONE: Record<string, PillTone> = {
   connected: "success",
   pending: "warn",
@@ -95,6 +164,18 @@ const KEY_PLACEHOLDER: Record<string, string> = {
   shipbob: "ShipBob token",
   shiphero: "ShipHero refresh token",
 };
+
+/** Row caption for how a provider pairs, derived from its real connect flow. */
+function integrationMech(key: string): string | null {
+  const provider = kindToProvider(key);
+  if (isApiKeyConnect(key)) {
+    if (provider === "shipbob") return "PAT";
+    if (provider === "shiphero") return "Refresh token";
+    return "API key";
+  }
+  if (isConnectable(key)) return "OAuth";
+  return null;
+}
 
 /**
  * Connect / Disconnect / key-paste affordance for one Connections row.
@@ -203,6 +284,30 @@ const UNMATCHED_REASON_LABEL: Record<string, string> = {
   carrier_adjustment_no_link: "Carrier adjustment, no link",
 };
 
+/** Monospace command/URL row with a working copy affordance. */
+function CodeRow({ text, app }: { text: string; app: DashboardCtx }) {
+  return (
+    <div className="cd-code">
+      <span style={{ minWidth: 0, wordBreak: "break-all" }}>{text}</span>
+      <button
+        type="button"
+        className="cd-btn cd-btn-secondary cd-btn-sm"
+        style={{ flexShrink: 0 }}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            app.toast("Copied to clipboard", "check");
+          } catch {
+            app.toast("Couldn't copy — select the text manually.", "x", "critical");
+          }
+        }}
+      >
+        Copy
+      </button>
+    </div>
+  );
+}
+
 export default function Settings({ app }: { app: DashboardCtx }) {
   // Local editable copy of guardrails, seeded from app.guardrails and re-synced
   // whenever the shell refreshes it. Optimistic edits write here first; a failed
@@ -210,6 +315,14 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   const [g, setG] = useState<GuardrailVM | null>(app.guardrails);
   const [saving, setSaving] = useState(false);
   const [savingConsent, setSavingConsent] = useState(false);
+
+  // Disclosure state for the General tab's folds.
+  const [guardrailsOpen, setGuardrailsOpen] = useState(false);
+  const [unmatchedOpen, setUnmatchedOpen] = useState(false);
+  const [learnedOpen, setLearnedOpen] = useState(false);
+  const guardrailsFoldId = useId();
+  const unmatchedFoldId = useId();
+  const learnedFoldId = useId();
 
   useEffect(() => {
     setG(app.guardrails);
@@ -286,7 +399,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   }, []);
 
   // Unmatched carrier charges (Phase 3 Part C) — READ-ONLY on the dashboard. Loaded like
-  // ship-cost above (not in the shell context). When unreachable or zero, the block hides.
+  // ship-cost above (not in the shell context). When unreachable or zero, the row hides.
   const [unmatchedShip, setUnmatchedShip] = useState<UnmatchedShipCharges | null>(null);
   useEffect(() => {
     let active = true;
@@ -295,7 +408,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
         if (active) setUnmatchedShip(d);
       })
       .catch(() => {
-        /* leave null → the block renders nothing until reachable */
+        /* leave null → the row renders nothing until reachable */
       });
     return () => {
       active = false;
@@ -306,20 +419,20 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // Loaded like ship-cost above; removing one hands the decision back (the
   // suggestion returns to the Action Queue, never silently re-enables autonomy).
   const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[] | null>(null);
+  const [learnedFailed, setLearnedFailed] = useState(false);
   const [removingRuleId, setRemovingRuleId] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
+  const loadLearnedRules = useCallback(() => {
+    setLearnedFailed(false);
     fetchLearnedRules()
-      .then((rules) => {
-        if (active) setLearnedRules(rules);
-      })
+      .then((rules) => setLearnedRules(rules))
       .catch(() => {
-        /* leave null → the section shows its unavailable state */
+        // A failed read must look failed, not eternally loading (rule 12).
+        setLearnedFailed(true);
       });
-    return () => {
-      active = false;
-    };
   }, []);
+  useEffect(() => {
+    loadLearnedRules();
+  }, [loadLearnedRules]);
 
   const removeRule = async (rule: LearnedRuleVM) => {
     if (removingRuleId) return;
@@ -371,14 +484,71 @@ export default function Settings({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Stripe Connect payout pairing (real status via /dashboard/api/billing).
+  // Drives which Connectors card the Stripe row sits in: Connected when the
+  // Express account is fully active, Available (with a live onboarding CTA)
+  // otherwise. Same start-onboarding / login-link calls as the Payments screen.
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [billingFailed, setBillingFailed] = useState(false);
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    fetchBilling()
+      .then((d) => {
+        if (active) setBilling(d);
+      })
+      .catch(() => {
+        if (active) setBillingFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const retryBilling = async () => {
+    setBillingFailed(false);
+    try {
+      setBilling(await fetchBilling());
+    } catch {
+      setBillingFailed(true);
+    }
+  };
+
+  const openPayoutOnboarding = async () => {
+    if (payoutBusy) return;
+    setPayoutBusy(true);
+    try {
+      const { url } = await startPayoutOnboarding();
+      window.location.assign(url); // top-level hop to Stripe-hosted onboarding
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't start payout setup.";
+      app.toast(message, "x", "critical");
+      setPayoutBusy(false);
+    }
+  };
+
+  const openStripeDashboard = async () => {
+    if (payoutBusy) return;
+    setPayoutBusy(true);
+    try {
+      // Login links are single-use; mint on click (in-tab nav — an async
+      // window.open would trip popup blockers).
+      const { url } = await fetchPayoutLoginLink();
+      window.location.assign(url);
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't open the Stripe dashboard.";
+      app.toast(message, "x", "critical");
+      setPayoutBusy(false);
+    }
+  };
+
   // Guardrails not loaded yet — show the placeholder per the spec.
   if (!g) {
     return (
       <div className="cd-screen" style={{ maxWidth: 760 }}>
-        <ScreenHeader
-          title="Settings"
-          sub="Guardrails keep every automated action small, slow, and reversible."
-        />
+        <ScreenHeader title="Settings" />
         <Card pad={false}>
           <Placeholder icon="shield" title="Loading guardrails" sub="Reading your autopilot limits and connections." />
         </Card>
@@ -389,43 +559,364 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   const integrations = app.integrations;
   const sub = app.nav.screen === "settings" ? (app.nav.sub ?? "general") : "general";
 
+  const payouts = billing ? payoutsCardState(billing) : null;
+  const stripeActive = payouts?.phase === "active";
+  const stripeBalance = billing?.balance?.available?.[0];
+  const shopifyRow = integrations.find((it) => it.key === "shopify") ?? null;
+
   return (
     <div className="cd-screen" style={{ maxWidth: 760 }}>
-      <ScreenHeader
-        title="Settings"
-        sub="Guardrails keep every automated action small, slow, and reversible."
-      />
+      <ScreenHeader title="Settings" />
 
       <SettingsSubTabs app={app} />
 
       {sub === "general" && (
-      <>
-      <section>
-        <SectionTitle>Shipping cost</SectionTitle>
-        <Card pad={false}>
-          <SettingRow
-            label="Cost source"
-            sub="How Calderyn estimates each order's shipping cost. Automatic picks the most trustworthy source per order. Enter period totals, carrier invoices, and per-order overrides in the Shopify admin."
-          >
-            <Segmented
-              small
-              value={shipMode ?? "auto"}
-              onChange={(v) => commitShipMode(v)}
-              options={[
-                { value: "auto", label: "Auto" },
-                { value: "force_measured", label: "Measured" },
-                { value: "force_reconciled", label: "Allocated" },
-              ]}
+        <SettingsCard>
+          <SettingRow label="Dark mode" sub="Persisted across sessions.">
+            <Toggle
+              value={!!app.t.dark}
+              onChange={(v) => app.setNightMode(v)}
+              ariaLabel="Dark mode"
             />
           </SettingRow>
-          {missingWeight > 0 && (
-            <SettingRow
-              label="Weight coverage"
-              sub="Orders missing product weight get degraded shipping estimates. Add weights in Shopify to improve per-order accuracy."
+          <SettingRow label="Guardrails" sub="Spend caps, cooldowns, hours.">
+            <FoldBtn
+              open={guardrailsOpen}
+              controls={guardrailsFoldId}
+              onClick={() => setGuardrailsOpen((v) => !v)}
             >
-              <Pill tone="warn">{`${missingWeight}% missing`}</Pill>
-            </SettingRow>
+              Configure
+            </FoldBtn>
+          </SettingRow>
+          {guardrailsOpen && (
+            <div id={guardrailsFoldId}>
+              <SettingRow
+                label="Autopilot"
+                sub="Let Calderyn execute recommended actions on its own, within the guardrails below."
+              >
+                <Toggle
+                  value={g.autopilot_enabled}
+                  disabled={saving}
+                  ariaLabel="Autopilot"
+                  onChange={(v) =>
+                    commit(
+                      "autopilot_enabled",
+                      v,
+                      v ? "Autopilot enabled." : "Autopilot turned off.",
+                    )
+                  }
+                />
+              </SettingRow>
+              {/* Limits only appear once autopilot is on — mirrors the embedded
+                  settings page, reinforcing that autopilot is off by default. */}
+              {g.autopilot_enabled && (
+                <>
+                  <SettingRow
+                    label="Bypass guardrails"
+                    sub="DANGER: ignore every limit below (daily cap, min spend, approval $ cap, cooldown, business hours) and act on every candidate immediately. Change sizes still follow the cut/raise % below."
+                  >
+                    <Toggle
+                      value={g.autopilot_bypass_guardrails}
+                      disabled={saving}
+                      ariaLabel="Bypass guardrails"
+                      onChange={(v) =>
+                        commit(
+                          "autopilot_bypass_guardrails",
+                          v,
+                          v
+                            ? "Guardrails bypassed — autopilot acts without limits."
+                            : "Guardrails re-enabled.",
+                        )
+                      }
+                    />
+                  </SettingRow>
+                  <SettingRow label="Daily action cap" sub="Maximum automated actions per day. Unlimited removes the daily cap.">
+                    <GuardrailField
+                      value={g.autopilot_daily_action_cap}
+                      presets={[
+                        { value: 3, label: "3" },
+                        { value: 6, label: "6" },
+                        { value: 12, label: "12" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                      }}
+                      suffix="per day"
+                      unlimited={{ label: "Unlimited" }}
+                      disabled={saving}
+                      onCommit={(v) => commit("autopilot_daily_action_cap", v)}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Max budget cut"
+                    sub="Autopilot never reduces a campaign budget by more than this."
+                  >
+                    <GuardrailField
+                      value={g.autopilot_max_budget_cut_pct}
+                      presets={[
+                        { value: 15, label: "15%" },
+                        { value: 30, label: "30%" },
+                        { value: 50, label: "50%" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                      }}
+                      suffix="%"
+                      disabled={saving}
+                      onCommit={(v) => {
+                        if (v !== null) commit("autopilot_max_budget_cut_pct", v);
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Max price change"
+                    sub="Adjust-price never moves a product price by more than this in one step."
+                  >
+                    <GuardrailField
+                      value={g.max_price_change_pct}
+                      presets={[
+                        { value: 10, label: "10%" },
+                        { value: 15, label: "15%" },
+                        { value: 25, label: "25%" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                      }}
+                      suffix="%"
+                      disabled={saving}
+                      onCommit={(v) => {
+                        if (v !== null) commit("max_price_change_pct", v);
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Most a price can move on its own (%)"
+                    sub="When autopilot adjusts a price without you, it never moves it more than this in one step."
+                  >
+                    <GuardrailField
+                      value={g.autopilot_max_price_change_pct}
+                      presets={[
+                        { value: 5, label: "5%" },
+                        { value: 10, label: "10%" },
+                        { value: 15, label: "15%" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                      }}
+                      suffix="%"
+                      disabled={saving}
+                      onCommit={(v) => {
+                        if (v !== null) commit("autopilot_max_price_change_pct", v);
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Most stock Calderyn can move on its own (units)"
+                    sub="When autopilot reallocates inventory without you, it never moves more than this many units at once. Leave unset for no limit."
+                  >
+                    <GuardrailField
+                      value={g.autopilot_max_inventory_units_per_move}
+                      presets={[
+                        { value: 10, label: "10" },
+                        { value: 50, label: "50" },
+                        { value: 100, label: "100" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
+                      }}
+                      unlimited={{ label: "No limit" }}
+                      disabled={saving}
+                      onCommit={(v) => commit("autopilot_max_inventory_units_per_move", v)}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Max budget increase"
+                    sub="Autopilot never raises a campaign budget by more than this in one step."
+                  >
+                    <GuardrailField
+                      value={g.autopilot_max_budget_increase_pct}
+                      presets={[
+                        { value: 10, label: "10%" },
+                        { value: 20, label: "20%" },
+                        { value: 50, label: "50%" },
+                      ]}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+                      }}
+                      suffix="%"
+                      disabled={saving}
+                      onCommit={(v) => {
+                        if (v !== null) commit("autopilot_max_budget_increase_pct", v);
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Daily budget ceiling"
+                    sub="A hard cap on how high autopilot can push any one campaign's daily budget."
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Toggle
+                        value={g.autopilot_max_daily_budget_cents !== null}
+                        disabled={saving}
+                        ariaLabel="Daily budget ceiling"
+                        onChange={(on) =>
+                          commit("autopilot_max_daily_budget_cents", on ? 50000 : null)
+                        }
+                      />
+                      {g.autopilot_max_daily_budget_cents !== null && (
+                        <GuardrailField
+                          value={g.autopilot_max_daily_budget_cents}
+                          presets={[
+                            { value: 25000, label: "$250" },
+                            { value: 50000, label: "$500" },
+                            { value: 100000, label: "$1,000" },
+                          ]}
+                          toInput={(c) => String(Math.round(c / 100))}
+                          fromInput={(raw) => {
+                            const n = Number(raw);
+                            return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+                          }}
+                          suffix="USD/day"
+                          disabled={saving}
+                          onCommit={(v) => commit("autopilot_max_daily_budget_cents", v)}
+                        />
+                      )}
+                    </div>
+                  </SettingRow>
+                  <SettingRow
+                    label="Minimum spend to act"
+                    sub="Autopilot only touches a campaign once it has spent at least this much."
+                  >
+                    <GuardrailField
+                      value={g.autopilot_min_spend_cents}
+                      presets={[
+                        { value: 5000, label: "$50" },
+                        { value: 10000, label: "$100" },
+                        { value: 25000, label: "$250" },
+                      ]}
+                      toInput={(c) => String(Math.round(c / 100))}
+                      fromInput={(raw) => {
+                        const n = Number(raw);
+                        return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+                      }}
+                      suffix="USD"
+                      disabled={saving}
+                      onCommit={(v) => {
+                        if (v !== null) commit("autopilot_min_spend_cents", v);
+                      }}
+                    />
+                  </SettingRow>
+                </>
+              )}
+              <SettingRow
+                label="Daily action budget"
+                sub={`Dollar impact ceiling across all actions per day. ${money(
+                  g.daily_action_budget_used_cents,
+                )} used today.`}
+              >
+                <GuardrailField
+                  value={g.daily_action_budget_cents}
+                  presets={[
+                    { value: 25000, label: "$250" },
+                    { value: 50000, label: "$500" },
+                    { value: 100000, label: "$1,000" },
+                  ]}
+                  toInput={(c) => String(Math.round(c / 100))}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+                  }}
+                  suffix="USD/day"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("daily_action_budget_cents", v);
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Per-action dollar cap"
+                sub="The most a single action is allowed to move."
+              >
+                <GuardrailField
+                  value={g.dollar_cap_cents}
+                  presets={[
+                    { value: 10000, label: "$100" },
+                    { value: 25000, label: "$250" },
+                    { value: 50000, label: "$500" },
+                  ]}
+                  toInput={(c) => String(Math.round(c / 100))}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+                  }}
+                  suffix="USD"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("dollar_cap_cents", v);
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Cooldown between actions"
+                sub="Minimum gap before another action can touch the same campaign or SKU."
+              >
+                <GuardrailField
+                  value={g.cooldown_minutes}
+                  presets={[
+                    { value: 15, label: "15m" },
+                    { value: 30, label: "30m" },
+                    { value: 60, label: "1h" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+                  }}
+                  suffix="minutes"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("cooldown_minutes", v);
+                  }}
+                />
+              </SettingRow>
+              <BusinessHoursEditor
+                enabled={g.business_hours_only}
+                start={g.business_hours.start}
+                end={g.business_hours.end}
+                tz={g.business_hours.tz}
+                disabled={saving}
+                onToggle={(on) =>
+                  commit("business_hours_only", on, on ? "Business-hours window on." : "Business-hours window off.")
+                }
+                onChangeWindow={(next) => commit("business_hours", next, "Business hours updated")}
+              />
+            </div>
           )}
+
+          <SettingRow
+            label="Shipping cost source"
+            sub="How each order's shipping cost is estimated. Automatic picks the most trustworthy source per order; period totals, carrier invoices, and per-order overrides live in the Shopify admin."
+          >
+            <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {missingWeight > 0 && <Pill tone="warn">{`${missingWeight}% missing weight`}</Pill>}
+              <Segmented
+                small
+                value={shipMode ?? "auto"}
+                onChange={(v) => commitShipMode(v)}
+                options={[
+                  { value: "auto", label: "Auto" },
+                  { value: "force_measured", label: "Measured" },
+                  { value: "force_reconciled", label: "Allocated" },
+                ]}
+              />
+            </div>
+          </SettingRow>
+
           {unmatchedShip && unmatchedShip.count > 0 && (
             <>
               <SettingRow
@@ -433,384 +924,99 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                 sub="Carrier charges we couldn't tie to an order, so they aren't in margin yet. Map them to orders in the Shopify admin."
               >
                 <Pill tone="warn">{`${unmatchedShip.count} unmatched`}</Pill>
-              </SettingRow>
-              {unmatchedShip.items.slice(0, 10).map((it) => (
-                <SettingRow
-                  key={it.id}
-                  label={`${money(it.costCents)}${it.provider ? ` · ${it.provider}` : ""}`}
-                  sub={`${it.orderRef ? `Ref ${it.orderRef}` : "No ref"}${
-                    it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""
-                  } — ${UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}`}
+                <FoldBtn
+                  open={unmatchedOpen}
+                  controls={unmatchedFoldId}
+                  onClick={() => setUnmatchedOpen((v) => !v)}
                 >
-                  <Pill tone="neutral">Resolve in admin</Pill>
-                </SettingRow>
-              ))}
-            </>
-          )}
-        </Card>
-      </section>
-
-      <section>
-        <SectionTitle>Autopilot</SectionTitle>
-        <Card pad={false}>
-          <SettingRow
-            label="Autopilot"
-            sub="Let Calderyn execute recommended actions on its own, within the guardrails below."
-          >
-            <Toggle
-              value={g.autopilot_enabled}
-              disabled={saving}
-              onChange={(v) =>
-                commit(
-                  "autopilot_enabled",
-                  v,
-                  v ? "Autopilot enabled." : "Autopilot turned off.",
-                )
-              }
-            />
-          </SettingRow>
-          {/* Limits only appear once autopilot is on — mirrors the embedded
-              settings page, reinforcing that autopilot is off by default. */}
-          {g.autopilot_enabled && (
-            <>
-              <SettingRow
-                label="Bypass guardrails"
-                sub="DANGER: ignore every limit below (daily cap, min spend, approval $ cap, cooldown, business hours) and act on every candidate immediately. Change sizes still follow the cut/raise % below."
-              >
-                <Toggle
-                  value={g.autopilot_bypass_guardrails}
-                  disabled={saving}
-                  onChange={(v) =>
-                    commit(
-                      "autopilot_bypass_guardrails",
-                      v,
-                      v
-                        ? "Guardrails bypassed — autopilot acts without limits."
-                        : "Guardrails re-enabled.",
-                    )
-                  }
-                />
+                  Review
+                </FoldBtn>
               </SettingRow>
-              <SettingRow label="Daily action cap" sub="Maximum automated actions per day. Unlimited removes the daily cap.">
-                <GuardrailField
-                  value={g.autopilot_daily_action_cap}
-                  presets={[
-                    { value: 3, label: "3" },
-                    { value: 6, label: "6" },
-                    { value: 12, label: "12" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
-                  }}
-                  suffix="per day"
-                  unlimited={{ label: "Unlimited" }}
-                  disabled={saving}
-                  onCommit={(v) => commit("autopilot_daily_action_cap", v)}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Max budget cut"
-                sub="Autopilot never reduces a campaign budget by more than this."
-              >
-                <GuardrailField
-                  value={g.autopilot_max_budget_cut_pct}
-                  presets={[
-                    { value: 15, label: "15%" },
-                    { value: 30, label: "30%" },
-                    { value: 50, label: "50%" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
-                  }}
-                  suffix="%"
-                  disabled={saving}
-                  onCommit={(v) => {
-                    if (v !== null) commit("autopilot_max_budget_cut_pct", v);
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Max price change"
-                sub="Adjust-price never moves a product price by more than this in one step."
-              >
-                <GuardrailField
-                  value={g.max_price_change_pct}
-                  presets={[
-                    { value: 10, label: "10%" },
-                    { value: 15, label: "15%" },
-                    { value: 25, label: "25%" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
-                  }}
-                  suffix="%"
-                  disabled={saving}
-                  onCommit={(v) => {
-                    if (v !== null) commit("max_price_change_pct", v);
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Most a price can move on its own (%)"
-                sub="When autopilot adjusts a price without you, it never moves it more than this in one step."
-              >
-                <GuardrailField
-                  value={g.autopilot_max_price_change_pct}
-                  presets={[
-                    { value: 5, label: "5%" },
-                    { value: 10, label: "10%" },
-                    { value: 15, label: "15%" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
-                  }}
-                  suffix="%"
-                  disabled={saving}
-                  onCommit={(v) => {
-                    if (v !== null) commit("autopilot_max_price_change_pct", v);
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Most stock Calderyn can move on its own (units)"
-                sub="When autopilot reallocates inventory without you, it never moves more than this many units at once. Leave unset for no limit."
-              >
-                <GuardrailField
-                  value={g.autopilot_max_inventory_units_per_move}
-                  presets={[
-                    { value: 10, label: "10" },
-                    { value: 50, label: "50" },
-                    { value: 100, label: "100" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
-                  }}
-                  unlimited={{ label: "No limit" }}
-                  disabled={saving}
-                  onCommit={(v) => commit("autopilot_max_inventory_units_per_move", v)}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Max budget increase"
-                sub="Autopilot never raises a campaign budget by more than this in one step."
-              >
-                <GuardrailField
-                  value={g.autopilot_max_budget_increase_pct}
-                  presets={[
-                    { value: 10, label: "10%" },
-                    { value: 20, label: "20%" },
-                    { value: 50, label: "50%" },
-                  ]}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
-                  }}
-                  suffix="%"
-                  disabled={saving}
-                  onCommit={(v) => {
-                    if (v !== null) commit("autopilot_max_budget_increase_pct", v);
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Daily budget ceiling"
-                sub="A hard cap on how high autopilot can push any one campaign's daily budget."
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Toggle
-                    value={g.autopilot_max_daily_budget_cents !== null}
-                    disabled={saving}
-                    onChange={(on) =>
-                      commit("autopilot_max_daily_budget_cents", on ? 50000 : null)
-                    }
-                  />
-                  {g.autopilot_max_daily_budget_cents !== null && (
-                    <GuardrailField
-                      value={g.autopilot_max_daily_budget_cents}
-                      presets={[
-                        { value: 25000, label: "$250" },
-                        { value: 50000, label: "$500" },
-                        { value: 100000, label: "$1,000" },
-                      ]}
-                      toInput={(c) => String(Math.round(c / 100))}
-                      fromInput={(raw) => {
-                        const n = Number(raw);
-                        return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
-                      }}
-                      suffix="USD/day"
-                      disabled={saving}
-                      onCommit={(v) => commit("autopilot_max_daily_budget_cents", v)}
-                    />
-                  )}
+              {unmatchedOpen && (
+                <div id={unmatchedFoldId}>
+                  {unmatchedShip.items.slice(0, 10).map((it) => (
+                    <SettingRow
+                      key={it.id}
+                      label={`${money(it.costCents)}${it.provider ? ` · ${it.provider}` : ""}`}
+                      sub={`${it.orderRef ? `Ref ${it.orderRef}` : "No ref"}${
+                        it.trackingNo ? ` · Tracking ${it.trackingNo}` : ""
+                      } — ${UNMATCHED_REASON_LABEL[it.reason] ?? it.reason}`}
+                    >
+                      <Pill tone="neutral">Resolve in admin</Pill>
+                    </SettingRow>
+                  ))}
                 </div>
-              </SettingRow>
-              <SettingRow
-                label="Minimum spend to act"
-                sub="Autopilot only touches a campaign once it has spent at least this much."
-              >
-                <GuardrailField
-                  value={g.autopilot_min_spend_cents}
-                  presets={[
-                    { value: 5000, label: "$50" },
-                    { value: 10000, label: "$100" },
-                    { value: 25000, label: "$250" },
-                  ]}
-                  toInput={(c) => String(Math.round(c / 100))}
-                  fromInput={(raw) => {
-                    const n = Number(raw);
-                    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-                  }}
-                  suffix="USD"
-                  disabled={saving}
-                  onCommit={(v) => {
-                    if (v !== null) commit("autopilot_min_spend_cents", v);
-                  }}
-                />
-              </SettingRow>
+              )}
             </>
           )}
-        </Card>
-      </section>
 
-      <section>
-        <SectionTitle>Guardrails</SectionTitle>
-        <Card pad={false}>
           <SettingRow
-            label="Daily action budget"
-            sub={`Dollar impact ceiling across all actions per day. ${money(
-              g.daily_action_budget_used_cents,
-            )} used today.`}
+            label="Learned rules"
+            sub="What Calderyn learned from your rejections. Remove one to hand the decision back."
           >
-            <GuardrailField
-              value={g.daily_action_budget_cents}
-              presets={[
-                { value: 25000, label: "$250" },
-                { value: 50000, label: "$500" },
-                { value: 100000, label: "$1,000" },
-              ]}
-              toInput={(c) => String(Math.round(c / 100))}
-              fromInput={(raw) => {
-                const n = Number(raw);
-                return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
-              }}
-              suffix="USD/day"
-              disabled={saving}
-              onCommit={(v) => {
-                if (v !== null) commit("daily_action_budget_cents", v);
-              }}
-            />
+            {learnedRules !== null && learnedRules.length > 0 && (
+              <Pill tone="neutral">
+                {learnedRules.length === 1 ? "1 rule" : `${learnedRules.length} rules`}
+              </Pill>
+            )}
+            <FoldBtn
+              open={learnedOpen}
+              controls={learnedFoldId}
+              onClick={() => setLearnedOpen((v) => !v)}
+            >
+              View
+            </FoldBtn>
           </SettingRow>
-          <SettingRow
-            label="Per-action dollar cap"
-            sub="The most a single action is allowed to move."
-          >
-            <GuardrailField
-              value={g.dollar_cap_cents}
-              presets={[
-                { value: 10000, label: "$100" },
-                { value: 25000, label: "$250" },
-                { value: 50000, label: "$500" },
-              ]}
-              toInput={(c) => String(Math.round(c / 100))}
-              fromInput={(raw) => {
-                const n = Number(raw);
-                return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
-              }}
-              suffix="USD"
-              disabled={saving}
-              onCommit={(v) => {
-                if (v !== null) commit("dollar_cap_cents", v);
-              }}
-            />
-          </SettingRow>
-          <SettingRow
-            label="Cooldown between actions"
-            sub="Minimum gap before another action can touch the same campaign or SKU."
-          >
-            <GuardrailField
-              value={g.cooldown_minutes}
-              presets={[
-                { value: 15, label: "15m" },
-                { value: 30, label: "30m" },
-                { value: 60, label: "1h" },
-              ]}
-              fromInput={(raw) => {
-                const n = Number(raw);
-                return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-              }}
-              suffix="minutes"
-              disabled={saving}
-              onCommit={(v) => {
-                if (v !== null) commit("cooldown_minutes", v);
-              }}
-            />
-          </SettingRow>
-          <BusinessHoursEditor
-            enabled={g.business_hours_only}
-            start={g.business_hours.start}
-            end={g.business_hours.end}
-            tz={g.business_hours.tz}
-            disabled={saving}
-            onToggle={(on) =>
-              commit("business_hours_only", on, on ? "Business-hours window on." : "Business-hours window off.")
-            }
-            onChangeWindow={(next) => commit("business_hours", next, "Business hours updated")}
-          />
-        </Card>
-      </section>
-
-      <section>
-        <SectionTitle>Learned rules</SectionTitle>
-        <Card pad={false}>
-          {learnedRules === null ? (
-            <Placeholder
-              icon="shield"
-              title="Loading learned rules"
-              sub="Reading what Calderyn learned from your decisions."
-            />
-          ) : learnedRules.length === 0 ? (
-            <Placeholder
-              icon="shield"
-              title="Nothing learned yet"
-              sub="Reject a suggestion with a reason and the rule Calderyn learns appears here."
-            />
-          ) : (
-            learnedRules.map((r) => (
-              <SettingRow
-                key={r.id}
-                label={r.summary}
-                sub={`Learned ${new Date(r.created_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })} — remove to hand the decision back`}
-              >
-                <button
-                  type="button"
-                  className="cd-btn"
-                  disabled={removingRuleId !== null}
-                  onClick={() => removeRule(r)}
-                >
-                  {removingRuleId === r.id
-                    ? "Removing…"
-                    : r.rule_kind === "muted_pair"
-                      ? "Hand it back"
-                      : "Remove rule"}
-                </button>
-              </SettingRow>
-            ))
+          {learnedOpen && (
+            <div id={learnedFoldId}>
+              {learnedFailed ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 20px" }}>
+                  <span className="cd-caption">Couldn&apos;t load learned rules.</span>
+                  <Btn small onClick={loadLearnedRules}>
+                    Retry
+                  </Btn>
+                </div>
+              ) : learnedRules === null ? (
+                <Placeholder
+                  icon="shield"
+                  title="Loading learned rules"
+                  sub="Reading what Calderyn learned from your decisions."
+                />
+              ) : learnedRules.length === 0 ? (
+                <Placeholder
+                  icon="shield"
+                  title="Nothing learned yet"
+                  sub="Reject a suggestion with a reason and the rule Calderyn learns appears here."
+                />
+              ) : (
+                learnedRules.map((r) => (
+                  <SettingRow
+                    key={r.id}
+                    label={r.summary}
+                    sub={`Learned ${new Date(r.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })} — remove to hand the decision back`}
+                  >
+                    <button
+                      type="button"
+                      className="cd-btn"
+                      disabled={removingRuleId !== null}
+                      onClick={() => removeRule(r)}
+                    >
+                      {removingRuleId === r.id
+                        ? "Removing…"
+                        : r.rule_kind === "muted_pair"
+                          ? "Hand it back"
+                          : "Remove rule"}
+                    </button>
+                  </SettingRow>
+                ))
+              )}
+            </div>
           )}
-        </Card>
-      </section>
 
-      <section>
-        <SectionTitle>Privacy</SectionTitle>
-        <Card pad={false}>
           <SettingRow
             label="Peer baseline"
             sub="Contribute anonymized, hashed metrics so Calderyn can benchmark you against peer shops in your category. Withdraw anytime — your contribution is purged within 30 days."
@@ -818,52 +1024,187 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             <Toggle
               value={app.consent ?? false}
               disabled={savingConsent || app.consent === null}
+              ariaLabel="Peer baseline"
               onChange={(v) => commitConsent(v)}
             />
           </SettingRow>
-        </Card>
-      </section>
-      </>
+
+          <SettingRow
+            label="Go live"
+            sub="Where your store is on the path from Shopify to Calderyn — checklist, dual run, and the switch."
+          >
+            <Btn small onClick={() => app.navigate("cutover")}>
+              Open
+            </Btn>
+          </SettingRow>
+
+          <SettingRow
+            label="Locations"
+            sub="Rank fulfillment locations, set allocator coordinates, and edit ship-from addresses."
+          >
+            <Btn small onClick={() => app.navigate("locations-settings")}>
+              Open
+            </Btn>
+          </SettingRow>
+
+          <SettingRow label="Collections" sub="Create and manage product collections.">
+            <Btn small onClick={() => app.navigate("collections")}>
+              Open
+            </Btn>
+          </SettingRow>
+        </SettingsCard>
       )}
 
       {sub === "connectors" && (
-      <>
-      <section>
-        <SectionTitle>Connections</SectionTitle>
-        <Card pad={false}>
-          {integrations.length === 0 ? (
-            <Placeholder icon="bolt" title="No connections" sub="Your ad, finance, and shipping accounts will appear here." />
-          ) : (
-            integrations.map((it) => {
-              const tone = CONNECTION_TONE[it.status] ?? "neutral";
-              const label = CONNECTION_LABEL[it.status] ?? it.status;
-              const icon = CONNECTION_ICON[it.status] ?? "clock";
-              return (
-                <SettingRow key={it.key} label={it.name} sub={it.detail}>
-                  <div className="flex items-center gap-2">
-                    <Pill tone={tone} icon={icon}>
-                      {label}
-                    </Pill>
-                    <ConnectionActions it={it} app={app} />
-                  </div>
-                </SettingRow>
-              );
-            })
-          )}
-        </Card>
-      </section>
+        <>
+          <SettingsCard>
+            <CardLabel>Connected</CardLabel>
+            {/* No status pill: accounts can be email+password only, and nothing
+                on the session says whether Google is linked — a hardcoded
+                "Connected" badge would be fabricated state. */}
+            <SettingRow label="Google Sign-In" sub="Merchant login rail — used at sign-in when linked">
+              <Mech>OAuth</Mech>
+            </SettingRow>
+            {billingFailed ? (
+              <SettingRow label="Stripe Connect" sub="Payouts — status unavailable">
+                <Mech>OAuth</Mech>
+                <Btn small onClick={retryBilling}>
+                  Retry
+                </Btn>
+              </SettingRow>
+            ) : !payouts ? (
+              <SettingRow label="Stripe Connect" sub="Payouts">
+                <Mech>OAuth</Mech>
+                <Pill tone="neutral" icon="clock">
+                  Checking…
+                </Pill>
+              </SettingRow>
+            ) : stripeActive ? (
+              <SettingRow
+                label="Stripe Connect"
+                sub={`Payouts · ${payouts.feeLabel}${
+                  stripeBalance ? ` · ${money(stripeBalance.amountCents)} available` : ""
+                }`}
+              >
+                <Mech>OAuth</Mech>
+                <Pill tone="success" icon="check">
+                  Connected
+                </Pill>
+                <Btn small disabled={payoutBusy} onClick={openStripeDashboard}>
+                  Open
+                </Btn>
+              </SettingRow>
+            ) : null}
+            <SettingRow label="Claude · MCP" sub="Agentic sales channel">
+              <Mech>MCP</Mech>
+              <Btn small onClick={() => app.navigate("settings", null, "mcp")}>
+                View setup
+              </Btn>
+            </SettingRow>
+            <SettingRow label="Shopify import" sub="Catalog, inventory, and orders migrated in">
+              <Mech>One-click</Mech>
+              {shopifyRow && isPaired(shopifyRow.status) && (
+                <Pill tone="success" icon="check">
+                  Connected
+                </Pill>
+              )}
+              <Btn small onClick={() => app.navigate("import-shopify")}>
+                Open
+              </Btn>
+            </SettingRow>
+          </SettingsCard>
 
-      <PayoutsCard app={app} />
-      </>
+          <SettingsCard>
+            <CardLabel>Available</CardLabel>
+            {payouts && !stripeActive && (
+              <SettingRow label="Stripe Connect" sub={`Payouts · ${payouts.feeLabel}`}>
+                <Mech>OAuth</Mech>
+                {payouts.phase === "onboarding" && (
+                  <Pill tone="warn" icon="clock">
+                    Onboarding incomplete
+                  </Pill>
+                )}
+                <Btn small kind="primary" disabled={payoutBusy} onClick={openPayoutOnboarding}>
+                  {payouts.phase === "onboarding" ? "Resume" : "Connect"}
+                </Btn>
+              </SettingRow>
+            )}
+            {integrations.filter((it) => it.key !== "shopify").length === 0 ? (
+              <Placeholder
+                icon="bolt"
+                title="No connections"
+                sub="Your ad, finance, and shipping accounts will appear here."
+              />
+            ) : (
+              integrations
+                .filter((it) => it.key !== "shopify")
+                .map((it) => {
+                  const tone = CONNECTION_TONE[it.status] ?? "neutral";
+                  const label = CONNECTION_LABEL[it.status] ?? it.status;
+                  const icon = CONNECTION_ICON[it.status] ?? "clock";
+                  const mech = integrationMech(it.key);
+                  return (
+                    <SettingRow key={it.key} label={it.name} sub={it.detail}>
+                      {mech && <Mech>{mech}</Mech>}
+                      {it.status !== "disconnected" && (
+                        <Pill tone={tone} icon={icon}>
+                          {label}
+                        </Pill>
+                      )}
+                      <ConnectionActions it={it} app={app} />
+                    </SettingRow>
+                  );
+                })
+            )}
+          </SettingsCard>
+        </>
       )}
 
       {sub === "mcp" && (
-      <section>
-        <SectionTitle>Claude connector</SectionTitle>
-        <Card>
-          <McpGuide />
-        </Card>
-      </section>
+        <SettingsCard>
+          <div style={{ padding: "18px 20px 2px" }}>
+            <div className="cd-anh" style={{ margin: 0 }}>
+              <CDIcon name="bolt" size={15} />
+              Calderyn MCP &amp; CLI
+            </div>
+            <p className="cd-caption" style={{ marginTop: 5 }}>
+              Connect your store to Claude — let it read your ads, inventory, and alerts and act
+              within your guardrails.
+            </p>
+          </div>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 14, padding: "14px 20px 20px" }}
+          >
+            {CONNECTOR_STEPS.map((s) => (
+              <div key={s.n}>
+                <div className="cd-mcp-step">
+                  <b>{s.n}</b>
+                  {s.title}
+                </div>
+                <div className="cd-caption">{s.body}</div>
+                {s.n === 2 && (
+                  <div style={{ marginTop: 6 }}>
+                    <CodeRow text={MCP_CONNECTOR_URL} app={app} />
+                  </div>
+                )}
+              </div>
+            ))}
+            <div>
+              <div className="cd-mcp-step">
+                <b>4</b>
+                Claude Code (CLI)
+              </div>
+              <CodeRow text={CLI_COMMAND} app={app} />
+              <div className="cd-caption" style={{ marginTop: 6 }}>
+                {CLI_NOTE}
+              </div>
+            </div>
+            <div className="cd-caption">
+              Manage access keys &amp; connected workspaces from the Calderyn app in your Shopify
+              admin.
+            </div>
+          </div>
+        </SettingsCard>
       )}
 
       {/* Secret Calderyn Labs trigger — the dimmed hexagon next to the build

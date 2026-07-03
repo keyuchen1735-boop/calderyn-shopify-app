@@ -3,8 +3,11 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { Card, Btn, Placeholder } from "../ui";
-import { CDIcon } from "../icons";
-import { ProductsSubTabs } from "../subtabs";
+
+// URL-only page (/dashboard/products/collections): no Products subtab entry,
+// so no subtab bar renders here.
+
+const GRID = "2fr 1fr";
 
 export default function Collections({ app }: { app: DashboardCtx }) {
   const [items, setItems] = useState<client.CollectionVM[]>([]);
@@ -60,8 +63,6 @@ export default function Collections({ app }: { app: DashboardCtx }) {
         </div>
       </header>
 
-      <ProductsSubTabs app={app} />
-
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <input
           className="cd-input"
@@ -87,15 +88,18 @@ export default function Collections({ app }: { app: DashboardCtx }) {
         ) : items.length === 0 ? (
           <Placeholder icon="tag" title="No collections yet" sub="Create one to group products in your storefront." />
         ) : (
-          <div className="cd-rows">
+          <>
+            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+              <span>Collection</span>
+              <span>Handle</span>
+            </div>
             {items.map((c) => (
-              <div key={c.id} className="cd-row">
-                <CDIcon name="tag" size={16} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                <span className="cd-row-title flex-1 truncate">{c.title}</span>
-                <span className="cd-caption tabular-nums">{c.handle}</span>
+              <div key={c.id} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
+                <div className="cd-row-title truncate">{c.title}</div>
+                <div className="cd-caption tabular-nums truncate">{c.handle}</div>
               </div>
             ))}
-          </div>
+          </>
         )}
       </Card>
     </div>

@@ -1,37 +1,65 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  Card,
-  AreaChart,
-  Btn,
-  GradePill,
-  CountMoney,
-  CountNum,
-  Segmented,
-  Placeholder,
-} from "../ui";
-import { fetchAnalytics, DashboardApiError } from "~/lib/dashboard/client";
-import { gradeFromRow } from "~/lib/campaign-grade";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { Card, Btn, CountMoney, Segmented, Placeholder } from "../ui";
+import { CDIcon } from "../icons";
+import { money } from "../format";
+import { DashboardApiError } from "~/lib/dashboard/client";
+import { fetchCommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
+import type {
+  CommerceAnalytics,
+  CommerceWindowDays,
+} from "~/lib/analytics/commerce-types";
 import type { DashboardCtx } from "../context";
-import type { DailyRow, TopAd } from "../view-models";
-import type { CampaignGradeRow } from "~/lib/types";
-import {
-  StatRow,
-  FocusCard,
-  ActivityFeed,
-  GuardrailCard,
-  AttentionSection,
-} from "./overview-cards";
-import { PeerBenchmarks } from "./PeerBenchmarks";
 import AnalyticsLive from "./AnalyticsLive";
-import type { PeerBenchmarks as BenchmarksData } from "~/lib/benchmarks/types";
 
 type Range = "7d" | "14d" | "30d";
 
-interface AnalyticsData {
-  daily: DailyRow[];
-  grades: CampaignGradeRow[];
-  topAds: TopAd[];
+const RANGE_DAYS: Record<Range, CommerceWindowDays> = { "7d": 7, "14d": 14, "30d": 30 };
+
+/* ---------- SVG series helpers ----------
+ * The charts are plain scaled polylines: x spreads the points across the
+ * viewBox, y maps 0..max onto the drawable band (max at the top). A flat
+ * zero series draws along the bottom of the band. */
+
+function seriesPoints(
+  values: number[],
+  width: number,
+  yTop: number,
+  yBottom: number,
+): Array<[number, number]> {
+  const max = Math.max(...values, 0);
+  const last = values.length - 1;
+  return values.map((v, i) => {
+    const x = last <= 0 ? width : (i / last) * width;
+    const y = max > 0 ? yBottom - (v / max) * (yBottom - yTop) : yBottom;
+    return [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+  });
 }
+
+function toPolyline(pts: Array<[number, number]>): string {
+  return pts.map(([x, y]) => `${x},${y}`).join(" ");
+}
+
+function toAreaPath(pts: Array<[number, number]>, width: number, floor: number): string {
+  const line = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ");
+  return `${line} L${width},${floor} L0,${floor} Z`;
+}
+
+/** "2026-07-02" → "Jul 2" (UTC — the daily buckets are UTC days). */
+function dayLabel(date: string): string {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(t)) return date;
+  return new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+const rowBetween: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+};
 
 /* ---------- Header ---------- */
 function ScreenHeader({
@@ -54,22 +82,258 @@ function ScreenHeader({
   );
 }
 
+/* ---------- Building blocks ---------- */
+
+function KpiCard({
+  label,
+  icon,
+  value,
+  spark,
+  stroke,
+}: {
+  label: string;
+  icon: string;
+  value: ReactNode;
+  /** Daily series behind the sparkline; omit when no real daily series exists. */
+  spark?: number[];
+  stroke?: string;
+}) {
+  return (
+    <Card className="cd-stat">
+      <div style={rowBetween}>
+        <span className="cd-stat-label">{label}</span>
+        <CDIcon name={icon} size={15} style={{ color: "var(--text-3)" }} />
+      </div>
+      <span className="cd-stat-value tabular-nums">{value}</span>
+      {spark && spark.length >= 2 && (
+        <svg className="cd-kspark" viewBox="0 0 120 24" preserveAspectRatio="none">
+          <polyline
+            points={toPolyline(seriesPoints(spark, 120, 4, 20))}
+            fill="none"
+            stroke={stroke ?? "var(--accent)"}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      )}
+    </Card>
+  );
+}
+
+const liveDot: CSSProperties = {
+  width: 7,
+  height: 7,
+  borderRadius: "50%",
+  background: "var(--live)",
+  display: "inline-block",
+  flex: "0 0 auto",
+};
+
+function CardHead({
+  icon,
+  dot,
+  title,
+  meta,
+}: {
+  icon?: string;
+  dot?: boolean;
+  title: string;
+  meta?: ReactNode;
+}) {
+  return (
+    <div className="cd-anh-wrap">
+      <div className="cd-anh">
+        {dot ? <span style={liveDot} /> : icon ? <CDIcon name={icon} size={15} /> : null}
+        {title}
+        {meta && (
+          <span style={{ marginLeft: "auto", fontWeight: 500, color: "var(--text-3)" }}>
+            {meta}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AreaLineChart({
+  values,
+  height,
+  area = true,
+}: {
+  values: number[];
+  height?: number;
+  area?: boolean;
+}) {
+  const pts = seriesPoints(values, 300, 12, 112);
+  return (
+    <svg
+      className="cd-chart"
+      style={height ? { height } : undefined}
+      viewBox="0 0 300 120"
+      preserveAspectRatio="none"
+    >
+      {area && <path d={toAreaPath(pts, 300, 120)} fill="var(--accent)" fillOpacity={0.1} />}
+      <polyline
+        points={toPolyline(pts)}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+function NoData({ minHeight }: { minHeight?: number }) {
+  return (
+    <div className="cd-nc-empty" style={minHeight ? { minHeight } : undefined}>
+      No data yet
+    </div>
+  );
+}
+
+function BarRow({
+  label,
+  cents,
+  max,
+  live,
+}: {
+  label: ReactNode;
+  cents: number;
+  max: number;
+  live?: boolean;
+}) {
+  const width = max > 0 ? Math.max(2, Math.round((cents / max) * 100)) : 0;
+  const fill = live ? "var(--live)" : "var(--accent)";
+  return (
+    <div className="cd-bar-row">
+      <span
+        className="cd-bl"
+        style={live ? { display: "flex", alignItems: "center", gap: 6 } : undefined}
+      >
+        {live && <span style={liveDot} />}
+        {label}
+      </span>
+      <div className="cd-bar-track">
+        <div className="cd-bar-fill" style={{ width: `${width}%`, background: fill }} />
+      </div>
+      <span className="cd-bar-val">{money(cents)}</span>
+    </div>
+  );
+}
+
+function BreakdownLine({
+  label,
+  value,
+  negative,
+  net,
+  first,
+}: {
+  label: string;
+  value: number;
+  /** Renders red with a leading minus (refund-style line). */
+  negative?: boolean;
+  /** The bold net row with the strong divider. */
+  net?: boolean;
+  first?: boolean;
+}) {
+  const style: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: net ? "10px 0" : "8px 0",
+    fontSize: net ? 14 : 13.5,
+    ...(first
+      ? {}
+      : { boxShadow: `inset 0 ${net ? "1px" : "0.5px"} 0 var(--hairline-strong)` }),
+  };
+  return (
+    <div style={style}>
+      <span style={net ? { fontWeight: 600 } : { color: "var(--text-2)" }}>{label}</span>
+      <b
+        className="tabular-nums"
+        style={negative && value > 0 ? { color: "var(--red)" } : undefined}
+      >
+        {negative && value > 0 ? money(-value) : money(value)}
+      </b>
+    </div>
+  );
+}
+
+function FunnelStage({
+  label,
+  count,
+  pct,
+  done,
+}: {
+  label: string;
+  count: number;
+  pct: number;
+  done?: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+        <span style={{ color: "var(--text-2)" }}>{label}</span>
+        <b className="tabular-nums">{count.toLocaleString()}</b>
+      </div>
+      <div className="cd-bar-track" style={{ marginTop: 6 }}>
+        <div
+          className="cd-bar-fill"
+          style={{
+            width: `${Math.max(count > 0 ? 2 : 0, Math.round(pct))}%`,
+            background: done ? "var(--green)" : "var(--accent)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AgenticStat({
+  label,
+  value,
+  caption,
+  captionTone,
+}: {
+  label: string;
+  value: ReactNode;
+  caption: string;
+  captionTone?: string;
+}) {
+  return (
+    <div className="cd-stat">
+      <span className="cd-stat-label">{label}</span>
+      <span className="cd-stat-value tabular-nums">{value}</span>
+      <span className="cd-caption" style={captionTone ? { color: captionTone } : undefined}>
+        {caption}
+      </span>
+    </div>
+  );
+}
+
+/* ---------- Screen ---------- */
+
 export default function Analytics({ app }: { app: DashboardCtx }) {
   const [range, setRange] = useState<Range>("30d");
   // Performance ↔ Live rides the URL (/dashboard/analytics vs /analytics/live)
   // so both subtabs are deep-linkable and back-button friendly.
   const view: "performance" | "live" = app.nav.sub === "live" ? "live" : "performance";
-  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [data, setData] = useState<CommerceAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Peer Benchmarks: self-fetched (relocated from the former Overview).
-  const [benchmarks, setBenchmarks] = useState<BenchmarksData | null>(null);
 
+  // The 7d/14d/30d segment re-queries the endpoint — the window is aggregated
+  // server-side, not sliced client-side.
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError(null);
-    fetchAnalytics()
+    fetchCommerceAnalytics(RANGE_DAYS[range])
       .then((res) => {
         if (!alive) return;
         setData(res);
@@ -86,55 +350,12 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    fetch("/dashboard/api/benchmarks")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (alive && d && Array.isArray((d as BenchmarksData).kpis)) {
-          setBenchmarks(d as BenchmarksData);
-        }
-      })
-      .catch((e) => {
-        console.error("peer benchmarks fetch failed", e);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // The daily series arrives with daysAgo offsets (0 = today). Slice the most
-  // recent N days for the selected range — i.e. the rows with the smallest
-  // daysAgo. Preserve oldest→newest order for the chart.
-  const rows = useMemo<DailyRow[]>(() => {
-    const all = data?.daily ?? [];
-    if (range === "30d") return all;
-    const n = range === "7d" ? 7 : 14;
-    return all.slice(-n);
-  }, [data, range]);
-
-  const spend = rows.reduce((s, r) => s + r.spend_cents, 0);
-  const revenue = rows.reduce((s, r) => s + r.revenue_cents, 0);
-  const blended = spend > 0 ? revenue / spend : 0;
-
-  const grades = data?.grades ?? [];
-  const winning = grades.filter((g) => g.grade === "winning");
-  const losing = grades.filter((g) => g.break_even_roas > 0 && g.roas < g.break_even_roas);
-
-  const topAds = data?.topAds ?? [];
-  const maxEng = topAds.length ? Math.max(...topAds.map((a) => a.engagement)) : 1;
-  // Scale for the campaign grade bars — top of the track maps to the best ROAS
-  // seen (with headroom), so the fill never overflows when ROAS is high.
-  const gradeMax = grades.length
-    ? Math.max(6.5, ...grades.map((g) => g.roas), ...grades.map((g) => g.break_even_roas)) * 1.05
-    : 6.5;
+  }, [range]);
 
   // The Performance ↔ Live subtab switch, present in every header state so the
   // Live view stays reachable while Performance is still loading or errored.
-  // The Agentic channel rides along here — it lost its top-level nav item in
-  // the grouped IA, and this is its home surface now.
+  // The Agentic channel button rides along here — it lost its top-level nav
+  // item in the grouped IA, and Analytics is its entry point.
   const viewSwitch = (
     <>
       <Segmented
@@ -168,32 +389,45 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   if (loading) {
     return (
       <div className="cd-screen">
-        <ScreenHeader title="Analytics" sub="Loading blended performance across your ad accounts…">
+        <ScreenHeader title="Analytics" sub="Loading sales, sessions and conversion…">
           {viewSwitch}
         </ScreenHeader>
         <Card pad={false}>
-          <Placeholder icon="chart" title="Loading analytics" sub="Reading spend, revenue and campaign grades." />
+          <Placeholder icon="chart" title="Loading analytics" sub="Reading orders, sessions and channel mix." />
         </Card>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !data) {
     return (
       <div className="cd-screen">
         <ScreenHeader title="Analytics">{viewSwitch}</ScreenHeader>
         <Card pad={false}>
-          <Placeholder icon="warn" title="Couldn't load analytics" sub={error} />
+          <Placeholder icon="warn" title="Couldn't load analytics" sub={error ?? "No data returned."} />
         </Card>
       </div>
     );
   }
 
-  const haveDaily = rows.length > 1;
+  const { daily, totals, byChannel, topProducts, funnel, agentic } = data;
+  const haveSales = totals.orders > 0;
+  const haveSessions = funnel.sessions > 0;
+
+  const channelMax = byChannel.length ? Math.max(...byChannel.map((c) => c.grossCents)) : 0;
+  const productMax = topProducts.length ? Math.max(...topProducts.map((p) => p.grossCents)) : 0;
+
+  // Conversion series: only days that had sessions carry a real rate.
+  const conversionDays = daily.filter((d) => d.conversionPct != null);
+  const conversionValues = conversionDays.map((d) => d.conversionPct ?? 0);
+  const latestConversion = conversionValues.length
+    ? conversionValues[conversionValues.length - 1]
+    : null;
+  const funnelPct = funnel.sessions > 0 ? (funnel.purchases / funnel.sessions) * 100 : null;
 
   return (
     <div className="cd-screen">
-      <ScreenHeader title="Analytics" sub="Blended performance across Meta, Google and TikTok — margin-aware.">
+      <ScreenHeader title="Analytics" sub="Sales, sessions and channels across your store.">
         {viewSwitch}
         <Segmented
           small
@@ -203,178 +437,199 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
         />
       </ScreenHeader>
 
+      {/* kpi row */}
       <div className="cd-stat-grid">
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Ad spend ({range})</span>
-          <span className="cd-stat-value">
-            <CountMoney cents={spend} />
-          </span>
-          <span className="cd-caption">across {grades.length} graded campaigns</span>
+        <KpiCard
+          label="Gross sales"
+          icon="coin"
+          value={<CountMoney cents={totals.grossCents} />}
+          spark={haveSales ? daily.map((d) => d.grossCents) : undefined}
+          stroke="var(--green)"
+        />
+        {/* No per-day returning series exists, so this card carries no sparkline. */}
+        <KpiCard
+          label="Returning customers"
+          icon="user"
+          value={totals.returningPct == null ? "—" : `${Math.round(totals.returningPct)}%`}
+        />
+        <KpiCard
+          label="Orders fulfilled"
+          icon="box"
+          value={totals.fulfilled.toLocaleString()}
+          spark={haveSales ? daily.map((d) => d.fulfilled) : undefined}
+          stroke="var(--accent)"
+        />
+        <KpiCard
+          label="Orders"
+          icon="doc"
+          value={totals.orders.toLocaleString()}
+          spark={haveSales ? daily.map((d) => d.orders) : undefined}
+          stroke="var(--green)"
+        />
+      </div>
+
+      {/* sales over time + breakdown */}
+      <div className="cd-grid-main">
+        <Card>
+          <CardHead
+            icon="coin"
+            title="Sales over time"
+            meta={`${money(totals.grossCents)} gross · ${totals.orders.toLocaleString()} orders`}
+          />
+          {haveSales ? (
+            <>
+              <AreaLineChart values={daily.map((d) => d.grossCents)} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                <span className="cd-caption">{dayLabel(daily[0].date)}</span>
+                <span className="cd-caption">{dayLabel(daily[daily.length - 1].date)}</span>
+              </div>
+            </>
+          ) : (
+            <NoData minHeight={190} />
+          )}
         </Card>
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Attributed revenue</span>
-          <span className="cd-stat-value">
-            <CountMoney cents={revenue} />
-          </span>
-          <span className="cd-caption">last-click + modeled</span>
-        </Card>
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Blended ROAS</span>
-          <span
-            className="cd-stat-value tabular-nums"
-            style={{ color: blended >= 2 ? "var(--green)" : "var(--orange)" }}
-          >
-            <CountNum value={blended} decimals={1} suffix="×" />
-          </span>
-          <span className="cd-caption">revenue ÷ spend, blended</span>
-        </Card>
-        <Card hover onClick={() => app.navigate("campaigns")} className="cd-stat">
-          <span className="cd-stat-label">Campaign health</span>
-          <span className="cd-stat-value tabular-nums">
-            {winning.length}
-            <span style={{ color: "var(--text-3)", fontWeight: 500 }}>/{grades.length}</span>
-          </span>
-          <span className="cd-caption" style={losing.length ? { color: "var(--red)" } : undefined}>
-            {losing.length ? `${losing.length} below break-even` : "all above break-even"}
-          </span>
+        <Card>
+          <CardHead icon="chart" title="Sales breakdown" />
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {/* No discounts field exists on the order spine, so no Discounts line. */}
+            <BreakdownLine first label="Gross sales" value={totals.grossCents} />
+            <BreakdownLine negative label="Refunds" value={totals.refundCents} />
+            <BreakdownLine net label="Net sales" value={totals.netCents} />
+            <BreakdownLine label="Shipping" value={totals.shippingCents} />
+            <BreakdownLine label="Tax collected" value={totals.taxCents} />
+          </div>
         </Card>
       </div>
 
-      <Card pad={false}>
-        <div className="cd-pad-x cd-pad-t flex items-center justify-between">
-          <h2 className="cd-h2">Revenue vs ad spend</h2>
-          <div className="flex items-center gap-4">
-            <span className="cd-caption flex items-center gap-1.5">
-              <span className="cd-dot" style={{ background: "var(--accent)" }}></span>Revenue
-            </span>
-            <span className="cd-caption flex items-center gap-1.5">
-              <span className="cd-dot" style={{ background: "var(--text-3)" }}></span>Ad spend
-            </span>
-          </div>
-        </div>
-        <div className="cd-pad" style={{ paddingTop: 8 }}>
-          {haveDaily ? (
-            <AreaChart rows={rows} height={260} live={app.liveOn} />
+      {/* channel + products */}
+      <div className="cd-grid-duo">
+        <Card>
+          <CardHead icon="layers" title="Sales by channel" />
+          {byChannel.length === 0 ? (
+            <NoData />
           ) : (
-            <Placeholder icon="chart" title="No data yet" sub="Spend and revenue will chart here once your ad accounts report a few days of activity." />
+            byChannel.map((c) => (
+              <BarRow
+                key={c.label}
+                label={c.label}
+                cents={c.grossCents}
+                max={channelMax}
+                live={c.agentic}
+              />
+            ))
           )}
+        </Card>
+        <Card>
+          <CardHead icon="tag" title="Top products by sales" />
+          {topProducts.length === 0 ? (
+            <NoData />
+          ) : (
+            topProducts.map((p) => (
+              <BarRow key={p.title} label={p.title} cents={p.grossCents} max={productMax} />
+            ))
+          )}
+        </Card>
+      </div>
+
+      {/* sessions / conversion / funnel */}
+      <div className="cd-an3">
+        <Card>
+          <CardHead icon="gauge" title="Sessions over time" />
+          {haveSessions ? (
+            <>
+              <AreaLineChart values={daily.map((d) => d.sessions)} height={128} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                <span className="cd-caption">{funnel.sessions.toLocaleString()} total</span>
+                <span className="cd-caption">last {data.days} days</span>
+              </div>
+            </>
+          ) : (
+            <NoData minHeight={128} />
+          )}
+        </Card>
+        <Card>
+          <CardHead icon="arrowUpRight" title="Conversion rate over time" />
+          {conversionValues.length >= 2 ? (
+            <>
+              <AreaLineChart values={conversionValues} height={128} area={false} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                <span className="cd-caption">
+                  {latestConversion == null ? "—" : `${latestConversion.toFixed(1)}% latest`}
+                </span>
+                <span className="cd-caption">orders ÷ sessions, per day</span>
+              </div>
+            </>
+          ) : (
+            <NoData minHeight={128} />
+          )}
+        </Card>
+        <Card>
+          <CardHead icon="radar" title="Conversion funnel" />
+          {haveSessions ? (
+            <>
+              <div className="cd-stat-value tabular-nums" style={{ fontSize: 26 }}>
+                {funnelPct == null ? "—" : `${funnelPct.toFixed(1)}%`}
+              </div>
+              <p className="cd-caption" style={{ margin: "2px 0 14px" }}>
+                session to completed order
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+                <FunnelStage label="Sessions" count={funnel.sessions} pct={100} />
+                <FunnelStage
+                  label="Added to cart"
+                  count={funnel.carts}
+                  pct={(funnel.carts / funnel.sessions) * 100}
+                />
+                <FunnelStage
+                  label="Reached checkout"
+                  count={funnel.checkouts}
+                  pct={(funnel.checkouts / funnel.sessions) * 100}
+                />
+                <FunnelStage
+                  done
+                  label="Completed"
+                  count={funnel.purchases}
+                  pct={(funnel.purchases / funnel.sessions) * 100}
+                />
+              </div>
+            </>
+          ) : (
+            <NoData minHeight={128} />
+          )}
+        </Card>
+      </div>
+
+      {/* agentic channel */}
+      <Card hover onClick={() => app.navigate("agentic")}>
+        <CardHead
+          dot
+          title="Agentic channel"
+          meta="External AI assistants · ChatGPT, Claude, Perplexity"
+        />
+        <div className="cd-stat-grid">
+          <AgenticStat
+            label="Connected assistants"
+            value={agentic.connectedClients == null ? "—" : agentic.connectedClients.toLocaleString()}
+            caption="commerce-scope clients"
+          />
+          <AgenticStat
+            label="Quotes issued · 30d"
+            value={agentic.quotes30d == null ? "—" : agentic.quotes30d.toLocaleString()}
+            caption="real-time pricing"
+          />
+          <AgenticStat
+            label="Orders placed"
+            value={agentic.orders == null ? "—" : agentic.orders.toLocaleString()}
+            caption={agentic.gmvCents == null ? "—" : `${money(agentic.gmvCents)} GMV`}
+            captionTone={agentic.gmvCents ? "var(--green)" : undefined}
+          />
+          <AgenticStat
+            label="GMV"
+            value={agentic.gmvCents == null ? "—" : money(agentic.gmvCents)}
+            caption="paid agentic orders"
+          />
         </div>
       </Card>
-
-      <div className="cd-grid-main">
-        <section className="min-w-0">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="cd-h2">Campaign grades</h2>
-          </div>
-          <Card pad={false}>
-            {grades.length === 0 ? (
-              <Placeholder icon="megaphone" title="No data yet" sub="Campaign grades appear once your campaigns accrue spend and revenue." />
-            ) : (
-              <div className="cd-rows">
-                {[...grades]
-                  .sort((a, b) => b.roas - a.roas)
-                  .map((g) => {
-                    const below = g.break_even_roas > 0 && g.roas < g.break_even_roas;
-                    return (
-                      <button
-                        key={g.campaign_id}
-                        className="cd-row"
-                        onClick={() => app.navigate("campaigns", g.campaign_id)}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="cd-row-title truncate">{g.name}</span>
-                            <GradePill grade={gradeFromRow(g)} />
-                          </div>
-                          <div className="cd-grade-track">
-                            <div
-                              className="cd-grade-fill"
-                              style={{
-                                width: `${Math.min(100, (g.roas / gradeMax) * 100)}%`,
-                                background: below ? "var(--red)" : "var(--green)",
-                              }}
-                            ></div>
-                            <div
-                              className="cd-grade-be"
-                              style={{ left: `${Math.min(100, (g.break_even_roas / gradeMax) * 100)}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                        <span
-                          className="cd-row-num tabular-nums"
-                          style={{
-                            color: below ? "var(--red)" : "var(--green)",
-                            width: 52,
-                            textAlign: "right",
-                          }}
-                        >
-                          {g.roas.toFixed(1)}×
-                        </span>
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
-          </Card>
-          <p className="cd-caption mt-2">
-            Tick = your break-even ROAS for that campaign&apos;s products.
-          </p>
-        </section>
-
-        <section className="min-w-0">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="cd-h2">Most-engaging ads</h2>
-          </div>
-          <Card pad={false}>
-            {topAds.length === 0 ? (
-              <Placeholder icon="sparkle" title="No data yet" sub="Your top-performing ads by engagement will list here." />
-            ) : (
-              <div className="cd-rows">
-                {topAds.map((ad) => (
-                  <div key={ad.ad_name} className="cd-row" style={{ cursor: "default" }}>
-                    <div className="min-w-0 flex-1">
-                      <div className="cd-row-title truncate">{ad.ad_name}</div>
-                      <div className="cd-caption truncate">{ad.campaign_name}</div>
-                      <div className="cd-grade-track" style={{ marginTop: 6 }}>
-                        <div
-                          className="cd-grade-fill"
-                          style={{
-                            width: `${(ad.engagement / maxEng) * 100}%`,
-                            background: "var(--accent)",
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-                    <div className="text-right whitespace-nowrap">
-                      <div className="cd-row-num tabular-nums">{ad.engagement.toLocaleString()}</div>
-                      <div className="cd-caption tabular-nums">
-                        {ad.saves.toLocaleString()} saves · {ad.shares.toLocaleString()} shares
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-          <p className="cd-caption mt-2">
-            Engagement = reactions + comments + shares + saves, last 30 days.
-          </p>
-        </section>
-      </div>
-
-      {/* Operational cards relocated from the former Overview (now the Live Engine). */}
-      <StatRow app={app} />
-      <div className="cd-grid-main">
-        <div className="flex flex-col gap-4 min-w-0">
-          <FocusCard app={app} />
-          <GuardrailCard app={app} />
-        </div>
-        <div className="flex flex-col gap-4 min-w-0">
-          <ActivityFeed app={app} limit={7} tall />
-        </div>
-      </div>
-      <AttentionSection app={app} />
-      {benchmarks ? <PeerBenchmarks data={benchmarks} /> : null}
     </div>
   );
 }

@@ -11,10 +11,24 @@ function notFound(): never {
   throw new CalderynError({ code: "not_found", status: 404, message: "product not found" });
 }
 
+/** List row = summary + the price/ship-readiness fields the catalog table shows. */
+export interface ProductListItem extends ProductSummary {
+  /** Lowest variant price in cents; null when no variant carries a price. */
+  priceCents: number | null;
+  /** True when every variant passes the same shipping predicate the activation
+   * 422 uses (`incomplete_shipping` in validate.ts): digital
+   * (requires_shipping=false) or weight + all three dimensions > 0. A variant
+   * with no variant_shipping row counts as physical-with-no-dims (the same
+   * defaults getProduct applies), so it fails. */
+  shipDataOk: boolean;
+  /** Heaviest physical-variant weight in grams; null when none recorded. */
+  shipWeightGrams: number | null;
+}
+
 export async function listProducts(
   shopId: string,
   opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number } = {},
-): Promise<{ products: ProductSummary[]; total: number }> {
+): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
   const limit = Math.min(opts.limit ?? 50, 100);
   // Clamp: a client-supplied negative offset would reach PostgREST .range(-n, ...)
@@ -38,22 +52,75 @@ export async function listProducts(
   const ids = (rows ?? []).map((r: { id: string }) => r.id);
   const mediaByProduct = new Map<string, string>();
   const variantCount = new Map<string, number>();
+  // Per-product rollups for the catalog table: lowest variant price, heaviest
+  // physical-variant weight, and whether every variant is ship-complete.
+  const minPriceByProduct = new Map<string, number>();
+  const shipOkByProduct = new Map<string, boolean>();
+  const maxWeightByProduct = new Map<string, number>();
   if (ids.length) {
     const { data: media, error: mErr } = await sb.from("product_media").select("product_id, storage_path").in("product_id", ids).eq("is_primary", true);
     if (mErr) throw mErr;
     for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
-    const { data: variants, error: vcErr } = await sb.from("variant_dim").select("product_id").in("product_id", ids);
+    const { data: variants, error: vcErr } = await sb.from("variant_dim").select("id, product_id, retail_price_cents").in("product_id", ids);
     if (vcErr) throw vcErr;
-    for (const v of variants ?? []) variantCount.set(String(v.product_id), (variantCount.get(String(v.product_id)) ?? 0) + 1);
+
+    const variantIds = (variants ?? []).map((v: { id: string }) => String(v.id));
+    const shippingByVariant = new Map<string, Record<string, unknown>>();
+    // Chunk the id list: a page of products can carry hundreds of variants and
+    // an unbounded .in() blows past PostgREST's URL length limit.
+    const SHIP_IN_CHUNK = 200;
+    for (let i = 0; i < variantIds.length; i += SHIP_IN_CHUNK) {
+      const { data: shipping, error: shErr } = await sb
+        .from("variant_shipping")
+        .select("variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping")
+        .eq("shop_id", shopId)
+        .in("variant_id", variantIds.slice(i, i + SHIP_IN_CHUNK));
+      if (shErr) throw shErr;
+      for (const s of (shipping ?? []) as Array<Record<string, unknown>>) {
+        shippingByVariant.set(String(s.variant_id), s);
+      }
+    }
+
+    for (const v of (variants ?? []) as Array<Record<string, unknown>>) {
+      const pid = String(v.product_id);
+      variantCount.set(pid, (variantCount.get(pid) ?? 0) + 1);
+
+      const price = v.retail_price_cents == null ? null : Number(v.retail_price_cents);
+      if (price != null) {
+        const cur = minPriceByProduct.get(pid);
+        if (cur == null || price < cur) minPriceByProduct.set(pid, price);
+      }
+
+      // Mirror of validate.ts's incomplete_shipping check, with getProduct's
+      // defaults for a missing variant_shipping row (physical, zero weight).
+      const sh = shippingByVariant.get(String(v.id)) ?? {};
+      const physical = ((sh.requires_shipping as boolean | null) ?? true) !== false;
+      const weight = Number(sh.weight_grams ?? 0);
+      const complete =
+        !physical ||
+        (weight > 0 &&
+          Number(sh.length_mm ?? 0) > 0 &&
+          Number(sh.width_mm ?? 0) > 0 &&
+          Number(sh.height_mm ?? 0) > 0);
+      shipOkByProduct.set(pid, (shipOkByProduct.get(pid) ?? true) && complete);
+      if (physical && weight > 0 && weight > (maxWeightByProduct.get(pid) ?? 0)) {
+        maxWeightByProduct.set(pid, weight);
+      }
+    }
   }
 
-  const products: ProductSummary[] = (rows ?? []).map((r: Record<string, unknown>) => ({
+  const products: ProductListItem[] = (rows ?? []).map((r: Record<string, unknown>) => ({
     id: String(r.id),
     title: String(r.title),
     status: r.status as ProductStatus,
     primaryImagePath: mediaByProduct.get(String(r.id)) ?? null,
     variantCount: variantCount.get(String(r.id)) ?? 0,
     updatedAt: String(r.updated_at),
+    priceCents: minPriceByProduct.get(String(r.id)) ?? null,
+    // A product with zero variants passes vacuously — the same way it passes
+    // the activation validator's per-variant loop.
+    shipDataOk: shipOkByProduct.get(String(r.id)) ?? true,
+    shipWeightGrams: maxWeightByProduct.get(String(r.id)) ?? null,
   }));
   return { products, total: count ?? products.length };
 }

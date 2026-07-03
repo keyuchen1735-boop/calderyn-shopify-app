@@ -93,7 +93,9 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen cd-screen--wide">
       <header className="cd-screen-head" data-screen-label="Import from Shopify">
-        <h1 className="cd-h1">Import from Shopify</h1>
+        <div>
+          <h1 className="cd-h1">Import from Shopify</h1>
+        </div>
       </header>
 
       <SettingsSubTabs app={app} />
