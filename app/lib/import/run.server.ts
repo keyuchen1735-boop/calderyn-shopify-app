@@ -6,6 +6,7 @@ import { getSupabase } from "../supabase.server";
 import { backfillShop } from "../ingest/backfill.server";
 import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./promote.server";
 import { importCustomers } from "./customers.server";
+import { relinkOrdersToBuyers } from "./relink.server";
 
 const IMPORT_WINDOW_DAYS = 365; // 12 months
 // A 12-month pull is heavy; bound how many imports one cron tick processes so the
@@ -82,7 +83,16 @@ export async function drainImports(): Promise<{ processed: number }> {
       // The promote materializes order/refund history into imported_*; the report reads
       // its counts (what actually landed), so `backfill.orders` (the raw pull) is unused.
       const counts = await promoteShopFromMirror(shopId);
-      const report = buildImportReport(counts, customers);
+
+      // Order<->customer relink (#13.customers): tie the just-promoted imported_order rows to the
+      // buyers the customer stage re-pulled. Skipped when that stage was blocked (protected-
+      // customer-data access pending) — no buyers were imported, so there is nothing to link, and
+      // the PCD-gated email query would only ACCESS_DENY. Uses the same 12-month window as the pull.
+      const since = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
+      const relink = customers.blocked
+        ? { linked: 0, unmatched: 0 }
+        : await relinkOrdersToBuyers(domain, shopId, since);
+      const report = buildImportReport(counts, customers, relink);
       await sb
         .from("import_run")
         .update({ state: "done", counts, report, finished_at: new Date().toISOString() })

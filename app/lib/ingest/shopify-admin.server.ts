@@ -187,6 +187,48 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
   } while (cursor);
 }
 
+// One (Order GID, customer email) pair for the #13.customers relink pass. email is null for a
+// guest / customerless order.
+export type AdminOrderCustomerEmail = { id: string; email: string | null };
+
+type OrderEmailsPage = {
+  orders: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: Array<{ id: string; customer: { email: string | null } | null }>;
+  };
+};
+
+// Lightweight order->customer email walk for the #13.customers relink. Selects ONLY the Order
+// GID + customer email (no line items), so the relink can resolve email->buyer_dim without
+// re-pulling the heavy order payload fetchRecentOrders carries. The email stays in memory — the
+// relink persists only the resolved buyer_id UUID, never the email, keeping buyer PII inside the
+// buyer_* store. Requires read_customers + protected-customer-data approval, the same gate as
+// fetchCustomers; without it the query errors ACCESS_DENIED (the caller only runs this pass once
+// the customer stage has confirmed access, so a blocked shop never reaches here).
+export async function* fetchOrderCustomerEmails(
+  shopDomain: string,
+  sinceISO: string,
+): AsyncGenerator<AdminOrderCustomerEmail> {
+  const admin = await adminFor(shopDomain);
+  let cursor: string | null = null;
+  const search = `created_at:>=${sinceISO}`;
+  do {
+    const data: OrderEmailsPage = await gql<OrderEmailsPage>(
+      admin,
+      `#graphql
+      query OrderCustomerEmails($cursor: String, $q: String!) {
+        orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id customer { email } }
+        }
+      }`,
+      { cursor, q: search },
+    );
+    for (const node of data.orders.nodes) yield { id: node.id, email: node.customer?.email ?? null };
+    cursor = data.orders.pageInfo.hasNextPage ? data.orders.pageInfo.endCursor : null;
+  } while (cursor);
+}
+
 export type AdminCustomer = {
   id: string;
   email: string | null;

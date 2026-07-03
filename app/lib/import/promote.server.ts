@@ -31,6 +31,7 @@ export async function promoteShopFromMirror(shopId: string): Promise<PromoteCoun
 export function buildImportReport(
   counts: PromoteCounts,
   customers: { imported: number; skipped: number; blocked: boolean },
+  relink: { linked: number; unmatched: number } = { linked: 0, unmatched: 0 },
 ): { imported: string[]; notIncluded: string[] } {
   const customersRan = !customers.blocked;
   return {
@@ -50,6 +51,10 @@ export function buildImportReport(
               : `${customers.imported} customers`,
           ]
         : []),
+      // Order<->customer relink (#13.customers): only when orders were actually tied to a
+      // re-pulled customer, so a run that linked nothing (guest-only history, or customer
+      // access blocked) never claims a relink it didn't do.
+      ...(relink.linked > 0 ? [`${relink.linked} past orders linked to customers`] : []),
     ],
     notIncluded: [
       ...(customersRan
