@@ -38,7 +38,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const badOrigin = checkSameOrigin(request);
   if (badOrigin) return badOrigin;
   const session = await getDashboardSessionAllowUnverified(request);
-  const fd = await request.formData();
+  // Tolerate bodyless/non-form POSTs (fetch clients): formData() throws a
+  // TypeError on a missing content type, which surfaced as a 500.
+  const fd = await request.formData().catch(() => new FormData());
 
   // "Sign out" from the verification gate: revoke + clear cookies + land on
   // /login. (A form posting to the JSON logout API would paint {"ok":true}
@@ -64,7 +66,11 @@ export async function action({ request }: ActionFunctionArgs) {
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
   const email = data?.email as string | null;
   const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
-  if (email) await sendVerificationEmail(session.userId, email, baseUrl).catch(() => {});
+  // Honest result: "Email sent" only when the mailer accepted it.
+  const delivery = email
+    ? await sendVerificationEmail(session.userId, email, baseUrl).catch(() => ({ sent: false }))
+    : { sent: false };
+  if (!delivery.sent) return fail(502, "send_failed");
   if (wantsJson(request)) {
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
