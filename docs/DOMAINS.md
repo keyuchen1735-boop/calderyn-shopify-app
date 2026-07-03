@@ -23,6 +23,26 @@ Tenant storefronts use vercel.app subdomains because wildcard DNS
 (`*.calderyncompany.com`) isn't set up yet; adding a wildcard record at the DNS
 host would give every shop `shopname.calderyncompany.com`.
 
+### Pretty tenant URLs — one step left (owner of the Squarespace account)
+
+DNS for calderyncompany.com lives in **Squarespace Domains** (the registrar; its
+`ns-cloud-e*.googledomains.com` nameservers are Squarespace's Google-inherited
+infrastructure — the zone is NOT in any of our GCP projects). The Squarespace
+account that owns the domain is not john@calderyncompany.com.
+
+Whoever has that login: Squarespace → Domains → calderyncompany.com → DNS →
+add ONE custom record:
+
+    Host: *        Type: A        TTL: default        Data: 76.76.21.21
+
+Everything else is already wired: `calderyn-test.calderyncompany.com` and
+`mvp-rehearsal-co-36ea83.calderyncompany.com` are attached to the `shopify-app`
+Vercel project (pending DNS) and will auto-verify + get certificates the moment
+the record exists. The storefront resolver already routes by the first host
+label, so any future shop is just one `vercel domains add <slug>.calderyncompany.com`.
+The wildcard cannot break mail or existing hosts: `app`, `send`, `_dmarc`,
+`resend._domainkey` all have explicit records, which always win over `*`.
+
 ## Noise you can safely ignore
 
 - `shopify-<hash>-keyuchen1735-boops-projects.vercel.app` — Vercel mints one of
