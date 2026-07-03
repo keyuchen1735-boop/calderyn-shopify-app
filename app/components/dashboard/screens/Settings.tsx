@@ -19,7 +19,9 @@ import {
   DashboardApiError,
   type UnmatchedShipCharges,
   type BillingStatus,
+  type ShipCostSettings,
 } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
 import { payoutsCardState } from "../view-models";
@@ -378,14 +380,20 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // Ship-cost mode + weight-coverage nudge. Loaded from /dashboard/api/ship-cost
   // (not in the shell context). Mode is the dashboard control; detailed inputs
   // (period total, invoice CSV, per-order override) live in the Shopify admin.
-  const [shipMode, setShipMode] = useState<string | null>(null);
-  const [missingWeight, setMissingWeight] = useState(0);
+  // Ship-cost/unmatched/rules/billing below seed from the session cache so a
+  // return visit paints instantly; each mount fetch revalidates + writes back.
+  // The cache holds the endpoint's whole payload (same rule as every screen),
+  // so the prefetch warm-up can reuse fetchShipCost verbatim.
+  const seededShipCost = cachedScreenData<ShipCostSettings>(SCREEN_CACHE_KEYS.shipCost);
+  const [shipMode, setShipMode] = useState<string | null>(() => seededShipCost?.ship_mode ?? null);
+  const [missingWeight, setMissingWeight] = useState(() => seededShipCost?.missing_weight_pct ?? 0);
   const [savingMode, setSavingMode] = useState(false);
 
   useEffect(() => {
     let active = true;
     fetchShipCost()
       .then((d) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.shipCost, d);
         if (!active) return;
         setShipMode(d.ship_mode);
         setMissingWeight(d.missing_weight_pct);
@@ -400,11 +408,14 @@ export default function Settings({ app }: { app: DashboardCtx }) {
 
   // Unmatched carrier charges (Phase 3 Part C) — READ-ONLY on the dashboard. Loaded like
   // ship-cost above (not in the shell context). When unreachable or zero, the row hides.
-  const [unmatchedShip, setUnmatchedShip] = useState<UnmatchedShipCharges | null>(null);
+  const [unmatchedShip, setUnmatchedShip] = useState<UnmatchedShipCharges | null>(() =>
+    cachedScreenData<UnmatchedShipCharges>(SCREEN_CACHE_KEYS.unmatchedShip),
+  );
   useEffect(() => {
     let active = true;
     fetchUnmatchedShipCharges()
       .then((d) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.unmatchedShip, d);
         if (active) setUnmatchedShip(d);
       })
       .catch(() => {
@@ -418,13 +429,15 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // Learned calibration rules — what Calderyn learned from this shop's rejects.
   // Loaded like ship-cost above; removing one hands the decision back (the
   // suggestion returns to the Action Queue, never silently re-enables autonomy).
-  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[] | null>(null);
+  const [learnedRules, setLearnedRules] = useState<LearnedRuleVM[] | null>(() =>
+    cachedScreenData<LearnedRuleVM[]>(SCREEN_CACHE_KEYS.learnedRules),
+  );
   const [learnedFailed, setLearnedFailed] = useState(false);
   const [removingRuleId, setRemovingRuleId] = useState<string | null>(null);
   const loadLearnedRules = useCallback(() => {
     setLearnedFailed(false);
     fetchLearnedRules()
-      .then((rules) => setLearnedRules(rules))
+      .then((rules) => setLearnedRules(cacheScreenData(SCREEN_CACHE_KEYS.learnedRules, rules)))
       .catch(() => {
         // A failed read must look failed, not eternally loading (rule 12).
         setLearnedFailed(true);
@@ -488,13 +501,16 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // Drives which Connectors card the Stripe row sits in: Connected when the
   // Express account is fully active, Available (with a live onboarding CTA)
   // otherwise. Same start-onboarding / login-link calls as the Payments screen.
-  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(() =>
+    cachedScreenData<BillingStatus>(SCREEN_CACHE_KEYS.billing),
+  );
   const [billingFailed, setBillingFailed] = useState(false);
   const [payoutBusy, setPayoutBusy] = useState(false);
   useEffect(() => {
     let active = true;
     fetchBilling()
       .then((d) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.billing, d);
         if (active) setBilling(d);
       })
       .catch(() => {

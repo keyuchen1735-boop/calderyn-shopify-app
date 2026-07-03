@@ -1,0 +1,68 @@
+// Idle warm-up for the screen cache: once the shell's shared load has
+// settled, fetch each screen's data once in the background so even the FIRST
+// visit to a tab paints instantly. Strictly sequential — one request at a
+// time — so the warm-up never competes with a user-initiated fetch for
+// connection slots. Every entry must use the exact key + payload shape its
+// screen caches, or the seed will miss.
+import {
+  apiGet,
+  fetchBilling,
+  fetchCollections,
+  fetchLearnedRules,
+  fetchLiveAnalytics,
+  fetchLocations,
+  fetchProducts,
+  fetchShipCost,
+  fetchSkus,
+  fetchUnmatchedShipCharges,
+} from "./client";
+import { fetchOrdersPage } from "./orders-client";
+import { fetchCustomersPage } from "./customers-client";
+import { fetchShippingSummary } from "./shipping-client";
+import { fetchPaymentsPage } from "./payments-client";
+import { fetchStudio } from "./store-client";
+import { fetchAllPendingTransfers } from "./transfers-client";
+import { fetchCommerceAnalytics } from "./commerce-analytics-client";
+import {
+  analyticsCacheKey,
+  catalogCacheKey,
+  prefetchScreenData,
+  SCREEN_CACHE_KEYS,
+} from "./screen-cache";
+
+// Ordered by how likely the merchant is to open the tab next. Mission
+// Control's own fetches (live analytics, default catalog) sit at the end:
+// they usually self-warm on mount, so by the time the chain reaches them the
+// cache is hot and they cost nothing.
+const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
+  [SCREEN_CACHE_KEYS.orders, fetchOrdersPage],
+  [analyticsCacheKey(30), () => fetchCommerceAnalytics(30)],
+  [SCREEN_CACHE_KEYS.customers, fetchCustomersPage],
+  [SCREEN_CACHE_KEYS.shipping, fetchShippingSummary],
+  [SCREEN_CACHE_KEYS.payments, fetchPaymentsPage],
+  [SCREEN_CACHE_KEYS.billing, fetchBilling],
+  [SCREEN_CACHE_KEYS.storeStudio, fetchStudio],
+  [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],
+  [SCREEN_CACHE_KEYS.inventorySkus, fetchSkus],
+  [SCREEN_CACHE_KEYS.collections, fetchCollections],
+  [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
+  [SCREEN_CACHE_KEYS.locations, fetchLocations],
+  [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
+  [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
+  [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],
+  [SCREEN_CACHE_KEYS.liveAnalytics, fetchLiveAnalytics],
+  [catalogCacheKey("", undefined), () => fetchProducts()],
+];
+
+/**
+ * Best-effort, fire-and-forget. Failures are swallowed inside
+ * prefetchScreenData (the owning screen keeps its error UX); a metered
+ * connection with Data Saver on skips the warm-up entirely.
+ */
+export async function warmScreenCaches(): Promise<void> {
+  const conn = (navigator as { connection?: { saveData?: boolean } }).connection;
+  if (conn?.saveData) return;
+  for (const [key, fetcher] of WARM_TARGETS) {
+    await prefetchScreenData(key, fetcher);
+  }
+}
