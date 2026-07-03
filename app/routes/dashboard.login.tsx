@@ -133,7 +133,7 @@ export default function DashboardLoginPage() {
               required
               placeholder="example.myshopify.com"
               defaultValue={data.hintShop ?? ""}
-              pattern="[A-Za-z0-9][A-Za-z0-9-]*\.[Mm][Yy][Ss][Hh][Oo][Pp][Ii][Ff][Yy]\.[Cc][Oo][Mm]"
+              pattern="[A-Za-z0-9][A-Za-z0-9\-]*\.[Mm][Yy][Ss][Hh][Oo][Pp][Ii][Ff][Yy]\.[Cc][Oo][Mm]"
               autoComplete="on"
             />
             {data.returnTo ? <input type="hidden" name="return_to" value={data.returnTo} /> : null}
