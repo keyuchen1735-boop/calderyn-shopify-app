@@ -7,6 +7,10 @@ export interface PromoteCounts {
   variants: number;
   collections: number;
   balances: number;
+  /** Historical orders promoted into imported_order (analytics continuity). */
+  orders: number;
+  /** Historical refunded lines promoted into imported_refund. */
+  refunds: number;
 }
 
 /** Promote this shop's mirrored Shopify data into the owned tables. Idempotent (see the SQL fn). */
@@ -18,13 +22,14 @@ export async function promoteShopFromMirror(shopId: string): Promise<PromoteCoun
 
 /**
  * Honest import summary. The exclusions are FIXED copy (not free-form) so the report can
- * never overstate what was brought over (rule 12). Customers appear in `imported` only
- * when the stage actually ran; while Shopify's protected-customer-data approval is
+ * never overstate what was brought over (rule 12). The order/refund counts are the rows
+ * that actually landed in the owned imported_* tables (from the promote), not the raw pull
+ * count — so the report reflects what was truly materialized. Customers appear in `imported`
+ * only when the stage actually ran; while Shopify's protected-customer-data approval is
  * pending, they stay in notIncluded with the real reason.
  */
 export function buildImportReport(
   counts: PromoteCounts,
-  orderCount: number,
   customers: { imported: number; skipped: number; blocked: boolean },
 ): { imported: string[]; notIncluded: string[] } {
   const customersRan = !customers.blocked;
@@ -34,7 +39,10 @@ export function buildImportReport(
       `${counts.collections} collections`,
       // counts.balances is stock RECORDS (one per variant at each location), not locations.
       `${counts.balances} stock records`,
-      `${orderCount} past orders (last 12 months)`,
+      `${counts.orders} past orders (last 12 months)`,
+      // Refund history rides along as read-only continuity; only surfaced when present so
+      // a shop with no refunds doesn't get a "0 refunds" line.
+      ...(counts.refunds > 0 ? [`${counts.refunds} past refunds`] : []),
       ...(customersRan
         ? [
             customers.skipped > 0
