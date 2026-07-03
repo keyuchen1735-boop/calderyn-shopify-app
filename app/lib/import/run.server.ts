@@ -5,6 +5,7 @@
 import { getSupabase } from "../supabase.server";
 import { backfillShop } from "../ingest/backfill.server";
 import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./promote.server";
+import { importCustomers } from "./customers.server";
 
 const IMPORT_WINDOW_DAYS = 365; // 12 months
 // A 12-month pull is heavy; bound how many imports one cron tick processes so the
@@ -75,10 +76,11 @@ export async function drainImports(): Promise<{ processed: number }> {
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {
       const backfill = await backfillShop(domain, { sinceDays });
+      const customers = await importCustomers(domain, shopId);
       await sb.from("import_run").update({ state: "promoting" }).eq("id", id);
 
       const counts = await promoteShopFromMirror(shopId);
-      const report = buildImportReport(counts, backfill.orders);
+      const report = buildImportReport(counts, backfill.orders, customers);
       await sb
         .from("import_run")
         .update({ state: "done", counts, report, finished_at: new Date().toISOString() })

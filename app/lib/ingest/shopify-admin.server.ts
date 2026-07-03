@@ -181,3 +181,49 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
     cursor = data.orders.pageInfo.hasNextPage ? data.orders.pageInfo.endCursor : null;
   } while (cursor);
 }
+
+export type AdminCustomer = {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  defaultAddress: {
+    name: string | null;
+    address1: string | null;
+    address2: string | null;
+    city: string | null;
+    province: string | null;
+    zip: string | null;
+    country: string | null;
+    phone: string | null;
+  } | null;
+  emailMarketingConsent: { marketingState: string; consentUpdatedAt: string | null } | null;
+};
+
+type CustomersPage = { customers: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: AdminCustomer[] } };
+
+// Requires the read_customers scope AND Shopify's protected-customer-data
+// approval (Partner Dashboard). Without them the query errors ACCESS_DENIED —
+// the import stage classifies that as "blocked", never a silent skip.
+export async function* fetchCustomers(shopDomain: string): AsyncGenerator<AdminCustomer> {
+  const admin = await adminFor(shopDomain);
+  let cursor: string | null = null;
+  do {
+    const data: CustomersPage = await gql<CustomersPage>(
+      admin,
+      `#graphql
+      query Customers($cursor: String) {
+        customers(first: 100, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id email phone
+            defaultAddress { name address1 address2 city province zip country phone }
+            emailMarketingConsent { marketingState consentUpdatedAt }
+          }
+        }
+      }`,
+      { cursor },
+    );
+    for (const node of data.customers.nodes) yield node;
+    cursor = data.customers.pageInfo.hasNextPage ? data.customers.pageInfo.endCursor : null;
+  } while (cursor);
+}

@@ -3,15 +3,11 @@
 // (app.calderyncompany.com/login). The form posts to /dashboard/signin, which
 // owns credentials, rate limits, and session minting; this page owns the UI
 // and the friendly error states (?error= codes set by that action).
-//
-// Never redirects into Shopify OAuth: entering the Shopify flow is always an
-// explicit click on the footer link (/dashboard/login pre-fills the store
-// domain from the remembered hint instead).
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
-import { AuthShell, AuthError, AuthNotice, GoogleButton } from "~/components/auth/AuthCard";
+import { AuthShell, AuthError, AuthNotice, GoogleButton, ShopifyButton } from "~/components/auth/AuthCard";
 import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
 
@@ -42,6 +38,7 @@ export default function LoginPage() {
       <AuthError code={error} />
       <AuthNotice notice={notice} />
       <GoogleButton label="Continue with Google" returnTo={returnTo} />
+      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} />
       <div className="cd-auth-divider">or</div>
       <form method="post" action="/dashboard/signin">
         <label className="cd-auth-label" htmlFor="email">
@@ -76,9 +73,6 @@ export default function LoginPage() {
         <a href="/reset">Forgot password?</a>
         <a href="/signup">Create an account</a>
       </div>
-      <p className="cd-auth-foot">
-        Store connected through Shopify? <a href="/dashboard/login">Sign in with Shopify</a>
-      </p>
     </AuthShell>
   );
 }

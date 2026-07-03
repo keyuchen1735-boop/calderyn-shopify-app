@@ -3,6 +3,7 @@
 // pages supply the form. Server-rendered, no client state.
 import type { ReactNode } from "react";
 import { authErrorMessage, AUTH_NOTICE_MESSAGES } from "~/lib/auth/messages";
+import { CDIcon } from "~/components/dashboard/icons";
 
 export function AuthShell({ children }: { children: ReactNode }) {
   return (
@@ -41,6 +42,18 @@ export function AuthNotice({ notice }: { notice: string | null }) {
     <p className="cd-auth-banner cd-auth-banner--ok" role="status">
       {message}
     </p>
+  );
+}
+
+export function ShopifyButton({ label, returnTo }: { label: string; returnTo?: string | null }) {
+  const href = returnTo
+    ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
+    : "/dashboard/login";
+  return (
+    <a className="cd-auth-google" href={href}>
+      <CDIcon name="store" size={16} />
+      {label}
+    </a>
   );
 }
 
