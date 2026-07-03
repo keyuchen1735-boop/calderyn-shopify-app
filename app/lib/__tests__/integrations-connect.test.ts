@@ -251,23 +251,30 @@ describe("integrations.disconnect (EasyPost)", () => {
     }
   });
 
-  it("leaves an OAuth provider's credential untouched (only deletes its status row)", async () => {
+  it("clears BOTH the status row and the stored OAuth credential for an ad provider", async () => {
     const { sb, captured } = makeFakeSupabase({
       shop_integrations: [{ shop_id: "shop-1", kind: "google_ads", sync_status: "live" }],
-      integration_credentials: [{ shop_id: "shop-1", kind: "google_ads" }],
+      integration_credentials: [
+        { shop_id: "shop-1", kind: "google_ads", access_token_encrypted: "x:y:z" },
+      ],
     });
     currentSb = sb;
     const client = calderynClient("x.myshopify.com");
 
     await client.integrations.disconnect("google");
-    expect(captured.deletes.map((d) => d.table)).toEqual(["shop_integrations"]);
+
+    const tables = captured.deletes.map((d) => d.table).sort();
+    expect(tables).toEqual(["integration_credentials", "shop_integrations"]);
+    for (const d of captured.deletes) {
+      expect(d.filters).toMatchObject({ shop_id: "shop-1", kind: "google_ads" });
+    }
   });
 });
 
 describe("integrations.disconnect (Shippo — Phase 2)", () => {
   it("clears BOTH the shop_integrations row and the NON-EXPIRING OAuth token (Plan 02 §11 #6)", async () => {
-    // Shippo's OAuth token never expires, so disconnect MUST delete the credential —
-    // unlike the rotating ad/QBO tokens, leaving it would orphan a forever-valid token.
+    // Shippo's OAuth token never expires, so disconnect MUST delete the credential;
+    // like every credential-bearing connector, leaving it would orphan a valid token.
     const { sb, captured } = makeFakeSupabase({
       shop_integrations: [{ shop_id: "shop-1", kind: "shippo_ship", sync_status: "ready" }],
       integration_credentials: [
