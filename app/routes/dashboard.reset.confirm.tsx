@@ -47,8 +47,8 @@ export default function ResetConfirm() {
   const { t, error } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
-      <h1 className="cd-auth-title">Set a new password</h1>
-      <p className="cd-auth-sub">Choose a new password for your account.</p>
+      <h1 className="cd-auth-title">New password</h1>
+      <p className="cd-auth-sub">Make it a strong one.</p>
       <AuthError code={error} />
       <AuthForm action="/dashboard/reset/confirm">
         <input type="hidden" name="t" value={t} />

@@ -110,8 +110,8 @@ export default function DashboardLoginPage() {
     : "/dashboard/login";
   return (
     <AuthShell>
-      <h1 className="cd-auth-title">Sign in with Shopify</h1>
-      <p className="cd-auth-sub">Connect your store and bring your data with you.</p>
+      <h1 className="cd-auth-title">Connect Shopify</h1>
+      <p className="cd-auth-sub">Bring your store over.</p>
       {data.mode === "error" ? (
         <>
           <AuthError code={data.errorCode} />

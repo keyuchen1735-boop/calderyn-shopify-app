@@ -165,8 +165,7 @@ export default function VerifyNeeded() {
     <AuthShell>
       <h1 className="cd-auth-title">Check your email</h1>
       <p className="cd-auth-sub">
-        We sent a verification link{email ? ` to ${email}` : ""}. Click it to open your
-        dashboard. It can take a minute to arrive. Check spam too.
+        We sent a link{email ? ` to ${email}` : ""}.
       </p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
