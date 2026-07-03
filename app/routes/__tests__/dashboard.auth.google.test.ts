@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as HttpMod from "~/lib/dashboard/http.server";
 
 // ---------------------------------------------------------------------------
 // Mocks: all declared before any module import so vi.mock hoisting works
 // ---------------------------------------------------------------------------
 
-vi.mock("~/lib/dashboard/http.server", () => ({
+vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof HttpMod>()),
   rateLimit: vi.fn().mockResolvedValue(true),
   clientIpKey: () => "k",
   requireSameOrigin: vi.fn(),
@@ -205,6 +207,23 @@ describe("google callback loader", () => {
       const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("Set-Cookie") ?? ""];
       const joined = cookies.join("; ");
       expect(joined).toContain("__Host-calderyn_dash=");
+    });
+
+    it("honours a validated return_to carried in the goauth cookie", async () => {
+      const nonce = "testnonce";
+      mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
+      mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
+      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1" });
+
+      const { loader } = await import("../dashboard.auth.google.callback");
+      // Cookie format is `nonce:enc(returnTo)` — see dashboard.auth.google.
+      const req = callbackRequest(
+        { code: "code", state: nonce },
+        `${nonce}:${encodeURIComponent("/dashboard/connect?t=abc")}`,
+      );
+      const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/dashboard/connect?t=abc");
     });
   });
 

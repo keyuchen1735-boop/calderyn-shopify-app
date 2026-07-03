@@ -21,7 +21,9 @@ vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
 }));
 
 // eslint-disable-next-line import/first
-import { loader, safeDashboardReturnTo } from "../dashboard.login";
+import { loader } from "../dashboard.login";
+// eslint-disable-next-line import/first
+import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 
 describe("safeDashboardReturnTo", () => {
   it("accepts a same-origin dashboard path", () => {

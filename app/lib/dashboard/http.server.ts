@@ -96,6 +96,21 @@ export function wantsJson(request: Request): boolean {
   return (request.headers.get("Accept") ?? "").includes("application/json");
 }
 
+// Only same-origin dashboard paths may be carried through an auth round-trip
+// (Shopify OAuth, Google, or the native signin form), so a crafted ?return_to=
+// cannot turn sign-in into an open redirect. Rejects absolute URLs,
+// protocol-relative (//host), backslash tricks, and control chars: a CR/LF
+// survives the round-trip into a Location header (CRLF injection / response
+// splitting / a 500 when the runtime rejects it).
+export function safeDashboardReturnTo(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/dashboard/")) return null;
+  if (raw.startsWith("//") || raw.includes("\\") || raw.includes("://")) return null;
+  // eslint-disable-next-line no-control-regex -- intentionally matching control chars
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return null;
+  return raw;
+}
+
 /** Wrap a loader/action body: CalderynError → its status/code; rethrow Responses. */
 export async function dashboardJson(fn: () => Promise<unknown>): Promise<Response> {
   try {

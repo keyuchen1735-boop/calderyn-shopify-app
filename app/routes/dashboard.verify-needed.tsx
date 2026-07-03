@@ -12,7 +12,7 @@ import { rateLimit, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboar
 import { sendVerificationEmail } from "~/lib/auth/verify.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { AuthShell, AuthError, AuthNotice } from "~/components/auth/AuthCard";
-import { SHOP_HINT_COOKIE_NAME } from "./dashboard.login";
+import { clearShopHintCookieHeader } from "~/lib/dashboard/cookies.server";
 
 export const meta: MetaFunction = () => [{ title: "Verify your email — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
@@ -49,10 +49,7 @@ export async function action({ request }: ActionFunctionArgs) {
     await revokeSession(session.sessionId).catch(() => {});
     const headers = new Headers();
     headers.append("Set-Cookie", clearSessionCookieHeader());
-    headers.append(
-      "Set-Cookie",
-      `${SHOP_HINT_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-    );
+    headers.append("Set-Cookie", clearShopHintCookieHeader());
     return redirect("/login?notice=signed_out", { headers });
   }
 

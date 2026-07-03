@@ -77,7 +77,7 @@ describe("dashboard.login loader", () => {
     );
   });
 
-  it("auto-redirects to Shopify using the remembered shop when no ?shop is given", async () => {
+  it("shows the shop form pre-filled from the remembered shop — never an auto-redirect", async () => {
     const res = (await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login", {
         headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
@@ -85,11 +85,12 @@ describe("dashboard.login loader", () => {
       params: {},
       context: {},
     })) as Response;
-    expect(res.status).toBe(302);
-    const loc = new URL(res.headers.get("Location")!);
-    expect(loc.origin + loc.pathname).toBe(
-      "https://remembered.myshopify.com/admin/oauth/authorize",
-    );
+    // Entering Shopify OAuth is always an explicit user action: the hint only
+    // pre-fills the store-domain input.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain('value="remembered.myshopify.com"');
   });
 
   it("shows an HTML landing (not raw JSON) when no shop is known", async () => {

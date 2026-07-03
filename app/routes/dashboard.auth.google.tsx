@@ -5,9 +5,13 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { randomBytes } from "node:crypto";
 import { buildSigninAuthUrl } from "~/lib/auth/google-signin.server";
-import { rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
+import {
+  rateLimit,
+  clientIpKey,
+  safeDashboardReturnTo,
+} from "~/lib/dashboard/http.server";
+import { GOAUTH_COOKIE } from "~/lib/dashboard/cookies.server";
 
-const GOAUTH_COOKIE = "__Host-calderyn_goauth";
 const NONCE_TTL = 900; // 15 minutes
 
 function redirectUri(): string {
@@ -28,9 +32,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const nonce = randomBytes(32).toString("base64url");
   const authUrl = buildSigninAuthUrl({ clientId, redirectUri: redirectUri(), state: nonce });
 
+  // Carry a validated post-login destination (e.g. /dashboard/connect?t=…)
+  // through the round-trip as `nonce:enc(returnTo)` — same pattern as the
+  // Shopify state cookie in dashboard.login. Plain `nonce` when absent.
+  const returnTo = safeDashboardReturnTo(new URL(request.url).searchParams.get("return_to"));
+  const cookieValue = returnTo ? `${nonce}:${encodeURIComponent(returnTo)}` : nonce;
+
   return redirect(authUrl, {
     headers: {
-      "Set-Cookie": `${GOAUTH_COOKIE}=${nonce}; Max-Age=${NONCE_TTL}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      "Set-Cookie": `${GOAUTH_COOKIE}=${cookieValue}; Max-Age=${NONCE_TTL}; Path=/; HttpOnly; Secure; SameSite=Lax`,
     },
   });
 }
