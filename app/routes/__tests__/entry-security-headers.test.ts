@@ -33,7 +33,12 @@ describe("applySecurityHeaders", () => {
     const csp = headers.get("Content-Security-Policy") ?? "";
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'self'");
-    expect(csp).toContain("form-action 'self'");
+    // The Shopify hosts must stay in form-action: Chrome enforces it across the
+    // store-domain form's redirect chain into Shopify OAuth (silent dead button
+    // otherwise).
+    expect(csp).toContain(
+      "form-action 'self' https://*.myshopify.com https://accounts.shopify.com https://admin.shopify.com",
+    );
     expect(csp).toContain("upgrade-insecure-requests");
   });
 

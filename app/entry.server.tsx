@@ -21,7 +21,12 @@ const EMBEDDED_PATH = /^\/(?:app|auth)(?:\/|$)/;
 const HARDENING_DIRECTIVES = [
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  // The Shopify hosts are required: Chrome enforces form-action across a form
+  // submission's redirect chain, and the store-domain form on /dashboard/login
+  // 302s into <shop>.myshopify.com/admin/oauth/authorize (which may hop through
+  // accounts/admin.shopify.com for merchant login). 'self' alone silently kills
+  // that navigation — the "Continue" button does nothing.
+  "form-action 'self' https://*.myshopify.com https://accounts.shopify.com https://admin.shopify.com",
   "upgrade-insecure-requests",
 ];
 
