@@ -1997,7 +1997,7 @@
 }
 
 /* ============ Auth pages (sign in / sign up / reset / verify) ============ */
-.cd-auth-wrap { min-height: 100vh; display: grid; place-items: center; background: var(--bg); padding: 24px; }
+.cd-auth-wrap { flex: 1; min-height: 100vh; display: grid; place-items: center; background: var(--bg); padding: 24px; }
 .cd-auth-card { width: 100%; max-width: 400px; background: var(--card-solid); border-radius: 16px; box-shadow: var(--shadow-card); padding: 32px 28px 26px; }
 .cd-auth-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; color: var(--text-1); text-decoration: none; }
 .cd-auth-brand-mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-size: 13px; font-weight: 800; }
