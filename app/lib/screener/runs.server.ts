@@ -1,5 +1,6 @@
 // app/lib/screener/runs.server.ts
 import { getSupabase, resolveShopId } from "../supabase.server";
+import { persistExternalImage, isFetchableUrl } from "../assets/persist.server";
 import type { CreativeInput, CreativeScreenRun, RunSource, RunStatus, ScoreCard, Variant } from "./types";
 
 export function rowToRun(r: Record<string, unknown>): CreativeScreenRun {
@@ -58,15 +59,35 @@ export async function completeRun(shop: string, id: string, scorecard: ScoreCard
 export async function saveVariants(shop: string, id: string, variants: Variant[]): Promise<CreativeScreenRun> {
   const sb = getSupabase();
   const shopId = await resolveShopId(shop);
+  // Image-mode variants carry an EPHEMERAL Higgsfield URL. The variant is stored
+  // now but reviewed and "Push to Meta"'d by the merchant LATER — Meta only
+  // downloads the picture URL at push time — so the ephemeral url can expire
+  // before it is used, breaking the deferred push. Capture generated images into
+  // owned storage first and store the stable owned url instead. Copy-mode
+  // variants (whose imageUrl is the original ad's Meta creative, not generated)
+  // are left untouched. persistExternalImage never throws: on failure it keeps
+  // the ephemeral url (rule 12).
+  const owned = await persistVariantImages(shopId, variants);
   const { data, error } = await sb
     .from("creative_screen_run")
-    .update({ variants })
+    .update({ variants: owned })
     .eq("shop_id", shopId)
     .eq("id", id)
     .select()
     .single();
   if (error) throw error;
   return rowToRun(data);
+}
+
+async function persistVariantImages(shopId: string, variants: Variant[]): Promise<Variant[]> {
+  return Promise.all(
+    variants.map(async (v) => {
+      const src = v.input.imageUrl;
+      if (v.mode !== "image" || !src || !isFetchableUrl(src)) return v;
+      const { url } = await persistExternalImage(shopId, src, "generated", "generated");
+      return url === src ? v : { ...v, input: { ...v.input, imageUrl: url } };
+    }),
+  );
 }
 
 export async function failRun(shop: string, id: string, message: string): Promise<CreativeScreenRun> {

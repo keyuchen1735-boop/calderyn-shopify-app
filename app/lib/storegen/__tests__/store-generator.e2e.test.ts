@@ -123,6 +123,12 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storegen/imagery/provider.server", () => ({
   getImageProvider: () => ({ name: "fake", generateListingImage: providerMock }),
 }));
+// Owned-asset persistence is a true external boundary (network fetch + Storage);
+// stub it as a passthrough so this smoke suite stays offline and the provider url
+// flows through to store_asset unchanged.
+vi.mock("~/lib/assets/persist.server", () => ({
+  persistExternalImage: async (_shop: string, url: string) => ({ persisted: false, url }),
+}));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const EMPTY_CATALOG: StorefrontCatalog = {

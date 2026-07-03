@@ -5,6 +5,7 @@
 // cycle; the live storefront read path adopts it with the publish flow (editor, sub-project 2).
 import { getSupabase } from "~/lib/supabase.server";
 import type { StoreProduct } from "~/lib/storefront/catalog";
+import { persistExternalImage } from "~/lib/assets/persist.server";
 import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -22,7 +23,13 @@ export async function enhanceListing(shopId: string, product: StoreProduct): Pro
       productTitle: product.title, productDescription: product.description,
       sourceImageUrl: product.images[0]?.url ?? null, mode: "product_shot",
     });
-    url = out.url; status = "ready";
+    status = "ready";
+    // Higgsfield returns an EPHEMERAL provider URL that expires; capture it into
+    // owned storage so the stored store_asset.url — which the storefront read
+    // path serves to buyers — is stable and self-hosted. persistExternalImage
+    // never throws: on a persistence failure it logs and returns the ephemeral
+    // url, so the image still renders (rule 12) and the row stays 'ready'.
+    url = (await persistExternalImage(shopId, out.url, "generated", "generated")).url;
   } catch {
     status = "failed"; // keep the source image; surfaced as a failed asset row
   }

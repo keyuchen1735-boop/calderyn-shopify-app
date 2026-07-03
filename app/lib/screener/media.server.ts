@@ -121,6 +121,20 @@ export function isAllowedMediaUrl(url: string): boolean {
 }
 
 /**
+ * True when `host` is a private/reserved/loopback/link-local address or
+ * localhost. Shared with the owned-asset persistence pipeline's SSRF guard
+ * (app/lib/assets/persist.server.ts) so both fetchers reject the same hosts.
+ * `host` must already be lowercased (URL.hostname is) with IPv6 brackets and a
+ * trailing FQDN dot tolerated.
+ */
+export function isPrivateHost(host: string): boolean {
+  const h = host.replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h.includes(":")) return isPrivateIpv6(h);
+  return isPrivateIpv4(h);
+}
+
+/**
  * Enforce the media URL policy across imageUrl + every videoFrameUrl. Returns an
  * error string (same convention as validateCreativeMedia) or null when clean.
  * Null/absent fields are ignored here — media presence is enforced by
