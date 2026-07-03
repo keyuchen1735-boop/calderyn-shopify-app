@@ -45,7 +45,10 @@ export function AuthNotice({ notice }: { notice: string | null }) {
   );
 }
 
-export function ShopifyButton({ label, href = "/dashboard/login" }: { label: string; href?: string }) {
+export function ShopifyButton({ label, returnTo }: { label: string; returnTo?: string | null }) {
+  const href = returnTo
+    ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
+    : "/dashboard/login";
   return (
     <a className="cd-auth-google" href={href}>
       <CDIcon name="store" size={16} />

@@ -31,9 +31,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function LoginPage() {
   const { error, notice, email, returnTo } = useLoaderData<typeof loader>();
-  const shopifyHref = returnTo
-    ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
-    : "/dashboard/login";
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Sign in</h1>
@@ -41,7 +38,7 @@ export default function LoginPage() {
       <AuthError code={error} />
       <AuthNotice notice={notice} />
       <GoogleButton label="Continue with Google" returnTo={returnTo} />
-      <ShopifyButton label="Continue with Shopify" href={shopifyHref} />
+      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} />
       <div className="cd-auth-divider">or</div>
       <form method="post" action="/dashboard/signin">
         <label className="cd-auth-label" htmlFor="email">
