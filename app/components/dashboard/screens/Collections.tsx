@@ -4,6 +4,7 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { Card, Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
+import { ProductsSubTabs } from "../subtabs";
 
 export default function Collections({ app }: { app: DashboardCtx }) {
   const [items, setItems] = useState<client.CollectionVM[]>([]);
@@ -58,6 +59,8 @@ export default function Collections({ app }: { app: DashboardCtx }) {
           </p>
         </div>
       </header>
+
+      <ProductsSubTabs app={app} />
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <input

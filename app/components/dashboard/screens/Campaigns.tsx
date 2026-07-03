@@ -698,6 +698,70 @@ function ScreenNewCreative({
 /* ---------- Screen ---------- */
 type PlatformFilter = "All" | Platform;
 
+// The "New campaign" surface. Calderyn manages campaigns that live on the ad
+// platforms — it doesn't create them from scratch — so this screen routes to
+// the real starting points rather than staging a form that can't submit.
+function CampaignNew({ app }: { app: DashboardCtx }) {
+  const meta = app.integrations.find((i) => i.key === "meta_ads");
+  const google = app.integrations.find((i) => i.key === "google_ads");
+  const connected = app.integrations.filter((i) => i.status === "connected").length;
+  return (
+    <div className="cd-screen">
+      <header className="cd-screen-head" data-screen-label="Create campaign">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Btn small icon="chevronLeft" onClick={() => app.navigate("campaigns")}>
+            Back
+          </Btn>
+          <div>
+            <h1 className="cd-h1" style={{ fontSize: 24 }}>
+              Create campaign
+            </h1>
+          </div>
+        </div>
+      </header>
+      <Card>
+        <p className="cd-emptyhint" style={{ marginBottom: 14 }}>
+          Campaigns are created in your ad platform (Meta, Google, TikTok) and sync into
+          Calderyn automatically — usually within the hour. From there Calderyn grades them,
+          screens new creative, and manages budgets inside your guardrails.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn
+            kind="primary"
+            small
+            onClick={() => window.open("https://adsmanager.facebook.com/adsmanager/manage/campaigns", "_blank", "noopener")}
+          >
+            Open Meta Ads Manager
+          </Btn>
+          <Btn small onClick={() => window.open("https://ads.google.com/aw/campaigns", "_blank", "noopener")}>
+            Open Google Ads
+          </Btn>
+          <Btn small onClick={() => app.navigate("settings", null, "connectors")}>
+            {connected > 0 ? "Manage connections" : "Connect an ad account"}
+          </Btn>
+        </div>
+        {(meta || google) && (
+          <p className="cd-caption" style={{ marginTop: 12 }}>
+            {[meta && `Meta: ${meta.status}`, google && `Google: ${google.status}`]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        )}
+      </Card>
+      <Card>
+        <SectionTitle>Screen new creative first</SectionTitle>
+        <p className="cd-caption" style={{ margin: "8px 0 12px", maxWidth: "56ch" }}>
+          Already have a campaign running? Open it and use Screen creative to generate and
+          score variants before spending — winners can push to Meta as paused drafts.
+        </p>
+        <Btn small icon="sparkle" onClick={() => app.navigate("campaigns")}>
+          Pick a campaign
+        </Btn>
+      </Card>
+    </div>
+  );
+}
+
 export default function Campaigns({ app }: { app: DashboardCtx }) {
   const [platform, setPlatform] = useState<PlatformFilter>("All");
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
@@ -732,6 +796,13 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     // not "poor" (P1-6) — same logic adaptCampaign uses for the initial load.
     return { ...c, grade: gradeFromRow(g, c.roas_7d), breakeven_roas: g.break_even_roas };
   });
+
+  // /dashboard/campaigns/new — campaigns are created on the ad platforms and
+  // synced in; this surface says so honestly and routes to the real levers
+  // (connectors, creative screening) instead of a fake create form.
+  if (app.nav.param === "new") {
+    return <CampaignNew app={app} />;
+  }
 
   // Row-click / deep-link: nav.param carries the selected campaign id.
   const selected = app.nav.param ? joined.find((c) => c.id === app.nav.param) : null;
@@ -772,6 +843,9 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
           onChange={(v) => setPlatform(v as PlatformFilter)}
           options={["All", "Meta", "Google", "TikTok"]}
         />
+        <Btn kind="primary" small icon="plus" onClick={() => app.navigate("campaigns", "new")}>
+          New campaign
+        </Btn>
       </ScreenHeader>
       <Card pad={false}>
         {loading ? (

@@ -6,7 +6,9 @@ import { getSupabase } from "~/lib/supabase.server";
 
 // GET ?variantId= → the shop's in-transit transfers (optionally for one variant),
 // so the merchant can receive them. Location ids on inventory_transfer aren't FK'd,
-// so names are resolved with a second shop-scoped lookup.
+// so names are resolved with a second shop-scoped lookup; variant labels (sku/title,
+// for the shop-wide Transfers list) are resolved the same way and are null when the
+// variant row is gone or unlabeled.
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const variantId = new URL(request.url).searchParams.get("variantId");
@@ -28,6 +30,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
       const { data: locs } = await getSupabase().from("location_dim").select("id, name").eq("shop_id", session.shopId).in("id", locIds);
       for (const l of locs ?? []) names.set(String(l.id), String(l.name));
     }
+
+    const varIds = [...new Set(rows.map((t) => String(t.variant_id)))];
+    const variants = new Map<string, { sku: string | null; title: string | null }>();
+    if (varIds.length) {
+      const { data: vs } = await getSupabase().from("variant_dim").select("id, sku, title").eq("shop_id", session.shopId).in("id", varIds);
+      for (const v of vs ?? []) {
+        variants.set(String(v.id), {
+          sku: v.sku == null ? null : String(v.sku),
+          title: v.title == null ? null : String(v.title),
+        });
+      }
+    }
+
     return {
       transfers: rows.map((t) => ({
         id: String(t.id),
@@ -36,6 +51,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         fromName: names.get(String(t.from_location_id)) ?? "Location",
         toName: names.get(String(t.to_location_id)) ?? "Location",
         createdAt: String(t.created_at),
+        sku: variants.get(String(t.variant_id))?.sku ?? null,
+        variantTitle: variants.get(String(t.variant_id))?.title ?? null,
       })),
     };
   });

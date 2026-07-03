@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Card,
   AreaChart,
+  Btn,
   GradePill,
   CountMoney,
   CountNum,
@@ -55,7 +56,9 @@ function ScreenHeader({
 
 export default function Analytics({ app }: { app: DashboardCtx }) {
   const [range, setRange] = useState<Range>("30d");
-  const [view, setView] = useState<"performance" | "live">("performance");
+  // Performance ↔ Live rides the URL (/dashboard/analytics vs /analytics/live)
+  // so both subtabs are deep-linkable and back-button friendly.
+  const view: "performance" | "live" = app.nav.sub === "live" ? "live" : "performance";
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,16 +133,23 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
 
   // The Performance ↔ Live subtab switch, present in every header state so the
   // Live view stays reachable while Performance is still loading or errored.
+  // The Agentic channel rides along here — it lost its top-level nav item in
+  // the grouped IA, and this is its home surface now.
   const viewSwitch = (
-    <Segmented
-      small
-      value={view}
-      onChange={(v) => setView(v as "performance" | "live")}
-      options={[
-        { value: "performance", label: "Performance" },
-        { value: "live", label: "Live" },
-      ]}
-    />
+    <>
+      <Segmented
+        small
+        value={view}
+        onChange={(v) => app.navigate("analytics", null, v === "live" ? "live" : "perf")}
+        options={[
+          { value: "performance", label: "Performance" },
+          { value: "live", label: "Live" },
+        ]}
+      />
+      <Btn small icon="bot" onClick={() => app.navigate("agentic")}>
+        Agentic channel
+      </Btn>
+    </>
   );
 
   // The Live subtab is fully independent of the performance fetch — bail out

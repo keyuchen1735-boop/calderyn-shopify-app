@@ -32,11 +32,26 @@ export type Screen =
   // Import from Shopify (#13.promote) — one-click mirror → owned migration.
   | "import-shopify"
   // Go live (Step 9 slice 3) — cutover status, go-live checklist, mode transitions.
-  | "cutover";
+  | "cutover"
+  // Autopilot — the trust ladder / calibration surface, promoted to a screen.
+  | "autopilot"
+  // Owned commerce surfaces (RUN group).
+  | "orders"
+  | "customers"
+  | "shipping"
+  | "payments"
+  // Purchase orders + stock transfers — Products subtabs with their own URLs.
+  | "products-po"
+  | "products-transfers"
+  // Store studio (BUILD group) — draft/publish editor over page_document.
+  | "storefront";
 
 export interface NavState {
   screen: Screen;
   param: string | null;
+  /** Subtab within the screen (e.g. orders → "labels"); null when the screen
+   *  has no subtabs or is on its default tab. Encoded in the URL by routes.ts. */
+  sub: string | null;
 }
 
 export interface DashboardTheme {
@@ -69,8 +84,8 @@ export interface DashboardCtx {
   storeLabel: string;
   /** Current screen + optional route param. */
   nav: NavState;
-  /** Navigate to a screen; scrolls main to top. */
-  navigate: (screen: Screen, param?: string | null) => void;
+  /** Navigate to a screen; pushes the dedicated URL and scrolls main to top. */
+  navigate: (screen: Screen, param?: string | null, sub?: string | null) => void;
 
   // --- data (view-models, fetched on mount) ---
   alerts: AlertVM[];

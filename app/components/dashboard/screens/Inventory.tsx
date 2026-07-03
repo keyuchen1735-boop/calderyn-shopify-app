@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Pill, Segmented, Placeholder, Sparkline } from "../ui";
 import { CDIcon } from "../icons";
+import { ProductsSubTabs } from "../subtabs";
 import {
   executeAlertAction,
   fetchSkus,
@@ -235,6 +236,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
         sortBy={sortBy}
         onSort={setSortBy}
       />
+      <ProductsSubTabs app={app} />
       {(facets.vendors.length ||
         facets.types.length ||
         facets.collections.length ||

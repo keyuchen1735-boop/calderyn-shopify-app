@@ -46,7 +46,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     t: {},
     shopDomain: "test.myshopify.com",
     storeLabel: "test.myshopify.com",
-    nav: { screen: "audit", param: null },
+    nav: { screen: "audit", param: null, sub: null },
     navigate: () => {},
     alerts: [],
     campaigns: [],

@@ -89,7 +89,9 @@ describe("inventory transfer route", () => {
     const res = (await loader({ request: new Request("https://app.x/x?variantId=v1") } as never)) as Response;
     expect(res.status).toBe(200);
     expect((await res.json()).transfers).toEqual([
-      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now" },
+      // sku/variantTitle come from a variant_dim lookup; the mock has no row for
+      // v1, so both resolve null (the DTO's honest missing-label state).
+      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now", sku: null, variantTitle: null },
     ]);
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
+import { ProductsSubTabs } from "../subtabs";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 
@@ -35,6 +36,7 @@ export default function Locations({ app }: { app: DashboardCtx }) {
       <header className="cd-screen-head" data-screen-label="Locations">
         <h1 className="cd-h1">Locations</h1>
       </header>
+      <ProductsSubTabs app={app} />
       <Card>
         <p className="cd-caption" style={{ marginBottom: 12 }}>
           Rank locations (lower priority fills first) and set coordinates so orders can ship from the

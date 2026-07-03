@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
+import { SettingsSubTabs } from "../subtabs";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -171,6 +172,7 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
         <header className="cd-screen-head" data-screen-label="Go live">
           <h1 className="cd-h1">Go live</h1>
         </header>
+        <SettingsSubTabs app={app} />
         <Card>
           <p className="cd-caption">Checking your store's cutover status…</p>
         </Card>
@@ -187,6 +189,8 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
       <header className="cd-screen-head" data-screen-label="Go live">
         <h1 className="cd-h1">Go live</h1>
       </header>
+
+      <SettingsSubTabs app={app} />
 
       <Card>
         <SectionTitle>Where you are</SectionTitle>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "@remix-run/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -34,6 +35,7 @@ import type {
 
 import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
+import { parsePath, pathFor, DASHBOARD_BASE } from "./routes";
 import ScreenDashboard from "./screens/Dashboard";
 import ScreenAlerts from "./screens/Alerts";
 import ScreenCampaigns from "./screens/Campaigns";
@@ -49,26 +51,75 @@ import ScreenProductEditor from "./screens/ProductEditor";
 import ScreenCollections from "./screens/Collections";
 import ScreenImportShopify from "./screens/ImportShopify";
 import ScreenCutover from "./screens/Cutover";
+import ScreenAutopilot from "./screens/Autopilot";
+import ScreenOrders from "./screens/Orders";
+import ScreenCustomers from "./screens/Customers";
+import ScreenShipping from "./screens/Shipping";
+import ScreenPayments from "./screens/Payments";
+import ScreenStore from "./screens/Store";
+import ScreenPurchaseOrders from "./screens/PurchaseOrders";
+import ScreenTransfers from "./screens/Transfers";
 
-const NAV_ITEMS: { id: ScreenId; label: string; icon: string }[] = [
-  { id: "dashboard", label: "Overview", icon: "gauge" },
+interface NavItem {
+  id: ScreenId;
+  label: string;
+  icon: string;
+}
+
+// Grouped IA: the growth brain on top (Calderyn's wedge), owned commerce under
+// RUN, the storefront under BUILD. Alerts / History / Settings ride the foot.
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Grow",
+    items: [
+      { id: "dashboard", label: "Mission Control", icon: "gauge" },
+      { id: "autopilot", label: "Autopilot", icon: "bolt" },
+      { id: "campaigns", label: "Campaigns", icon: "megaphone" },
+      { id: "analytics", label: "Analytics", icon: "chart" },
+    ],
+  },
+  {
+    label: "Run",
+    items: [
+      { id: "orders", label: "Orders", icon: "doc" },
+      { id: "catalog", label: "Products", icon: "tag" },
+      { id: "customers", label: "Customers", icon: "user" },
+      { id: "shipping", label: "Shipping", icon: "truck" },
+      { id: "payments", label: "Payments", icon: "card" },
+    ],
+  },
+  {
+    label: "Build",
+    items: [{ id: "storefront", label: "Store", icon: "store" }],
+  },
+];
+
+const FOOT_NAV: NavItem[] = [
   { id: "alerts", label: "Alerts", icon: "bell" },
-  { id: "campaigns", label: "Campaigns", icon: "megaphone" },
-  { id: "analytics", label: "Analytics", icon: "chart" },
-  { id: "inventory", label: "Inventory", icon: "box" },
-  { id: "catalog", label: "Products", icon: "bag" },
-  { id: "collections", label: "Collections", icon: "tag" },
-  { id: "locations-settings", label: "Locations", icon: "globe" },
-  { id: "import-shopify", label: "Import from Shopify", icon: "download" },
-  { id: "cutover", label: "Go live", icon: "rocket" },
-  { id: "audit", label: "Action history", icon: "clock" },
-  { id: "agentic", label: "Agentic", icon: "bot" },
+  { id: "audit", label: "History", icon: "clock" },
   { id: "settings", label: "Settings", icon: "gear" },
 ];
 
-// On phones the sidebar collapses to a bottom tab bar. These four ride the bar
-// (matching the mobile design); everything else in NAV_ITEMS lives behind "More".
-const PRIMARY_TABS: ScreenId[] = ["dashboard", "alerts", "campaigns", "inventory"];
+const ALL_NAV_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...FOOT_NAV];
+
+// Screens that live under a nav item's umbrella keep that item highlighted
+// (subtab families, inner flows, and the Labs mask).
+const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
+  labs: "campaigns",
+  "product-editor": "catalog",
+  inventory: "catalog",
+  "products-po": "catalog",
+  "products-transfers": "catalog",
+  collections: "catalog",
+  "locations-settings": "catalog",
+  "import-shopify": "settings",
+  cutover: "settings",
+  agentic: "analytics",
+};
+
+// On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
+// everything else lives behind "More".
+const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
   dark: false,
@@ -99,8 +150,16 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   audit: ScreenAudit,
   agentic: () => <AgenticChannel />,
   settings: ScreenSettings,
-  // Hidden (not in NAV_ITEMS) — reached via the secret dot in Settings.
+  // Hidden (not in the nav rail) — reached via the secret dot in Settings.
   labs: ScreenLabs,
+  autopilot: ScreenAutopilot,
+  orders: ScreenOrders,
+  customers: ScreenCustomers,
+  shipping: ScreenShipping,
+  payments: ScreenPayments,
+  storefront: ScreenStore,
+  "products-po": ScreenPurchaseOrders,
+  "products-transfers": ScreenTransfers,
 };
 
 function relTime(ts: number): string {
@@ -139,18 +198,52 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
   }, []);
   const t = useMemo<DashboardTheme>(() => ({ ...DASHBOARD_THEME, dark }), [dark]);
 
-  const [nav, setNav] = useState<NavState>({ screen: "dashboard", param: null });
+  // Screen state is the URL: seeded from the SSR location (deep links), pushed
+  // on navigate, and re-parsed on popstate so the back button works.
+  const location = useLocation();
+  const [nav, setNav] = useState<NavState>(
+    () => parsePath(location.pathname) ?? { screen: "dashboard", param: null, sub: null },
+  );
   // Mobile "More" bottom sheet (only rendered/visible under the tab-bar breakpoint).
   const [moreOpen, setMoreOpen] = useState(false);
   // Bumped by the More-sheet items to open the assistant / bug-report overlays
   // (their floating launchers are hidden at phone width).
   const [assistantSignal, setAssistantSignal] = useState(0);
   const [bugSignal, setBugSignal] = useState(0);
+  // Account chip menu (sidebar foot).
+  const [acctOpen, setAcctOpen] = useState(false);
 
-  const navigate = useCallback((screen: ScreenId, param: string | null = null) => {
-    setNav({ screen, param });
-    setMoreOpen(false);
-    document.getElementById("cd-main")?.scrollTo({ top: 0 });
+  const navigate = useCallback(
+    (screen: ScreenId, param: string | null = null, sub: string | null = null) => {
+      const next: NavState = { screen, param, sub };
+      setNav(next);
+      setMoreOpen(false);
+      setAcctOpen(false);
+      const path = pathFor(next);
+      if (window.location.pathname !== path) {
+        // Preserve the router's history state (its position index) so browser
+        // back/forward and scroll restoration keep working across our entries.
+        // Deliberately drop the query string: dashboard queries are one-shot
+        // (OAuth return notices) and must not ride along to every screen.
+        window.history.pushState(window.history.state, "", path);
+      }
+      document.getElementById("cd-main")?.scrollTo({ top: 0 });
+    },
+    [],
+  );
+
+  // Back/forward re-derive the screen from the URL; an unknown deep link
+  // canonicalizes to Mission Control once on mount.
+  useEffect(() => {
+    if (!parsePath(window.location.pathname)) {
+      window.history.replaceState(null, "", DASHBOARD_BASE + window.location.search);
+    }
+    const onPop = () => {
+      setNav(parsePath(window.location.pathname) ?? { screen: "dashboard", param: null, sub: null });
+      document.getElementById("cd-main")?.scrollTo({ top: 0 });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   // Escape closes the More sheet (backdrop click handles pointer dismissal).
@@ -162,6 +255,26 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [moreOpen]);
+
+  // The account menu dismisses on Escape or any pointer press outside its wrap
+  // (there's no backdrop element — it floats over the sidebar foot).
+  useEffect(() => {
+    if (!acctOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAcctOpen(false);
+    };
+    const onPress = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest(".cd-acct-wrap")) {
+        setAcctOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPress);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPress);
+    };
+  }, [acctOpen]);
 
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
@@ -200,7 +313,19 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     const params = new URLSearchParams(window.location.search);
     const notice = connectionNotice(params);
     if (!notice) return;
-    navigate("settings");
+    // Strip the consumed one-shot params from the LANDING entry first
+    // (unrelated params + hash survive), THEN navigate — otherwise the pushed
+    // settings entry inherits the params and the original ?provider=connected
+    // URL stays behind the Back button, re-announcing on every pop.
+    params.delete(notice.key);
+    params.delete("reason");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+    navigate("settings", null, "connectors");
     if (notice.ok) {
       toast(`${notice.provider} connected`, "check");
     } else {
@@ -212,16 +337,6 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
         "critical",
       );
     }
-    // Strip ONLY the consumed one-shot params; unrelated query params and the
-    // hash survive for whoever reads them next.
-    params.delete(notice.key);
-    params.delete("reason");
-    const query = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
-    );
   }, [navigate, toast]);
 
   // Opening an alert detail: fetch the ENRICHED single alert and merge it into
@@ -314,6 +429,34 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
 
   const refreshCalibration = useCallback(() => {
     client.fetchCalibration().then(setCalibration).catch(() => {});
+  }, []);
+
+  // Nav-rail autopilot switch: same guardrail mutation Settings uses, applied
+  // only after the server confirms (no optimistic flip on a kill switch).
+  const [apSaving, setApSaving] = useState(false);
+  const toggleAutopilot = useCallback(async () => {
+    if (!guardrails || apSaving) return;
+    const next = !guardrails.autopilot_enabled;
+    setApSaving(true);
+    try {
+      const updated = await client.putGuardrails({ autopilot_enabled: next });
+      setGuardrails(updated);
+      toast(next ? "Autopilot on" : "Autopilot paused", next ? "bolt" : "pause");
+    } catch (err) {
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update autopilot.";
+      toast(msg, "warn", "critical");
+    } finally {
+      setApSaving(false);
+    }
+  }, [guardrails, apSaving, toast]);
+
+  const signOut = useCallback(async () => {
+    try {
+      await client.logout();
+    } catch {
+      // Session may already be gone; the signin page sorts it out either way.
+    }
+    window.location.assign("/dashboard/signin");
   }, []);
 
   // Returning to the tab does an immediate refresh instead of waiting up to one
@@ -831,16 +974,25 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
 
   const Screen = SCREENS[nav.screen] ?? ScreenDashboard;
   const openCount = alerts.filter((a) => a.status === "open").length;
-  // The Labs replay masks as Campaigns, so keep "Campaigns" lit while it's open
-  // (sidebar, tab bar, and the "More" active state all read off this).
-  const activeNav: ScreenId = nav.screen === "labs" ? "campaigns" : nav.screen;
+  // Umbrella screens (subtab families, inner flows, the Labs mask) keep their
+  // nav item lit (sidebar, tab bar, and the "More" active state read off this).
+  const activeNav: ScreenId = NAV_HIGHLIGHT[nav.screen] ?? nav.screen;
+
+  // Store label initials for the account chip (first letters of two words).
+  const acctInitials = storeLabel
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   // Bottom-tab-bar partition: the four primary tabs (in design order) + the rest
   // behind "More". "More" reads active whenever a non-primary screen is open.
   const primaryTabs = PRIMARY_TABS.map(
-    (id) => NAV_ITEMS.find((n) => n.id === id)!,
+    (id) => ALL_NAV_ITEMS.find((n) => n.id === id)!,
   );
-  const moreItems = NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
+  const moreItems = ALL_NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
   const onMoreScreen = !PRIMARY_TABS.includes(activeNav);
 
   return (
@@ -872,30 +1024,129 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
             <div className="cd-brand-sub">{storeLabel}</div>
           </div>
         </div>
-        <nav className="cd-side-nav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className="cd-nav-item"
-              data-active={activeNav === item.id ? "1" : "0"}
-              onClick={() => navigate(item.id)}
-            >
-              <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-              <span>{item.label}</span>
-              {item.id === "alerts" && openCount > 0 && (
-                <span className="cd-nav-count">{openCount}</span>
+        <nav className="cd-side-nav cd-nav-scroll">
+          <button
+            type="button"
+            className="cd-ask-btn"
+            onClick={() => setAssistantSignal((n) => n + 1)}
+          >
+            <CDIcon name="assist" size={18} strokeWidth={1.8} />
+            <span>
+              Ask Calderyn
+              <span className="cd-ask-sub">Operator for every screen</span>
+            </span>
+          </button>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} style={{ display: "contents" }}>
+              <div className="cd-nav-group">{group.label}</div>
+              {group.items.map((item) =>
+                item.id === "autopilot" && guardrails ? (
+                  // The kill switch is a SIBLING button (absolutely positioned
+                  // over the row) — nesting it inside the nav button would be
+                  // invalid HTML and unreachable by keyboard.
+                  <div key={item.id} style={{ position: "relative" }}>
+                    <button
+                      className="cd-nav-item"
+                      data-active={activeNav === item.id ? "1" : "0"}
+                      style={{ width: "100%", paddingRight: 52 }}
+                      onClick={() => navigate(item.id)}
+                    >
+                      <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                      <span>{item.label}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={guardrails.autopilot_enabled}
+                      aria-label="Autopilot on/off"
+                      title={guardrails.autopilot_enabled ? "Autopilot on" : "Autopilot off"}
+                      className="cd-apswitch"
+                      data-on={guardrails.autopilot_enabled ? "1" : "0"}
+                      disabled={apSaving}
+                      onClick={toggleAutopilot}
+                      style={{
+                        position: "absolute",
+                        right: 10,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        border: 0,
+                        padding: 0,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <i />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    key={item.id}
+                    className="cd-nav-item"
+                    data-active={activeNav === item.id ? "1" : "0"}
+                    onClick={() => navigate(item.id)}
+                  >
+                    <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                    <span>{item.label}</span>
+                  </button>
+                ),
               )}
-            </button>
+            </div>
           ))}
         </nav>
         <div className="cd-side-foot">
-          <div className="cd-live-row">
-            <CDIcon name="moon" size={15} strokeWidth={1.9} />
-            <span className="flex-1">Night mode</span>
-            <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 1, margin: "0 -4px", padding: "0 4px" }}>
+            {FOOT_NAV.map((item) => (
+              <button
+                key={item.id}
+                className="cd-nav-item"
+                data-active={activeNav === item.id ? "1" : "0"}
+                onClick={() => navigate(item.id)}
+              >
+                <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                <span>{item.label}</span>
+                {item.id === "alerts" && openCount > 0 && (
+                  <span className="cd-nav-count">{openCount}</span>
+                )}
+              </button>
+            ))}
+            <div className="cd-live-row">
+              <CDIcon name="moon" size={15} strokeWidth={1.9} />
+              <span className="flex-1">Night mode</span>
+              <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
+            </div>
           </div>
-          <div className="cd-caption" style={{ paddingLeft: 2 }}>
-            Shopify · Meta · Google · TikTok · QuickBooks
+          <div className="cd-acct-wrap">
+            <div className="cd-acct-menu" data-open={acctOpen ? "1" : "0"}>
+              <button type="button" className="cd-acct-mi" onClick={() => navigate("settings")}>
+                <CDIcon name="gear" size={16} strokeWidth={1.8} />
+                Account settings
+              </button>
+              <button type="button" className="cd-acct-mi" onClick={() => navigate("payments")}>
+                <CDIcon name="card" size={16} strokeWidth={1.8} />
+                Billing & payouts
+              </button>
+              <div className="cd-acct-sep" />
+              <button type="button" className="cd-acct-mi" data-danger="1" onClick={signOut}>
+                <CDIcon name="logout" size={16} strokeWidth={1.8} />
+                Sign out
+              </button>
+            </div>
+            <button
+              type="button"
+              className="cd-acct"
+              data-open={acctOpen ? "1" : "0"}
+              aria-expanded={acctOpen}
+              aria-haspopup="menu"
+              onClick={() => setAcctOpen((v) => !v)}
+            >
+              <span className="cd-acct-av">{acctInitials || "C"}</span>
+              <span className="cd-acct-body">
+                <span className="cd-acct-name">{storeLabel}</span>
+                <span className="cd-acct-mail">{shopDomain ?? "Calderyn store"}</span>
+              </span>
+              <span className="cd-acct-chev">
+                <CDIcon name="chevronDown" size={15} strokeWidth={1.9} />
+              </span>
+            </button>
           </div>
         </div>
       </aside>
