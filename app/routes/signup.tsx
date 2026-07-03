@@ -5,7 +5,14 @@
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
-import { AuthShell, AuthError, GoogleButton } from "~/components/auth/AuthCard";
+import {
+  AuthShell,
+  AuthError,
+  AuthForm,
+  AuthSubmit,
+  PasswordField,
+  GoogleButton,
+} from "~/components/auth/AuthCard";
 
 export const meta: MetaFunction = () => [{ title: "Create your account — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
@@ -28,7 +35,7 @@ export default function SignupPage() {
       <AuthError code={error} />
       <GoogleButton label="Sign up with Google" />
       <div className="cd-auth-divider">or</div>
-      <form method="post" action="/dashboard/signup">
+      <AuthForm action="/dashboard/signup">
         <label className="cd-auth-label" htmlFor="store">
           Store name
         </label>
@@ -38,8 +45,10 @@ export default function SignupPage() {
           name="store"
           type="text"
           required
+          autoComplete="organization"
           defaultValue={store}
           placeholder="e.g. Northbound Supply"
+          autoFocus
         />
         <label className="cd-auth-label" htmlFor="email">
           Email
@@ -56,23 +65,13 @@ export default function SignupPage() {
         <label className="cd-auth-label" htmlFor="password">
           Password
         </label>
-        <input
-          className="cd-auth-input"
-          id="password"
-          name="password"
-          type="password"
-          required
-          minLength={10}
-          autoComplete="new-password"
-        />
+        <PasswordField id="password" autoComplete="new-password" minLength={10} />
         <p className="cd-auth-hint">At least 10 characters.</p>
-        <button className="cd-auth-submit" type="submit">
-          Create account
-        </button>
-      </form>
+        <AuthSubmit label="Create account" pendingLabel="Creating account…" />
+      </AuthForm>
+      <p className="cd-auth-foot">We'll email you a link to verify your address.</p>
       <p className="cd-auth-foot">
-        We'll email you a link to verify your address. Already have an account?{" "}
-        <a href="/login">Sign in</a>
+        Already have an account? <a href="/login">Sign in</a>
       </p>
     </AuthShell>
   );

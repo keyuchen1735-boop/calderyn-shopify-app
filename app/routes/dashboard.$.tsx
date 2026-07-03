@@ -27,7 +27,23 @@ import rglResize from "react-resizable/css/styles.css?url";
 
 // Utils first so the cd-* rules in dashboard.css can override the utility layer.
 // react-grid-layout base styles before dashboard.css so our .cd-tile rules win.
+// Inter is preloaded so the display greeting doesn't reflow when the woff2
+// lands after first paint (the font-display:swap shift was the page's CLS).
 export const links: LinksFunction = () => [
+  {
+    rel: "preload",
+    href: "/fonts/inter-var-latin.woff2",
+    as: "font",
+    type: "font/woff2",
+    crossOrigin: "anonymous",
+  },
+  {
+    rel: "preload",
+    href: "/fonts/inter-var-latin-italic.woff2",
+    as: "font",
+    type: "font/woff2",
+    crossOrigin: "anonymous",
+  },
   { rel: "stylesheet", href: dashboardUtils },
   { rel: "stylesheet", href: rglStyles },
   { rel: "stylesheet", href: rglResize },

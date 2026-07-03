@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
-import { Card, Btn, Pill, Placeholder, Segmented } from "../ui";
+import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { ProductsSubTabs } from "../subtabs";
 import { money } from "../format";
 
@@ -140,7 +140,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
 
       <Card pad={false}>
         {loading ? (
-          <Placeholder icon="bag" title="Loading products" sub="Reading your catalog." />
+          <TableSkeleton />
         ) : error ? (
           <Placeholder icon="warn" title="Couldn't load products" sub={error} />
         ) : products.length === 0 ? (
@@ -148,6 +148,8 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
             icon="bag"
             title={filtered ? "No matching products" : "No products yet"}
             sub={filtered ? "Try a different search or filter." : "Create your first product to start your catalog."}
+            actionLabel={filtered ? undefined : "New product"}
+            onAction={filtered ? undefined : () => app.navigate("product-editor", "new")}
           />
         ) : (
           <>

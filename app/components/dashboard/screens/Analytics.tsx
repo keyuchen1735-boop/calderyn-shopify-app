@@ -414,6 +414,10 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   const haveSales = totals.orders > 0;
   const haveSessions = funnel.sessions > 0;
 
+  // A store with zero orders AND zero sessions in the window gets one honest
+  // empty state instead of a wall of hollow "No data yet" chart cards.
+  const zeroData = !haveSales && !haveSessions;
+
   const channelMax = byChannel.length ? Math.max(...byChannel.map((c) => c.grossCents)) : 0;
   const productMax = topProducts.length ? Math.max(...topProducts.map((p) => p.grossCents)) : 0;
 
@@ -437,6 +441,16 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
         />
       </ScreenHeader>
 
+      {zeroData ? (
+        <Card pad={false}>
+          <Placeholder
+            icon="chart"
+            title="No data yet"
+            sub="Sales, sessions, channels and conversion fill in here as soon as your storefront gets traffic."
+          />
+        </Card>
+      ) : (
+      <>
       {/* kpi row */}
       <div className="cd-stat-grid">
         <KpiCard
@@ -630,6 +644,8 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
           />
         </div>
       </Card>
+      </>
+      )}
     </div>
   );
 }

@@ -38,7 +38,7 @@ export function DashboardErrorFallback({ error }: { error?: unknown }) {
         Something went wrong
       </h1>
       <p style={{ margin: 0, maxWidth: 420, color: "#5c5f62", fontSize: 14 }}>
-        This view hit a snag. Reload to try again — your data is safe.
+        This view hit a snag. Reload to try again. Your data is safe.
       </p>
       {detail ? (
         <code

@@ -7,6 +7,7 @@ import {
   Placeholder,
   CountMoney,
   Tooltip,
+  TableSkeleton,
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
@@ -975,12 +976,14 @@ function CampaignList({
       </ScreenHeader>
       <div className="cd-card" style={{ overflow: "hidden" }}>
         {loading ? (
-          <Placeholder icon="megaphone" title="Loading campaigns" sub="Pulling spend and ROAS from Meta, Google and TikTok." />
+          <TableSkeleton />
         ) : shown.length === 0 && drafts.length === 0 ? (
           <Placeholder
             icon="megaphone"
             title="No campaigns yet"
             sub="Connect an ad account and your campaigns will appear here."
+            actionLabel="Connect ad account"
+            onAction={() => app.navigate("settings", null, "connectors")}
           />
         ) : (
           <>

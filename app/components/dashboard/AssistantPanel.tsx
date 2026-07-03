@@ -258,7 +258,7 @@ export default function AssistantPanel({
           <div className="cd-chat-empty">
             <p className="cd-sub">
               Ask anything about your store&rsquo;s alerts, campaigns, inventory, or action
-              history — or start with one of these:
+              history, or start with one of these:
             </p>
             <div className="cd-chat-chips">
               {SUGGESTED_PROMPTS.map((p) => (

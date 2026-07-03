@@ -445,7 +445,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
               <div className="cd-store-grid">
                 {data.products.length === 0 ? (
                   <div className="cd-caption" style={{ gridColumn: "1 / -1", padding: "10px 0" }}>
-                    No products yet — add products to fill your storefront.
+                    No products yet. Add products to fill your storefront.
                   </div>
                 ) : (
                   data.products.map((p) => (

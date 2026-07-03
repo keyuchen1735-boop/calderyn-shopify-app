@@ -4,7 +4,7 @@ import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
 import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
 import { setPasswordWithToken } from "~/lib/auth/reset.server";
-import { AuthShell, AuthError } from "~/components/auth/AuthCard";
+import { AuthShell, AuthError, AuthForm, AuthSubmit, PasswordField } from "~/components/auth/AuthCard";
 
 const MIN_PASSWORD = 10;
 
@@ -50,25 +50,15 @@ export default function ResetConfirm() {
       <h1 className="cd-auth-title">Set a new password</h1>
       <p className="cd-auth-sub">Choose a new password for your account.</p>
       <AuthError code={error} />
-      <form method="post" action="/dashboard/reset/confirm">
+      <AuthForm action="/dashboard/reset/confirm">
         <input type="hidden" name="t" value={t} />
         <label className="cd-auth-label" htmlFor="password">
           New password
         </label>
-        <input
-          className="cd-auth-input"
-          id="password"
-          name="password"
-          type="password"
-          required
-          minLength={10}
-          autoComplete="new-password"
-        />
+        <PasswordField id="password" autoComplete="new-password" minLength={10} autoFocus />
         <p className="cd-auth-hint">At least 10 characters.</p>
-        <button className="cd-auth-submit" type="submit">
-          Save password
-        </button>
-      </form>
+        <AuthSubmit label="Save password" pendingLabel="Saving…" />
+      </AuthForm>
       <div className="cd-auth-links">
         <a href="/reset">Request a new link</a>
         <a href="/login">Back to sign in</a>

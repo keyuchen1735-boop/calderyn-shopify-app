@@ -1177,7 +1177,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           >
             {CONNECTOR_STEPS.map((s) => (
               <div key={s.n}>
-                <div className="cd-mcp-step">
+                <div className="cd-mcp-substep">
                   <b>{s.n}</b>
                   {s.title}
                 </div>
@@ -1190,7 +1190,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               </div>
             ))}
             <div>
-              <div className="cd-mcp-step">
+              <div className="cd-mcp-substep">
                 <b>4</b>
                 Claude Code (CLI)
               </div>

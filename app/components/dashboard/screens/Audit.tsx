@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Card, Pill, Btn, Placeholder } from "../ui";
+import { Card, Pill, Btn, Placeholder, TableSkeleton } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money, timeAgo, absTime } from "../format";
 import { recovered } from "~/lib/recovered";
@@ -213,7 +213,7 @@ export default function Audit({ app }: { app: DashboardCtx }) {
       />
       <Card pad={false}>
         {loading ? (
-          <Placeholder icon="clock" title="Loading action history" sub="Pulling every automated and manual action." />
+          <TableSkeleton />
         ) : audit.length === 0 ? (
           <Placeholder
             icon="clock"

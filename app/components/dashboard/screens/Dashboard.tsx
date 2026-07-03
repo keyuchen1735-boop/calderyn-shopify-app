@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Card, Placeholder, TickGauge } from "../ui";
+import { hasEngineSignals } from "../first-run";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
@@ -131,7 +132,20 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       <header className="cd-screen-head" style={{ alignItems: "flex-start", marginBottom: 8 }} data-screen-label="Mission Control">
         <div>
           <h1 className="cd-display">
-            {greet},<span className="cd-display-it"> welcome back.</span>
+            {/* While the catalog count is unknown the tail stays off: painting
+                "welcome back" at a brand-new user and swapping it out reads
+                as a bug, appending a tail reads as progressive load. */}
+            {catalogTotal === 0 ? (
+              <>
+                {greet}.<span className="cd-display-it"> Let's get your store live.</span>
+              </>
+            ) : catalogTotal === null ? (
+              <>{greet}.</>
+            ) : (
+              <>
+                {greet},<span className="cd-display-it"> welcome back.</span>
+              </>
+            )}
           </h1>
         </div>
       </header>
@@ -147,7 +161,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           <div className="cd-setup-head">
             <h2 className="cd-setup-title">Set up your store</h2>
             <p className="cd-setup-sub">
-              Your account is ready — it just has nothing to sell yet. Start with one of these.
+              Your account is ready. Add something to sell and you're live. Start with one of these.
             </p>
           </div>
           <div className="cd-setup-rows">
@@ -157,7 +171,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               </span>
               <span className="cd-setup-txt">
                 <span className="cd-setup-l">Add your first product</span>
-                <span className="cd-setup-d">Name, price, photo — live in a couple of minutes.</span>
+                <span className="cd-setup-d">Name, price, photo. Live in a couple of minutes.</span>
               </span>
               <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
             </button>
@@ -318,7 +332,13 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
             </span>
             <CDIcon name="chevronRight" size={13} strokeWidth={2} style={{ color: "var(--text-3)" }} />
           </div>
-          {graduated && engine ? (
+          {!app.loading && !hasEngineSignals(app) ? (
+            <Placeholder
+              icon="bolt"
+              title="Standing by"
+              sub="Autopilot trains on your store's real orders and campaigns. It starts once there's something to watch."
+            />
+          ) : graduated && engine ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 18, margin: "auto 0" }}>
               <div>
                 <div className="cd-caption" style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 650 }}>
@@ -438,6 +458,8 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               icon="store"
               title="No products yet"
               sub="Add products or import them from Shopify to see your storefront here."
+              actionLabel="Add a product"
+              onAction={() => app.navigate("product-editor", "new")}
             />
           ) : (
             <div className="cd-store-grid">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
-import { Card, Pill, Segmented, Placeholder } from "../ui";
+import { Card, Pill, Segmented, Placeholder, TableSkeleton } from "../ui";
 import { money, alertDetectorLabel, ACTION_LABELS, timeAgo } from "../format";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { actionDeepLink } from "~/lib/action-deeplinks";
@@ -579,7 +579,7 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
       </ScreenHeader>
       <Card pad={false}>
         {loading ? (
-          <Placeholder icon="scan" title="Loading alerts" sub="Detectors are sweeping your accounts." />
+          <TableSkeleton />
         ) : rows.length === 0 ? (
           filter === "open" ? (
             <Placeholder
