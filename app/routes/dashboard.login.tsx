@@ -10,7 +10,7 @@
 // (oauth_failed, app_not_installed) instead of raw JSON.
 
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { randomBytes } from "node:crypto";
 import dashboard from "~/styles/dashboard.css?url";
@@ -54,7 +54,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Explicit shop in the URL (the embedded-app entry point): validate strictly.
     const candidate = rawShop.trim().toLowerCase();
     if (!isValidShopDomain(candidate)) {
-      throw jsonError(422, "invalid_shop", "Expected <name>.myshopify.com");
+      return json(
+        { mode: "error", hintShop, returnTo, errorCode: "invalid_shop", shop: null } satisfies LoginPageData,
+        { status: 422 },
+      );
     }
     shop = candidate;
   }
@@ -100,7 +103,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function DashboardLoginPage() {
-  const data = useLoaderData<typeof loader>() as LoginPageData;
+  const data = useLoaderData<typeof loader>();
   const retryHref = data.shop
     ? `/dashboard/login?shop=${encodeURIComponent(data.shop)}`
     : "/dashboard/login";

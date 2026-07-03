@@ -46,14 +46,16 @@ function signedCallbackUrl(params: Record<string, string>): string {
 }
 
 describe("dashboard.login loader", () => {
-  it("422s on an invalid shop", async () => {
-    await expect(
-      loginLoader({
-        request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
-        params: {},
-        context: {},
-      }),
-    ).rejects.toMatchObject({ status: 422 });
+  it("422s on an invalid shop with friendly error-page data", async () => {
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.mode).toBe("error");
+    expect(body.errorCode).toBe("invalid_shop");
   });
 
   it("redirects to the shop's authorize URL and sets a state cookie", async () => {
@@ -117,13 +119,15 @@ describe("dashboard.login loader", () => {
   });
 
   it("still 422s when an explicit ?shop is malformed", async () => {
-    await expect(
-      loginLoader({
-        request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
-        params: {},
-        context: {},
-      }),
-    ).rejects.toMatchObject({ status: 422 });
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.mode).toBe("error");
+    expect(body.errorCode).toBe("invalid_shop");
   });
 });
 

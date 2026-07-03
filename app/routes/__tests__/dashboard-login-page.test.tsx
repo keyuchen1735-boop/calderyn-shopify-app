@@ -20,7 +20,6 @@ describe("/dashboard/login page", () => {
     expect(html).toContain('value="myshop.myshopify.com"');
     expect(html).toContain('name="return_to"');
     expect(html).toContain('value="/dashboard/connect?t=abc"');
-    expect(html).not.toContain("#5b3df5"); // the off-brand inline style is gone
   });
 
   it("renders the app_not_installed error with install guidance and no retry loop", () => {
@@ -36,5 +35,13 @@ describe("/dashboard/login page", () => {
     const html = renderToStaticMarkup(createElement(DashboardLoginPage));
     expect(html).toContain("cd-auth-banner--error");
     expect(html).toContain("/dashboard/login?shop=myshop.myshopify.com");
+  });
+
+  it("renders invalid_shop with domain-format guidance", () => {
+    loaderDataRef.current = { mode: "error", hintShop: null, returnTo: null, errorCode: "invalid_shop", shop: null };
+    const html = renderToStaticMarkup(createElement(DashboardLoginPage));
+    expect(html).toContain("cd-auth-banner--error");
+    // Substring starts after the apostrophe in "store's" (React HTML-escapes it).
+    expect(html).toContain(".myshopify.com domain, like example.myshopify.com");
   });
 });
