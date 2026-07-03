@@ -3,6 +3,92 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-03
+
+### Triage — big 24h window, companion nightly PR already existed
+Window = everything merged 2026-07-02 (PRs #257, #260–#266, #268–#272; ~55 commits /
+212 files: Stripe Connect payouts, full dashboard redesign, calibration
+organic-learning, storefront checkout/analytics, security hardening). **A companion
+nightly PR #273 (author Mezoh, branch `nightly-review/2026-07-03`) already existed at
+run start** and fixed 5 landed bugs (media delete ordering; cron.calibration-recompute
+500-escalation; ACP unsupported-currency guard; ACP pre-charge session-wedge /
+`releaseAcpSessionClaim`; `cart_add` product-vs-variant id) + listed 4 deferred. Did
+NOT duplicate it — hunted for what it MISSED. Fanned out 4 read-only bug-hunters
+(payments/billing #269 · calibration #261–266 · security #257 + new commerce/campaign
+server code #272 · dashboard connections/IA #268/#270). 3 → NONE (verified clean); 1
+real bug found + fixed.
+
+### Bug fixed tonight — disconnect leaves OAuth credential encrypted-at-rest
+- **`app/lib/calderyn.server.ts` `integrations.disconnect()`** deleted the
+  `integration_credentials` row ONLY for a hardcoded `SHIP_COST_CRED_KINDS` set — but
+  `meta_ads`/`google_ads`/`tiktok_ads`/`quickbooks` ALSO store their encrypted OAuth
+  token in the same `integration_credentials.access_token_encrypted` column (see
+  `auth.{meta,google,tiktok,quickbooks}.$.tsx` upserts). So after a Disconnect the
+  `shop_integrations` row was gone (UI shows disconnected, cron stops) but a
+  still-valid token stayed at rest indefinitely (Google refresh never expires; Meta
+  ~60d; QBO ~100d; TikTok weeks). The inline comment claiming ad/QBO tokens live as a
+  bytea on `shop_integrations` was FACTUALLY WRONG. Fix: make the credential delete
+  UNCONDITIONAL on the resolved `kind` (keyed `shop_id`+`kind` → credential-less
+  providers match 0 rows, harmless). Shipped **PR #274**. Helper predates the window,
+  but PR #268 (`77fdc64`) newly routed dashboard disconnects into it.
+- **Lesson (allowlist-vs-writers):** when reviewing a delete/cleanup gated by a
+  hardcoded `kind`/type allowlist, cross-check it against EVERY writer of that table —
+  an inline comment asserting where a token is stored is NOT proof; grep the actual
+  upsert sites. Same shape as last night's "cross-check column names against the
+  migration DDL, not the test mock" lesson.
+- The unit test `integrations-connect.test.ts` had a case asserting the OLD buggy
+  contract ("leaves an OAuth provider's credential untouched") — updated to assert the
+  credential IS deleted. (Recurring: green tests can encode the wrong contract.)
+
+### Open-PR review
+- **PR #273** (companion nightly, 5 fixes): reviewed all 5, all correct. `releaseAcpSessionClaim`
+  (fix #4) canNOT reopen after a successful charge (charge is OUTSIDE the try/catch);
+  soft-error routing (fix #2) still 500s real recompute throws; no reader expected a
+  variant id in `storefront_event.product_id`. Posted NONE (no comment).
+- **PR #267** (DRAFT: React Router 7 migration, supersedes merged #264): `response.server.ts`
+  is byte-parity with Remix `json()`; `EmbeddedAppProvider` composition OK (RR7
+  `AppProvider` prop is `embedded`, does NOT wrap Polaris — no double provider). Found
+  ONE real regression → posted a review comment: **`app/routes/app.settings.tsx` CSV 5MB
+  cap now runs AFTER `request.formData()` buffers the whole body** (undici has no size
+  limit), losing the streaming `maxPartSize` DoS protection `unstable_createMemoryUploadHandler`
+  gave on main. Fix = reject on Content-Length up front / stream with a size cap.
+
+### Gate / environment — IMPORTANT UPDATE (supersedes 2026-07-01 offline recipe)
+- **`npm ci` WORKS in this remote-execution environment** (exit 0, ~37s). The proxy
+  here (CA bundle `/root/.ccr/ca-bundle.crt`) lets `@prisma/engines` download its
+  binary fine — the whole 2026-07-01 curl-the-engine offline recipe is NOT needed
+  here. Just `npm ci`. (Node is v22.22.2 in this env.) Keep the offline recipe only as
+  a fallback if the environment changes back.
+- Full gate on the fix branch: setup 0 · typecheck 0 · lint 0 (13 pre-existing
+  warnings, none on touched files) · build 0 (verifier: 227 client files clean) ·
+  vitest 522 files / 3715 passed / 11 skipped / 0 failed.
+- **Flaky test:** `app/lib/social/__tests__/linkedin-connection.test.ts` (randomized
+  state-tamper assertion) failed ONCE then passed on re-run. Not a regression — re-run
+  if it fails in isolation.
+
+### CI gotcha UPDATE — "Python engine tests" is GREEN now
+- The fork's **"Python engine tests" GitHub Action, previously RED on every PR**
+  (the `v_audit_view` / `trigger_reason` schema-ordering bug in the 2026-06-21
+  migration), is now **passing** on #274's checks — it appears to have been fixed
+  upstream. Stop treating a red Python-engine job as automatically pre-existing/ignorable;
+  re-check. The real gate is still **"Node gate"** (the CI job that runs typecheck/lint/build/vitest).
+
+### False positives cleared this run (do NOT re-flag)
+- Stripe Connect fee/destination/idempotency wiring (#269): fee bps+flat rounded &
+  clamped to [0,amount], omitted at 0, routes only to fully-onboarded accounts,
+  per-order idempotency key with a distinct `_platform` fallback key, card declines
+  never trigger the destination-param fallback retry. Clean.
+- Calibration batch/N+1 rewrite (#265): bulk `action_pair_priors()` semantically
+  identical to the retired per-pair fn; cache `upsert` only updates rows that existed
+  in step 1; single-threaded cron worker pool → no torn shared counters. Clean.
+- "Asks twice" no-brainer mute (#266): both `i_handle_this` surfaces handle the 409
+  `CONFIRM_REQUIRED` and re-post `confirmed=true`; the Autopilot reject surface never
+  offers `i_handle_this`, so it can't wedge. Clean.
+- New analytics `commerce.server.ts` / `campaign-draft.server.ts` (#272): all routes
+  `requireDashboardSession`, `shop_id` threaded on every read/write, Supabase errors
+  thrown not swallowed, `ilike` passed as a discrete supabase-js filter param (no
+  PostgREST injection), aggregate math (net = gross − refund) correct. Clean.
+
 ## 2026-07-02
 
 ### Triage result — LANDED code clean, zero fixes needed
