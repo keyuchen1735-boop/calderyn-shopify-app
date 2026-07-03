@@ -47,12 +47,13 @@ function signedCallbackUrl(params: Record<string, string>): string {
 
 describe("dashboard.login loader", () => {
   it("422s on an invalid shop", async () => {
-    const res = (await loginLoader({
-      request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
-      params: {},
-      context: {},
-    })) as Response;
-    expect(res.status).toBe(422);
+    await expect(
+      loginLoader({
+        request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
+        params: {},
+        context: {},
+      }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 
   it("redirects to the shop's authorize URL and sets a state cookie", async () => {
@@ -84,24 +85,21 @@ describe("dashboard.login loader", () => {
       }),
       params: {},
       context: {},
-    })) as Response;
+    })) as { mode: string; hintShop: string | null };
     // Entering Shopify OAuth is always an explicit user action: the hint only
-    // pre-fills the store-domain input.
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
-    const body = await res.text();
-    expect(body).toContain('value="remembered.myshopify.com"');
+    // pre-fills the store-domain input — never auto-redirecting.
+    expect(res.mode).toBe("form");
+    expect(res.hintShop).toBe("remembered.myshopify.com");
   });
 
-  it("shows an HTML landing (not raw JSON) when no shop is known", async () => {
+  it("returns form data (not an error code) when no shop is known", async () => {
     const res = (await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login"),
       params: {},
       context: {},
-    })) as Response;
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
-    expect(await res.text()).not.toContain("invalid_shop");
+    })) as { mode: string; errorCode: string | null };
+    expect(res.mode).toBe("form");
+    expect(res.errorCode).toBeNull();
   });
 
   it("does not auto-redirect (loop) when bounced back with an error", async () => {
@@ -112,18 +110,20 @@ describe("dashboard.login loader", () => {
       ),
       params: {},
       context: {},
-    })) as Response;
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
+    })) as { mode: string; errorCode: string | null };
+    // Returns error-mode page data — never a redirect (which would loop).
+    expect(res.mode).toBe("error");
+    expect(res.errorCode).toBe("oauth_failed");
   });
 
   it("still 422s when an explicit ?shop is malformed", async () => {
-    const res = (await loginLoader({
-      request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
-      params: {},
-      context: {},
-    })) as Response;
-    expect(res.status).toBe(422);
+    await expect(
+      loginLoader({
+        request: new Request("https://calderyncompany.com/dashboard/login?shop=evil.com"),
+        params: {},
+        context: {},
+      }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 });
 

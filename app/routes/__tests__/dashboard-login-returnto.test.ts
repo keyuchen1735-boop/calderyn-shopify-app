@@ -87,33 +87,22 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     expect(cookie).not.toContain("evil.example");
   });
 
-  it("renders a shop-entry form (not a dead end) when there is no shop and no cookie", async () => {
+  it("returns form data (not a dead end) when there is no shop and no cookie", async () => {
     const r = (await loader(
       req(
         "https://app.calderyncompany.com/dashboard/login?return_to=%2Fdashboard%2Fconnect%3Ft%3Dabc",
       ) as never,
-    )) as Response;
-    expect(r.status).toBe(200);
-    expect(r.headers.get("Content-Type")).toContain("text/html");
-    const body = await r.text();
-    expect(body).toContain("<form");
-    expect(body).toContain('name="shop"');
-    expect(body).toContain('action="/dashboard/login"');
-    // The connector destination survives into the form (in the attribute, not
-    // just prose) so it resumes after login.
-    expect(body).toContain('name="return_to"');
-    expect(body).toContain('value="/dashboard/connect?t=abc"');
-    // No longer the old dead-end copy.
-    expect(body).not.toContain("Open Calderyn from your Shopify admin");
+    )) as { mode: string; returnTo: string | null; hintShop: string | null };
+    expect(r.mode).toBe("form");
+    // The connector destination survives into the form so it resumes after login.
+    expect(r.returnTo).toBe("/dashboard/connect?t=abc");
   });
 
-  it("renders the form WITHOUT a hidden return_to when none is given", async () => {
+  it("omits return_to from the form data when none is given", async () => {
     const r = (await loader(
       req("https://app.calderyncompany.com/dashboard/login") as never,
-    )) as Response;
-    expect(r.status).toBe(200);
-    const body = await r.text();
-    expect(body).toContain("<form");
-    expect(body).not.toContain('name="return_to"');
+    )) as { mode: string; returnTo: string | null };
+    expect(r.mode).toBe("form");
+    expect(r.returnTo).toBeNull();
   });
 });
