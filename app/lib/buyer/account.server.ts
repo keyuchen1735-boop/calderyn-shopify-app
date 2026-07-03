@@ -1,0 +1,140 @@
+// app/lib/buyer/account.server.ts
+//
+// Read models + account deletion for the buyer account surface (platform pivot #1b). Order
+// history reuses the existing OLTP `orders` spine (which already carries buyer_id); saved
+// addresses reuse `buyer_address`. All reads thread shop_id (service-role/BYPASSRLS path).
+
+import { getSupabase } from "~/lib/supabase.server";
+import type { BuyerAddress } from "./identity.server";
+import { deleteBuyerStripeCustomer } from "./payment-methods.server";
+
+export interface BuyerOrderSummary {
+  orderId: string;
+  state: string;
+  financialStatus: string;
+  totalCents: number;
+  currency: string;
+  createdAt: string;
+  /** Unguessable per-order token that keys the buyer-facing confirmation/receipt page. */
+  confirmationToken: string | null;
+}
+
+function mapAddress(row: Record<string, unknown>): BuyerAddress {
+  return {
+    id: String(row.id),
+    buyerId: String(row.buyer_id),
+    kind: row.kind as BuyerAddress["kind"],
+    name: row.name == null ? null : String(row.name),
+    line1: row.line1 == null ? null : String(row.line1),
+    line2: row.line2 == null ? null : String(row.line2),
+    city: row.city == null ? null : String(row.city),
+    region: row.region == null ? null : String(row.region),
+    postal: row.postal == null ? null : String(row.postal),
+    country: row.country == null ? null : String(row.country),
+    phone: row.phone == null ? null : String(row.phone),
+    isDefault: row.is_default === true,
+  };
+}
+
+/** All saved addresses for a buyer, default-first within each kind. */
+export async function listBuyerAddresses(shopId: string, buyerId: string): Promise<BuyerAddress[]> {
+  if (!shopId) throw new Error("shopId is required");
+  const { data, error } = await getSupabase()
+    .from("buyer_address")
+    .select("id, buyer_id, kind, name, line1, line2, city, region, postal, country, phone, is_default")
+    .eq("shop_id", shopId)
+    .eq("buyer_id", buyerId)
+    .order("kind", { ascending: true })
+    .order("is_default", { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as Record<string, unknown>[]).map(mapAddress);
+}
+
+/** The buyer's email, or null — used to prefill the checkout contact field for a signed-in buyer. */
+export async function getBuyerEmail(shopId: string, buyerId: string): Promise<string | null> {
+  if (!shopId) throw new Error("shopId is required");
+  const { data, error } = await getSupabase()
+    .from("buyer_dim")
+    .select("email_normalized")
+    .eq("shop_id", shopId)
+    .eq("id", buyerId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.email_normalized ? String(data.email_normalized) : null;
+}
+
+/** The buyer's default shipping address, or null — used to prefill checkout. */
+export async function defaultShippingAddress(shopId: string, buyerId: string): Promise<BuyerAddress | null> {
+  if (!shopId) throw new Error("shopId is required");
+  const { data, error } = await getSupabase()
+    .from("buyer_address")
+    .select("id, buyer_id, kind, name, line1, line2, city, region, postal, country, phone, is_default")
+    .eq("shop_id", shopId)
+    .eq("buyer_id", buyerId)
+    .eq("kind", "shipping")
+    .eq("is_default", true)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapAddress(data as Record<string, unknown>) : null;
+}
+
+/** Delete one of the buyer's saved addresses (scoped so a buyer can only delete their own). */
+export async function deleteBuyerAddress(shopId: string, buyerId: string, addressId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!addressId) return;
+  const { error } = await getSupabase()
+    .from("buyer_address")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("buyer_id", buyerId)
+    .eq("id", addressId);
+  if (error) throw error;
+}
+
+/** Order history: the buyer's OLTP orders at this shop, newest first. PII-free by construction. */
+export async function listBuyerOrders(shopId: string, buyerId: string): Promise<BuyerOrderSummary[]> {
+  if (!shopId) throw new Error("shopId is required");
+  const { data, error } = await getSupabase()
+    .from("orders")
+    .select("id, state, financial_status, total_cents, currency, created_at, confirmation_token")
+    .eq("shop_id", shopId)
+    .eq("buyer_id", buyerId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as Record<string, unknown>[]).map((o) => ({
+    orderId: String(o.id),
+    state: String(o.state),
+    financialStatus: String(o.financial_status),
+    totalCents: Number(o.total_cents),
+    currency: String(o.currency),
+    createdAt: String(o.created_at),
+    confirmationToken: o.confirmation_token == null ? null : String(o.confirmation_token),
+  }));
+}
+
+/**
+ * GDPR account deletion. Respects the PII/warehouse split: it deletes the buyer's PII from the
+ * buyer_* store and detaches their vaulted cards from Stripe, but NEVER touches the analytics
+ * warehouse (order_fact / order_line_fact) — those hold no buyer PII and are a separate spine.
+ *
+ * Order of operations:
+ *  1. Delete the buyer's Stripe Customer (removes all vaulted PaymentMethods) — done FIRST, while
+ *     the stripe_customer_id is still readable from buyer_dim. Best-effort (logged, not thrown).
+ *  2. Delete the buyer_dim row. Its ON DELETE CASCADE composite FKs remove buyer_address,
+ *     buyer_consent, buyer_magic_link, buyer_session (so every live session is gone — stronger
+ *     than a revoke), and buyer_payment_method. The OLTP `orders` FK also cascades (its buyer_id
+ *     is a PII link); the warehouse order_fact is NOT reachable from this cascade and is preserved.
+ */
+export async function deleteBuyerAccount(shopId: string, buyerId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!buyerId) throw new Error("buyerId is required");
+
+  await deleteBuyerStripeCustomer(shopId, buyerId);
+
+  const { error } = await getSupabase()
+    .from("buyer_dim")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("id", buyerId);
+  if (error) throw error;
+}
