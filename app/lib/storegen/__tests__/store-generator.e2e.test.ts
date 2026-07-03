@@ -286,22 +286,21 @@ describe("store generator e2e", () => {
     expect(html).toContain('method="post"');
   });
 
-  it("4. empty catalog: status is no_products, 3 drafts still written, home renders cleanly", async () => {
+  it("4. empty catalog: status is no_products, LLM skipped, 3 fallback drafts still render cleanly", async () => {
     getCatalogMock.mockReturnValue(EMPTY_CATALOG);
-    createMock
-      .mockResolvedValueOnce(reply(BRAND))
-      .mockResolvedValueOnce(reply(HOME_PLAN))
-      .mockResolvedValueOnce(reply(COLLECTION_PLAN))
-      .mockResolvedValueOnce(reply(PDP_PLAN));
 
     const result = await generateStore({ shopId: SHOP, mode: "catalog" });
     expect(result.status).toBe("no_products");
     expect(db.pageDocs.size).toBe(3);
+    // No catalog and no brief gives the model nothing to work with — the run
+    // is deterministic and free.
+    expect(createMock).not.toHaveBeenCalled();
+    expect(result.tokenCost).toBe(0);
 
     // Home must render against an empty catalog without throwing or blanking the hero.
     const home = await loadDraftDoc(SHOP, "home");
     const html = await renderDoc(home!, undefined, EMPTY_CATALOG);
-    expect(html).toContain("Summit Goods");
+    expect(html).toContain("My Store");
     expect(html).toContain("cd-store__grid");
   });
 

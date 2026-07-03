@@ -7,6 +7,8 @@ import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
+import { getConnectedAccount } from "~/lib/payments/connect.server";
+import { listProducts as listAdminProducts } from "~/lib/catalog/catalog.server";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
@@ -69,15 +71,45 @@ async function latestGeneration(shopId: string): Promise<StudioGeneration | null
   };
 }
 
+/** Whether payments are fully set up — same three-flag definition the Payments
+ *  screen uses (charges + payouts + details). Advisory only (the publish warn
+ *  panel), so a payments read error reports not-ready rather than failing the
+ *  whole studio load. Demo (non-uuid) shops have no row and read as not ready. */
+async function checkoutReady(shopId: string): Promise<boolean> {
+  if (!UUID_RE.test(shopId)) return false;
+  try {
+    const account = await getConnectedAccount(shopId);
+    return (
+      account?.charges_enabled === true &&
+      account.payouts_enabled === true &&
+      account.details_submitted === true
+    );
+  } catch (err) {
+    console.error("[studio] checkout readiness read failed; reporting not ready", err);
+    return false;
+  }
+}
+
+/** Products sitting in draft status — invisible to the storefront until
+ *  finished, but the studio must say where chat-box attachments went. */
+async function draftProductCount(shopId: string): Promise<number> {
+  if (!UUID_RE.test(shopId)) return 0;
+  const { total } = await listAdminProducts(shopId, { status: "draft", limit: 1 });
+  return total;
+}
+
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation] = await Promise.all([
-    getStoreSettings(shopId),
-    loadDraftDoc(shopId, "home"),
-    loadPublishedDoc(shopId, "home"),
-    catalog.listProducts(shopId),
-    latestGeneration(shopId),
-  ]);
+  const [settings, draft, published, products, generation, canCharge, draftCount] =
+    await Promise.all([
+      getStoreSettings(shopId),
+      loadDraftDoc(shopId, "home"),
+      loadPublishedDoc(shopId, "home"),
+      catalog.listProducts(shopId),
+      latestGeneration(shopId),
+      checkoutReady(shopId),
+      draftProductCount(shopId),
+    ]);
 
   const doc = draft ?? published;
   const shaped: StudioProduct[] = products.slice(0, 3).map((p) => ({
@@ -96,6 +128,9 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     },
     hero: doc ? heroFromDoc(doc) : null,
     products: shaped,
+    productCount: products.length,
+    draftProductCount: draftCount,
+    checkoutReady: canCharge,
     hasDraft: draft != null,
     hasPublished: published != null,
     generation,
@@ -156,23 +191,30 @@ export async function saveStudioAccent(shopId: string, color: string): Promise<v
 
 /** Publish every drafted page in the publishable set (home/collection/pdp),
  *  validating each draft first (page-document.server.ts caller obligation).
- *  409s when there is nothing to publish. */
+ *  Publishing is never gated: with nothing drafted, the default home doc is
+ *  seeded as the draft and published, so the storefront always goes live. */
 export async function publishStudioStore(shopId: string): Promise<void> {
+  // Demo/fixture shops can't persist page documents (saveDraft throws a raw
+  // Error for non-uuid ids) — refuse cleanly instead of 500ing.
+  if (!UUID_RE.test(shopId)) {
+    throw new CalderynError({
+      code: "demo_shop",
+      status: 422,
+      message: "This demo store can't publish changes.",
+    });
+  }
   const valid = await catalogValidIds(shopId);
+  const publishPage = async (pageKey: PageKey, doc: BlockDocument) => {
+    const { doc: clean } = validateDocument(doc, valid);
+    await saveDraft(shopId, pageKey, clean);
+    await publishDoc(shopId, pageKey);
+  };
   let publishedAny = false;
   for (const pageKey of PUBLISHABLE_PAGES) {
     const draft = await loadDraftDoc(shopId, pageKey);
     if (!draft) continue;
-    const { doc: clean } = validateDocument(draft, valid);
-    await saveDraft(shopId, pageKey, clean);
-    await publishDoc(shopId, pageKey);
+    await publishPage(pageKey, draft);
     publishedAny = true;
   }
-  if (!publishedAny) {
-    throw new CalderynError({
-      code: "no_draft",
-      status: 409,
-      message: "Nothing to publish yet — build or edit a draft first.",
-    });
-  }
+  if (!publishedAny) await publishPage("home", defaultHomeDocument());
 }

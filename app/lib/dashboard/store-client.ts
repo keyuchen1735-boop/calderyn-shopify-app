@@ -1,6 +1,6 @@
 // Client fetchers for the Store studio surface. Kept in its own module (not
 // client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend } from "./client";
+import { apiGet, apiSend, saveProduct, uploadProductImage } from "./client";
 import type {
   StudioState,
   StudioSettings,
@@ -53,9 +53,43 @@ export async function generateStudioStore(brief: string): Promise<StudioGenerate
   });
 }
 
-/** Publish every drafted storefront page. 409s when there is no draft. */
+/** Publish every drafted storefront page (the server seeds and publishes the
+ *  default home page when nothing is drafted — publishing is never gated). */
 export async function publishStudioStore(): Promise<{ publishedAt: string }> {
   return apiSend<{ publishedAt: string }>("POST", "/dashboard/api/store", {
     action: "publish",
   });
+}
+
+/** "red-ceramic_mug.v2.jpg" → "Red ceramic mug v2" — a starter title for a
+ *  product created from a chat-box image attachment. */
+export function productTitleFromFilename(filename: string): string {
+  const stem = filename.replace(/\.[a-z0-9]+$/i, "");
+  const words = stem.replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return "New product";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+export interface AddedProduct {
+  id: string;
+  title: string;
+  /** Set when the product was created but its image failed to attach — the
+   *  caller must surface the partial add rather than reporting total failure
+   *  (a retry would otherwise mint a duplicate product). */
+  imageError?: string;
+}
+
+/** Turn a chat-box image attachment into a catalog product: create a draft
+ *  product titled from the filename, then attach the image. Draft, not active —
+ *  price and shipping still need the product editor before it can sell. */
+export async function addProductFromImage(file: File): Promise<AddedProduct> {
+  const title = productTitleFromFilename(file.name);
+  const { id } = await saveProduct({ title, status: "draft", variants: [{}] });
+  try {
+    await uploadProductImage(id, file);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "image upload failed";
+    return { id, title, imageError: msg };
+  }
+  return { id, title };
 }

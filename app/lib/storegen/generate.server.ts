@@ -43,9 +43,14 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   let tokenCost = 0;
   let budgetHit = false;
+  // An empty catalog with no brief gives the model nothing to work with — the
+  // result would match the deterministic fallback anyway, so skip the paid
+  // calls entirely (this is also the auto-build path for brand-new shops).
+  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief;
   const client = getAnthropic();
 
   async function call(system: string, user: string): Promise<string | null> {
+    if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     try {
       const msg = await client.messages.create({ model, max_tokens: 1500, system, messages: [{ role: "user", content: user }] });
