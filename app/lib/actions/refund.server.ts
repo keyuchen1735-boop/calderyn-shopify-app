@@ -355,22 +355,34 @@ export async function executeRefundAction(
 
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
   // (a refund is money OUT, not clawed-back waste) — recoveredCentsFromStates returns 0 for it.
-  const audit = await insertAuditWithIdempotency(
-    shopId,
-    input.idempotencyKey,
-    {
-      alert_id: null,
-      action_kind: "issue_refund",
-      params,
-      outcome: "succeeded",
-      pre_state: { state: order.state, refunded_cents: totals.refundedCents },
-      post_state: { state: resolvedState, refunded_cents: refundedTotalCents },
-      last_error: null,
-      actor_user_id: input.actor ?? "merchant",
-      trigger_reason: input.triggerReason ?? null,
-    },
-    sb,
-  );
+  // Loud-log before rethrow: after a FULL refund the order is already 'refunded', so a retry is
+  // refused as non-refundable and this audit row would otherwise be lost silently — the refund id
+  // in the log is the reconcile handle (ledger stays the money truth).
+  let audit;
+  try {
+    audit = await insertAuditWithIdempotency(
+      shopId,
+      input.idempotencyKey,
+      {
+        alert_id: null,
+        action_kind: "issue_refund",
+        params,
+        outcome: "succeeded",
+        pre_state: { state: order.state, refunded_cents: totals.refundedCents },
+        post_state: { state: resolvedState, refunded_cents: refundedTotalCents },
+        last_error: null,
+        actor_user_id: input.actor ?? "merchant",
+        trigger_reason: input.triggerReason ?? null,
+      },
+      sb,
+    );
+  } catch (err) {
+    console.error(
+      `[refund] order ${input.orderId} refund ${refund.refundId} recorded in the ledger but the action_audit insert failed — reconcile from the ledger`,
+      err,
+    );
+    throw err;
+  }
 
   return {
     auditId: audit.id,
