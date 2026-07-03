@@ -118,6 +118,12 @@ describe("importCustomers", () => {
     );
     await importCustomers("s.myshopify.com", "shop-1");
     expect(recordConsent).toHaveBeenCalledTimes(1);
-    expect(recordConsent).toHaveBeenCalledWith("shop-1", "buyer-a@example.com", expect.objectContaining({ policy: "marketing", accepted: true }));
+    // version + capturedAt are the append-only ledger's provenance proof — pin them.
+    expect(recordConsent).toHaveBeenCalledWith("shop-1", "buyer-a@example.com", {
+      policy: "marketing",
+      version: "shopify-import-2026-07",
+      accepted: true,
+      capturedAt: "2026-01-01T00:00:00Z",
+    });
   });
 });
