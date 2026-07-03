@@ -1,6 +1,8 @@
 import {
   useState,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -595,6 +597,83 @@ export function RingGauge({
         )}
       </div>
       {sublabel}
+    </div>
+  );
+}
+
+/** Circular calibration gauge (ticks + arc + knob), driven by a real pct.
+ *  Shared by Mission Control's autopilot card and the Autopilot screen's
+ *  calibration panel. */
+export function TickGauge({ pct, size }: { pct: number; size: number }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const ticks = useMemo(() => {
+    const out: { x1: string; y1: string; x2: string; y2: string; lit: boolean }[] = [];
+    for (let i = 0; i < 60; i++) {
+      const a = -Math.PI / 2 + (i / 60) * Math.PI * 2;
+      const lit = (i / 60) * 100 <= clamped + 0.01;
+      const r1 = 93;
+      const r2 = 82;
+      out.push({
+        x1: (100 + r1 * Math.cos(a)).toFixed(2),
+        y1: (100 + r1 * Math.sin(a)).toFixed(2),
+        x2: (100 + r2 * Math.cos(a)).toFixed(2),
+        y2: (100 + r2 * Math.sin(a)).toFixed(2),
+        lit,
+      });
+    }
+    return out;
+  }, [clamped]);
+  const arcOffset = (100 - clamped).toFixed(2);
+  const deg = ((clamped / 100) * 360).toFixed(2);
+  // SVG gradient ids must be document-unique — this is a shared component and
+  // two gauges on one page would silently bind to the first one's gradient.
+  const gradientId = useId();
+  return (
+    <div className="cd-gauge cd-gauge-sm" style={{ width: size, height: size }}>
+      <svg viewBox="0 0 200 200" width={size} height={size} fill="none">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="color-mix(in oklch, var(--live) 42%, #ffffff)" />
+            <stop offset="1" stopColor="var(--live)" />
+          </linearGradient>
+        </defs>
+        {ticks.map((t, i) => (
+          <line
+            key={i}
+            x1={t.x1}
+            y1={t.y1}
+            x2={t.x2}
+            y2={t.y2}
+            stroke={t.lit ? "var(--live)" : "var(--gauge-dim)"}
+            strokeWidth={t.lit ? 2.6 : 2}
+            strokeLinecap="round"
+          />
+        ))}
+        <circle cx="100" cy="100" r="72" stroke="var(--gauge-track)" strokeWidth="6" />
+        <circle
+          className="cd-gauge-arc"
+          cx="100"
+          cy="100"
+          r="72"
+          pathLength={100}
+          stroke={`url(#${gradientId})`}
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray="100"
+          strokeDashoffset={arcOffset}
+          transform="rotate(-90 100 100)"
+        />
+        <g className="cd-gauge-dot" style={{ transform: `rotate(${deg}deg)` }}>
+          <circle cx="100" cy="28" r="11" fill="var(--live)" opacity="0.22" />
+          <circle cx="100" cy="28" r="5" fill="var(--gauge-knob)" />
+        </g>
+      </svg>
+      <div className="cd-gauge-c">
+        <div className="cd-gauge-num">
+          <b>{Math.round(clamped)}</b>
+          <i>%</i>
+        </div>
+      </div>
     </div>
   );
 }

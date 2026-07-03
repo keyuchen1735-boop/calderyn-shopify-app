@@ -1,8 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
 import {
   Card,
-  SevBadge,
   Pill,
   Segmented,
   Sparkline,
@@ -44,22 +43,50 @@ function ScreenHeader({
   );
 }
 
-/* ---------- List row ---------- */
-function AlertRow({ a, onClick }: { a: AlertVM; onClick: () => void }) {
-  const resolved = a.status !== "open";
+/* ---------- Row derivations ---------- */
+// Mirror of the extension's sold-out guard (app/routes/app.alerts.$id.tsx):
+// when a "may sell out" alert's stock / days-of-cover are already 0, reframe the
+// headline so copy never contradicts the evidence. Engine fix flagged separately.
+function isSoldOut(a: AlertVM): boolean {
   return (
-    <button className="cd-row" onClick={onClick} data-dim={resolved ? "1" : "0"}>
+    a.detector_id === "scaling_sku_fulfillment_risk" &&
+    (Number(a.evidence.stock) === 0 || Number(a.evidence.days_of_cover) === 0)
+  );
+}
+
+function headline(a: AlertVM): string {
+  const productName = a.evidence.title || a.evidence.sku_title || a.sku || "";
+  return isSoldOut(a) && productName ? `${productName} is sold out — restock now` : a.title;
+}
+
+// The only detector whose dollar figure is money to be gained rather than money
+// at risk; every other alert reads "at risk".
+function isUpside(a: AlertVM): boolean {
+  return a.detector_id === "campaign_scaling_opportunity";
+}
+
+/* ---------- List row ---------- */
+function AlertRow({ a, open, onToggle }: { a: AlertVM; open: boolean; onToggle: () => void }) {
+  const resolved = a.status !== "open";
+  const upside = isUpside(a);
+  return (
+    <button
+      className="cd-row"
+      onClick={onToggle}
+      data-dim={resolved ? "1" : "0"}
+      aria-expanded={open}
+    >
       <span className={"cd-sev-bar sev-" + a.severity}></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="cd-row-title truncate">{a.title}</span>
+          <span className="cd-row-title truncate">{headline(a)}</span>
           {resolved && (
             <Pill tone="success" icon="check">
               Resolved
             </Pill>
           )}
         </div>
-        <div className="cd-caption truncate">
+        <div className="cd-caption truncate" style={{ marginTop: 2 }}>
           {alertDetectorLabel(a.detector_id, a.evidence) +
             " · " +
             (a.sku || a.campaign || "—") +
@@ -70,14 +97,25 @@ function AlertRow({ a, onClick }: { a: AlertVM; onClick: () => void }) {
       <div className="text-right whitespace-nowrap">
         <div
           className="cd-row-num tabular-nums"
-          style={{ color: resolved ? "var(--text-3)" : "var(--red)" }}
+          style={{
+            color: resolved ? "var(--text-3)" : upside ? "var(--green)" : "var(--red)",
+          }}
         >
-          {money(a.dollar_impact)}
+          {(upside ? "+" : "") + money(a.dollar_impact)}
           <span className="cd-caption">{IMPACT_SUFFIX}</span>
         </div>
-        <div className="cd-caption">at risk</div>
+        <div className="cd-caption">{upside ? "upside" : "at risk"}</div>
       </div>
-      <CDIcon name="chevronRight" size={16} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+      <CDIcon
+        name="chevronRight"
+        size={16}
+        style={{
+          color: "var(--text-3)",
+          flexShrink: 0,
+          transition: "transform 0.18s ease",
+          transform: open ? "rotate(90deg)" : "none",
+        }}
+      />
     </button>
   );
 }
@@ -115,16 +153,15 @@ function LinkedCampaign({ app, campaign }: { app: DashboardCtx; campaign: Campai
   );
 }
 
-/* ---------- Detail ---------- */
-function AlertDetail({
-  app,
-  alert,
-  onBack,
-}: {
-  app: DashboardCtx;
-  alert: AlertVM;
-  onBack: () => void;
-}) {
+/* ---------- Expanded detail (inline, below the row) ---------- */
+const EYEBROW_STYLE = {
+  fontWeight: 650,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  fontSize: 10.5,
+} as const;
+
+function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
   // Track the kind we attempted, so a freshly-resolved alert can read "Resolved — <label>".
   // (AlertVM has no `resolved_with` field; the shell only flips status to "resolved".)
   const [attempted, setAttempted] = useState<ActionKind | null>(null);
@@ -148,16 +185,7 @@ function AlertDetail({
     (alert.recommended && ACTION_LABELS[alert.recommended]) ||
     "action taken";
 
-  // Mirror of the extension's sold-out guard (app/routes/app.alerts.$id.tsx):
-  // when a "may sell out" alert's stock / days-of-cover are already 0, reframe the
-  // headline so copy never contradicts the evidence. Engine fix flagged separately.
-  const soldOut =
-    alert.detector_id === "scaling_sku_fulfillment_risk" &&
-    (Number(alert.evidence.stock) === 0 || Number(alert.evidence.days_of_cover) === 0);
-  const productName =
-    alert.evidence.title || alert.evidence.sku_title || alert.sku || "";
-  const headline =
-    soldOut && productName ? `${productName} is sold out — restock now` : alert.title;
+  const soldOut = isSoldOut(alert);
 
   const campaign = alert.campaign_id
     ? app.campaigns.find((c) => c.id === alert.campaign_id) ?? null
@@ -169,6 +197,16 @@ function AlertDetail({
   const evidenceCells = Object.entries(alert.evidence).filter(
     ([k, v]) => !isInternalEvidenceKey(k) && v != null && v !== "",
   );
+
+  // The one-line "Fix" is the primary recommended action's label: the
+  // remediation plan's recommended move when a plan exists, else the legacy
+  // recommended kind mapped through ACTION_LABELS.
+  const plan = alert.remediation;
+  const fixLabel = plan
+    ? plan.moves.find((m) => m.kind === plan.recommended)?.label ?? null
+    : alert.recommended
+      ? ACTION_LABELS[alert.recommended] || alert.recommended
+      : null;
 
   // adjust_price: parse the optional override (dollars → cents; blank → engine
   // suggestion) and execute. The executor bounds the price to the guardrail cap
@@ -235,346 +273,330 @@ function AlertDetail({
   };
 
   return (
-    <div className="cd-screen" data-screen-label="Alert detail">
-      <button className="cd-back" onClick={onBack}>
-        <CDIcon name="chevronLeft" size={15} />
-        Alerts
-      </button>
-      <header className="cd-screen-head" style={{ marginTop: 4 }}>
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <SevBadge severity={alert.severity} />
-            <span className="cd-caption">
-              {alertDetectorLabel(alert.detector_id, alert.evidence) +
-                " · detected " +
-                timeAgo(alert.created_at)}
-            </span>
-            {resolved && (
-              <Pill tone="success" icon="check">
-                Resolved — {resolvedLabel}
-              </Pill>
-            )}
+    <div className="cd-alert-detail">
+      {soldOut && (
+        <p
+          className="cd-body"
+          style={{ color: "var(--red)", margin: "8px 0 0", maxWidth: "62ch" }}
+        >
+          On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s a
+          stockout. Restock now and pause or exclude the spend until inventory is back.
+        </p>
+      )}
+      <div
+        style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-2)", maxWidth: "68ch", marginTop: 8 }}
+      >
+        {alert.narrative}
+      </div>
+      {evidenceCells.length > 0 && (
+        <>
+          <div className="cd-caption" style={{ ...EYEBROW_STYLE, marginTop: 12 }}>
+            Evidence
           </div>
-          <h1 className="cd-h1">{headline}</h1>
-        </div>
-        <div className="text-right">
-          <div
-            className="cd-stat-value tabular-nums"
-            style={{ color: resolved ? "var(--text-3)" : "var(--red)" }}
-          >
-            {money(alert.dollar_impact)}
+          <div className="cd-evidence">
+            {evidenceCells.map(([k, v]) => (
+              <div key={k} className="cd-evidence-cell">
+                <div className="cd-caption">{evidenceLabel(k)}</div>
+                <div className="cd-h3 tabular-nums">{evidenceValue(k, v)}</div>
+              </div>
+            ))}
           </div>
-          <div className="cd-caption">at risk over 30 days</div>
+        </>
+      )}
+      {campaign && (
+        <div style={{ marginTop: 10 }}>
+          <LinkedCampaign app={app} campaign={campaign} />
         </div>
-      </header>
-
-      <div className="cd-grid-main">
-        <div className="flex flex-col gap-4 min-w-0">
-          <Card>
-            <h2 className="cd-h2 mb-2">What&apos;s happening</h2>
-            {soldOut && (
-              <p className="cd-body" style={{ color: "var(--red)", marginBottom: 8, maxWidth: "62ch" }}>
-                On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s a
-                stockout. Restock now and pause or exclude the spend until inventory is back.
-              </p>
-            )}
-            <p className="cd-body" style={{ maxWidth: "62ch" }}>
-              {alert.narrative}
-            </p>
-          </Card>
-          {evidenceCells.length > 0 && (
-            <Card pad={false}>
-              <div className="cd-pad-x cd-pad-t">
-                <h2 className="cd-h2">Evidence</h2>
-              </div>
-              <div className="cd-evidence">
-                {evidenceCells.map(([k, v]) => (
-                  <div key={k} className="cd-evidence-cell">
-                    <div className="cd-caption">{evidenceLabel(k)}</div>
-                    <div className="cd-h3 tabular-nums">{evidenceValue(k, v)}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
+      )}
+      {resolved ? (
+        <p className="cd-caption" style={{ marginTop: 10 }}>
+          This alert was resolved with{" "}
+          <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
+          your audit history and can be reverted there.
+        </p>
+      ) : (
+        <>
+          {fixLabel && (
+            <div
+              style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 10, flexWrap: "wrap" }}
+            >
+              <span className="cd-caption" style={{ ...EYEBROW_STYLE, color: "var(--live)" }}>
+                Fix
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 560 }}>{fixLabel}</span>
+            </div>
           )}
-          {campaign && <LinkedCampaign app={app} campaign={campaign} />}
-        </div>
-
-        <div className="flex flex-col gap-4 min-w-0">
-          <Card className="flex flex-col gap-2.5">
-            <h2 className="cd-h2">Fix it</h2>
-            {resolved ? (
-              <p className="cd-caption">
-                This alert was resolved with{" "}
-                <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
-                your audit history and can be reverted there.
-              </p>
-            ) : alert.remediation ? (
-              <>
-                {alert.rec_detail && (
-                  <p className="cd-body" style={{ maxWidth: "52ch" }}>
-                    {alert.rec_detail}
-                  </p>
-                )}
-                <div className="flex flex-col gap-2 mt-1">
-                  {alert.remediation.moves.map((m) => {
-                    const rec = m.kind === alert.remediation!.recommended;
-                    const executable = m.executor !== null;
-                    if (executable) {
-                      // Executable move: render as a button. Danger styling for
-                      // destructive executors (discontinue). Phase 3 adds
-                      // reallocate_spend_sku, reduce_campaign_budget, pause_campaign.
-                      const isDiscontinue = m.executor === "discontinue_sku";
-                      return (
-                        <button
-                          key={m.kind}
-                          disabled={resolved || busy}
-                          aria-busy={busy && attempted === m.executor}
-                          className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
-                          onClick={() =>
-                            m.executor === "adjust_price"
-                              ? setConfirmPrice(true)
-                              : run(
-                                  m.executor as ActionKind,
-                                  m.target?.loserCampaignId
-                                    ? {
-                                        campaignId: m.target.loserCampaignId,
-                                        loserBudgetCents: m.target.loserCampaignBudgetCents,
-                                      }
-                                    : undefined,
-                                )
-                          }
-                        >
-                          <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
-                          <span className="flex-1 text-left">{m.label}</span>
-                          {rec && <span className="cd-rec-tag">Recommended</span>}
-                        </button>
-                      );
-                    }
-                    // Advisory move (executor === null): show guidance row with
-                    // ineligibleReason when set (rule 12 — never a dead button).
+          {plan ? (
+            <>
+              {alert.rec_detail && (
+                <p className="cd-body" style={{ maxWidth: "52ch", marginTop: 8 }}>
+                  {alert.rec_detail}
+                </p>
+              )}
+              <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+                {plan.moves.map((m) => {
+                  const rec = m.kind === plan.recommended;
+                  const executable = m.executor !== null;
+                  if (executable) {
+                    // Executable move: render as a button. Danger styling for
+                    // destructive executors (discontinue). Phase 3 adds
+                    // reallocate_spend_sku, reduce_campaign_budget, pause_campaign.
+                    const isDiscontinue = m.executor === "discontinue_sku";
                     return (
-                      <div
+                      <button
                         key={m.kind}
-                        className={"cd-move-row" + (rec ? " rec" : "")}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "10px 12px",
-                          borderRadius: 10,
-                          border: "1px solid var(--border)",
-                          background: rec ? "var(--surface-2)" : "transparent",
-                        }}
+                        disabled={resolved || busy}
+                        aria-busy={busy && attempted === m.executor}
+                        className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
+                        onClick={() =>
+                          m.executor === "adjust_price"
+                            ? setConfirmPrice(true)
+                            : run(
+                                m.executor as ActionKind,
+                                m.target?.loserCampaignId
+                                  ? {
+                                      campaignId: m.target.loserCampaignId,
+                                      loserBudgetCents: m.target.loserCampaignBudgetCents,
+                                    }
+                                  : undefined,
+                              )
+                        }
                       >
-                        <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
+                        <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
                         <span className="flex-1 text-left">{m.label}</span>
                         {rec && <span className="cd-rec-tag">Recommended</span>}
-                        {m.ineligibleReason && (
-                          <span className="cd-caption" style={{ color: "var(--text-3)", flexShrink: 0, maxWidth: "32ch", textAlign: "right" }}>
-                            {m.ineligibleReason}
-                          </span>
-                        )}
-                        {m.deepLink && (
-                          <a
-                            href={m.deepLink.href}
-                            target={m.deepLink.external ? "_blank" : undefined}
-                            rel={m.deepLink.external ? "noopener noreferrer" : undefined}
-                            className="cd-move-link"
-                            style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0, color: "var(--accent)" }}
-                          >
-                            {m.deepLink.label}
-                            <CDIcon name="arrowUpRight" size={14} strokeWidth={1.9} />
-                          </a>
-                        )}
-                      </div>
+                      </button>
+                    );
+                  }
+                  // Advisory move (executor === null): show guidance row with
+                  // ineligibleReason when set (rule 12 — never a dead button).
+                  return (
+                    <div
+                      key={m.kind}
+                      className={"cd-move-row" + (rec ? " rec" : "")}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--border)",
+                        background: rec ? "var(--surface-2)" : "transparent",
+                      }}
+                    >
+                      <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
+                      <span className="flex-1 text-left">{m.label}</span>
+                      {rec && <span className="cd-rec-tag">Recommended</span>}
+                      {m.ineligibleReason && (
+                        <span className="cd-caption" style={{ color: "var(--text-3)", flexShrink: 0, maxWidth: "32ch", textAlign: "right" }}>
+                          {m.ineligibleReason}
+                        </span>
+                      )}
+                      {m.deepLink && (
+                        <a
+                          href={m.deepLink.href}
+                          target={m.deepLink.external ? "_blank" : undefined}
+                          rel={m.deepLink.external ? "noopener noreferrer" : undefined}
+                          className="cd-move-link"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0, color: "var(--accent)" }}
+                        >
+                          {m.deepLink.label}
+                          <CDIcon name="arrowUpRight" size={14} strokeWidth={1.9} />
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {confirmPrice && (
+                <div
+                  className="cd-move-row"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    padding: "12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    marginTop: 8,
+                  }}
+                >
+                  <span className="cd-caption">
+                    This changes the live selling price on Shopify to restore this product&apos;s
+                    margin. Leave the field blank to use the suggested price, or set your own
+                    (within your price-change guardrail). Reversible from your action history.
+                  </span>
+                  <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <span className="cd-caption">New price</span>
+                    <input
+                      className="cd-input tabular-nums"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      inputMode="decimal"
+                      placeholder="Suggested"
+                      value={priceInput}
+                      disabled={busy}
+                      onChange={(e) => setPriceInput(e.target.value)}
+                    />
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="cd-action-btn rec"
+                      disabled={busy}
+                      aria-busy={busy}
+                      onClick={runAdjustPrice}
+                      style={{ flex: "0 0 auto", width: "auto" }}
+                    >
+                      <CDIcon name="tag" size={16} strokeWidth={1.9} />
+                      <span>{busy ? "Updating…" : "Update price"}</span>
+                    </button>
+                    <button
+                      className="cd-action-btn"
+                      disabled={busy}
+                      onClick={() => {
+                        setConfirmPrice(false);
+                        setPriceInput("");
+                      }}
+                      style={{ flex: "0 0 auto", width: "auto" }}
+                    >
+                      <span>Cancel</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+              <p className="cd-caption" style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+                <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                logged. Advisory moves are guidance; the highlighted action runs with one click.
+              </p>
+            </>
+          ) : (
+            <>
+              {alert.rec_detail && (
+                <p className="cd-caption" style={{ marginTop: 8 }}>
+                  {alert.rec_detail}
+                </p>
+              )}
+              <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+                {alert.actions.map((kind) => {
+                  const rec = kind === alert.recommended;
+                  return (
+                    <button
+                      key={kind}
+                      disabled={resolved || busy}
+                      aria-busy={busy && attempted === kind}
+                      className={"cd-action-btn" + (rec ? " rec" : "")}
+                      onClick={() =>
+                        kind === "create_po_draft"
+                          ? setConfirmPo(true)
+                          : run(kind as ActionKind)
+                      }
+                    >
+                      <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
+                      <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
+                      {rec && <span className="cd-rec-tag">Recommended</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {deepLinkDomain && (alert.deepLinkKinds ?? []).length > 0 && (
+                <div className="flex flex-col gap-2" style={{ marginTop: 8 }}>
+                  {alert.deepLinkKinds!.map((kind) => {
+                    const dl = actionDeepLink(kind, deepLinkDomain);
+                    if (!dl) return null;
+                    return (
+                      <a
+                        key={kind}
+                        href={dl.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="cd-action-btn"
+                        style={{ textDecoration: "none" }}
+                      >
+                        <CDIcon name="arrowUpRight" size={16} strokeWidth={1.9} />
+                        <span className="flex-1 text-left">{dl.label}</span>
+                      </a>
                     );
                   })}
                 </div>
-                {confirmPrice && (
-                  <div
-                    className="cd-move-row"
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      padding: "12px",
-                      borderRadius: 10,
-                      border: "1px solid var(--border)",
-                      background: "var(--surface-2)",
-                    }}
-                  >
-                    <span className="cd-caption">
-                      This changes the live selling price on Shopify to restore this product&apos;s
-                      margin. Leave the field blank to use the suggested price, or set your own
-                      (within your price-change guardrail). Reversible from your action history.
-                    </span>
+              )}
+              {confirmPo && (
+                <div
+                  className="cd-move-row"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    padding: "12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    marginTop: 8,
+                  }}
+                >
+                  <span className="cd-caption">
+                    Drafts a purchase order for this product and records it in your action
+                    history, where the PDF can be downloaded. Review and send to your supplier
+                    manually — nothing is ordered automatically.
+                  </span>
+                  <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                     <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <span className="cd-caption">New price</span>
+                      <span className="cd-caption">Quantity</span>
+                      <input
+                        className="cd-input tabular-nums"
+                        type="number"
+                        min={1}
+                        max={1_000_000}
+                        value={poQty}
+                        disabled={busy}
+                        onChange={(e) => setPoQty(e.target.value)}
+                      />
+                    </label>
+                    <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <span className="cd-caption">Unit cost</span>
                       <input
                         className="cd-input tabular-nums"
                         type="number"
                         min={0}
                         step={0.01}
-                        inputMode="decimal"
-                        placeholder="Suggested"
-                        value={priceInput}
+                        placeholder="TBD"
+                        value={poCost}
                         disabled={busy}
-                        onChange={(e) => setPriceInput(e.target.value)}
+                        onChange={(e) => setPoCost(e.target.value)}
                       />
                     </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="cd-action-btn rec"
-                        disabled={busy}
-                        aria-busy={busy}
-                        onClick={runAdjustPrice}
-                        style={{ flex: "0 0 auto", width: "auto" }}
-                      >
-                        <CDIcon name="tag" size={16} strokeWidth={1.9} />
-                        <span>{busy ? "Updating…" : "Update price"}</span>
-                      </button>
-                      <button
-                        className="cd-action-btn"
-                        disabled={busy}
-                        onClick={() => {
-                          setConfirmPrice(false);
-                          setPriceInput("");
-                        }}
-                        style={{ flex: "0 0 auto", width: "auto" }}
-                      >
-                        <span>Cancel</span>
-                      </button>
-                    </div>
                   </div>
-                )}
-                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-                  logged. Advisory moves are guidance; the highlighted action runs with one click.
-                </p>
-              </>
-            ) : (
-              <>
-                {alert.rec_detail && <p className="cd-caption">{alert.rec_detail}</p>}
-                <div className="flex flex-col gap-2 mt-1">
-                  {alert.actions.map((kind) => {
-                    const rec = kind === alert.recommended;
-                    return (
-                      <button
-                        key={kind}
-                        disabled={resolved || busy}
-                        aria-busy={busy && attempted === kind}
-                        className={"cd-action-btn" + (rec ? " rec" : "")}
-                        onClick={() =>
-                          kind === "create_po_draft"
-                            ? setConfirmPo(true)
-                            : run(kind as ActionKind)
-                        }
-                      >
-                        <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
-                        <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
-                        {rec && <span className="cd-rec-tag">Recommended</span>}
-                      </button>
-                    );
-                  })}
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="cd-action-btn rec"
+                      disabled={busy}
+                      aria-busy={busy}
+                      onClick={runPo}
+                      style={{ flex: "0 0 auto", width: "auto" }}
+                    >
+                      <CDIcon name="doc" size={16} strokeWidth={1.9} />
+                      <span>{busy ? "Drafting…" : "Create PO draft"}</span>
+                    </button>
+                    <button
+                      className="cd-action-btn"
+                      disabled={busy}
+                      onClick={() => setConfirmPo(false)}
+                      style={{ flex: "0 0 auto", width: "auto" }}
+                    >
+                      <span>Cancel</span>
+                    </button>
+                  </div>
                 </div>
-                {deepLinkDomain && (alert.deepLinkKinds ?? []).length > 0 && (
-                  <div className="flex flex-col gap-2 mt-1">
-                    {alert.deepLinkKinds!.map((kind) => {
-                      const dl = actionDeepLink(kind, deepLinkDomain);
-                      if (!dl) return null;
-                      return (
-                        <a
-                          key={kind}
-                          href={dl.href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="cd-action-btn"
-                          style={{ textDecoration: "none" }}
-                        >
-                          <CDIcon name="arrowUpRight" size={16} strokeWidth={1.9} />
-                          <span className="flex-1 text-left">{dl.label}</span>
-                        </a>
-                      );
-                    })}
-                  </div>
-                )}
-                {confirmPo && (
-                  <div
-                    className="cd-move-row"
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      padding: "12px",
-                      borderRadius: 10,
-                      border: "1px solid var(--border)",
-                      background: "var(--surface-2)",
-                    }}
-                  >
-                    <span className="cd-caption">
-                      Drafts a purchase order for this product and records it in your action
-                      history, where the PDF can be downloaded. Review and send to your supplier
-                      manually — nothing is ordered automatically.
-                    </span>
-                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                      <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <span className="cd-caption">Quantity</span>
-                        <input
-                          className="cd-input tabular-nums"
-                          type="number"
-                          min={1}
-                          max={1_000_000}
-                          value={poQty}
-                          disabled={busy}
-                          onChange={(e) => setPoQty(e.target.value)}
-                        />
-                      </label>
-                      <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <span className="cd-caption">Unit cost</span>
-                        <input
-                          className="cd-input tabular-nums"
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          placeholder="TBD"
-                          value={poCost}
-                          disabled={busy}
-                          onChange={(e) => setPoCost(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="cd-action-btn rec"
-                        disabled={busy}
-                        aria-busy={busy}
-                        onClick={runPo}
-                        style={{ flex: "0 0 auto", width: "auto" }}
-                      >
-                        <CDIcon name="doc" size={16} strokeWidth={1.9} />
-                        <span>{busy ? "Drafting…" : "Create PO draft"}</span>
-                      </button>
-                      <button
-                        className="cd-action-btn"
-                        disabled={busy}
-                        onClick={() => setConfirmPo(false)}
-                        style={{ flex: "0 0 auto", width: "auto" }}
-                      >
-                        <span>Cancel</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <p className="cd-caption mt-1" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-                  logged.
-                </p>
-              </>
-            )}
-          </Card>
-        </div>
-      </div>
+              )}
+              <p className="cd-caption" style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+                <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
+                logged.
+              </p>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -585,18 +607,20 @@ type Filter = "open" | "resolved" | "all";
 export default function Alerts({ app }: { app: DashboardCtx }) {
   const [filter, setFilter] = useState<Filter>("open");
 
-  // Deep-link / row-click: nav.param carries the selected alert id.
-  const selected = app.nav.param ? app.alerts.find((a) => a.id === app.nav.param) : null;
-  if (selected) {
-    return (
-      <AlertDetail
-        key={selected.id}
-        app={app}
-        alert={selected}
-        onBack={() => app.navigate("alerts")}
-      />
-    );
-  }
+  // Deep-link / row-click: nav.param carries the expanded alert id. Expansion
+  // rides the URL so /dashboard/alerts/:id links keep working, and the shell's
+  // enriched-alert fetch (keyed on nav.param) still fires when a row opens.
+  const expandedId = app.nav.param;
+
+  // Keep the expanded row on screen: a click below the fold stays put (row
+  // already visible → "nearest" is a no-op) and a deep link scrolls down to
+  // the opened detail instead of stranding it below the fold.
+  const expandedRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (expandedId) {
+      expandedRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [expandedId]);
 
   const open = app.alerts.filter((a) => a.status === "open");
   const shown = (
@@ -608,6 +632,10 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
   )
     .slice()
     .sort((a, b) => a.claude_rank - b.claude_rank);
+  // A deep-linked alert must stay visible even when the current filter would
+  // hide it (e.g. a resolved alert opened from an old link while on "Open").
+  const expanded = expandedId ? app.alerts.find((a) => a.id === expandedId) ?? null : null;
+  const rows = expanded && !shown.some((a) => a.id === expanded.id) ? [expanded, ...shown] : shown;
   const atRisk = open.reduce((s, a) => s + a.dollar_impact, 0);
 
   // Initial load: no data yet → calm placeholder rather than an empty "All clear".
@@ -637,7 +665,7 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
       <Card pad={false}>
         {loading ? (
           <Placeholder icon="scan" title="Loading alerts" sub="Detectors are sweeping your accounts." />
-        ) : shown.length === 0 ? (
+        ) : rows.length === 0 ? (
           filter === "open" ? (
             <Placeholder
               icon="check"
@@ -649,8 +677,21 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
           )
         ) : (
           <div className="cd-rows">
-            {shown.map((a) => (
-              <AlertRow key={a.id} a={a} onClick={() => app.navigate("alerts", a.id)} />
+            {rows.map((a) => (
+              <div key={a.id} ref={a.id === expandedId ? expandedRef : undefined}>
+                <AlertRow
+                  a={a}
+                  open={a.id === expandedId}
+                  onToggle={() =>
+                    // In-place expansion: keep the pane where the user is
+                    // instead of navigate()'s default jump to top.
+                    app.navigate("alerts", a.id === expandedId ? null : a.id, null, {
+                      preserveScroll: true,
+                    })
+                  }
+                />
+                {a.id === expandedId && <AlertDetail app={app} alert={a} />}
+              </div>
             ))}
           </div>
         )}
