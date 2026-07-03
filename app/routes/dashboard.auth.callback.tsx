@@ -87,11 +87,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
   if (!accepted) return failure;
 
-  // Gate: only shops with the app installed (provisioned in Supabase) may in.
+  // Gate: only shops with the app installed (provisioned in Supabase) may sign
+  // in — the import pipeline runs on the offline token minted at install, so an
+  // uninstalled shop has nothing to port. Friendly page, not raw JSON.
+  let shopId: string;
   try {
-    await resolveShopId(shop);
+    shopId = await resolveShopId(shop);
   } catch {
-    return jsonError(403, "app_not_installed");
+    return redirect(`${publicUrl}/dashboard/login?error=app_not_installed&shop=${encodeURIComponent(shop)}`, {
+      headers: { "Set-Cookie": expireCookieHeader(STATE_COOKIE_NAME) },
+    });
   }
 
   const { raw } = await createSession(shop);
@@ -101,9 +106,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // store-domain form (it no longer triggers any automatic redirect).
   headers.append("Set-Cookie", shopHintCookieHeader(shop));
   headers.append("Set-Cookie", expireCookieHeader(STATE_COOKIE_NAME));
-  // Honour a validated post-login destination (re-checked here, never trusted
-  // straight from the cookie) so the connector consent flow resumes at
-  // /dashboard/connect?t=…; default to the dashboard home.
-  const dest = safeDashboardReturnTo(cookieState.returnTo) ?? "/dashboard";
+  // Destination: an explicit validated return_to wins (connector consent flow);
+  // otherwise a shop that never finished a data port lands on the import screen
+  // (the "Continue with Shopify" promise), and everyone else on the home.
+  let dest = safeDashboardReturnTo(cookieState.returnTo);
+  if (!dest) {
+    try {
+      // Lazy-loaded: run.server pulls the ingest/shopify.server chain — keep
+      // that out of this auth route's module graph (module-load env coupling).
+      const { latestImport } = await import("~/lib/import/run.server");
+      const last = await latestImport(shopId);
+      dest = last?.state === "done" ? "/dashboard" : "/dashboard/settings/import";
+    } catch {
+      dest = "/dashboard"; // a broken poll must not break sign-in
+    }
+  }
   return redirect(`${publicUrl}${dest}`, { headers });
 }
