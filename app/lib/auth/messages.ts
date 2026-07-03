@@ -18,6 +18,10 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   bad_origin: "Something went wrong submitting the form. Reload the page and try again.",
   session_expired: "You were signed out. Sign in again to continue.",
   send_failed: "We couldn't send the email just now. Wait a moment and try again.",
+  oauth_failed: "Shopify sign-in didn't complete. Try again.",
+  app_not_installed:
+    "This store isn't connected to Calderyn yet. Install the Calderyn app from your Shopify admin first — that's what links your store and lets us bring your data over.",
+  invalid_shop: "Enter your store's .myshopify.com domain, like example.myshopify.com.",
 };
 
 export const AUTH_NOTICE_MESSAGES: Record<string, string> = {
