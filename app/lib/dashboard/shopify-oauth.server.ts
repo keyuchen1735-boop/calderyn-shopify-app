@@ -1,8 +1,9 @@
 // app/lib/dashboard/shopify-oauth.server.ts
 //
-// Standalone Shopify OAuth for the web dashboard. We run the code grant only
-// to PROVE the requester controls the shop — the embedded app already holds
-// offline tokens, so the access token returned here is discarded.
+// Standalone Shopify OAuth for the web dashboard. The code grant proves the
+// requester controls the shop AND yields the offline token the import
+// pipeline runs on — for shops connecting here first (never opened the
+// embedded app), this grant IS the install.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -13,7 +14,7 @@ export function isValidShopDomain(shop: string): boolean {
 }
 
 export function buildAuthorizeUrl(opts: {
-  shop: string;
+  shop: string | null;
   clientId: string;
   scopes: string;
   redirectUri: string;
@@ -25,7 +26,14 @@ export function buildAuthorizeUrl(opts: {
     redirect_uri: opts.redirectUri,
     state: opts.state,
   });
-  return `https://${opts.shop}/admin/oauth/authorize?${sp.toString()}`;
+  // Shop-less entry: Shopify's unified admin authenticates the merchant and
+  // forwards the grant to their store, so we never ask for the domain. If this
+  // path ever regresses, the callback's ?error bounce renders the friendly
+  // retry page rather than looping.
+  const base = opts.shop
+    ? `https://${opts.shop}/admin/oauth/authorize`
+    : "https://admin.shopify.com/admin/oauth/authorize";
+  return `${base}?${sp.toString()}`;
 }
 
 /**
@@ -47,21 +55,59 @@ export function verifyShopifyHmac(params: URLSearchParams, secret: string): bool
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Returns true if Shopify accepted the code (token is discarded on purpose). */
+export interface OfflineTokenGrant {
+  accessToken: string;
+  scope: string;
+  /** Seconds until the token expires — present when the app uses expiring offline tokens. */
+  expiresIn: number | null;
+  refreshToken: string | null;
+  refreshTokenExpiresIn: number | null;
+}
+
+/**
+ * Exchanges the code for the shop's offline token; null if Shopify refused or
+ * the endpoint stalled (bounded so a Shopify outage fails fast onto the
+ * friendly error page instead of burning the one-shot code on a 504).
+ */
 export async function exchangeCodeForToken(opts: {
   shop: string;
   code: string;
   clientId: string;
   clientSecret: string;
-}): Promise<boolean> {
-  const res = await fetch(`https://${opts.shop}/admin/oauth/access_token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: opts.clientId,
-      client_secret: opts.clientSecret,
-      code: opts.code,
-    }),
-  });
-  return res.ok;
+}): Promise<OfflineTokenGrant | null> {
+  let res: Response;
+  try {
+    res = await fetch(`https://${opts.shop}/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: opts.clientId,
+        client_secret: opts.clientSecret,
+        code: opts.code,
+        // Match the embedded flow's expiringOfflineAccessTokens: without this
+        // Shopify mints a legacy non-expiring token, which new public apps
+        // can't use for background Admin calls (403, enforced 2026-04-01).
+        expiring: "1",
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    refresh_token_expires_in?: number;
+  } | null;
+  if (!body?.access_token) return null;
+  return {
+    accessToken: body.access_token,
+    scope: body.scope ?? "",
+    expiresIn: body.expires_in ?? null,
+    refreshToken: body.refresh_token ?? null,
+    refreshTokenExpiresIn: body.refresh_token_expires_in ?? null,
+  };
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 import type * as SessionMod from "../session.server";
 import type * as ShopifyOauthMod from "../shopify-oauth.server";
@@ -6,11 +6,30 @@ import type * as ShopifyOauthMod from "../shopify-oauth.server";
 import { loader as loginLoader } from "../../../routes/dashboard.login";
 import { loader as callbackLoader } from "../../../routes/dashboard.auth.callback";
 
-const { createSession, resolveShopId, exchangeCodeForToken, latestImport } = vi.hoisted(() => ({
+const {
+  createSession,
+  resolveShopId,
+  exchangeCodeForToken,
+  latestImport,
+  startImport,
+  kickDrainSoon,
+  storeSession,
+  completeShopInstall,
+} = vi.hoisted(() => ({
   createSession: vi.fn(async () => ({ raw: "dash_live_token" })),
   resolveShopId: vi.fn(async () => "shop-1"),
-  exchangeCodeForToken: vi.fn(async () => true),
+  exchangeCodeForToken: vi.fn(async () => ({
+    accessToken: "tok-1",
+    scope: "read_products",
+    expiresIn: 86_399,
+    refreshToken: "rt-1",
+    refreshTokenExpiresIn: 7_775_999,
+  })),
   latestImport: vi.fn(async (_shopId: string) => null as unknown),
+  startImport: vi.fn(async () => ({ importId: "run-1" })),
+  kickDrainSoon: vi.fn(async () => undefined),
+  storeSession: vi.fn(async () => true),
+  completeShopInstall: vi.fn(async () => undefined),
 }));
 
 vi.mock("../session.server", async (importOriginal) => ({
@@ -27,6 +46,15 @@ vi.mock("../shopify-oauth.server", async (importOriginal) => ({
 }));
 vi.mock("~/lib/import/run.server", () => ({
   latestImport,
+  startImport,
+  kickDrainSoon,
+}));
+vi.mock("~/shopify.server", () => ({
+  sessionStorage: { storeSession },
+  unauthenticated: { admin: vi.fn(async () => ({ admin: {} })) },
+}));
+vi.mock("~/lib/install.server", () => ({
+  completeShopInstall,
 }));
 
 beforeEach(() => {
@@ -37,6 +65,10 @@ beforeEach(() => {
   process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
   process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
   process.env.DASHBOARD_SESSION_PEPPER = "test-pepper-that-is-at-least-32-chars!!";
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 function signedCallbackUrl(params: Record<string, string>): string {
@@ -84,28 +116,37 @@ describe("dashboard.login loader", () => {
     );
   });
 
-  it("shows the shop form pre-filled from the remembered shop — never an auto-redirect", async () => {
+  it("redirects straight to the shop-less authorize URL when no shop is known", async () => {
+    const res = (await loginLoader({
+      request: new Request("https://calderyncompany.com/dashboard/login"),
+      params: {},
+      context: {},
+    })) as Response;
+    // No store-domain form: Shopify identifies the store on its side.
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe("https://admin.shopify.com/admin/oauth/authorize");
+    expect(loc.searchParams.get("client_id")).toBe("client-1");
+    expect(loc.searchParams.get("redirect_uri")).toBe(
+      "https://calderyncompany.com/dashboard/auth/callback",
+    );
+    const cookie = res.headers.get("Set-Cookie")!;
+    // Shop unknown at initiation — the state cookie pins the nonce to `*`.
+    const stateValue = decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]);
+    expect(stateValue).toBe(`${loc.searchParams.get("state")}:*`);
+  });
+
+  it("goes shop-less even when a remembered-shop hint exists (Shopify owns store identity)", async () => {
     const res = (await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login", {
         headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
       }),
       params: {},
       context: {},
-    })) as { mode: string; hintShop: string | null };
-    // Entering Shopify OAuth is always an explicit user action: the hint only
-    // pre-fills the store-domain input — never auto-redirecting.
-    expect(res.mode).toBe("form");
-    expect(res.hintShop).toBe("remembered.myshopify.com");
-  });
-
-  it("returns form data (not an error code) when no shop is known", async () => {
-    const res = (await loginLoader({
-      request: new Request("https://calderyncompany.com/dashboard/login"),
-      params: {},
-      context: {},
-    })) as { mode: string; errorCode: string | null };
-    expect(res.mode).toBe("form");
-    expect(res.errorCode).toBeNull();
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.host).toBe("admin.shopify.com");
   });
 
   it("does not auto-redirect (loop) when bounced back with an error", async () => {
@@ -161,6 +202,93 @@ describe("dashboard.auth.callback loader", () => {
     expect(createSession).toHaveBeenCalledWith("x.myshopify.com");
   });
 
+  it("persists the exchanged offline token (with expiry + refresh token) via the library store", async () => {
+    latestImport.mockResolvedValueOnce({ state: "done" });
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(storeSession).toHaveBeenCalledOnce();
+    const session = (storeSession.mock.calls[0] as unknown[])[0] as {
+      id: string;
+      shop: string;
+      accessToken: string;
+      isOnline: boolean;
+      scope: string;
+      expires: Date | undefined;
+      refreshToken: string | undefined;
+    };
+    expect(session.id).toBe("offline_x.myshopify.com");
+    expect(session.shop).toBe("x.myshopify.com");
+    expect(session.accessToken).toBe("tok-1");
+    expect(session.isOnline).toBe(false);
+    expect(session.scope).toBe("read_products");
+    // expiringOfflineAccessTokens is on: the row must carry the real expiry
+    // and refresh token or the library treats the session as unrefreshable.
+    expect(session.expires).toBeInstanceOf(Date);
+    expect(session.refreshToken).toBe("rt-1");
+  });
+
+  it("fails the round-trip when Shopify rejects the code exchange", async () => {
+    exchangeCodeForToken.mockResolvedValueOnce(null as never);
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.headers.get("Location")).toContain("error=oauth_failed");
+    expect(storeSession).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("accepts a shop-less (*) state cookie and binds the shop from the signed params", async () => {
+    latestImport.mockResolvedValueOnce({ state: "done" });
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:*"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).not.toContain("error=");
+    expect(createSession).toHaveBeenCalledWith("x.myshopify.com");
+  });
+
+  it("still rejects a pinned state cookie whose shop differs from the callback shop", async () => {
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:other.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.headers.get("Location")).toContain("error=oauth_failed");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
   it("rejects a state mismatch", async () => {
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
@@ -208,7 +336,7 @@ describe("dashboard.auth.callback loader", () => {
     );
   });
 
-  it("does not crash on a malformed return_to encoding — steers to import screen instead", async () => {
+  it("does not crash on a malformed return_to encoding — steers to the native store instead", async () => {
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
       code: "code-1",
@@ -217,20 +345,62 @@ describe("dashboard.auth.callback loader", () => {
     });
     // A trailing '%' is not a valid percent-encoding; decodeURIComponent throws
     // and the consumer must swallow it rather than 500 the OAuth round-trip.
-    // With no valid return_to, import steering kicks in (latestImport → null →
-    // no completed import → /dashboard/settings/import).
+    // With no valid return_to, port steering kicks in (latestImport → null →
+    // no completed import → auto-port + /dashboard/store).
     const res = (await callbackLoader({
       request: callbackRequest(url, "nonce-1:x.myshopify.com:bad%"),
       params: {},
       context: {},
     })) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe(
-      "https://calderyncompany.com/dashboard/settings/import",
-    );
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/store");
   });
 
-  it("redirects an uninstalled shop to the friendly login error page, not raw JSON", async () => {
+  it("runs the shared install routine on every connect — approve IS the install", async () => {
+    latestImport.mockResolvedValueOnce({ state: "done" });
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).not.toContain("error=");
+    // Always — a returning soft-uninstalled shop needs uninstalled_at cleared
+    // (provisionShop inside the routine), and a dashboard-first shop needs the
+    // ingest enqueue + carrier service the embedded afterAuth would have done.
+    expect(completeShopInstall).toHaveBeenCalledWith(
+      expect.objectContaining({ shop: "x.myshopify.com", inlineBackfill: false }),
+    );
+    expect(createSession).toHaveBeenCalledWith("x.myshopify.com");
+  });
+
+  it("an install-extras failure does not block sign-in when the tenant resolves", async () => {
+    latestImport.mockResolvedValueOnce({ state: "done" });
+    completeShopInstall.mockRejectedValueOnce(new Error("carrier registration exploded"));
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).not.toContain("error=");
+    expect(createSession).toHaveBeenCalledWith("x.myshopify.com");
+  });
+
+  it("falls back to the friendly error page when the tenant cannot be provisioned", async () => {
+    completeShopInstall.mockRejectedValueOnce(new Error("supabase down"));
     resolveShopId.mockRejectedValueOnce(new Error("Shop not found in Supabase: x"));
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
@@ -248,10 +418,11 @@ describe("dashboard.auth.callback loader", () => {
     const setCookie = res.headers.get("Set-Cookie")!;
     expect(setCookie).toContain("__Host-dash_oauth=");
     expect(setCookie).toContain("Max-Age=0");
+    expect(createSession).not.toHaveBeenCalled();
   });
 
-  it("steers a shop with no completed import to the import screen", async () => {
-    // latestImport returns null (default mock) — shop has no completed import
+  it("auto-starts the data port and lands on the native store when no import completed", async () => {
+    // latestImport returns null (default mock) — shop has never ported.
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
       code: "code-1",
@@ -264,10 +435,54 @@ describe("dashboard.auth.callback loader", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toContain("/dashboard/settings/import");
+    // The merchant never clicks an "Import" button — approve starts the port,
+    // and the drain is nudged so the pull begins before the next cron tick.
+    expect(startImport).toHaveBeenCalledWith("shop-1");
+    expect(kickDrainSoon).toHaveBeenCalled();
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/store");
   });
 
-  it("sends a shop whose import is done to the dashboard home", async () => {
+  it("does not re-queue the port for a shop whose last import errored — steers to the import screen", async () => {
+    // A deterministically-failing import must not re-trigger a 12-month pull
+    // on every sign-in; the import screen owns the error + manual retry.
+    latestImport.mockResolvedValueOnce({ state: "error" });
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(startImport).not.toHaveBeenCalled();
+    expect(res.headers.get("Location")).toBe(
+      "https://calderyncompany.com/dashboard/settings/import",
+    );
+  });
+
+  it("does not double-start an in-progress port and still lands on the native store", async () => {
+    latestImport.mockResolvedValueOnce({ state: "pulling" });
+    const url = signedCallbackUrl({
+      shop: "x.myshopify.com",
+      code: "code-1",
+      state: "nonce-1",
+      timestamp: "1",
+    });
+    const res = (await callbackLoader({
+      request: callbackRequest(url, "nonce-1:x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(startImport).not.toHaveBeenCalled();
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/store");
+  });
+
+  it("sends a shop whose import is done to the dashboard home without restarting the port", async () => {
     latestImport.mockResolvedValueOnce({ state: "done" });
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
@@ -283,7 +498,8 @@ describe("dashboard.auth.callback loader", () => {
     expect(res.status).toBe(302);
     const loc = res.headers.get("Location")!;
     expect(loc).toContain("/dashboard");
-    expect(loc).not.toContain("/settings/import");
+    expect(loc).not.toContain("/dashboard/store");
+    expect(startImport).not.toHaveBeenCalled();
   });
 
   it("lets an explicit return_to win over import steering", async () => {
@@ -304,7 +520,10 @@ describe("dashboard.auth.callback loader", () => {
     expect(res.headers.get("Location")).toContain("/dashboard/connect?t=abc");
   });
 
-  it("falls back to the dashboard when the import poll itself fails", async () => {
+  it("lands on the import screen (manual retry) when the auto-port itself fails", async () => {
+    // A swallowed startImport failure must not strand the merchant on an
+    // empty home with no queued run and no signal — the import screen has
+    // the honest state + a retry button.
     latestImport.mockRejectedValueOnce(new Error("poll failed"));
     const url = signedCallbackUrl({
       shop: "x.myshopify.com",
@@ -318,6 +537,8 @@ describe("dashboard.auth.callback loader", () => {
       context: {},
     })) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).not.toContain("/settings/import");
+    expect(res.headers.get("Location")).toBe(
+      "https://calderyncompany.com/dashboard/settings/import",
+    );
   });
 });

@@ -17,6 +17,12 @@ export function expireCookieHeader(name: string): string {
  *  stored as `nonce:shop[:enc(returnTo)]`. */
 export const STATE_COOKIE_NAME = "__Host-dash_oauth";
 
+/** Shop field of the state cookie when OAuth was initiated shop-less (no
+ *  ?shop= — Shopify's unified admin resolves the store). Can never collide
+ *  with a real shop: `*` fails isValidShopDomain. Written by dashboard.login,
+ *  honoured by dashboard.auth.callback — keep both on this constant. */
+export const SHOPLESS_STATE_SHOP = "*";
+
 /** Google-signin CSRF nonce for /dashboard/auth/google → its callback. */
 export const GOAUTH_COOKIE = "__Host-calderyn_goauth";
 

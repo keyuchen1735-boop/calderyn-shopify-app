@@ -1,13 +1,11 @@
 // app/routes/dashboard.login.tsx
-// GET /dashboard/login?shop=x.myshopify.com → 302 to Shopify authorize.
-// The state nonce lives in a short-lived HttpOnly cookie as `nonce:shop`.
-//
-// This is the Shopify-identity entry, reached from the embedded app's "Open
-// dashboard" button (always ?shop=) and from /login's "Continue with Shopify"
-// (no ?shop= — renders the store-domain form on the auth card, pre-filled from
-// the __Host-dash_shop hint, never auto-redirecting: entering Shopify OAuth is
-// always an explicit user action). ?error= renders the friendly failure state
-// (oauth_failed, app_not_installed) instead of raw JSON.
+// GET /dashboard/login → 302 to Shopify authorize. With ?shop= (the embedded
+// app's "Open dashboard" button) the shop's own authorize URL is used and the
+// state cookie pins `nonce:shop`; without it (/login's "Continue with
+// Shopify") the shop-less unified-admin authorize URL is used and the cookie
+// pins `nonce:*` — Shopify signs the merchant in and routes the grant to
+// their store, so we never ask for the domain. ?error= renders the friendly
+// failure state (oauth_failed, app_not_installed) instead of raw JSON.
 
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -26,14 +24,17 @@ import {
   safeDashboardReturnTo,
   publicBaseUrl,
 } from "~/lib/dashboard/http.server";
-import { STATE_COOKIE_NAME, readShopHint } from "~/lib/dashboard/cookies.server";
+import {
+  STATE_COOKIE_NAME,
+  SHOPLESS_STATE_SHOP,
+  readShopHint,
+} from "~/lib/dashboard/cookies.server";
 
 export const meta: MetaFunction = () => [{ title: "Sign in with Shopify — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
 
 type LoginPageData = {
-  mode: "form" | "error";
-  hintShop: string | null;
+  mode: "error";
   returnTo: string | null;
   errorCode: string | null;
   shop: string | null;
@@ -56,7 +57,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const candidate = rawShop.trim().toLowerCase();
     if (!isValidShopDomain(candidate)) {
       return json(
-        { mode: "error", hintShop, returnTo, errorCode: "invalid_shop", shop: null } satisfies LoginPageData,
+        { mode: "error", returnTo, errorCode: "invalid_shop", shop: null } satisfies LoginPageData,
         { status: 422 },
       );
     }
@@ -65,15 +66,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   if (errorCode) {
     // Bounce-back from a failed round-trip: render the failure, never blindly
-    // re-redirect (that would loop).
-    return { mode: "error", hintShop, returnTo, errorCode, shop: shop ?? hintShop } satisfies LoginPageData;
+    // re-redirect (that would loop). The remembered-shop hint only steers the
+    // retry link at the right store.
+    return { mode: "error", returnTo, errorCode, shop: shop ?? hintShop } satisfies LoginPageData;
   }
-  if (!shop) {
-    // No shop supplied (direct visit, /login button, connect redirect): ask for
-    // it. The hint only pre-fills the form — no automatic redirect into OAuth.
-    return { mode: "form", hintShop, returnTo, errorCode: null, shop: null } satisfies LoginPageData;
-  }
-
+  // No ?shop= (direct visit, /login button, connect redirect): go shop-less.
+  // Shopify's unified admin signs the merchant in and routes the grant to
+  // their store — no store-domain form on our side. The state cookie pins `*`
+  // so the callback knows the shop was unknown at initiation and binds the
+  // shop from the HMAC-verified callback params instead.
   const state = randomBytes(16).toString("hex");
   const publicUrl = publicBaseUrl();
   const authorizeUrl = buildAuthorizeUrl({
@@ -87,9 +88,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Carry a validated post-login destination (e.g. /dashboard/connect?t=…) in
   // the state cookie so it survives the OAuth round-trip. URL-encoded so its
   // query string can't collide with the cookie's `:` field separators.
+  const cookieShop = shop ?? SHOPLESS_STATE_SHOP;
   const stateValue = returnTo
-    ? `${state}:${shop}:${encodeURIComponent(returnTo)}`
-    : `${state}:${shop}`;
+    ? `${state}:${cookieShop}:${encodeURIComponent(returnTo)}`
+    : `${state}:${cookieShop}`;
 
   const headers = new Headers();
   headers.append(
@@ -99,54 +101,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // The shop hint is set only AFTER a successful OAuth callback (see
   // dashboard.auth.callback), never here on an unauthenticated GET — otherwise a
   // crafted /dashboard/login?shop=... link could plant a 90-day hint that skews
-  // the form pre-fill for the life of the cookie.
+  // the error page's retry target for the life of the cookie.
   return redirect(authorizeUrl, { headers });
 }
 
 export default function DashboardLoginPage() {
   const data = useLoaderData<typeof loader>();
-  const retryHref = data.shop
-    ? `/dashboard/login?shop=${encodeURIComponent(data.shop)}`
-    : "/dashboard/login";
+  // Retry re-enters OAuth with everything the failed attempt carried — the
+  // shop (when known) and the post-login destination (connector consent).
+  const retryParams = new URLSearchParams();
+  if (data.shop) retryParams.set("shop", data.shop);
+  if (data.returnTo) retryParams.set("return_to", data.returnTo);
+  const qs = retryParams.toString();
+  const retryHref = qs ? `/dashboard/login?${qs}` : "/dashboard/login";
+  // GETs redirect into Shopify OAuth, so the page only renders bounce-back
+  // errors — there is no store-domain form: Shopify owns store identity.
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Connect Shopify</h1>
       <p className="cd-auth-sub">Bring your store over.</p>
-      {data.mode === "error" ? (
-        <>
-          <AuthError code={data.errorCode} />
-          <div className="cd-auth-links">
-            <a href={retryHref}>Try again</a>
-            <a href="/login">Sign in another way</a>
-          </div>
-        </>
-      ) : (
-        <>
-          <form method="get" action="/dashboard/login">
-            <label className="cd-auth-label" htmlFor="shop">
-              Store domain
-            </label>
-            <input
-              className="cd-auth-input"
-              id="shop"
-              name="shop"
-              type="text"
-              required
-              placeholder="example.myshopify.com"
-              defaultValue={data.hintShop ?? ""}
-              pattern="[A-Za-z0-9][A-Za-z0-9\-]*\.[Mm][Yy][Ss][Hh][Oo][Pp][Ii][Ff][Yy]\.[Cc][Oo][Mm]"
-              autoComplete="on"
-            />
-            {data.returnTo ? <input type="hidden" name="return_to" value={data.returnTo} /> : null}
-            <button className="cd-auth-submit" type="submit">
-              Continue
-            </button>
-          </form>
-          <p className="cd-auth-foot">
-            Prefer email? <a href="/login">Sign in another way</a>
-          </p>
-        </>
-      )}
+      <AuthError code={data.errorCode} />
+      <div className="cd-auth-links">
+        <a href={retryHref}>Try again</a>
+        <a href="/login">Sign in another way</a>
+      </div>
     </AuthShell>
   );
 }

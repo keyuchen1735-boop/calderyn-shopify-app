@@ -87,22 +87,27 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     expect(cookie).not.toContain("evil.example");
   });
 
-  it("returns form data (not a dead end) when there is no shop and no cookie", async () => {
+  it("goes shop-less and still carries return_to when there is no shop and no cookie", async () => {
     const r = (await loader(
       req(
         "https://app.calderyncompany.com/dashboard/login?return_to=%2Fdashboard%2Fconnect%3Ft%3Dabc",
       ) as never,
-    )) as { mode: string; returnTo: string | null; hintShop: string | null };
-    expect(r.mode).toBe("form");
-    // The connector destination survives into the form so it resumes after login.
-    expect(r.returnTo).toBe("/dashboard/connect?t=abc");
+    )) as Response;
+    // No store-domain form: straight into OAuth with the shop pinned to `*`.
+    // The connector destination survives the round-trip in the state cookie.
+    expect(r.status).toBe(302);
+    const cookie = r.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain(`:*:${encodeURIComponent("/dashboard/connect?t=abc")}`);
   });
 
-  it("omits return_to from the form data when none is given", async () => {
+  it("omits the return_to cookie field when none is given", async () => {
     const r = (await loader(
       req("https://app.calderyncompany.com/dashboard/login") as never,
-    )) as { mode: string; returnTo: string | null };
-    expect(r.mode).toBe("form");
-    expect(r.returnTo).toBeNull();
+    )) as Response;
+    expect(r.status).toBe(302);
+    const cookie = r.headers.get("set-cookie") ?? "";
+    const value = decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]);
+    expect(value.endsWith(":*")).toBe(true);
+    expect(value.split(":")).toHaveLength(2);
   });
 });

@@ -21,7 +21,7 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   account_creation_failed: "Something went wrong creating your account. Please try again.",
   oauth_failed: "Shopify sign-in didn't complete. Try again.",
   app_not_installed:
-    "This store isn't connected to Calderyn yet. Install the Calderyn app from your Shopify admin first — that's what links your store and lets us bring your data over.",
+    "Your store approved the connection, but we couldn't finish setting it up on our side. Nothing is lost — try again in a moment.",
   invalid_shop: "Enter your store's .myshopify.com domain, like example.myshopify.com.",
 };
 

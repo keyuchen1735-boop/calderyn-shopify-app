@@ -6,10 +6,7 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { getSupabase, provisionShop, resolveShopId } from "./lib/supabase.server";
-import { enqueueShopifyBackfill, shopifyNeverSynced } from "./lib/ingest/enqueue.server";
-import { resurfaceAllSnoozes } from "./lib/actions/snooze.server";
-import { registerCarrierService } from "./lib/shipping/carrier-service.server";
+import { completeShopInstall } from "./lib/install.server";
 
 // A failure in a fire-and-forget background task — e.g. the session-store table
 // poll the Prisma session storage starts in its constructor, which rejects if
@@ -43,46 +40,12 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   hooks: {
+    // The install work itself lives in lib/install.server.ts, shared with the
+    // dashboard OAuth callback (where approve IS the install) so the two entry
+    // points can never drift.
     afterAuth: async ({ session, admin }) => {
       try {
-        await provisionShop(session.shop);
-        // Register the Shopify CarrierService so a buyer's checkout computes shipping
-        // via Calderyn (#6.4). Idempotent (re-auth never duplicates). Best-effort and
-        // isolated: it requires the write_shipping scope + a qualifying store plan, so
-        // a userError/throw here (e.g. before re-consent) must never block install.
-        try {
-          const carrierShopId = await resolveShopId(session.shop);
-          await registerCarrierService(admin, {
-            shopId: carrierShopId,
-            baseUrl: process.env.SHOPIFY_APP_URL || "https://app.calderyncompany.com",
-          });
-        } catch (err) {
-          console.error(`[afterAuth] CarrierService registration failed for ${session.shop}`, err);
-        }
-        // Snapshot first-install state BEFORE enqueue resets sync_status.
-        const firstInstall = await shopifyNeverSynced(session.shop);
-        await enqueueShopifyBackfill(session.shop);
-        // On first install, pull the catalog + last 30 days of orders inline so the
-        // merchant sees their data immediately instead of waiting up to 30 min for
-        // the /cron/ingest tick. Routine re-auths skip this; the cron keeps data
-        // fresh after the initial sync. Dynamic import avoids a static import cycle
-        // (backfill -> shopify-admin -> this module).
-        if (firstInstall) {
-          try {
-            const { backfillShop } = await import("./lib/ingest/backfill.server");
-            await backfillShop(session.shop);
-          } catch (err) {
-            // Best-effort: backfillShop marks sync_status='error' on failure, which
-            // the cron skips. Reset to 'pending' so /cron/ingest still recovers the
-            // data, then swallow — a backfill failure must not block install.
-            console.error(`[afterAuth] inline backfill failed for ${session.shop}`, err);
-            await enqueueShopifyBackfill(session.shop);
-          }
-        }
-        // A fresh login re-surfaces alerts snoozed in a prior session (snooze
-        // hides until +1 day or next login, whichever first). Kept last so it
-        // can never disrupt provisioning/backfill.
-        await resurfaceAllSnoozes(getSupabase(), await resolveShopId(session.shop));
+        await completeShopInstall({ shop: session.shop, admin, inlineBackfill: true });
       } catch (err) {
         console.error(
           `[afterAuth] failed to provision/enqueue shop ${session.shop} in Supabase`,
