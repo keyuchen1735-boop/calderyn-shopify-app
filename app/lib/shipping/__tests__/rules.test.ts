@@ -125,6 +125,14 @@ describe("selectOptions", () => {
     expect(selectOptions(all, "fastest").map((o) => o.service)).toEqual(["Express"]);
   });
 
+  it("'fastest' breaks an equal-arrival, equal-price tie deterministically by service code", () => {
+    // Same earliest date AND same amount → must not depend on carrier list order.
+    const b = opt("Bravo", 1200, "2026-07-03", "2026-07-04");
+    const a = opt("Alpha", 1200, "2026-07-03", "2026-07-04");
+    expect(selectOptions([b, a], "fastest").map((o) => o.service)).toEqual(["Alpha"]);
+    expect(selectOptions([a, b], "fastest").map((o) => o.service)).toEqual(["Alpha"]);
+  });
+
   it("'blended' flattens to exactly ONE option, labeled 'blended' explicitly (rule 7, never averaged)", () => {
     const blended = selectOptions(all, "blended");
     expect(blended).toHaveLength(1);

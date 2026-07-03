@@ -87,7 +87,17 @@ export function createQuoteEngine(deps: Partial<EngineDeps> = {}): QuoteShipping
     // quoteCacheKey) and are sent to the carrier. Pure + cheap — no carrier call yet.
     const { parcels, lowConfidence } = assembleParcels(req.cart);
 
-    const cacheKey = quoteCacheKey(req, rules, parcels);
+    // Scope the (process-wide, cross-tenant) cache by everything that changes the quote
+    // but is NOT in quoteCacheKey's request fingerprint:
+    //   - the rate SOURCE identity: rates come from this shop's carrier credentials, so two
+    //     shops with a byte-identical request must never share an entry (tenant isolation).
+    //   - the calendar day: estTransitDays windows are anchored to `now`; without the day in
+    //     the key a re-quote across midnight would serve a frozen (possibly past) delivery date.
+    //   - lowConfidence: explicit zero dims and omitted dims assemble to the same parcel
+    //     fingerprint but must not share an entry (rule 12: never report a cached false).
+    const cacheKey = `${rateSource.id ?? ""}:${nowDate.toISOString().slice(0, 10)}:${
+      lowConfidence ? "lc1" : "lc0"
+    }:${quoteCacheKey(req, rules, parcels)}`;
     const cached = cache.get(cacheKey, nowMs);
     if (cached) return cached;
 

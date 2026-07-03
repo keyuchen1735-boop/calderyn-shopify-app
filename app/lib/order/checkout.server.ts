@@ -22,7 +22,7 @@ import {
   recordCheckoutConsent,
   type BuyerAddressInput,
 } from "~/lib/buyer/identity.server";
-import { createPaymentIntent } from "~/lib/payments/stripe.server";
+import { createPaymentIntent, isSupportedCurrency } from "~/lib/payments/stripe.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 
 export interface CheckoutBuyer {
@@ -138,6 +138,13 @@ export async function createCheckout(
   // order with no PaymentIntent. Rejecting on the total covers both the empty and $0 cases.
   if (totalCents <= 0) {
     throw new Error(`cannot originate a checkout for cart ${cartId}: nothing to charge (total ${totalCents} cents)`);
+  }
+  // Guard the currency BEFORE any buyer/order/line write. createPaymentIntent (the final step)
+  // rejects an unsupported currency, but only after the order + lines are persisted — leaving an
+  // orphan checkout_pending order with no PaymentIntent that re-originates into another orphan on
+  // every retry. Reject here so a cart snapshotted in an unchargeable currency fails cleanly.
+  if (!isSupportedCurrency(priced.currency)) {
+    throw new Error(`cannot originate a checkout for cart ${cartId}: unsupported currency '${priced.currency}'`);
   }
 
   const buyerRow = await upsertGuestBuyer(shopId, { email: buyer.email, phone: buyer.phone });

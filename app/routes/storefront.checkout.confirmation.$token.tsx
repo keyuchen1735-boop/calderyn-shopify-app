@@ -52,12 +52,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
   for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 
-  // The webhook may lag, so a genuinely-paid order can still read `checkout_pending` here —
-  // reflect it gracefully ("received / processing") rather than hard-failing on not-yet-paid.
+  // Reflect the ACTUAL order state so the buyer is never falsely reassured. The webhook may lag
+  // (order still `checkout_pending` reads as "processing"), but a `cancelled`/`refunded` order
+  // must show its terminal status — not the "we'll email you shortly" processing copy.
+  // `fulfilled` is post-paid, so it reads as confirmed.
+  const status: "confirmed" | "processing" | "cancelled" | "refunded" =
+    order.state === "paid" || order.state === "fulfilled"
+      ? "confirmed"
+      : order.state === "cancelled"
+        ? "cancelled"
+        : order.state === "refunded"
+          ? "refunded"
+          : "processing";
+
   return json(
     {
       ref: formatOrderRef(order.orderId),
-      paid: captured,
+      status,
       totalCents: order.totalCents,
       currency: order.currency,
       lines: order.lines.map((l) => ({ title: l.title, quantity: l.quantity })),
@@ -67,16 +78,27 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 
+const HEADING: Record<"confirmed" | "processing" | "cancelled" | "refunded", string> = {
+  confirmed: "Thank you — your order is in",
+  processing: "Thank you — your order is in",
+  cancelled: "This order was cancelled",
+  refunded: "This order was refunded",
+};
+
+const STATUS_COPY: Record<"confirmed" | "processing" | "cancelled" | "refunded", string> = {
+  confirmed: "Payment confirmed. We're getting your order ready.",
+  processing:
+    "We've received your order and are confirming your payment. You'll get an email shortly.",
+  cancelled: "This order was cancelled and you have not been charged.",
+  refunded: "This order has been refunded. The amount below was returned to your payment method.",
+};
+
 export default function StorefrontCheckoutConfirmation() {
-  const { ref, paid, totalCents, currency, lines } = useLoaderData<typeof loader>();
+  const { ref, status, totalCents, currency, lines } = useLoaderData<typeof loader>();
   return (
     <section className="cd-confirm">
-      <h1>Thank you — your order is in</h1>
-      <p className="cd-confirm__status">
-        {paid
-          ? "Payment confirmed. We're getting your order ready."
-          : "We've received your order and are confirming your payment. You'll get an email shortly."}
-      </p>
+      <h1>{HEADING[status]}</h1>
+      <p className="cd-confirm__status">{STATUS_COPY[status]}</p>
       <p className="cd-confirm__ref">
         Order reference <strong>{ref}</strong>
       </p>

@@ -225,6 +225,20 @@ describe("createCheckout", () => {
     expect(stripe.piCreate).not.toHaveBeenCalled();
   });
 
+  it("rejects an unsupported cart currency BEFORE any write (no orphan checkout_pending order)", async () => {
+    // A merchant selling in CHF snapshots 'chf' onto the cart line; Stripe can't open a PI in an
+    // unsupported currency, so the guard must reject before writing buyer/order/lines — otherwise
+    // every attempt writes another orphan and re-originating loops forever.
+    seedCartLine("shop-1", "cart-chf", { currency: "chf", unit_price_cents: 5000 });
+    await expect(createCheckout("shop-1", "cart-chf", { email: "b@example.com" })).rejects.toThrow(
+      /unsupported currency/,
+    );
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+    expect(stripe.piCreate).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-empty cart that totals $0 BEFORE any write (no orphan checkout_pending order)", async () => {
     // All-free items: lines present, but subtotal/total = 0. Stripe can't open a $0 PI, so the
     // guard must reject on the TOTAL before writing the buyer/order/lines (else: orphan order).

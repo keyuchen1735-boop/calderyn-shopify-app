@@ -110,6 +110,30 @@ describe("quote engine (real impl)", () => {
     expect(q2).toEqual(q1);
   });
 
+  it("scopes the shared cache by rate-source id so two shops never collide (tenant isolation)", async () => {
+    // Same process-wide cache, byte-identical REQ + rules, but two different shops' sources.
+    // Without source-id scoping, shop B would be served shop A's cached carrier rates.
+    const idSource = (id: string, amountCents: number) => {
+      const s = {
+        id,
+        calls: 0,
+        async getRates(): Promise<RateQuoteResult> {
+          s.calls++;
+          return { options: [carrierOpt({ amountCents })], fallbackUsed: false, latencyMs: 1, provider: "easypost" as const };
+        },
+      };
+      return s;
+    };
+    const shopA = idSource("easypost:shop-A", 700);
+    const shopB = idSource("easypost:shop-B", 900);
+    const engine = freshEngine(); // ONE shared cache across both calls
+    const qA = await engine(REQ, shopA);
+    const qB = await engine(REQ, shopB);
+    expect(shopB.calls).toBe(1); // NOT served shop A's cached quote
+    expect(qA.options[0].baseAmountCents).toBe(700);
+    expect(qB.options[0].baseAmountCents).toBe(900);
+  });
+
   it("does NOT cache a degraded (fallback) quote, so carrier recovery isn't masked", async () => {
     const src = countingSource({
       options: [carrierOpt()],

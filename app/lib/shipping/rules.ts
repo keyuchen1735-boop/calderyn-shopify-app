@@ -75,6 +75,9 @@ function fastest(options: ShippingQuoteOption[]): ShippingQuoteOption {
     const rb = rank(best);
     if (ro < rb) return o;
     if (ro === rb && o.amountCents < best.amountCents) return o;
+    // Final tie-break by service code so equal arrival + equal price is still
+    // deterministic regardless of carrier list order (mirrors `cheapest`).
+    if (ro === rb && o.amountCents === best.amountCents && o.service < best.service) return o;
     return best;
   });
 }
