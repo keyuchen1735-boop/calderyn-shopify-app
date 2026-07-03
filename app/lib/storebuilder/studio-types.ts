@@ -47,6 +47,12 @@ export interface StudioState {
   hero: StudioHero | null;
   /** First 3 catalog products for the preview grid. */
   products: StudioProduct[];
+  /** Live (active) products the storefront renders — the preview list above is capped at 3. */
+  productCount: number;
+  /** Products still in draft status (e.g. created from chat-box attachments). */
+  draftProductCount: number;
+  /** Whether payments are fully set up (Stripe charges + payouts + details). */
+  checkoutReady: boolean;
   hasDraft: boolean;
   hasPublished: boolean;
   /** Latest store_generation row, or null when the shop has never generated. */
