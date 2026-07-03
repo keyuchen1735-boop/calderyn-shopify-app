@@ -124,7 +124,7 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
 const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
-  dark: false,
+  dark: true,
   // Design tokens: the 1.06 type scale the fresh design ships with (its root
   // sets --type-scale:1.06). Accent lives in the CSS token blocks per theme.
   density: "balanced",
@@ -133,7 +133,7 @@ const DASHBOARD_THEME = {
   typeScale: 1.06,
 };
 
-// Persisted night-mode preference (per browser). Light is the default.
+// Persisted night-mode preference (per browser). Dark is the default.
 const NIGHT_MODE_KEY = "cd-night-mode";
 
 const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> = {
@@ -180,15 +180,16 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }) {
-  // Night mode (dark theme). Defaults to light; the merchant's choice persists in
-  // localStorage. Initialised to false so the server render and first client render
-  // agree (no hydration mismatch); the stored preference is applied post-mount.
-  const [dark, setDark] = useState(false);
+  // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
+  // localStorage. Initialised to true so the server render and first client render
+  // agree (no hydration mismatch); a merchant who explicitly chose light ("0") is
+  // applied post-mount.
+  const [dark, setDark] = useState(true);
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "1") setDark(true);
+      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "0") setDark(false);
     } catch {
-      /* localStorage unavailable — stay on the light default */
+      /* localStorage unavailable — stay on the dark default */
     }
   }, []);
   const setNightMode = useCallback((next: boolean) => {
