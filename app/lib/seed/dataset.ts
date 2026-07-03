@@ -87,7 +87,7 @@ function daysBetween(from: string, to: string): number {
 }
 
 /** Format 16 PRNG-derived bytes as a v4-shaped UUID (deterministic). */
-function uuidFrom(rng: () => number): string {
+export function uuidFrom(rng: () => number): string {
   const hex = () => Math.floor(rng() * 256).toString(16).padStart(2, "0");
   const b = Array.from({ length: 16 }, hex);
   b[6] = "4" + b[6][1];
