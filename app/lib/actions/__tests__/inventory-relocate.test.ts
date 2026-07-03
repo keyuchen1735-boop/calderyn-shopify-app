@@ -215,6 +215,8 @@ describe("executeInventoryRelocation", () => {
       expect(res.outcome).toBe("succeeded");
       expect(inventoryAdjustQuantities).toHaveBeenCalled(); // Shopify path (underlying)
       expect(applyOwnedInventoryMove).not.toHaveBeenCalled();
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
+      expect(audit.write_target).toBe("shopify_admin");
     });
 
     it("live: moves stock via the owned engine, never Shopify", async () => {
@@ -238,6 +240,7 @@ describe("executeInventoryRelocation", () => {
       expect(audit.params.owned_variant_id).toBe("sku-1");
       expect(audit.params.owned_from_location_id).toBe("loc-a");
       expect(audit.params.owned_to_location_id).toBe("loc-b");
+      expect(audit.write_target).toBe("owned_sot");
     });
 
     it("dual_run: writes Shopify AND mirrors the move into the owned engine", async () => {
@@ -256,6 +259,7 @@ describe("executeInventoryRelocation", () => {
       expect(audit.params.dual_write).toBe("ok");
       expect(audit.params.owned_transfer_id).toBe("tr-1");
       expect(audit.params.owned).toBeUndefined(); // Shopify was authoritative, not owned
+      expect(audit.write_target).toBe("shopify_admin"); // Shopify authoritative in dual_run
     });
 
     it("dual_run: a failed owned mirror never fails the action, recorded on the audit", async () => {

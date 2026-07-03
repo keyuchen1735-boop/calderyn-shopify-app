@@ -138,6 +138,7 @@ describe("executeInventoryAlertAction — org_mode routing", () => {
           owned_variant_id: "var-1",
           shopify_operation_id: "tr-1",
         }),
+        writeTarget: "owned_sot",
       }),
     );
   });
@@ -167,6 +168,7 @@ describe("executeInventoryAlertAction — org_mode routing", () => {
           owned_transfer_id: "tr-1",
           shopify_operation_id: "gid://op/1",
         }),
+        writeTarget: "shopify_admin", // Shopify authoritative in dual_run
       }),
     );
   });

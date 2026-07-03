@@ -75,12 +75,14 @@ export async function drainImports(): Promise<{ processed: number }> {
     const sinceDays = Number((row as { since_days?: number }).since_days) || IMPORT_WINDOW_DAYS;
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {
-      const backfill = await backfillShop(domain, { sinceDays });
+      await backfillShop(domain, { sinceDays });
       const customers = await importCustomers(domain, shopId);
       await sb.from("import_run").update({ state: "promoting" }).eq("id", id);
 
+      // The promote materializes order/refund history into imported_*; the report reads
+      // its counts (what actually landed), so `backfill.orders` (the raw pull) is unused.
       const counts = await promoteShopFromMirror(shopId);
-      const report = buildImportReport(counts, backfill.orders, customers);
+      const report = buildImportReport(counts, customers);
       await sb
         .from("import_run")
         .update({ state: "done", counts, report, finished_at: new Date().toISOString() })

@@ -20,7 +20,8 @@ vi.mock("~/lib/supabase.server", () => ({
         return { select: () => ({ eq: () => ordered }) };
       }
       if (table === "product_media") {
-        return { select: () => ({ in: () => ({ eq: () => Promise.resolve(mediaQuery) }) }) };
+        // .select().in().eq(is_primary).not(storage_path,is,null)
+        return { select: () => ({ in: () => ({ eq: () => ({ not: () => Promise.resolve(mediaQuery) }) }) }) };
       }
       if (table === "variant_shipping") {
         // listProducts chains .eq("shop_id").in("variant_id", chunk)

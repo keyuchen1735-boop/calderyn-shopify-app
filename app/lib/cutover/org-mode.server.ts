@@ -8,7 +8,7 @@
 // on: only `live` routes autopilot writes to Calderyn's own tables.
 
 import { getSupabase } from "~/lib/supabase.server";
-import { assertGoLiveGates } from "./go-live.server";
+import { assertGoLiveGates, stampMigrationRunCutover } from "./go-live.server";
 import { CutoverBlockedError } from "./errors";
 
 export const ORG_MODES = ["mirror", "importing", "dual_run", "live"] as const;
@@ -127,7 +127,10 @@ export async function transitionOrgMode(
   // (mirror fully bridged into the owned SoT) AND payment-cleared (a test transaction
   // reached `paid` with a captured charge). Enforced here, the single choke point, so
   // no surface can flip a shop live past a failing gate. Throws before any write.
-  if (to === "live") await assertGoLiveGates(shopId);
+  // The passing evaluation records a durable migration_run row; we stamp its cutover_at
+  // once the ->live compare-and-set below actually commits.
+  let goLiveRunId: string | null = null;
+  if (to === "live") ({ runId: goLiveRunId } = await assertGoLiveGates(shopId));
 
   const inserted = await sb
     .from("cutover_transition")
@@ -153,6 +156,17 @@ export async function transitionOrgMode(
     throw new CutoverBlockedError(
       `transitionOrgMode updated ${affected} rows for shop ${shopId}; expected exactly 1 — the shop changed under us`,
     );
+  }
+
+  // The ->live move committed: stamp cutover_at on the migration_run that gated it, so a
+  // live cutover is distinguishable from a merely-passed gate. Best-effort — the cutover
+  // already committed, so a stamp failure is surfaced (rule 12), never rolled back onto it.
+  if (goLiveRunId) {
+    try {
+      await stampMigrationRunCutover(shopId, goLiveRunId);
+    } catch (err) {
+      console.error(`[cutover] failed to stamp cutover_at on migration_run ${goLiveRunId}`, err);
+    }
   }
 
   return mapTransition(inserted.data as Record<string, unknown>);

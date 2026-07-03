@@ -114,7 +114,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
         .order("position"),
       sb
         .from("product_media")
-        .select("product_id, storage_path, alt, position, is_primary")
+        .select("product_id, storage_path, external_url, alt, position, is_primary")
         .in("product_id", ids)
         .order("position"),
       sb.from("product_collection").select("product_id, collection_id").in("product_id", ids),
@@ -145,20 +145,26 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     ((variants ?? []) as Row[]).map((v) => String(v.id)),
   );
 
-  const signed = await signMediaPaths((media ?? []).map((m: Row) => String(m.storage_path)));
+  const signed = await signMediaPaths(
+    ((media ?? []) as Row[]).filter((m) => m.storage_path).map((m) => String(m.storage_path)),
+  );
   const sellable = await sellablePromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
   for (const v of (variants ?? []) as Row[])
     pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
 
-  // Primary image leads, then by position; unsignable paths are dropped.
+  // Primary image leads, then by position. A promoted mirror image carries an
+  // external_url (Shopify CDN, hotlinked) and is used directly; an owned/uploaded
+  // image carries a private-bucket storage_path resolved through a signed url.
+  // Rows that resolve to neither are dropped.
   const imagesByProduct = new Map<string, { url: string; alt: string | null }[]>();
   const orderedMedia = [...((media ?? []) as Row[])].sort(
     (a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) || Number(a.position ?? 0) - Number(b.position ?? 0),
   );
   for (const m of orderedMedia) {
-    const url = signed.get(String(m.storage_path));
+    const external = m.external_url ? String(m.external_url) : null;
+    const url = external ?? signed.get(String(m.storage_path));
     if (!url) continue;
     pushInto(imagesByProduct, String(m.product_id), { url, alt: (m.alt as string | null) ?? null });
   }

@@ -6,10 +6,9 @@ const promoteShopFromMirror = vi.fn();
 vi.mock("../promote.server", () => ({
   promoteShopFromMirror,
   buildImportReport: (
-    _counts: unknown,
-    orders: number,
+    counts: { orders?: number },
     customers: { imported: number; skipped: number; blocked: boolean },
-  ) => ({ imported: [`${orders} orders`, `${customers.imported} customers`], notIncluded: ["customers"] }),
+  ) => ({ imported: [`${counts.orders ?? 0} orders`, `${customers.imported} customers`], notIncluded: ["customers"] }),
 }));
 const importCustomers = vi.fn();
 vi.mock("../customers.server", () => ({ importCustomers }));
@@ -66,7 +65,7 @@ describe("drainImports", () => {
   it("pulls sinceDays, promotes, and marks the run done", async () => {
     selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
     backfillShop.mockResolvedValue({ orders: 1100 });
-    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12, orders: 1100, refunds: 30 });
 
     const { drainImports } = await import("../run.server");
     const r = await drainImports();
@@ -80,8 +79,10 @@ describe("drainImports", () => {
 
   it("runs the customer stage and feeds its counts into the report", async () => {
     selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
-    backfillShop.mockResolvedValue({ orders: 1100 });
-    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12 });
+    // The pull count (777) differs from the promoted count (1100): the report must
+    // read the PROMOTED count, so this proves run feeds counts.orders, not backfill.orders.
+    backfillShop.mockResolvedValue({ orders: 777 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12, orders: 1100, refunds: 30 });
     importCustomers.mockResolvedValueOnce({ imported: 3, skipped: 0, blocked: false });
 
     const { drainImports } = await import("../run.server");
@@ -90,6 +91,7 @@ describe("drainImports", () => {
     expect(importCustomers).toHaveBeenCalledWith("d.myshopify.com", "shop1");
     const done = updates.find((u) => u.state === "done");
     expect((done?.report as { imported: string[] }).imported).toContain("3 customers");
+    expect((done?.report as { imported: string[] }).imported).toContain("1100 orders");
   });
 
   it("marks the run error and skips promote when the pull throws", async () => {

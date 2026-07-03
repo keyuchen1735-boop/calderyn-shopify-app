@@ -30,9 +30,14 @@ function greenDrift(overrides: Partial<DriftReport> = {}): DriftReport {
   };
 }
 
+// Captures every migration_run insert the gate records, so tests can assert the
+// durable go-live fact (verdict, payment_ok, parity_json) — reset per test.
+let migrationRunInserts: Array<Record<string, unknown>> = [];
+
 beforeEach(() => {
   driftMock.mockReset();
   driftMock.mockResolvedValue(greenDrift());
+  migrationRunInserts = [];
 });
 
 interface SbConfig {
@@ -103,6 +108,12 @@ function makeSb(cfg: SbConfig) {
         column = cols;
         return b;
       },
+      // migration_run recording/stamping: capture the insert, no-op the update.
+      insert: (rows: Record<string, unknown>) => {
+        if (table === "migration_run") migrationRunInserts.push(rows);
+        return b;
+      },
+      update: () => b,
       eq: (col: string, val: unknown) => {
         eqCols[col] = val;
         return b;
@@ -117,12 +128,19 @@ function makeSb(cfg: SbConfig) {
         rangeTo = to;
         return b;
       },
+      single: () =>
+        Promise.resolve({
+          data: table === "migration_run" ? { id: "mr-1" } : null,
+          error: null,
+        }),
       maybeSingle: () =>
         Promise.resolve({
           data: table === "shops" ? { demo_mode: cfg.demoMode === true } : null,
           error: null,
         }),
       then: (res: (r: { data: unknown; count: number | null; error: null }) => unknown) => {
+        // migration_run stamp update (.update().eq().eq()) awaits to just an error slot.
+        if (table === "migration_run") return res({ data: null, count: null, error: null });
         if (isCount) {
           const n =
             table === "orders" && eqCols.state === "paid"
@@ -303,7 +321,7 @@ describe("checkGoLiveGates", () => {
 describe("assertGoLiveGates", () => {
   it("resolves when every check passes", async () => {
     currentSb = makeSb(allGreen());
-    await expect(assertGoLiveGates("shop-1")).resolves.toBeUndefined();
+    await expect(assertGoLiveGates("shop-1")).resolves.toEqual({ runId: "mr-1" });
   });
 
   it("throws a typed CutoverBlockedError naming every failing check", async () => {
@@ -317,12 +335,35 @@ describe("assertGoLiveGates", () => {
       /go-live blocked: 2 gate check\(s\) failing:.*catalog_projection.*paid_order/,
     );
   });
+
+  it("records a durable migration_run fact (verdict=pass, payment_ok) on a passing gate", async () => {
+    currentSb = makeSb(allGreen());
+    await assertGoLiveGates("shop-1");
+    expect(migrationRunInserts).toHaveLength(1);
+    const row = migrationRunInserts[0];
+    expect(row.shop_id).toBe("shop-1");
+    expect(row.verdict).toBe("pass");
+    expect(row.payment_ok).toBe(true);
+    // parity_json carries the full evaluated check set (incl. the value-parity gate).
+    expect(Array.isArray(row.parity_json)).toBe(true);
+    expect(row.cutover_at).toBeUndefined(); // stamped only when the ->live move commits
+  });
+
+  it("records verdict=blocked and payment_ok=false when the payment gate fails", async () => {
+    const cfg = allGreen();
+    cfg.paidOrders = 0; // no test order cleared → payment gate fails
+    currentSb = makeSb(cfg);
+    await assertGoLiveGates("shop-1").catch(() => undefined);
+    expect(migrationRunInserts).toHaveLength(1);
+    expect(migrationRunInserts[0].verdict).toBe("blocked");
+    expect(migrationRunInserts[0].payment_ok).toBe(false);
+  });
 });
 
 describe("assertGoLiveGates — value-parity (drift) gate", () => {
   it("runs the drift check with the shop id and resolves when values match", async () => {
     currentSb = makeSb(allGreen());
-    await expect(assertGoLiveGates("shop-1")).resolves.toBeUndefined();
+    await expect(assertGoLiveGates("shop-1")).resolves.toEqual({ runId: "mr-1" });
     expect(driftMock).toHaveBeenCalledWith("shop-1");
   });
 
@@ -363,7 +404,7 @@ describe("assertGoLiveGates — value-parity (drift) gate", () => {
     driftMock.mockRejectedValue(
       new CalderynError({ code: "not_connected", status: 409, message: "no Shopify side" }),
     );
-    await expect(assertGoLiveGates("shop-1")).resolves.toBeUndefined();
+    await expect(assertGoLiveGates("shop-1")).resolves.toEqual({ runId: "mr-1" });
   });
 
   it("fails CLOSED when a bridged (Shopify-heritage) shop reports not_connected", async () => {
@@ -417,7 +458,7 @@ describe("assertGoLiveGates — value-parity (drift) gate", () => {
     cfg.demoMode = true;
     currentSb = makeSb(cfg);
     driftMock.mockRejectedValue(new Error("sweep must not run for demo shops"));
-    await expect(assertGoLiveGates("shop-demo")).resolves.toBeUndefined();
+    await expect(assertGoLiveGates("shop-demo")).resolves.toEqual({ runId: "mr-1" });
     expect(driftMock).not.toHaveBeenCalled();
   });
 });

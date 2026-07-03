@@ -58,7 +58,8 @@ vi.mock("~/lib/supabase.server", () => ({
         return { select: () => Promise.resolve(vovRows) };
       }
       if (table === "product_media") {
-        return { select: () => ({ eq: () => ({ order: () => Promise.resolve(mediaRows) }) }) };
+        // .select().eq(product_id).not(storage_path,is,null).order(position)
+        return { select: () => ({ eq: () => ({ not: () => ({ order: () => Promise.resolve(mediaRows) }) }) }) };
       }
       if (table === "variant_shipping") {
         return { select: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) };

@@ -20,6 +20,7 @@ import { discontinueProduct } from "../shopify/product.server";
 import { resolveSkuForDiscontinue, setDoNotReorder } from "./discontinue.server";
 import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
 import { resolveOwnedMoveTarget, applyOwnedInventoryMove } from "./owned-writes.server";
+import type { WriteTarget } from "./execute.server";
 
 export type InventoryAlertActionKind = "reallocate_inventory" | "snooze_alert";
 
@@ -35,6 +36,8 @@ export interface AlertActionClient {
       idempotencyKey: string;
       actor?: string;
       triggerReason?: string | null;
+      /** The routed store-write target (extend:write-back); null for non-store actions. */
+      writeTarget?: WriteTarget | null;
     }): Promise<AuditEntry>;
   };
 }
@@ -96,6 +99,10 @@ export async function executeInventoryAlertAction(opts: {
     estimate_cents: alert.dollar_impact,
   };
 
+  // Which system the store write landed in (extend:write-back). Stays null for
+  // snooze (a deferral, not a store mutation); set below for reallocate_inventory.
+  let writeTarget: WriteTarget | null = null;
+
   if (kind === "reallocate_inventory") {
     const plan = transferPlanFromEvidence(alert.evidence ?? {});
     if (!plan) {
@@ -112,6 +119,9 @@ export async function executeInventoryAlertAction(opts: {
     // refs; every other mode adjusts Shopify as before, and dual_run ALSO mirrors the
     // move into the owned engine best-effort (recorded on the audit, never fatal).
     const orgMode = await getOrgMode(shopId);
+    // Authoritative target: owned engine at `live`, Shopify Admin otherwise
+    // (dual_run's owned mirror is best-effort, so Shopify stays authoritative).
+    writeTarget = writesToOwned(orgMode) ? "owned_sot" : "shopify_admin";
     let operationId: string;
     if (writesToOwned(orgMode)) {
       const target = await resolveOwnedMoveTarget(shopId, {
@@ -208,7 +218,7 @@ export async function executeInventoryAlertAction(opts: {
     }
   }
 
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
+  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason, writeTarget });
 
   // Snooze defers (hide for 1 day / until next login) rather than resolving;
   // every other kind closes the alert by acknowledging it.
@@ -326,7 +336,16 @@ export async function executeDiscontinueAlertAction(opts: {
     estimate_cents: alert.dollar_impact,
     archived_status: archivedStatus,
   };
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
+  // Discontinue always archives on live Shopify (not org_mode-routed).
+  const audit = await client.actions.execute({
+    alertId,
+    kind,
+    params,
+    idempotencyKey,
+    actor,
+    triggerReason,
+    writeTarget: "shopify_admin",
+  });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);
   return { auditId: audit.id, outcome: audit.outcome ?? "succeeded", acknowledged };

@@ -51,6 +51,7 @@ export type AdminProduct = {
   vendor: string | null;
   productType: string | null;
   tags: string[];
+  featuredImage: { url: string | null } | null;
   collections: { nodes: Array<{ title: string }> };
   variants: { nodes: AdminVariant[] };
 };
@@ -69,6 +70,10 @@ export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminPr
           pageInfo { hasNextPage endCursor }
           nodes {
             id title status vendor productType tags
+            # Featured image url for the mirror->product_media promote (#13.promote):
+            # hotlinked into product_media at cutover so imported products keep their
+            # imagery. Null when the product has no image.
+            featuredImage { url }
             # Collection membership for the inventory facet filters; first page
             # only (a product in >20 collections is truncated — acceptable for
             # facet slicing).

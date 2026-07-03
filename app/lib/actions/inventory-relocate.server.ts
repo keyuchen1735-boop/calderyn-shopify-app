@@ -220,6 +220,9 @@ export async function executeInventoryRelocation(
           : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
+      // At `live` the move landed in the owned inventory engine; every other mode
+      // (mirror/importing/dual_run) wrote Shopify authoritatively.
+      write_target: owned ? "owned_sot" : "shopify_admin",
     },
     sb,
   );

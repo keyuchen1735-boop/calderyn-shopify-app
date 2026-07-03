@@ -90,6 +90,10 @@ export type ExecuteActionOpts = {
   /** Plain-language reason persisted to action_audit.trigger_reason. Autopilot
    *  sets it; manual paths leave it undefined. */
   triggerReason?: string | null;
+  /** Which system a routed store write landed in (extend:write-back), persisted to
+   *  action_audit.write_target. `shopify_admin` | `owned_sot`; null/undefined for
+   *  non-store actions. */
+  writeTarget?: "shopify_admin" | "owned_sot" | null;
 };
 
 // OAuth providers + API-key providers (EasyPost ship-cost connector, contract C8).
@@ -846,6 +850,7 @@ export function calderynClient(shop: string) {
               post_state: opts.postState ?? opts.params,
               actor_user_id: opts.actor ?? "merchant",
               trigger_reason: opts.triggerReason ?? null,
+              write_target: opts.writeTarget ?? null,
               completed_at: new Date().toISOString(),
             })
             .select()

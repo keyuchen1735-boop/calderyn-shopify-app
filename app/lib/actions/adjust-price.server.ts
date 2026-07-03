@@ -294,7 +294,18 @@ export async function executeAdjustPriceAlertAction(opts: {
     // Unreachable: exactly one of the two branches resolves a write handle above.
     throw new CalderynError({ code: "action_failed", status: 500, message: "No price write target resolved." });
   }
-  const audit = await client.actions.execute({ alertId, kind, params, idempotencyKey, actor, triggerReason });
+  // Record which system the price write landed in (extend:write-back): the owned
+  // catalog at `live`, the Shopify Admin API on every other mode (dual_run's owned
+  // mirror is best-effort, so Shopify stays the authoritative target).
+  const audit = await client.actions.execute({
+    alertId,
+    kind,
+    params,
+    idempotencyKey,
+    actor,
+    triggerReason,
+    writeTarget: owned ? "owned_sot" : "shopify_admin",
+  });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);
   return { auditId: audit.id, outcome: audit.outcome ?? "succeeded", acknowledged };

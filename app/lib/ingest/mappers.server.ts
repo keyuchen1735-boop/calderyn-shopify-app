@@ -21,6 +21,7 @@ type ProductNode = {
   vendor?: string | null;
   productType?: string | null;
   tags?: string[] | null;
+  featuredImage?: { url?: string | null } | null;
   collections?: { nodes: Array<{ title: string | null }> } | null;
 };
 type VariantNode = {
@@ -98,6 +99,10 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
   // a blank Shopify field doesn't render a dead facet.
   const productType = product.productType?.trim() || null;
   const vendor = product.vendor?.trim() || null;
+  // Featured-image url for the mirror->product_media promote (#13.promote). Denormalized
+  // onto every variant row (like the other product-level facets); the promote reads it
+  // distinct-on product. Empty/whitespace nulled so a blank never seeds a dead image.
+  const imageUrl = product.featuredImage?.url?.trim() || null;
   const collections = (product.collections?.nodes ?? [])
     .map((c) => c.title?.trim())
     .filter((t): t is string => !!t);
@@ -119,6 +124,7 @@ export function mapVariantToSku(shopId: string, product: ProductNode, variant: V
     currency: "USD",
     category: productType,
     vendor,
+    image_url: imageUrl,
     tags: (product.tags ?? []).map((t) => t.trim()).filter(Boolean),
     collections,
   };
@@ -197,7 +203,7 @@ type RawProductWebhook = {
 /** Normalize products/update into sku_dim rows (shop_id is supplied by worker). */
 export function parseProductWebhook(
   p: RawProductWebhook,
-): Array<Omit<SkuRow, "shop_id" | "unit_cost_cents" | "collections">> {
+): Array<Omit<SkuRow, "shop_id" | "unit_cost_cents" | "collections" | "image_url">> {
   const productId = p.admin_graphql_api_id ??
     (p.id != null ? `gid://shopify/Product/${p.id}` : null);
   if (!productId) throw new Error("products webhook missing product id");

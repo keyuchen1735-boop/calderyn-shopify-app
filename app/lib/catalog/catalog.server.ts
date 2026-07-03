@@ -58,7 +58,9 @@ export async function listProducts(
   const shipOkByProduct = new Map<string, boolean>();
   const maxWeightByProduct = new Map<string, number>();
   if (ids.length) {
-    const { data: media, error: mErr } = await sb.from("product_media").select("product_id, storage_path").in("product_id", ids).eq("is_primary", true);
+    // Bucket-backed primaries only: a promoted mirror image carries an external_url
+    // and no storage_path (it renders on the storefront, not this admin thumbnail lane).
+    const { data: media, error: mErr } = await sb.from("product_media").select("product_id, storage_path").in("product_id", ids).eq("is_primary", true).not("storage_path", "is", null);
     if (mErr) throw mErr;
     for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
     const { data: variants, error: vcErr } = await sb.from("variant_dim").select("id, product_id, retail_price_cents").in("product_id", ids);
@@ -140,7 +142,9 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
     sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
     sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
-    sb.from("product_media").select("id, storage_path, alt, position, is_primary").eq("product_id", productId).order("position"),
+    // Bucket-backed media only (see getCatalogProducts): a promoted mirror image
+    // has an external_url + no storage_path and is served by the storefront reader.
+    sb.from("product_media").select("id, storage_path, alt, position, is_primary").eq("product_id", productId).not("storage_path", "is", null).order("position"),
     sb.from("product_collection").select("collection_id").eq("product_id", productId),
   ]);
 

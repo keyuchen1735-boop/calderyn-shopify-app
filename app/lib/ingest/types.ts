@@ -21,6 +21,9 @@ export type SkuRow = {
   // Product facets (inventory slicing). `category` carries Shopify productType.
   category: string | null;
   vendor: string | null;
+  // Shopify featured-image url, denormalized per variant for the mirror->product_media
+  // promote (#13.promote). Null when the product has no image.
+  image_url: string | null;
   tags: string[];
   collections: string[];
 };
