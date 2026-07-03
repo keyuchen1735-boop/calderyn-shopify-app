@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { Card, Btn, Placeholder, TableSkeleton } from "../ui";
 
 // URL-only page (/dashboard/products/collections): no Products subtab entry,
@@ -10,19 +11,22 @@ import { Card, Btn, Placeholder, TableSkeleton } from "../ui";
 const GRID = "2fr 1fr";
 
 export default function Collections({ app }: { app: DashboardCtx }) {
-  const [items, setItems] = useState<client.CollectionVM[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const seeded = cachedScreenData<client.CollectionVM[]>(SCREEN_CACHE_KEYS.collections);
+  const [items, setItems] = useState<client.CollectionVM[]>(() => seeded ?? []);
+  const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
     setError(null);
     client
       .fetchCollections()
       .then((c) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.collections, c);
         if (alive) setItems(c);
       })
       .catch((err: unknown) => {
@@ -42,7 +46,9 @@ export default function Collections({ app }: { app: DashboardCtx }) {
     setCreating(true);
     try {
       const c = await client.createCollection(t);
-      setItems((cur) => [c, ...cur]);
+      // Write the optimistic insert through the cache too, so navigating away
+      // and back can't briefly resurrect the pre-create list.
+      setItems((cur) => cacheScreenData(SCREEN_CACHE_KEYS.collections, [c, ...cur]));
       setTitle("");
       app.toast("Collection created.", "check");
     } catch (err) {

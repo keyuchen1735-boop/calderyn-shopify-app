@@ -18,11 +18,23 @@ import {
   DashboardApiError,
   type LiveAnalyticsSnapshot,
 } from "~/lib/dashboard/client";
+import {
+  cacheScreenData,
+  cachedScreenData,
+  SCREEN_CACHE_KEYS,
+} from "~/lib/dashboard/screen-cache";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
 export const LIVE_POLL_MS = 60_000;
 // Re-mint the realtime JWT a minute before it lapses.
 const TOKEN_RENEW_SLACK_MS = 60_000;
+
+// Monotonic request ordering, MODULE-scoped on purpose: the cache outlives any
+// single hook instance, so a slow response issued by an already-unmounted
+// instance must never overwrite a fresher snapshot a newer instance applied.
+// Per-mount counters can't see each other; these can.
+let liveIssued = 0;
+let liveApplied = 0;
 
 /** Pure gate: poll only when the Live subtab is active and the tab is visible. */
 export function shouldPollNow(active: boolean, visibility: DocumentVisibilityState): boolean {
@@ -33,7 +45,11 @@ export function useLiveAnalytics(active: boolean): {
   snapshot: LiveAnalyticsSnapshot | null;
   error: string | null;
 } {
-  const [snapshot, setSnapshot] = useState<LiveAnalyticsSnapshot | null>(null);
+  // Seeded from the session cache so a return visit paints the last-known
+  // numbers instantly instead of em dashes; the poll below revalidates.
+  const [snapshot, setSnapshot] = useState<LiveAnalyticsSnapshot | null>(() =>
+    cachedScreenData<LiveAnalyticsSnapshot>(SCREEN_CACHE_KEYS.liveAnalytics),
+  );
   const [error, setError] = useState<string | null>(null);
   const loadRef = useRef<(() => void) | null>(null);
 
@@ -45,18 +61,19 @@ export function useLiveAnalytics(active: boolean): {
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    // Monotonic request ordering: a slow, older response must never overwrite
-    // a newer snapshot (poll and order-ping loads can overlap).
-    let issued = 0;
-    let applied = 0;
 
     const load = () => {
       if (!shouldPollNow(active, document.visibilityState)) return;
-      const seq = ++issued;
+      const seq = ++liveIssued;
       fetchLiveAnalytics()
         .then((s) => {
-          if (!alive || seq < applied) return;
-          applied = seq;
+          if (seq < liveApplied) return; // an older response never wins
+          liveApplied = seq;
+          // Write-through even when this hook instance has unmounted: a
+          // response landing after a quick nav-away still warms the cache
+          // for the next visit.
+          cacheScreenData(SCREEN_CACHE_KEYS.liveAnalytics, s);
+          if (!alive) return;
           setSnapshot(s);
           setError(null);
         })

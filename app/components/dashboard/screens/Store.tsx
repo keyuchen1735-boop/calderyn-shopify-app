@@ -12,6 +12,7 @@ import { Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   fetchStudio,
   saveStudioHero,
@@ -108,7 +109,11 @@ function pctPoint(e: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElemen
 
 export default function Store({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
-  const [data, setData] = useState<StudioState | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount refresh below revalidates and writes back through.
+  const [data, setData] = useState<StudioState | null>(() =>
+    cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio),
+  );
   const [loading, setLoading] = useState(true);
   const [tool, setTool] = useState<Tool>("select");
 
@@ -136,6 +141,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
 
   const refresh = useCallback(async () => {
     const s = await fetchStudio();
+    cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, s);
     if (aliveRef.current) setData(s);
   }, []);
 

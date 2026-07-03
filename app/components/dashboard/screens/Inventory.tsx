@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, Pill, Placeholder, TableSkeleton } from "../ui";
 import { ProductsSubTabs } from "../subtabs";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import type { SkuVM } from "../view-models";
 
@@ -26,16 +27,19 @@ function stockStatus(s: SkuVM): StockStatus {
 }
 
 export default function Inventory({ app }: { app: DashboardCtx }) {
-  const [skus, setSkus] = useState<SkuVM[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const seeded = cachedScreenData<SkuVM[]>(SCREEN_CACHE_KEYS.inventorySkus);
+  const [skus, setSkus] = useState<SkuVM[]>(() => seeded ?? []);
+  const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
     setError(null);
     fetchSkus()
       .then((rows) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.inventorySkus, rows);
         if (alive) setSkus(rows);
       })
       .catch((err: unknown) => {

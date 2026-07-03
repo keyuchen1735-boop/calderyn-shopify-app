@@ -7,6 +7,7 @@ import {
   fetchAllPendingTransfers,
   type ShopTransferVM,
 } from "~/lib/dashboard/transfers-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 
 // Shop-wide view of in-transit stock moves. The transfer GET only returns
@@ -37,7 +38,11 @@ function VariantCell({ row }: { row: ShopTransferVM }) {
 }
 
 export default function Transfers({ app }: { app: DashboardCtx }) {
-  const [rows, setRows] = useState<ShopTransferVM[] | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const [rows, setRows] = useState<ShopTransferVM[] | null>(() =>
+    cachedScreenData<ShopTransferVM[]>(SCREEN_CACHE_KEYS.transfers),
+  );
   const [loading, setLoading] = useState(true);
   const [receiving, setReceiving] = useState<string | null>(null);
   // Bumped after a successful receive so the effect re-pulls the list.
@@ -49,6 +54,7 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
     setLoading(true);
     fetchAllPendingTransfers()
       .then((t) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.transfers, t);
         if (alive) setRows(t);
       })
       .catch((err: unknown) => {

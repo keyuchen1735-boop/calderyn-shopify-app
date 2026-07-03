@@ -4,6 +4,7 @@ import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { fetchOrdersPage, type OrderRow, type OrdersPage } from "~/lib/dashboard/orders-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
 
@@ -45,7 +46,11 @@ function StateBadge({ state }: { state: string }) {
 }
 
 export default function Orders({ app }: { app: DashboardCtx }) {
-  const [page, setPage] = useState<OrdersPage | null>(null);
+  // Seeded from the session cache so a return visit paints the last page
+  // instantly; the mount fetch below revalidates and writes back through.
+  const [page, setPage] = useState<OrdersPage | null>(() =>
+    cachedScreenData<OrdersPage>(SCREEN_CACHE_KEYS.orders),
+  );
   const [loading, setLoading] = useState(true);
   const [refundOrder, setRefundOrder] = useState<OrderRow | null>(null);
   const toast = app.toast;
@@ -55,6 +60,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       setLoading(true);
       fetchOrdersPage()
         .then((p) => {
+          cacheScreenData(SCREEN_CACHE_KEYS.orders, p);
           if (!signal || signal.alive) setPage(p);
         })
         .catch((err: unknown) => {

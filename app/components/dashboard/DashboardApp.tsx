@@ -5,6 +5,7 @@ import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
@@ -422,6 +423,18 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     let alive = true;
     setLoading(true);
     load()
+      .then(() => {
+        // Warm every screen's cache in the background once the shared load
+        // SUCCEEDS, so the first visit to any tab paints instantly instead of
+        // a skeleton. Success-gated: a failing backend shouldn't get 17 more
+        // background reads piled on. Idle-scheduled and sequential; the cache
+        // is module-level, so a late warm-up still helps the next mount.
+        const idle: (cb: () => void) => void =
+          typeof window.requestIdleCallback === "function"
+            ? (cb) => window.requestIdleCallback(cb, { timeout: 2000 })
+            : (cb) => void window.setTimeout(cb, 350);
+        idle(() => void warmScreenCaches());
+      })
       .catch((err) => {
         if (!alive) return;
         const msg = err instanceof DashboardApiError ? err.message : "Could not load dashboard data.";

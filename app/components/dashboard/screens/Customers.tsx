@@ -11,6 +11,7 @@ import {
   type CustomerDetail,
   type CustomerSegment,
 } from "~/lib/dashboard/customers-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 
 const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr";
@@ -373,7 +374,11 @@ function DetailView({
 }
 
 export default function Customers({ app }: { app: DashboardCtx }) {
-  const [page, setPage] = useState<CustomersPage | null>(null);
+  // Seeded from the session cache so a return visit paints the last directory
+  // instantly; the mount fetch below revalidates and writes back through.
+  const [page, setPage] = useState<CustomersPage | null>(() =>
+    cachedScreenData<CustomersPage>(SCREEN_CACHE_KEYS.customers),
+  );
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -387,6 +392,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     setLoading(true);
     fetchCustomersPage()
       .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.customers, p);
         if (alive) setPage(p);
       })
       .catch((err: unknown) => {
