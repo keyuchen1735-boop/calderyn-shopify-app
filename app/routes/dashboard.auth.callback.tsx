@@ -11,13 +11,18 @@ import {
   exchangeCodeForToken,
 } from "~/lib/dashboard/shopify-oauth.server";
 import { createSession, sessionCookieHeader } from "~/lib/dashboard/session.server";
-import { jsonError, rateLimit, clientIpKey } from "~/lib/dashboard/http.server";
+import {
+  jsonError,
+  rateLimit,
+  clientIpKey,
+  safeDashboardReturnTo,
+} from "~/lib/dashboard/http.server";
 import { resolveShopId } from "~/lib/supabase.server";
 import {
   STATE_COOKIE_NAME,
   shopHintCookieHeader,
-  safeDashboardReturnTo,
-} from "./dashboard.login";
+  expireCookieHeader,
+} from "~/lib/dashboard/cookies.server";
 
 function readStateCookie(
   request: Request,
@@ -54,7 +59,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const publicUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
   const failure = redirect(`${publicUrl}/dashboard/login?error=oauth_failed`, {
-    headers: { "Set-Cookie": `${STATE_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax` },
+    headers: { "Set-Cookie": expireCookieHeader(STATE_COOKIE_NAME) },
   });
 
   const url = new URL(request.url);
@@ -92,12 +97,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { raw } = await createSession(shop);
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookieHeader(raw));
-  // Remember the shop so a future expired-session visit auto-redirects.
+  // Remember the shop so a future visit to /dashboard/login pre-fills the
+  // store-domain form (it no longer triggers any automatic redirect).
   headers.append("Set-Cookie", shopHintCookieHeader(shop));
-  headers.append(
-    "Set-Cookie",
-    `${STATE_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-  );
+  headers.append("Set-Cookie", expireCookieHeader(STATE_COOKIE_NAME));
   // Honour a validated post-login destination (re-checked here, never trusted
   // straight from the cookie) so the connector consent flow resumes at
   // /dashboard/connect?t=…; default to the dashboard home.

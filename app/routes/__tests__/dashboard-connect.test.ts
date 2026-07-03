@@ -102,14 +102,14 @@ describe("/dashboard/connect loader", () => {
     expect(r.status).toBe(404);
   });
 
-  it("redirects to login, preserving the connect URL, when unauthenticated", async () => {
+  it("redirects to the native signin, preserving the connect URL, when unauthenticated", async () => {
     getSessionFromRequest.mockResolvedValue(null);
     const r = (await loader(loaderReq(TOKEN) as never)) as Response;
     expect(r.status).toBe(302);
     const loc = r.headers.get("location") ?? "";
-    expect(loc).toContain("/dashboard/login");
+    expect(loc).toContain("/dashboard/signin");
     expect(loc).toContain("return_to=");
-    // The token must survive the round-trip through login.
+    // The token must survive the round-trip through sign-in.
     expect(decodeURIComponent(loc)).toContain(`/dashboard/connect?t=${TOKEN}`);
   });
 

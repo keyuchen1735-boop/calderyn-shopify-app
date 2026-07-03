@@ -44,9 +44,12 @@ export function AuthNotice({ notice }: { notice: string | null }) {
   );
 }
 
-export function GoogleButton({ label }: { label: string }) {
+export function GoogleButton({ label, returnTo }: { label: string; returnTo?: string | null }) {
+  const href = returnTo
+    ? `/dashboard/auth/google?return_to=${encodeURIComponent(returnTo)}`
+    : "/dashboard/auth/google";
   return (
-    <a className="cd-auth-google" href="/dashboard/auth/google">
+    <a className="cd-auth-google" href={href}>
       <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
         <path
           fill="#EA4335"

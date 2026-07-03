@@ -18,15 +18,31 @@ import {
 } from "~/lib/auth/users.server";
 import { resolveShopForUser } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
+import { GOAUTH_COOKIE, expireCookieHeader } from "~/lib/dashboard/cookies.server";
 
-const GOAUTH_COOKIE = "__Host-calderyn_goauth";
-const CLEAR_GOAUTH = `${GOAUTH_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`;
+const CLEAR_GOAUTH = expireCookieHeader(GOAUTH_COOKIE);
 
-function readGoauthCookie(request: Request): string | null {
+// Cookie format is `nonce[:enc(returnTo)]` (see dashboard.auth.google). Only
+// the returnTo segment is URL-encoded, so split first and decode that segment
+// once — decoding the whole value would double-decode returnTo.
+function readGoauthCookie(request: Request): { nonce: string; returnTo: string | null } | null {
   const header = request.headers.get("Cookie") ?? "";
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (name === GOAUTH_COOKIE) return rest.join("=") || null;
+    if (name === GOAUTH_COOKIE) {
+      const [nonce, ...ret] = rest.join("=").split(":");
+      if (!nonce) return null;
+      let returnTo: string | null = null;
+      if (ret.length) {
+        try {
+          returnTo = decodeURIComponent(ret.join(":"));
+        } catch {
+          returnTo = null; // malformed encoding — fall back to /dashboard
+        }
+      }
+      return { nonce, returnTo };
+    }
   }
   return null;
 }
@@ -46,14 +62,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code") ?? "";
   const state = url.searchParams.get("state") ?? "";
-  const cookieNonce = readGoauthCookie(request);
+  const cookie = readGoauthCookie(request);
 
   // CSRF double-submit check. Both values must be present and equal.
-  if (!state || !cookieNonce || state !== cookieNonce) {
+  if (!state || !cookie || state !== cookie.nonce) {
     return redirect("/dashboard/signin?error=google_oauth_failed", {
       headers: { "Set-Cookie": CLEAR_GOAUTH },
     });
   }
+
+  // Validated post-login destination (re-checked here, never trusted straight
+  // from the cookie) so the connector consent flow resumes at /dashboard/connect?t=….
+  const dest = safeDashboardReturnTo(cookie.returnTo) ?? "/dashboard";
 
   const clientId = process.env.GOOGLE_SIGNIN_CLIENT_ID ?? "";
   const clientSecret = process.env.GOOGLE_SIGNIN_CLIENT_SECRET ?? "";
@@ -91,7 +111,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
-    return redirect("/dashboard", { headers });
+    return redirect(dest, { headers });
   }
 
   // Path 2: user exists by email (signed up with password) - link the Google sub.
@@ -108,7 +128,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
-    return redirect("/dashboard", { headers });
+    return redirect(dest, { headers });
   }
 
   // Path 3: brand-new user - send them to name-your-store with a signed token.

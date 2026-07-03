@@ -43,11 +43,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const session = await getSessionFromRequest(request);
   if (!session) {
-    // Preserve the connect URL (incl. ?t=) through Shopify login so the token
-    // survives the round-trip; the callback honours a validated return_to.
+    // Preserve the connect URL (incl. ?t=) through sign-in so the token
+    // survives the round-trip. The native signin page (default entry) honours
+    // return_to on both its password action and its Google link; merchants who
+    // sign in with Shopify reach /dashboard/login from there.
     const url = new URL(request.url);
     const returnTo = `/dashboard/connect${url.search}`;
-    return redirect(`/dashboard/login?return_to=${encodeURIComponent(returnTo)}`);
+    return redirect(`/dashboard/signin?return_to=${encodeURIComponent(returnTo)}`);
   }
 
   const token = new URL(request.url).searchParams.get("t") ?? "";

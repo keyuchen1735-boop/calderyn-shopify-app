@@ -8,6 +8,7 @@ import { redirect } from "@remix-run/node";
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
 import { resurfaceAllSnoozes } from "../actions/snooze.server";
+import { expireCookieHeader } from "./cookies.server";
 
 export const SESSION_COOKIE_NAME = "__Host-calderyn_dash";
 const SESSION_TTL_MS = 30 * 86_400_000; // 30 days
@@ -40,7 +41,7 @@ export function sessionCookieHeader(raw: string): string {
 }
 
 export function clearSessionCookieHeader(): string {
-  return `${SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`;
+  return expireCookieHeader(SESSION_COOKIE_NAME);
 }
 
 export function readSessionTokenFromCookie(request: Request): string | null {

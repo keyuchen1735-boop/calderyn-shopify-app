@@ -642,7 +642,15 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
 });
 
 describe("POST /dashboard/api/logout", () => {
-  it("revokes the session and clears both the session cookie and the shop hint", async () => {
+  const CLEARED = [
+    "__Host-calderyn_dash", // session token
+    "__Host-dash_shop", // dashboard shop hint (90d)
+    "__Host-cala_shop", // connector shop hint (90d)
+    "__Host-dash_oauth", // in-flight Shopify OAuth state
+    "__Host-calderyn_goauth", // in-flight Google OAuth state
+  ];
+
+  it("revokes the session and clears every auth-adjacent cookie", async () => {
     const res = (await logoutAction({
       request: post("https://calderyncompany.com/dashboard/api/logout", {}),
       params: {},
@@ -651,10 +659,21 @@ describe("POST /dashboard/api/logout", () => {
     expect(res.status).toBe(200);
     expect(revokeSession).toHaveBeenCalledWith("sess-1");
     const cookies = res.headers.getSetCookie();
-    expect(cookies.some((c) => c.startsWith("__Host-calderyn_dash=") && c.includes("Max-Age=0"))).toBe(true);
-    // The Shopify shop hint must die with the session — leaving it meant
-    // "Sign out" bounced straight back through Shopify OAuth and silently
-    // re-signed the merchant in.
-    expect(cookies.some((c) => c.startsWith("__Host-dash_shop=") && c.includes("Max-Age=0"))).toBe(true);
+    for (const name of CLEARED) {
+      expect(
+        cookies.some((c) => c.startsWith(`${name}=;`) && c.includes("Max-Age=0")),
+        `${name} should be cleared`,
+      ).toBe(true);
+    }
+  });
+
+  it("redirects a document form POST (Accept: text/html) to the login page", async () => {
+    const req = post("https://calderyncompany.com/dashboard/api/logout", {});
+    req.headers.set("Accept", "text/html,application/xhtml+xml");
+    const res = (await logoutAction({ request: req, params: {}, context: {} })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/login?notice=signed_out");
+    // Cookies are still cleared on the redirect.
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("__Host-calderyn_dash=;"))).toBe(true);
   });
 });
