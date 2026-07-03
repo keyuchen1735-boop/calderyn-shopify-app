@@ -123,11 +123,13 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
   dark: false,
-  accent: "#1A1A1C",
+  // Design tokens: near-black accent + the 1.06 type scale the fresh design
+  // ships with (its root sets --type-scale:1.06).
+  accent: "#16181D",
   density: "balanced",
   radius: 14,
   glass: 0.72,
-  typeScale: 1,
+  typeScale: 1.06,
 };
 
 // Persisted night-mode preference (per browser). Light is the default.
@@ -189,6 +191,13 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     }
   }, []);
   const setNightMode = useCallback((next: boolean) => {
+    // The design animates the theme flip: .cd-theming turns on color/background
+    // transitions for the duration of the swap, then comes off.
+    const root = document.querySelector(".cd-root");
+    if (root) {
+      root.classList.add("cd-theming");
+      window.setTimeout(() => root.classList.remove("cd-theming"), 480);
+    }
     setDark(next);
     try {
       window.localStorage.setItem(NIGHT_MODE_KEY, next ? "1" : "0");
@@ -940,6 +949,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     storeLabel,
     nav,
     navigate,
+    setNightMode,
     alerts,
     campaigns,
     audit,

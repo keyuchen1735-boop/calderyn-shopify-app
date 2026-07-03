@@ -1,41 +1,24 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { Btn, Card, Placeholder, TickGauge } from "../ui";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
-import { calibrationBand } from "../../../lib/calibration/bands";
+import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import type { RejectReason } from "~/lib/types";
 import type { ActionKind, DashboardCtx } from "../context";
+import type { WatchGroup } from "../engine-events";
 import type {
   LiveEngineFeatureVM,
+  LiveEnginePageData,
   TraceEventVM,
 } from "../../../lib/calibration/live-engine-types";
-import type { QueueProposalVM } from "../view-models";
-import AutopilotHero from "../hero/AutopilotHero";
-import CalderynLog from "../overview/CalderynLog";
-import AutopilotFeatures from "../overview/AutopilotFeatures";
-import InspectorPanel from "../overview/InspectorPanel";
-import {
-  buildFeatureGroups,
-  countEnabled,
-  flaggedGroups,
-  flagTextByGroup,
-} from "../overview/features-model";
-import {
-  inspectorFromTrace,
-  inspectorFromPending,
-  type InspectorVM,
-} from "../overview/inspector-vm";
-
-/** Which log item the inspector rail is showing, if any. */
-type Selection =
-  | { kind: "trace"; t: TraceEventVM }
-  | { kind: "pending"; p: QueueProposalVM };
+import type { AuditVM, QueueProposalVM } from "../view-models";
+import { flaggedGroups } from "../overview/features-model";
 
 // Kinds that are safe to run one-click from the trainer rows: no dialog inputs
 // (adjust_price shows a price, create_po_draft asks quantity/cost — those
-// review steps live on the inspector, so the row routes there instead of
-// silently executing with defaults). Mirrors Mission Control's to-do card.
+// review steps live on the alert's own detail, so the row routes there instead
+// of silently executing with defaults). Mirrors Mission Control's to-do card.
 const ONE_CLICK_KINDS: ActionKind[] = [
   "pause_campaign",
   "reduce_campaign_budget",
@@ -94,8 +77,8 @@ function CalibrationTrainer({
   // One-click is only offered when the client can actually run the action
   // here: a whitelisted kind, the alert loaded, and (for campaign kinds) a
   // resolvable campaign id. Everything else renders "Review" and opens the
-  // inspector — never a button that can't succeed, never a silent default on
-  // a kind that deserves a review step (price, PO quantities).
+  // alert's own detail — never a button that can't succeed, never a silent
+  // default on a kind that deserves a review step (price, PO quantities).
   const canOneClick = (p: QueueProposalVM): boolean => {
     if (!oneClickKind(p.action_kind)) return false;
     const alert = app.alerts.find((a) => a.id === p.alertId);
@@ -314,68 +297,190 @@ function CalibrationTrainer({
   );
 }
 
-// Autopilot — the trust ladder surface: the live engine hero (calibration ring,
-// watch rail), the decision log with approve/reject teaching, per-feature
-// autonomy toggles, and the inspector. Promoted from the old Overview hero to
-// its own screen under /dashboard/autopilot.
+/* ---------- Graduated state: the Live Engine panel ---------- */
+
+const WATCH_CELLS: { key: WatchGroup; label: string }[] = [
+  { key: "inv", label: "Inventory" },
+  { key: "ads", label: "Ad spend" },
+  { key: "price", label: "Pricing" },
+  { key: "ret", label: "Retention" },
+];
+
+/** Feed-row tone: green check for landed moves, amber for blocked, live pulse
+ *  otherwise (e.g. an undone row's reversal). */
+function traceTone(t: TraceEventVM): "done" | "need" | "live" {
+  if (t.tag === "BLOCKED") return "need";
+  if (t.moneyCents > 0 || t.tag === "APPROVED" || t.tag === "AUTO") return "done";
+  return "live";
+}
+
+/** The graduated Autopilot surface: header status, the watch rail, the newest
+ *  decision as the focus card, and the recent-moves feed. Every value binds to
+ *  the real Live Engine bundle; nothing is simulated. */
+function LiveEnginePanel({
+  app,
+  data,
+  flagged,
+}: {
+  app: DashboardCtx;
+  data: LiveEnginePageData;
+  flagged: Set<WatchGroup>;
+}) {
+  // Trace ids are audit-row ids (buildLiveEnginePageData maps trace events off
+  // durable audit rows 1:1), so undo eligibility comes straight from the
+  // matching audit entry — same gate the Audit screen uses.
+  const undoEntryFor = (traceId: string): AuditVM | null => {
+    const entry = app.audit.find((a) => a.id === traceId);
+    return entry && entry.undo_eligible && !entry.undo_of ? entry : null;
+  };
+
+  const newest = data.trace[0] ?? null;
+  const sub = data.autopilotEnabled
+    ? newest
+      ? `${newest.text} · ${newest.rel}`
+      : "Running — no moves yet"
+    : "Autopilot is paused";
+
+  const cells = WATCH_CELLS.map((c) => ({
+    ...c,
+    count: data.watchScan[c.key].length,
+  })).filter((c) => c.count > 0);
+
+  return (
+    <div className="cd-engine cd-engine-in">
+      <div className="cd-eg-pad">
+        <div className="cd-eg-top">
+          <div style={{ display: "flex", gap: 13, alignItems: "flex-start", minWidth: 0 }}>
+            <span className="cd-eg-mark">
+              <svg viewBox="0 0 32 32" width="22" height="22" fill="none" role="img" aria-label="Calderyn">
+                <path
+                  d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                />
+              </svg>
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div className="cd-eg-status">Calderyn Live Engine</div>
+              <div className="cd-eg-sub">{sub}</div>
+            </div>
+          </div>
+          <div className="cd-eg-money">
+            <b className="tabular-nums">{money(data.moneyProtectedWeekCents)}</b>
+            <span>protected this week</span>
+          </div>
+        </div>
+
+        {cells.length > 0 && (
+          <div className="cd-watch">
+            {cells.map((c) => (
+              <div key={c.key} className="cd-wcell" data-hot={flagged.has(c.key) ? "1" : "0"}>
+                <div className="cd-wcell-k">
+                  {c.label}
+                  <span className="cd-wdot" />
+                </div>
+                <div className="cd-wcell-v">{c.count} tracked</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {newest && (
+          <div className="cd-eg-focus">
+            <div className="cd-eg-focus-top">
+              <span className="cd-eg-check" data-done="1">
+                <CDIcon name="check" size={16} strokeWidth={2} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div className="cd-eg-focus-title">{newest.text}</div>
+              </div>
+              <span className="cd-eg-donepill">
+                <CDIcon name="check" size={12} strokeWidth={2.2} />
+                Done
+              </span>
+            </div>
+            {newest.evidence.length > 0 && (
+              <div className="cd-eg-facts">
+                {newest.evidence.slice(0, 4).map((line, i) => (
+                  <div key={`${i}:${line}`} className="cd-eg-fact">
+                    <div className="cd-eg-fact-v">
+                      {line}
+                      <CDIcon name="check" size={14} strokeWidth={2} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {newest.moneyCents !== 0 && (
+              <div className="cd-eg-focus-foot">
+                <b className="tabular-nums">{money(newest.moneyCents)}</b>
+                <span>impact</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="cd-eg-feed">
+        <div className="cd-eg-feedhd">
+          <b>Recent moves</b>
+          <span>Undoable for 24–48h</span>
+        </div>
+        {data.trace.length === 0 && (
+          <div className="cd-efrow">
+            <span className="cd-eftext" style={{ color: "var(--eg-2)" }}>
+              No autopilot moves yet.
+            </span>
+          </div>
+        )}
+        {data.trace.map((t) => {
+          const entry = undoEntryFor(t.id);
+          return (
+            <div key={t.id} className="cd-efrow">
+              <span className="cd-efico" data-tone={traceTone(t)}>
+                <CDIcon name={CD_ACTION_ICON[t.actionKind] ?? "bolt"} size={14} strokeWidth={1.9} />
+              </span>
+              <span className="cd-eftext">{t.text}</span>
+              {t.moneyCents !== 0 && (
+                <span
+                  className="cd-efimp"
+                  data-k={t.tag === "BLOCKED" || t.moneyCents < 0 ? "need" : undefined}
+                >
+                  {money(t.moneyCents)}
+                </span>
+              )}
+              {entry && (
+                <button type="button" className="cd-efundo" onClick={() => app.undoAction(entry)}>
+                  <CDIcon name="undo" size={11} strokeWidth={2.2} />
+                  Undo
+                </button>
+              )}
+              <span className="cd-eftime">{t.rel}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Autopilot — the trust ladder surface: the calibration trainer while the store
+// is still teaching Calderyn, then the Live Engine panel once graduated.
 export default function Autopilot({ app }: { app: DashboardCtx }) {
   const data = app.liveEngine;
-  const [selected, setSelected] = useState<Selection | null>(null);
 
   const refreshLiveEngine = app.refreshLiveEngine;
-  const selectedId = selected ? (selected.kind === "trace" ? selected.t.id : selected.p.alertId) : null;
-
-  // Gentle live poll: refresh only the Live Engine bundle while the tab is
-  // visible and no inspector row is open.
+  // Gentle live poll: refresh only the Live Engine bundle while the tab is visible.
   useEffect(() => {
     const id = setInterval(() => {
-      if (document.visibilityState === "visible" && !selectedId) refreshLiveEngine();
+      if (document.visibilityState === "visible") refreshLiveEngine();
     }, 45000);
     return () => clearInterval(id);
-  }, [selectedId, refreshLiveEngine]);
+  }, [refreshLiveEngine]);
 
-  // A selected item may disappear after a refresh (trace scrolled out of the
-  // capped list, or the pending proposal was worked through) — fall back to the
-  // features rail rather than showing a stale inspector.
-  useEffect(() => {
-    if (!selected || !data) return;
-    if (selected.kind === "trace" && !data.trace.some((t) => t.id === selected.t.id)) {
-      setSelected(null);
-    }
-    if (selected.kind === "pending" && !app.actionQueue.some((p) => p.alertId === selected.p.alertId)) {
-      setSelected(null);
-    }
-  }, [data, app.actionQueue, selected]);
-
-  const groups = data ? buildFeatureGroups(data.features) : [];
-  const featureOn = countEnabled(groups);
-  // Hero meter denominator stays the store's UNLOCKED features (matches the
-  // embedded hero); the locked catalog rows live in the list below, not the ring.
-  const featureTotal = data?.features.length ?? 0;
-  const band = calibrationBand(data?.calibrationPct ?? null);
+  const featureOn = data ? data.features.filter((f) => f.enabled).length : 0;
   const running = !!data && data.autopilotEnabled && featureOn > 0;
-  // Stable Set identity across renders so the hero's setFlags effect only fires
-  // when the pending queue actually changes (not on every 45s poll tick).
   const flagged = useMemo(() => flaggedGroups(app.actionQueue), [app.actionQueue]);
-  const watchFlags = useMemo(
-    () => flagTextByGroup(app.actionQueue.map((p) => ({ detectorId: p.detector_id, title: p.title }))),
-    [app.actionQueue],
-  );
-
-  // Build the inspector VM for whichever item is selected (history or pending).
-  let inspectorVM: InspectorVM | null = null;
-  if (selected) {
-    if (selected.kind === "trace") {
-      inspectorVM = inspectorFromTrace(selected.t);
-    } else {
-      const alert = app.alerts.find((a) => a.id === selected.p.alertId);
-      const call = data?.pipeline.find(
-        (c) => c.detectorId === selected.p.detector_id && c.actionKind === selected.p.action_kind,
-      );
-      inspectorVM = inspectorFromPending(selected.p, alert, call);
-    }
-  }
-
   const pct = data?.calibrationPct ?? null;
 
   return (
@@ -383,7 +488,6 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
       <header className="cd-screen-head" data-screen-label="Autopilot">
         <div>
           <h1 className="cd-h1">Autopilot</h1>
-          <p className="cd-sub">Earned autonomy — every move capped, logged, undoable.</p>
         </div>
         <span className="cd-live-pill" data-on={running ? "1" : "0"}>
           <span className={"cd-live-dot" + (running ? " on" : "")} />
@@ -392,48 +496,18 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
       </header>
 
       {data ? (
-        <section className="flex flex-col gap-4">
-          {data.calibrationPct !== null && data.calibrationPct < 100 && (
-            <CalibrationTrainer
-              app={app}
-              pct={data.calibrationPct}
-              features={data.features}
-              onReview={(p) => setSelected({ kind: "pending", p })}
-            />
-          )}
-
-          <AutopilotHero
-            running={running}
-            featureOn={featureOn}
-            featureTotal={featureTotal}
-            calibrationPct={data.calibrationPct}
-            level={band.level}
-            levels={band.levels}
-            moneyProtectedCents={data.moneyProtectedWeekCents}
-            flaggedGroups={flagged}
-            watchScan={data.watchScan}
-            watchFlags={watchFlags}
-            dark={app.t.dark}
+        data.calibrationPct !== null && data.calibrationPct < 100 ? (
+          <CalibrationTrainer
+            app={app}
+            pct={data.calibrationPct}
+            features={data.features}
+            // Non-one-click proposals review on the alert's own detail — that's
+            // where the real fix buttons (price, PO, snooze) live.
+            onReview={(p) => app.navigate("alerts", p.alertId)}
           />
-
-          <div className="cd-eng-cols">
-            <CalderynLog
-              trace={data.trace}
-              pending={app.actionQueue}
-              app={app}
-              selectedId={selectedId}
-              onSelectTrace={(t) => setSelected({ kind: "trace", t })}
-              onSelectPending={(p) => setSelected({ kind: "pending", p })}
-            />
-            <div className="flex flex-col gap-4 min-w-0">
-              {inspectorVM ? (
-                <InspectorPanel vm={inspectorVM} onClose={() => setSelected(null)} />
-              ) : (
-                <AutopilotFeatures groups={groups} app={app} />
-              )}
-            </div>
-          </div>
-        </section>
+        ) : (
+          <LiveEnginePanel app={app} data={data} flagged={flagged} />
+        )
       ) : (
         <Card>
           <Placeholder

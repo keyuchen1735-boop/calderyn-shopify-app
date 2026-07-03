@@ -187,7 +187,9 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen cd-screen--wide">
       <header className="cd-screen-head" data-screen-label="Go live">
-        <h1 className="cd-h1">Go live</h1>
+        <div>
+          <h1 className="cd-h1">Go live</h1>
+        </div>
       </header>
 
       <SettingsSubTabs app={app} />

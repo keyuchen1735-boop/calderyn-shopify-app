@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { IMPACT_SUFFIX } from "~/lib/impact-window";
-import { trueRoas } from "~/lib/roas";
 import { gradeFromRow } from "~/lib/campaign-grade";
-import { isSourceDisconnected } from "~/lib/integration-status";
 import {
   Card,
-  SectionTitle,
-  Sparkline,
-  Pill,
   Btn,
   Segmented,
   Placeholder,
@@ -16,27 +10,38 @@ import {
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
-import { money } from "../format";
+import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
-import { fetchAnalytics, executeCampaignAction, pushCreativeDraft, DashboardApiError, fetchCampaignDirection, fetchCampaignCreatives, scoreCampaignAd, regenerateCampaign, screenCampaignCreative, type CampaignDirectionDTO, type CampaignCreativesDTO, type CampaignCreativeDTO, type AdScorecardDTO, type RegenerateDTO, type ScreenCreativePayload } from "~/lib/dashboard/client";
-import AdScorecardPanel from "../AdScorecardPanel";
-import type { Variant, CreativeScreenRun } from "~/lib/screener/types";
+import {
+  fetchAnalytics,
+  executeCampaignAction,
+  pushCreativeDraft,
+  DashboardApiError,
+  fetchCampaignCreatives,
+  regenerateCampaign,
+  screenCampaignCreative,
+  type CampaignCreativesDTO,
+  type RegenerateDTO,
+} from "~/lib/dashboard/client";
+import {
+  fetchCampaignDrafts,
+  createCampaignDraft,
+  type CampaignDraftRow,
+} from "~/lib/dashboard/campaign-drafts-client";
+import {
+  CAMPAIGN_DRAFT_PLATFORM_LABELS,
+  type CampaignDraftPlatform,
+} from "~/lib/ads/campaign-draft-types";
+import type { Variant, CreativeScreenRun, CreativeInput } from "~/lib/screener/types";
+import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
-import { scaleReason as buildScaleReason } from "~/lib/scale-reason";
 import type { DashboardCtx } from "../context";
-import type { CampaignVM, Platform } from "../view-models";
+import type { CampaignVM } from "../view-models";
 import type { CampaignGradeRow } from "~/lib/types";
 
 const PENDING_SCORE: CampaignCalderynScore = {
   value: null, band: "nodata", performance: null, creative: null, confidence: "low",
   weakDimensions: [], tips: [], adsCovered: 0, adsTotal: 0,
-};
-
-const DIR_PILL: Record<string, { label: string; tone: "success" | "warn" | "critical" | "neutral"; icon?: string }> = {
-  scale_up: { label: "Scale up", tone: "success", icon: "arrowUpRight" },
-  keep: { label: "Keep", tone: "neutral" },
-  scale_down: { label: "Scale down", tone: "warn", icon: "reduce" },
-  pause: { label: "Pause", tone: "critical", icon: "pause" },
 };
 
 /** Shared column template for the campaigns table (header + rows). */
@@ -52,6 +57,11 @@ const BAND_CHIP: Record<CampaignCalderynScore["band"], { color: string; backgrou
   weak: { color: "var(--red)", background: "var(--red-bg)" },
   nodata: { color: "var(--text-2)", background: "var(--gray-bg)" },
 };
+
+/** 75/55 composite bands for scored creatives (matches the score-chip bands). */
+function compositeChip(composite: number): { color: string; background: string } {
+  return composite >= 75 ? BAND_CHIP.strong : composite >= 55 ? BAND_CHIP.fair : BAND_CHIP.weak;
+}
 
 /** Numeric Calderyn-score chip; blank scores render an em dash, never a made-up
  *  number. The label ScorePill shows ("82 · Strong") rides a plain title attr —
@@ -110,6 +120,29 @@ function useNarrowViewport(maxWidth = 1024): boolean {
   return narrow;
 }
 
+/** "Peak & Pine" → "P&P"-style initials for the ad-preview avatar. */
+function storeInitials(label: string): string {
+  const words = label.split(/\s+/).filter((w) => /[a-zA-Z0-9]/.test(w));
+  const initials = words.map((w) => w[0].toUpperCase()).slice(0, 3).join("");
+  return initials || "—";
+}
+
+/** Uppercased hostname of the ad's destination for the link box; "—" when the
+ *  creative has no parseable destination. */
+function destinationDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toUpperCase();
+  } catch {
+    return "—";
+  }
+}
+
+/** "SHOP_NOW" → "Shop now" — presentational casing of the ad's real CTA enum. */
+function ctaLabel(cta: string): string {
+  const words = cta.replace(/_/g, " ").trim().toLowerCase();
+  return words ? words[0].toUpperCase() + words.slice(1) : "—";
+}
+
 /* ---------- Header ---------- */
 function ScreenHeader({
   title,
@@ -131,20 +164,8 @@ function ScreenHeader({
   );
 }
 
-/* ---------- List row ---------- */
-function CampaignRow({
-  c,
-  onClick,
-  scaleReason,
-  staleSource,
-}: {
-  c: CampaignVM;
-  onClick: () => void;
-  /** Plain-language "why scale" reason; null = no suggestion (no pill). */
-  scaleReason: string | null;
-  /** The campaign's ad platform is disconnected — its data may be stale (P2-16). */
-  staleSource?: boolean;
-}) {
+/* ---------- List rows ---------- */
+function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
   const losing = c.roas_7d < c.breakeven_roas;
   const paused = c.status === "paused";
   // Spend/day prefers the real daily budget; falls back to the 7-day average
@@ -163,21 +184,7 @@ function CampaignRow({
       style={{ gridTemplateColumns: CAMP_GRID, padding: "14px 20px", opacity: paused ? 0.55 : undefined }}
     >
       <div className="min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="cd-row-title truncate">{c.name}</span>
-          {/* Plain title attrs, not <Tooltip>: its wrapper is focusable and
-              this whole row is a button — no nested interactive elements. */}
-          {staleSource && (
-            <span title="This ad platform is disconnected — its data may be out of date.">
-              <Pill tone="warn" icon="clock">Stale</Pill>
-            </span>
-          )}
-          {scaleReason && (
-            <span title={scaleReason}>
-              <Pill icon="arrowUpRight">Scale</Pill>
-            </span>
-          )}
-        </div>
+        <div className="cd-row-title truncate">{c.name}</div>
         <div className="cd-caption">{c.platform}</div>
       </div>
       <div>
@@ -211,6 +218,172 @@ function CampaignRow({
   );
 }
 
+/** An owned campaign_draft row. Not clickable — a draft has no spend, ROAS, or
+ *  score yet, so there is no detail to open; the caption says what it is. */
+function DraftRow({ d }: { d: CampaignDraftRow }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        alignItems: "center",
+        gridTemplateColumns: CAMP_GRID,
+        gap: 12,
+        padding: "14px 20px",
+        borderTop: "0.5px solid var(--hairline)",
+        fontSize: 13.5,
+      }}
+    >
+      <div className="min-w-0">
+        <div className="cd-row-title truncate">{d.name}</div>
+        <div className="cd-caption">
+          {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+        </div>
+      </div>
+      <div>
+        <span className="cd-badge" style={BADGE_NEUTRAL}>Draft</span>
+      </div>
+      <div className="tabular-nums" style={{ color: "var(--text-3)" }}>—</div>
+      <div className="cd-row-num tabular-nums" style={{ color: "var(--text-3)" }}>—</div>
+      <div className="text-right">
+        <span className="cd-score" style={BAND_CHIP.nodata}>—</span>
+      </div>
+      <div />
+    </div>
+  );
+}
+
+/* ---------- Screen-new-creative card (list) ---------- */
+// The design's one-row card, made real against the existing screening flow
+// (screenCampaignCreative → POST /screen). That flow requires the actual ad
+// image (the server 422s without media), so the card carries an image-URL
+// field alongside the hook input — a deliberate deviation that keeps the
+// button honest instead of always-failing. Results render inline below.
+function ScreenNewCreativeCard({
+  app,
+  campaigns,
+}: {
+  app: DashboardCtx;
+  campaigns: CampaignVM[];
+}) {
+  const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
+  const [brief, setBrief] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [run, setRun] = useState<CreativeScreenRun | null>(null);
+
+  // Keep the selection valid if campaigns refresh underneath us.
+  useEffect(() => {
+    if (!campaigns.some((c) => c.id === campaignId)) {
+      setCampaignId(campaigns[0]?.id ?? "");
+    }
+  }, [campaigns, campaignId]);
+
+  if (campaigns.length === 0) return null;
+
+  const submit = async () => {
+    if (busy || !campaignId || !brief.trim() || !imageUrl.trim()) return;
+    setBusy(true);
+    try {
+      setRun(
+        await screenCampaignCreative(campaignId, {
+          headline: brief.trim(),
+          primaryText: "",
+          cta: "SHOP_NOW",
+          destinationUrl: "",
+          audience: "",
+          assumedSpendCents: DEFAULT_SPEND_CENTS,
+          mediaKind: "image",
+          imageUrl: imageUrl.trim(),
+        }),
+      );
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't screen that creative — check the image URL and try again.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sc = run?.scorecard ?? null;
+
+  return (
+    <Card>
+      <div className="flex items-center" style={{ gap: 12, flexWrap: "wrap" }}>
+        <h2 className="cd-h2" style={{ flex: "0 0 auto" }}>Screen new creative</h2>
+        <select
+          className="cd-input"
+          aria-label="Campaign"
+          value={campaignId}
+          onChange={(e) => setCampaignId(e.target.value)}
+          style={{ flex: "0 1 200px", minWidth: 140 }}
+        >
+          {campaigns.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <input
+          className="cd-input"
+          type="text"
+          placeholder="Summit Down · cold-weather hook"
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        <input
+          className="cd-input"
+          type="text"
+          placeholder="Image URL (https)"
+          value={imageUrl}
+          onChange={(e) => setImageUrl(e.target.value)}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <span
+          title={
+            !campaignId
+              ? "Pick a campaign to score against"
+              : !brief.trim()
+                ? "Write the hook or headline to score"
+                : !imageUrl.trim()
+                  ? "Screening needs the creative image's URL"
+                  : undefined
+          }
+        >
+          <Btn
+            kind="primary"
+            small
+            disabled={busy || !campaignId || !brief.trim() || !imageUrl.trim()}
+            onClick={submit}
+          >
+            {/* "Score", not "Generate": this flow screens the supplied creative;
+                generation lives behind Regenerate on the campaign detail. */}
+            {busy ? "Scoring…" : "Score creative"}
+          </Btn>
+        </span>
+      </div>
+      {sc && (
+        <div
+          className="flex items-center"
+          style={{ gap: 12, marginTop: 14, paddingTop: 14, borderTop: "0.5px solid var(--hairline)" }}
+        >
+          <span className="cd-score" style={compositeChip(sc.composite)}>{sc.composite}</span>
+          <div className="min-w-0">
+            <div className="cd-row-title truncate">{run?.creativeInput?.headline ?? brief}</div>
+            <div className="cd-caption">{sc.summary}</div>
+          </div>
+        </div>
+      )}
+      {run && run.status === "error" && (
+        <div className="cd-caption" style={{ marginTop: 10 }}>
+          Couldn&apos;t score: {run.error}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ---------- Detail ---------- */
 function CampaignDetail({
   app,
@@ -231,16 +404,7 @@ function CampaignDetail({
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
   const [busy, setBusy] = useState(false);
-  const [pushing, setPushing] = useState<string | null>(null);
-  const [direction, setDirection] = useState<CampaignDirectionDTO | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetchCampaignDirection(c.id)
-      .then((d) => { if (live) setDirection(d); })
-      .catch(() => { if (live) setDirection(null); });
-    return () => { live = false; };
-  }, [c.id]);
-  // Keep in sync if app.campaigns refreshes underneath us with a new value.
+  const [pushing, setPushing] = useState(false);
   useEffect(() => {
     setStatus(c.status);
   }, [c.status]);
@@ -250,12 +414,8 @@ function CampaignDetail({
   // not masquerade as "not connected" — that would show misleading Meta-connect
   // guidance on a transient network/5xx error (rule 12, fail visibly).
   const [creativesLoadError, setCreativesLoadError] = useState(false);
-  const [scored, setScored] = useState<Record<string, AdScorecardDTO>>({});
-  const [scoring, setScoring] = useState<string | null>(null);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [regenBusy, setRegenBusy] = useState(false);
-  const [screenRun, setScreenRun] = useState<CreativeScreenRun | null>(null);
-  const [screenBusy, setScreenBusy] = useState(false);
   const narrow = useNarrowViewport();
 
   useEffect(() => {
@@ -267,44 +427,27 @@ function CampaignDetail({
     return () => { live = false; };
   }, [c.id]);
 
-  const cachedByAd = useMemo(() => {
-    const m: Record<string, AdScorecardDTO> = {};
-    for (const s of creativeData?.scorecards ?? []) m[s.adId] = s;
-    return m;
-  }, [creativeData?.scorecards]);
-
-  const scoreAd = async (ad: CampaignCreativeDTO) => {
-    setScoring(ad.adId);
-    try {
-      const sc = await scoreCampaignAd(c.id, {
-        adId: ad.adId,
-        headline: ad.creative.headline,
-        primaryText: ad.creative.primaryText,
-        cta: ad.creative.cta,
-        destinationUrl: ad.creative.destinationUrl,
-        audience: ad.creative.audience,
-        imageUrl: ad.creative.imageUrl,
-        assumedSpendCents: creativeData?.assumedSpendCents ?? 50000,
-      });
-      setScored((m) => ({ ...m, [ad.adId]: sc }));
-    } catch {
-      app.toast("Couldn't score this ad — try again.", "x", "critical");
-    } finally {
-      setScoring(null);
-    }
-  };
-
   const runRegen = async () => {
     const adIds = (creativeData?.creatives ?? []).map((x) => x.adId).filter(Boolean);
     if (adIds.length === 0) { app.toast("No creatives to regenerate yet.", "x", "critical"); return; }
     setRegenBusy(true);
     try {
-      const res: RegenerateDTO = await regenerateCampaign(c.id, adIds, creativeData?.assumedSpendCents ?? 50000);
+      const res: RegenerateDTO = await regenerateCampaign(c.id, adIds, creativeData?.assumedSpendCents ?? DEFAULT_SPEND_CENTS);
       if (res.ok) {
         setVariants(res.variants);
         app.toast(res.variants.length > 0 ? `Generated ${res.variants.length} stronger variant(s).` : "No variant beat the original.", "sparkle", "success");
       } else {
-        app.toast("Regenerate unavailable — score this campaign's ads first.", "x", "critical");
+        // Say which precondition failed — the old blanket "score first" pointed
+        // at a per-ad scoring control this surface no longer renders.
+        const msg =
+          res.reason === "no_scored_ads"
+            ? "This campaign's ads haven't been scored yet, so there's nothing to improve from."
+            : res.reason === "no_seed_run"
+              ? "No screening run yet — score a creative from the Campaigns screen first."
+              : res.reason === "generator_unavailable"
+                ? "The creative generator is unavailable right now — try again shortly."
+                : "Regenerate is unavailable for this campaign right now.";
+        app.toast(msg, "x", "critical");
       }
     } catch {
       app.toast("Regenerate failed — try again.", "x", "critical");
@@ -313,15 +456,15 @@ function CampaignDetail({
     }
   };
 
-  const pushVariant = async (pushKey: string, v: Variant) => {
-    setPushing(pushKey);
+  const pushVariant = async (v: Variant) => {
+    setPushing(true);
     try {
       const r = await pushCreativeDraft(c.id, v.input);
       app.toast(r.outcome === "succeeded" ? "Draft pushed to Meta (paused)" : "Push parked for retry");
     } catch {
       app.toast("Couldn't push the draft — check the action history");
     } finally {
-      setPushing(null);
+      setPushing(false);
     }
   };
 
@@ -334,17 +477,10 @@ function CampaignDetail({
   const losing = c.roas_7d < c.breakeven_roas;
   const paused = status === "paused";
 
-  const scaleAlert = app.alerts.find(
-    (a) => a.campaign_id === c.id && a.status === "open" && a.detector_id === "campaign_scaling_opportunity",
-  );
-  const scalePct = app.guardrails?.autopilot_max_budget_increase_pct ?? 20;
-  const scaleTarget = Math.round(c.daily_budget_cents * (1 + scalePct / 100));
-
   const run = async (
-    type: "pause_campaign" | "resume_campaign" | "reduce_campaign_budget" | "increase_campaign_budget",
+    type: "pause_campaign" | "resume_campaign" | "reduce_campaign_budget",
     successText: string,
     nextStatus: string,
-    dailyBudgetCents?: number,
   ) => {
     if (busy) return;
     setBusy(true);
@@ -352,22 +488,14 @@ function CampaignDetail({
       await executeCampaignAction(c.id, {
         type,
         ...(type === "reduce_campaign_budget"
-          ? { dailyBudgetCents: dailyBudgetCents ?? Math.round(c.daily_budget_cents * 0.7) }
-          : type === "increase_campaign_budget"
-            ? { dailyBudgetCents: dailyBudgetCents ?? Math.round(c.daily_budget_cents * 1.2) }
-            : {}),
+          ? { dailyBudgetCents: Math.round(c.daily_budget_cents * 0.7) }
+          : {}),
       });
       setStatus(nextStatus);
       app.refresh();
       app.toast(
         successText,
-        type === "pause_campaign"
-          ? "pause"
-          : type === "resume_campaign"
-            ? "play"
-            : type === "increase_campaign_budget"
-              ? "arrowUpRight"
-              : "reduce",
+        type === "pause_campaign" ? "pause" : type === "resume_campaign" ? "play" : "reduce",
       );
     } catch (err) {
       const message =
@@ -378,197 +506,127 @@ function CampaignDetail({
     }
   };
 
-  const directionActable =
-    direction != null &&
-    direction.actionKind != null &&
-    (direction.actionKind === "pause_campaign" || direction.suggestedBudgetCents != null);
-
-  const runDirection = () => {
-    if (!direction?.actionKind) return;
-    const verb =
-      direction.direction === "scale_up" ? "Budget scaled"
-      : direction.direction === "scale_down" ? "Budget reduced"
-      : direction.direction === "keep" ? "No action taken"
-      : "Campaign paused";
-    const nextStatus = direction.actionKind === "pause_campaign" ? "paused" : status;
-    run(direction.actionKind, `${verb} — logged to action history.`, nextStatus, direction.suggestedBudgetCents ?? undefined);
-  };
-
   const s = c.calderynScore ?? PENDING_SCORE;
 
-  const directionCard = direction && (
-    <Card>
-      <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-        <span className="cd-h2">Recommended direction</span>
-        <Pill tone={DIR_PILL[direction.direction].tone} icon={DIR_PILL[direction.direction].icon}>
-          {DIR_PILL[direction.direction].label}
-        </Pill>
-      </div>
-      <p className="cd-body">{direction.reason}</p>
-      {directionActable && (
-        <div style={{ marginTop: 10 }}>
-          <Btn icon={DIR_PILL[direction.direction].icon} disabled={busy} onClick={runDirection}>
-            {DIR_PILL[direction.direction].label}
-          </Btn>
-        </div>
-      )}
-    </Card>
-  );
+  // The REAL first creative on this campaign (null while loading, on error,
+  // when Meta isn't connected, or when the campaign has no ads yet).
+  const firstAd = creativeData?.creatives[0] ?? null;
+  const cre: CreativeInput | null = firstAd?.creative ?? null;
+  const creFormat =
+    cre?.mediaKind === "video" ? "Video" : cre?.mediaKind === "image" || cre?.imageUrl ? "Image" : "—";
+  // Honest message for the empty creative slot, by cause.
+  const creEmptyText = creativesLoadError
+    ? "Couldn't load the creative — refresh to retry"
+    : !creativeData
+      ? "Loading creative…"
+      : !creativeData.metaConnected
+        ? "Connect Meta to see this campaign's creative"
+        : "No creative yet";
 
-  const creativesCard = (
+  const creativeCard = (
     <Card pad={false}>
-      <SectionTitle>Creatives</SectionTitle>
+      <div
+        className="flex items-center justify-between"
+        style={{ padding: "14px 16px", borderBottom: "0.5px solid var(--hairline-strong)" }}
+      >
+        <div className="cd-anh" style={{ margin: 0 }}>
+          <CDIcon name="image" size={15} />
+          Creative
+        </div>
+        <span className="cd-caption">{creFormat}</span>
+      </div>
       <div style={{ padding: 16 }}>
-        {creativesLoadError ? (
-          <Placeholder icon="megaphone" title="Couldn't load creatives" sub="Refresh to retry." />
-        ) : !creativeData ? (
-          <Placeholder icon="scan" title="Loading creatives…" />
-        ) : !creativeData.metaConnected ? (
-          <Placeholder icon="megaphone" title="Connect Meta to score creatives" sub="No score is fabricated until your ad account is connected." />
-        ) : creativeData.creatives.length === 0 ? (
-          <Placeholder icon="megaphone" title="No ads on this campaign yet" />
+        <div className="flex items-center" style={{ gap: 9, marginBottom: 12 }}>
+          <span className="cd-acct-av">{storeInitials(app.storeLabel)}</span>
+          <div className="min-w-0">
+            <div style={{ fontSize: 13, fontWeight: 640 }}>{app.storeLabel}</div>
+            <div className="cd-caption">Sponsored · {c.platform}</div>
+          </div>
+        </div>
+        <p style={{ fontSize: 13.5, lineHeight: 1.5, color: cre?.primaryText ? "var(--text-1)" : "var(--text-3)", marginBottom: 12 }}>
+          {cre?.primaryText || creEmptyText}
+        </p>
+        {cre?.imageUrl ? (
+          <img
+            src={cre.imageUrl}
+            alt={cre.headline || "Ad creative"}
+            style={{ display: "block", width: "100%", height: 300, objectFit: "cover", borderRadius: 12 }}
+          />
         ) : (
-          <div className="flex flex-col gap-6">
-            {creativeData.creatives.map((ad) => {
-              const sc = scored[ad.adId] ?? cachedByAd[ad.adId];
-              return (
-                <div key={ad.adId} className="flex flex-col gap-2">
-                  <span style={{ fontWeight: 600 }}>{ad.adName || ad.adId}</span>
-                  {sc && sc.status === "done" && sc.scorecard ? (
-                    <AdScorecardPanel card={sc.scorecard} />
-                  ) : sc && sc.status === "error" ? (
-                    <span className="cd-caption">Analysis unavailable: {sc.error}</span>
-                  ) : (
-                    <Btn icon="scan" disabled={!!scoring} onClick={() => scoreAd(ad)}>
-                      {scoring === ad.adId ? "Scoring…" : "Score this ad"}
-                    </Btn>
-                  )}
-                </div>
-              );
-            })}
+          <div
+            className="cd-nc-empty"
+            style={{ height: 300, background: "var(--gray-bg)", borderRadius: 12 }}
+          >
+            {creEmptyText}
           </div>
         )}
-      </div>
-    </Card>
-  );
-
-  const regenerateCard = (
-    <Card>
-      <SectionTitle>Regenerate copy</SectionTitle>
-      <p className="cd-body">Rewrites the campaign&apos;s weakest creative, re-scores each rewrite, and keeps only ones that beat it. Run it from the Regenerate button above.</p>
-      {variants.length > 0 && (
-        <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
-          {variants.map((v, i) => {
-            const pushKey = `${i}:${v.input.headline}`;
-            return (
-            <div key={pushKey} style={{ background: "var(--cd-surface-2, #f5f5f5)", borderRadius: 12, padding: "12px 14px" }}>
-              <div className="flex items-center gap-2">
-                <Pill tone="accent">{v.mode}</Pill>
-                <span style={{ fontWeight: 600 }}>{v.composite}</span>
-                <span className="cd-caption" style={{ color: "var(--cd-success, #1a7f37)" }}>+{v.delta}</span>
-              </div>
-              <p className="cd-body" style={{ marginTop: 6 }}>&ldquo;{v.input.headline}&rdquo; · CTA: {v.input.cta}</p>
-              <p className="cd-caption">{v.rationale}</p>
-              <div style={{ marginTop: 8 }}>
-                {metaCanPushDrafts ? (
-                  <Btn
-                    icon="arrowUpRight"
-                    // Single-flight across ALL push buttons (incl. the header's
-                    // best-variant push) — two concurrent pushes of the same
-                    // creative would land duplicate paused drafts on Meta.
-                    disabled={pushing !== null}
-                    onClick={() => pushVariant(pushKey, v)}
-                  >
-                    Push to Meta as paused draft
-                  </Btn>
-                ) : (
-                  <Tooltip content="Reconnect Meta with ad-management access to enable drafts">
-                    <Btn icon="lock" disabled>
-                      Reconnect Meta to enable drafts
-                    </Btn>
-                  </Tooltip>
-                )}
-              </div>
+        <div
+          className="flex items-center justify-between"
+          style={{ gap: 12, marginTop: 12, padding: "11px 14px", background: "var(--gray-bg)", borderRadius: 12 }}
+        >
+          <div className="min-w-0">
+            <div className="cd-caption" style={{ letterSpacing: "0.04em" }}>
+              {cre?.destinationUrl ? destinationDomain(cre.destinationUrl) : "—"}
             </div>
-            );
-          })}
+            <div className="truncate" style={{ fontSize: 14, fontWeight: 640, letterSpacing: "-0.01em" }}>
+              {cre?.headline || "—"}
+            </div>
+          </div>
+          {/* Static preview of the ad's own CTA — part of the creative, not an app control. */}
+          <span className="cd-btn cd-btn-secondary cd-btn-sm" style={{ flexShrink: 0, pointerEvents: "none" }}>
+            {cre?.cta ? ctaLabel(cre.cta) : "—"}
+          </span>
         </div>
-      )}
-    </Card>
-  );
-
-  const screenCard = (
-    <Card>
-      <SectionTitle>Screen a new creative</SectionTitle>
-      <ScreenNewCreative
-        busy={screenBusy}
-        run={screenRun}
-        onSubmit={async (payload) => {
-          setScreenBusy(true);
-          try {
-            setScreenRun(await screenCampaignCreative(c.id, payload));
-          } catch {
-            app.toast("Couldn't screen that creative — check the image URL and try again.", "x", "critical");
-          } finally {
-            setScreenBusy(false);
-          }
-        }}
-      />
-    </Card>
-  );
-
-  const scaleCard = !paused && scaleAlert && (
-    <Card>
-      <SectionTitle>Scale opportunity</SectionTitle>
-      <p className="cd-body" style={{ margin: "8px 0 12px" }}>
-        This campaign is winning — earning{" "}
-        <b className="tabular-nums">{c.roas_7d.toFixed(1)}×</b> on ad spend. Raising its daily
-        budget {scalePct}% (
-        <span className="tabular-nums">
-          {money(c.daily_budget_cents)} → {money(scaleTarget)}
-        </span>
-        ) projects about{" "}
-        <b className="tabular-nums" style={{ color: "var(--green)" }}>
-          +{money(scaleAlert.dollar_impact)}/mo
-        </b>{" "}
-        more profit if it keeps performing.
-      </p>
-      <Btn
-        icon="arrowUpRight"
-        disabled={busy}
-        onClick={() =>
-          run(
-            "increase_campaign_budget",
-            `Budget scaled +${scalePct}% — logged to action history.`,
-            status,
-            scaleTarget,
-          )
-        }
-      >
-        Scale +{scalePct}%
-      </Btn>
-    </Card>
-  );
-
-  const openAlerts = app.alerts.filter((a) => a.campaign_id === c.id && a.status === "open");
-  const alertsCard = openAlerts.length > 0 && (
-    <Card pad={false}>
-      <div className="cd-pad-x cd-pad-t">
-        <SectionTitle>Open alerts on this campaign</SectionTitle>
       </div>
-      <div className="cd-rows">
-        {openAlerts.map((a) => (
-          <button
-            key={a.id}
-            className="cd-row"
-            onClick={() => app.navigate("alerts", a.id)}
-          >
-            <span className={`cd-sev-bar sev-${a.severity}`} />
-            <span className="cd-row-title flex-1">{a.title}</span>
-            <span className="cd-row-num tabular-nums">{money(a.dollar_impact)}{IMPACT_SUFFIX}</span>
-            <CDIcon name="chevronRight" size={14} />
-          </button>
-        ))}
+    </Card>
+  );
+
+  // Regenerated variants (design-language rows under the creative card). The
+  // regenerate flow returns scored Variant[]s, not score-card dims, so they
+  // surface here; the header Push to Meta targets the strongest one.
+  const variantsCard = variants.length > 0 && (
+    <Card pad={false}>
+      <div
+        className="flex items-center justify-between"
+        style={{ padding: "14px 16px", borderBottom: "0.5px solid var(--hairline-strong)" }}
+      >
+        <div className="cd-anh" style={{ margin: 0 }}>
+          <CDIcon name="sparkle" size={15} />
+          Regenerated variants
+        </div>
+        <span className="cd-caption">scored vs current creative</span>
+      </div>
+      {variants.map((v, i) => (
+        <div
+          key={`${i}:${v.input.headline}`}
+          className="flex items-center"
+          style={{ gap: 12, padding: "13px 16px", borderTop: i > 0 ? "0.5px solid var(--hairline)" : undefined }}
+        >
+          <span className="cd-score" style={compositeChip(v.composite)}>{v.composite}</span>
+          <div className="min-w-0" style={{ flex: 1 }}>
+            <div className="cd-row-title truncate">{v.input.headline}</div>
+            <div className="cd-caption truncate">{v.rationale}</div>
+          </div>
+          <b className="tabular-nums" style={{ color: "var(--green)", fontSize: 13, flexShrink: 0 }}>
+            +{v.delta}
+          </b>
+        </div>
+      ))}
+    </Card>
+  );
+
+  // No per-campaign daily spend/revenue series exists yet, so the chart card
+  // ships the design's honest no-data state rather than a fabricated series.
+  const chartCard = (
+    <Card>
+      <div className="cd-anh-wrap">
+        <div className="cd-anh">
+          <CDIcon name="arrowUpRight" size={15} />
+          Spend vs revenue · 12 days
+        </div>
+      </div>
+      <div className="cd-nc-empty" style={{ minHeight: 120 }}>
+        No data yet · launch to start collecting
       </div>
     </Card>
   );
@@ -576,7 +634,7 @@ function CampaignDetail({
   const scoreCard = (
     <Card>
       <div className="cd-caption" style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>
-        Calderyn score
+        Score
       </div>
       <div className="flex items-baseline" style={{ gap: 7, marginTop: 2 }}>
         <span
@@ -591,79 +649,33 @@ function CampaignDetail({
         <ScoreDim label="Performance" value={s.performance} />
         <ScoreDim label="Creative" value={s.creative} />
       </div>
-      <div className="flex items-center flex-wrap gap-2" style={{ marginTop: 4 }}>
-        <Pill>{`Confidence: ${s.confidence}`}</Pill>
-        <span className="cd-caption">{`Ads scored ${s.adsCovered}/${s.adsTotal}`}</span>
-      </div>
-      {(s.performance == null || s.creative == null) && (
-        <p className="cd-caption" style={{ marginTop: 8 }}>
-          {s.performance == null ? "Performance pending — attribution." : ""}
-          {" "}
-          {s.creative == null ? "Connect your Meta integration to score this campaign's creatives." : ""}
-        </p>
-      )}
-    </Card>
-  );
-
-  const improveCard = (s.weakDimensions.length > 0 || s.tips.length > 0) && (
-    <Card pad={false}>
-      <div className="cd-pad-x cd-pad-t">
-        <SectionTitle>How to improve</SectionTitle>
-      </div>
-      <div className="cd-rows">
-        {s.weakDimensions.map((d, i) => (
-          <div key={`wd-${d.adId}-${i}`} className="cd-row">
-            <span>{d.label}</span>
-            <Pill tone="warn">{d.score}</Pill>
-          </div>
-        ))}
-        {s.tips.map((t, i) => (
-          <div key={`tip-${i}`} className="cd-row">
-            <CDIcon name="sparkle" size={14} />
-            <span>{t}</span>
-          </div>
-        ))}
+      <div className="cd-caption" style={{ marginTop: 4 }}>
+        Confidence: {s.confidence} · Ads scored {s.adsCovered}/{s.adsTotal}
       </div>
     </Card>
   );
 
-  const metricsCard = (
+  // Delivery: rows render from REAL fields only — the daily budget is the one
+  // per-campaign delivery number the sync carries today; every metric with no
+  // source renders the design's "—" (never a fabricated number). Objective /
+  // Audience have no real fields, so those rows are omitted.
+  const deliveryCard = (
     <Card>
       <div className="cd-anh" style={{ marginBottom: 10 }}>
-        <CDIcon name="chart" size={15} />
-        Metrics
+        <CDIcon name="scan" size={15} />
+        Delivery
       </div>
+      <MetricRow k="Impressions" v="—" />
+      <MetricRow k="Clicks" v="—" />
+      <MetricRow k="CTR" v="—" />
+      <MetricRow k="CPA" v="—" />
+      <MetricRow k="CPM" v="—" />
+      <MetricRow k="Frequency" v="—" />
+      <MetricRow k="Reach" v="—" />
       <MetricRow
         k="Budget"
-        v={c.daily_budget_cents > 0 ? `${money(c.daily_budget_cents)}/day` : "Not set"}
+        v={c.daily_budget_cents > 0 ? `${money(c.daily_budget_cents)}/day` : "—"}
       />
-      <MetricRow k="Spend (7d)" v={money(c.spend_7d)} />
-      <MetricRow k="Break-even ROAS" v={`${c.breakeven_roas.toFixed(1)}×`} />
-      <MetricRow k="Contribution margin" v={`${Math.round(c.contribution_margin * 100)}%`} />
-      <MetricRow
-        k="Profit ROAS (POAS)"
-        v={
-          c.roas_7d > 0 && c.contribution_margin > 0
-            ? `${(c.roas_7d * c.contribution_margin).toFixed(1)}×`
-            : "—"
-        }
-      />
-      <div style={{ height: 0.5, background: "var(--hairline)", margin: "8px 0" }} />
-      <div className="cd-caption" style={{ marginBottom: 6 }}>7-day trend</div>
-      {c.trend && c.trend.length > 1 ? (
-        <>
-          <Sparkline
-            data={c.trend}
-            width={252}
-            height={44}
-            refLine={c.breakeven_roas}
-            stroke={losing ? "var(--red)" : "var(--green)"}
-          />
-          <div className="cd-caption">dashed = break-even</div>
-        </>
-      ) : (
-        <div className="cd-caption">No daily series yet.</div>
-      )}
     </Card>
   );
 
@@ -680,10 +692,11 @@ function CampaignDetail({
           <span className="cd-badge" style={BADGE_NEUTRAL}>{c.platform}</span>
           <span className="cd-badge" style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}>
             {paused ? "Paused" : "Active"}
-            {!paused && direction ? ` · ${DIR_PILL[direction.direction].label}` : ""}
           </span>
         </div>
         <div className="flex items-center flex-wrap" style={{ gap: 8, flexShrink: 0 }}>
+          {/* Pause/resume + cut-budget are real operator actions with no other
+              home — kept beyond the design's two header buttons (deliberate). */}
           {paused ? (
             <Btn
               small
@@ -705,20 +718,20 @@ function CampaignDetail({
               Pause
             </Btn>
           )}
-          <Btn
-            small
-            icon="reduce"
-            disabled={busy}
-            onClick={() =>
-              run(
-                "reduce_campaign_budget",
-                "Budget reduced 30% — logged to action history.",
-                status,
-              )
-            }
-          >
-            Cut budget 30%
-          </Btn>
+          {/* 0.7 × nothing is nothing: the action route rejects a zero budget,
+              so never offer a cut that cannot succeed. */}
+          <span title={c.daily_budget_cents <= 0 ? "No daily budget set on this campaign" : undefined}>
+            <Btn
+              small
+              icon="reduce"
+              disabled={busy || c.daily_budget_cents <= 0}
+              onClick={() =>
+                run("reduce_campaign_budget", "Budget reduced 30% — logged to action history.", status)
+              }
+            >
+              Cut budget 30%
+            </Btn>
+          </span>
           <Btn small icon="sparkle" disabled={regenBusy} onClick={runRegen}>
             {regenBusy ? "Generating…" : "Regenerate"}
           </Btn>
@@ -728,8 +741,8 @@ function CampaignDetail({
                 small
                 kind="primary"
                 icon="arrowUpRight"
-                disabled={pushing !== null}
-                onClick={() => pushVariant(`best:${bestVariant.input.headline}`, bestVariant)}
+                disabled={pushing}
+                onClick={() => pushVariant(bestVariant)}
               >
                 Push to Meta
               </Btn>
@@ -800,131 +813,206 @@ function CampaignDetail({
           gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) 300px",
           gap: 18,
           alignItems: "start",
+          marginTop: 14,
         }}
       >
         <div className="flex flex-col" style={{ gap: 14, minWidth: 0 }}>
-          {directionCard}
-          {creativesCard}
-          {regenerateCard}
-          {screenCard}
-          {scaleCard}
-          {alertsCard}
+          {creativeCard}
+          {variantsCard}
+          {chartCard}
         </div>
         <div className="flex flex-col" style={{ gap: 14, minWidth: 0 }}>
           {scoreCard}
-          {improveCard}
-          {metricsCard}
+          {deliveryCard}
         </div>
       </div>
-
-      <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and logged
-        to your action history.
-      </p>
     </div>
   );
 }
 
-function ScreenNewCreative({
-  busy,
-  run,
-  onSubmit,
-}: {
-  busy: boolean;
-  run: CreativeScreenRun | null;
-  onSubmit: (payload: ScreenCreativePayload) => void;
-}) {
-  const [f, setF] = useState({ headline: "", primaryText: "", cta: "SHOP_NOW", destinationUrl: "", audience: "", imageUrl: "" });
+/* ---------- New campaign (create draft) ---------- */
+const PLATFORM_OPTIONS: Array<{ value: CampaignDraftPlatform; label: string }> = [
+  { value: "meta", label: "Meta" },
+  { value: "google", label: "Google" },
+  { value: "tiktok", label: "TikTok" },
+];
+
+// The design's Create-campaign screen: name + platform on the right, the honest
+// empty stat grid on the left (a draft has no data yet), Create draft in the
+// header. Shareable-links / auto-match / activities cards are omitted — no
+// backend exists for them, and a dead "+" button would be dishonest.
+function CampaignNew({ app }: { app: DashboardCtx }) {
+  const [name, setName] = useState("");
+  const [platform, setPlatform] = useState<CampaignDraftPlatform>("meta");
+  const [saving, setSaving] = useState(false);
+  const narrow = useNarrowViewport();
+
+  const create = async () => {
+    if (saving || !name.trim()) return;
+    setSaving(true);
+    try {
+      await createCampaignDraft({ name: name.trim(), platform });
+      app.toast("Draft created.", "check", "success");
+      app.navigate("campaigns");
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't create the draft — try again.";
+      app.toast(message, "x", "critical");
+      setSaving(false);
+    }
+  };
+
+  const emptyStat = (label: string) => (
+    <Card className="cd-stat">
+      <span className="cd-stat-label">{label}</span>
+      <span className="cd-nc-empty">No data</span>
+    </Card>
+  );
+  const emptyChart = (label: string) => (
+    <div className="cd-card cd-pad" style={{ minHeight: 180, display: "flex", flexDirection: "column" }}>
+      <span className="cd-stat-label">{label}</span>
+      <span className="cd-nc-empty" style={{ flex: 1 }}>No data</span>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col gap-3">
-      <label className="cd-field"><span>Headline</span><input className="cd-input" value={f.headline} onChange={(e) => setF({ ...f, headline: e.target.value })} /></label>
-      <label className="cd-field"><span>Primary text</span><textarea className="cd-input" rows={3} value={f.primaryText} onChange={(e) => setF({ ...f, primaryText: e.target.value })} /></label>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="cd-field"><span>Call to action</span><input className="cd-input" value={f.cta} onChange={(e) => setF({ ...f, cta: e.target.value })} /></label>
-        <label className="cd-field"><span>Audience</span><input className="cd-input" value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value })} /></label>
-      </div>
-      <label className="cd-field"><span>Where the click goes</span><input className="cd-input" value={f.destinationUrl} onChange={(e) => setF({ ...f, destinationUrl: e.target.value })} /></label>
-      <label className="cd-field"><span>Image URL (https)</span><input className="cd-input" value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} /></label>
-      <div>
-        <Btn icon="scan" kind="primary" disabled={busy || !f.imageUrl} onClick={() => onSubmit({ ...f, mediaKind: "image", assumedSpendCents: 50000 })}>
-          {busy ? "Scoring…" : "Score creative"}
+    <div className="cd-screen" data-screen-label="Create campaign">
+      <header className="cd-screen-head">
+        <div className="flex items-center" style={{ gap: 10 }}>
+          <Btn small icon="chevronLeft" onClick={() => app.navigate("campaigns")}>
+            Back
+          </Btn>
+          <h1 className="cd-h1" style={{ fontSize: 24 }}>Create campaign</h1>
+          <span className="cd-badge" style={BADGE_NEUTRAL}>Draft</span>
+        </div>
+        <Btn kind="primary" small disabled={saving || !name.trim()} onClick={create}>
+          {saving ? "Creating…" : "Create draft"}
         </Btn>
+      </header>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) 280px",
+          gap: 18,
+          alignItems: "start",
+        }}
+      >
+        <div className="flex flex-col" style={{ gap: 14 }}>
+          <div className="cd-stat-grid">
+            {emptyStat("Sessions")}
+            {emptyStat("Total sales")}
+            {emptyStat("Orders")}
+            {emptyStat("Avg order value")}
+          </div>
+          <div className="cd-grid-duo">
+            {emptyChart("Sessions by channel")}
+            {emptyChart("Sales by channel")}
+          </div>
+          <div className="cd-grid-duo">
+            {emptyChart("New vs returning")}
+            {emptyChart("Sessions by device")}
+          </div>
+        </div>
+
+        <Card>
+          <input
+            className="cd-input"
+            type="text"
+            placeholder="Campaign name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            style={{ width: "100%" }}
+          />
+          <div style={{ marginTop: 12 }}>
+            <Segmented
+              small
+              value={platform}
+              onChange={(v) => setPlatform(v as CampaignDraftPlatform)}
+              options={PLATFORM_OPTIONS}
+            />
+          </div>
+        </Card>
       </div>
-      {run?.scorecard && <AdScorecardPanel card={run.scorecard} />}
-      {run && run.status === "error" && <span className="cd-caption">Couldn&apos;t score: {run.error}</span>}
+    </div>
+  );
+}
+
+/* ---------- List ---------- */
+function CampaignList({
+  app,
+  joined,
+}: {
+  app: DashboardCtx;
+  joined: CampaignVM[];
+}) {
+  // Owned campaign drafts render alongside synced campaigns. Fetched on mount —
+  // this component remounts on return from the create screen, so a fresh draft
+  // shows up immediately.
+  const [drafts, setDrafts] = useState<CampaignDraftRow[]>([]);
+  useEffect(() => {
+    let live = true;
+    fetchCampaignDrafts()
+      .then((rows) => { if (live) setDrafts(rows); })
+      .catch(() => {
+        // Non-fatal: the list still renders the synced campaigns.
+      });
+    return () => { live = false; };
+  }, []);
+
+  // Active campaigns sort to the top; within each status group, highest 7d
+  // spend first. Paused rows still render (dimmed), just below the active ones.
+  const shown = sortActiveFirst(joined, (a, b) => b.spend_7d - a.spend_7d);
+
+  const loading = app.loading && joined.length === 0;
+
+  return (
+    <div className="cd-screen">
+      <ScreenHeader title="Campaigns">
+        <Btn kind="primary" small onClick={() => app.navigate("campaigns", "new")}>
+          New campaign
+        </Btn>
+      </ScreenHeader>
+      <div className="cd-card" style={{ overflow: "hidden" }}>
+        {loading ? (
+          <Placeholder icon="megaphone" title="Loading campaigns" sub="Pulling spend and ROAS from Meta, Google and TikTok." />
+        ) : shown.length === 0 && drafts.length === 0 ? (
+          <Placeholder
+            icon="megaphone"
+            title="No campaigns yet"
+            sub="Connect an ad account and your campaigns will appear here."
+          />
+        ) : (
+          <>
+            <div
+              className="cd-tablehd"
+              style={{ gridTemplateColumns: CAMP_GRID, gap: 12, padding: "13px 20px" }}
+            >
+              <span>Campaign</span>
+              {/* No per-campaign autopilot flag exists in the data, so this
+                  column shows the real status instead of an Auto/Manual state. */}
+              <span>Status</span>
+              <span>Spend/day</span>
+              <span>ROAS</span>
+              <span className="text-right">Score</span>
+              <span />
+            </div>
+            {shown.map((c) => (
+              <CampaignRow key={c.id} c={c} onClick={() => app.navigate("campaigns", c.id)} />
+            ))}
+            {drafts.map((d) => (
+              <DraftRow key={d.id} d={d} />
+            ))}
+          </>
+        )}
+      </div>
+      <ScreenNewCreativeCard app={app} campaigns={shown} />
     </div>
   );
 }
 
 /* ---------- Screen ---------- */
-type PlatformFilter = "All" | Platform;
-
-// The "New campaign" surface. Calderyn manages campaigns that live on the ad
-// platforms — it doesn't create them from scratch — so this screen routes to
-// the real starting points rather than staging a form that can't submit.
-function CampaignNew({ app }: { app: DashboardCtx }) {
-  const meta = app.integrations.find((i) => i.key === "meta_ads");
-  const google = app.integrations.find((i) => i.key === "google_ads");
-  const connected = app.integrations.filter((i) => i.status === "connected").length;
-  return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Create campaign">
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Btn small icon="chevronLeft" onClick={() => app.navigate("campaigns")}>
-            Back
-          </Btn>
-          <div>
-            <h1 className="cd-h1" style={{ fontSize: 24 }}>
-              Create campaign
-            </h1>
-          </div>
-        </div>
-      </header>
-      <Card>
-        <p className="cd-emptyhint" style={{ marginBottom: 14 }}>
-          Campaigns are created in your ad platform (Meta, Google, TikTok) and sync into
-          Calderyn automatically — usually within the hour. From there Calderyn grades them,
-          screens new creative, and manages budgets inside your guardrails.
-        </p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn
-            kind="primary"
-            small
-            onClick={() => window.open("https://adsmanager.facebook.com/adsmanager/manage/campaigns", "_blank", "noopener")}
-          >
-            Open Meta Ads Manager
-          </Btn>
-          <Btn small onClick={() => window.open("https://ads.google.com/aw/campaigns", "_blank", "noopener")}>
-            Open Google Ads
-          </Btn>
-          <Btn small onClick={() => app.navigate("settings", null, "connectors")}>
-            {connected > 0 ? "Manage connections" : "Connect an ad account"}
-          </Btn>
-        </div>
-        {(meta || google) && (
-          <p className="cd-caption" style={{ marginTop: 12 }}>
-            {[meta && `Meta: ${meta.status}`, google && `Google: ${google.status}`]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-        )}
-      </Card>
-      <Card>
-        <SectionTitle>Screen new creative first</SectionTitle>
-        <p className="cd-caption" style={{ margin: "8px 0 12px", maxWidth: "56ch" }}>
-          Already have a campaign running? Open it and use Screen creative to generate and
-          score variants before spending — winners can push to Meta as paused drafts.
-        </p>
-        <Btn small icon="sparkle" onClick={() => app.navigate("campaigns")}>
-          Pick a campaign
-        </Btn>
-      </Card>
-    </div>
-  );
-}
-
 export default function Campaigns({ app }: { app: DashboardCtx }) {
-  const [platform, setPlatform] = useState<PlatformFilter>("All");
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
@@ -947,20 +1035,20 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
-  // Join the live grades onto each campaign (grade + break-even). Memo-free: the
-  // join is cheap and keeps the map fresh whenever grades or campaigns change.
+  // Join the live grades onto each campaign (grade + break-even).
   const gradeFor = (id: string) => grades.find((g) => g.campaign_id === id);
-  const joined: CampaignVM[] = app.campaigns.map((c) => {
-    const g = gradeFor(c.id);
-    if (!g) return c;
-    // Resolve via the shared grader so a no-revenue grade row shows "no data"
-    // not "poor" (P1-6) — same logic adaptCampaign uses for the initial load.
-    return { ...c, grade: gradeFromRow(g, c.roas_7d), breakeven_roas: g.break_even_roas };
-  });
+  const joined: CampaignVM[] = useMemo(
+    () =>
+      app.campaigns.map((c) => {
+        const g = grades.find((row) => row.campaign_id === c.id);
+        if (!g) return c;
+        // Resolve via the shared grader so a no-revenue grade row shows "no data"
+        // not "poor" (P1-6) — same logic adaptCampaign uses for the initial load.
+        return { ...c, grade: gradeFromRow(g, c.roas_7d), breakeven_roas: g.break_even_roas };
+      }),
+    [app.campaigns, grades],
+  );
 
-  // /dashboard/campaigns/new — campaigns are created on the ad platforms and
-  // synced in; this surface says so honestly and routes to the real levers
-  // (connectors, creative screening) instead of a fake create form.
   if (app.nav.param === "new") {
     return <CampaignNew app={app} />;
   }
@@ -979,101 +1067,5 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     );
   }
 
-  // Active campaigns sort to the top; within each status group, highest 7d
-  // spend first. Paused rows still render (dimmed), just below the active ones.
-  const shown = sortActiveFirst(
-    joined.filter((c) => platform === "All" || c.platform === platform),
-    (a, b) => b.spend_7d - a.spend_7d,
-  );
-
-  const totalSpend = joined.reduce((s, c) => s + c.spend_7d, 0);
-  // Margin-adjusted "true ROAS" via the shared helper so this header matches the
-  // Overview "Real ad return" exactly — it was a divergent inline formula here
-  // (different filter: active-only, kept the margin===0 no-data sentinel), which
-  // is why the same metric read differently per page (P1-3).
-  const trueRoasLabel = trueRoas(app.campaigns);
-
-  const loading = app.loading && app.campaigns.length === 0;
-
-  return (
-    <div className="cd-screen">
-      <ScreenHeader
-        title="Campaigns"
-        sub={
-          loading
-            ? "Loading campaigns from your ad accounts…"
-            : `${money(totalSpend)} spent across 7 days · true ROAS ${trueRoasLabel} (margin-adjusted)`
-        }
-      >
-        <Segmented
-          small
-          value={platform}
-          onChange={(v) => setPlatform(v as PlatformFilter)}
-          options={["All", "Meta", "Google", "TikTok"]}
-        />
-        <Btn kind="primary" small icon="plus" onClick={() => app.navigate("campaigns", "new")}>
-          New campaign
-        </Btn>
-      </ScreenHeader>
-      <div className="cd-card" style={{ overflow: "hidden" }}>
-        {loading ? (
-          <Placeholder icon="megaphone" title="Loading campaigns" sub="Pulling spend and ROAS from Meta, Google and TikTok." />
-        ) : shown.length === 0 ? (
-          <Placeholder
-            icon="megaphone"
-            title={app.campaigns.length === 0 ? "No campaigns yet" : "Nothing here"}
-            sub={
-              app.campaigns.length === 0
-                ? "Connect an ad account and your campaigns will appear here."
-                : "No campaigns match this platform filter."
-            }
-          />
-        ) : (
-          <>
-            <div
-              className="cd-tablehd"
-              style={{ gridTemplateColumns: CAMP_GRID, gap: 12, padding: "13px 20px" }}
-            >
-              <span>Campaign</span>
-              {/* No per-campaign autopilot flag exists in the data, so this
-                  column shows the real status instead of an Auto/Manual state. */}
-              <span>Status</span>
-              <span>Spend/day</span>
-              <span>ROAS</span>
-              <span className="text-right">Score</span>
-              <span />
-            </div>
-            {shown.map((c) => {
-              const scaleAlert = app.alerts.find(
-                (a) =>
-                  a.campaign_id === c.id &&
-                  a.status === "open" &&
-                  a.detector_id === "campaign_scaling_opportunity",
-              );
-              const hint = scaleAlert
-                ? buildScaleReason(
-                    c.roas_7d > 0 ? c.roas_7d : null,
-                    app.guardrails?.autopilot_max_budget_increase_pct ?? 20,
-                    scaleAlert.dollar_impact,
-                  )
-                : null;
-              return (
-                <CampaignRow
-                  key={c.id}
-                  c={c}
-                  onClick={() => app.navigate("campaigns", c.id)}
-                  scaleReason={hint}
-                  staleSource={isSourceDisconnected(c.platform, app.integrations)}
-                />
-              );
-            })}
-          </>
-        )}
-      </div>
-      <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <CDIcon name="chart" size={13} /> True ROAS weights each campaign&apos;s return by spend and
-        contribution margin — what&apos;s left after product costs.
-      </p>
-    </div>
-  );
+  return <CampaignList app={app} joined={joined} />;
 }

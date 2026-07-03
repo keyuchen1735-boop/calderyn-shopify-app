@@ -1149,6 +1149,13 @@ export interface ProductSummaryVM {
   imageUrl: string | null;
   variantCount: number;
   updatedAt: string;
+  /** Lowest variant price in cents; null when no variant carries a price. */
+  priceCents: number | null;
+  /** True when every variant passes the activation shipping check (the same
+   * predicate behind the `incomplete_shipping` 422). */
+  shipDataOk: boolean;
+  /** Heaviest physical-variant weight in grams; null when none recorded. */
+  shipWeightGrams: number | null;
 }
 
 export interface VariantDraft {

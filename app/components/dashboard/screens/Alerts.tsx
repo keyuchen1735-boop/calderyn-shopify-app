@@ -1,26 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IMPACT_SUFFIX } from "~/lib/impact-window";
-import {
-  Card,
-  Pill,
-  Segmented,
-  Sparkline,
-  PlatformMark,
-  Placeholder,
-} from "../ui";
-import {
-  money,
-  alertDetectorLabel,
-  ACTION_LABELS,
-  timeAgo,
-  evidenceLabel,
-  evidenceValue,
-  isInternalEvidenceKey,
-} from "../format";
+import { Card, Pill, Segmented, Placeholder } from "../ui";
+import { money, alertDetectorLabel, ACTION_LABELS, timeAgo } from "../format";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { actionDeepLink } from "~/lib/action-deeplinks";
 import type { ActionKind, DashboardCtx } from "../context";
-import type { AlertVM, CampaignVM } from "../view-models";
+import type { AlertVM } from "../view-models";
 
 /* ---------- Header ---------- */
 function ScreenHeader({
@@ -120,39 +105,6 @@ function AlertRow({ a, open, onToggle }: { a: AlertVM; open: boolean; onToggle: 
   );
 }
 
-/* ---------- Linked campaign card ---------- */
-function LinkedCampaign({ app, campaign }: { app: DashboardCtx; campaign: CampaignVM }) {
-  const below = campaign.roas_7d < campaign.breakeven_roas;
-  return (
-    <Card
-      hover
-      onClick={() => app.navigate("campaigns", campaign.id)}
-      className="flex items-center gap-3"
-    >
-      <PlatformMark platform={campaign.platform} />
-      <div className="min-w-0 flex-1">
-        <div className="cd-row-title truncate">{campaign.name}</div>
-        <div className="cd-caption">
-          {(campaign.status === "active"
-            ? `Active · ${money(campaign.daily_budget_cents)}/day`
-            : "Paused") +
-            ` · ROAS ${campaign.roas_7d.toFixed(1)}× vs ${campaign.breakeven_roas.toFixed(
-              1,
-            )}× break-even`}
-        </div>
-      </div>
-      {campaign.trend && campaign.trend.length > 1 && (
-        <Sparkline
-          data={campaign.trend}
-          refLine={campaign.breakeven_roas}
-          stroke={below ? "var(--red)" : "var(--green)"}
-        />
-      )}
-      <CDIcon name="chevronRight" size={16} style={{ color: "var(--text-3)" }} />
-    </Card>
-  );
-}
-
 /* ---------- Expanded detail (inline, below the row) ---------- */
 const EYEBROW_STYLE = {
   fontWeight: 650,
@@ -187,16 +139,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
 
   const soldOut = isSoldOut(alert);
 
-  const campaign = alert.campaign_id
-    ? app.campaigns.find((c) => c.id === alert.campaign_id) ?? null
-    : null;
   const deepLinkDomain = app.shopDomain; // string | null; narrowed to string by the guard below
-
-  // Merchant-facing evidence: drop raw platform IDs and empty values, then map
-  // each key/value through the shared labeler/formatter (see ../format).
-  const evidenceCells = Object.entries(alert.evidence).filter(
-    ([k, v]) => !isInternalEvidenceKey(k) && v != null && v !== "",
-  );
 
   // The one-line "Fix" is the primary recommended action's label: the
   // remediation plan's recommended move when a plan exists, else the legacy
@@ -288,26 +231,6 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
       >
         {alert.narrative}
       </div>
-      {evidenceCells.length > 0 && (
-        <>
-          <div className="cd-caption" style={{ ...EYEBROW_STYLE, marginTop: 12 }}>
-            Evidence
-          </div>
-          <div className="cd-evidence">
-            {evidenceCells.map(([k, v]) => (
-              <div key={k} className="cd-evidence-cell">
-                <div className="cd-caption">{evidenceLabel(k)}</div>
-                <div className="cd-h3 tabular-nums">{evidenceValue(k, v)}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      {campaign && (
-        <div style={{ marginTop: 10 }}>
-          <LinkedCampaign app={app} campaign={campaign} />
-        </div>
-      )}
       {resolved ? (
         <p className="cd-caption" style={{ marginTop: 10 }}>
           This alert was resolved with{" "}
@@ -466,10 +389,6 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                   </div>
                 </div>
               )}
-              <p className="cd-caption" style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
-                <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-                logged. Advisory moves are guidance; the highlighted action runs with one click.
-              </p>
             </>
           ) : (
             <>
@@ -589,10 +508,6 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                   </div>
                 </div>
               )}
-              <p className="cd-caption" style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
-                <CDIcon name="shield" size={13} /> Guardrails apply — every action is reversible and
-                logged.
-              </p>
             </>
           )}
         </>

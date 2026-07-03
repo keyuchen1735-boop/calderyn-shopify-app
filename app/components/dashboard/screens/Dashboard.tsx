@@ -91,7 +91,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     async (alertId: string, kind: string) => {
       const alert = app.alerts.find((a) => a.id === alertId);
       if (!alert || !oneClickKind(kind) || !canOneClick(alertId, kind)) {
-        app.navigate("autopilot");
+        // Review happens on the alert's own detail — its buttons/dialogs are
+        // the review surface, and it exists whether or not the Autopilot
+        // trainer is showing (the trainer hides once calibration completes).
+        app.navigate("alerts", alertId);
         return;
       }
       setApproving(alertId);
@@ -193,7 +196,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                       {approving === p.alertId ? "Approving…" : "Approve"}
                     </Btn>
                   ) : (
-                    <Btn kind="primary" small onClick={() => app.navigate("autopilot")}>
+                    <Btn kind="primary" small onClick={() => app.navigate("alerts", p.alertId)}>
                       Review
                     </Btn>
                   )}
@@ -357,17 +360,9 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       <Card className="cd-pad-lg" pad={false}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
           <h2 className="cd-serif-h">Storefront</h2>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn
-              small
-              onClick={() => window.open("/storefront", "_blank", "noopener")}
-            >
-              View live
-            </Btn>
-            <Btn kind="primary" small onClick={() => app.navigate("storefront")}>
-              Open studio
-            </Btn>
-          </div>
+          <Btn small onClick={() => app.navigate("storefront")}>
+            Open store
+          </Btn>
         </div>
         <div className="cd-browser">
           <div className="cd-browser-bar">

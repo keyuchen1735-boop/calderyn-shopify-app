@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
-import { ProductsSubTabs } from "../subtabs";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 
 // Location settings: rank locations (priority — lower fills first), set map
 // coordinates so the allocator can fill orders from the nearest location to
 // the buyer, and configure the ship-from address used on outbound labels.
+// URL-only page (/dashboard/products/locations): no Products subtab entry,
+// so no subtab bar renders here.
+
+const GRID = "2fr 1fr 1fr 1fr";
+
 export default function Locations({ app }: { app: DashboardCtx }) {
   const [rows, setRows] = useState<client.LocationVM[]>([]);
 
@@ -32,51 +36,51 @@ export default function Locations({ app }: { app: DashboardCtx }) {
   };
 
   return (
-    <div className="cd-screen cd-screen--wide">
+    <div className="cd-screen">
       <header className="cd-screen-head" data-screen-label="Locations">
         <h1 className="cd-h1">Locations</h1>
       </header>
-      <ProductsSubTabs app={app} />
-      <Card>
-        <p className="cd-caption" style={{ marginBottom: 12 }}>
+      <Card pad={false}>
+        <p className="cd-caption" style={{ padding: "14px 20px 2px" }}>
           Rank locations (lower priority fills first) and set coordinates so orders can ship from the
           nearest location to the buyer. Without coordinates, a location falls back to priority order.
         </p>
-        <div className="cd-table-head">
-          <span style={{ flex: "1 1 0", minWidth: 140 }}>Location</span>
-          <span style={{ width: 100 }}>Priority</span>
-          <span style={{ width: 130 }}>Latitude</span>
-          <span style={{ width: 130 }}>Longitude</span>
+        <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+          <span>Location</span>
+          <span>Priority</span>
+          <span>Latitude</span>
+          <span>Longitude</span>
         </div>
-        <div className="cd-rows">
-          {rows.length === 0 ? (
-            <div className="cd-caption" style={{ padding: 8 }}>No locations yet.</div>
-          ) : (
-            rows.map((l) => (
-              <div className="cd-row" key={l.id}>
-                <span style={{ flex: "1 1 0", minWidth: 140 }}>{l.name}</span>
-                <span style={{ width: 100 }}>
-                  <input
-                    className="cd-input tabular-nums" type="number" defaultValue={l.priority}
-                    onBlur={(e) => save(l.id, { priority: Math.trunc(Number(e.target.value)) || 0 })}
-                  />
-                </span>
-                <span style={{ width: 130 }}>
-                  <input
-                    className="cd-input tabular-nums" type="number" step="any" defaultValue={l.lat ?? ""} placeholder="—"
-                    onBlur={(e) => save(l.id, { lat: e.target.value === "" ? null : Number(e.target.value) })}
-                  />
-                </span>
-                <span style={{ width: 130 }}>
-                  <input
-                    className="cd-input tabular-nums" type="number" step="any" defaultValue={l.lng ?? ""} placeholder="—"
-                    onBlur={(e) => save(l.id, { lng: e.target.value === "" ? null : Number(e.target.value) })}
-                  />
-                </span>
+        {rows.length === 0 ? (
+          <div className="cd-caption" style={{ padding: "0 20px 14px" }}>No locations yet.</div>
+        ) : (
+          rows.map((l) => (
+            <div className="cd-trow" key={l.id} style={{ gridTemplateColumns: GRID }}>
+              <div className="cd-row-title truncate">{l.name}</div>
+              <div>
+                <input
+                  className="cd-input tabular-nums" type="number" defaultValue={l.priority}
+                  aria-label={`Priority for ${l.name}`}
+                  onBlur={(e) => save(l.id, { priority: Math.trunc(Number(e.target.value)) || 0 })}
+                />
               </div>
-            ))
-          )}
-        </div>
+              <div>
+                <input
+                  className="cd-input tabular-nums" type="number" step="any" defaultValue={l.lat ?? ""} placeholder="—"
+                  aria-label={`Latitude for ${l.name}`}
+                  onBlur={(e) => save(l.id, { lat: e.target.value === "" ? null : Number(e.target.value) })}
+                />
+              </div>
+              <div>
+                <input
+                  className="cd-input tabular-nums" type="number" step="any" defaultValue={l.lng ?? ""} placeholder="—"
+                  aria-label={`Longitude for ${l.name}`}
+                  onBlur={(e) => save(l.id, { lng: e.target.value === "" ? null : Number(e.target.value) })}
+                />
+              </div>
+            </div>
+          ))
+        )}
       </Card>
 
       {rows.length > 0 && (

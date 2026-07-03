@@ -95,6 +95,10 @@ export interface DashboardCtx {
     opts?: { preserveScroll?: boolean },
   ) => void;
 
+  /** Flip night mode (persisted). The shell owns the state; this setter lets
+   *  Settings render the design's "Dark mode" row as a real control. */
+  setNightMode: (next: boolean) => void;
+
   // --- data (view-models, fetched on mount) ---
   alerts: AlertVM[];
   campaigns: CampaignVM[];

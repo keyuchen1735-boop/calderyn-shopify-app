@@ -41,13 +41,14 @@ export function SubTabs({
   );
 }
 
+// The Products surface carries exactly four subtabs. Collections and
+// Locations remain reachable at their URLs but no longer sit on this bar
+// (their screens render without it).
 const PRODUCTS_TABS: SubTabDef[] = [
   { key: "catalog", label: "Catalog", screen: "catalog" },
   { key: "inventory", label: "Inventory", screen: "inventory" },
   { key: "po", label: "Purchase orders", screen: "products-po" },
   { key: "transfers", label: "Transfers", screen: "products-transfers" },
-  { key: "collections", label: "Collections", screen: "collections" },
-  { key: "locations", label: "Locations", screen: "locations-settings" },
 ];
 
 const PRODUCTS_ACTIVE: Partial<Record<Screen, string>> = {
@@ -56,8 +57,6 @@ const PRODUCTS_ACTIVE: Partial<Record<Screen, string>> = {
   inventory: "inventory",
   "products-po": "po",
   "products-transfers": "transfers",
-  collections: "collections",
-  "locations-settings": "locations",
 };
 
 export function ProductsSubTabs({ app }: { app: DashboardCtx }) {

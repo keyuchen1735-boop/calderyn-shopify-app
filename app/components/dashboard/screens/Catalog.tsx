@@ -3,8 +3,8 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { Card, Btn, Pill, Placeholder, Segmented } from "../ui";
-import { CDIcon } from "../icons";
 import { ProductsSubTabs } from "../subtabs";
+import { money } from "../format";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -20,6 +20,19 @@ const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
   { value: "archived", label: "Archived" },
 ];
+
+// Design table: Product / Price / Status / Ship data.
+const GRID = "2fr 1fr 1fr 1fr";
+
+/** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
+ * passes the activation shipping check; the weight is the heaviest recorded
+ * physical variant. No weight recorded (all-digital) drops the suffix. */
+function shipLabel(p: client.ProductSummaryVM): string {
+  if (!p.shipDataOk) return "Missing dims";
+  if (p.shipWeightGrams == null) return "Validated";
+  const kg = (p.shipWeightGrams / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return `Validated · ${kg}kg`;
+}
 
 export default function Catalog({ app }: { app: DashboardCtx }) {
   const [products, setProducts] = useState<client.ProductSummaryVM[]>([]);
@@ -102,6 +115,8 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
             {loading ? "Loading your catalog…" : `${total} product${total === 1 ? "" : "s"} in your catalog`}
           </p>
         </div>
+        {/* Deliberate addition over the reference table: without a create
+            entry point the catalog can never gain a product. */}
         <div className="flex items-center gap-2.5">
           <Btn kind="primary" icon="plus" onClick={() => app.navigate("product-editor", "new")}>
             New product
@@ -135,39 +150,46 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
             sub={filtered ? "Try a different search or filter." : "Create your first product to start your catalog."}
           />
         ) : (
-          <div className="cd-rows">
+          <>
+            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+              <span>Product</span>
+              <span>Price</span>
+              <span>Status</span>
+              <span>Ship data</span>
+            </div>
             {products.map((p) => (
-              <button key={p.id} className="cd-row" onClick={() => app.navigate("product-editor", p.id)}>
-                <span
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    flexShrink: 0,
-                    background: "var(--gray-bg)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    <CDIcon name="bag" size={16} style={{ color: "var(--text-3)" }} />
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="cd-row-title truncate">{p.title}</div>
-                  <div className="cd-caption">
-                    {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
-                  </div>
+              <button
+                key={p.id}
+                type="button"
+                className="cd-trow"
+                onClick={() => app.navigate("product-editor", p.id)}
+                style={{
+                  gridTemplateColumns: GRID,
+                  width: "100%",
+                  background: "none",
+                  border: 0,
+                  font: "inherit",
+                  color: "inherit",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <div className="cd-row-title truncate">{p.title}</div>
+                <div className="cd-row-num tabular-nums">
+                  {p.priceCents != null ? money(p.priceCents) : "—"}
                 </div>
-                <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
-                <CDIcon name="chevronRight" size={16} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                <div>
+                  <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
+                </div>
+                <div
+                  className="cd-caption"
+                  style={p.shipDataOk ? undefined : { color: "var(--orange)" }}
+                >
+                  {shipLabel(p)}
+                </div>
               </button>
             ))}
-          </div>
+          </>
         )}
       </Card>
 
