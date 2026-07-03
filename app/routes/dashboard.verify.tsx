@@ -20,9 +20,7 @@ export default function VerifyRoute() {
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Link expired</h1>
-      <p className="cd-auth-sub">
-        That verification link is invalid or has expired.
-      </p>
+      <p className="cd-auth-sub">This link no longer works.</p>
       <div className="cd-auth-links">
         <a href="/dashboard/verify-needed">Request a new one</a>
         <a href="/login">Back to sign in</a>

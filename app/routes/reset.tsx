@@ -22,10 +22,8 @@ export default function ResetPage() {
   const { error, notice } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
-      <h1 className="cd-auth-title">Reset your password</h1>
-      <p className="cd-auth-sub">
-        Enter your account email and we'll send you a link to set a new password.
-      </p>
+      <h1 className="cd-auth-title">Reset password</h1>
+      <p className="cd-auth-sub">We'll email you a link.</p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
       <form method="post" action="/dashboard/reset">

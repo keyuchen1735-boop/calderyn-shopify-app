@@ -23,8 +23,8 @@ export default function SignupPage() {
   const { error, email, store } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
-      <h1 className="cd-auth-title">Create your account</h1>
-      <p className="cd-auth-sub">Set up your store on Calderyn in about a minute.</p>
+      <h1 className="cd-auth-title">Create account</h1>
+      <p className="cd-auth-sub">Live in about a minute.</p>
       <AuthError code={error} />
       <GoogleButton label="Sign up with Google" />
       <div className="cd-auth-divider">or</div>
