@@ -63,6 +63,23 @@ export async function claimAcpSessionForCompletion(sessionId: string): Promise<b
   return (up.data?.length ?? 0) > 0;
 }
 
+// Release a completion claim (completing -> open) when the flow fails BEFORE any
+// charge is attempted. Without this a transient cap/place failure leaves the
+// session wedged in `completing` forever — the buyer is never charged, yet every
+// retry loses the `.eq("status","open")` claim and gets a permanent 409. The
+// `.eq("status","completing")` guard makes this a no-op on an already-completed
+// session, so it can never reopen (and re-charge) a finished order. MUST NOT be
+// called once a charge may have moved money: placeAgenticOrder is not idempotent,
+// so a post-charge reopen would re-place + double-charge.
+export async function releaseAcpSessionClaim(sessionId: string): Promise<void> {
+  const up = await getSupabase()
+    .from("acp_session")
+    .update({ status: "open", updated_at: new Date().toISOString() })
+    .eq("session_id", sessionId)
+    .eq("status", "completing");
+  if (up.error) throw up.error;
+}
+
 export async function completeAcpSession(sessionId: string, orderId: string): Promise<void> {
   const up = await getSupabase()
     .from("acp_session")
