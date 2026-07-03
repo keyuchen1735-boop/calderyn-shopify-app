@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind } from "./types";
 import { NO_BRAINER, pairConfidence } from "./calibration/confidence";
@@ -55,6 +56,77 @@ export async function resolveShopId(shopOrId: string): Promise<string> {
   }
   shopIdCache.set(shopOrId, data.id);
   return data.id;
+}
+
+function base64url(input: string): string {
+  return Buffer.from(input, "utf8").toString("base64url");
+}
+
+// Mint a short-lived HS256 JWT that authorizes PostgREST to SET ROLE app_web —
+// the NON-bypass tenant read lane. Signed with the project JWT secret (server
+// only), so it is a valid project token. `shop_id` is carried as a claim (see
+// getTenantSupabase for why it is advisory today, not the enforcement key).
+function mintAppWebJwt(shopId: string, secret: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64url(
+    JSON.stringify({ role: "app_web", shop_id: shopId, iss: "calderyn-tenant-lane", iat: now, exp: now + 3600 }),
+  );
+  const signature = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+/**
+ * NON-service-role tenant read lane (Step 10 RLS enforcement).
+ *
+ * Returns a Supabase client authenticated as the `app_web` Postgres role
+ * (NOBYPASSRLS, SELECT-only on tenant tables) — NOT the service-role client from
+ * getSupabase(). Use it where you want the database, not a hand-written
+ * `.eq('shop_id')`, to enforce tenant isolation.
+ *
+ * ENFORCEMENT MODEL — read before adopting. RLS policies key off
+ * `current_shop_id()` = the `app.shop_id` session GUC. PostgREST pools
+ * connections and runs each REST call in its own transaction, so a plain
+ * `.from(...).select()` on this lane cannot set app.shop_id for its own
+ * statement: current_shop_id() is null, every policy fails, and the query
+ * returns ZERO rows. That is fail-closed — this lane never returns cross-tenant
+ * data — but plain selects are not yet useful.
+ *
+ * The supported enforcement path is a tenant-scoped SECURITY INVOKER RPC that
+ * sets the GUC transaction-locally and runs its query in the same call, e.g.:
+ *   create function read_x(p_shop uuid) returns setof x security invoker as $$
+ *     select set_config('app.shop_id', p_shop::text, true);
+ *     select * from x;            -- RLS binds current_shop_id() = p_shop
+ *   $$ language sql;
+ * invoked as `getTenantSupabase(shopId).rpc('read_x', { p_shop: shopId })`.
+ * Because app_web is NOBYPASSRLS, the database filters cross-tenant rows.
+ *
+ * Live reads stay on getSupabase() (service-role) until such RPCs exist; this is
+ * the additive adoption seam, not a cutover. shop_id rides as a JWT claim for
+ * audit and as the single place enforcement would activate if current_shop_id()
+ * ever gains a request.jwt.claims fallback.
+ *
+ * Requires SUPABASE_URL + SUPABASE_JWT_SECRET; uses SUPABASE_PUBLISHABLE_KEY as
+ * the gateway apikey when present.
+ */
+export function getTenantSupabase(shopId: string): SupabaseClient {
+  if (!SHOP_ID_RE.test(shopId)) {
+    throw new Error(`getTenantSupabase requires a shops.id UUID, got: ${shopId}`);
+  }
+  const url = process.env.SUPABASE_URL;
+  const jwtSecret = process.env.SUPABASE_JWT_SECRET;
+  if (!url || !jwtSecret) {
+    throw new Error(
+      "Tenant lane not configured: SUPABASE_URL and SUPABASE_JWT_SECRET must be set.",
+    );
+  }
+  const token = mintAppWebJwt(shopId, jwtSecret);
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY || token;
+  return createClient(url, apiKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    db: { schema: "public" },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
 }
 
 /**

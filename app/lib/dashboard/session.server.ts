@@ -111,6 +111,13 @@ export async function getSessionFromRequest(
     /* best effort */
   }
 
+  // Tenant-context boundary. session.shopId is the authenticated tenant for the
+  // whole request; loaders currently read via getSupabase() (service-role,
+  // BYPASSRLS) and guard tenancy with an explicit .eq('shop_id', session.shopId).
+  // Step 10 adoption path: route a read through the non-bypass lane with
+  // getTenantSupabase(session.shopId) once it is backed by a tenant-scoped RPC
+  // that sets app.shop_id transaction-locally (see getTenantSupabase docs). Until
+  // then live reads stay on service-role; the RLS policies are dormant insurance.
   return {
     shopId: String(data.shop_id),
     shopDomain: data.shop_domain == null ? null : String(data.shop_domain),
