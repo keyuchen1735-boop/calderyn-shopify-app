@@ -78,6 +78,26 @@ describe("ownedCatalog.listProducts", () => {
     expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
   });
 
+  it("renders a promoted mirror image from its external_url (hotlink), never signed", async () => {
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "tee", title: "Tee", description: null }],
+      variant_dim: [
+        { id: "v1", product_id: "p1", sku: "S", title: "S", retail_price_cents: 1999, currency: "USD", inventory_tracked: false, inventory_on_hand: 0, position: 0 },
+      ],
+      // Promoted from the Shopify mirror: external_url set, storage_path null.
+      product_media: [
+        { product_id: "p1", storage_path: null, external_url: "https://cdn.shopify.com/x.jpg", alt: "Tee", position: 0, is_primary: true },
+      ],
+      product_collection: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const { signMediaPaths } = await import("~/lib/catalog/sign-media.server");
+    const out = await ownedCatalog.listProducts("shop-1");
+    expect(out[0].images).toEqual([{ url: "https://cdn.shopify.com/x.jpg", alt: "Tee" }]);
+    // The external hotlink is used directly — the null storage_path is never signed.
+    expect(signMediaPaths).toHaveBeenCalledWith([]);
+  });
+
   it("derives availability from the inventory ledger when balance rows exist (import/checkout truth)", async () => {
     tableRows = {
       product_dim: [{ id: "p1", handle: "board", title: "Board", description: "" }],

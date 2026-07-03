@@ -66,6 +66,7 @@ describe("mapVariantToSku", () => {
       currency: "USD",
       category: null,
       vendor: null,
+      image_url: null,
       tags: [],
       collections: [],
       inventory_policy: "deny",
@@ -98,6 +99,7 @@ describe("mapVariantToSku", () => {
       vendor: "  Acme  ",
       productType: " Gadgets ",
       tags: [" new ", "sale", ""],
+      featuredImage: { url: "  https://cdn.shopify.com/w.jpg  " },
       collections: { nodes: [{ title: "Best Sellers" }, { title: " " }, { title: null }] },
     };
     const variant = { id: "gid://shopify/ProductVariant/200", title: "Default Title", inventoryItem: { id: null } };
@@ -106,6 +108,16 @@ describe("mapVariantToSku", () => {
     expect(row.vendor).toBe("Acme");
     expect(row.tags).toEqual(["new", "sale"]);
     expect(row.collections).toEqual(["Best Sellers"]);
+    // featured image url captured for the mirror->product_media promote (trimmed).
+    expect(row.image_url).toBe("https://cdn.shopify.com/w.jpg");
+  });
+
+  it("nulls a missing or blank featured image url", () => {
+    const base = { id: "gid://shopify/Product/100", title: "Widget" };
+    const variant = { id: "gid://shopify/ProductVariant/200", title: "Default Title", inventoryItem: { id: null } };
+    expect(mapVariantToSku(SHOP, base, variant).image_url).toBeNull();
+    expect(mapVariantToSku(SHOP, { ...base, featuredImage: { url: "  " } }, variant).image_url).toBeNull();
+    expect(mapVariantToSku(SHOP, { ...base, featuredImage: null }, variant).image_url).toBeNull();
   });
   it("tolerates missing unit cost and sku", () => {
     const product = { id: "gid://shopify/Product/100", title: "Widget" };
