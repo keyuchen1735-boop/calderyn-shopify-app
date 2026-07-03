@@ -581,6 +581,14 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
     storeSettings,
     variantShipping,
     guardrailPatch: { autopilot_enabled: false, autopilot_bypass_guardrails: false },
-    shopPatch: { calibration_pct: null, calibration_updated_at: null },
+    // org_mode 'live' + completed onboarding are demo-shop invariants: owned
+    // writes must stay authoritative even if someone toured the Go live screen
+    // mid-demo, and the demo never replays the onboarding stepper.
+    shopPatch: {
+      calibration_pct: null,
+      calibration_updated_at: null,
+      org_mode: "live",
+      onboarding_step: "complete",
+    },
   };
 }

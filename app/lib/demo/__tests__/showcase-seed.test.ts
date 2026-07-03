@@ -161,5 +161,7 @@ describe("generateShowcaseLayer: storefront + config", () => {
     expect(layer.storeSettings.store_name).toBe("Peak & Pine Outfitters");
     expect(layer.guardrailPatch.autopilot_enabled).toBe(false);
     expect(layer.shopPatch.calibration_pct).toBeNull();
+    expect(layer.shopPatch.org_mode).toBe("live");
+    expect(layer.shopPatch.onboarding_step).toBe("complete");
   });
 });
