@@ -8,6 +8,8 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   rateLimit: vi.fn().mockResolvedValue(true),
   clientIpKey: () => "k",
   requireSameOrigin: vi.fn(),
+  checkSameOrigin: vi.fn(() => null),
+  wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
 }));
 
@@ -70,13 +72,14 @@ function callbackRequest(params: Record<string, string>, cookieNonce?: string) {
   return new Request(url.toString(), { headers });
 }
 
-/** Build a POST form request for the store route. */
+/** Build a POST form request for the store route (JSON contract variant). */
 function storePost(fields: Record<string, string>) {
   return new Request("https://app.calderyncompany.com/dashboard/auth/google/store", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Origin: "https://app.calderyncompany.com",
+      Accept: "application/json",
     },
     body: new URLSearchParams(fields).toString(),
   });
@@ -256,7 +259,7 @@ describe("google store action", () => {
     const { action } = await import("../dashboard.auth.google.store");
     const res = (await action({ request: storePost({ t: "bad.token", store: "My Shop" }), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: "invalid_or_expired" });
+    expect(await res.json()).toMatchObject({ error: "invalid_or_expired_token" });
   });
 
   it("returns 422 when the store name is missing", async () => {

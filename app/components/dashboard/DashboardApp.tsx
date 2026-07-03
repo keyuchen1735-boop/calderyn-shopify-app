@@ -471,9 +471,9 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     try {
       await client.logout();
     } catch {
-      // Session may already be gone; the signin page sorts it out either way.
+      // Session may already be gone; the login page sorts it out either way.
     }
-    window.location.assign("/dashboard/signin");
+    window.location.assign("/login?notice=signed_out");
   }, []);
 
   // Returning to the tab does an immediate refresh instead of waiting up to one

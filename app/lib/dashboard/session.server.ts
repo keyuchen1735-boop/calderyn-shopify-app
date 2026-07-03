@@ -142,7 +142,7 @@ export async function requireVerifiedSession(
   const session = await getSessionFromRequest(request);
   // Signed-out visitors land on the first-party signin page, which links out to
   // the Shopify-OAuth entry (/dashboard/login) for embedded merchants.
-  if (!session) throw redirect("/dashboard/signin");
+  if (!session) throw redirect("/login");
   if (unverifiedFirstParty(session)) throw redirect("/dashboard/verify-needed");
   return session;
 }
@@ -167,7 +167,7 @@ export async function getSessionOrRedirect(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
-  if (!session) throw redirect("/dashboard/signin");
+  if (!session) throw redirect("/login");
   return session;
 }
 

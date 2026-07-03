@@ -51,13 +51,18 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const { snapshot: live } = useLiveAnalytics(true);
 
   // Storefront card: real catalog products (title + image), no invented prices.
+  // catalogTotal doubles as the first-run signal (0 = brand-new store); it stays
+  // null on fetch errors so the setup card never shows on a transient failure.
   const [products, setProducts] = useState<ProductSummaryVM[] | null>(null);
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     client
       .fetchProducts()
       .then((p) => {
-        if (alive) setProducts(p.products.slice(0, 3));
+        if (!alive) return;
+        setProducts(p.products.slice(0, 3));
+        setCatalogTotal(p.total);
       })
       .catch(() => {
         if (alive) setProducts([]);
@@ -136,6 +141,59 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         <span style={{ whiteSpace: "nowrap" }}>Today · live view</span>
         <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
       </button>
+
+      {catalogTotal === 0 && (
+        <Card className="cd-setup">
+          <div className="cd-setup-head">
+            <h2 className="cd-setup-title">Set up your store</h2>
+            <p className="cd-setup-sub">
+              Your account is ready — it just has nothing to sell yet. Start with one of these.
+            </p>
+          </div>
+          <div className="cd-setup-rows">
+            <button type="button" className="cd-setup-row" onClick={() => app.navigate("product-editor", "new")}>
+              <span className="cd-setup-ic">
+                <CDIcon name="plus" size={16} strokeWidth={2} />
+              </span>
+              <span className="cd-setup-txt">
+                <span className="cd-setup-l">Add your first product</span>
+                <span className="cd-setup-d">Name, price, photo — live in a couple of minutes.</span>
+              </span>
+              <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
+            </button>
+            <button type="button" className="cd-setup-row" onClick={() => app.navigate("import-shopify")}>
+              <span className="cd-setup-ic">
+                <CDIcon name="download" size={16} strokeWidth={2} />
+              </span>
+              <span className="cd-setup-txt">
+                <span className="cd-setup-l">Import from Shopify</span>
+                <span className="cd-setup-d">Already selling? Bring your catalog, orders and history over.</span>
+              </span>
+              <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
+            </button>
+            <button type="button" className="cd-setup-row" onClick={() => app.navigate("storefront")}>
+              <span className="cd-setup-ic">
+                <CDIcon name="store" size={16} strokeWidth={2} />
+              </span>
+              <span className="cd-setup-txt">
+                <span className="cd-setup-l">Build your storefront</span>
+                <span className="cd-setup-d">Describe your brand and publish a storefront your customers can buy from.</span>
+              </span>
+              <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
+            </button>
+            <button type="button" className="cd-setup-row" onClick={() => app.navigate("payments")}>
+              <span className="cd-setup-ic">
+                <CDIcon name="card" size={16} strokeWidth={2} />
+              </span>
+              <span className="cd-setup-txt">
+                <span className="cd-setup-l">Connect payouts</span>
+                <span className="cd-setup-d">Link Stripe so sales land in your bank account.</span>
+              </span>
+              <CDIcon name="chevronRight" size={14} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
+            </button>
+          </div>
+        </Card>
+      )}
 
       <div className="cd-kstrip" style={{ marginTop: 12 }}>
         <div className="cd-kcell">

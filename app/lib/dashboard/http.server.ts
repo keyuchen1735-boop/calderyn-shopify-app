@@ -34,13 +34,35 @@ export function jsonError(status: number, error: string, message?: string): Resp
 }
 
 function allowedOrigins(): string[] {
-  return [process.env.DASHBOARD_PUBLIC_URL, process.env.SHOPIFY_APP_URL]
-    .filter((v): v is string => Boolean(v))
-    .map((v) => new URL(v).origin);
+  // DASHBOARD_ALLOWED_ORIGINS: comma-separated extra origins that may submit
+  // state-changing requests — e.g. the marketing apex, whose /dashboard/* proxy
+  // forwards auth posts here with its own Origin header.
+  const candidates = [
+    process.env.DASHBOARD_PUBLIC_URL,
+    process.env.SHOPIFY_APP_URL,
+    ...(process.env.DASHBOARD_ALLOWED_ORIGINS ?? "").split(","),
+  ];
+  const origins = new Set<string>();
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (!value) continue;
+    try {
+      origins.add(new URL(value).origin);
+    } catch {
+      // A malformed entry must not take the whole allowlist (and every
+      // mutation) down with it.
+    }
+  }
+  return [...origins];
 }
 
-/** CSRF guard for POST/PUT/DELETE: Origin (or Referer origin) must be ours. */
-export function requireSameOrigin(request: Request): void {
+/**
+ * CSRF origin check for POST/PUT/DELETE. Returns the 403 response when the
+ * Origin (or Referer origin) is not ours, null when the request is fine.
+ * Page routes must RETURN this (a thrown Response walks up to the root
+ * ErrorBoundary and surfaces as a 500 error page instead of the 403 JSON).
+ */
+export function checkSameOrigin(request: Request): Response | null {
   const origin =
     request.headers.get("Origin") ??
     (() => {
@@ -52,8 +74,26 @@ export function requireSameOrigin(request: Request): void {
       }
     })();
   if (!origin || !allowedOrigins().includes(origin)) {
-    throw jsonError(403, "bad_origin");
+    return jsonError(403, "bad_origin");
   }
+  return null;
+}
+
+/** Throwing form of checkSameOrigin for resource routes (no page to render). */
+export function requireSameOrigin(request: Request): void {
+  const bad = checkSameOrigin(request);
+  if (bad) throw bad;
+}
+
+/**
+ * True when the client asked for JSON (fetch-based forms send
+ * `Accept: application/json`). Auth actions use this to keep the JSON error
+ * contract for programmatic clients while plain HTML form posts get a
+ * redirect back to the page with the error code in the query string —
+ * never a raw JSON body in the browser tab.
+ */
+export function wantsJson(request: Request): boolean {
+  return (request.headers.get("Accept") ?? "").includes("application/json");
 }
 
 /** Wrap a loader/action body: CalderynError → its status/code; rethrow Responses. */

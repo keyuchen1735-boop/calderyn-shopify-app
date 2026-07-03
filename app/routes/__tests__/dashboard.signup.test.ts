@@ -4,6 +4,8 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   rateLimit: vi.fn().mockResolvedValue(true),
   clientIpKey: () => "k",
   requireSameOrigin: vi.fn(),
+  checkSameOrigin: vi.fn(() => null),
+  wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
 }));
 const findUserByEmail = vi.fn();
@@ -40,10 +42,26 @@ function form(fields: Record<string, string>) {
   const body = new URLSearchParams(fields).toString();
   return new Request("https://app.calderyncompany.com/dashboard/signup", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    // Accept: application/json = the JSON error contract these tests pin.
+    // (Plain form posts redirect back to /signup?error=… instead.)
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body,
   });
 }
+
+describe("signup action (plain form post)", () => {
+  it("redirects back to /signup with the error code instead of raw JSON", async () => {
+    const { action } = await import("../dashboard.signup");
+    const req = new Request("https://app.calderyncompany.com/dashboard/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ email: "bad", password: "longenough12", store: "Acme" }).toString(),
+    });
+    const res = (await action({ request: req } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/signup?error=invalid_email&email=bad&store=Acme");
+  });
+});
 
 describe("signup action", () => {
   it("rejects an invalid email with 422", async () => {
