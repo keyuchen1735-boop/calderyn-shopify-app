@@ -30,7 +30,9 @@ describe("chargeSharedPaymentToken", () => {
     expect(routedCreate).toHaveBeenCalledWith(
       "shop_test",
       expect.objectContaining({ amount: 2660, currency: "usd", payment_method: "spt_123", confirm: true, off_session: true }),
-      { logLabel: "ACP" },
+      // The per-order idempotency key is what makes a retried ACP `complete`
+      // reuse the PaymentIntent instead of double-charging the buyer.
+      { logLabel: "ACP", idempotencyKey: "acp_charge_order1" },
     );
     expect((routedCreate.mock.calls[0][1] as { metadata: { order_ref: string } }).metadata.order_ref).toBe("order1");
     // Platform charge -> null routing stamps on the mirror row.

@@ -54,6 +54,10 @@ export async function deleteProductMedia(shopId: string, mediaId: string): Promi
     .maybeSingle();
   if (oErr) throw oErr;
   if (!owner) return; // not this shop's media — no-op, no leak
-  await sb.storage.from(PRODUCT_MEDIA_BUCKET).remove([String(row.storage_path)]);
-  await sb.from("product_media").delete().eq("id", mediaId);
+  const { error: rmErr } = await sb.storage.from(PRODUCT_MEDIA_BUCKET).remove([String(row.storage_path)]);
+  if (rmErr) throw rmErr;
+  // Delete the row after the blob so a failed row-delete never leaves the media
+  // orphaned in the DB (a stale row would re-surface a broken, 404-ing image).
+  const { error: delErr } = await sb.from("product_media").delete().eq("id", mediaId);
+  if (delErr) throw delErr;
 }

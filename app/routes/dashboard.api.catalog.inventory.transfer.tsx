@@ -27,7 +27,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const locIds = [...new Set(rows.flatMap((t) => [String(t.from_location_id), String(t.to_location_id)]))];
     const names = new Map<string, string>();
     if (locIds.length) {
-      const { data: locs } = await getSupabase().from("location_dim").select("id, name").eq("shop_id", session.shopId).in("id", locIds);
+      const { data: locs, error: locErr } = await getSupabase().from("location_dim").select("id, name").eq("shop_id", session.shopId).in("id", locIds);
+      if (locErr) throw locErr;
       for (const l of locs ?? []) names.set(String(l.id), String(l.name));
     }
 

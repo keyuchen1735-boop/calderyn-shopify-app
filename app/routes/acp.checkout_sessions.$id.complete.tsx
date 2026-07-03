@@ -8,7 +8,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
-import { getAcpSession, completeAcpSession } from "~/lib/commerce/acp/session-store.server";
+import { getAcpSession, claimAcpSessionForCompletion, completeAcpSession } from "~/lib/commerce/acp/session-store.server";
 import { getQuote } from "~/lib/commerce/quote-store.server";
 import { assertWithinCommerceCap } from "~/lib/commerce/guardrail.server";
 import { placeAgenticOrder } from "~/lib/commerce/order.server";
@@ -36,7 +36,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const q = await getQuote(s.shopId, s.quoteId);
   if (!q) return json({ error: "QUOTE_EXPIRED" }, { status: 409 });
 
-  const body = JSON.parse(raw) as AcpCompleteBody;
+  let body: AcpCompleteBody;
+  try {
+    body = JSON.parse(raw) as AcpCompleteBody;
+  } catch {
+    return json({ error: "invalid_json" }, { status: 400 });
+  }
+  if (!body?.buyer?.email || !body?.payment?.shared_payment_token) {
+    return json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  // Atomically claim the session BEFORE any place/charge. A retried or concurrent
+  // `complete` that loses this claim must not re-place and re-charge (double charge).
+  const claimed = await claimAcpSessionForCompletion(s.sessionId);
+  if (!claimed) {
+    const cur = await getAcpSession(String(params.id));
+    if (cur?.status === "completed" && cur.orderId) {
+      return json({ order_id: cur.orderId, status: "completed" });
+    }
+    return json({ error: "in_progress" }, { status: 409 });
+  }
 
   // Rule 5: deterministic cap check BEFORE any charge — model never decides the spend authority
   await assertWithinCommerceCap(s.clientId, q.totalCents);

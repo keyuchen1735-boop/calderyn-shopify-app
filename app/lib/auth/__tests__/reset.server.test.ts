@@ -6,11 +6,13 @@ process.env.DASHBOARD_SESSION_PEPPER = "x".repeat(32);
 
 const single = vi.fn();
 const maybeSingle = vi.fn();
-const update = vi.fn(() => ({ eq: () => Promise.resolve({ error: null }) }));
+const update = vi.fn(() => ({
+  eq: () => ({ is: () => ({ select: () => ({ maybeSingle: () => Promise.resolve({ data: { id: "tok" }, error: null }) }) }) }),
+}));
 const insert = vi.fn(() => ({ select: () => ({ single }) }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({ insert, select: () => ({ eq: () => ({ maybeSingle }) }), update }),
+    from: () => ({ insert, select: () => ({ eq: () => ({ in: () => ({ maybeSingle }) }) }), update }),
   }),
 }));
 const sendEmail = vi.fn().mockResolvedValue({ sent: true, id: "e1" });
