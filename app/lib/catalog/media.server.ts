@@ -54,10 +54,12 @@ export async function deleteProductMedia(shopId: string, mediaId: string): Promi
     .maybeSingle();
   if (oErr) throw oErr;
   if (!owner) return; // not this shop's media — no-op, no leak
-  const { error: rmErr } = await sb.storage.from(PRODUCT_MEDIA_BUCKET).remove([String(row.storage_path)]);
-  if (rmErr) throw rmErr;
-  // Delete the row after the blob so a failed row-delete never leaves the media
-  // orphaned in the DB (a stale row would re-surface a broken, 404-ing image).
+  // Delete the row BEFORE the blob: if the blob-remove then fails, we orphan an
+  // invisible storage blob (harmless, reclaimable) rather than leaving a stale
+  // product_media row that points at a now-deleted path and re-surfaces a
+  // broken, 404-ing image in the gallery.
   const { error: delErr } = await sb.from("product_media").delete().eq("id", mediaId);
   if (delErr) throw delErr;
+  const { error: rmErr } = await sb.storage.from(PRODUCT_MEDIA_BUCKET).remove([String(row.storage_path)]);
+  if (rmErr) throw rmErr;
 }
