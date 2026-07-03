@@ -53,7 +53,11 @@ export async function markEmailVerified(userId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function sendVerificationEmail(userId: string, email: string, baseUrl: string): Promise<void> {
+export async function sendVerificationEmail(
+  userId: string,
+  email: string,
+  baseUrl: string,
+): Promise<{ sent: boolean }> {
   const { raw } = await createVerifyToken(userId);
   const link = `${baseUrl}/dashboard/verify?t=${encodeURIComponent(raw)}`;
   const result = await sendEmail({
@@ -65,8 +69,10 @@ export async function sendVerificationEmail(userId: string, email: string, baseU
   });
   // Callers deliberately swallow rejections so signup never fails on email
   // trouble — but an unverified user is locked out of the dashboard until this
-  // arrives, so a delivery failure must at least reach the server logs.
+  // arrives, so a delivery failure must at least reach the server logs, and
+  // the resend surface tells the user the truth instead of a fake "sent".
   if (!result.sent) {
     console.error(`[verify-email] delivery failed for user ${userId}: ${result.error ?? "unknown error"}`);
   }
+  return { sent: result.sent };
 }

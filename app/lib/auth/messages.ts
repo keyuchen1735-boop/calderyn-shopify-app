@@ -17,6 +17,7 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   invalid_or_expired_token: "That link is invalid or has expired. Request a new one.",
   bad_origin: "Something went wrong submitting the form. Reload the page and try again.",
   session_expired: "You were signed out. Sign in again to continue.",
+  send_failed: "We couldn't send the email just now. Wait a moment and try again.",
 };
 
 export const AUTH_NOTICE_MESSAGES: Record<string, string> = {
