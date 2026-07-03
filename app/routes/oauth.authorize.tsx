@@ -122,7 +122,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     token: jwt,
     apiKey: process.env.SHOPIFY_API_KEY ?? "",
     appUrl: process.env.SHOPIFY_APP_URL ?? "",
-    dashboardUrl: process.env.DASHBOARD_PUBLIC_URL ?? "https://calderyncompany.com",
+    dashboardUrl: process.env.DASHBOARD_PUBLIC_URL || "https://calderyncompany.com",
     shop: validShop,
   });
 };

@@ -16,6 +16,7 @@ import {
   rateLimit,
   clientIpKey,
   safeDashboardReturnTo,
+  publicBaseUrl,
 } from "~/lib/dashboard/http.server";
 import { resolveShopId } from "~/lib/supabase.server";
 import {
@@ -57,7 +58,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return jsonError(429, "rate_limited");
   }
 
-  const publicUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const publicUrl = publicBaseUrl();
   const failure = redirect(`${publicUrl}/dashboard/login?error=oauth_failed`, {
     headers: { "Set-Cookie": expireCookieHeader(STATE_COOKIE_NAME) },
   });

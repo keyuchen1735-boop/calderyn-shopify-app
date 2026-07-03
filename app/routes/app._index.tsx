@@ -57,7 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Sign-in entry point of the external merchant dashboard; the merchant's live
   // admin session completes the OAuth round-trip silently.
   const dashboardLoginUrl = `${
-    process.env.DASHBOARD_PUBLIC_URL ?? "https://calderyncompany.com"
+    process.env.DASHBOARD_PUBLIC_URL || "https://calderyncompany.com"
   }/dashboard/login?shop=${encodeURIComponent(session.shop)}`;
 
   const client = calderynClient(session.shop);

@@ -9,13 +9,14 @@ import {
   rateLimit,
   clientIpKey,
   safeDashboardReturnTo,
+  publicBaseUrl,
 } from "~/lib/dashboard/http.server";
 import { GOAUTH_COOKIE } from "~/lib/dashboard/cookies.server";
 
 const NONCE_TTL = 900; // 15 minutes
 
 function redirectUri(): string {
-  const base = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+  const base = publicBaseUrl();
   return `${base}/dashboard/auth/google/callback`;
 }
 

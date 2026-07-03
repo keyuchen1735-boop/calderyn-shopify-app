@@ -3,7 +3,7 @@
 // owned shop, the membership link, and a session (no Shopify involved).
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
+import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
@@ -70,7 +70,7 @@ export async function action({ request }: ActionFunctionArgs) {
     await linkMembership(userId, shopId, "owner");
 
     const { raw } = await createSessionForUser(userId, shopId);
-    const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
+    const baseUrl = publicBaseUrl();
     // Best-effort: a delivery failure must not fail the signup, but the user
     // should land on a resend prompt that tells the truth instead of waiting
     // on an email that never left.
