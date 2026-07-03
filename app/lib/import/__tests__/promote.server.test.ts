@@ -65,4 +65,19 @@ describe("buildImportReport", () => {
     expect(report.notIncluded.join(" ")).toContain("customer");
     expect(report.notIncluded.join(" ")).toContain("access");
   });
+
+  it("reports the order<->customer relink count only when orders were linked", async () => {
+    const { buildImportReport } = await import("../promote.server");
+    const linked = buildImportReport(counts, { imported: 40, skipped: 0, blocked: false }, { linked: 30, unmatched: 10 });
+    expect(linked.imported).toContain("30 past orders linked to customers");
+  });
+
+  it("omits the relink line when nothing linked (never a '0 linked' lie)", async () => {
+    const { buildImportReport } = await import("../promote.server");
+    // Zero linked (e.g. guest-only history) and the default (no relink arg) both omit the line.
+    const zero = buildImportReport(counts, { imported: 40, skipped: 0, blocked: false }, { linked: 0, unmatched: 5 });
+    expect(zero.imported.join(" ")).not.toMatch(/linked to customers/);
+    const none = buildImportReport(counts, { imported: 40, skipped: 0, blocked: false });
+    expect(none.imported.join(" ")).not.toMatch(/linked to customers/);
+  });
 });

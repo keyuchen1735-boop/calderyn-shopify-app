@@ -8,10 +8,20 @@ vi.mock("../promote.server", () => ({
   buildImportReport: (
     counts: { orders?: number },
     customers: { imported: number; skipped: number; blocked: boolean },
-  ) => ({ imported: [`${counts.orders ?? 0} orders`, `${customers.imported} customers`], notIncluded: ["customers"] }),
+    relink: { linked: number; unmatched: number } = { linked: 0, unmatched: 0 },
+  ) => ({
+    imported: [
+      `${counts.orders ?? 0} orders`,
+      `${customers.imported} customers`,
+      ...(relink.linked > 0 ? [`${relink.linked} orders linked`] : []),
+    ],
+    notIncluded: ["customers"],
+  }),
 }));
 const importCustomers = vi.fn();
 vi.mock("../customers.server", () => ({ importCustomers }));
+const relinkOrdersToBuyers = vi.fn();
+vi.mock("../relink.server", () => ({ relinkOrdersToBuyers }));
 
 // Supabase query-builder mock: every builder method is chainable AND the builder is
 // awaitable (thenable), matching supabase-js where `.eq()` etc. both chain and resolve.
@@ -56,6 +66,8 @@ beforeEach(() => {
   promoteShopFromMirror.mockReset();
   importCustomers.mockReset();
   importCustomers.mockResolvedValue({ imported: 0, skipped: 0, blocked: false });
+  relinkOrdersToBuyers.mockReset();
+  relinkOrdersToBuyers.mockResolvedValue({ linked: 0, unmatched: 0 });
   selectRows = [];
   singleReturn = { data: null, error: null };
   updates.length = 0;
@@ -92,6 +104,39 @@ describe("drainImports", () => {
     const done = updates.find((u) => u.state === "done");
     expect((done?.report as { imported: string[] }).imported).toContain("3 customers");
     expect((done?.report as { imported: string[] }).imported).toContain("1100 orders");
+  });
+
+  it("relinks orders to buyers after promote and surfaces the count in the report", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockResolvedValue({ orders: 1100 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12, orders: 1100, refunds: 30 });
+    importCustomers.mockResolvedValueOnce({ imported: 3, skipped: 0, blocked: false });
+    relinkOrdersToBuyers.mockResolvedValueOnce({ linked: 900, unmatched: 200 });
+
+    const { drainImports } = await import("../run.server");
+    await drainImports();
+
+    // Relink runs with the same 12-month window the pull used.
+    expect(relinkOrdersToBuyers).toHaveBeenCalledTimes(1);
+    expect(relinkOrdersToBuyers.mock.calls[0][0]).toBe("d.myshopify.com");
+    expect(relinkOrdersToBuyers.mock.calls[0][1]).toBe("shop1");
+    const done = updates.find((u) => u.state === "done");
+    expect((done?.report as { imported: string[] }).imported).toContain("900 orders linked");
+  });
+
+  it("skips relink when the customer stage is blocked (protected-customer-data pending)", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockResolvedValue({ orders: 1100 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12, orders: 1100, refunds: 0 });
+    importCustomers.mockResolvedValueOnce({ imported: 0, skipped: 0, blocked: true });
+
+    const { drainImports } = await import("../run.server");
+    const r = await drainImports();
+
+    // No buyers were imported, so there is nothing to link — the pass (and its PCD-gated query) is skipped.
+    expect(relinkOrdersToBuyers).not.toHaveBeenCalled();
+    expect(r.processed).toBe(1);
+    expect(updates.some((u) => u.state === "done")).toBe(true);
   });
 
   it("marks the run error and skips promote when the pull throws", async () => {
