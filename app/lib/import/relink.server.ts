@@ -43,15 +43,17 @@ export async function relinkOrdersToBuyers(
     emailByOrder.set(o.id, normalized);
   }
 
-  // 2) Resolve the distinct emails to buyer_dim ids in one shop-scoped lookup.
+  // 2) Resolve the distinct emails to buyer_dim ids, chunked: PostgREST IN() rides the URL, so a
+  //    12-month window with thousands of distinct buyers would 414 in one shot and error the run.
+  const CHUNK = 200;
   const emails = [...new Set(emailByOrder.values())];
   const buyerByEmail = new Map<string, string>();
-  if (emails.length) {
+  for (let i = 0; i < emails.length; i += CHUNK) {
     const { data, error } = await sb
       .from("buyer_dim")
       .select("id, email_normalized")
       .eq("shop_id", shopId)
-      .in("email_normalized", emails);
+      .in("email_normalized", emails.slice(i, i + CHUNK));
     if (error) throw error;
     for (const r of data ?? []) buyerByEmail.set(String(r.email_normalized), String(r.id));
   }
