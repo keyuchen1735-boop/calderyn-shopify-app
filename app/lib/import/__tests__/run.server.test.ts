@@ -5,8 +5,14 @@ vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
 const promoteShopFromMirror = vi.fn();
 vi.mock("../promote.server", () => ({
   promoteShopFromMirror,
-  buildImportReport: (_counts: unknown, orders: number) => ({ imported: [`${orders} orders`], notIncluded: ["customers"] }),
+  buildImportReport: (
+    _counts: unknown,
+    orders: number,
+    customers: { imported: number; skipped: number; blocked: boolean },
+  ) => ({ imported: [`${orders} orders`, `${customers.imported} customers`], notIncluded: ["customers"] }),
 }));
+const importCustomers = vi.fn();
+vi.mock("../customers.server", () => ({ importCustomers }));
 
 // Supabase query-builder mock: every builder method is chainable AND the builder is
 // awaitable (thenable), matching supabase-js where `.eq()` etc. both chain and resolve.
@@ -49,6 +55,8 @@ vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: () => chai
 beforeEach(() => {
   backfillShop.mockReset();
   promoteShopFromMirror.mockReset();
+  importCustomers.mockReset();
+  importCustomers.mockResolvedValue({ imported: 0, skipped: 0, blocked: false });
   selectRows = [];
   singleReturn = { data: null, error: null };
   updates.length = 0;
@@ -68,6 +76,20 @@ describe("drainImports", () => {
     expect(r.processed).toBe(1);
     expect(updates.some((u) => u.state === "promoting")).toBe(true);
     expect(updates.some((u) => u.state === "done")).toBe(true);
+  });
+
+  it("runs the customer stage and feeds its counts into the report", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockResolvedValue({ orders: 1100 });
+    promoteShopFromMirror.mockResolvedValue({ products: 5, variants: 12, collections: 2, balances: 12 });
+    importCustomers.mockResolvedValueOnce({ imported: 3, skipped: 0, blocked: false });
+
+    const { drainImports } = await import("../run.server");
+    await drainImports();
+
+    expect(importCustomers).toHaveBeenCalledWith("d.myshopify.com", "shop1");
+    const done = updates.find((u) => u.state === "done");
+    expect((done?.report as { imported: string[] }).imported).toContain("3 customers");
   });
 
   it("marks the run error and skips promote when the pull throws", async () => {

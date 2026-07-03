@@ -19,9 +19,12 @@ describe("promoteShopFromMirror", () => {
 });
 
 describe("buildImportReport", () => {
+  const counts = { products: 5, variants: 12, collections: 2, balances: 12 };
+
   it("names what was imported and always names the exclusions", async () => {
     const { buildImportReport } = await import("../promote.server");
-    const r = buildImportReport({ products: 5, variants: 12, collections: 2, balances: 12 }, 1100);
+    // customers blocked here → they stay in notIncluded (the exclusion copy under test).
+    const r = buildImportReport(counts, 1100, { imported: 0, skipped: 0, blocked: true });
     expect(r.imported.join(" ")).toMatch(/5 products/);
     expect(r.imported.join(" ")).toMatch(/1100 past orders/);
     // balances are stock RECORDS (variant x location), not locations — the copy
@@ -30,5 +33,19 @@ describe("buildImportReport", () => {
     expect(r.imported.join(" ")).not.toMatch(/stock locations/);
     expect(r.notIncluded.join(" ")).toMatch(/customer/i);
     expect(r.notIncluded.join(" ")).toMatch(/store design|theme/i);
+  });
+
+  it("reports imported customers with the skipped count", async () => {
+    const { buildImportReport } = await import("../promote.server");
+    const report = buildImportReport(counts, 12, { imported: 40, skipped: 2, blocked: false });
+    expect(report.imported).toContain("40 customers (2 skipped — no email address)");
+    expect(report.notIncluded.join(" ")).not.toContain("customer");
+  });
+
+  it("keeps customers in notIncluded — with the real reason — when blocked", async () => {
+    const { buildImportReport } = await import("../promote.server");
+    const report = buildImportReport(counts, 12, { imported: 0, skipped: 0, blocked: true });
+    expect(report.notIncluded.join(" ")).toContain("customer");
+    expect(report.notIncluded.join(" ")).toContain("access");
   });
 });

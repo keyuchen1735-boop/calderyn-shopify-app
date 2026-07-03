@@ -17,14 +17,17 @@ export async function promoteShopFromMirror(shopId: string): Promise<PromoteCoun
 }
 
 /**
- * Honest import summary. The exclusions are FIXED copy (not free-form): we always tell the
- * merchant that customers and store design are not part of this import, so the report can
- * never overstate what was brought over (rule 12).
+ * Honest import summary. The exclusions are FIXED copy (not free-form) so the report can
+ * never overstate what was brought over (rule 12). Customers appear in `imported` only
+ * when the stage actually ran; while Shopify's protected-customer-data approval is
+ * pending, they stay in notIncluded with the real reason.
  */
 export function buildImportReport(
   counts: PromoteCounts,
   orderCount: number,
+  customers: { imported: number; skipped: number; blocked: boolean },
 ): { imported: string[]; notIncluded: string[] } {
+  const customersRan = !customers.blocked;
   return {
     imported: [
       `${counts.products} products (${counts.variants} variants)`,
@@ -32,9 +35,18 @@ export function buildImportReport(
       // counts.balances is stock RECORDS (one per variant at each location), not locations.
       `${counts.balances} stock records`,
       `${orderCount} past orders (last 12 months)`,
+      ...(customersRan
+        ? [
+            customers.skipped > 0
+              ? `${customers.imported} customers (${customers.skipped} skipped — no email address)`
+              : `${customers.imported} customers`,
+          ]
+        : []),
     ],
     notIncluded: [
-      "Your customer list, which is brought over separately, with consent (privacy rules).",
+      ...(customersRan
+        ? []
+        : ["Your customer list — Shopify hasn't granted Calderyn customer-data access yet, so it couldn't come over this run."]),
       "Your store design / theme, which is re-created in Calderyn's builder later.",
     ],
   };
