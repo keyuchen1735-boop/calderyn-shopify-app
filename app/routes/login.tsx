@@ -43,7 +43,7 @@ export default function LoginPage() {
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Sign in</h1>
-      <p className="cd-auth-sub">Welcome back. Your store's engine is waiting.</p>
+      <p className="cd-auth-sub">Welcome back.</p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
       <GoogleButton label="Continue with Google" returnTo={returnTo} />

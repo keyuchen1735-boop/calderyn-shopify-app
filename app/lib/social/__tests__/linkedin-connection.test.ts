@@ -403,7 +403,9 @@ describe("signState / verifyState", () => {
 
   it("verifyState returns null for a tampered state", () => {
     const state = signState("founder@example.com");
-    const tampered = state.slice(0, -2) + (state.at(-1) === "a" ? "b" : "a") + state.at(-1);
+    // Flip the char actually being replaced — keying off a different position made
+    // the "tampered" string byte-identical ~1/64 runs (flaky CI failure).
+    const tampered = state.slice(0, -2) + (state.at(-2) === "a" ? "b" : "a") + state.at(-1);
     expect(verifyState(tampered)).toBeNull();
   });
 

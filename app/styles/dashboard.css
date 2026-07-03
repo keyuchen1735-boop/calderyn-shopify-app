@@ -1955,31 +1955,80 @@
 @media (prefers-reduced-motion: reduce) { .cd-skel-bar::after { animation: none; } }
 
 /* ============ Auth pages (sign in / sign up / reset / verify) ============ */
-.cd-auth-wrap { flex: 1; min-height: 100vh; display: grid; place-items: center; background: var(--bg); padding: 24px; }
-.cd-auth-card { width: 100%; max-width: 400px; background: var(--card-solid); border-radius: 16px; box-shadow: var(--shadow-card); padding: 32px 28px 26px; }
-.cd-auth-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; color: var(--text-1); text-decoration: none; }
-.cd-auth-brand-mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-size: 13px; font-weight: 800; }
-.cd-auth-title { font-size: 20px; font-weight: 650; letter-spacing: -0.015em; color: var(--text-1); margin: 0 0 4px; }
-.cd-auth-sub { font-size: 13.5px; color: var(--text-2); margin: 0 0 20px; line-height: 1.5; }
-.cd-auth-banner { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.45; border-radius: 10px; padding: 10px 12px; margin: 0 0 16px; }
+/* The auth surfaces borrow .cd-root only for its token palette; they are NOT the
+   sidebar shell. This modifier neutralizes the shell's flex/height/overflow so
+   the centered wrap fills the page (without it, .cd-auth-wrap is a flex child
+   and collapses to content width against the left edge). */
+.cd-auth-root { display: block; height: auto; min-height: 100dvh; overflow: visible; }
+.cd-auth-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 20px max(24px, env(safe-area-inset-bottom, 0px));
+  /* Atmospheric anchor: a single soft accent halo above the card. Token-driven,
+     so it reads as a faint dark wash in light mode and a light bloom in night. */
+  background:
+    radial-gradient(135% 95% at 50% -25%, color-mix(in oklch, var(--accent) 8%, transparent) 0%, transparent 55%),
+    var(--bg);
+}
+.cd-auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card-solid);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 34px 30px 28px;
+  animation: cd-auth-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes cd-auth-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.cd-auth-brand { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 24px; font-weight: 650; font-size: 16px; letter-spacing: -0.015em; color: var(--text-1); text-decoration: none; }
+.cd-auth-brand-mark { width: 30px; height: 30px; flex-shrink: 0; display: block; }
+.cd-auth-brand-mark svg { width: 100%; height: 100%; display: block; }
+.cd-auth-title { font-size: 23px; font-weight: 650; letter-spacing: -0.02em; color: var(--text-1); margin: 0 0 5px; font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif; }
+.cd-auth-sub { font-size: 14px; color: var(--text-2); margin: 0 0 22px; line-height: 1.5; letter-spacing: -0.006em; }
+.cd-auth-banner { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; font-weight: 500; line-height: 1.45; border-radius: 12px; padding: 11px 13px; margin: 0 0 16px; letter-spacing: -0.004em; }
+.cd-auth-banner::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; margin-top: 6px; }
 .cd-auth-banner--error { background: var(--red-bg); color: var(--red); }
 .cd-auth-banner--ok { background: var(--green-bg); color: var(--green); }
-.cd-auth-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 0 0 6px; }
-.cd-auth-input { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; color: var(--text-1); background: var(--bg); border: 1px solid var(--hairline-strong); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; outline: none; }
-.cd-auth-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
-.cd-auth-hint { font-size: 12px; color: var(--text-3); margin: -8px 0 14px; }
-.cd-auth-submit { display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; font-weight: 650; color: var(--on-accent); background: var(--accent); border: none; border-radius: 10px; padding: 11px 14px; cursor: pointer; }
-.cd-auth-submit:hover { opacity: 0.92; }
-.cd-auth-google { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; font-weight: 600; color: var(--text-1); background: var(--card-solid); border: 1px solid var(--hairline-strong); border-radius: 10px; padding: 10px 14px; text-decoration: none; }
-.cd-auth-google:hover { background: var(--gray-bg); }
-.cd-auth-divider { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; margin: 16px 0; }
-.cd-auth-divider::before, .cd-auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
-.cd-auth-links { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-top: 16px; }
-.cd-auth-links a, .cd-auth-inline-link { color: var(--text-2); text-decoration: none; }
-.cd-auth-links a:hover, .cd-auth-inline-link:hover { color: var(--text-1); text-decoration: underline; }
-.cd-auth-foot { text-align: center; font-size: 12px; color: var(--text-3); margin-top: 20px; }
-.cd-auth-foot a { color: inherit; }
-.cd-auth-linkbtn { background: none; border: none; padding: 0; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; text-decoration: underline; }
+.cd-auth-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 0 0 6px; letter-spacing: -0.004em; }
+.cd-auth-input {
+  display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 14.5px;
+  color: var(--text-1); background: var(--bg);
+  border: 1px solid var(--hairline-strong); border-radius: 12px;
+  padding: 11px 13px; margin: 0 0 14px; outline: none;
+  letter-spacing: -0.006em;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.cd-auth-input::placeholder { color: var(--text-3); }
+.cd-auth-input:hover { border-color: var(--text-3); }
+.cd-auth-input:focus { border-color: var(--accent); background: var(--card-solid); box-shadow: 0 0 0 3.5px var(--accent-bg); }
+.cd-auth-hint { font-size: 12px; color: var(--text-3); margin: -8px 0 14px; letter-spacing: -0.002em; }
+.cd-auth-submit {
+  display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 14.5px; font-weight: 600;
+  color: var(--on-accent); background: var(--accent); border: 1px solid transparent; border-radius: 12px;
+  padding: 12px 16px; cursor: pointer; letter-spacing: -0.008em;
+  transition: opacity 0.15s ease, transform 0.12s ease;
+}
+.cd-auth-submit:hover { opacity: 0.9; }
+.cd-auth-submit:active { transform: scale(0.985); }
+.cd-auth-google {
+  display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; box-sizing: border-box;
+  font: inherit; font-size: 14px; font-weight: 550; color: var(--text-1); background: var(--card-solid);
+  border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 11px 14px; margin-bottom: 10px;
+  text-decoration: none; letter-spacing: -0.006em;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
+}
+.cd-auth-google:hover { background: var(--gray-bg); border-color: var(--text-3); }
+.cd-auth-google:active { transform: scale(0.985); }
+.cd-auth-divider { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin: 18px 0; }
+.cd-auth-divider::before, .cd-auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--hairline-strong); opacity: 0.6; }
+.cd-auth-links { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-top: 20px; }
+.cd-auth-links a, .cd-auth-inline-link { color: var(--text-2); text-decoration: none; font-weight: 500; letter-spacing: -0.004em; border-radius: 4px; }
+.cd-auth-links a:hover, .cd-auth-inline-link:hover { color: var(--text-1); }
+.cd-auth-foot { text-align: center; font-size: 12.5px; color: var(--text-3); margin-top: 22px; letter-spacing: -0.002em; }
+.cd-auth-foot a { color: var(--text-2); font-weight: 500; text-decoration: none; }
+.cd-auth-foot a:hover { color: var(--text-1); }
+.cd-auth-linkbtn { background: none; border: none; padding: 0; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; border-radius: 4px; }
 .cd-auth-linkbtn:hover { color: var(--text-1); }
 /* Wrapper owns the field's bottom margin so the inline toggle centres on the input box. */
 .cd-auth-pwwrap { position: relative; margin: 0 0 14px; }
@@ -1988,6 +2037,23 @@
 .cd-auth-pwtoggle:hover { color: var(--text-1); }
 .cd-auth-pwtoggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cd-auth-submit:disabled { opacity: 0.65; cursor: default; }
+/* Keyboard focus: a crisp accent ring on every interactive element in the card. */
+.cd-auth-google:focus-visible,
+.cd-auth-submit:focus-visible,
+.cd-auth-links a:focus-visible,
+.cd-auth-inline-link:focus-visible,
+.cd-auth-foot a:focus-visible,
+.cd-auth-linkbtn:focus-visible,
+.cd-auth-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cd-auth-input:focus-visible { outline: none; }
+@media (max-width: 420px) {
+  .cd-auth-card { padding: 26px 20px 22px; border-radius: 14px; }
+  .cd-auth-title { font-size: 21px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-auth-card { animation: none; }
+  .cd-auth-input, .cd-auth-submit, .cd-auth-google { transition: none; }
+}
 
 /* ============ First-run setup card (Mission Control, empty catalog) ============ */
 .cd-setup-head { margin-bottom: 6px; }

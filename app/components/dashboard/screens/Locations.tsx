@@ -3,6 +3,7 @@ import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 
 // Location settings: rank locations (priority — lower fills first), set map
 // coordinates so the allocator can fill orders from the nearest location to
@@ -13,10 +14,17 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 const GRID = "2fr 1fr 1fr 1fr";
 
 export default function Locations({ app }: { app: DashboardCtx }) {
-  const [rows, setRows] = useState<client.LocationVM[]>([]);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const [rows, setRows] = useState<client.LocationVM[]>(
+    () => cachedScreenData<client.LocationVM[]>(SCREEN_CACHE_KEYS.locations) ?? [],
+  );
 
   useEffect(() => {
-    client.fetchLocations().then(setRows).catch(() => {});
+    client
+      .fetchLocations()
+      .then((r) => setRows(cacheScreenData(SCREEN_CACHE_KEYS.locations, r)))
+      .catch(() => {});
   }, []);
 
   const save = async (

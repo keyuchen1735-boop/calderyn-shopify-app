@@ -18,7 +18,8 @@ function ensureEases(): void {
 }
 const EMPH = "m3emph";
 
-function reduced(): boolean {
+// Exported: the single prefers-reduced-motion predicate for dashboard motion.
+export function reduced(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 

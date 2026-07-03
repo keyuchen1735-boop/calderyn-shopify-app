@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent as ReactChangeEvent,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -17,7 +18,9 @@ import {
   IMPORT_IN_PROGRESS,
   type ImportRunVM,
 } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
+  addProductFromImage,
   fetchStudio,
   saveStudioHero,
   setStudioAccent,
@@ -26,6 +29,7 @@ import {
   type StudioState,
   type StudioHero,
 } from "~/lib/dashboard/store-client";
+import { buildStep, missingPieces, type BuildPhase, type MissingPiece } from "./store-logic";
 import type { DashboardCtx } from "../context";
 
 type Tool = "select" | "edit" | "comment" | "markup" | "tweak";
@@ -53,7 +57,7 @@ const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our lates
 const GEN_LABEL: Record<string, string> = {
   draft: "draft ready",
   failed: "failed",
-  no_products: "no products",
+  no_products: "draft ready — no products",
 };
 
 interface Pin {
@@ -63,40 +67,11 @@ interface Pin {
   text: string;
 }
 
-type BuildPhase =
-  | { kind: "running" }
-  | { kind: "done"; status: "draft" | "no_products" }
-  | { kind: "failed"; message: string };
-
-function buildStep(phase: BuildPhase): {
-  dot: "run" | "done" | "wait";
-  dotColor?: string;
-  title: string;
-  sub: string;
-} {
-  if (phase.kind === "running") {
-    return {
-      dot: "run",
-      title: "Generating with your brand kit",
-      sub: "This can take a few seconds.",
-    };
-  }
-  if (phase.kind === "failed") {
-    return { dot: "wait", dotColor: "var(--red)", title: "Generation failed", sub: phase.message };
-  }
-  if (phase.status === "no_products") {
-    return {
-      dot: "wait",
-      title: "Add products first",
-      sub: "The generator found no products in your catalog.",
-    };
-  }
-  return {
-    dot: "done",
-    title: "Draft ready — review and publish",
-    sub: "Home, collection and product pages were drafted.",
-  };
-}
+// Once-per-SPA-session guard for the first-visit auto-build. Module-scoped so
+// remounts (navigate away and back) can't re-fire a generation while one is
+// already running or after one failed — the server's generation audit row only
+// lands when a run completes.
+let autoBuildAttempted = false;
 
 const clampPct = (v: number): number => Math.min(100, Math.max(0, v));
 
@@ -113,7 +88,11 @@ function pctPoint(e: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElemen
 
 export default function Store({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
-  const [data, setData] = useState<StudioState | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount refresh below revalidates and writes back through.
+  const [data, setData] = useState<StudioState | null>(() =>
+    cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio),
+  );
   const [loading, setLoading] = useState(true);
   const [tool, setTool] = useState<Tool>("select");
 
@@ -130,6 +109,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [accentBusy, setAccentBusy] = useState(false);
+  // Pre-publish warning panel visibility. The pieces themselves are derived
+  // from `data` at render so they can never go stale. Warn-only: the panel
+  // offers to fix each piece inline, but "Publish anyway" always proceeds.
+  const [confirmingPublish, setConfirmingPublish] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -141,6 +126,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
 
   const refresh = useCallback(async () => {
     const s = await fetchStudio();
+    cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, s);
     if (aliveRef.current) setData(s);
   }, []);
 
@@ -333,30 +319,86 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   // --- generate + publish -------------------------------------------------------
-  const runBuild = async () => {
-    if (building) return;
-    setBuildPhase({ kind: "running" });
-    try {
-      const receipt = await generateStudioStore(prompt.trim());
-      // Re-pull the whole studio state — generation rewrites brand settings,
-      // drafts and the generation audit row.
-      await refresh();
-      if (!aliveRef.current) return;
-      setBuildPhase({ kind: "done", status: receipt.status });
-      if (receipt.status === "no_products") {
-        toast("Add products first", "warn", "critical");
+  const runBuild = useCallback(
+    async (brief: string) => {
+      if (building) return;
+      setBuildPhase({ kind: "running" });
+      try {
+        const receipt = await generateStudioStore(brief.trim());
+        // Re-pull the whole studio state — generation rewrites brand settings,
+        // drafts and the generation audit row.
+        await refresh();
+        if (!aliveRef.current) return;
+        setBuildPhase({ kind: "done", status: receipt.status });
+      } catch (err) {
+        if (!aliveRef.current) return;
+        const msg =
+          err instanceof DashboardApiError ? err.message : "Store generation failed.";
+        setBuildPhase({ kind: "failed", message: msg });
+        toast(msg, "warn", "critical");
       }
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg =
-        err instanceof DashboardApiError ? err.message : "Store generation failed.";
-      setBuildPhase({ kind: "failed", message: msg });
-      toast(msg, "warn", "critical");
+    },
+    [building, refresh, toast],
+  );
+
+  // First visit with nothing built yet: kick off a design immediately instead
+  // of waiting for a prompt — the merchant lands on a drafted store. The
+  // once-guard is module-scoped (below, outside the component) because the
+  // store_generation row is only written when a run finishes, so a per-mount
+  // ref would re-fire the build on every navigate-away-and-back mid-run.
+  useEffect(() => {
+    if (loading || !data || autoBuildAttempted) return;
+    if (data.hasDraft || data.hasPublished || data.generation) return;
+    autoBuildAttempted = true;
+    void runBuild("");
+  }, [loading, data, runBuild]);
+
+  // Chat-box attachments → draft products (title from filename, image attached).
+  const onAttachFiles = async (e: ReactChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.currentTarget.files ?? []);
+    e.currentTarget.value = "";
+    if (files.length === 0) return;
+    if (attaching) {
+      toast("Still adding the previous images — try again in a moment.");
+      return;
     }
+    setAttaching(true);
+    const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
+    if (!aliveRef.current) return;
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled" && !r.value.imageError) {
+        toast(`Added "${r.value.title}" as a draft product`);
+      } else if (r.status === "fulfilled") {
+        // Partial add: the product exists but has no image — say so, or a
+        // retry would mint a duplicate.
+        toast(`Added draft "${r.value.title}", but its image failed to upload — add one in Products.`, "warn", "critical");
+      } else {
+        const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
+        toast(`Couldn't add "${files[i].name}" — ${msg}`, "warn", "critical");
+      }
+    });
+    try {
+      await refresh();
+    } finally {
+      if (aliveRef.current) setAttaching(false);
+    }
+  };
+
+  // Publish click: warn about missing pieces first (products, payments) with
+  // inline fixes — but never gate. "Publish anyway" runs the same publish.
+  const publishPieces: MissingPiece[] = data ? missingPieces(data) : [];
+  const onPublishClick = () => {
+    if (!data || publishing) return;
+    if (publishPieces.length > 0) {
+      setConfirmingPublish(true);
+      return;
+    }
+    void runPublish();
   };
 
   const runPublish = async () => {
     if (publishing) return;
+    setConfirmingPublish(false);
     setPublishing(true);
     try {
       // Flush any in-flight hero save first, so the published snapshot matches
@@ -448,12 +490,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
               Clear
             </Btn>
           )}
-          <Btn
-            kind="primary"
-            small
-            onClick={() => void runPublish()}
-            disabled={!data.hasDraft || publishing || building}
-          >
+          <Btn kind="primary" small onClick={onPublishClick} disabled={publishing || building}>
             {publishing ? "Publishing…" : "Publish"}
           </Btn>
         </div>
@@ -501,7 +538,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
               <div className="cd-store-grid">
                 {data.products.length === 0 ? (
                   <div className="cd-caption" style={{ gridColumn: "1 / -1", padding: "10px 0" }}>
-                    No products yet. Add products to fill your storefront.
+                    {data.draftProductCount > 0
+                      ? `${data.draftProductCount} draft product${
+                          data.draftProductCount === 1 ? "" : "s"
+                        } waiting — finish them in Products to show them here.`
+                      : "No products yet. Attach images below to add them."}
                   </div>
                 ) : (
                   data.products.map((p) => (
@@ -629,6 +670,45 @@ export default function Store({ app }: { app: DashboardCtx }) {
             </div>
           )}
 
+          {confirmingPublish && publishPieces.length > 0 && (
+            <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
+              <div className="cd-buildlist">
+                {publishPieces.map((piece) => (
+                  <div key={piece.key} className="cd-build-step">
+                    <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
+                    <div>
+                      <div className="cd-build-title">{piece.label}</div>
+                      <button
+                        type="button"
+                        className="cd-chip"
+                        style={{ marginTop: 6 }}
+                        onClick={() => {
+                          setConfirmingPublish(false);
+                          app.navigate(piece.screen);
+                        }}
+                      >
+                        {piece.action}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
+                <Btn
+                  kind="primary"
+                  small
+                  onClick={() => void runPublish()}
+                  disabled={publishing || building}
+                >
+                  Publish anyway
+                </Btn>
+                <Btn small onClick={() => setConfirmingPublish(false)}>
+                  Keep editing
+                </Btn>
+              </div>
+            </div>
+          )}
+
           {tool === "tweak" && (
             <div className="cd-tweak-pop">
               <div className="cd-build-title">Accent color</div>
@@ -664,7 +744,25 @@ export default function Store({ app }: { app: DashboardCtx }) {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
-            <Btn kind="primary" onClick={() => void runBuild()} disabled={building}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              hidden
+              onChange={(e) => void onAttachFiles(e)}
+            />
+            <button
+              type="button"
+              className="cd-tool"
+              title="Attach images to add products"
+              aria-label="Attach images to add products"
+              disabled={attaching}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <CDIcon name="paperclip" size={15} strokeWidth={1.9} />
+            </button>
+            <Btn kind="primary" onClick={() => void runBuild(prompt)} disabled={building}>
               {building ? "Building…" : "Build"}
             </Btn>
           </div>

@@ -63,6 +63,22 @@ describe("generateStore", () => {
     expect(saveDraftMock).toHaveBeenCalled();
   });
 
+  it("skips all paid LLM calls for an empty catalog with no brief (deterministic fallback, zero spend)", async () => {
+    getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
+    const result = await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(result.tokenCost).toBe(0);
+    expect(result.status).toBe("no_products");
+    expect(saveDraftMock).toHaveBeenCalledTimes(3); // fallback docs still drafted
+  });
+
+  it("still calls the LLM for an empty catalog when a brief gives it real input", async () => {
+    getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "warm earthy brand" });
+    expect(createMock).toHaveBeenCalled();
+  });
+
   it("falls back to a deterministic brand when the brand call fails, without throwing", async () => {
     createMock.mockRejectedValue(new Error("api down"));
     const result = await generateStore({ shopId: realShop, mode: "catalog" });

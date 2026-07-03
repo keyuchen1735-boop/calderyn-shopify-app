@@ -5,6 +5,7 @@ import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
 
@@ -124,7 +125,7 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
 const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
-  dark: false,
+  dark: true,
   // Design tokens: the 1.06 type scale the fresh design ships with (its root
   // sets --type-scale:1.06). Accent lives in the CSS token blocks per theme.
   density: "balanced",
@@ -133,7 +134,7 @@ const DASHBOARD_THEME = {
   typeScale: 1.06,
 };
 
-// Persisted night-mode preference (per browser). Light is the default.
+// Persisted night-mode preference (per browser). Dark is the default.
 const NIGHT_MODE_KEY = "cd-night-mode";
 
 const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> = {
@@ -180,15 +181,16 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }) {
-  // Night mode (dark theme). Defaults to light; the merchant's choice persists in
-  // localStorage. Initialised to false so the server render and first client render
-  // agree (no hydration mismatch); the stored preference is applied post-mount.
-  const [dark, setDark] = useState(false);
+  // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
+  // localStorage. Initialised to true so the server render and first client render
+  // agree (no hydration mismatch); a merchant who explicitly chose light ("0") is
+  // applied post-mount.
+  const [dark, setDark] = useState(true);
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "1") setDark(true);
+      if (window.localStorage.getItem(NIGHT_MODE_KEY) === "0") setDark(false);
     } catch {
-      /* localStorage unavailable — stay on the light default */
+      /* localStorage unavailable — stay on the dark default */
     }
   }, []);
   const setNightMode = useCallback((next: boolean) => {
@@ -422,6 +424,18 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     let alive = true;
     setLoading(true);
     load()
+      .then(() => {
+        // Warm every screen's cache in the background once the shared load
+        // SUCCEEDS, so the first visit to any tab paints instantly instead of
+        // a skeleton. Success-gated: a failing backend shouldn't get 17 more
+        // background reads piled on. Idle-scheduled and sequential; the cache
+        // is module-level, so a late warm-up still helps the next mount.
+        const idle: (cb: () => void) => void =
+          typeof window.requestIdleCallback === "function"
+            ? (cb) => window.requestIdleCallback(cb, { timeout: 2000 })
+            : (cb) => void window.setTimeout(cb, 350);
+        idle(() => void warmScreenCaches());
+      })
       .catch((err) => {
         if (!alive) return;
         const msg = err instanceof DashboardApiError ? err.message : "Could not load dashboard data.";

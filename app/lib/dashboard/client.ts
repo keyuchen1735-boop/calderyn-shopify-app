@@ -8,6 +8,7 @@
 // location.origin. It MUST NOT import any *.server.ts module.
 
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
+import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
   AuditEntry,
@@ -1272,6 +1273,22 @@ export async function uploadProductImage(productId: string, file: File): Promise
 
 export async function deleteProductImage(mediaId: string): Promise<void> {
   await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
+}
+
+// --- AI listing drafts (new-product flow) ------------------------------------
+
+// The wire shapes (ops, plan, request context) live in the shared contract
+// module so this client and the route can't drift.
+export type { ListingDraftCurrent } from "~/lib/catalog/listing-prompt";
+
+/** Prompt → structured listing edits via the Claude-backed endpoint. Only
+ *  called for prompts the local deterministic parser can't place (see
+ *  app/lib/catalog/listing-prompt.ts); errors are DashboardApiError. */
+export async function fetchListingDraft(
+  prompt: string,
+  current: ListingDraftCurrent,
+): Promise<ListingPlan> {
+  return apiSend<ListingPlan>("POST", "/dashboard/api/listing-draft", { prompt, current });
 }
 
 // --- inventory --------------------------------------------------------------

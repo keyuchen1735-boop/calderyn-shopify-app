@@ -8,6 +8,7 @@ import {
   type LedgerRow,
   type PaymentsPage,
 } from "~/lib/dashboard/payments-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 
 // Ledger kind → badge tone. The vocabulary is the transaction_ledger kind set
@@ -42,8 +43,15 @@ function KindBadge({ kind }: { kind: LedgerRow["kind"] }) {
 }
 
 export default function Payments({ app }: { app: DashboardCtx }) {
-  const [page, setPage] = useState<PaymentsPage | null>(null);
-  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetches below revalidate and write back through. The billing key is
+  // shared with Settings' Stripe row — same endpoint, one entry.
+  const [page, setPage] = useState<PaymentsPage | null>(() =>
+    cachedScreenData<PaymentsPage>(SCREEN_CACHE_KEYS.payments),
+  );
+  const [billing, setBilling] = useState<BillingStatus | null>(() =>
+    cachedScreenData<BillingStatus>(SCREEN_CACHE_KEYS.billing),
+  );
   const [billingFailed, setBillingFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const toast = app.toast;
@@ -53,6 +61,7 @@ export default function Payments({ app }: { app: DashboardCtx }) {
     setLoading(true);
     const pagePromise = fetchPaymentsPage()
       .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.payments, p);
         if (alive) setPage(p);
       })
       .catch((err: unknown) => {
@@ -65,6 +74,7 @@ export default function Payments({ app }: { app: DashboardCtx }) {
     // surface); the ledger stats above still render from real data.
     const billingPromise = fetchBilling()
       .then((b) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.billing, b);
         if (alive) setBilling(b);
       })
       .catch(() => {

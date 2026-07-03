@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, Placeholder } from "../ui";
 import { apiGet } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { formatMoney } from "~/lib/storefront/money";
 
 // Order currency comes from external agentic protocols; a malformed or empty
@@ -38,13 +39,18 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 export function AgenticChannel() {
-  const [data, setData] = useState<AgenticData | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const [data, setData] = useState<AgenticData | null>(() =>
+    cachedScreenData<AgenticData>(SCREEN_CACHE_KEYS.agentic),
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     apiGet<AgenticData>("/dashboard/api/agentic")
       .then((d) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.agentic, d);
         if (alive) setData(d);
       })
       .catch((e: unknown) => {

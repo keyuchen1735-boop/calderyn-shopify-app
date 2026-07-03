@@ -4,6 +4,7 @@ import { hasEngineSignals } from "../first-run";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
 import { useLiveAnalytics } from "../use-live-analytics";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { ProductSummaryVM } from "~/lib/dashboard/client";
@@ -54,19 +55,31 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // Storefront card: real catalog products (title + image), no invented prices.
   // catalogTotal doubles as the first-run signal (0 = brand-new store); it stays
   // null on fetch errors so the setup card never shows on a transient failure.
-  const [products, setProducts] = useState<ProductSummaryVM[] | null>(null);
-  const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
+  // Seeded from the session cache (same request/key as the Products screen's
+  // default filter) so a return visit paints instantly; the fetch revalidates.
+  const seededCatalog = cachedScreenData<{ products: ProductSummaryVM[]; total: number }>(
+    catalogCacheKey("", undefined),
+  );
+  const [products, setProducts] = useState<ProductSummaryVM[] | null>(
+    () => seededCatalog?.products.slice(0, 3) ?? null,
+  );
+  const [catalogTotal, setCatalogTotal] = useState<number | null>(
+    () => seededCatalog?.total ?? null,
+  );
   useEffect(() => {
     let alive = true;
     client
       .fetchProducts()
       .then((p) => {
+        cacheScreenData(catalogCacheKey("", undefined), p);
         if (!alive) return;
         setProducts(p.products.slice(0, 3));
         setCatalogTotal(p.total);
       })
       .catch(() => {
-        if (alive) setProducts([]);
+        // Keep whatever the cache seeded — only fall to the error state when
+        // there was nothing to show at all.
+        if (alive) setProducts((cur) => cur ?? []);
       });
     return () => {
       alive = false;

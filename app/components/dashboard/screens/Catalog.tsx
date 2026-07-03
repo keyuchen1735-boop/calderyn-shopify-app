@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
 import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { ProductsSubTabs } from "../subtabs";
 import { money } from "../format";
@@ -34,12 +35,18 @@ function shipLabel(p: client.ProductSummaryVM): string {
   return `Validated · ${kg}kg`;
 }
 
+type CatalogPage = { products: client.ProductSummaryVM[]; total: number };
+
 export default function Catalog({ app }: { app: DashboardCtx }) {
-  const [products, setProducts] = useState<client.ProductSummaryVM[]>([]);
-  const [total, setTotal] = useState(0);
+  // Seeded from the session cache (default filter — the mount state) so a
+  // return visit paints the last list instantly; the effect below revalidates
+  // per filter and writes back through.
+  const seeded = cachedScreenData<CatalogPage>(catalogCacheKey("", undefined));
+  const [products, setProducts] = useState<client.ProductSummaryVM[]>(() => seeded?.products ?? []);
+  const [total, setTotal] = useState(() => seeded?.total ?? 0);
   const [status, setStatus] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -61,11 +68,20 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    const key = catalogCacheKey(query, statusParam);
+    const cached = cachedScreenData<CatalogPage>(key);
+    if (cached) {
+      // Last-known rows for this filter paint immediately — no skeleton, no
+      // "Loading…" caption; the fetch below silently revalidates them.
+      setProducts(cached.products);
+      setTotal(cached.total);
+    }
+    setLoading(!cached);
     setError(null);
     client
       .fetchProducts({ search: query || undefined, status: statusParam })
       .then((r) => {
+        cacheScreenData(key, { products: r.products, total: r.total });
         if (!alive) return;
         setProducts(r.products);
         setTotal(r.total);

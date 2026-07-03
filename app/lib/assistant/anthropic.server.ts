@@ -65,3 +65,11 @@ export const DEFAULT_DIGEST_MODEL = "claude-haiku-4-5";
 export function digestModel(): string {
   return process.env.DIGEST_MODEL || DEFAULT_DIGEST_MODEL;
 }
+
+/** Model for the new-product listing drafts: structured extraction against a
+ *  forced tool schema, so the digest-class model is the right default. The
+ *  deterministic parser handles common intents before this is ever called.
+ *  Override with LISTING_DRAFT_MODEL. */
+export function listingDraftModel(): string {
+  return process.env.LISTING_DRAFT_MODEL || DEFAULT_DIGEST_MODEL;
+}

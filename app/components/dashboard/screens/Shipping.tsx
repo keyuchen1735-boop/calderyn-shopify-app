@@ -3,6 +3,7 @@ import { Btn, Card, Pill, Placeholder } from "../ui";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { fetchShippingSummary, type ShippingSummary } from "~/lib/dashboard/shipping-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 
 const RATE_GRID = "1.4fr 1fr 1fr 1fr";
@@ -28,7 +29,11 @@ function CoverageStat({ value, label }: { value: string; label: string }) {
 }
 
 export default function Shipping({ app }: { app: DashboardCtx }) {
-  const [page, setPage] = useState<ShippingSummary | null>(null);
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through.
+  const [page, setPage] = useState<ShippingSummary | null>(() =>
+    cachedScreenData<ShippingSummary>(SCREEN_CACHE_KEYS.shipping),
+  );
   const [loading, setLoading] = useState(true);
   const toast = app.toast;
 
@@ -37,6 +42,7 @@ export default function Shipping({ app }: { app: DashboardCtx }) {
     setLoading(true);
     fetchShippingSummary()
       .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.shipping, p);
         if (alive) setPage(p);
       })
       .catch((err: unknown) => {

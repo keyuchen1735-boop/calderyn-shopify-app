@@ -118,8 +118,8 @@ export default function DashboardLoginPage() {
   // errors — there is no store-domain form: Shopify owns store identity.
   return (
     <AuthShell>
-      <h1 className="cd-auth-title">Sign in with Shopify</h1>
-      <p className="cd-auth-sub">Connect your store and bring your data with you.</p>
+      <h1 className="cd-auth-title">Connect Shopify</h1>
+      <p className="cd-auth-sub">Bring your store over.</p>
       <AuthError code={data.errorCode} />
       <div className="cd-auth-links">
         <a href={retryHref}>Try again</a>

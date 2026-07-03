@@ -4,6 +4,7 @@ import { CDIcon } from "../icons";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { fetchCommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
+import { analyticsCacheKey, cacheScreenData, cachedScreenData } from "~/lib/dashboard/screen-cache";
 import type {
   CommerceAnalytics,
   CommerceWindowDays,
@@ -323,18 +324,28 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   // Performance ↔ Live rides the URL (/dashboard/analytics vs /analytics/live)
   // so both subtabs are deep-linkable and back-button friendly.
   const view: "performance" | "live" = app.nav.sub === "live" ? "live" : "performance";
-  const [data, setData] = useState<CommerceAnalytics | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the session cache (default 30d — the mount state) so a return
+  // visit paints the last numbers instantly; the effect below revalidates per
+  // range and writes back through. loading must derive from the seed too —
+  // starting it at true would gate the first frame behind the skeleton and
+  // waste the seed.
+  const seeded = cachedScreenData<CommerceAnalytics>(analyticsCacheKey(RANGE_DAYS["30d"]));
+  const [data, setData] = useState<CommerceAnalytics | null>(seeded);
+  const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
 
   // The 7d/14d/30d segment re-queries the endpoint — the window is aggregated
   // server-side, not sliced client-side.
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    const key = analyticsCacheKey(RANGE_DAYS[range]);
+    const cached = cachedScreenData<CommerceAnalytics>(key);
+    if (cached) setData(cached);
+    setLoading(!cached);
     setError(null);
     fetchCommerceAnalytics(RANGE_DAYS[range])
       .then((res) => {
+        cacheScreenData(key, res);
         if (!alive) return;
         setData(res);
       })
