@@ -61,8 +61,26 @@ const excludeGeoAudit = {
   outcome: "succeeded",
 };
 
+const issueRefundAudit = {
+  id: "aud_refund", shop_id: SHOP, action_kind: "issue_refund",
+  params: { order_id: "order-1", stripe_refund_id: "re_1", amount_cents: 2500 },
+  pre_state: { state: "paid", refunded_cents: 0 },
+  post_state: { state: "refunded", refunded_cents: 2500 },
+  dollar_impact_at_exec: 0,
+  outcome: "succeeded",
+};
+
 describe("undoAction", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("refuses to undo an issue_refund (a Stripe refund is irreversible)", async () => {
+    const { sb, calls } = fakeSb(issueRefundAudit);
+    await expect(undoAction(SHOP, "aud_refund", sb)).rejects.toThrow(
+      /issue_refund; a Stripe refund is irreversible/,
+    );
+    // No reversal row is written — the refusal happens before any write (rule 12).
+    expect(calls.inserts).toHaveLength(0);
+  });
 
   it("undo of exclude_geo re-includes the recorded region", async () => {
     const { sb, calls } = fakeSb(excludeGeoAudit);

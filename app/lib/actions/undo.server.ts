@@ -90,6 +90,16 @@ export async function undoAction(
   if (error) throw error;
   if (!orig) throw new Error(`audit ${auditId} not found for shop`);
 
+  // issue_refund is audited-but-NOT-undoable: a Stripe refund is irreversible (there is no
+  // "un-refund" API call). Refuse loudly here — the API is the real boundary — even though
+  // v_audit_view already withholds undo_eligible for this kind (rule 12: never fake a reversal
+  // that can't happen). To reverse the effect a merchant must issue a NEW charge, not an undo.
+  if (orig.action_kind === "issue_refund") {
+    throw new Error(
+      `audit ${auditId} is an issue_refund; a Stripe refund is irreversible and cannot be undone. Issue a new charge to reverse it.`,
+    );
+  }
+
   // An undo row replays state (or, for inventory, a delta) — undoing it again
   // or undoing twice must be refused server-side, not just hidden by the UI's
   // undo_eligible flag (rule 12: the API is the real boundary). Read-then-act

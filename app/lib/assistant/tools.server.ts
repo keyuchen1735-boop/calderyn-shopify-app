@@ -106,6 +106,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
             "exclude_geo",
             "reallocate_inventory",
             "create_po_draft",
+            "issue_refund",
             "snooze_alert",
           ],
         },

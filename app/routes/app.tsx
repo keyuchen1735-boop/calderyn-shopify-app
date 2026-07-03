@@ -69,6 +69,7 @@ export default function App() {
         <Link to={withParams("/app/analytics")}>Analytics</Link>
         <Link to={withParams("/app/audit")}>Action history</Link>
         <Link to={withParams("/app/campaigns")}>Campaigns</Link>
+        <Link to={withParams("/app/orders")}>Orders</Link>
         <Link to={withParams("/app/skus")}>Inventory</Link>
         <Link to={withParams("/app/settings")}>Settings</Link>
         <Link to={withParams("/app/mcp")}>Claude connections</Link>
