@@ -112,7 +112,7 @@ export async function addCartLine(
   cartId: string,
   variantId: string,
   quantity: number,
-): Promise<CartLine> {
+): Promise<CartLine & { productId: string }> {
   if (!shopId) throw new Error("shopId is required");
   assertPersistableShop(shopId);
   if (!cartId) throw new Error("cartId is required");
@@ -153,7 +153,7 @@ export async function addCartLine(
       .single();
     if (bumped.error) throw bumped.error;
     if (!bumped.data) throw new Error("cart_line update returned no row");
-    return mapLine(bumped.data as Record<string, unknown>);
+    return { ...mapLine(bumped.data as Record<string, unknown>), productId: resolved.product.id };
   }
 
   const { data, error } = await sb
@@ -171,7 +171,7 @@ export async function addCartLine(
     .single();
   if (error) throw error;
   if (!data) throw new Error("cart_line insert returned no row");
-  return mapLine(data as Record<string, unknown>);
+  return { ...mapLine(data as Record<string, unknown>), productId: resolved.product.id };
 }
 
 /**
