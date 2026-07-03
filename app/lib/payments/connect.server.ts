@@ -111,11 +111,13 @@ export async function createRoutedPaymentIntent(
   let stripeAccountId = dest.stripeAccountId;
   let applicationFeeCents = dest.applicationFeeCents;
   let pi: Stripe.PaymentIntent;
+  const routedParams = { ...base, ...dest.params };
   try {
-    pi = await getStripe().paymentIntents.create(
-      { ...base, ...dest.params },
-      opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
-    );
+    // Callers without a key get the exact one-argument call (no trailing
+    // undefined) so request shapes stay byte-stable for Stripe and tests.
+    pi = opts.idempotencyKey
+      ? await getStripe().paymentIntents.create(routedParams, { idempotencyKey: opts.idempotencyKey })
+      : await getStripe().paymentIntents.create(routedParams);
   } catch (err) {
     // Destination-specific rejection (half-onboarded/restricted account) must not
     // break checkout: retry as a platform charge (= manually settleable) and
@@ -139,10 +141,11 @@ export async function createRoutedPaymentIntent(
       // The platform fallback needs its OWN idempotency key: reusing the
       // destination attempt's key with different params would make Stripe
       // reject the retry with idempotency_error instead of charging.
-      pi = await getStripe().paymentIntents.create(
-        base,
-        opts.idempotencyKey ? { idempotencyKey: `${opts.idempotencyKey}_platform` } : undefined,
-      );
+      pi = opts.idempotencyKey
+        ? await getStripe().paymentIntents.create(base, {
+            idempotencyKey: `${opts.idempotencyKey}_platform`,
+          })
+        : await getStripe().paymentIntents.create(base);
     } else {
       throw err;
     }
