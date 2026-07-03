@@ -3,35 +3,23 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
+import { centsToDollars, dollarsToCents, parseOptionRows } from "~/lib/catalog/product-form";
 import { Card, Btn, Pill, Placeholder, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
 import InventoryPanel from "./InventoryPanel";
+import NewProductFlow from "./NewProductFlow";
 
 // Option values are edited as raw text (not a parsed array) so typing the comma
-// separator doesn't fight a controlled input. The array is derived on demand.
+// separator doesn't fight a controlled input. The array is derived on demand
+// via the shared parseOptionRows (same converter the new-product flow uses).
 type Opt = { name: string; valuesText: string };
 
 function parseOptions(opts: Opt[]): Array<{ name: string; values: string[] }> {
-  return opts
-    .map((o) => ({
-      name: o.name.trim(),
-      values: o.valuesText.split(",").map((s) => s.trim()).filter(Boolean),
-    }))
-    .filter((o) => o.name && o.values.length);
+  return parseOptionRows(opts.map((o) => ({ name: o.name, values: o.valuesText })));
 }
 
 function variantLabel(v: client.VariantDraft): string {
   return (v.optionValues ?? []).join(" / ") || "Default";
-}
-
-// Price is stored in cents but edited in dollars (merchant-facing). Empty -> undefined.
-function centsToDollars(cents?: number): string {
-  return cents == null ? "" : String(cents / 100);
-}
-function dollarsToCents(text: string): number | undefined {
-  if (text.trim() === "") return undefined;
-  const n = Number(text);
-  return Number.isFinite(n) ? Math.round(n * 100) : undefined;
 }
 
 function parseRestrictedCountries(text: string): string[] {
@@ -45,7 +33,15 @@ function restrictedCountriesText(codes?: string[]): string {
   return (codes ?? []).join(", ");
 }
 
+// Creating a product goes through the prompt-first stepped flow; this editor
+// remains the edit surface (media, per-variant SKUs/shipping, live stock).
 export default function ProductEditor({ app }: { app: DashboardCtx }) {
+  const isNew = !app.nav.param || app.nav.param === "new";
+  if (isNew) return <NewProductFlow app={app} />;
+  return <ProductEditorEdit app={app} />;
+}
+
+function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const id = app.nav.param && app.nav.param !== "new" ? app.nav.param : null;
 
   const [title, setTitle] = useState("");
