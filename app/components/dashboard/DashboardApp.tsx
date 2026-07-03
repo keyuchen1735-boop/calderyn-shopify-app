@@ -214,7 +214,12 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
   const [acctOpen, setAcctOpen] = useState(false);
 
   const navigate = useCallback(
-    (screen: ScreenId, param: string | null = null, sub: string | null = null) => {
+    (
+      screen: ScreenId,
+      param: string | null = null,
+      sub: string | null = null,
+      opts?: { preserveScroll?: boolean },
+    ) => {
       const next: NavState = { screen, param, sub };
       setNav(next);
       setMoreOpen(false);
@@ -227,7 +232,10 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
         // (OAuth return notices) and must not ride along to every screen.
         window.history.pushState(window.history.state, "", path);
       }
-      document.getElementById("cd-main")?.scrollTo({ top: 0 });
+      // In-place expansions (an alert row opening) keep the pane where it is.
+      if (!opts?.preserveScroll) {
+        document.getElementById("cd-main")?.scrollTo({ top: 0 });
+      }
     },
     [],
   );

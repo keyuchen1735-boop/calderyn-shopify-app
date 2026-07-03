@@ -19,12 +19,11 @@ function ScreenHeader({ title, sub }: { title: ReactNode; sub?: ReactNode }) {
   );
 }
 
-/* ---------- Single history row ---------- */
+/* ---------- Single history row (punch list) ---------- */
 function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const failed = entry.outcome === "failed";
-  const retrying = entry.outcome === "retrying";
   const undone =
     Boolean((entry as AuditVM & { undone?: boolean }).undone) || entry.post === "Reverted";
 
@@ -38,64 +37,95 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
     }
   };
 
-  const tone = failed ? "critical" : entry.mode === "auto" ? "accent" : "success";
+  // Punch-list tint maps the REAL outcome vocabulary (succeeded | failed |
+  // retrying): succeeded → done, failed/undone → need, retrying → prog.
+  const k = failed || undone ? "need" : entry.outcome === "succeeded" ? "done" : "prog";
   const iconName = failed ? "warn" : CD_ACTION_ICON[entry.action_kind] ?? "bolt";
   const showImpact = entry.dollar_impact_at_exec > 0 && !undone;
 
+  // Sub line: in-flight/undone state word first (all from the VM), then the
+  // action detail (falling back to the legibility trigger when detail is
+  // empty), the actor, and the booked dollar impact when nonzero — always
+  // with its margin-basis qualifier so an estimate never reads as measured.
+  const status = failed
+    ? null // failed rows carry their failure reason on a dedicated line below
+    : undone
+      ? "Undone"
+      : entry.outcome === "retrying"
+        ? "Retrying"
+        : null;
+  const subParts = [
+    status,
+    entry.detail || entry.why,
+    entry.actorDisplay,
+    showImpact
+      ? `+${money(entry.dollar_impact_at_exec)}${entry.marginBasisLabel ? ` (${entry.marginBasisLabel.toLowerCase()})` : ""}`
+      : null,
+  ].filter((p): p is string => Boolean(p));
+
   return (
-    <div className="cd-row" data-dim={failed ? "1" : "0"} style={{ flexWrap: "wrap" }}>
-      <button
-        className="cd-feed-icon"
-        data-tone={tone}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label={open ? "Hide details" : "Show details"}
-        style={{ border: 0, cursor: "pointer", background: "transparent" }}
-      >
-        <CDIcon name={open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={1.9} />
-      </button>
-      <span className="cd-feed-icon" data-tone={tone}>
-        <CDIcon name={iconName} size={14} strokeWidth={1.9} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <Pill tone={entry.mode === "auto" ? "accent" : "neutral"}>
-            {entry.mode === "auto" ? "Auto" : "Manual"}
-          </Pill>
-          <span className="cd-row-title truncate">
+    <>
+      <div className="cd-punch-row">
+        <span className="cd-punch-ico" data-k={k}>
+          <CDIcon name={iconName} size={16} strokeWidth={1.9} />
+        </span>
+        <button
+          type="button"
+          className="cd-punch-body"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-label={open ? "Hide details" : "Show details"}
+          style={{
+            background: "transparent",
+            border: 0,
+            padding: 0,
+            textAlign: "left",
+            cursor: "pointer",
+            font: "inherit",
+            color: "inherit",
+          }}
+        >
+          <div className="cd-punch-title">
             {entry.undo_of ? "Reversed — " : ""}
-            {entry.verb}{entry.target ? ` — ${entry.target}` : ""}
+            {entry.verb}
+            {entry.target ? ` — ${entry.target}` : ""}
+          </div>
+          <div className="cd-punch-sub">{subParts.join(" · ")}</div>
+          {/* A failed row must surface WHY it failed without needing expansion
+              (rule 12 — fail visibly). The legibility `why` is the trigger, not
+              the failure, so show the machine failure message too. */}
+          {failed && (
+            <div className="cd-punch-sub" style={{ color: "var(--red)" }}>
+              {entry.failureFriendly ?? entry.failure ?? "Failed"}
+            </div>
+          )}
+        </button>
+        <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+          {entry.action_kind === "create_po_draft" && !failed && (
+            <a
+              href={`/dashboard/api/audit/${encodeURIComponent(entry.id)}/po.pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="cd-link"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <CDIcon name="doc" size={13} strokeWidth={1.9} /> PDF
+            </a>
+          )}
+          {entry.undo_eligible && !undone && (
+            <Btn small icon="undo" disabled={busy} onClick={onUndo}>
+              {busy ? "Undoing…" : "Undo"}
+            </Btn>
+          )}
+          <span
+            className="cd-eftime"
+            style={{ color: "var(--text-3)" }}
+            title={absTime(entry.when) || undefined}
+          >
+            {timeAgo(entry.when)}
           </span>
-          {failed && <Pill tone="critical" icon="x">Blocked</Pill>}
-          {retrying && <Pill tone="warn" icon="clock">Retrying</Pill>}
-          {undone && <Pill icon="undo">Undone</Pill>}
-        </div>
-        <div className="cd-caption truncate">{entry.why}</div>
-        {/* A failed row must surface WHY it failed without needing expansion
-            (rule 12 — fail visibly). The legibility `why` is the trigger, not
-            the failure, so show the machine failure message too. */}
-        {failed && entry.failure && (
-          <div className="cd-caption truncate" style={{ color: "var(--red)" }}>
-            {entry.failureFriendly ?? entry.failure}
-          </div>
-        )}
-      </div>
-      <div className="text-right whitespace-nowrap">
-        {showImpact && (
-          <div className="cd-row-num tabular-nums" style={{ color: "var(--green)" }}>
-            +{money(entry.dollar_impact_at_exec)}
-          </div>
-        )}
-        {showImpact && <div className="cd-caption">{entry.marginBasisLabel}</div>}
-        <div className="cd-caption" title={absTime(entry.when) || undefined}>
-          {entry.actorDisplay} · {timeAgo(entry.when)}
         </div>
       </div>
-      {entry.undo_eligible && !undone && (
-        <Btn small icon="undo" disabled={busy} onClick={onUndo}>
-          {busy ? "Undoing…" : "Undo"}
-        </Btn>
-      )}
       {open && (
         <div className="cd-audit-detail">
           <div className="cd-kv-col">
@@ -103,20 +133,6 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
               <span>Why this fired</span>
               <b>{entry.whyDetail ?? entry.why}</b>
             </div>
-            {entry.action_kind === "create_po_draft" && !failed && (
-              <div className="cd-kv">
-                <span>Purchase order</span>
-                <a
-                  href={`/dashboard/api/audit/${encodeURIComponent(entry.id)}/po.pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="cd-link"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-                >
-                  <CDIcon name="doc" size={14} strokeWidth={1.9} /> Download PDF
-                </a>
-              </div>
-            )}
             {entry.failure && (
               <div className="cd-kv">
                 <span>Failure reason</span>
@@ -169,7 +185,7 @@ function AuditRow({ entry, app }: { entry: AuditVM; app: DashboardCtx }) {
           )}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -205,7 +221,7 @@ export default function Audit({ app }: { app: DashboardCtx }) {
             sub="When Calderyn or you act on an alert, it gets logged here — reversible where possible."
           />
         ) : (
-          <div className="cd-rows">
+          <div style={{ padding: "6px 0" }}>
             {audit.map((e) => (
               <AuditRow key={e.id} entry={e} app={app} />
             ))}

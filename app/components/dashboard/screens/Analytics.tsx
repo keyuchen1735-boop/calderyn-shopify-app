@@ -160,7 +160,7 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
         <ScreenHeader title="Analytics" sub="Your storefront right now.">
           {viewSwitch}
         </ScreenHeader>
-        <AnalyticsLive />
+        <AnalyticsLive dark={!!app.t.dark} />
       </div>
     );
   }

@@ -84,8 +84,16 @@ export interface DashboardCtx {
   storeLabel: string;
   /** Current screen + optional route param. */
   nav: NavState;
-  /** Navigate to a screen; pushes the dedicated URL and scrolls main to top. */
-  navigate: (screen: Screen, param?: string | null, sub?: string | null) => void;
+  /** Navigate to a screen; pushes the dedicated URL and scrolls main to top.
+   *  opts.preserveScroll keeps the pane where it is — for in-place expansions
+   *  (an alert row opening its detail) where jumping to top would lose the
+   *  row the user just clicked. */
+  navigate: (
+    screen: Screen,
+    param?: string | null,
+    sub?: string | null,
+    opts?: { preserveScroll?: boolean },
+  ) => void;
 
   // --- data (view-models, fetched on mount) ---
   alerts: AlertVM[];
