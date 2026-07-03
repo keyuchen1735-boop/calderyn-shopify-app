@@ -60,7 +60,8 @@ export async function action({ request }: ActionFunctionArgs) {
     ({ id: userId } = await createUser(email, password));
   } catch (err) {
     if ((err as { code?: string }).code === "23505") return fail(409, "email_taken");
-    throw err;
+    console.error("[signup] account creation failed", err);
+    return fail(500, "account_creation_failed");
   }
   // Compensating cleanup: if anything after createUser fails, delete the just-
   // created user so the email is not permanently locked and a retry can succeed.
@@ -70,12 +71,25 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const { raw } = await createSessionForUser(userId, shopId);
     const baseUrl = process.env.DASHBOARD_PUBLIC_URL ?? process.env.SHOPIFY_APP_URL ?? "";
-    await sendVerificationEmail(userId, normalizeEmail(email), baseUrl).catch(() => {});
-    return redirect("/dashboard", {
+    // Best-effort: a delivery failure must not fail the signup, but the user
+    // should land on a resend prompt that tells the truth instead of waiting
+    // on an email that never left.
+    const delivery = await sendVerificationEmail(userId, normalizeEmail(email), baseUrl).catch(
+      () => ({ sent: false }),
+    );
+    // A brand-new email account is always unverified, and /dashboard would just
+    // bounce it to the verification gate anyway; go there directly.
+    const dest = delivery.sent
+      ? "/dashboard/verify-needed"
+      : "/dashboard/verify-needed?error=send_failed";
+    return redirect(dest, {
       headers: { "Set-Cookie": sessionCookieHeader(raw) },
     });
   } catch (err) {
     await deleteUser(userId).catch(() => {});
-    throw err;
+    // The rollback leaves a retry able to succeed, so bounce back to the form
+    // with a retryable error instead of a raw 500.
+    console.error("[signup] account creation failed", err);
+    return fail(500, "account_creation_failed");
   }
 }

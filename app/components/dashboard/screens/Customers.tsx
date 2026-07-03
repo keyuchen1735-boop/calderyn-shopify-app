@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Card, Btn, Placeholder, Segmented } from "../ui";
+import { Card, Btn, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
@@ -488,16 +488,16 @@ export default function Customers({ app }: { app: DashboardCtx }) {
       />
 
       {!page ? (
-        <Card>
-          <Placeholder
-            icon="user"
-            title={loading ? "Loading customers" : "Customers unavailable"}
-            sub={
-              loading
-                ? "Reading your buyer directory."
-                : "Could not load customers just now. Refresh to try again."
-            }
-          />
+        <Card pad={false}>
+          {loading ? (
+            <TableSkeleton />
+          ) : (
+            <Placeholder
+              icon="user"
+              title="Customers unavailable"
+              sub="Could not load customers just now. Refresh to try again."
+            />
+          )}
         </Card>
       ) : sub === "segments" ? (
         <Card pad={false}>

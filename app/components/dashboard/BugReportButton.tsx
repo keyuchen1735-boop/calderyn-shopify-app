@@ -95,7 +95,7 @@ export default function BugReportButton({
         const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
         throw new Error(body.message ?? body.error ?? "Could not send the report.");
       }
-      app.toast("Thanks — your bug report was sent.", "check");
+      app.toast("Thanks, your bug report was sent.", "check");
       reset();
       setOpen(false);
     } catch (err) {

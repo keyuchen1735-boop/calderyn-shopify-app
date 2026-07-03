@@ -81,7 +81,7 @@ export default function MediaDrop({
           </div>
         ) : (
           <div className="cd-mediadrop-meta">
-            <b>Drop the actual ad — image or video</b>
+            <b>Drop the actual ad (image or video)</b>
             <span>
               PNG, JPEG, WebP, AVIF · MP4, WebM, MOV · or <u>browse files</u>
             </span>

@@ -10,7 +10,7 @@ import { createGoogleUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
 import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
-import { AuthShell, AuthError } from "~/components/auth/AuthCard";
+import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
 export const meta: MetaFunction = () => [{ title: "Name your store — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
@@ -56,7 +56,10 @@ export async function action({ request }: ActionFunctionArgs) {
     return redirect("/dashboard", { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
   } catch (err) {
     await deleteUser(userId).catch(() => {});
-    throw err;
+    // The rollback leaves a retry able to succeed, so surface a retryable
+    // error page instead of a raw 500.
+    console.error("[google-store] account creation failed", err);
+    return fail(500, "account_creation_failed");
   }
 }
 
@@ -76,18 +79,25 @@ export default function GoogleStoreRoute() {
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Name your store</h1>
-      <p className="cd-auth-sub">You're signed in with Google. One last thing — what should we call your store?</p>
+      <p className="cd-auth-sub">You're signed in with Google. One last thing: what should we call your store?</p>
       <AuthError code={error} />
-      <form method="post" action="/dashboard/auth/google/store">
+      <AuthForm action="/dashboard/auth/google/store">
         <input type="hidden" name="t" value={t} />
         <label className="cd-auth-label" htmlFor="store">
           Store name
         </label>
-        <input className="cd-auth-input" id="store" name="store" type="text" required placeholder="e.g. Northbound Supply" />
-        <button className="cd-auth-submit" type="submit">
-          Continue
-        </button>
-      </form>
+        <input
+          className="cd-auth-input"
+          id="store"
+          name="store"
+          type="text"
+          required
+          autoComplete="organization"
+          placeholder="e.g. Northbound Supply"
+          autoFocus
+        />
+        <AuthSubmit label="Continue" pendingLabel="Creating account…" />
+      </AuthForm>
     </AuthShell>
   );
 }

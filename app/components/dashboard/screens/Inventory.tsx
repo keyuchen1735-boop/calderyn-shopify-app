@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Pill, Placeholder } from "../ui";
+import { Card, Pill, Placeholder, TableSkeleton } from "../ui";
 import { ProductsSubTabs } from "../subtabs";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
 import type { DashboardCtx } from "../context";
@@ -65,7 +65,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
 
       <Card pad={false}>
         {loading ? (
-          <Placeholder icon="box" title="Loading inventory" sub="Reading on-hand stock across your locations." />
+          <TableSkeleton />
         ) : error ? (
           <Placeholder icon="warn" title="Couldn't load inventory" sub={error} />
         ) : skus.length === 0 ? (

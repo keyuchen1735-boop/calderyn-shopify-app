@@ -104,7 +104,9 @@ function redirectToLogin(): void {
   // can't trip the guard and suppress a real later redirect.
   if (redirectingToLogin || typeof location === "undefined") return;
   redirectingToLogin = true;
-  location.assign("/dashboard/signin");
+  // Straight to the login page with the session-expired copy: routing through
+  // /dashboard/signin would redirect to /login anyway, but drop the message.
+  location.assign("/login?error=session_expired");
 }
 
 export async function apiGet<T>(path: string): Promise<T> {

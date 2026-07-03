@@ -57,7 +57,7 @@ export function McpGuide({ initialTab = "connector" }: { initialTab?: GuideTab }
         </span>
         <div className="cd-mcp-hero-title">Calderyn MCP for Claude</div>
         <div className="cd-mcp-hero-sub">
-          Connect your store to Claude — let it read your ads, inventory, and alerts and act within your guardrails.
+          Connect your store to Claude: let it read your ads, inventory, and alerts and act within your guardrails.
         </div>
       </div>
 

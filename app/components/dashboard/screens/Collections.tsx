@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
-import { Card, Btn, Placeholder } from "../ui";
+import { Card, Btn, Placeholder, TableSkeleton } from "../ui";
 
 // URL-only page (/dashboard/products/collections): no Products subtab entry,
 // so no subtab bar renders here.
@@ -82,7 +82,7 @@ export default function Collections({ app }: { app: DashboardCtx }) {
 
       <Card pad={false}>
         {loading ? (
-          <Placeholder icon="tag" title="Loading collections" />
+          <TableSkeleton />
         ) : error ? (
           <Placeholder icon="warn" title="Couldn't load collections" sub={error} />
         ) : items.length === 0 ? (
