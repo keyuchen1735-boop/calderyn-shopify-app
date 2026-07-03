@@ -37,6 +37,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const sb = getSupabase();
   const startedAt = Date.now();
   const errors: string[] = [];
+  // Organic-sweep failures are best-effort by contract (sweepOrganicSignals never
+  // throws; per-signal read hiccups are collected here). They must NOT flip the
+  // run's exit status: a single transient organic read on one shop would otherwise
+  // 500 the whole cron even though every shop's recompute succeeded, tripping
+  // Vercel's failed-cron alerting + a full-run retry. Surfaced, never fatal.
+  const organicErrors: string[] = [];
   let count = 0;
   let implicitApprovals = 0;
   let reversals = 0;
@@ -59,7 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         const organic = await sweepOrganicSignals(shopId, sb);
         implicitApprovals += organic.implicitApprovals;
         reversals += organic.reversals;
-        for (const e of organic.errors) errors.push(`${shopId} organic: ${e}`);
+        for (const e of organic.errors) organicErrors.push(`${shopId} organic: ${e}`);
       }
       try {
         await recomputeShopCalibration(shopId, { sb }, { peerPriors });
@@ -74,12 +80,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
 
   const duration_ms = Date.now() - startedAt;
+  if (organicErrors.length > 0) {
+    console.warn(`[cron.calibration-recompute] organic soft-errors: ${organicErrors.join("; ")}`);
+  }
   if (errors.length > 0) {
     console.error(`[cron.calibration-recompute] partial: ${errors.join("; ")}`);
     return json(
-      { ok: false, shops: count, implicitApprovals, reversals, errors, duration_ms },
+      { ok: false, shops: count, implicitApprovals, reversals, errors, organicErrors, duration_ms },
       { status: 500 },
     );
   }
-  return json({ ok: true, shops: count, implicitApprovals, reversals, errors, duration_ms });
+  return json({ ok: true, shops: count, implicitApprovals, reversals, errors, organicErrors, duration_ms });
 };
