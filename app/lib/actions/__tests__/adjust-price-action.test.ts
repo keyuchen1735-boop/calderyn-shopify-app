@@ -283,14 +283,18 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
 
   it("mirror: writes to Shopify, never the owned column", async () => {
     getOrgMode.mockResolvedValue("mirror");
+    const c = client(alert({}));
     await executeAdjustPriceAlertAction({
       ...base,
-      client: client(alert({})) as never,
+      client: c as never,
       admin: ADMIN,
       sb: okSb(),
     });
     expect(setVariantPrice).toHaveBeenCalled(); // Shopify write
     expect(setOwnedVariantPrice).not.toHaveBeenCalled();
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ writeTarget: "shopify_admin" }),
+    );
   });
 
   it("live: writes the owned column, never Shopify, cap anchored on owned price", async () => {
@@ -316,6 +320,7 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
           prior_price_cents: 1500,
           new_price_cents: 1700,
         }),
+        writeTarget: "owned_sot",
       }),
     );
     // The owned branch deliberately omits product_id (a Shopify handle it never touched);

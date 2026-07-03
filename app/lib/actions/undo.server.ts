@@ -168,6 +168,10 @@ export async function undoAction(
   // reversal is a relative delta, so retrying it double-applies — unlike the
   // campaign kinds, whose reversals are absolute-state and safe to retry.
   let appliedInventoryOperationId: string | null = null;
+  // Which system this reversal wrote to (extend:write-back), stamped on the undo
+  // row's write_target. Set in the store-mutating branches below; stays null for
+  // campaign kinds (Meta/Google), matching the forward path's convention.
+  let writeTarget: "shopify_admin" | "owned_sot" | null = null;
 
   // Single-campaign undos act on the campaign's external id. A blank id (e.g. a
   // legacy row that never recorded params.external_id) would hit the platform
@@ -231,6 +235,8 @@ export async function undoAction(
       owned_to_location_id?: string;
     };
     const delta = Number(ip.delta ?? 0);
+    // The reversal lands wherever the original move's authoritative write did.
+    writeTarget = ip.owned ? "owned_sot" : "shopify_admin";
     if (ip.owned) {
       // The original move ran on the OWNED engine (org_mode=live) — reverse it there,
       // locations swapped, never through Shopify (whose stock this move never touched).
@@ -319,6 +325,7 @@ export async function undoAction(
     // visible default rather than staying archived).
     await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
     await setDoNotReorder(sb, shopId, dp.sku_id, false);
+    writeTarget = "shopify_admin"; // re-activates the product on live Shopify
   } else if (orig.action_kind === "adjust_price") {
     const pp = (orig.params ?? {}) as {
       variant_id?: string;
@@ -328,6 +335,8 @@ export async function undoAction(
       dual_write?: string;
       owned_variant_id?: string;
     };
+    // The restore lands wherever the original change's authoritative write did.
+    writeTarget = pp.owned ? "owned_sot" : "shopify_admin";
     if (pp.owned) {
       // The original change ran on the OWNED catalog (org_mode=live) — restore the
       // recorded prior price there. Absolute-state, retry-safe, no Shopify involved.
@@ -406,6 +415,7 @@ export async function undoAction(
       dollar_impact_at_exec: orig.dollar_impact_at_exec ? -Number(orig.dollar_impact_at_exec) : 0,
       undo_of: orig.id,
       actor_user_id: "merchant",
+      write_target: writeTarget,
       completed_at: new Date().toISOString(),
     })
     .select("id")

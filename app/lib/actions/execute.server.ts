@@ -126,6 +126,14 @@ export async function recoveredDollarsForAlertAction(
   }
 }
 
+/**
+ * Which system a routed store mutation actually wrote to (extend:write-back).
+ * `shopify_admin` = the Shopify Admin API (mirror/importing/dual_run authoritative);
+ * `owned_sot` = Calderyn's owned catalog/inventory (org_mode=live). Persisted to
+ * action_audit.write_target. Campaign actions (Meta/Google) leave it null.
+ */
+export type WriteTarget = "shopify_admin" | "owned_sot";
+
 export interface AuditInsert {
   alert_id: string | null;
   action_kind: string;
@@ -136,6 +144,8 @@ export interface AuditInsert {
   last_error: string | null;
   actor_user_id: string;
   trigger_reason?: string | null;
+  /** The routed store-write target; null for campaign/platform actions. */
+  write_target?: WriteTarget | null;
 }
 
 /** The tail of every executor: ONE append-only audit row + its idempotency marker. */
