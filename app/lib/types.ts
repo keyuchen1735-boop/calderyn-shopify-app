@@ -20,6 +20,7 @@ export type ActionKind =
   | "exclude_sku_free_ship"
   | "discontinue_sku"
   | "adjust_price"
+  | "issue_refund"
   | "snooze_alert"
   | "push_creative_draft";
 export type DetectorId =

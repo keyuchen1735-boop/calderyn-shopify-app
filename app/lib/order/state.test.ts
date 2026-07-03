@@ -23,6 +23,11 @@ describe("isLegalTransition", () => {
     expect(isLegalTransition("paid", "fulfilled")).toBe(true);
     expect(isLegalTransition("paid", "refunded")).toBe(true);
     expect(isLegalTransition("fulfilled", "refunded")).toBe(true);
+    // Refund edges (#3b): partial refund routes paid/fulfilled -> partially_refunded,
+    // and a partially_refunded order can still reach full refunded.
+    expect(isLegalTransition("paid", "partially_refunded")).toBe(true);
+    expect(isLegalTransition("fulfilled", "partially_refunded")).toBe(true);
+    expect(isLegalTransition("partially_refunded", "refunded")).toBe(true);
   });
 
   it("rejects skips, backward moves, identity, and moves out of terminal states", () => {
@@ -32,6 +37,8 @@ describe("isLegalTransition", () => {
     expect(isLegalTransition("paid", "paid")).toBe(false); // identity
     expect(isLegalTransition("cancelled", "paid")).toBe(false); // out of terminal
     expect(isLegalTransition("refunded", "fulfilled")).toBe(false); // out of terminal
+    expect(isLegalTransition("partially_refunded", "partially_refunded")).toBe(false); // identity (a 2nd partial does not re-transition)
+    expect(isLegalTransition("partially_refunded", "paid")).toBe(false); // backward
   });
 
   it("treats cancelled and refunded as terminal (no outgoing edges)", () => {

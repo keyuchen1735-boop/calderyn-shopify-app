@@ -12,6 +12,7 @@ export const ORDER_STATES = [
   "fulfilled",
   "cancelled",
   "refunded",
+  "partially_refunded",
 ] as const;
 
 export type OrderState = (typeof ORDER_STATES)[number];
@@ -26,11 +27,20 @@ export type OrderState = (typeof ORDER_STATES)[number];
 // sits in `cart`. So `cart` only has the cart->checkout_pending edge here; a `cart ->
 // cancelled` edge (cancelling an abandoned basket) is intentionally omitted because it is
 // unreachable for the order state machine this enforcer guards.
+//
+// Refund edges (#3b): a partial Stripe refund moves paid/fulfilled -> `partially_refunded`;
+// a full refund (or a later partial that reaches the captured total) moves paid / fulfilled /
+// partially_refunded -> `refunded`. A SECOND partial refund on an already-partially_refunded
+// order does NOT re-transition (identity moves are illegal); the refund executor detects that
+// the target equals the current state and skips transitionOrder, recording only the ledger +
+// refund_fact. `refunded` stays terminal. `partially_refunded -> fulfilled` is intentionally
+// omitted (a refunded order is not re-fulfilled through this spine).
 export const LEGAL_TRANSITIONS: Record<OrderState, readonly OrderState[]> = {
   cart: ["checkout_pending"],
   checkout_pending: ["paid", "cancelled"],
-  paid: ["fulfilled", "refunded"],
-  fulfilled: ["refunded"],
+  paid: ["fulfilled", "refunded", "partially_refunded"],
+  fulfilled: ["refunded", "partially_refunded"],
+  partially_refunded: ["refunded"],
   cancelled: [],
   refunded: [],
 };

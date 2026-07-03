@@ -107,6 +107,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   exclude_sku_free_ship: "Exclude SKU from free shipping",
   discontinue_sku: "Stop reordering & archive product",
   adjust_price: "Raise price to restore margin",
+  issue_refund: "Issue a refund",
   snooze_alert: "Snooze alert",
   push_creative_draft: "Push to Meta as paused draft",
 };
@@ -141,6 +142,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   exclude_sku_free_ship: "Excluded SKU from free shipping",
   discontinue_sku: "Discontinued product",
   adjust_price: "Raised price",
+  issue_refund: "Issued refund",
   snooze_alert: "Snoozed alert",
   push_creative_draft: "Pushed paused draft to Meta",
 };
@@ -419,7 +421,7 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   regional_shortage_risk: ["reallocate_inventory", "create_po_draft", "snooze_alert"],
   regional_spend_starved_stock: ["exclude_geo", "reallocate_inventory", "snooze_alert"],
   reorder_timing: ["create_po_draft", "snooze_alert"],
-  return_rate_hidden_loss: ["pause_campaign", "reduce_campaign_budget", "discontinue_sku", "snooze_alert"],
+  return_rate_hidden_loss: ["pause_campaign", "reduce_campaign_budget", "issue_refund", "discontinue_sku", "snooze_alert"],
   scaling_sku_fulfillment_risk: ["create_po_draft", "reallocate_inventory", "snooze_alert"],
   wrong_location_concentration: ["reallocate_inventory", "snooze_alert"],
   // Baseline (catalog/inventory) detectors are informational nudges with no
@@ -451,6 +453,11 @@ const PLAN_ONLY_ACTIONS: ReadonlySet<ActionKind> = new Set([
   // COGS to compute a target the coarse hint can't — surfaced only via the
   // ranked remediation plan (review_pricing), never auto-queued.
   "adjust_price",
+  // issue_refund is order-scoped, not alert-scoped: it needs a specific owned
+  // order + a refund amount the coarse alert hint can't supply, and a Stripe
+  // refund is irreversible — never auto-queued. Merchants issue it from the order
+  // surface; the alert only PROPOSES it (MCP propose_action / "review & confirm").
+  "issue_refund",
 ]);
 
 /**
