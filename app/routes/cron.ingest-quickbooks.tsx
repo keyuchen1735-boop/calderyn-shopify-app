@@ -8,11 +8,16 @@ import { isRevokedTokenError } from "~/lib/quickbooks/oauth.server";
 
 async function setSync(shopId: string, patch: Record<string, unknown>): Promise<void> {
   const sb = getSupabase();
-  await sb
+  // supabase-js returns { error } without throwing; a silently-dropped status
+  // write would report a sync state that never persisted (stale status → endless
+  // re-sync, or a missed disconnected/last_sync_at). Throw so the caller surfaces
+  // it — mirrors cron.ingest-ads / cron.ingest-ship-costs.
+  const { error } = await sb
     .from("shop_integrations")
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("shop_id", shopId)
     .eq("kind", "quickbooks");
+  if (error) throw error;
 }
 
 async function toDlq(shopId: string, err: unknown): Promise<void> {
@@ -65,17 +70,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       summary.synced.push({ shopId, ...counts });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Best-effort status write: setSync now throws on a failed DB write, so it
+      // must not escape this per-shop catch and abort the remaining shops.
+      const nextStatus = isRevokedTokenError(err)
+        ? {
+            // Merchant revoked the app (or the refresh token expired): a clean
+            // "reconnect" state, not a system failure.
+            sync_status: "disconnected",
+            sync_error: "QuickBooks access was revoked — reconnect to resume syncing.",
+          }
+        : { sync_status: "error", sync_error: message.slice(0, 500) };
+      try {
+        await setSync(shopId, nextStatus);
+      } catch (statusErr) {
+        console.error(`[cron.ingest-quickbooks] failed to record sync status for ${shopId}`, statusErr);
+      }
       if (isRevokedTokenError(err)) {
-        // Merchant revoked the app (or the refresh token expired): a clean
-        // "reconnect" state, not a system failure — mark disconnected, no DLQ.
-        await setSync(shopId, {
-          sync_status: "disconnected",
-          sync_error: "QuickBooks access was revoked — reconnect to resume syncing.",
-        });
+        // A revoked token is a clean reconnect state, not a DLQ failure.
         summary.disconnected.push(shopId);
         continue;
       }
-      await setSync(shopId, { sync_status: "error", sync_error: message.slice(0, 500) });
       await toDlq(shopId, err);
       summary.errors.push(`${shopId}: ${message}`);
       console.error(`[cron.ingest-quickbooks] sync failed for ${shopId}`, err);
