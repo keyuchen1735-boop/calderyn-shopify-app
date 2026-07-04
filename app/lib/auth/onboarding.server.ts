@@ -31,3 +31,26 @@ export function normalizePhone(raw: string): string | null {
   if (digits.length < 7 || digits.length > 15) return null;
   return hasPlus ? `+${digits}` : digits;
 }
+
+export interface OnboardingProfile {
+  phone: string;
+  referralSource: ReferralSource;
+  referralOther: string | null;
+}
+
+/** Persist the onboarding profile and mark the user onboarded, in one update. */
+export async function setOnboardingProfile(
+  userId: string,
+  profile: OnboardingProfile,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from("users")
+    .update({
+      phone: profile.phone,
+      referral_source: profile.referralSource,
+      referral_source_other: profile.referralSource === "other" ? profile.referralOther : null,
+      onboarded_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+  if (error) throw error;
+}
