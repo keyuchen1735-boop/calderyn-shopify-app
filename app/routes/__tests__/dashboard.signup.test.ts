@@ -86,27 +86,28 @@ describe("signup action", () => {
     expect((res as Response).status).toBe(409);
   });
 
-  it("creates user+shop+membership+session and redirects to the verification gate", async () => {
+  it("creates user+shop+membership+session and redirects to onboarding", async () => {
     findUserByEmail.mockResolvedValue(null);
     createUser.mockResolvedValue({ id: "u1" });
     const { action } = await import("../dashboard.signup");
     const res = (await action({ request: form({ email: "a@b.co", password: "longenough12", store: "Acme" }) } as never)) as Response;
     expect(res.status).toBe(302);
-    // A fresh email account is always unverified; /dashboard would only bounce
-    // it back here, so the action goes straight to the gate (no double hop).
-    expect(res.headers.get("Location")).toBe("/dashboard/verify-needed");
+    // Onboarding (phone + how-heard, optional Shopify port) runs right after signup,
+    // before the verify gate.
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=");
   });
 
-  it("lands on the gate with error=send_failed when the verification email does not go out", async () => {
+  it("still lands on onboarding when the verification email does not go out (best-effort send)", async () => {
     findUserByEmail.mockResolvedValue(null);
     createUser.mockResolvedValue({ id: "u1" });
     sendVerificationEmail.mockResolvedValue({ sent: false });
     const { action } = await import("../dashboard.signup");
     const res = (await action({ request: form({ email: "a@b.co", password: "longenough12", store: "Acme" }) } as never)) as Response;
-    // Send failure must not fail the signup: still 302 with the session cookie.
+    // Send failure must not fail the signup: still 302 with the session cookie. The
+    // resend control lives on /dashboard/verify-needed, reached after onboarding.
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard/verify-needed?error=send_failed");
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=");
   });
 
@@ -117,7 +118,7 @@ describe("signup action", () => {
     const { action } = await import("../dashboard.signup");
     const res = (await action({ request: form({ email: "a@b.co", password: "longenough12", store: "Acme" }) } as never)) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard/verify-needed?error=send_failed");
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
   });
 
   it("rolls back the user and redirects to /signup with a friendly error when provisioning fails (form post)", async () => {
