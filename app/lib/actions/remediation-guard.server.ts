@@ -35,7 +35,12 @@ export async function checkSkuGuardrails(
 
   if (!row.autopilot_enabled) return { allowed: false, reason: "auto-pilot disabled" };
 
-  const dailyActionCap = Number(row.autopilot_daily_action_cap ?? 0);
+  // A null daily-action cap means "Unlimited" (the nullable column exists so
+  // merchants can select it). This SKU path is the autonomous autopilot path, so
+  // mirror evaluateGuardrails and treat null as 5 — never `Number(null ?? 0) === 0`,
+  // which made `count >= 0` always true and blocked every action as "cap reached".
+  const dailyActionCap =
+    row.autopilot_daily_action_cap == null ? 5 : Number(row.autopilot_daily_action_cap);
   const dollarCapCents = Math.round(Number(row.dollar_impact_cap_without_2fa ?? 0) * 100);
 
   // Same cap accounting as the campaign guard: only landed (`succeeded`)
