@@ -2040,3 +2040,150 @@ describe("runAutopilotForShop — resume_campaign (Slice B)", () => {
     );
   });
 });
+
+// ─── SKU→campaign resolution (dedicated-campaign fallback) ──────────────────
+
+const { resolveDedicatedCampaign, campaignSpend7dCents } = vi.hoisted(() => ({
+  // Default null → SKU-only candidates stay blocked exactly as before, so every
+  // pre-existing test keeps its behavior. Fallback tests override per-test.
+  resolveDedicatedCampaign: vi.fn(
+    async (): Promise<{
+      campaignId: string;
+      platform: string | null;
+      dailyBudgetCents: number | null;
+      spendCents: number;
+    } | null> => null,
+  ),
+  campaignSpend7dCents: vi.fn(async (): Promise<number | null> => 40000),
+}));
+vi.mock("../dedicated-campaign.server", () => ({ resolveDedicatedCampaign, campaignSpend7dCents }));
+
+describe("SKU-scoped candidates resolve their dedicated campaign", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    checkGuardrails.mockResolvedValue({ allowed: true });
+  });
+
+  const stockoutSkuOnly = {
+    alert_id: "al-stock-1", detector_id: "sku_stockout_vs_spend", dollar_impact: 120,
+    campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+    evidence: {}, sku: "SKU-A", sku_id: "sku-uuid-1",
+  };
+  const stockoutAlertRow = {
+    id: "al-stock-1",
+    detector_id: "sku_stockout_vs_spend",
+    entity_ref: { sku: "SKU-A", sku_id: "sku-uuid-1" },
+  };
+
+  it("legacy pause: a campaign-less stockout alert pauses its resolved dedicated campaign", async () => {
+    resolveDedicatedCampaign.mockResolvedValueOnce({
+      campaignId: "camp-dedicated-1", platform: "meta", dailyBudgetCents: 20000, spendCents: 30000,
+    });
+    stockoutPauseAllowed.mockResolvedValueOnce({ ok: true });
+    const sb = fakeSb({ enabled: true, alerts: [stockoutSkuOnly], scopedAlerts: [stockoutAlertRow] });
+
+    const summary = await runAutopilotForShop(SHOP, sb);
+
+    expect(summary.acted).toBe(1);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "pause_campaign", campaignId: "camp-dedicated-1", alertId: "al-stock-1" }),
+      sb,
+    );
+    // The min-spend guardrail must see the RESOLVED campaign's spend, not the
+    // candidate row's zero.
+    expect(checkGuardrails).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ campaignId: "camp-dedicated-1", campaignSpendCents: 30000 }),
+      sb,
+      expect.objectContaining({ forceBypassOff: true, autonomous: true }),
+    );
+  });
+
+  it("legacy pause: no dedicated campaign keeps the honest blocked reason (fail-closed)", async () => {
+    resolveDedicatedCampaign.mockResolvedValueOnce(null);
+    const sb = fakeSb({ enabled: true, alerts: [stockoutSkuOnly], scopedAlerts: [stockoutAlertRow] });
+
+    const summary = await runAutopilotForShop(SHOP, sb);
+
+    expect(summary.acted).toBe(0);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(summary.blockedReasons["pause_campaign requires a campaign_id"]).toBe(1);
+  });
+
+  it("remediation fallback: advisory recommendation falls back to the enriched executable cut", async () => {
+    const nueSkuOnly = {
+      alert_id: "al-nue-1", detector_id: "negative_unit_economics", dollar_impact: 90,
+      campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+      evidence: { gross_unit_margin_usd: 12, cac_per_unit_usd: 40, net_per_unit_usd: -28 },
+      sku: "SKU-B", sku_id: "sku-uuid-2",
+    };
+    // Phase-3 enrichment left the recommended reallocate_to_winner advisory but
+    // flipped cut_ads to an executable pause of the SKU's dedicated campaign.
+    enrichRemediation.mockImplementationOnce(async (_alert: unknown, plan: unknown) => {
+      const p = plan as { moves: Array<Record<string, unknown>> };
+      return {
+        ...p,
+        moves: p.moves.map((m) =>
+          m.kind === "cut_ads"
+            ? {
+                ...m,
+                executor: "pause_campaign",
+                ineligibleReason: undefined,
+                target: { skuId: "sku-uuid-2", loserCampaignId: "camp-dedicated-2", loserCampaignBudgetCents: 900 },
+              }
+            : m,
+        ),
+      };
+    });
+    campaignSpend7dCents.mockResolvedValueOnce(40000);
+    const sb = fakeSb({ enabled: true, alerts: [nueSkuOnly] });
+
+    const summary = await runAutopilotForShop(SHOP, sb);
+
+    expect(summary.acted).toBe(1);
+    expect(executeAction).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ kind: "pause_campaign", campaignId: "camp-dedicated-2", alertId: "al-nue-1" }),
+      sb,
+    );
+    expect(checkGuardrails).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ campaignId: "camp-dedicated-2", campaignSpendCents: 40000 }),
+      sb,
+      expect.objectContaining({ forceBypassOff: true, autonomous: true }),
+    );
+  });
+
+  it("remediation fallback: unverifiable dedicated-campaign spend skips (fail-closed)", async () => {
+    const nueSkuOnly = {
+      alert_id: "al-nue-2", detector_id: "negative_unit_economics", dollar_impact: 90,
+      campaign_id: null, campaign_spend_cents: 0, daily_budget_cents: null,
+      evidence: { gross_unit_margin_usd: 12, cac_per_unit_usd: 40, net_per_unit_usd: -28 },
+      sku: "SKU-B", sku_id: "sku-uuid-2",
+    };
+    enrichRemediation.mockImplementationOnce(async (_alert: unknown, plan: unknown) => {
+      const p = plan as { moves: Array<Record<string, unknown>> };
+      return {
+        ...p,
+        moves: p.moves.map((m) =>
+          m.kind === "cut_ads"
+            ? {
+                ...m,
+                executor: "pause_campaign",
+                ineligibleReason: undefined,
+                target: { skuId: "sku-uuid-2", loserCampaignId: "camp-dedicated-3", loserCampaignBudgetCents: 900 },
+              }
+            : m,
+        ),
+      };
+    });
+    campaignSpend7dCents.mockResolvedValueOnce(null);
+    const sb = fakeSb({ enabled: true, alerts: [nueSkuOnly] });
+
+    const summary = await runAutopilotForShop(SHOP, sb);
+
+    expect(summary.acted).toBe(0);
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+});

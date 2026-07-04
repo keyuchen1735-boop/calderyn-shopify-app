@@ -29,6 +29,7 @@ import { suggestAdjustPrice } from "../remediation/price";
 import { readVariantPrice } from "../shopify/price.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import { transferPlanFromEvidence } from "../shopify/inventory.server";
+import { campaignSpend7dCents, resolveDedicatedCampaign } from "./dedicated-campaign.server";
 import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
 import { isGraduated } from "../calibration/graduation.server";
@@ -183,31 +184,80 @@ async function tryRemediation(
     console.info(`[autopilot] remediation skip on alert ${c.alert_id}: no recommended move`);
     return { outcome: "skipped", reason: "remediation: no recommended move" };
   }
-  const move: StrategicMove | undefined = plan.moves.find((m) => m.kind === recommended);
+  let move: StrategicMove | undefined = plan.moves.find((m) => m.kind === recommended);
 
   // Advisory / not-yet-executable recommendation (executor null, or snooze):
-  // autopilot does not auto-snooze and does not act on advisory moves. This
-  // includes a reallocate_to_winner that enrichRemediation left advisory
-  // (no dedicated campaign / no winner → executor stayed null). Fall through so
-  // the legacy campaign logic can still pause/reduce if applicable.
+  // autopilot does not auto-snooze and does not act on advisory moves. Before
+  // deferring, fall back to the plan's cut_ads leg when enrichment made IT
+  // executable — a pause/reduce of the SKU's dedicated campaign, resolved from
+  // the trusted v_sku_remediation_inputs view (never request input). This is
+  // how a SKU-scoped money-loser reaches its own pause pair even when the
+  // cross-campaign reallocation stays advisory (no qualifying winner /
+  // non-Meta loser). Without an executable cut either, fall through so the
+  // legacy campaign logic can still pause/reduce if applicable.
   if (!move || move.executor == null || move.executor === "snooze_alert") {
-    console.info(
-      `[autopilot] remediation skip on alert ${c.alert_id}: recommended ${recommended} is advisory/non-executable`,
+    const cut = plan.moves.find(
+      (m) =>
+        m.kind === "cut_ads" &&
+        (m.executor === "pause_campaign" || m.executor === "reduce_campaign_budget") &&
+        typeof m.target?.loserCampaignId === "string",
     );
-    return {
-      outcome: "fell_through",
-      reason: `remediation: ${recommended} is advisory/non-executable`,
-    };
+    if (!cut) {
+      console.info(
+        `[autopilot] remediation skip on alert ${c.alert_id}: recommended ${recommended} is advisory/non-executable`,
+      );
+      return {
+        outcome: "fell_through",
+        reason: `remediation: ${recommended} is advisory/non-executable`,
+      };
+    }
+    console.info(
+      `[autopilot] remediation fallback on alert ${c.alert_id}: ${recommended} is advisory — trying executable ${cut.executor} on the SKU's dedicated campaign`,
+    );
+    move = cut;
+  }
+  // Defensive re-narrow: both branches above guarantee an executable, non-snooze
+  // move (the compiler cannot see through the find() predicates).
+  if (move.executor == null || move.executor === "snooze_alert") {
+    return { outcome: "skipped", reason: "remediation: no executable move" };
+  }
+
+  // Campaign target for the campaign-scoped executors below. The enriched
+  // cut/reallocate legs carry the SKU's dedicated campaign in move.target
+  // (trusted view data); candidates keyed to a campaign use their own.
+  const remCampaignId =
+    typeof move.target?.loserCampaignId === "string" ? move.target.loserCampaignId : c.campaign_id;
+  // When acting on a resolved campaign the candidate row's spend/budget belong
+  // to a DIFFERENT campaign (or none) — re-derive both for the target so the
+  // min-spend guardrail and the budget-snapshot freshness check stay honest.
+  const usingResolvedCampaign =
+    remCampaignId != null &&
+    remCampaignId !== c.campaign_id &&
+    (move.executor === "pause_campaign" || move.executor === "reduce_campaign_budget");
+  let remCampaignSpendCents = c.campaign_spend_cents ?? 0;
+  let remCampaignBudgetCents = c.daily_budget_cents ?? null;
+  if (usingResolvedCampaign) {
+    const spend = await campaignSpend7dCents(sb, shopId, remCampaignId);
+    if (spend == null) {
+      // Fail-closed: cannot verify the target campaign's spend → do not act.
+      console.info(
+        `[autopilot] remediation skip on alert ${c.alert_id}: could not verify dedicated-campaign spend`,
+      );
+      return { outcome: "skipped", reason: "remediation: dedicated-campaign spend unavailable" };
+    }
+    remCampaignSpendCents = spend;
+    remCampaignBudgetCents =
+      typeof move.target?.loserCampaignBudgetCents === "number"
+        ? move.target.loserCampaignBudgetCents
+        : null;
+    // Audited decision must name the campaign actually touched (see decide()).
+    (c as Candidate & { _resolvedCampaignId?: string })._resolvedCampaignId = remCampaignId;
   }
 
   const dollarImpactCents = move.dollarImpactCents;
-  const reason = remediationReason(plan, recommended as MoveKind, c.detector_id as DetectorId);
+  const reason = remediationReason(plan, move.kind as MoveKind, c.detector_id as DetectorId);
   const idempotencyKey = `autopilot:${c.alert_id}:${move.executor}`;
 
-  // REVIEW: autopilot-remediation is gated on calibration graduation (same as
-  // legacy autonomous actions); in v1 no pair is graduated so it stays dormant.
-  // Confirm which remediation pairs should become graduatable.
-  //
   // Graduation gate (Slice 5 parity): an executable remediation move MUST NOT
   // bypass calibration's safety model. Gate it on the SAME isGraduated check the
   // legacy autonomous path applies — keyed on the kind the move is calibrated +
@@ -239,6 +289,7 @@ async function tryRemediation(
   // pair_dollar_cap on reduce_campaign_budget downsizes instead of vetoing —
   // the cap is stashed here and applied where newBudgetCents is computed below.
   let remediationCappedDollarCents: number | undefined;
+  let remediationMuOverride = 1;
   {
     const nowUtc = new Date();
     const ruleVerdict = await loadAndApplyRules(
@@ -247,7 +298,7 @@ async function tryRemediation(
       graduationKind,
       {
         dollarImpactCents,
-        campaignSpendCents: c.campaign_spend_cents ?? 0,
+        campaignSpendCents: remCampaignSpendCents,
         nowUtcHour: nowUtc.getUTCHours(),
         nowIso: nowUtc.toISOString(),
       },
@@ -260,6 +311,7 @@ async function tryRemediation(
       return { outcome: "skipped", reason: `rule: ${ruleVerdict.veto}` };
     }
     remediationCappedDollarCents = ruleVerdict.cappedDollarCents;
+    if (ruleVerdict.muOverride !== undefined) remediationMuOverride = ruleVerdict.muOverride;
   }
 
   // SKU-scoped move (discontinue_sku): SKU guard, no campaign needed. The Phase-2
@@ -406,9 +458,10 @@ async function tryRemediation(
   }
 
   // Campaign-scoped remediation moves: reallocate_spend_sku, or a plain cut via
-  // pause/reduce. These need a campaign; without one, block (rule 12 — the
-  // engine should not have offered an executable campaign move with no campaign).
-  if (!c.campaign_id) {
+  // pause/reduce. These need a campaign — either the candidate's own or the
+  // enriched move target's dedicated campaign; without either, block (rule 12 —
+  // the engine should not have offered an executable campaign move with no campaign).
+  if (!remCampaignId) {
     console.info(`[autopilot] remediation block on alert ${c.alert_id}: ${move.executor} needs a campaign`);
     return { outcome: "blocked", reason: `remediation: ${move.executor} needs a campaign` };
   }
@@ -453,7 +506,7 @@ async function tryRemediation(
     // I7: every autonomous action notifies the merchant at execution time.
     notifyPromises.push(
       notifyAutonomousAction(
-        { shopId, actionDescription: `Shifted ad spend${c.sku ? ` for SKU ${c.sku}` : ""} (campaign ${c.campaign_id})` },
+        { shopId, actionDescription: `Shifted ad spend${c.sku ? ` for SKU ${c.sku}` : ""} (campaign ${remCampaignId})` },
         merchantEmail,
       ).catch((e) => console.error("[autopilot-notify] unexpected error (reallocate_spend_sku)", e)),
     );
@@ -464,12 +517,17 @@ async function tryRemediation(
   // campaign executor seam executeAction(shopId, ExecuteInput, sb) + the
   // campaign guard. triggerReason flows through ExecuteInput.triggerReason.
   if (move.executor === "pause_campaign" || move.executor === "reduce_campaign_budget") {
-    // Non-null campaign_id captured so it survives the awaits below (guarded above).
-    const campaignId: string = c.campaign_id;
-    const currentBudgetCents = c.daily_budget_cents ?? null;
+    // Non-null campaign target captured so it survives the awaits below
+    // (guarded above). Spend/budget were re-derived when the target is the
+    // resolved dedicated campaign rather than the candidate's own.
+    const campaignId: string = remCampaignId;
+    const currentBudgetCents = remCampaignBudgetCents;
     let newBudgetCents =
       move.executor === "reduce_campaign_budget" && currentBudgetCents != null
-        ? Math.round(currentBudgetCents * 0.5) // mirror DEFAULT_MAX_CUT_PCT (guard enforces the live value)
+        ? // Mirror DEFAULT_MAX_CUT_PCT (guard enforces the live value), scaled by
+          // the merchant's learned sizing restraint — the override only ever
+          // makes the cut smaller.
+          Math.round(currentBudgetCents * (1 - 0.5 * remediationMuOverride))
         : undefined;
     if (move.executor === "reduce_campaign_budget" && !newBudgetCents) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: no current budget to cut`);
@@ -498,7 +556,7 @@ async function tryRemediation(
         kind: move.executor,
         campaignId,
         dollarImpactCents,
-        campaignSpendCents: c.campaign_spend_cents,
+        campaignSpendCents: remCampaignSpendCents,
         currentBudgetCents: currentBudgetCents ?? undefined,
         newBudgetCents,
       },
@@ -514,7 +572,7 @@ async function tryRemediation(
     // Fail-safe: any doubt skips, the alert stays open for the merchant.
     const precheck = await preconditionFresh({
       kind: move.executor,
-      candidate: { ...c, campaign_id: campaignId },
+      candidate: { ...c, campaign_id: campaignId, daily_budget_cents: currentBudgetCents },
       sb,
       nowMs: Date.now(),
     });
@@ -588,29 +646,34 @@ async function tryInventoryRelocation(
 
   // Concrete transfer plan from the alert's own evidence (never the request).
   const plan = transferPlanFromEvidence(c.evidence ?? {});
-  if (!plan) {
-    // No transfer plan in the evidence. sku_stockout_vs_spend ALSO has a legacy
-    // pause_campaign autopilot path (its own no-brainer gate) and never carries a
-    // transfer plan — for it, FALL THROUGH so that pause autonomy is preserved
-    // (one decision per alert: pause OR relocate, never both). For the
-    // pure-relocation detectors (no legacy path), a missing plan is unexecutable
-    // → block so the alert stays open for the merchant (rule 12).
-    if (c.detector_id === "sku_stockout_vs_spend") {
-      return { outcome: "fell_through", reason: "reallocate_inventory: no transfer plan (defer to pause path)" };
-    }
-    console.info(`[autopilot] inventory relocation block on alert ${c.alert_id}: invalid inventory evidence`);
-    return { outcome: "blocked", reason: "reallocate_inventory: invalid inventory evidence" };
+  // sku_stockout_vs_spend ALSO has a legacy pause_campaign autopilot path (its
+  // own no-brainer gate) and never carries a transfer plan — for it, FALL
+  // THROUGH before any other gate so that pause autonomy is preserved (one
+  // decision per alert: pause OR relocate, never both).
+  if (!plan && c.detector_id === "sku_stockout_vs_spend") {
+    return { outcome: "fell_through", reason: "reallocate_inventory: no transfer plan (defer to pause path)" };
   }
 
   // Graduation gate (same safety model as every other autonomous path). Keyed on
   // the executor kind reallocate_inventory. isGraduated is fail-safe (false on any
   // read error), so a DB hiccup can never grant autonomy. NOT graduated → skip
   // (bucketed as skippedMoves, not a guardrail block) and resolve the candidate.
+  // Checked BEFORE evidence validation: a pair that could not act anyway must
+  // not flood the summary's blocked histogram with evidence-shape noise every
+  // tick — "invalid inventory evidence" is only surfaced (and only actionable)
+  // once the pair is actually enabled to act.
   if (!(await isGraduated(shopId, c.detector_id, "reallocate_inventory", sb))) {
     console.info(
       `[autopilot] inventory relocation skip on alert ${c.alert_id}: pair (${c.detector_id}/reallocate_inventory) not graduated`,
     );
     return { outcome: "skipped", reason: "remediation pair not graduated" };
+  }
+
+  if (!plan) {
+    // A graduated pair with unexecutable evidence is a real, actionable data
+    // gap — block so the alert stays open for the merchant (rule 12).
+    console.info(`[autopilot] inventory relocation block on alert ${c.alert_id}: invalid inventory evidence`);
+    return { outcome: "blocked", reason: "reallocate_inventory: invalid inventory evidence" };
   }
 
   // DOLLAR/CENTS boundary: c.dollar_impact from v_autopilot_candidates is in
@@ -914,7 +977,11 @@ export async function runAutopilotForShop(
     } else if (bucket === "failed") failed += 1;
     decisions.push({
       alertId: c.alert_id,
-      campaignId: c.campaign_id,
+      // SKU-scoped candidates that acted on a resolved dedicated campaign
+      // stash it so the audited decision names the campaign that was actually
+      // touched (matching action_audit + the merchant notification), not null.
+      campaignId:
+        (c as Candidate & { _resolvedCampaignId?: string })._resolvedCampaignId ?? c.campaign_id,
       detectorId: c.detector_id,
       intendedKind,
       outcome,
@@ -1033,18 +1100,50 @@ export async function runAutopilotForShop(
       // candidate without one (data gap in the view) is blocked, not silently
       // dropped (rule 12). Checked before the graduation gate because it is a
       // structural precondition of the legacy executor seam.
-      if (!c.campaign_id) {
+      // SKU-only candidates (e.g. a stockout alert the engine could not key to
+      // a campaign) get one trusted resolution attempt before the structural
+      // block: the SKU's dedicated mutable campaign from
+      // v_sku_remediation_inputs (>= 70% of the campaign's attributed revenue,
+      // active, budgeted). Pause-only — budget cuts/increases are never taken
+      // against an inferred campaign. Spend/budget are re-derived for the
+      // resolved campaign so the min-spend guardrail and the freshness
+      // snapshot stay honest. Fail-closed: no dedicated campaign (or any read
+      // error) keeps the existing blocked-with-reason behavior, so the alert
+      // stays queued for the merchant (rule 12).
+      let resolvedCampaignId = c.campaign_id;
+      let currentBudgetCents = c.daily_budget_cents ?? null;
+      let campaignSpendCents = c.campaign_spend_cents;
+      // Scoped ad_tax_overload candidates lack sku fields — narrow like the
+      // resume block does; undefined refs simply skip the resolution attempt.
+      const skuRef = c as Candidate;
+      if (!resolvedCampaignId && kind === "pause_campaign" && (skuRef.sku_id || skuRef.sku)) {
+        const resolved = await resolveDedicatedCampaign(sb, shopId, {
+          skuId: skuRef.sku_id,
+          sku: skuRef.sku,
+        });
+        if (resolved) {
+          resolvedCampaignId = resolved.campaignId;
+          currentBudgetCents = resolved.dailyBudgetCents;
+          campaignSpendCents = resolved.spendCents;
+          (c as Candidate & { _resolvedCampaignId?: string })._resolvedCampaignId =
+            resolved.campaignId;
+          console.info(
+            `[autopilot] resolved dedicated campaign ${resolved.campaignId} for SKU-scoped alert ${c.alert_id}`,
+          );
+        }
+      }
+      if (!resolvedCampaignId) {
         const reason = `${kind} requires a campaign_id`;
         console.info(`[autopilot] blocked legacy action on alert ${c.alert_id}: ${reason}`);
         decide(c, kind, "blocked", reason);
         continue;
       }
       // Non-null campaign_id captured here so it survives the awaits/closures
-      // below (TS would otherwise re-widen c.campaign_id back to string | null).
-      // The merged Candidate keeps campaign_id nullable for SKU-only economics
+      // below (TS would otherwise re-widen it back to string | null). The
+      // merged Candidate keeps campaign_id nullable for SKU-only economics
       // alerts; the legacy seam — and preconditionFresh's targeting Candidate —
       // require it non-null, which the guard above guarantees.
-      const campaignId: string = c.campaign_id;
+      const campaignId: string = resolvedCampaignId;
 
       // Learned pairs must earn graduation; the three shipped no-brainers start
       // unlocked. isGraduated remains fail-safe, so a DB hiccup can never grant
@@ -1068,14 +1167,14 @@ export async function runAutopilotForShop(
           kind,
           {
             dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
-            campaignSpendCents: c.campaign_spend_cents,
+            campaignSpendCents,
             nowUtcHour: nowUtc.getUTCHours(),
             nowIso: nowUtc.toISOString(),
           },
           sb,
         );
         if (ruleVerdict.veto) {
-          console.info(`[autopilot] rule veto for ${c.campaign_id} (${c.detector_id}/${kind}): ${ruleVerdict.veto}`);
+          console.info(`[autopilot] rule veto for ${campaignId} (${c.detector_id}/${kind}): ${ruleVerdict.veto}`);
           decide(c, kind, "skipped", `rule: ${ruleVerdict.veto}`);
           continue;
         }
@@ -1087,7 +1186,13 @@ export async function runAutopilotForShop(
           // The capped amount is resolved after currentBudgetCents is known, below.
           (c as Candidate & { _cappedDollarCents?: number })._cappedDollarCents = ruleVerdict.cappedDollarCents;
         }
+        if (ruleVerdict.muOverride !== undefined) {
+          // Learned sizing restraint (too_aggressive): consumed below as
+          // min(policyMu, muOverride) — it can only shrink a cut/increase.
+          (c as Candidate & { _muOverride?: number })._muOverride = ruleVerdict.muOverride;
+        }
       }
+      const muOverride = (c as Candidate & { _muOverride?: number })._muOverride ?? 1;
 
       // Slice B: resume a campaign Calderyn auto-paused for a stockout, now that
       // its SKU is restocked. resume_campaign restarts spend, so it clears the
@@ -1114,7 +1219,7 @@ export async function runAutopilotForShop(
             dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
             // Pre-pause spend, not the paused campaign's near-zero recent spend,
             // so the min-spend guardrail stays meaningful instead of false-blocking.
-            campaignSpendCents: Math.max(c.campaign_spend_cents, prepauseSpendCents),
+            campaignSpendCents: Math.max(campaignSpendCents, prepauseSpendCents),
           },
           sb,
           { forceBypassOff: true, autonomous: true },
@@ -1177,24 +1282,25 @@ export async function runAutopilotForShop(
         continue;
       }
 
-      const currentBudgetCents = c.daily_budget_cents ?? null;
-
       if (kind === "increase_campaign_budget") {
         if (!currentBudgetCents) {
           const reason =
             currentBudgetCents == null
               ? "current daily budget missing from sync"
               : "current daily budget is $0";
-          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          console.info(`[autopilot] skipped scale on ${campaignId}: ${reason}`);
           decide(c, kind, "skipped", reason);
           continue;
         }
-        const muInc = (await getActionPolicy(sb, shopId, c.detector_id, "increase_campaign_budget")) ?? 1;
+        const muInc = Math.min(
+          (await getActionPolicy(sb, shopId, c.detector_id, "increase_campaign_budget")) ?? 1,
+          muOverride,
+        );
         let target = Math.round(currentBudgetCents * (1 + (maxIncreasePct * muInc) / 100));
         if (maxDailyBudgetCents != null) target = Math.min(target, maxDailyBudgetCents);
         if (target <= currentBudgetCents) {
           const reason = "already at/above the daily ceiling";
-          console.info(`[autopilot] skipped scale on ${c.campaign_id}: ${reason}`);
+          console.info(`[autopilot] skipped scale on ${campaignId}: ${reason}`);
           decide(c, kind, "skipped", reason);
           continue;
         }
@@ -1202,9 +1308,9 @@ export async function runAutopilotForShop(
           shopId,
           {
             kind: "increase_campaign_budget",
-            campaignId: c.campaign_id,
+            campaignId,
             dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
-            campaignSpendCents: c.campaign_spend_cents,
+            campaignSpendCents,
             currentBudgetCents,
             newBudgetCents: target,
           },
@@ -1220,7 +1326,7 @@ export async function runAutopilotForShop(
           {
             alertId: c.alert_id,
             kind: "increase_campaign_budget",
-            campaignId: c.campaign_id,
+            campaignId,
             idempotencyKey: `autopilot:${c.alert_id}:increase_campaign_budget`,
             dailyBudgetCents: target,
             actor: "autopilot",
@@ -1233,7 +1339,7 @@ export async function runAutopilotForShop(
           // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
           notifyPromises.push(
             notifyAutonomousAction(
-              { shopId, actionDescription: `Scaled up campaign budget (campaign ${c.campaign_id})` },
+              { shopId, actionDescription: `Scaled up campaign budget (campaign ${campaignId})` },
               merchantEmail,
             ).catch((e) => console.error("[autopilot-notify] unexpected error (budget scale)", e)),
           );
@@ -1251,14 +1357,17 @@ export async function runAutopilotForShop(
           currentBudgetCents == null
             ? "current daily budget missing from sync"
             : "current daily budget is $0 on the platform";
-        console.info(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason}`);
+        console.info(`[autopilot] skipped budget cut on ${campaignId}: ${reason}`);
         decide(c, kind, "skipped", reason);
         continue;
       }
 
       const muCut =
         kind === "reduce_campaign_budget"
-          ? (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1
+          ? Math.min(
+              (await getActionPolicy(sb, shopId, c.detector_id, "reduce_campaign_budget")) ?? 1,
+              muOverride,
+            )
           : 1;
       let newBudgetCents =
         kind === "reduce_campaign_budget" && currentBudgetCents != null
@@ -1279,7 +1388,7 @@ export async function runAutopilotForShop(
           // Clamp: newBudgetCents >= currentBudgetCents - cappedCents
           newBudgetCents = Math.max(newBudgetCents, currentBudgetCents - cappedCents);
           console.info(
-            `[autopilot] pair_dollar_cap clamped reduce for ${c.campaign_id}: newBudget=${newBudgetCents}c (cap=${cappedCents}c)`,
+            `[autopilot] pair_dollar_cap clamped reduce for ${campaignId}: newBudget=${newBudgetCents}c (cap=${cappedCents}c)`,
           );
         }
       }
@@ -1289,7 +1398,7 @@ export async function runAutopilotForShop(
       // reachable with maxCutPct near 100, so flag the config loudly.
       if (kind === "reduce_campaign_budget" && !newBudgetCents) {
         const reason = "max_budget_cut_pct computes a $0 target budget";
-        console.warn(`[autopilot] skipped budget cut on ${c.campaign_id}: ${reason} (max_budget_cut_pct=${maxCutPct})`);
+        console.warn(`[autopilot] skipped budget cut on ${campaignId}: ${reason} (max_budget_cut_pct=${maxCutPct})`);
         decide(c, kind, "skipped", reason);
         continue;
       }
@@ -1316,9 +1425,17 @@ export async function runAutopilotForShop(
       // to the plain reduce path so loss-prevention still acts.
       if (kind === "reduce_campaign_budget" && currentBudgetCents != null && newBudgetCents != null) {
         if (currentBudgetCents - newBudgetCents > 0) {
-          const { dest } = pickReallocation(gradedPool, { sourceCampaignId: c.campaign_id });
+          const { dest } = pickReallocation(gradedPool, { sourceCampaignId: campaignId });
           if (dest && (await isGraduated(shopId, c.detector_id, "reallocate_budget", sb))) {
-            const muRealloc = (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1;
+            // muOverride was learned on the reduce pair, and it binds here on
+            // purpose: a reallocation removes amountCents from the SAME source
+            // campaign the merchant said was being cut too aggressively — the
+            // restraint governs how much leaves that campaign, whichever
+            // executor carries the cut.
+            const muRealloc = Math.min(
+              (await getActionPolicy(sb, shopId, c.detector_id, "reallocate_budget")) ?? 1,
+              muOverride,
+            );
             const amountCents = Math.round((currentBudgetCents * maxCutPct * muRealloc) / 100);
             if (amountCents > 0) {
               const reallocSrcBudget = currentBudgetCents - amountCents;
@@ -1326,10 +1443,10 @@ export async function runAutopilotForShop(
                 shopId,
                 {
                   kind: "reallocate_budget",
-                  campaignId: c.campaign_id,
+                  campaignId,
                   destCampaignId: dest.campaignId,
                   dollarImpactCents: amountCents,
-                  campaignSpendCents: c.campaign_spend_cents,
+                  campaignSpendCents,
                   currentBudgetCents,
                   newBudgetCents: reallocSrcBudget,
                 },
@@ -1344,7 +1461,7 @@ export async function runAutopilotForShop(
                 shopId,
                 {
                   alertId: c.alert_id,
-                  sourceCampaignId: c.campaign_id,
+                  sourceCampaignId: campaignId,
                   destCampaignId: dest.campaignId,
                   amountCents,
                   idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
@@ -1373,7 +1490,7 @@ export async function runAutopilotForShop(
                 // Collect for await Promise.allSettled at end of run — prevents serverless abandonment.
                 notifyPromises.push(
                   notifyAutonomousAction(
-                    { shopId, actionDescription: `Reallocated budget from campaign ${c.campaign_id}` },
+                    { shopId, actionDescription: `Reallocated budget from campaign ${campaignId}` },
                     merchantEmail,
                   ).catch((e) => console.error("[autopilot-notify] unexpected error (realloc)", e)),
                 );
@@ -1388,9 +1505,9 @@ export async function runAutopilotForShop(
         shopId,
         {
           kind,
-          campaignId: c.campaign_id,
+          campaignId,
           dollarImpactCents: Math.round(Number(c.dollar_impact) * 100),
-          campaignSpendCents: c.campaign_spend_cents,
+          campaignSpendCents,
           currentBudgetCents: currentBudgetCents ?? undefined,
           newBudgetCents,
         },
@@ -1408,12 +1525,12 @@ export async function runAutopilotForShop(
       if (kind === "pause_campaign" || kind === "reduce_campaign_budget") {
         const precheck = await preconditionFresh({
           kind,
-          candidate: { ...c, campaign_id: campaignId },
+          candidate: { ...c, campaign_id: campaignId, daily_budget_cents: currentBudgetCents },
           sb,
           nowMs: Date.now(),
         });
         if (!precheck.ok) {
-          console.info(`[autopilot] precondition re-check failed for ${c.campaign_id}: ${precheck.reason}`);
+          console.info(`[autopilot] precondition re-check failed for ${campaignId}: ${precheck.reason}`);
           decide(c, kind, "skipped", precheck.reason ?? "precondition_failed");
           continue;
         }
@@ -1440,7 +1557,7 @@ export async function runAutopilotForShop(
           sb,
         });
         if (!stockCheck.ok) {
-          console.info(`[autopilot] stockout allowlist blocked ${c.campaign_id}: ${stockCheck.reason}`);
+          console.info(`[autopilot] stockout allowlist blocked ${campaignId}: ${stockCheck.reason}`);
           decide(c, kind, "skipped", stockCheck.reason ?? "stockout_precondition_not_met");
           continue;
         }
@@ -1451,7 +1568,7 @@ export async function runAutopilotForShop(
         {
           alertId: c.alert_id,
           kind,
-          campaignId: c.campaign_id,
+          campaignId,
           idempotencyKey: `autopilot:${c.alert_id}:${kind}`,
           dailyBudgetCents: newBudgetCents,
           actor: "autopilot",
@@ -1469,7 +1586,7 @@ export async function runAutopilotForShop(
         const actionLabel = kind === "pause_campaign" ? "Paused campaign" : "Reduced budget for campaign";
         notifyPromises.push(
           notifyAutonomousAction(
-            { shopId, actionDescription: `${actionLabel} ${c.campaign_id}` },
+            { shopId, actionDescription: `${actionLabel} ${campaignId}` },
             merchantEmail,
           ).catch((e) => console.error("[autopilot-notify] unexpected error (pause/reduce)", e)),
         );
