@@ -78,21 +78,21 @@ describe("onboarding loader", () => {
 
 describe("onboarding action", () => {
   it("422s an invalid phone", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty());
+    getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ phone: "123", referral_source: "google_search" }) } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "invalid_phone" });
   });
   it("422s an invalid referral", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty());
+    getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ phone: "4155550123", referral_source: "myspace" }) } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "invalid_referral" });
   });
   it("finish: saves and redirects an unverified user to verify-needed", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty());
+    getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
@@ -100,13 +100,13 @@ describe("onboarding action", () => {
     expect(setOnboardingProfile).toHaveBeenCalledWith("u1", expect.objectContaining({ phone: "4155550123", referralSource: "google_search" }));
   });
   it("finish: redirects a verified (Google) user to /dashboard", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty({ emailVerified: true }));
+    getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard");
   });
   it("connect: saves then hands off to the existing Shopify OAuth", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty());
+    getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "connect", phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
@@ -114,9 +114,40 @@ describe("onboarding action", () => {
     expect(setOnboardingProfile).toHaveBeenCalled();
   });
   it("rejects a shop-based (userId null) session with 400 not_first_party", async () => {
-    getDashboardSessionAllowUnverified.mockResolvedValue(firstParty({ userId: null }));
+    getSessionFromRequest.mockResolvedValue(firstParty({ userId: null }));
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }) } as never)) as Response;
     expect(res.status).toBe(400);
+  });
+
+  it("redirects a browser form post to /login when the session is gone (no raw JSON in the tab)", async () => {
+    getSessionFromRequest.mockResolvedValue(null);
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/login");
+  });
+
+  it("returns 401 JSON to a JSON client when the session is gone", async () => {
+    getSessionFromRequest.mockResolvedValue(null);
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }, true) } as never)) as Response;
+    expect(res.status).toBe(401);
+  });
+
+  it("forwards the 'other' free-text to setOnboardingProfile", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    const { action } = await import("../dashboard.onboarding");
+    await action({ request: form({ phone: "4155550123", referral_source: "other", referral_source_other: "a friend at a meetup" }, false) } as never);
+    expect(setOnboardingProfile).toHaveBeenCalledWith("u1", expect.objectContaining({ referralSource: "other", referralOther: "a friend at a meetup" }));
+  });
+
+  it("clamps referral_source_other to 120 chars at the action boundary", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    const { action } = await import("../dashboard.onboarding");
+    const long = "x".repeat(300);
+    await action({ request: form({ phone: "4155550123", referral_source: "other", referral_source_other: long }, false) } as never);
+    const call = setOnboardingProfile.mock.calls[0][1] as { referralOther: string };
+    expect(call.referralOther).toHaveLength(120);
   });
 });

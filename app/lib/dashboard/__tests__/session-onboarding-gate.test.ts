@@ -68,4 +68,15 @@ describe("onboarding gate", () => {
     expect(err.status).toBe(403);
     expect(await err.json()).toMatchObject({ error: "onboarding_required" });
   });
+
+  it("requireVerifiedSession returns an onboarded + verified first-party session (happy path)", async () => {
+    maybeSingle.mockResolvedValue(
+      row({ user: { email_verified: true, onboarded_at: "2026-07-04T00:00:00Z" } }),
+    );
+    const { requireVerifiedSession } = await import("../session.server");
+    const s = await requireVerifiedSession(req());
+    expect(s.userId).toBe("u1");
+    expect(s.emailVerified).toBe(true);
+    expect(s.onboardedAt).toBe("2026-07-04T00:00:00Z");
+  });
 });

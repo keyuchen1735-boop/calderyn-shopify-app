@@ -71,12 +71,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const { raw } = await createSessionForUser(userId, shopId);
     const baseUrl = publicBaseUrl();
-    // Best-effort: a delivery failure must not fail the signup, but the user
-    // should land on a resend prompt that tells the truth instead of waiting
-    // on an email that never left.
     // Best-effort: a delivery failure must not fail the signup. The verification
-    // email is sent now, but the resend control lives on /dashboard/verify-needed,
-    // which the user reaches after finishing onboarding.
+    // email is sent now; if it fails, the resend control on /dashboard/verify-needed
+    // (reached after onboarding) is the recovery path and surfaces the send error.
     await sendVerificationEmail(userId, normalizeEmail(email), baseUrl).catch(() => {});
     // Onboarding (phone + how-heard, optional Shopify port) runs right after signup,
     // before the verify gate.

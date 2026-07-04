@@ -8,10 +8,7 @@ import { redirect } from "@remix-run/node";
 import { useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
-import {
-  getSessionFromRequest,
-  getDashboardSessionAllowUnverified,
-} from "~/lib/dashboard/session.server";
+import { getSessionFromRequest } from "~/lib/dashboard/session.server";
 import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
 import { normalizePhone, isReferralSource, setOnboardingProfile } from "~/lib/auth/onboarding.server";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
@@ -38,10 +35,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const badOrigin = checkSameOrigin(request);
   if (badOrigin) return badOrigin;
-  const session = await getDashboardSessionAllowUnverified(request);
 
   const fail = (status: number, code: string) =>
     wantsJson(request) ? jsonError(status, code) : redirect(`/dashboard/onboarding?error=${code}`);
+
+  const session = await getSessionFromRequest(request);
+  // No live session (expired/revoked while this first-post-signup screen sat open):
+  // HTML posts go to /login, JSON clients get a 401 — never a raw JSON body painted
+  // into the browser tab (mirrors the loader's graceful handling).
+  if (!session) return wantsJson(request) ? jsonError(401, "unauthenticated") : redirect("/login");
 
   // Only first-party users onboard; a shop-based session has no users row to write.
   if (session.userId == null) return fail(400, "not_first_party");
@@ -51,7 +53,8 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = String(fd.get("intent") ?? "finish");
   const phone = normalizePhone(String(fd.get("phone") ?? ""));
   const referral = String(fd.get("referral_source") ?? "");
-  const referralOther = String(fd.get("referral_source_other") ?? "").trim() || null;
+  // Clamp the free text at the boundary — never trust the browser maxLength.
+  const referralOther = String(fd.get("referral_source_other") ?? "").trim().slice(0, 120) || null;
 
   if (!phone) return fail(422, "invalid_phone");
   if (!isReferralSource(referral)) return fail(422, "invalid_referral");
