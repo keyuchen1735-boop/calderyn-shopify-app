@@ -296,6 +296,11 @@ function ruleSummary(r: { detector_id: string; action_kind: ActionKind; rule_kin
       const dollars = (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
       return `I skip ${label} under ${dollars} of spend`;
     }
+    case "pair_mu_override": {
+      const mu = Number(val?.mu ?? 1);
+      const pct = Math.round(Math.min(1, Math.max(0.05, mu)) * 100);
+      return `I keep ${label} to ${pct}% of my normal move size`;
+    }
     default:
       return `Rule on ${label}`;
   }

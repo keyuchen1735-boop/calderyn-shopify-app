@@ -338,3 +338,59 @@ describe("loadAndApplyRules", () => {
     expect(result.veto).toBe("merchant handles this");
   });
 });
+
+// ─── pair_mu_override (learned sizing restraint) ────────────────────────────
+
+describe("applyRules pair_mu_override", () => {
+  it("returns the clamped muOverride without vetoing", () => {
+    const result = applyRules([rule("pair_mu_override", { mu: 0.7 })], BASE_CTX);
+    expect(result.veto).toBeUndefined();
+    expect(result.muOverride).toBe(0.7);
+  });
+
+  it("clamps out-of-range values to [0.05, 1]", () => {
+    expect(applyRules([rule("pair_mu_override", { mu: -3 })], BASE_CTX).muOverride).toBe(0.05);
+    expect(applyRules([rule("pair_mu_override", { mu: 7 })], BASE_CTX).muOverride).toBe(1);
+  });
+
+  it("ignores a rule with no numeric mu", () => {
+    const result = applyRules([rule("pair_mu_override", {})], BASE_CTX);
+    expect(result.muOverride).toBeUndefined();
+    expect(result.veto).toBeUndefined();
+  });
+
+  it("resolves multiple active overrides to the TIGHTEST dial", () => {
+    const result = applyRules(
+      [rule("pair_mu_override", { mu: 0.85 }), rule("pair_mu_override", { mu: 0.55 })],
+      BASE_CTX,
+    );
+    expect(result.muOverride).toBe(0.55);
+  });
+
+  it("combines with a reduce dollar cap: both effects returned, no veto", () => {
+    const result = applyRules(
+      [rule("pair_mu_override", { mu: 0.4 }), rule("pair_dollar_cap", { cents: 500 })],
+      { ...BASE_CTX, actionKind: "reduce_campaign_budget", dollarImpactCents: 1000 },
+    );
+    expect(result.veto).toBeUndefined();
+    expect(result.muOverride).toBe(0.4);
+    expect(result.cappedDollarCents).toBe(500);
+  });
+
+  it("a veto rule still wins over sizing effects (mute beats override)", () => {
+    const result = applyRules(
+      [rule("pair_mu_override", { mu: 0.4 }), rule("muted_pair")],
+      BASE_CTX,
+    );
+    expect(result.veto).toBe("merchant handles this");
+    expect(result.muOverride).toBeUndefined();
+  });
+
+  it("resolves multiple reduce dollar caps to the tightest cap", () => {
+    const result = applyRules(
+      [rule("pair_dollar_cap", { cents: 900 }), rule("pair_dollar_cap", { cents: 300 })],
+      { ...BASE_CTX, actionKind: "reduce_campaign_budget", dollarImpactCents: 1000 },
+    );
+    expect(result.cappedDollarCents).toBe(300);
+  });
+});

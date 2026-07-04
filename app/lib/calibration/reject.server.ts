@@ -152,6 +152,155 @@ async function learnBlackoutHours(
   }
 }
 
+/** too_aggressive sizing restraint (spec §5): each too_aggressive reject shrinks
+ * the pair's learned sizing dial by MU_STEP, flooring at MU_FLOOR. Enforcement
+ * combines it as min(policyMu, override), so this rule can only ever make an
+ * autonomous cut/increase smaller. */
+export const MU_STEP = 0.15;
+export const MU_FLOOR = 0.05;
+/** A rejected proposal counts as "small spend" when its campaign's 7d spend is
+ * at or below max(2 × the shop's autopilot_min_spend_cents, this floor). */
+export const SMALL_SPEND_FLOOR_CENTS = 5000;
+
+/** Tighten (or create) the pair's pair_mu_override rule. Tighten-only: a write
+ * never raises the dial. Supersede pattern (append + deactivate), same as
+ * learnBlackoutHours. Best-effort: failures log and skip. Returns true when a
+ * rule was written. */
+async function tightenMuOverride(
+  sb: SupabaseClient,
+  shopId: string,
+  detectorId: string,
+  actionKind: ActionKind,
+): Promise<boolean> {
+  try {
+    const { data: existing, error: exErr } = await sb
+      .from("calibration_rule")
+      .select("id, rule_value")
+      .eq("shop_id", shopId)
+      .eq("detector_id", detectorId)
+      .eq("action_kind", actionKind)
+      .eq("rule_kind", "pair_mu_override")
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle();
+    if (exErr) throw new Error(exErr.message);
+    const rawMu = ((existing?.rule_value ?? null) as Record<string, unknown> | null)?.mu;
+    const existingMu = typeof rawMu === "number" && Number.isFinite(rawMu) ? Math.min(1, Math.max(MU_FLOOR, rawMu)) : 1;
+    const next = Math.max(MU_FLOOR, Math.round((existingMu - MU_STEP) * 100) / 100);
+    if (next >= existingMu) return false; // already at the floor — nothing to tighten
+
+    const { data: inserted, error: insErr } = await sb
+      .from("calibration_rule")
+      .insert({
+        shop_id: shopId,
+        detector_id: detectorId,
+        action_kind: actionKind,
+        rule_kind: "pair_mu_override",
+        rule_value: { mu: next },
+        source: "too_aggressive",
+        active: true,
+      })
+      .select("id")
+      .single();
+    if (insErr) throw new Error(insErr.message);
+    if (existing?.id) {
+      const { error: supErr } = await sb
+        .from("calibration_rule")
+        .update({ active: false, superseded_by: inserted?.id ?? null })
+        .eq("shop_id", shopId)
+        .eq("id", existing.id);
+      if (supErr) console.error(`[calibration] mu-override supersede failed: ${supErr.message}`);
+    }
+    return true;
+  } catch (err) {
+    console.error(
+      `[calibration] tightenMuOverride failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
+}
+
+/** too_aggressive on a small-spend campaign (spec §5): raise the pair's spend
+ * floor to just above the rejected campaign's 7d spend, so autopilot leaves
+ * campaigns that small alone for this pair. Tighten-only: the floor only ever
+ * rises. Best-effort: failures log and skip. */
+async function raiseMinSpendFloor(
+  sb: SupabaseClient,
+  shopId: string,
+  detectorId: string,
+  actionKind: ActionKind,
+  alertId: string | null,
+): Promise<boolean> {
+  try {
+    if (!alertId) return false;
+    const { data: cand, error: candErr } = await sb
+      .from("v_autopilot_candidates")
+      .select("campaign_spend_cents")
+      .eq("shop_id", shopId)
+      .eq("alert_id", alertId)
+      .limit(1)
+      .maybeSingle();
+    if (candErr) throw new Error(candErr.message);
+    const spendCents = Number(cand?.campaign_spend_cents);
+    if (!Number.isFinite(spendCents) || spendCents <= 0) return false;
+
+    const { data: g, error: gErr } = await sb
+      .from("guardrail_config")
+      .select("autopilot_min_spend_cents")
+      .eq("shop_id", shopId)
+      .maybeSingle();
+    if (gErr) throw new Error(gErr.message);
+    const shopMinCents = Number(g?.autopilot_min_spend_cents ?? 0) || 0;
+    const smallBarCents = Math.max(2 * shopMinCents, SMALL_SPEND_FLOOR_CENTS);
+    if (spendCents > smallBarCents) return false; // not a small-spend reject
+
+    const floorCents = Math.round(spendCents) + 1; // veto campaigns at/below this spend
+    const { data: existing, error: exErr } = await sb
+      .from("calibration_rule")
+      .select("id, rule_value")
+      .eq("shop_id", shopId)
+      .eq("detector_id", detectorId)
+      .eq("action_kind", actionKind)
+      .eq("rule_kind", "pair_min_spend")
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle();
+    if (exErr) throw new Error(exErr.message);
+    const rawCents = ((existing?.rule_value ?? null) as Record<string, unknown> | null)?.cents;
+    const existingCents = typeof rawCents === "number" && Number.isFinite(rawCents) ? rawCents : 0;
+    if (existingCents >= floorCents) return false; // tighten-only: never lower the floor
+
+    const { data: inserted, error: insErr } = await sb
+      .from("calibration_rule")
+      .insert({
+        shop_id: shopId,
+        detector_id: detectorId,
+        action_kind: actionKind,
+        rule_kind: "pair_min_spend",
+        rule_value: { cents: floorCents },
+        source: "too_aggressive",
+        active: true,
+      })
+      .select("id")
+      .single();
+    if (insErr) throw new Error(insErr.message);
+    if (existing?.id) {
+      const { error: supErr } = await sb
+        .from("calibration_rule")
+        .update({ active: false, superseded_by: inserted?.id ?? null })
+        .eq("shop_id", shopId)
+        .eq("id", existing.id);
+      if (supErr) console.error(`[calibration] min-spend supersede failed: ${supErr.message}`);
+    }
+    return true;
+  } catch (err) {
+    console.error(
+      `[calibration] raiseMinSpendFloor failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
+}
+
 async function refreshShopCalibrationHeadline(
   shopId: string,
   sb: SupabaseClient,
@@ -277,6 +426,15 @@ export async function recordRejection(
       input.detectorId,
       input.actionKind,
     );
+  }
+
+  // too_aggressive structural learning beyond the dollar cap (spec §5): shrink
+  // the pair's sizing dial, and — when the rejected proposal targeted a
+  // small-spend campaign — raise the pair's spend floor. Both tighten-only and
+  // best-effort; the reject itself never fails on their account.
+  if (input.reason === "too_aggressive") {
+    await tightenMuOverride(sb, shopId, input.detectorId, input.actionKind);
+    await raiseMinSpendFloor(sb, shopId, input.detectorId, input.actionKind, input.alertId);
   }
 
   // Read the pair's Beta counters AFTER the bump for the confidence diff.
