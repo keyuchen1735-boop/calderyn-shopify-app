@@ -27,13 +27,17 @@ async function runOne(item: AdWorkItem, summary: Summary): Promise<void> {
   const { shopId, status, adapter } = item;
   const tag = `${shopId}:${adapter.platform}`;
   const sb = getSupabase();
-  const source = await adapter.connect(shopId);
-  if (!source) {
-    summary.skipped.push(tag);
-    return;
-  }
   const now = new Date().toISOString();
   try {
+    // connect() is INSIDE the try so a thrown connect (a stored-but-BROKEN
+    // credential) lands in the same sync_status:'error' path as a fetch failure
+    // instead of escaping unrecorded — mirrors cron.ingest-ship-costs. A null
+    // return still means genuinely-no-credential → benign skip.
+    const source = await adapter.connect(shopId);
+    if (!source) {
+      summary.skipped.push(tag);
+      return;
+    }
     if (status === "pending") {
       await backfillAds(source, adapter.platform, shopId, sb);
       await setSync(shopId, adapter.integrationKind, { sync_status: "live", sync_error: null, last_sync_at: now });
