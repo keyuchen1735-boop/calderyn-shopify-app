@@ -21,6 +21,7 @@ describe("seedShippedAutopilotFeatures", () => {
         detector_id: "sku_stockout_vs_spend",
         action_kind: "pause_campaign",
         graduated: true,
+        autonomy_enabled: true,
         last_conf: 74,
       }),
       expect.objectContaining({
@@ -28,6 +29,7 @@ describe("seedShippedAutopilotFeatures", () => {
         detector_id: "campaign_below_breakeven",
         action_kind: "pause_campaign",
         graduated: true,
+        autonomy_enabled: true,
         last_conf: 74,
       }),
       expect.objectContaining({
@@ -35,6 +37,7 @@ describe("seedShippedAutopilotFeatures", () => {
         detector_id: "negative_unit_economics",
         action_kind: "pause_campaign",
         graduated: true,
+        autonomy_enabled: true,
         last_conf: 74,
       }),
     ]);
