@@ -18,15 +18,19 @@ export function isValidEmail(raw: string): boolean {
 
 export async function findUserByEmail(
   email: string,
-): Promise<{ id: string; passwordHash: string } | null> {
+): Promise<{ id: string; passwordHash: string; emailVerified: boolean } | null> {
   const { data, error } = await getSupabase()
     .from("users")
-    .select("id, password_hash")
+    .select("id, password_hash, email_verified")
     .eq("email", normalizeEmail(email))
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return { id: String(data.id), passwordHash: String(data.password_hash) };
+  return {
+    id: String(data.id),
+    passwordHash: String(data.password_hash),
+    emailVerified: Boolean(data.email_verified),
+  };
 }
 
 export async function createUser(

@@ -115,8 +115,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   // Path 2: user exists by email (signed up with password) - link the Google sub.
+  // Only link + sign in when the local account has proven ownership of the email
+  // (email_verified). Merging a Google identity into an unverified local row would
+  // let anyone who pre-registers an email be hijacked into by the real owner's
+  // federated login, so refuse and steer them to verify first.
   const byEmail = await findUserByEmail(email);
   if (byEmail) {
+    if (!byEmail.emailVerified) {
+      return redirect("/dashboard/signin?error=verify_email_first", {
+        headers: { "Set-Cookie": CLEAR_GOAUTH },
+      });
+    }
     await setGoogleSub(byEmail.id, sub);
     const shopId = await resolveShopForUser(byEmail.id);
     if (!shopId) {

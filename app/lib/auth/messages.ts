@@ -14,6 +14,7 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   google_oauth_failed: "Google sign-in didn't complete. Try again.",
   google_unavailable: "Google sign-in isn't available right now. Use your email and password.",
   google_unverified_email: "Your Google account's email isn't verified with Google, so we can't use it to sign you in.",
+  verify_email_first: "Verify your email address first, then sign in. Check your inbox for the verification link.",
   invalid_or_expired_token: "That link is invalid or has expired. Request a new one.",
   bad_origin: "Something went wrong submitting the form. Reload the page and try again.",
   session_expired: "You were signed out. Sign in again to continue.",

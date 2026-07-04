@@ -233,7 +233,7 @@ describe("google callback loader", () => {
       mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "existing@e.com", emailVerified: true });
       mockFindUserByGoogleSub.mockResolvedValue(null);
-      mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com" });
+      mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com", emailVerified: true });
       mockResolveShopForUser.mockResolvedValue("shop-existing");
 
       const { loader } = await import("../dashboard.auth.google_.callback");
@@ -247,6 +247,27 @@ describe("google callback loader", () => {
       const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("Set-Cookie") ?? ""];
       const joined = cookies.join("; ");
       expect(joined).toContain("__Host-calderyn_dash=");
+    });
+
+    it("refuses to link or sign in when the matched local account is not email-verified", async () => {
+      const nonce = "testnonce";
+      mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
+      mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "existing@e.com", emailVerified: true });
+      mockFindUserByGoogleSub.mockResolvedValue(null);
+      mockFindUserByEmail.mockResolvedValue({ id: "u-unverified", email: "existing@e.com", emailVerified: false });
+
+      const { loader } = await import("../dashboard.auth.google_.callback");
+      const req = callbackRequest({ code: "code", state: nonce }, nonce);
+      const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toContain("/dashboard/signin?error=verify_email_first");
+      // No linking and no session for an unproven account.
+      expect(mockSetGoogleSub).not.toHaveBeenCalled();
+      expect(mockCreateSessionForUser).not.toHaveBeenCalled();
+      // Cookie must be cleared.
+      const setCookie = res.headers.get("Set-Cookie") ?? "";
+      expect(setCookie).toContain("Max-Age=0");
     });
   });
 
