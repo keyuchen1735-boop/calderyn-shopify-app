@@ -4,14 +4,13 @@ import {
   useRef,
   useState,
   type ChangeEvent as ReactChangeEvent,
-  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Btn, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
-import { money, timeAgo } from "../format";
+import { timeAgo } from "../format";
 import {
   DashboardApiError,
   fetchImportStatus,
@@ -50,15 +49,21 @@ const QUICK_PROMPTS = [
   "A seasonal sale layout with a strong call to action",
 ];
 
-// What the storefront really renders when no doc exists yet — the default home
-// document's hero copy (app/lib/storebuilder/default-doc.ts).
+// The draft home document's default hero copy (app/lib/storebuilder/default-doc.ts) —
+// the seed for the copy editor before a real doc loads.
 const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our latest" };
 
 const GEN_LABEL: Record<string, string> = {
   draft: "draft ready",
-  failed: "failed",
+  failed: "AI unavailable — starter layout",
   no_products: "draft ready — no products",
 };
+
+// The studio canvas is a same-origin iframe of the server-rendered draft store
+// (see app/routes/dashboard.store.preview.tsx). It renders the ACTUAL generated
+// BlockDocument with the real storefront styles, so a prompt visibly rebuilds
+// the page. A version counter in the src forces a reload after every mutation.
+const PREVIEW_PATH = "/dashboard/store/preview";
 
 interface Pin {
   id: number;
@@ -95,6 +100,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
   );
   const [loading, setLoading] = useState(true);
   const [tool, setTool] = useState<Tool>("select");
+
+  // Bumping this re-navigates the preview iframe, so it re-pulls the draft after
+  // a generate/edit/accent/publish and the merchant watches the store update.
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
+  const previewSrc = `${PREVIEW_PATH}?v=${previewVersion}`;
 
   // Session-local annotations — pins and markup strokes live in component
   // state only and are never persisted.
@@ -164,7 +175,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       setPorting(false);
       if (sawRun && run?.state === "done") {
         toast("Your Shopify data is in", "download");
-        void refresh().catch(() => {});
+        void refresh().then(reloadPreview).catch(() => {});
       } else if (sawRun && run?.state === "error") {
         toast("Import didn't finish — retry from Settings → Import.", "warn", "critical");
       }
@@ -174,7 +185,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [refresh, toast]);
+  }, [refresh, reloadPreview, toast]);
 
   useEffect(() => {
     setLoading(true);
@@ -199,24 +210,36 @@ export default function Store({ app }: { app: DashboardCtx }) {
     window.open(storefrontPath, "_blank", "noopener");
   };
 
-  // --- edit tool: contentEditable hero copy -------------------------------
-  // save-hero persists BOTH fields, so payloads must build from the LATEST
-  // committed copy (a render-closure `hero` can be stale when both fields are
-  // edited back-to-back) and saves must run one at a time; publish awaits the
-  // chain so it never snapshots a draft mid-save.
+  // --- edit tool: hero copy popover ---------------------------------------
+  // save-hero persists BOTH fields, so payloads build from the LATEST committed
+  // copy (heroRef) and saves run one at a time (heroSaveChain); publish awaits
+  // the chain so it never snapshots a draft mid-save. The canvas is now an
+  // iframe, so editing happens in a fields popover rather than in place.
   const heroRef = useRef<StudioHero>(DEFAULT_HERO);
   useEffect(() => {
     heroRef.current = hero;
   }, [hero]);
   const heroSaveChain = useRef<Promise<void>>(Promise.resolve());
+  const [heroDraft, setHeroDraft] = useState<StudioHero>(DEFAULT_HERO);
+  // Re-seed each field from the persisted copy INDEPENDENTLY: both inputs share
+  // one heroDraft, so a single effect keyed on the whole object would reset the
+  // field the merchant is mid-editing whenever the other field commits. Split
+  // per field so committing (or an external refresh of) one never touches the
+  // other's in-progress text.
+  useEffect(() => {
+    setHeroDraft((h) => ({ ...h, headline: hero.headline }));
+  }, [hero.headline]);
+  useEffect(() => {
+    setHeroDraft((h) => ({ ...h, subhead: hero.subhead }));
+  }, [hero.subhead]);
 
-  const commitHero = (field: keyof StudioHero, el: HTMLElement): Promise<void> => {
-    const next = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+  const commitHero = (field: keyof StudioHero, rawNext: string): Promise<void> => {
+    const next = rawNext.replace(/\s+/g, " ").trim();
     const run = async () => {
       const prev = heroRef.current[field];
       if (next === prev) return;
       if (field === "headline" && !next) {
-        el.textContent = prev;
+        setHeroDraft((h) => ({ ...h, headline: prev }));
         toast("Headline can't be empty.", "warn", "critical");
         return;
       }
@@ -226,30 +249,20 @@ export default function Store({ app }: { app: DashboardCtx }) {
         if (!aliveRef.current) return;
         // save-hero writes the draft doc, so hasDraft is now genuinely true.
         setData((d) => (d ? { ...d, hero: saved, hasDraft: true } : d));
+        // Sync only the field that was committed — never the whole object, or a
+        // save resolving mid-edit would wipe the other field's in-progress text.
+        setHeroDraft((h) => ({ ...h, [field]: saved[field] }));
+        reloadPreview();
         toast("Copy updated");
       } catch (err) {
-        el.textContent = prev;
         if (!aliveRef.current) return;
+        setHeroDraft(heroRef.current);
         const msg = err instanceof DashboardApiError ? err.message : "Could not save copy.";
         toast(msg, "warn", "critical");
       }
     };
     heroSaveChain.current = heroSaveChain.current.then(run);
     return heroSaveChain.current;
-  };
-
-  const heroBlur = (field: keyof StudioHero) => (e: ReactFocusEvent<HTMLElement>) => {
-    void commitHero(field, e.currentTarget);
-  };
-
-  const heroKeyDown = (field: keyof StudioHero) => (e: ReactKeyboardEvent<HTMLElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      e.currentTarget.blur();
-    } else if (e.key === "Escape") {
-      e.currentTarget.textContent = hero[field];
-      e.currentTarget.blur();
-    }
   };
 
   // --- comment tool --------------------------------------------------------
@@ -306,6 +319,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       const saved = await setStudioAccent(color);
       if (aliveRef.current) {
         setData((d) => (d ? { ...d, settings: { ...d.settings, accent: saved } } : d));
+        reloadPreview();
       }
     } catch (err) {
       if (aliveRef.current) {
@@ -326,10 +340,21 @@ export default function Store({ app }: { app: DashboardCtx }) {
       try {
         const receipt = await generateStudioStore(brief.trim());
         // Re-pull the whole studio state — generation rewrites brand settings,
-        // drafts and the generation audit row.
+        // drafts and the generation audit row — then reload the preview so the
+        // merchant sees the store that was just built.
         await refresh();
+        reloadPreview();
         if (!aliveRef.current) return;
         setBuildPhase({ kind: "done", status: receipt.status });
+        if (receipt.status === "failed") {
+          // Honest failure (rule 12): the AI was unreachable, so this is a
+          // deterministic starter layout, not the prompted design.
+          toast(
+            "The AI designer is unavailable right now — showing a starter layout. Add Anthropic credits and try Build again.",
+            "warn",
+            "critical",
+          );
+        }
       } catch (err) {
         if (!aliveRef.current) return;
         const msg =
@@ -338,7 +363,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
         toast(msg, "warn", "critical");
       }
     },
-    [building, refresh, toast],
+    [building, refresh, reloadPreview, toast],
   );
 
   // First visit with nothing built yet: kick off a design immediately instead
@@ -402,12 +427,14 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setPublishing(true);
     try {
       // Flush any in-flight hero save first, so the published snapshot matches
-      // the copy on screen (clicking Publish blurs a focused field, which
-      // queues a save in the same tick).
+      // the copy on screen.
       await heroSaveChain.current;
       await publishStudioStore();
       if (!aliveRef.current) return;
       setData((d) => (d ? { ...d, hasPublished: true } : d));
+      // Publishing seeds a draft when none existed — reload so the preview
+      // reflects whatever is now live.
+      reloadPreview();
       toast("Published to your storefront");
     } catch (err) {
       if (!aliveRef.current) return;
@@ -442,7 +469,6 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const stateAttr = building ? "building" : data.hasPublished ? "built" : "idle";
   const stateLabel = building ? "Building" : data.hasPublished ? "Live" : data.hasDraft ? "Draft" : "Idle";
   const step = buildPhase ? buildStep(buildPhase) : null;
-  const editing = tool === "edit";
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -495,90 +521,18 @@ export default function Store({ app }: { app: DashboardCtx }) {
           </Btn>
         </div>
 
-        <div className="cd-studio-canvas" data-tool={tool}>
+        <div className="cd-studio-canvas" data-tool={tool} data-building={building ? "1" : "0"}>
           <div className="cd-canvas-page">
-            <div className="cd-store">
-              <div
-                className="cd-store-hero"
-                style={{
-                  background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 18%, var(--card-solid)), var(--card-solid))`,
-                }}
-              >
-                <div
-                  className="cd-store-eyebrow"
-                  data-editable="1"
-                  role="textbox"
-                  aria-label="Hero subhead"
-                  tabIndex={editing ? 0 : undefined}
-                  contentEditable={editing}
-                  suppressContentEditableWarning
-                  style={{ color: accent }}
-                  onBlur={heroBlur("subhead")}
-                  onKeyDown={heroKeyDown("subhead")}
-                >
-                  {hero.subhead}
-                </div>
-                <h2
-                  className="cd-store-h"
-                  data-editable="1"
-                  role="textbox"
-                  aria-label="Hero headline"
-                  tabIndex={editing ? 0 : undefined}
-                  contentEditable={editing}
-                  suppressContentEditableWarning
-                  onBlur={heroBlur("headline")}
-                  onKeyDown={heroKeyDown("headline")}
-                >
-                  {hero.headline}
-                </h2>
-                <span className="cd-store-cta" style={{ background: accent }}>
-                  Shop now
-                </span>
-              </div>
-              <div className="cd-store-grid">
-                {data.products.length === 0 ? (
-                  <div className="cd-caption" style={{ gridColumn: "1 / -1", padding: "10px 0" }}>
-                    {data.draftProductCount > 0
-                      ? `${data.draftProductCount} draft product${
-                          data.draftProductCount === 1 ? "" : "s"
-                        } waiting — finish them in Products to show them here.`
-                      : "No products yet. Attach images below to add them."}
-                  </div>
-                ) : (
-                  data.products.map((p) => (
-                    <div key={p.id}>
-                      {p.imageUrl ? (
-                        <img
-                          src={p.imageUrl}
-                          alt={p.title}
-                          style={{
-                            width: "100%",
-                            aspectRatio: "1",
-                            objectFit: "cover",
-                            borderRadius: 8,
-                            display: "block",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          aria-hidden="true"
-                          style={{
-                            width: "100%",
-                            aspectRatio: "1",
-                            background: "var(--gray-bg)",
-                            borderRadius: 8,
-                          }}
-                        />
-                      )}
-                      <div className="cd-store-prod-name">{p.title}</div>
-                      <div className="cd-store-prod-price">
-                        {p.priceCents != null ? money(p.priceCents) : "—"}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            {/* Live preview of the actual generated draft (server-rendered, real
+                storefront styles). sandbox: same-origin only, no scripts — a
+                static, display-only render that reloads on every mutation. */}
+            <iframe
+              key="store-preview"
+              className="cd-canvas-frame"
+              title="Store preview"
+              src={previewSrc}
+              sandbox="allow-same-origin"
+            />
 
             <svg
               className="cd-mark-layer"
@@ -706,6 +660,35 @@ export default function Store({ app }: { app: DashboardCtx }) {
                   Keep editing
                 </Btn>
               </div>
+            </div>
+          )}
+
+          {tool === "edit" && (
+            <div className="cd-edit-pop">
+              <div className="cd-build-title">Home hero copy</div>
+              <div className="cd-build-sub">Saved to your storefront draft.</div>
+              <label className="cd-edit-label" htmlFor="cd-hero-eyebrow">
+                Eyebrow
+              </label>
+              <input
+                id="cd-hero-eyebrow"
+                className="cd-edit-field"
+                value={heroDraft.subhead}
+                aria-label="Hero eyebrow"
+                onChange={(e) => setHeroDraft((h) => ({ ...h, subhead: e.target.value }))}
+                onBlur={(e) => void commitHero("subhead", e.target.value)}
+              />
+              <label className="cd-edit-label" htmlFor="cd-hero-headline">
+                Headline
+              </label>
+              <input
+                id="cd-hero-headline"
+                className="cd-edit-field"
+                value={heroDraft.headline}
+                aria-label="Hero headline"
+                onChange={(e) => setHeroDraft((h) => ({ ...h, headline: e.target.value }))}
+                onBlur={(e) => void commitHero("headline", e.target.value)}
+              />
             </div>
           )}
 

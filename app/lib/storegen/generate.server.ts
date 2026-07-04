@@ -24,7 +24,8 @@ const PAGES: { pageKey: PageKey; kind: DocKind }[] = [
 ];
 
 export interface GenerateInput { shopId: string; mode: "brief" | "catalog"; brief?: string }
-export interface GenerateResult { runId: string; status: "draft" | "no_products"; tokenCost: number; docs: Record<string, BlockDocument> }
+export type GenerateStatus = "draft" | "no_products" | "failed";
+export interface GenerateResult { runId: string; status: GenerateStatus; tokenCost: number; docs: Record<string, BlockDocument> }
 
 function textOf(msg: { content: { type: string; text?: string }[] }): string {
   return msg.content.map((b) => (b.type === "text" ? b.text ?? "" : "")).join("").trim();
@@ -43,6 +44,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   let tokenCost = 0;
   let budgetHit = false;
+  // Distinguish "the model was never called" (skipLlm / budget) from "the model
+  // was called and every call failed" (out of credits, API down). Only the
+  // latter is a degraded run the merchant must be told about (rule 12) — a call
+  // that merely returns junk still counts as a success (parsing handles it).
+  let llmAttempts = 0;
+  let llmOk = 0;
   // An empty catalog with no brief gives the model nothing to work with — the
   // result would match the deterministic fallback anyway, so skip the paid
   // calls entirely (this is also the auto-build path for brand-new shops).
@@ -52,11 +59,13 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   async function call(system: string, user: string): Promise<string | null> {
     if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
+    llmAttempts += 1;
     try {
       const msg = await client.messages.create({ model, max_tokens: 1500, system, messages: [{ role: "user", content: user }] });
       const u = (msg as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
+      llmOk += 1;
       return textOf(msg);
     } catch (err) {
       console.error("[storegen] Claude call failed; using deterministic fallback", err);
@@ -99,7 +108,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     await saveDraft(input.shopId, pageKey, doc);
   }
 
-  const status = products.length === 0 ? "no_products" : "draft";
+  // The AI was reached but produced nothing (every call errored) → the docs
+  // above are all deterministic fallbacks that ignore the brief. Surface that as
+  // a failed run so the studio can tell the merchant instead of passing a
+  // generic layout off as their design (rule 12).
+  const degraded = llmAttempts > 0 && llmOk === 0;
+  const status: GenerateStatus = degraded ? "failed" : products.length === 0 ? "no_products" : "draft";
   await recordProposal(input.shopId, runId, proposals);
   await recordGeneration({ shopId: input.shopId, runId, source: input.mode, briefText: input.brief ?? null, model, status, tokenCost });
   return { runId, status, tokenCost, docs };

@@ -79,11 +79,28 @@ describe("generateStore", () => {
     expect(createMock).toHaveBeenCalled();
   });
 
-  it("falls back to a deterministic brand when the brand call fails, without throwing", async () => {
+  it("reports 'failed' when every LLM call errors (out of credits / API down), still writing fallback docs", async () => {
+    // Every call rejects → all docs are deterministic fallbacks that ignore the
+    // brief. The run still produces a publishable store, but its status must be
+    // "failed" so the studio tells the merchant the AI was unavailable (rule 12)
+    // rather than presenting the generic layout as their design.
     createMock.mockRejectedValue(new Error("api down"));
     const result = await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(result.status).toBe("failed");
+    expect(saveDraftMock).toHaveBeenCalledTimes(3); // all fallback docs — store never blanks
+    expect(recGenMock).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+  });
+
+  it("stays 'draft' when the AI is partially degraded (brand ok, one doc call throws)", async () => {
+    // A single transient doc-call error must NOT flip a mostly-good generation to
+    // "failed" — at least one call succeeded, so the brief did reach the model.
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}')) // home ok
+      .mockRejectedValueOnce(new Error("blip")) // collection throws
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}')); // pdp ok
+    const result = await generateStore({ shopId: realShop, mode: "catalog" });
     expect(result.status).toBe("draft");
-    expect(saveDraftMock).toHaveBeenCalledTimes(3); // all fallback docs
   });
 
   it("stops calling Claude once the token budget is tripped, still writing all 3 drafts (rule 6)", async () => {

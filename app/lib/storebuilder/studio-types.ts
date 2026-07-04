@@ -61,9 +61,11 @@ export interface StudioState {
   storefrontPath: string;
 }
 
-/** POST {action:"generate"} response — generateStore never resolves "failed"
- *  (a hard failure surfaces as a 502 instead). */
+/** POST {action:"generate"} response. A hard failure (nothing produced at all)
+ *  surfaces as a 502; "failed" here is a SOFT-degraded success — a publishable
+ *  draft was written, but the AI was unavailable so every page fell back to a
+ *  deterministic starter layout that ignores the brief. */
 export interface StudioGenerateReceipt {
   runId: string;
-  status: "draft" | "no_products";
+  status: "draft" | "no_products" | "failed";
 }

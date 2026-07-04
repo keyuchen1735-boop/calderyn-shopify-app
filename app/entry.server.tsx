@@ -15,6 +15,13 @@ export const streamTimeout = 5000;
 // stops loading; Shopify supplies their frame-ancestors itself.
 const EMBEDDED_PATH = /^\/(?:app|auth)(?:\/|$)/;
 
+// The Store studio embeds its own draft storefront preview in a same-origin
+// iframe. That page must allow framing by its own origin (not X-Frame-Options:
+// DENY, which blocks even same-origin), while still refusing cross-origin frames
+// so it can't be clickjacked. Anchored to the exact path so a future child route
+// under this prefix can't silently inherit the framing relaxation.
+const SELF_FRAMEABLE_PATH = /^\/dashboard\/store\/preview$/;
+
 // Directives appended to every document response regardless of surface. None of
 // these constrain script execution, so they cannot break inline hydration or
 // App Bridge.
@@ -92,6 +99,20 @@ export function applySecurityHeaders(headers: Headers, pathname?: string): void 
   // No Shopify CSP. An embedded path may legitimately have none (e.g. an error
   // response) — leave its framing alone so the admin iframe is unaffected.
   if (pathname !== undefined && EMBEDDED_PATH.test(pathname)) {
+    return;
+  }
+
+  // The studio's own draft preview: allow same-origin framing only. SAMEORIGIN
+  // for legacy browsers, frame-ancestors 'self' for the rest — cross-origin
+  // clickjacking is still refused. The page is a display-only, script-free
+  // render, so script-src 'none' keeps the isolation even on a top-level load
+  // (not just inside the parent's sandboxed iframe).
+  if (pathname !== undefined && SELF_FRAMEABLE_PATH.test(pathname)) {
+    headers.set("X-Frame-Options", "SAMEORIGIN");
+    headers.set(
+      "Content-Security-Policy",
+      `frame-ancestors 'self'; script-src 'none'; ${HARDENING_DIRECTIVES.join("; ")};`,
+    );
     return;
   }
 
