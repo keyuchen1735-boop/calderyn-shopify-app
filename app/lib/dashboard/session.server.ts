@@ -82,6 +82,7 @@ export type DashboardSession = {
   userId: string | null;
   sessionId: string;
   emailVerified: boolean;
+  onboardedAt: string | null;
 };
 
 export async function getSessionFromRequest(
@@ -93,7 +94,7 @@ export async function getSessionFromRequest(
   const sb = getSupabase();
   const { data, error } = await sb
     .from("dashboard_sessions")
-    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at, user:users(email_verified)")
+    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at, user:users(email_verified, onboarded_at)")
     .eq("token_hash", hashSessionToken(raw))
     .maybeSingle();
   if (error) throw error;
@@ -124,11 +125,22 @@ export async function getSessionFromRequest(
     userId: data.user_id == null ? null : String(data.user_id),
     sessionId: String(data.id),
     emailVerified: data.user_id == null ? true : Boolean((data.user as { email_verified?: boolean } | null)?.email_verified),
+    onboardedAt:
+      data.user_id == null
+        ? null
+        : ((data.user as { onboarded_at?: string | null } | null)?.onboarded_at ?? null),
   };
 }
 
 function unverifiedFirstParty(s: DashboardSession): boolean {
   return s.userId != null && !s.emailVerified;
+}
+
+// A first-party user (email/Google) who hasn't finished the post-signup onboarding
+// screen yet. Shopify (shop-based) sessions have no users row — userId is null —
+// so they are exempt by construction.
+function needsOnboarding(s: DashboardSession): boolean {
+  return s.userId != null && s.onboardedAt == null;
 }
 
 export async function getDashboardSessionAllowUnverified(
@@ -151,6 +163,8 @@ export async function requireVerifiedSession(
   // Signed-out visitors land on the first-party signin page, which links out to
   // the Shopify-OAuth entry (/dashboard/login) for embedded merchants.
   if (!session) throw redirect("/login");
+  // Onboarding runs right after signup, before the verify gate — check it first.
+  if (needsOnboarding(session)) throw redirect("/dashboard/onboarding");
   if (unverifiedFirstParty(session)) throw redirect("/dashboard/verify-needed");
   return session;
 }
@@ -161,6 +175,12 @@ export async function requireDashboardSession(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getDashboardSessionAllowUnverified(request);
+  if (needsOnboarding(session)) {
+    throw new Response(JSON.stringify({ error: "onboarding_required" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
   if (unverifiedFirstParty(session)) {
     throw new Response(JSON.stringify({ error: "email_unverified" }), {
       status: 403,
