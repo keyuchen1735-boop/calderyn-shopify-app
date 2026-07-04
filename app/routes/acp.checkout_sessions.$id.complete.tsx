@@ -8,11 +8,12 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
-import { getAcpSession, claimAcpSessionForCompletion, completeAcpSession } from "~/lib/commerce/acp/session-store.server";
+import { getAcpSession, claimAcpSessionForCompletion, completeAcpSession, releaseAcpSessionClaim } from "~/lib/commerce/acp/session-store.server";
 import { getQuote } from "~/lib/commerce/quote-store.server";
 import { assertWithinCommerceCap } from "~/lib/commerce/guardrail.server";
-import { placeAgenticOrder } from "~/lib/commerce/order.server";
+import { placeAgenticOrder, type PlaceResult } from "~/lib/commerce/order.server";
 import { chargeSharedPaymentToken } from "~/lib/commerce/acp/charge.server";
+import { isSupportedCurrency } from "~/lib/payments/stripe.server";
 
 interface AcpCompleteBody {
   payment: { shared_payment_token: string };
@@ -35,6 +36,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   const q = await getQuote(s.shopId, s.quoteId);
   if (!q) return json({ error: "QUOTE_EXPIRED" }, { status: 409 });
+  // Reject an unchargeable currency BEFORE claiming/placing (mirrors the storefront
+  // guard in createCheckout). Otherwise placeAgenticOrder writes the order rows and
+  // Stripe rejects the charge afterward, orphaning the order and wedging the session.
+  if (!isSupportedCurrency(q.currency)) {
+    return json({ error: "unsupported_currency" }, { status: 400 });
+  }
 
   let body: AcpCompleteBody;
   try {
@@ -57,14 +64,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "in_progress" }, { status: 409 });
   }
 
-  // Rule 5: deterministic cap check BEFORE any charge — model never decides the spend authority
-  await assertWithinCommerceCap(s.clientId, q.totalCents);
-  const placed = await placeAgenticOrder(
-    s.shopId,
-    s.quoteId,
-    { email: body.buyer.email, phone: body.buyer.phone ?? null },
-    { protocol: "acp", clientId: s.clientId },
-  );
+  // Rule 5: deterministic cap check BEFORE any charge — model never decides the spend authority.
+  // Cap + place run before any money moves, so a failure here is safe to recover: release the
+  // claim (completing -> open) so a transient blip is retryable instead of permanently wedging
+  // the session. Past the charge below, money may have moved and placeAgenticOrder is not
+  // idempotent, so we must NOT reopen — a stuck `completing` is the lesser evil than a double charge.
+  let placed: PlaceResult;
+  try {
+    await assertWithinCommerceCap(s.clientId, q.totalCents);
+    placed = await placeAgenticOrder(
+      s.shopId,
+      s.quoteId,
+      { email: body.buyer.email, phone: body.buyer.phone ?? null },
+      { protocol: "acp", clientId: s.clientId },
+    );
+  } catch (err) {
+    await releaseAcpSessionClaim(s.sessionId);
+    throw err;
+  }
   await chargeSharedPaymentToken(s.shopId, {
     orderId: placed.orderId,
     totalCents: placed.totalCents,

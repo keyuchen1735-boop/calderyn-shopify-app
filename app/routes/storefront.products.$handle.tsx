@@ -73,10 +73,13 @@ export async function action({ request }: ActionFunctionArgs) {
     headers.append("Set-Cookie", await commitCartId(cartId));
   }
   // addCartLine snapshots price/currency/title and increments on a repeat variant.
-  await addCartLine(shopId, cartId, variantId, 1);
+  const line = await addCartLine(shopId, cartId, variantId, 1);
 
+  // Record the owning PRODUCT id (not the variant id) so storefront_event.product_id
+  // holds the same id kind that page_view writes — a variant id here would silently
+  // break any product-level view->add funnel join.
   const track = await trackStorefrontEvent(request, shopId, "cart_add", {
-    productId: variantId,
+    productId: line.productId,
   });
   for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 

@@ -36,7 +36,7 @@ vi.mock("~/lib/storebuilder/resolve-data.server", () => ({
 }));
 vi.mock("~/lib/order/cart.server", () => ({
   buildCart: vi.fn(async () => ({ id: "cart-1" })),
-  addCartLine: vi.fn(async () => undefined),
+  addCartLine: vi.fn(async () => ({ id: "line-1", productId: "p1" })),
   priceCart: vi.fn(async () => null),
 }));
 
@@ -69,6 +69,8 @@ describe("storefront live-analytics wiring", () => {
     })) as Response;
     expect(track).toHaveBeenCalledTimes(1);
     expect(track.mock.calls[0][2]).toBe("cart_add");
+    // cart_add records the owning PRODUCT id (same id kind as page_view), not the variant id.
+    expect((track.mock.calls[0][3] as { productId?: string }).productId).toBe("p1");
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/storefront/cart");
     expect(res.headers.getSetCookie().some((c) => c.startsWith("cd_sid="))).toBe(true);

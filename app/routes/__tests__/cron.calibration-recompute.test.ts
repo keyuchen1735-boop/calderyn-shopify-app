@@ -67,7 +67,7 @@ describe("cron.calibration-recompute loader", () => {
     expect(vi.mocked(sweepOrganicSignals)).not.toHaveBeenCalled();
   });
 
-  it("surfaces organic sweep errors without blocking the recompute", async () => {
+  it("surfaces organic sweep soft-errors without failing the run (best-effort, non-fatal)", async () => {
     const { sweepOrganicSignals } = await import("../../lib/calibration/organic.server");
     vi.mocked(sweepOrganicSignals).mockResolvedValueOnce({
       implicitApprovals: 1,
@@ -75,11 +75,15 @@ describe("cron.calibration-recompute loader", () => {
       errors: ["implicit al-1: campaign read failed"],
     });
     const res = await loader({ request: req("Bearer s3cret"), params: {}, context: {} } as never);
-    expect(res.status).toBe(500); // partial: visible, not swallowed (rule 12)
+    // A best-effort organic read hiccup must NOT flip the whole cron to 500
+    // (that would trip failed-cron alerting + a full-run retry). Surfaced, not fatal.
+    expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.ok).toBe(true);
     expect(body.shops).toBe(1); // the recompute still ran for the shop
     expect(body.implicitApprovals).toBe(1);
-    expect(body.errors[0]).toContain("organic");
+    expect(body.errors).toEqual([]); // hard-error channel stays clean
+    expect(body.organicErrors[0]).toContain("organic"); // soft-error channel carries it
   });
 
   it("500s when a shop recompute throws", async () => {
