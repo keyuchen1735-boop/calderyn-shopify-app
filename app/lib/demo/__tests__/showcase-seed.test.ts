@@ -165,3 +165,46 @@ describe("generateShowcaseLayer: storefront + config", () => {
     expect(layer.shopPatch.onboarding_step).toBe("complete");
   });
 });
+
+describe("generateShowcaseLayer: pair_calibration column contracts", () => {
+  // pair_calibration's learned columns are NOT NULL with strict types:
+  // last_conf integer 0-100, last_detection numeric 0-1, last_outcome_sign
+  // smallint -1/0/1. Wrong shapes here abort the whole reset at insert time.
+  it("writes DB-valid learned-column values on every pair", () => {
+    for (const p of layer.pairCalibration) {
+      expect(Number.isInteger(p.last_conf)).toBe(true);
+      expect(Number(p.last_conf)).toBeGreaterThanOrEqual(0);
+      expect(Number(p.last_conf)).toBeLessThanOrEqual(100);
+      expect(typeof p.last_detection).toBe("number");
+      expect(Number(p.last_detection)).toBeGreaterThan(0);
+      expect(Number(p.last_detection)).toBeLessThanOrEqual(1);
+      expect([-1, 0, 1]).toContain(p.last_outcome_sign);
+    }
+  });
+});
+
+describe("generateShowcaseLayer: no future timestamps", () => {
+  it("stamps nothing after the provided wall-clock now", () => {
+    const now = `${TODAY}T09:15:00.000Z`; // morning run — before the 2pm default
+    const l = generateShowcaseLayer({ shopId: SHOP_ID, today: TODAY, dataset: ds, now });
+    const nowMs = Date.parse(now);
+    const stamps: number[] = [];
+    for (const o of l.ownedOrders) stamps.push(Date.parse(String(o.created_at)));
+    for (const t of l.orderTransitions) stamps.push(Date.parse(String(t.occurred_at)));
+    for (const a of l.alerts) {
+      stamps.push(Date.parse(String(a.first_seen_at)), Date.parse(String(a.last_seen_at)));
+    }
+    for (const b of l.buyers) stamps.push(Date.parse(String(b.created_at)));
+    for (const r of l.auditRows) stamps.push(Date.parse(String(r.completed_at)));
+    for (const ts of stamps) expect(ts).toBeLessThanOrEqual(nowMs);
+  });
+
+  it("never lets a buyer's first order predate the account", () => {
+    for (const o of layer.ownedOrders) {
+      const buyer = layer.buyers.find((b) => b.id === o.buyer_id);
+      expect(Date.parse(String(o.created_at))).toBeGreaterThanOrEqual(
+        Date.parse(String(buyer?.created_at)),
+      );
+    }
+  });
+});

@@ -14,6 +14,7 @@
 import { mulberry32, seedFromString } from "../seed/rng";
 import { uuidFrom, SANDBOX_CAMPAIGN_IDS } from "../seed/dataset";
 import type { SeedDataset } from "../seed/dataset";
+import { DETECTION_COLD } from "../calibration/confidence";
 
 export interface ShowcaseConfig {
   shopId: string;
@@ -21,6 +22,10 @@ export interface ShowcaseConfig {
   today: string;
   dataset: SeedDataset;
   rngSeed?: number;
+  /** Wall-clock ISO timestamp for "freshest" rows (alert last_seen_at,
+   * updated_at columns). Callers pass the real now so nothing is stamped in
+   * the future; tests omit it for a deterministic 2pm-anchor default. */
+  now?: string;
 }
 
 type Row = Record<string, unknown>;
@@ -95,7 +100,8 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
   const { shopId, today, dataset } = config;
   const rng = mulberry32(config.rngSeed ?? seedFromString(`${shopId}:showcase`));
   const todayMs = Date.parse(`${today}T00:00:00Z`);
-  const nowIso = iso(todayMs + 14 * 60 * 60 * 1000); // 2pm on the anchor day
+  // Real now when provided (never in the future); 2pm anchor default for tests.
+  const nowIso = config.now ?? iso(todayMs + 14 * 60 * 60 * 1000);
 
   // --- dataset lookups -----------------------------------------------------
   const skuByExternal = new Map(dataset.skus.map((s) => [s.external_id, s]));
@@ -132,7 +138,9 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
     shop_id: shopId,
     email_normalized: emailFor(p.name, i),
     phone: null,
-    created_at: iso(todayMs - Math.floor(20 + rng() * 100) * DAY_MS),
+    // Older than the deepest order history (115 days) so no buyer's first
+    // order predates their own account.
+    created_at: iso(todayMs - Math.floor(120 + rng() * 30) * DAY_MS),
   }));
 
   const buyerAddresses: Row[] = PEOPLE.map((p, i) => ({
@@ -210,7 +218,10 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
       }
       const shipping = subtotal >= 10000 ? 0 : 795;
       const tax = Math.round(subtotal * 0.08);
-      const refunded = rng() < 0.05;
+      // Refunds only on orders old enough that the refund transition (created
+      // + 1-2 days) still lands in the past.
+      const refundRoll = rng();
+      const refunded = ageDays >= 3 && refundRoll < 0.05;
       const recent = ageDays <= 1;
       const state = refunded ? "refunded" : recent ? "paid" : "fulfilled";
       ownedOrders.push({
@@ -524,27 +535,31 @@ export function generateShowcaseLayer(config: ShowcaseConfig): ShowcaseLayer {
     merchant_disabled: false,
     graduated: false,
     autonomy_enabled: false,
-    last_conf: null,
-    last_detection: nowIso,
+    // last_conf is an integer confidence percentage (0-100, graduation compares
+    // against graduation_threshold); last_detection a numeric reliability factor
+    // (DETECTION_COLD = 0.6 until real precision history exists); both columns
+    // are NOT NULL, as is last_outcome_sign (-1/0/1).
+    last_conf: 0,
+    last_detection: DETECTION_COLD,
     net_positive_outcomes: 0,
-    last_outcome_sign: null,
+    last_outcome_sign: 0,
     updated_at: nowIso,
     ...extras,
   });
 
   const pairCalibration: Row[] = [
     pair("sku_stockout_vs_spend", "pause_campaign", 14, 1, {
-      graduated: true, autonomy_enabled: true, net_positive_outcomes: 4, last_outcome_sign: 1, last_conf: 0.93,
+      graduated: true, autonomy_enabled: true, net_positive_outcomes: 4, last_outcome_sign: 1, last_conf: 93, last_detection: 0.82,
     }),
     pair("campaign_below_breakeven", "pause_campaign", 11, 1, {
-      graduated: true, autonomy_enabled: true, net_positive_outcomes: 3, last_outcome_sign: 1, last_conf: 0.9,
+      graduated: true, autonomy_enabled: true, net_positive_outcomes: 3, last_outcome_sign: 1, last_conf: 90, last_detection: 0.8,
     }),
     pair("campaign_scaling_opportunity", "increase_campaign_budget", 19, 2, {
-      net_positive_outcomes: 2, last_outcome_sign: 1, last_conf: 0.86,
+      net_positive_outcomes: 2, last_outcome_sign: 1, last_conf: 86, last_detection: 0.74,
     }),
-    pair("reorder_timing", "create_po_draft", 8, 1, { net_positive_outcomes: 1, last_conf: 0.78 }),
-    pair("regional_shortage_risk", "reallocate_inventory", 6, 2, { net_positive_outcomes: 1, last_conf: 0.71 }),
-    pair("margin_erosion", "adjust_price", 3, 1, { last_conf: 0.62 }),
+    pair("reorder_timing", "create_po_draft", 8, 1, { net_positive_outcomes: 1, last_conf: 78 }),
+    pair("regional_shortage_risk", "reallocate_inventory", 6, 2, { net_positive_outcomes: 1, last_conf: 71 }),
+    pair("margin_erosion", "adjust_price", 3, 1, { last_conf: 62 }),
   ];
 
   // --- storefront + config ---------------------------------------------------

@@ -94,14 +94,17 @@ export const SHOWCASE_WIPE_ORDER = [
   "store_generation_proposal",
   "store_generation",
   "page_document",
-  // owned catalog (import_map bridges onto variant ids — wipe it first)
+  // imported history (sku_id FKs are ON DELETE SET NULL onto sku_dim — left
+  // behind they'd survive a reset with NULLed links; children first)
+  "imported_order_line",
+  "imported_refund",
+  "imported_order",
+  // owned catalog (import_map bridges onto variant ids — wipe it first).
+  // product_media / option tables / product_collection are NOT listed: they
+  // have no shop_id column and cascade from product_dim / variant_dim /
+  // collection_dim deletes below.
   "import_map",
   "import_run",
-  "product_media",
-  "variant_option_value",
-  "product_option_value",
-  "product_option",
-  "product_collection",
   "collection_dim",
   "variant_shipping",
   "variant_dim",
@@ -169,7 +172,9 @@ export async function resetDemoShowcase(
   if (promoteErr) throw new Error(`demo reset: promote failed: ${promoteErr.message}`);
 
   // 4) Showcase layer on top (owned commerce, alerts, calibration, audit).
-  const layer = generateShowcaseLayer({ shopId, today, dataset });
+  // Real wall-clock now so freshest rows are never stamped in the future
+  // (the 2pm-anchor default only holds after 14:00 UTC).
+  const layer = generateShowcaseLayer({ shopId, today, dataset, now: new Date().toISOString() });
   const inserted: Record<string, number> = { ...writerSummary.inserted };
   for (const [table, rows] of layerInserts(layer)) {
     await insertRowsBatched(sb, table, rows);
@@ -181,11 +186,13 @@ export async function resetDemoShowcase(
     .from("store_settings")
     .upsert(layer.storeSettings, { onConflict: "shop_id" });
   if (settingsErr) throw new Error(`demo reset: store_settings upsert: ${settingsErr.message}`);
+  // Upsert, not update: owned-signup shops may have no guardrail_config row
+  // yet (every other column has a sane default), and an update matching zero
+  // rows would silently skip the autopilot-off restore.
   const { error: guardrailErr } = await sb
     .from("guardrail_config")
-    .update(layer.guardrailPatch)
-    .eq("shop_id", shopId);
-  if (guardrailErr) throw new Error(`demo reset: guardrail update: ${guardrailErr.message}`);
+    .upsert({ shop_id: shopId, ...layer.guardrailPatch }, { onConflict: "shop_id" });
+  if (guardrailErr) throw new Error(`demo reset: guardrail upsert: ${guardrailErr.message}`);
   const { error: shopUpdateErr } = await sb.from("shops").update(layer.shopPatch).eq("id", shopId);
   if (shopUpdateErr) throw new Error(`demo reset: shops update: ${shopUpdateErr.message}`);
 

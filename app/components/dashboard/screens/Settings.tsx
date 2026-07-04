@@ -22,7 +22,7 @@ import {
   type BillingStatus,
   type ShipCostSettings,
 } from "~/lib/dashboard/client";
-import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { cacheScreenData, cachedScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
 import { payoutsCardState } from "../view-models";
@@ -397,6 +397,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
     setResetBusy(true);
     try {
       const summary = await resetDemoData();
+      // The session screen cache still holds every pre-reset payload; drop it
+      // all so no tab paints wiped data before revalidation.
+      clearScreenCache();
       const rows = Object.values(summary.inserted).reduce((sum, n) => sum + n, 0);
       app.toast(`Demo reset — ${rows.toLocaleString()} rows reseeded`, "check");
       app.refresh();

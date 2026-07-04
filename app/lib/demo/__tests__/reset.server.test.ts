@@ -81,12 +81,8 @@ describe("SHOWCASE_WIPE_ORDER", () => {
       ["buyer_address", "buyer_dim"],
       ["buyer_consent", "buyer_dim"],
       ["orders", "buyer_dim"],
-      ["product_media", "product_dim"],
-      ["variant_option_value", "variant_dim"],
-      ["variant_option_value", "product_option_value"],
-      ["product_option_value", "product_option"],
-      ["product_option", "product_dim"],
-      ["product_collection", "collection_dim"],
+      ["imported_order_line", "imported_order"],
+      ["imported_refund", "imported_order"],
       ["variant_shipping", "variant_dim"],
       ["variant_dim", "product_dim"],
       ["import_map", "variant_dim"],
@@ -94,6 +90,20 @@ describe("SHOWCASE_WIPE_ORDER", () => {
     ];
     for (const [child, parent] of before) {
       expect(idx(child), `${child} must be wiped before ${parent}`).toBeLessThan(idx(parent));
+    }
+  });
+
+  it("only lists tables that carry a shop_id column (no-shop_id children cascade)", () => {
+    // These cascade from product_dim / variant_dim / collection_dim deletes;
+    // a delete().eq("shop_id") against them would 42703 and abort the reset.
+    for (const t of [
+      "product_media",
+      "variant_option_value",
+      "product_option_value",
+      "product_option",
+      "product_collection",
+    ]) {
+      expect(SHOWCASE_WIPE_ORDER).not.toContain(t);
     }
   });
 });
@@ -134,9 +144,10 @@ describe("resetDemoShowcase", () => {
     expect(at("ins:orders:")).toBeLessThan(at("ins:order_line:"));
     expect(at("ins:alerts:")).toBeLessThan(at("ins:alert_context:"));
     expect(at("ins:alerts:")).toBeLessThan(at("ins:action_audit:"));
-    // Config restore happens.
+    // Config restore happens. guardrail_config is an upsert — owned-signup
+    // shops may have no row yet and an update would silently match nothing.
     expect(sb.ops).toContain("ups:store_settings");
-    expect(sb.ops).toContain("upd:guardrail_config");
+    expect(sb.ops).toContain("ups:guardrail_config");
     expect(sb.ops).toContain("upd:shops");
 
     // Both wipe passes are reported: the extended list, then the writer's own.

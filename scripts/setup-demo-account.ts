@@ -54,11 +54,20 @@ if (existing) {
 let shopId: string;
 const { data: shopRow, error: shopErr } = await sb
   .from("shops")
-  .select("id")
+  .select("id, demo_mode")
   .eq("org_slug", ORG_SLUG)
   .maybeSingle();
 if (shopErr) throw new Error(`shops read failed: ${shopErr.message}`);
 if (shopRow) {
+  // Safety: never convert an existing non-demo shop. If a real tenant somehow
+  // holds the slug, flipping demo_mode here would arm the reset wipe against
+  // live merchant data — abort and let a human sort out the slug instead.
+  if (shopRow.demo_mode !== true) {
+    console.error(
+      `shop with org_slug '${ORG_SLUG}' exists (${String(shopRow.id)}) but demo_mode is not true — refusing to convert it. Free the slug or set demo_mode manually if this really is the demo shop.`,
+    );
+    process.exit(1);
+  }
   shopId = String(shopRow.id);
   console.log(`shop ${ORG_SLUG} exists (${shopId})`);
 } else {
