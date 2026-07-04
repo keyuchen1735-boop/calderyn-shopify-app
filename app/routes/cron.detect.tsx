@@ -35,13 +35,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Vercel build-output function and take the whole deploy down (2026-06-16).
   const enginePaths = ["/api/engine/run", "/api/detectors/run"];
 
-  // Query ready shops (bounded batch)
-  const { data: ready } = await sb
+  // Query ready shops (bounded batch). Surface a read failure as a 500 instead
+  // of swallowing it: a DB outage must not look identical to "no shops ready"
+  // (an empty 200), which a cron monitor would read as a healthy run. Mirrors
+  // cron.autopilot's shop-list guard.
+  const { data: ready, error: readyErr } = await sb
     .from("shop_integrations")
     .select("shop_id")
     .eq("kind", "shopify")
     .eq("sync_status", "ready")
     .limit(MAX_DETECT_SHOPS);
+  if (readyErr) {
+    console.error("[cron.detect] failed to list ready shops", readyErr);
+    return json({ error: `failed to list ready shops: ${readyErr.message}` }, { status: 500 });
+  }
 
   // For each ready shop, drive both engines. Per-shop isolation: one shop's
   // failure must not abort detection for the remaining shops.
