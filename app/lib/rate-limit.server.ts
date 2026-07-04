@@ -49,9 +49,22 @@ export async function rateLimit(
   }
 }
 
-/** Stable per-client key for rate limiting (Vercel sets x-forwarded-for). */
+/**
+ * Stable per-client key for rate limiting.
+ *
+ * A client can send its own `X-Forwarded-For`, and Vercel *appends* the real
+ * connection IP rather than replacing the header — so the leftmost hop is
+ * attacker-controlled and rotating it would defeat the limiter entirely. Trust
+ * `x-real-ip` (set by the platform to the actual connection IP) first, then fall
+ * back to the *rightmost* forwarded hop (the one the trusted proxy added).
+ */
 export function clientIpKey(request: Request, scope: string): string {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  const forwarded = request.headers
+    .get("x-forwarded-for")
+    ?.split(",")
+    .pop()
+    ?.trim();
+  const ip = realIp || forwarded || "unknown";
   return `${scope}:${ip}`;
 }

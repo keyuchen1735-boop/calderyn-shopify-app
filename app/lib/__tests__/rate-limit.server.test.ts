@@ -52,14 +52,26 @@ describe("rateLimit (Postgres-backed)", () => {
 });
 
 describe("clientIpKey", () => {
-  it("uses the first x-forwarded-for hop and scopes the key", () => {
+  it("prefers x-real-ip (the platform-set connection IP) over x-forwarded-for", () => {
     const req = new Request("https://x/y", {
-      headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
+      headers: {
+        "x-real-ip": "5.6.7.8",
+        "x-forwarded-for": "1.2.3.4, 5.6.7.8",
+      },
     });
-    expect(clientIpKey(req, "login")).toBe("login:1.2.3.4");
+    expect(clientIpKey(req, "login")).toBe("login:5.6.7.8");
   });
 
-  it("falls back to 'unknown' when the header is absent", () => {
+  it("uses the rightmost (proxy-added) x-forwarded-for hop, not the spoofable leftmost", () => {
+    // A client can prepend a fake hop; the platform appends the real IP, so the
+    // trustworthy value is the last one.
+    const req = new Request("https://x/y", {
+      headers: { "x-forwarded-for": "9.9.9.9, 5.6.7.8" },
+    });
+    expect(clientIpKey(req, "login")).toBe("login:5.6.7.8");
+  });
+
+  it("falls back to 'unknown' when no IP header is present", () => {
     expect(clientIpKey(new Request("https://x/y"), "login")).toBe("login:unknown");
   });
 });
