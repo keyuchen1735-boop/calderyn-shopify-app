@@ -16,8 +16,9 @@ them through a one-screen onboarding that collects:
 
 1. **Phone number** — required.
 2. **How did you hear about us?** — required, single-select from a fixed set.
-3. **Connect Shopify to bring your data over** — optional; reuses the existing
-   Shopify-OAuth port and links the real store to the just-created account.
+3. **Connect Shopify to bring your data over** — optional; hands off to the
+   existing Shopify-OAuth flow + #13 cutover/import machine (§7). Onboarding adds
+   no port or account-linking code of its own.
 
 Shopify-connect (Door A) users are **out of scope**: they arrive via Shopify,
 already have their data ported, and have no first-party `users` row.
@@ -30,14 +31,15 @@ already have their data ported, and have no first-party `users` row.
 | Placement | **Right after signup**, before the email-verify gate |
 | Phone | **Required** (light validation) |
 | How-heard options | Fixed set (below) + free text on "Other" |
-| Shopify connect linking | **Repoint membership** (correct) — no OAuth-callback changes |
+| Shopify connect / data port | **Reuse the existing #13 cutover machine** — no invented port or linking code (see §7) |
 
 ## 3. Flow
 
 ```
 Email/pw signup ─┐
 Google signup  ──┼─▶ /dashboard/onboarding ──finish──▶ [unverified? verify-needed : /dashboard]
-                 │                          └─connect─▶ save → Shopify OAuth → /dashboard/onboarding/connected → /dashboard
+                 │                          └─connect─▶ save fields → /dashboard/login (existing Shopify OAuth)
+                 │                                        → dashboard.auth.callback → startImport+kickDrainSoon (#13)
 gate (any first-party session, onboarded_at IS NULL) ─▶ /dashboard/onboarding
 ```
 
@@ -101,8 +103,8 @@ onboarded (`onboardedAt != null`) or `userId == null` → redirect to next step
   **and** `onboarded_at = now()` in one update.
 - `intent = "finish"` → redirect: unverified → `/dashboard/verify-needed`, else
   `/dashboard`.
-- `intent = "connect"` → set the signed pending-link cookie (§7) and redirect to
-  `/dashboard/login?return_to=/dashboard/onboarding/connected` (Shopify OAuth).
+- `intent = "connect"` → after the same save (incl. `onboarded_at`), redirect to
+  `/dashboard/login` — the existing Shopify OAuth that enters the #13 machine (§7).
 
 **UI:** `AuthShell` + existing `cd-*` primitives (matches signup/verify pages;
 no Polaris on the dashboard surface). Graphics-forward, minimal words per the
@@ -111,41 +113,43 @@ phone; native `<select>` for how-heard with a conditional free-text input when
 "Other" is chosen. Primary **Continue** (`intent=finish`); secondary **Connect
 Shopify — bring your data over** (`intent=connect`).
 
-## 7. Optional Shopify connect — repoint-membership linking
+## 7. Optional Shopify connect — hand off to the existing #13 machine
 
-Required fields are **saved before** OAuth launches, so data is captured even if
-the merchant abandons the Shopify round-trip.
+**Do not invent a port or linking mechanism.** The platform-pivot #13 cutover
+machine is fully built and owns "port over all existing data." Onboarding only
+*enters* it; it re-implements nothing.
 
-**Handoff token/cookie** — new `app/lib/auth/pending-link-token.server.ts`,
-modeled exactly on `google-signup-token.server.ts` (HMAC-SHA256 over a base64url
-JSON payload, `DASHBOARD_SESSION_PEPPER`, 15-min expiry):
-- Payload: `{ userId, placeholderShopId }`.
-- Stored in a short-lived `__Host-` HttpOnly/Secure/SameSite=Lax cookie
-  (`Max-Age` ~900s) set at connect-time.
+What already exists (reused verbatim):
+- **Connect** = the existing Shopify OAuth entry `GET /dashboard/login` →
+  `dashboard.auth.callback`, which stores the offline token, runs
+  `completeShopInstall`, calls **`startImport(shopId)` + `kickDrainSoon()`**
+  (`app/lib/import/run.server.ts`), and steers to the import/store screen.
+- **Data port** = `import/run.server.ts` (`#13.promote`): `backfillShop` +
+  `importCustomers` → `promoteShopFromMirror` → `relinkOrdersToBuyers` → honest
+  `buildImportReport`, drained by `/cron/import`.
+- **Cutover** = `app/lib/cutover/org-mode.server.ts` state machine
+  (`mirror → importing → dual_run → live`, parity + payment-cleared go-live
+  gates) driven by the existing `dashboard.api.cutover` route + `Cutover.tsx`
+  screen. The merchant completes cutover there, at their own pace — **outside**
+  onboarding.
 
-**Return route** — new `app/routes/dashboard.onboarding_.connected.tsx` (un-nested
-from the redirecting `/dashboard/login`, same convention as the google routes):
-1. Read + verify the pending-link cookie → `{ userId, placeholderShopId }`.
-   Invalid/expired → clear cookie, redirect `/dashboard`.
-2. Read the now-active session (`getSessionFromRequest`); it is the **shop-based**
-   session for the real shop minted by `dashboard.auth.callback`. Take
-   `realShopId = session.shopId`.
-3. **Safety guard (has its own test):** repoint **only if** the real shop has
-   **no existing first-party membership** (`membership` rows for `realShopId`).
-   If it already has one, the store belongs to another account — **abort the
-   link**, clear cookie, redirect `/dashboard` (data already ported; no
-   cross-tenant hijack). Log the aborted-link visibly.
-4. Otherwise repoint: `UPDATE membership SET shop_id = realShopId WHERE
-   user_id = userId AND shop_id = placeholderShopId`. Clear cookie. Redirect
-   `/dashboard`.
+Onboarding's contribution (all it adds):
+1. The `connect` intent **validates + saves** phone/referral and sets
+   `onboarded_at` first (so required data is captured even if the merchant
+   abandons the OAuth round-trip).
+2. Then `redirect("/dashboard/login")` — the same shop-less OAuth the "Continue
+   with Shopify" button uses. No `return_to` needed; the callback's existing
+   steering lands the merchant on the store/import screen where the port is
+   visible. The shop enters the #13 machine at `mirror` and the import
+   auto-runs.
 
-Result: one account, backed by the real Shopify shop + its ported data;
-email/Google login later resolves to the real shop (`resolveShopForUser` returns
-`realShopId`). The active session remains shop-based (authenticated, correctly
-scoped) — acceptable for v1.
-
-**Orphaned placeholder shop** (the `provisionOwnedShop` row created at signup) is
-left in place (harmless; cleanup is a possible later chore, not v1).
+**Consequence (accepted for v1, supersedes the earlier "repoint membership"
+idea):** the callback mints a **shop-based** session (overwriting the first-party
+session cookie), exactly as any "sign in with Shopify" does. So after connecting,
+the merchant is authenticated as the real shop; the placeholder owned-shop from
+signup is left orphaned (harmless). We do **not** add membership-repointing — that
+would be inventing on top of the existing flow, which the port-mechanism decision
+rules out. The `users` row (phone/referral) persists regardless.
 
 ## 8. Validation helpers — `app/lib/auth/onboarding.server.ts`
 
@@ -157,9 +161,9 @@ left in place (harmless; cleanup is a possible later chore, not v1).
 - `setOnboardingProfile(userId, { phone, referralSource, referralOther })` —
   single Supabase update setting the four columns incl. `onboarded_at`. **Test
   persistence + that `onboarded_at` is set.**
-- `repointMembershipToRealShop(userId, placeholderShopId, realShopId)` — the
-  guarded update from §7 step 3–4; returns whether it linked. **Test: links when
-  real shop is unowned; aborts when real shop already has a membership.**
+
+No linking/port helpers here — the `connect` intent just saves and redirects into
+the existing `/dashboard/login` OAuth flow (§7).
 
 ## 9. Files
 
@@ -167,10 +171,11 @@ left in place (harmless; cleanup is a possible later chore, not v1).
 - `supabase/migrations/<timestamp>_users_onboarding_profile.sql` (timestamp
   assigned at implementation, following the `YYYYMMDDHHMMSS` convention)
 - `app/routes/dashboard.onboarding.tsx`
-- `app/routes/dashboard.onboarding_.connected.tsx`
 - `app/lib/auth/onboarding.server.ts`
-- `app/lib/auth/pending-link-token.server.ts`
 - tests alongside existing `__tests__` conventions
+
+No `connected` return route and no pending-link token module — the port/cutover
+is the existing #13 machine (§7).
 
 **Changed**
 - `app/lib/dashboard/session.server.ts` — `onboardedAt` on session, gate in
@@ -187,8 +192,6 @@ Unit:
 - `normalizePhone` valid/invalid branches.
 - `isReferralSource` accept known / reject unknown.
 - `setOnboardingProfile` persists fields + `onboarded_at`.
-- `repointMembershipToRealShop`: links unowned real shop; **aborts when real
-  shop already owned** (hijack guard).
 - `needsOnboarding` truth table (first-party unonboarded → true; onboarded →
   false; shop-session `userId==null` → false).
 
@@ -197,17 +200,19 @@ Route/integration:
   even when also unverified.
 - Onboarding action: `finish` with valid input saves + redirects
   (verify-needed vs dashboard by verified state); invalid phone/referral → 422;
-  `connect` saves, sets cookie, redirects to `/dashboard/login?return_to=...`.
+  `connect` saves (sets `onboarded_at`) then redirects to `/dashboard/login`.
 - Onboarding loader: already-onboarded → redirect away.
-- Connected route: valid cookie + unowned real shop → membership repointed →
-  `/dashboard`; already-owned real shop → link aborted, cookie cleared; bad/expired
-  cookie → `/dashboard`.
 - Changed signup redirects (email + google) now land on `/dashboard/onboarding`.
 
 ## 11. Non-goals / follow-ups
 
+- **Driving the cutover** (`mirror→importing→dual_run→live`) inside onboarding —
+  the existing `dashboard.api.cutover` route + `Cutover.tsx` screen own it. Onboarding
+  only kicks off connect + import.
+- **Account-linking** the placeholder shop to the real Shopify shop
+  (membership-repoint) — dropped per the port-mechanism decision (§7); the
+  post-connect shop-session and orphaned placeholder are accepted for v1.
 - Deleting/garbage-collecting the orphaned placeholder shop.
-- Swapping the post-connect shop-session back to a first-party session.
 - Onboarding for Shopify-connect (Door A) users.
 - Country-code dropdown / heavy phone validation (light normalize only for v1).
 
