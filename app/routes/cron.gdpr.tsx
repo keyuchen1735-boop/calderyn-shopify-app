@@ -28,5 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("[cron.gdpr] sweep failed", err);
   }
 
-  return json(summary);
+  // A failed compliance-critical sweep must not report HTTP 200 — a status-based
+  // cron monitor would read it as a healthy run. Fail visibly (rule 12).
+  return json(summary, { status: summary.error ? 500 : 200 });
 };
