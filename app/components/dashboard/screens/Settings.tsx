@@ -16,12 +16,13 @@ import {
   fetchBilling,
   startPayoutOnboarding,
   fetchPayoutLoginLink,
+  resetDemoData,
   DashboardApiError,
   type UnmatchedShipCharges,
   type BillingStatus,
   type ShipCostSettings,
 } from "~/lib/dashboard/client";
-import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { cacheScreenData, cachedScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
 import { payoutsCardState } from "../view-models";
@@ -374,6 +375,40 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       app.toast(message, "x", "critical");
     } finally {
       setSavingConsent(false);
+    }
+  };
+
+  // Demo reset (demo shops only): two-step confirm — first click arms for 5s,
+  // second click runs the wipe+reseed and refreshes the whole shell.
+  const [resetArmed, setResetArmed] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  useEffect(() => {
+    if (!resetArmed) return;
+    const t = setTimeout(() => setResetArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [resetArmed]);
+  const handleDemoReset = async () => {
+    if (resetBusy) return;
+    if (!resetArmed) {
+      setResetArmed(true);
+      return;
+    }
+    setResetArmed(false);
+    setResetBusy(true);
+    try {
+      const summary = await resetDemoData();
+      // The session screen cache still holds every pre-reset payload; drop it
+      // all so no tab paints wiped data before revalidation.
+      clearScreenCache();
+      const rows = Object.values(summary.inserted).reduce((sum, n) => sum + n, 0);
+      app.toast(`Demo reset — ${rows.toLocaleString()} rows reseeded`, "check");
+      app.refresh();
+      app.navigate("dashboard");
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Reset failed — try again.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -1066,6 +1101,28 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           <SettingRow label="Collections" sub="Create and manage product collections.">
             <Btn small onClick={() => app.navigate("collections")}>
               Open
+            </Btn>
+          </SettingRow>
+        </SettingsCard>
+      )}
+
+      {sub === "general" && app.demoMode && (
+        <SettingsCard>
+          <CardLabel>Demo store</CardLabel>
+          <SettingRow
+            label="Reset demo data"
+            sub={
+              resetArmed
+                ? "DANGER: this wipes every order, product, alert, and learned signal on this store and reseeds the opening scene. Confirm within 5 seconds."
+                : "Restore this demo store to its opening scene — fresh action queue, baseline calibration, autopilot off. Takes a few seconds."
+            }
+          >
+            <Btn
+              small
+              disabled={resetBusy}
+              onClick={() => void handleDemoReset()}
+            >
+              {resetBusy ? "Resetting…" : resetArmed ? "Confirm reset" : "Reset demo data"}
             </Btn>
           </SettingRow>
         </SettingsCard>

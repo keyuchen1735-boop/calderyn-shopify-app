@@ -180,7 +180,15 @@ function nextFeedId(): string {
   return "f" + feedSeq++;
 }
 
-export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: string | null; storeLabel: string }) {
+export default function DashboardApp({
+  shopDomain,
+  storeLabel,
+  demoMode = false,
+}: {
+  shopDomain: string | null;
+  storeLabel: string;
+  demoMode?: boolean;
+}) {
   // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
   // localStorage. Initialised to true so the server render and first client render
   // agree (no hydration mismatch); a merchant who explicitly chose light ("0") is
@@ -965,6 +973,7 @@ export default function DashboardApp({ shopDomain, storeLabel }: { shopDomain: s
     t,
     shopDomain,
     storeLabel,
+    demoMode,
     nav,
     navigate,
     setNightMode,

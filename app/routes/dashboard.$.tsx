@@ -59,23 +59,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireVerifiedSession(request);
   const { data } = await getSupabase()
     .from("shops")
-    .select("display_name, shop_domain")
+    .select("display_name, shop_domain, demo_mode")
     .eq("id", session.shopId)
     .maybeSingle();
   const storeLabel =
     (data?.display_name as string | null) ||
     (data?.shop_domain as string | null) ||
     "Your store";
-  return { shopDomain: session.shopDomain, storeLabel };
+  return { shopDomain: session.shopDomain, storeLabel, demoMode: data?.demo_mode === true };
 }
 
 export default function DashboardRoute() {
-  const { shopDomain, storeLabel } = useLoaderData<typeof loader>();
+  const { shopDomain, storeLabel, demoMode } = useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
     <DashboardErrorBoundary>
-      <DashboardApp shopDomain={shopDomain} storeLabel={storeLabel} />
+      <DashboardApp shopDomain={shopDomain} storeLabel={storeLabel} demoMode={demoMode} />
     </DashboardErrorBoundary>
   );
 }

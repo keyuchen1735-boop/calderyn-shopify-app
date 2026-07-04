@@ -30,6 +30,18 @@ describe("generateSeedDataset: catalog + locations", () => {
     }
   });
 
+  it("carries sellable-catalog fields so promote_shop_catalog yields priced, active variants", () => {
+    for (const sku of ds.skus) {
+      // A NULL retail_price_cents renders "not for sale" on the owned storefront.
+      expect(sku.retail_price_cents).toBe(ds.listPriceCentsBySkuId[sku.id]);
+      expect(sku.retail_price_cents).toBeGreaterThan(sku.unit_cost_cents);
+      expect(sku.product_status).toBe("active");
+      expect(sku.inventory_policy).toBe("deny");
+      expect(sku.inventory_tracked).toBe(true);
+      expect(sku.grams).toBeGreaterThan(0);
+    }
+  });
+
   it("creates a coherent catalog: real names, family-consistent pricing, sane margins", () => {
     expect(ds.skus.length).toBeGreaterThanOrEqual(25);
     for (const sku of ds.skus) {

@@ -87,7 +87,7 @@ function daysBetween(from: string, to: string): number {
 }
 
 /** Format 16 PRNG-derived bytes as a v4-shaped UUID (deterministic). */
-function uuidFrom(rng: () => number): string {
+export function uuidFrom(rng: () => number): string {
   const hex = () => Math.floor(rng() * 256).toString(16).padStart(2, "0");
   const b = Array.from({ length: 16 }, hex);
   b[6] = "4" + b[6][1];
@@ -136,6 +136,14 @@ const PRODUCTS: ProductSpec[] = [
   { handle: "trail-socks-3pack", title: "Trail Running Socks 3-Pack", category: "accessories", priceCents: 2200, costCents: 650, variants: ["M", "L"], velocityPerDay: 4.5, variantWeights: [0.6, 0.4] },
   { handle: "switchback-cap", title: "Switchback Cap", category: "accessories", priceCents: 2800, costCents: 900, variants: ["one-size"], velocityPerDay: 3 },
 ];
+
+/** Shipping weight per category — feeds sku_dim.grams (quotes + labels). */
+const GRAMS_BY_CATEGORY: Record<string, number> = {
+  apparel: 300,
+  outerwear: 650,
+  gear: 950,
+  accessories: 180,
+};
 
 /** Demo vendor per category — gives the inventory vendor facet a few values. */
 const VENDOR_BY_CATEGORY: Record<string, string> = {
@@ -300,6 +308,11 @@ export function generateSeedDataset(config: SeedConfig): SeedDataset {
         category: p.category,
         price_tier: priceTier(p.priceCents),
         unit_cost_cents: p.costCents,
+        retail_price_cents: p.priceCents,
+        product_status: "active",
+        inventory_policy: "deny",
+        inventory_tracked: true,
+        grams: GRAMS_BY_CATEGORY[p.category] ?? 400,
         currency: "USD",
         vendor: VENDOR_BY_CATEGORY[p.category] ?? null,
         tags: [p.category, priceTier(p.priceCents)],

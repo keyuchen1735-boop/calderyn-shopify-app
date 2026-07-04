@@ -92,6 +92,36 @@ export interface SeedWriteSummary {
   inserted: Record<string, number>;
 }
 
+/** Delete each table's shop-scoped rows in order, aborting on the first error.
+ *  Shared with the demo reset (app/lib/demo/reset.server.ts) so wipe semantics
+ *  can never drift between the two paths. */
+export async function wipeShopTables(
+  client: SeedWriterClient,
+  tables: readonly string[],
+  shopId: string,
+): Promise<string[]> {
+  const wiped: string[] = [];
+  for (const table of tables) {
+    const { error } = await client.from(table).delete().eq("shop_id", shopId);
+    if (error) throw new Error(`wipe ${table}: ${error.message}`);
+    wiped.push(table);
+  }
+  return wiped;
+}
+
+/** Insert rows in PostgREST-sized batches, aborting on the first error. */
+export async function insertRowsBatched(
+  client: SeedWriterClient,
+  table: string,
+  rows: Record<string, unknown>[],
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    const { error } = await client.from(table).insert(batch);
+    if (error) throw new Error(`insert ${table} (rows ${i}-${i + batch.length}): ${error.message}`);
+  }
+}
+
 export async function writeSeedDataset(
   ds: SeedDataset,
   shopId: string,
@@ -101,21 +131,12 @@ export async function writeSeedDataset(
     throw new Error(`dataset was generated for a different shop than ${shopId}`);
   }
 
-  const wiped: string[] = [];
-  for (const table of WIPE_ORDER) {
-    const { error } = await client.from(table).delete().eq("shop_id", shopId);
-    if (error) throw new Error(`wipe ${table}: ${error.message}`);
-    wiped.push(table);
-  }
+  const wiped = await wipeShopTables(client, WIPE_ORDER, shopId);
 
   const inserted: Record<string, number> = {};
   for (const table of INSERT_ORDER) {
     const rows = rowsFor(ds, table);
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
-      const { error } = await client.from(table).insert(batch);
-      if (error) throw new Error(`insert ${table} (rows ${i}-${i + batch.length}): ${error.message}`);
-    }
+    await insertRowsBatched(client, table, rows);
     inserted[table] = rows.length;
   }
 

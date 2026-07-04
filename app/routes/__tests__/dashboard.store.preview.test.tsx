@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import type { BlockDocument } from "~/lib/storebuilder/types";
+// vi.mock calls are hoisted above every import, so the mocks below still apply
+// before the route module is evaluated.
+import { loader } from "../dashboard.store.preview";
 
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
@@ -18,8 +21,6 @@ vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sess
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: getSettingsMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
-
-import { loader } from "../dashboard.store.preview";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const settings = {
