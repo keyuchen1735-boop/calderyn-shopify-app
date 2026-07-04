@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, DetectorId } from "../types";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import {
-  calibrationPct, DETECTION_COLD, detectionFactor, pairConfidence, smooth,
+  calibrationPct, clampToDayAnchor, DETECTION_COLD, detectionFactor, pairConfidence, smooth,
 } from "./confidence";
 import { graduationVerdict } from "./graduation";
 import { loadPairOutcomeTallies } from "./outcomes.server";
@@ -297,22 +297,43 @@ export async function recomputeShopCalibration(
 
   const raw = calibrationPct(scored);
 
-  // 4. smooth vs prior display, write back
+  // 4. smooth vs prior display, clamp to the day anchor, write back
   const { data: shopRow, error: shopErr } = await sb
     .from("shops")
-    .select("calibration_pct")
+    .select("calibration_pct, calibration_anchor_pct, calibration_anchor_date")
     .eq("id", shopId)
     .maybeSingle();
   if (shopErr) throw shopErr;
   const prev = shopRow?.calibration_pct == null ? null : Number(shopRow.calibration_pct);
-  let display = smooth(raw, prev);
+
+  // Day anchor (I6): smooth() bounds a single run; the anchor bounds the whole
+  // UTC day at ±5 now that the recompute runs hourly. The first run of a new
+  // day pins the anchor to the day's opening display.
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const storedAnchorDate =
+    shopRow?.calibration_anchor_date == null ? null : String(shopRow.calibration_anchor_date).slice(0, 10);
+  const storedAnchorPct =
+    shopRow?.calibration_anchor_pct == null ? null : Number(shopRow.calibration_anchor_pct);
+  const anchorPct = storedAnchorDate === todayUtc && storedAnchorPct != null ? storedAnchorPct : prev;
+
+  // The band includes prev so a merchant nudge that stepped outside it is
+  // never reverted by a later passive run and a clamped value can never move
+  // against the raw direction.
+  let display = clampToDayAnchor(smooth(raw, prev), anchorPct, prev);
+  // The merchant's own approve/reject must visibly move the needle — the ±1
+  // nudge applies AFTER the day clamp on purpose (spec §9 I6 exemption).
   if (opts?.forceVisibleStep && prev != null && display === prev && raw !== prev) {
     display = raw > prev ? Math.min(100, prev + 1) : Math.max(0, prev - 1);
   }
 
   const { error: updErr } = await sb
     .from("shops")
-    .update({ calibration_pct: display, calibration_updated_at: new Date().toISOString() })
+    .update({
+      calibration_pct: display,
+      calibration_updated_at: new Date().toISOString(),
+      calibration_anchor_pct: anchorPct ?? display,
+      calibration_anchor_date: todayUtc,
+    })
     .eq("id", shopId);
   if (updErr) throw updErr;
 

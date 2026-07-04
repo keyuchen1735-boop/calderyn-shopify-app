@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { loader } from "../cron.calibration-recompute";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { loader, ORGANIC_SWEEP_UTC_HOUR } from "../cron.calibration-recompute";
 
 // Mock the recompute + organic sweep + supabase so the route is tested in isolation.
 vi.mock("../../lib/calibration/recompute.server", () => ({
@@ -27,6 +27,15 @@ beforeEach(() => {
   process.env.CRON_SECRET = "s3cret";
   shopRows.length = 0;
   shopRows.push({ id: "shop-1", demo_mode: false });
+  // The organic sweep is a nightly batch: it only runs on the
+  // ORGANIC_SWEEP_UTC_HOUR tick. Pin the clock there by default so the sweep
+  // assertions exercise the nightly run; the hourly-skip test overrides.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(Date.UTC(2026, 6, 3, ORGANIC_SWEEP_UTC_HOUR, 45, 0)));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("cron.calibration-recompute loader", () => {
@@ -54,6 +63,18 @@ describe("cron.calibration-recompute loader", () => {
       expect.anything(),
       expect.objectContaining({ peerPriors: expect.any(Map) }),
     );
+  });
+
+  it("skips the organic sweep on non-nightly hourly runs (bulk-pause suppression needs one batch)", async () => {
+    vi.setSystemTime(new Date(Date.UTC(2026, 6, 3, (ORGANIC_SWEEP_UTC_HOUR + 3) % 24, 45, 0)));
+    const { sweepOrganicSignals } = await import("../../lib/calibration/organic.server");
+    const { recomputeShopCalibration } = await import("../../lib/calibration/recompute.server");
+    const res = await loader({ request: req("Bearer s3cret"), params: {}, context: {} } as never);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.shops).toBe(1); // recompute still runs hourly
+    expect(vi.mocked(recomputeShopCalibration)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sweepOrganicSignals)).not.toHaveBeenCalled();
   });
 
   it("skips the organic sweep for demo shops (seeded state would misfire the matchers)", async () => {

@@ -1,13 +1,26 @@
-// Nightly: recompute every shop's calibration headline. Thin by design - the
-// math lives in lib/calibration. Deviation from the autopilot-train pattern
-// (which POSTs to a Python engine fn) is intentional: the confidence formula
-// must have ONE implementation (TS), so we do not round-trip to Python.
+// Hourly (at :45, between the autopilot ticks at :00/:30): recompute every
+// shop's calibration headline. Thin by design - the math lives in
+// lib/calibration. Deviation from the autopilot-train pattern (which POSTs to
+// a Python engine fn) is intentional: the confidence formula must have ONE
+// implementation (TS), so we do not round-trip to Python.
 //
-// The organic-signal sweep runs per shop BEFORE the recompute so tonight's
-// headline already reflects what the merchant did on the platform themselves
-// (implicit approvals of open pause suggestions, out-of-band reversals of
-// autonomous pauses). Demo shops are skipped: their seeded synthetic state
-// simulates action side effects and would misfire the organic matchers.
+// Hourly cadence safety: the pair cache is a pure re-derivation (idempotent),
+// and the headline honors I6's ±5-per-DAY bound via the day anchor inside
+// recomputeShopCalibration (smooth()'s per-run clamp alone would not).
+//
+// The ORGANIC sweep stays a nightly batch (the ORGANIC_SWEEP_UTC_HOUR run
+// only). Its MASS_PAUSE_LIMIT bulk-pause suppression is a per-sweep batch
+// heuristic: a merchant's seasonal shutdown paused over an afternoon must be
+// seen in ONE sweep (> limit → credit nothing), which hourly slices of 2-3
+// campaigns would misread as per-suggestion agreement and credit. The
+// individual credits are still exactly-once (open→acknowledged transition and
+// the action_feedback reversal ledger are the dedup) — the batching is about
+// classification, not double-counting. It runs BEFORE that run's recompute so
+// the nightly headline reflects what the merchant did on the platform
+// themselves (implicit approvals of open pause suggestions, out-of-band
+// reversals of autonomous pauses). Demo shops are skipped: their seeded
+// synthetic state simulates action side effects and would misfire the organic
+// matchers.
 //
 // Scale shape (the ingest cron's 504 lesson): peer priors are fetched ONCE
 // for the whole run (they are shop-independent) and shared across shops;
@@ -30,6 +43,10 @@ export const config = { maxDuration: 300 };
  * roughly 4x vs the old serial loop. */
 const SHOP_CONCURRENCY = 4;
 
+/** The one hourly run that also performs the nightly organic-signal sweep
+ * (06:45 UTC — the slot the old nightly cron occupied). See header comment. */
+export const ORGANIC_SWEEP_UTC_HOUR = 6;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
@@ -44,6 +61,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { data: shops, error } = await sb.from("shops").select("id, demo_mode");
   if (error) return json({ ok: false, error: error.message }, { status: 502 });
 
+  const runOrganicSweep = new Date().getUTCHours() === ORGANIC_SWEEP_UTC_HOUR;
+
   // Peer baselines are shop-independent: one bulk fetch serves the whole run.
   const peerPriors = await loadPeerPriors(sb);
 
@@ -55,7 +74,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const shopId = s.id as string;
       // Organic sweep first (never throws; per-signal failures are collected)
       // so the recompute below scores tonight's conf WITH the new signals.
-      if (!s.demo_mode) {
+      // Nightly-batch only: see ORGANIC_SWEEP_UTC_HOUR.
+      if (runOrganicSweep && !s.demo_mode) {
         const organic = await sweepOrganicSignals(shopId, sb);
         implicitApprovals += organic.implicitApprovals;
         reversals += organic.reversals;

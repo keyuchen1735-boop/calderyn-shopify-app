@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  pairPrior, historical, confidence, calibrationPct, smooth,
+  pairPrior, historical, confidence, calibrationPct, smooth, clampToDayAnchor,
   actionTier, reversibilityFactor, NO_BRAINER, HAS_EXECUTOR,
   pairConfidence, DETECTION_COLD,
 } from "../confidence";
@@ -198,5 +198,42 @@ describe("pairConfidence — learned factors (opts)", () => {
     expect(HAS_EXECUTOR.has("exclude_geo")).toBe(true);
     expect(HAS_EXECUTOR.has("push_creative_draft")).toBe(true);
     expect(pairConfidence("regional_shortage_risk", "exclude_geo", { alpha: 0, beta: 0 }, null)).toBeGreaterThan(0);
+  });
+});
+
+describe("clampToDayAnchor (I6 hourly-cadence day bound)", () => {
+  it("is a no-op with a null anchor (first-ever recompute)", () => {
+    expect(clampToDayAnchor(83, null)).toBe(83);
+  });
+  it("clamps upward drift to anchor + 5", () => {
+    expect(clampToDayAnchor(40, 30)).toBe(35);
+  });
+  it("clamps downward drift to anchor - 5", () => {
+    expect(clampToDayAnchor(10, 30)).toBe(25);
+  });
+  it("passes through values inside the day window", () => {
+    expect(clampToDayAnchor(33, 30)).toBe(33);
+    expect(clampToDayAnchor(27, 30)).toBe(27);
+  });
+  it("never clamps outside [0, 100]", () => {
+    expect(clampToDayAnchor(0, 2)).toBe(0);
+    expect(clampToDayAnchor(100, 98)).toBe(100);
+  });
+  it("bounds a full day of hourly ±5 smooth() steps to ±5 total", () => {
+    // Simulate 24 hourly recomputes all pulling hard toward raw=100 from 20.
+    const anchor = 20;
+    let display = 20;
+    for (let h = 0; h < 24; h++) {
+      display = clampToDayAnchor(smooth(100, display), anchor, display);
+    }
+    expect(display).toBe(25); // anchor + 5, not 20 + 24*5
+  });
+  it("never reverts or inverts a merchant nudge that stepped outside the band", () => {
+    // Anchor 50 (band [45,55]); a forceVisibleStep nudge wrote 56. A passive
+    // hourly run pulling toward raw=90 must hold at 56 (band expands to
+    // include prev), never fall back to 55.
+    expect(clampToDayAnchor(smooth(90, 56), 50, 56)).toBe(56);
+    // And a second merchant approve from 56 must not move DOWN either.
+    expect(clampToDayAnchor(smooth(90, 56), 50, 56)).toBeGreaterThanOrEqual(56);
   });
 });

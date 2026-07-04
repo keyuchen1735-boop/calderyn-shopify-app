@@ -262,6 +262,36 @@ export function smooth(
   return clampInt(next, 0, 100);
 }
 
+/**
+ * I6's ±5-per-DAY clamp, made explicit for sub-daily recomputes. smooth()'s
+ * maxStep bounds a single RUN; with the recompute on an hourly cadence that
+ * alone would allow ±5 per hour. The day anchor is the display value at the
+ * first recompute of the UTC day — every later run that day may land at most
+ * maxDayStep away from it. A null anchor (first-ever recompute) is a no-op.
+ *
+ * The band EXPANDS to include prevDisplay: the merchant's own approve/reject
+ * nudges (±1, exempt per spec §9 I6) may step the display just outside the
+ * band, and the next passive run must neither revert that step nor let a
+ * clamped value move AGAINST the raw direction. Including prev keeps every
+ * passive run monotone relative to the last written display while passive
+ * drift stays bounded at maxDayStep from the day's open.
+ */
+export function clampToDayAnchor(
+  display: number,
+  anchorPct: number | null,
+  prevDisplay: number | null = null,
+  maxDayStep = 5,
+): number {
+  if (anchorPct == null || !Number.isFinite(anchorPct)) return display;
+  let lo = Math.max(0, Math.round(anchorPct) - maxDayStep);
+  let hi = Math.min(100, Math.round(anchorPct) + maxDayStep);
+  if (prevDisplay != null && Number.isFinite(prevDisplay)) {
+    lo = Math.min(lo, Math.round(prevDisplay));
+    hi = Math.max(hi, Math.round(prevDisplay));
+  }
+  return Math.min(hi, Math.max(lo, display));
+}
+
 /* ---------- confidence breakdown (Live Engine pipeline + inspector) ---------- */
 
 export interface ConfidenceFactor {
