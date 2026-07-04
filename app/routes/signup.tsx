@@ -5,6 +5,7 @@
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
+import { publicBaseUrl } from "~/lib/dashboard/http.server";
 import {
   AuthShell,
   AuthError,
@@ -23,17 +24,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
     error: url.searchParams.get("error"),
     email: url.searchParams.get("email") ?? "",
     store: url.searchParams.get("store") ?? "",
+    // OAuth provider flows must start on the public apex (their callback host),
+    // not this app.* origin — see GoogleButton.
+    authBase: publicBaseUrl(),
   };
 }
 
 export default function SignupPage() {
-  const { error, email, store } = useLoaderData<typeof loader>();
+  const { error, email, store, authBase } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Create account</h1>
       <p className="cd-auth-sub">Live in about a minute.</p>
       <AuthError code={error} />
-      <GoogleButton label="Sign up with Google" />
+      <GoogleButton label="Sign up with Google" baseUrl={authBase} />
       <div className="cd-auth-divider">or</div>
       <AuthForm action="/dashboard/signup">
         <label className="cd-auth-label" htmlFor="store">

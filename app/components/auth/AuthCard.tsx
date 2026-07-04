@@ -157,10 +157,23 @@ export function PasswordField({
   );
 }
 
-export function ShopifyButton({ label, returnTo }: { label: string; returnTo?: string | null }) {
-  const href = returnTo
+export function ShopifyButton({
+  label,
+  returnTo,
+  baseUrl,
+}: {
+  label: string;
+  returnTo?: string | null;
+  // Same host constraint as GoogleButton: the Shopify OAuth __Host- state
+  // cookie and its redirect_uri live on the public apex, so the flow must
+  // start there and not on this app.* origin, or the callback's state check
+  // never sees the cookie. Empty in single-host dev.
+  baseUrl?: string;
+}) {
+  const path = returnTo
     ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
     : "/dashboard/login";
+  const href = `${baseUrl ?? ""}${path}`;
   return (
     <a className="cd-auth-google" href={href}>
       <CDIcon name="store" size={16} />
@@ -169,10 +182,24 @@ export function ShopifyButton({ label, returnTo }: { label: string; returnTo?: s
   );
 }
 
-export function GoogleButton({ label, returnTo }: { label: string; returnTo?: string | null }) {
-  const href = returnTo
+export function GoogleButton({
+  label,
+  returnTo,
+  baseUrl,
+}: {
+  label: string;
+  returnTo?: string | null;
+  // Absolute origin the Google flow must run on (the public apex where the
+  // __Host- CSRF cookie and the Google-registered redirect_uri live). These
+  // pages are served on app.*, so a bare relative path would set the state
+  // cookie on the wrong host and the callback's state check would always fail.
+  // Empty in single-host dev, where a relative path is already correct.
+  baseUrl?: string;
+}) {
+  const path = returnTo
     ? `/dashboard/auth/google?return_to=${encodeURIComponent(returnTo)}`
     : "/dashboard/auth/google";
+  const href = `${baseUrl ?? ""}${path}`;
   return (
     <a className="cd-auth-google" href={href}>
       <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
