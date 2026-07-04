@@ -1805,6 +1805,16 @@
 .cd-swatches { display: flex; gap: 8px; margin-top: 10px; }
 .cd-swatch { width: 26px; height: 26px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 0.5px var(--hairline-strong); }
 .cd-swatch[data-active="1"] { box-shadow: 0 0 0 2px var(--card-solid), 0 0 0 3.5px var(--text-1); }
+/* Live storefront preview: a server-rendered iframe of the draft doc. Fixed
+   viewport height so it reads like a browser preview and scrolls internally. */
+.cd-canvas-frame { display: block; width: 100%; height: min(78vh, 900px); border: 0; background: #fff; }
+.cd-studio-canvas[data-building="1"] .cd-canvas-frame { opacity: 0.5; transition: opacity 0.2s; }
+/* Hero-copy editor popover (replaces the old in-canvas contentEditable now that
+   the canvas is an iframe). Mirrors the tweak-accent popover. */
+.cd-edit-pop { position: absolute; top: 14px; right: 14px; z-index: 10; width: 264px; background: var(--card-solid); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 14px; }
+.cd-edit-label { font-size: 11px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-3); margin-top: 10px; display: block; }
+.cd-edit-field { width: 100%; margin-top: 5px; border: 0.5px solid var(--hairline-strong); border-radius: 8px; background: var(--gray-bg); font: inherit; font-size: 13px; color: var(--text-1); padding: 7px 9px; outline: none; box-sizing: border-box; }
+.cd-edit-field:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--live) 35%, transparent); }
 .cd-studio-foot { flex: 0 0 auto; border-top: 0.5px solid var(--hairline-strong); padding: 12px 16px; }
 .cd-screen-storefront { padding: 0 !important; max-width: none !important; height: 100%; }
 .cd-screen-storefront .cd-studio { height: 100%; flex: 1; min-height: 540px; }

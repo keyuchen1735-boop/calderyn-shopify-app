@@ -48,4 +48,13 @@ describe("buildStep", () => {
     expect(step.dot).toBe("wait");
     expect(step.sub).toBe("boom");
   });
+
+  it("says a degraded (AI-unavailable) draft is a starter layout, not the design", () => {
+    // A soft-degraded run produced a draft, but the prompt wasn't applied — the
+    // copy must not read as "draft ready" or the merchant thinks it worked.
+    const step = buildStep({ kind: "done", status: "failed" });
+    expect(step.dot).toBe("wait");
+    expect(step.title).not.toMatch(/ready/i);
+    expect(step.sub).toMatch(/unavailable|starter/i);
+  });
 });

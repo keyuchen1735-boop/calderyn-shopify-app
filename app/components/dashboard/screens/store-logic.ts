@@ -22,7 +22,7 @@ export interface MissingPiece {
 
 export type BuildPhase =
   | { kind: "running" }
-  | { kind: "done"; status: "draft" | "no_products" }
+  | { kind: "done"; status: "draft" | "no_products" | "failed" }
   | { kind: "failed"; message: string };
 
 export interface BuildStepView {
@@ -45,6 +45,17 @@ export function buildStep(phase: BuildPhase): BuildStepView {
   }
   if (phase.kind === "failed") {
     return { dot: "wait", dotColor: "var(--red)", title: "Generation failed", sub: phase.message };
+  }
+  // Soft-degraded: a draft exists, but the AI designer was unreachable so every
+  // page is a deterministic starter layout that ignored the prompt. Say so
+  // plainly instead of claiming the design is ready (rule 12).
+  if (phase.status === "failed") {
+    return {
+      dot: "wait",
+      dotColor: "var(--orange)",
+      title: "Showing a starter layout",
+      sub: "The AI designer was unavailable, so your prompt wasn't applied. Try Build again in a moment.",
+    };
   }
   return {
     dot: "done",

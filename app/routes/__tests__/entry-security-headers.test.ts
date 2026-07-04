@@ -74,6 +74,30 @@ describe("applySecurityHeaders", () => {
     expect(csp).not.toContain("default-src");
   });
 
+  it("allows same-origin framing on the studio draft-preview path (not DENY)", () => {
+    // The Store studio iframes /dashboard/store/preview; DENY would blank it.
+    const headers = new Headers();
+    applySecurityHeaders(headers, "/dashboard/store/preview");
+    expect(headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    const csp = headers.get("Content-Security-Policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'self'");
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    // Display-only + script-free: block scripts even on a top-level load, so the
+    // isolation doesn't rest solely on the parent iframe's sandbox attribute.
+    expect(csp).toContain("script-src 'none'");
+    // Still hardened like every other non-embedded surface.
+    expect(csp).toContain("object-src 'none'");
+  });
+
+  it("does NOT extend the framing exemption to child paths under the preview", () => {
+    // The exemption is anchored to the exact path — a future nested route must
+    // fall back to the default DENY / frame-ancestors 'none', not inherit it.
+    const headers = new Headers();
+    applySecurityHeaders(headers, "/dashboard/store/preview/anything");
+    expect(headers.get("X-Frame-Options")).toBe("DENY");
+    expect(headers.get("Content-Security-Policy") ?? "").toContain("frame-ancestors 'none'");
+  });
+
   it("leaves embedded-path framing untouched even with no Shopify CSP", () => {
     // Shopify frames /app and /auth; setting X-Frame-Options or frame-ancestors
     // 'none' on an embedded error response would break the admin iframe.
