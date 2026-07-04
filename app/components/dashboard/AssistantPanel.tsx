@@ -124,8 +124,8 @@ export default function AssistantPanel({
 }) {
   const [open, setOpen] = useState(false);
 
-  // The mobile "More" sheet opens the panel by bumping openSignal (the floating
-  // launcher is hidden at phone width). Each increment re-opens it.
+  // The sidebar "Ask Calderyn" button and the mobile "More" sheet open the
+  // panel by bumping openSignal. Each increment re-opens it.
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
@@ -212,19 +212,7 @@ export default function AssistantPanel({
     inputRef.current?.focus();
   };
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        className="cd-chat-launcher"
-        onClick={() => setOpen(true)}
-        aria-label="Ask Calderyn"
-      >
-        <CDIcon name="assist" size={18} strokeWidth={1.9} />
-        <span>Ask Calderyn</span>
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <div className="cd-chat-panel" role="dialog" aria-label="Ask Calderyn">

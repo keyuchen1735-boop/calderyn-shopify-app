@@ -19,8 +19,8 @@ export default function BugReportButton({
 }) {
   const [open, setOpen] = useState(false);
 
-  // The mobile "More" sheet opens this by bumping openSignal (the floating
-  // launcher is hidden at phone width). Each increment re-opens it.
+  // The mobile "More" sheet opens this by bumping openSignal. Each increment
+  // re-opens it.
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
@@ -105,14 +105,7 @@ export default function BugReportButton({
     }
   };
 
-  if (!open) {
-    return (
-      <button type="button" className="cd-bug-launcher" onClick={() => setOpen(true)} aria-label="Report a bug">
-        <CDIcon name="warn" size={16} strokeWidth={1.9} />
-        <span>Report a bug</span>
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <div className="cd-bug-overlay" role="dialog" aria-label="Report a bug" aria-modal="true">
