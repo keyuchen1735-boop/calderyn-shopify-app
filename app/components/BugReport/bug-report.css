@@ -1,8 +1,0 @@
-/* Stacks directly above the Ask Calderyn launcher (.calderyn-assistant-launcher
-   sits at right:20px; bottom:20px). Same right edge + z-index lane. */
-.calderyn-bugreport-launcher {
-  position: fixed;
-  right: 20px;
-  bottom: 68px;
-  z-index: 519;
-}

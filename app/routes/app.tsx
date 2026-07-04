@@ -10,11 +10,7 @@ import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
-import assistantStyles from "../components/Assistant/assistant.css?url";
-import bugReportStyles from "../components/BugReport/bug-report.css?url";
 import calderynStyles from "../components/calderyn/calderyn.css?url";
-import { AssistantSlideout } from "../components/Assistant/AssistantSlideout";
-import { BugReportButton } from "../components/BugReport/BugReportButton";
 import { appendEmbeddedSearch, useKeepEmbeddedUrl } from "../lib/embedded-nav";
 import { useRefreshOnFocus } from "../lib/use-refresh-on-focus";
 import { adminDeepLinkRedirect } from "../lib/admin-deeplink.server";
@@ -22,8 +18,6 @@ import { authenticate } from "../shopify.server";
 
 export const links = () => [
   { rel: "stylesheet", href: polarisStyles },
-  { rel: "stylesheet", href: assistantStyles },
-  { rel: "stylesheet", href: bugReportStyles },
   { rel: "stylesheet", href: calderynStyles },
 ];
 
@@ -75,8 +69,6 @@ export default function App() {
         <Link to={withParams("/app/mcp")}>Claude connections</Link>
       </NavMenu>
       <Outlet />
-      <AssistantSlideout />
-      <BugReportButton />
     </AppProvider>
   );
 }
