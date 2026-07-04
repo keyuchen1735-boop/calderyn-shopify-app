@@ -3,6 +3,103 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-04
+
+### Triage — HUGE 24h window (~80 commits, PRs #275–#300); a companion nightly PR had BOGUS triage
+Window = everything merged 2026-07-03 (auth redesign #275/#276/#277/#279/#289/#291/#296/#297/#298;
+buyer accounts #1b; Step-10 refunds/relink/RLS/owned-asset CDN #281–#287; tenant storefront #278;
+AI store generator + product flow #292/#293/#294/#295/#300). Fanned out **5 read-only bug-hunters**
+by cluster: buyer-accounts · refunds/relink/promote/assets · dashboard auth/OAuth/session/CSP ·
+store-generator/AI-product-flow · RLS/tenant-read-lane/migrations. 4 → NONE (verified clean, hardened);
+1 real bug found + fixed. Shipped **PR #301** (draft), branch `fix/nightly-2026-07-04`.
+
+- **CAUTION — a companion nightly PR #299 (author Mezoh, branch `nightly-review/2026-07-04`) existed at
+  run start but its triage was WRONG:** its body claims "zero commits in the last 24h, latest is
+  9f49b77 4 days ago" and it therefore reviewed only OLDER cron/webhook/rate-limit modules — it never
+  looked at tonight's ~80-commit landed surface. So unlike 2026-07-03 (where companion #273 genuinely
+  covered the window), this run I could NOT lean on #299 for coverage; I reviewed the whole window
+  myself. **Lesson:** don't trust a companion PR's "zero commits" claim — re-derive the window from
+  `git log origin/main --since` yourself. (Also: the local checkout started on a STALE `main` ref /
+  detached HEAD; always `git fetch origin main` and branch off `origin/main`, not the local ref.)
+- Reviewed #299's 7 fixes separately (cron.detect/ingest/ingest-ads/gdpr/ingest-quickbooks error-swallow
+  → 500; rate-limit XFF leftmost→rightmost/x-real-ip; remediation-guard null-cap→5). All 7 correct, no
+  new defects, changed test asserts the right contract. Posted NONE (no comment).
+
+### Bug fixed tonight — account pre-hijacking via unverified federated (Google) merge
+- **`app/routes/dashboard.auth.google_.callback.tsx` Path 2** (the un-nested callback newly created by
+  #298 / `1f84622`, in-window). After Google verifies the email, Path 2 linked the Google `sub` to ANY
+  pre-existing local account matched **only by email string** and created a session — with NO check the
+  local account had proven email ownership. Exploit: attacker `/dashboard/signup` with victim's email +
+  attacker password creates an UNVERIFIED `users` row + attacker-owned tenant (`createUser` does not set
+  `email_verified`); victim later "Continue with Google" → Path 2 finds the attacker row by email, binds
+  the victim's Google identity, signs the victim INTO THE ATTACKER'S TENANT with the attacker's password
+  surviving → account/tenant takeover. Fix: `findUserByEmail` now also returns `emailVerified`; Path 2
+  refuses the silent link+session when the match is unverified (no `setGoogleSub`, no session; redirect
+  `/dashboard/signin?error=verify_email_first`, GOAUTH cleared). Paths 1 & 3 untouched; legit
+  verified-password→Google link still works. Added `messages.ts` copy + a test asserting the unverified
+  match is refused.
+- **Lesson (federated-merge pre-hijack):** any OAuth/SSO callback that auto-links a verified federated
+  identity into a pre-existing local account BY EMAIL must gate on the local account being email-verified
+  (or require a password proof). If password signup creates a matchable row BEFORE email verification
+  (as here — `createUser` omits `email_verified`), the by-email merge is a pre-hijacking vector. Check
+  every provider callback that calls a `findUserByEmail`→`setSub`→`createSession` sequence.
+
+### Second fix — landed-in-window lint error breaking `npm run lint` for the whole repo
+- **`app/routes/__tests__/dashboard.store.preview.test.tsx`** (landed via #300 / `da74383`): the
+  module-under-test `import { loader }` sat BELOW the `vi.mock` calls → `import/first` ESLint error →
+  `npm run lint` exit 1 repo-wide (a gate + CI step). Fix: hoist the import to the top block —
+  behavior-preserving because Vitest hoists `vi.mock` above imports and the factories reference only
+  `vi.hoisted` vars (test still 4/4). **Lesson:** `npm run lint` returns exit 0 despite 13 pre-existing
+  WARNINGS (it's not `--max-warnings=0` globally), so a non-zero lint means a real ERROR was newly
+  landed — grep the diff for it; the `import { X } from "../route"` after `vi.mock` pattern is the usual
+  culprit and is always safe to hoist.
+
+### Open-PR review
+- **#299** (companion nightly): 7 fixes all verified correct → NONE (no comment). See caution above re
+  its bogus triage window.
+- **#267** (RR7 migration, still a DRAFT, unchanged since 2026-07-03 05:21): NOT re-reviewed — memory's
+  2026-07-03 entry already reviewed it in full and posted the one real finding (the `app.settings` CSV
+  5MB cap now running AFTER `request.formData()` buffers the whole body). Re-posting would be duplicate
+  noise. If it changes, re-review.
+
+### Gate / environment
+- `npm ci` again WORKS here (exit 0), Node v22.22.2. Full gate on the final fix tree: setup 0 ·
+  typecheck 0 · lint 0 (13 pre-existing warnings, 0 errors) · build 0 (verifier: **244** client files
+  clean) · vitest **550 files / 3938 passed / 12 skipped / 0 failed**. Flaky
+  `linkedin-connection.test.ts` passed this run.
+- Build emits a pre-existing esbuild CSS `[WARNING] Expected "(" but found "print"` — cosmetic, not a
+  failure, ignore.
+
+### False positives cleared this run (do NOT re-flag)
+- **Buyer accounts #1b** (session/magic-link/identity/account/payment-methods + storefront.account.* +
+  checkout prefill): every read/write threads shop_id + session-derived buyer_id; `__Host-` cookie
+  HttpOnly/Secure/SameSite=Lax; 256-bit CSPRNG tokens, single-use magic link via atomic
+  `consumed_at IS NULL`, expiry enforced; saved cards store only Stripe display fields (brand/last4/exp),
+  never PAN/CVV, `si.customer` ownership-checked; GDPR delete shop+buyer scoped, Stripe best-effort
+  logged, DB throws; composite FK `(shop_id,buyer_id)→buyer_dim`. Clean.
+- **Step-10 refunds/relink/promote/assets:** refund over-refund blocked by signed-ledger sum + FOR-UPDATE
+  `record_refund_ledger` + Stripe backstop; double-refund triple-guarded (action dedup + Stripe
+  idempotency key + `unique(stripe_event_id,kind)`); refund correctly NON-undoable (undoAction boundary +
+  `v_audit_view` exclusion); relink buyer lookup shop-scoped + composite FK blocks cross-tenant link;
+  promote inserts `on conflict do nothing` + shop-filtered + `distinct on` media (idempotent); asset
+  upload session+same-origin+rate-limited, key `${shopId}/${randomUUID()}.${ext}` (no traversal),
+  magic-number sniffed, size double-capped. Clean.
+- **Store generator / AI product flow:** no `.server` leak into client bundles (Anthropic key confined to
+  `anthropic.server`); all publish/write paths thread `session.shopId` from `requireDashboardSession`,
+  cross-tenant guarded (`ownedCollectionIds`, matched-row checks); listing-draft boundary JSON-guarded +
+  clamped + tool-schema-forced + `sanitizePlan`; screen-cache (b2516a1) is a per-browser module-level Map
+  written only from client effects, account switch does full navigation → no cross-tenant seed;
+  AI-unavailable render is defensive (optional-chaining + fallbackDoc), no null-deref. Clean.
+- **RLS / tenant read lane / Step-10 migrations:** `getTenantSupabase` mints an HS256 `app_web`
+  (NOBYPASSRLS) JWT bearer — NOT the service-role key; fail-closed (no GUC → zero rows). Migration
+  "duplicate-looking pairs" resolved by `d080286` (only one copy of each object exists). `160000`
+  app_web→SELECT-only + `170000` security_invoker guard self-test on apply; `v_audit_view.trigger_reason`
+  exists since a 2026-06-15 migration (no ordering bug). `verify-rls-enforcement.mjs` uses genuine
+  `SET ROLE app_web`, not the bypass key. Clean. (Sub-threshold, NOT bugs: verify script's per-table
+  positive control only covers `product_dim`; `app_web` role is an environmental precondition never
+  `CREATE ROLE`'d in-repo so a fully-fresh `db reset` of this repo alone would fail — both pre-date
+  Step 10.)
+
 ## 2026-07-03
 
 ### Triage — big 24h window, companion nightly PR already existed
