@@ -5,7 +5,8 @@
 // from requireDashboardSession, NEVER the body. Disabling is always safe;
 // enabling only bites for a graduated pair while shop autopilot is on (the
 // graduation gate, not this flag, is the real authority). setFeatureAutonomy
-// flips pair_calibration.merchant_disabled and never throws.
+// flips pair_calibration.autonomy_enabled and never throws. The three shipped
+// no-brainer pairs seed autonomy_enabled=true, so this is their off-switch.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";

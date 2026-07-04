@@ -53,6 +53,13 @@ export interface RuleVerdict {
    * The caller clamps newBudgetCents so (currentBudgetCents - newBudgetCents) <= cappedDollarCents.
    */
   cappedDollarCents?: number;
+  /**
+   * Learned sizing dial from a pair_mu_override rule (too_aggressive rejects),
+   * clamped to [0.05, 1]. The caller combines it with the trained policy dial
+   * as min(policyMu, muOverride) — the merchant's learned restraint can only
+   * ever SHRINK an autonomous cut/increase, never enlarge it.
+   */
+  muOverride?: number;
 }
 
 // ─── Load ──────────────────────────────────────────────────────────────────
@@ -93,12 +100,16 @@ export async function loadPairRules(
  *   2. pair_probation_until → veto if until > nowIso
  *   3. pair_blackout_hours  → veto if nowUtcHour ∈ rule_value.hours
  *   4. pair_min_spend       → veto if campaignSpendCents < rule_value.cents
- *   5. pair_dollar_cap      → veto (pause) or cappedDollarCents (reduce)
+ *   5. pair_mu_override     → non-veto: shrink the sizing dial (muOverride)
+ *   6. pair_dollar_cap      → veto (pause) or cappedDollarCents (reduce)
  *
- * Returns {} (no veto, no cap) when all rules pass.
+ * Non-veto effects (muOverride, cappedDollarCents) accumulate across rules;
+ * dollar_cap is the last priority so a veto from it still wins over sizing.
+ * Returns {} (no veto, no effects) when all rules pass.
  */
 export function applyRules(rules: CalibrationRule[], ctx: RuleContext): RuleVerdict {
   const nowIso = ctx.nowIso ?? new Date().toISOString();
+  const effects: RuleVerdict = {};
 
   for (const rule of sortedRules(rules)) {
     switch (rule.rule_kind) {
@@ -129,13 +140,31 @@ export function applyRules(rules: CalibrationRule[], ctx: RuleContext): RuleVerd
         break;
       }
 
+      case "pair_mu_override": {
+        // Learned restraint on sizing (too_aggressive). Multiple active rows
+        // (e.g. the tighten RPC raced a fallback insert) resolve to the
+        // TIGHTEST dial. Out-of-range values are clamped, never trusted raw.
+        const mu = typeof rule.rule_value.mu === "number" ? rule.rule_value.mu : null;
+        if (mu !== null && Number.isFinite(mu)) {
+          const clamped = Math.min(1, Math.max(0.05, mu));
+          effects.muOverride =
+            effects.muOverride === undefined ? clamped : Math.min(effects.muOverride, clamped);
+        }
+        break;
+      }
+
       case "pair_dollar_cap": {
         const capCents = typeof rule.rule_value.cents === "number" ? rule.rule_value.cents : null;
         if (capCents !== null && ctx.dollarImpactCents > capCents) {
           if (ctx.actionKind === "reduce_campaign_budget") {
-            // Downsize the cut to the cap: return a cappedDollarCents the caller
-            // uses to clamp (currentBudgetCents - newBudgetCents).
-            return { cappedDollarCents: capCents };
+            // Downsize the cut to the cap: accumulate a cappedDollarCents the
+            // caller uses to clamp (currentBudgetCents - newBudgetCents).
+            // Multiple caps resolve to the tightest.
+            effects.cappedDollarCents =
+              effects.cappedDollarCents === undefined
+                ? capCents
+                : Math.min(effects.cappedDollarCents, capCents);
+            break;
           }
           // pause/increase cannot be partially applied — veto.
           return { veto: "exceeds merchant dollar cap" };
@@ -149,7 +178,7 @@ export function applyRules(rules: CalibrationRule[], ctx: RuleContext): RuleVerd
     }
   }
 
-  return {};
+  return effects;
 }
 
 /**
@@ -162,7 +191,8 @@ function sortedRules(rules: CalibrationRule[]): CalibrationRule[] {
     pair_probation_until: 1,
     pair_blackout_hours: 2,
     pair_min_spend: 3,
-    pair_dollar_cap: 4,
+    pair_mu_override: 4,
+    pair_dollar_cap: 5,
   };
   return [...rules].sort(
     (a, b) => (priority[a.rule_kind] ?? 99) - (priority[b.rule_kind] ?? 99),

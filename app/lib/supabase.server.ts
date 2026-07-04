@@ -162,9 +162,13 @@ export async function provisionShop(shopDomain: string): Promise<void> {
 
 /**
  * Ensure Calderyn's three baseline no-brainer features exist for a shop.
- * Existing rows are left untouched so merchant off-switches and learned state
- * survive re-authentication. A migration performs the corresponding backfill
- * for shops that already existed when this behavior shipped.
+ * They ship pre-unlocked AND pre-enabled (autonomy_enabled): once the merchant
+ * turns shop-level Autopilot on, these protections run without any per-feature
+ * setup. Every other pair still requires the explicit warm-up opt-in. The
+ * merchant can switch any of the three off from Live Engine at any time —
+ * existing rows are left untouched so that off-switch and learned state survive
+ * re-authentication. A migration performs the corresponding backfill for shops
+ * that already existed when this behavior shipped.
  */
 export async function seedShippedAutopilotFeatures(
   shopId: string,
@@ -178,6 +182,7 @@ export async function seedShippedAutopilotFeatures(
       detector_id: detectorId,
       action_kind: actionKind,
       graduated: true,
+      autonomy_enabled: true,
       last_conf: pairConfidence(detectorId, actionKind, { alpha: 0, beta: 0 }, null),
     };
   });
