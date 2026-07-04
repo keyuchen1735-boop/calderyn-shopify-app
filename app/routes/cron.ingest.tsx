@@ -46,13 +46,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shipCostErrors: [] as string[],
   };
 
-  // Phase 1: backfill pending shops (bounded)
-  const { data: pending } = await sb
+  // Phase 1: backfill pending shops (bounded). Surface a read failure as a 500
+  // instead of swallowing it — a DB outage must not look like "no pending shops"
+  // (an empty 200) to a cron monitor. Mirrors cron.autopilot's shop-list guard.
+  const { data: pending, error: pendingErr } = await sb
     .from("shop_integrations")
     .select("shop_id, shops!inner(shop_domain)")
     .eq("kind", "shopify")
     .eq("sync_status", "pending")
     .limit(MAX_BACKFILL_SHOPS);
+  if (pendingErr) {
+    console.error("[cron.ingest] failed to list pending shops", pendingErr);
+    return json({ error: `failed to list pending shops: ${pendingErr.message}` }, { status: 500 });
+  }
   for (const row of pending ?? []) {
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
     try {
@@ -65,11 +71,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Existing shops predate the inventory-policy columns. Incrementally refresh
   // up to five catalogs per tick until every SKU has Shopify's safety settings.
-  const { data: activeIntegrations } = await sb
+  const { data: activeIntegrations, error: activeErr } = await sb
     .from("shop_integrations")
     .select("shop_id, shops!inner(shop_domain)")
     .eq("kind", "shopify")
     .in("sync_status", ["ready", "live"]);
+  // This list feeds inventory sync, attribution reconcile (Phase 3) and
+  // ship-cost resolution (Phase 4). A swallowed read failure would silently
+  // zero all three and still return a healthy-looking 200 — fail visibly.
+  if (activeErr) {
+    console.error("[cron.ingest] failed to list active shops", activeErr);
+    return json({ error: `failed to list active shops: ${activeErr.message}` }, { status: 500 });
+  }
   for (const row of (activeIntegrations ?? []).slice(0, MAX_BACKFILL_SHOPS)) {
     const shopId = String(row.shop_id);
     const domain = (row as unknown as { shops?: { shop_domain?: string } }).shops?.shop_domain;
