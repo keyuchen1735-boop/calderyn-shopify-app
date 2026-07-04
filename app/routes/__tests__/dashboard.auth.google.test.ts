@@ -145,7 +145,7 @@ describe("google callback loader", () => {
     it("redirects to /dashboard/signin?error=google_oauth_failed when state does not match cookie", async () => {
       // state=wrongnonce, cookie=correctnonce - mismatch must be rejected without
       // touching any OAuth or user-lookup code.
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest(
         { code: "authcode", state: "wrongnonce" },
         "correctnonce",
@@ -163,7 +163,7 @@ describe("google callback loader", () => {
     });
 
     it("redirects to /dashboard/signin?error=google_oauth_failed when goauth cookie is absent", async () => {
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       // No cookie at all
       const req = callbackRequest({ code: "authcode", state: "somenonce" });
       const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
@@ -179,7 +179,7 @@ describe("google callback loader", () => {
       mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
       mockVerifyIdToken.mockResolvedValue({ sub: "google-sub", email: "user@example.com", emailVerified: false });
 
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest({ code: "authcode", state: nonce }, nonce);
       const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
       expect(res.status).toBe(302);
@@ -199,7 +199,7 @@ describe("google callback loader", () => {
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
       mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1" });
 
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest({ code: "code", state: nonce }, nonce);
       const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
       expect(res.status).toBe(302);
@@ -215,7 +215,7 @@ describe("google callback loader", () => {
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
       mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1" });
 
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       // Cookie format is `nonce:enc(returnTo)` — see dashboard.auth.google.
       const req = callbackRequest(
         { code: "code", state: nonce },
@@ -236,7 +236,7 @@ describe("google callback loader", () => {
       mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com" });
       mockResolveShopForUser.mockResolvedValue("shop-existing");
 
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest({ code: "code", state: nonce }, nonce);
       const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
 
@@ -259,7 +259,7 @@ describe("google callback loader", () => {
       mockFindUserByEmail.mockResolvedValue(null);
       mockSignGoogleSignup.mockReturnValue("signed.tok");
 
-      const { loader } = await import("../dashboard.auth.google.callback");
+      const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest({ code: "code", state: nonce }, nonce);
       const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
       expect(res.status).toBe(302);
@@ -275,7 +275,7 @@ describe("google callback loader", () => {
 describe("google store action", () => {
   it("returns 400 when the signup token is invalid or missing", async () => {
     mockVerifyGoogleSignup.mockReturnValue(null);
-    const { action } = await import("../dashboard.auth.google.store");
+    const { action } = await import("../dashboard.auth.google_.store");
     const res = (await action({ request: storePost({ t: "bad.token", store: "My Shop" }), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_or_expired_token" });
@@ -283,7 +283,7 @@ describe("google store action", () => {
 
   it("returns 422 when the store name is missing", async () => {
     mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
-    const { action } = await import("../dashboard.auth.google.store");
+    const { action } = await import("../dashboard.auth.google_.store");
     const res = (await action({ request: storePost({ t: "valid.token", store: "" }), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "missing_store" });
@@ -293,7 +293,7 @@ describe("google store action", () => {
     mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
     mockCreateGoogleUser.mockResolvedValue({ id: "u1" });
 
-    const { action } = await import("../dashboard.auth.google.store");
+    const { action } = await import("../dashboard.auth.google_.store");
     const res = (await action({ request: storePost({ t: "valid.token", store: "Acme Store" }), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/dashboard");
@@ -309,7 +309,7 @@ describe("google store action", () => {
     mockCreateGoogleUser.mockResolvedValue({ id: "u2" });
     mockProvisionOwnedShop.mockRejectedValue(new Error("shop insert failed"));
 
-    const { action } = await import("../dashboard.auth.google.store");
+    const { action } = await import("../dashboard.auth.google_.store");
     const res = (await action({
       request: storePost({ t: "valid.token", store: "Acme" }),
       params: {},
