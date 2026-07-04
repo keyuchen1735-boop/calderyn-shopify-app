@@ -53,7 +53,10 @@ export async function action({ request }: ActionFunctionArgs) {
     const { shopId } = await provisionOwnedShop(store);
     await linkMembership(userId, shopId, "owner");
     const { raw } = await createSessionForUser(userId, shopId);
-    return redirect("/dashboard", { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
+    // New Google users go through onboarding (phone + how-heard, optional Shopify
+    // port) before the dashboard — same gate as email signups. Google emails are
+    // pre-verified, so onboarding-finish lands them straight on /dashboard.
+    return redirect("/dashboard/onboarding", { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
   } catch (err) {
     await deleteUser(userId).catch(() => {});
     // The rollback leaves a retry able to succeed, so surface a retryable

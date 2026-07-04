@@ -289,14 +289,14 @@ describe("google store action", () => {
     expect(await res.json()).toMatchObject({ error: "missing_store" });
   });
 
-  it("creates user+shop+membership+session and redirects to /dashboard on success", async () => {
+  it("creates user+shop+membership+session and redirects to onboarding on success", async () => {
     mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
     mockCreateGoogleUser.mockResolvedValue({ id: "u1" });
 
     const { action } = await import("../dashboard.auth.google_.store");
     const res = (await action({ request: storePost({ t: "valid.token", store: "Acme Store" }), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard");
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=");
     expect(mockCreateGoogleUser).toHaveBeenCalledWith("u@e.com", "gsub");
     expect(mockProvisionOwnedShop).toHaveBeenCalledWith("Acme Store");
