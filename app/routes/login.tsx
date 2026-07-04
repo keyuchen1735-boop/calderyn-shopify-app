@@ -17,7 +17,7 @@ import {
   GoogleButton,
   ShopifyButton,
 } from "~/components/auth/AuthCard";
-import { safeDashboardReturnTo } from "~/lib/dashboard/http.server";
+import { safeDashboardReturnTo, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
 
 export const meta: MetaFunction = () => [{ title: "Sign in — Calderyn" }];
@@ -35,19 +35,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
     email: url.searchParams.get("email") ?? "",
     // Validated here AND at the action; a hostile value never reaches the form.
     returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
+    // OAuth provider flows must start on the public apex (their callback host),
+    // not this app.* origin — see GoogleButton / ShopifyButton.
+    authBase: publicBaseUrl(),
   };
 }
 
 export default function LoginPage() {
-  const { error, notice, email, returnTo } = useLoaderData<typeof loader>();
+  const { error, notice, email, returnTo, authBase } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Sign in</h1>
       <p className="cd-auth-sub">Welcome back.</p>
       <AuthError code={error} />
       <AuthNotice notice={notice} />
-      <GoogleButton label="Continue with Google" returnTo={returnTo} />
-      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} />
+      <GoogleButton label="Continue with Google" returnTo={returnTo} baseUrl={authBase} />
+      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} baseUrl={authBase} />
       <div className="cd-auth-divider">or</div>
       <AuthForm action="/dashboard/signin">
         <label className="cd-auth-label" htmlFor="email">
