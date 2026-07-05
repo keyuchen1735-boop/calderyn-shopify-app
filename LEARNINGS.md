@@ -3,6 +3,105 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-05
+
+### Triage — ~40 commits (PRs #302–#309 + demo-showcase merge); a GENUINE companion nightly PR existed
+Window = merged 2026-07-04 on `main` `89059ad`: signup onboarding (#305), demo showcase account +
+resettable Peak & Pine shop, calibration prelock/hourly-recompute/too_aggressive rule writers (#302
+region), SKU→dedicated-campaign autopilot (#302), Home redesign (#306–#309: agent-first landing,
+progressive first-paint, prompt→chat handoff). Fanned out **4 read-only bug-hunters** by cluster
+(onboarding/auth · demo/seed · calibration/autopilot money-path · Home/dashboard UI). 2 → NONE
+(verified clean/hardened); 1 real bug found + fixed; 1 real-but-not-surgically-fixable finding surfaced.
+Shipped **PR #311** (draft), branch `fix/nightly-2026-07-05`, single commit `5f2e0fd`.
+
+- **Companion nightly PR #310 (author Mezoh, branch `nightly-review/2026-07-05`) was GENUINE this time**
+  (base sha == our `main` `89059ad`; triage covered the real window — unlike #299 on 2026-07-04). It
+  fixed 4 defects: demo-reset `sku_reorder_belief` (table has NO migration → PGRST205 wipe throw, breaks
+  ALL demo-reset); `calibration/reject.server.ts` $0-impact cap flooring to 1¢ and bricking a pair;
+  `dedicated-campaign.server.ts` empty/absent read returning 0 (fail-open) instead of null;
+  `dashboard.store.preview.tsx` loader shipping the internal `shop_id` UUID to the browser. **Did NOT
+  duplicate these** — reviewed all 4 (correct, well-scoped; guards both RPC + fallback cap paths;
+  DTO-only preview) → posted NONE, and hunted for what #310 MISSED. Same playbook as 2026-07-03 with #273.
+
+### Bug fixed tonight — decision-deck batch approve double-submits a reversible money action
+- **`app/components/dashboard/screens/Dashboard.tsx`** (Home decision deck, landed via `2d4bdd6`/#306).
+  A batch only starts when there is NO current card (`showBatch = !current && …`). But `approveBatch`
+  dismisses items one-at-a-time INSIDE its loop (`setDismissed` after each `await executeAction`); each
+  dismissal re-runs the fold `useMemo`, which unfolds the batch once `eligible.length < 2`. So on the
+  PENULTIMATE dismissal the LAST still-in-flight item pops back out as `current = cardQueue[0]` and
+  renders a full card with a LIVE Approve button (`approving` is null during a batch run — the batch
+  tracks `batchLeft`, not `approving`), WHILE the loop is still awaiting that same item's executeAction.
+  A merchant click → `executeAction(sameAlert, sameAction)` fires a 2nd time → the reversible money
+  action (reduce_campaign_budget / pause_campaign) runs twice. Fix (one line): gate `current` on
+  `batchLeft` — `const current = batchLeft !== null ? null : (cardQueue[0] ?? null)` — freezing the deck
+  during a batch so no live single-approve card can leak. `approveBatch` was already re-entrancy-guarded;
+  the batch button is already `disabled={batchLeft !== null}`. No test asserted the old behavior.
+- **Lesson (loop-mutates-derived-state UI race):** when a sequential async loop calls a state setter
+  (`setDismissed`) between awaits AND a `useMemo`/derived value keys off that state to decide what's
+  interactive, each iteration re-derives mid-flight and can surface an item the loop is still processing
+  as a fresh, clickable control → double-submit. Freeze the interactive surface for the loop's duration
+  (guard on the in-progress flag) or batch the dismissals into a single post-loop setState.
+- **Dashboard parity:** `app/components/dashboard/screens/*` IS the dashboard surface (rendered by
+  `app/routes/dashboard.$.tsx`; per CLAUDE.md the repo's `dashboard.*` routes ARE the dashboard). So a
+  fix here lands on the dashboard directly — there is NO separate mirror to update for these components.
+  (A fixer subagent mis-flagged this as a parity TODO; it isn't one.)
+
+### Found but NOT auto-fixed (surfaced for a product/maintainer decision) — do act on this if it recurs
+- **`supabase/migrations/20260703200000_prelock_no_brainer_autonomy.sql`** (`9908ab3`/#302) re-enables
+  the three no-brainer `pause_campaign` pairs for every row `where not autonomy_enabled and not
+  merchant_disabled and not exists(muted_pair)`. But the Live-Engine off-switch (`setPairAutonomy` in
+  `app/lib/calibration/live-engine.server.ts`) writes ONLY `autonomy_enabled`; **`merchant_disabled` is
+  never set true by any current writer** (its sole write, `calderyn.server.ts:1573`, only clears it to
+  false on unmute). So a merchant who enabled→disabled a no-brainer during the ~1-week Slice C window
+  sits at `autonomy_enabled=false, merchant_disabled=false, no muted_pair` — which this migration flips
+  back to true, silently resuming autonomous campaign pausing they turned OFF, on the money path. The
+  migration header's "respects explicit merchant signals" is false for the ONE signal that is the
+  off-switch. **Why not fixed:** it's a one-shot SQL migration already landed/applied — editing it does
+  nothing on migrated DBs and violates repo migration-immutability; after the flip affected rows are
+  indistinguishable from freshly-enabled, so no forward migration can identify/repair them. The LIVE seed
+  path `seedShippedAutopilotFeatures` (`supabase.server.ts`) is SAFE — upserts with
+  `ignoreDuplicates: true`, so re-auth does NOT re-flip merchant-off rows; only the historical one-shot
+  migration bites. Documented in #311's "Attempted — unresolved" section for a maintainer call.
+- **Lesson (boolean-default vs explicit-off collision):** a single boolean column can't distinguish
+  "never set (schema default)" from "user explicitly turned off." Any backfill/seed that flips
+  `false → true` on such a column reverts explicit opt-outs. When a feature adds a second-gate boolean
+  (default false) that a UI toggle also writes, the safe backfill must key off a distinct opt-out marker
+  or a nullable tri-state (`NULL`=never-set), NOT `not <flag>`.
+
+### False positives cleared this run (do NOT re-flag)
+- **Signup onboarding (#305):** `needsOnboarding = userId != null && onboardedAt == null` correctly
+  exempts shop sessions (userId null); gate runs before verify in both `requireVerifiedSession` and
+  `requireDashboardSession`; onboarding route loader is read-only + session-gated, action re-checks
+  session/rejects shop sessions/rate-limits/validates FormData; `normalizePhone`/`isReferralSource`
+  reject bad input without throwing; migration backfills `onboarded_at = now()` for pre-existing users
+  (never retro-forced), new rows default NULL; `.select` includes `onboarded_at` (no snake↔camel gap).
+- **Demo showcase / seed:** demo-reset derives shop only from `session.shopId` (no forgeable param),
+  `requireSameOrigin` + rate-limit, `resetDemoShowcase` re-reads `shops.demo_mode` and throws
+  `not_demo_shop` BEFORE any wipe (fail-closed); service-role client so no RLS silent no-op; every
+  `SHOWCASE_WIPE_ORDER` table (except the #310-fixed `sku_reorder_belief`) exists in a migration or the
+  vendored engine schema and carries `shop_id`; FK/wipe ordering children-before-parents, cascade-only
+  tables intentionally omitted; seed enum/CHECK values valid, no future stamps, `variant_dim.id ==
+  sku_dim.id` intentional (promote preserves id).
+- **Calibration/autopilot (rest of cluster):** mu-override `min(policyMu, muOverride)` + `1-0.5·mu`
+  strictly shrink; min_spend floor `spend+1` vetoes correctly; day-anchor recompute + cron status codes
+  (502 shop-read, 500 real error, organic errors non-fatal) correct; SKU→dedicated-campaign shop-scoped,
+  pause-only, fail-closed on unverifiable spend.
+- **Home UI (rest):** boot generation guard (`loadGen` ref + `fresh()`) drops stale slices, no
+  cross-tenant seed; prompt→chat handoff queue `n`-keyed, drained one-at-a-time, no drop/double-send;
+  `live-engine-page.server.ts` displayTarget resolves from loaded rows (no N+1), unresolvable → "" with
+  text fallback; TickGauge + motion effects hooks-order clean. (Known cosmetic, NOT fixed: `approveBatch`
+  not bumping `handledSession` drifts the "X of Y" total — #310 flagged it, left intentionally.)
+
+### Gate / environment
+- `npm ci` again WORKS (exit 0), Node v22.22.2. Full gate on the fix tree (`5f2e0fd`): setup 0 ·
+  typecheck 0 · lint 0 (13 pre-existing warnings, 0 errors, none on the touched file) · build 0
+  (verifier: **243** client files clean) · vitest **558 files / 4028 passed / 12 skipped / 0 failed**.
+- **CI-status read via GitHub MCP `pull_request_read get_status` returns 403 "Resource not accessible by
+  integration"** in this env — cannot poll combined status. Rely on the `<github-webhook-activity>`
+  events for CI failures instead (they wake the session); a green run is confirmed by the local gate.
+- Vercel bot posts a routine "Building"→"Ready" preview-deploy comment on every nightly PR — NOT a
+  review comment, no action.
+
 ## 2026-07-04
 
 ### Triage — HUGE 24h window (~80 commits, PRs #275–#300); a companion nightly PR had BOGUS triage
