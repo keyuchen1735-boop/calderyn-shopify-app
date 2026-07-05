@@ -32,11 +32,17 @@ export function parseBlockPlan(raw: string): BlockPlan | null {
   return { blocks };
 }
 
+// Palette values flow into inline styles on the public storefront; anything
+// that isn't strictly a hex color (e.g. a url(...) tracking pixel smuggled in
+// via catalog-derived brand copy) falls back to the default.
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+
 export function parseBrandPlan(raw: string): BrandPlan | null {
   const p = asRecord(parseJson(raw));
   if (typeof p.storeName !== "string") return null;
   const pal = asRecord(p.palette);
-  const hex = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  const hex = (v: unknown, d: string) =>
+    typeof v === "string" && HEX_COLOR_RE.test(v.trim()) ? v.trim() : d;
   // Enforce the prompt's length limits here: brand text is model output derived from
   // untrusted catalog text and flows on to saveStoreSettings/DB.
   return {
