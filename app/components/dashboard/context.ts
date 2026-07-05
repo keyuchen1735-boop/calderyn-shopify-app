@@ -154,8 +154,10 @@ export interface DashboardCtx {
   toast: (text: string, icon?: string, tone?: string) => void;
   relTime: (ts: number) => string;
   /** Open the Ask Calderyn assistant panel (same panel the sidebar button
-   *  opens). Home's prompt bar and the global ⌘K shortcut ride this. */
-  openAssistant: () => void;
+   *  opens). Home's prompt bar and the global ⌘K shortcut ride this. With
+   *  `prompt`, the panel opens AND sends the text as the next user turn —
+   *  the page bar is an entry point; the conversation lives in the panel. */
+  openAssistant: (prompt?: string) => void;
 
   /** Calibration headline; null until loaded or when no data yet. */
   calibration: { pct: number | null; updated_at: string | null; nearGraduation: number } | null;

@@ -235,6 +235,10 @@ export default function DashboardApp({
   // Bumped by the More-sheet items to open the assistant / bug-report overlays
   // (their floating launchers are hidden at phone width).
   const [assistantSignal, setAssistantSignal] = useState(0);
+  // Home's prompt bar hands its typed text off to the panel through this
+  // (sequence number so re-sending the same text still fires).
+  const [assistantPrompt, setAssistantPrompt] = useState<{ n: number; text: string } | null>(null);
+  const assistantPromptSeq = useRef(0);
   const [bugSignal, setBugSignal] = useState(0);
   // Account chip menu (sidebar foot).
   const [acctOpen, setAcctOpen] = useState(false);
@@ -1002,7 +1006,11 @@ export default function DashboardApp({
     [pushFeed, toast],
   );
 
-  const openAssistant = useCallback(() => setAssistantSignal((n) => n + 1), []);
+  const openAssistant = useCallback((prompt?: string) => {
+    const text = prompt?.trim();
+    if (text) setAssistantPrompt({ n: ++assistantPromptSeq.current, text });
+    setAssistantSignal((n) => n + 1);
+  }, []);
 
   const app: DashboardCtx = {
     t,
@@ -1263,7 +1271,7 @@ export default function DashboardApp({
         <Screen app={app} />
       </main>
 
-      <AssistantPanel app={app} openSignal={assistantSignal} />
+      <AssistantPanel app={app} openSignal={assistantSignal} prompt={assistantPrompt} />
       <BugReportButton app={app} openSignal={bugSignal} />
 
       {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}

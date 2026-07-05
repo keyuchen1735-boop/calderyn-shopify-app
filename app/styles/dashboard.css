@@ -775,7 +775,11 @@
     backdrop-filter: blur(24px) saturate(1.5);
     border-radius: var(--radius);
     box-shadow: var(--shadow-pop);
+    /* The panel mounts on open, so a mount animation IS the open animation:
+       it slides in from past the right edge (drawer choreography). */
+    animation: cd-chat-panel-in 0.42s cubic-bezier(0.32, 0.72, 0, 1);
   }
+  @keyframes cd-chat-panel-in { from { transform: translateX(calc(100% + 16px)); } }
   .cd-chat-head {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 14px 16px; border-bottom: 0.5px solid var(--hairline-strong);
@@ -807,7 +811,13 @@
   .cd-chat-chip:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); }
   .cd-chat-chip:disabled { opacity: 0.5; cursor: default; }
 
-  .cd-chat-bubble { display: flex; }
+  /* Each bubble rises in as it lands (history bubbles included — they mount
+     together with the panel, so the rise reads as the thread arriving). */
+  .cd-chat-bubble { display: flex; animation: cd-chat-bubble-in 0.35s cubic-bezier(0.33, 1, 0.68, 1); }
+  @keyframes cd-chat-bubble-in { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .cd-chat-panel, .cd-chat-bubble { animation: none; }
+  }
   .cd-chat-bubble[data-role="assistant"] { justify-content: flex-start; }
   .cd-chat-bubble[data-role="user"] { justify-content: flex-end; }
   .cd-chat-bubble-body { max-width: 88%; min-width: 0; }
@@ -2097,6 +2107,21 @@
 .cd-promptbar:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
 .cd-promptbar-ph { flex: 1; min-width: 0; font-size: 14px; color: var(--text-3); }
 .cd-promptbar .cd-live-mark { color: var(--text-2); }
+/* Established stores get a real input in the bar (fresh stores keep the
+   button that routes to the product flow). */
+.cd-promptbar-form { cursor: text; }
+.cd-promptbar-form:focus-within { outline: 2px solid var(--live); outline-offset: 2px; }
+.cd-promptbar-in {
+  flex: 1; min-width: 0; border: 0; background: none; outline: none; padding: 0;
+  font: inherit; font-size: 14px; color: var(--text-1);
+}
+.cd-promptbar-in::placeholder { color: var(--text-3); }
+.cd-promptbar-send {
+  border: 0; background: none; cursor: pointer; padding: 5px; border-radius: 99px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--text-3);
+  transition: color 0.13s ease, background 0.13s ease;
+}
+.cd-promptbar-send:hover { color: var(--accent); background: var(--gray-bg); }
 @media (prefers-reduced-motion: reduce) { .cd-promptbar, .cd-promptbar:hover { transition: none; transform: none; } }
 
 /* setup guide (fresh store): identity tiles + segmented progress */
