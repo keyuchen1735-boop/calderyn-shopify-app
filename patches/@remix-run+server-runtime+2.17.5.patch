@@ -1,0 +1,56 @@
+diff --git a/node_modules/@remix-run/server-runtime/dist/actions.js b/node_modules/@remix-run/server-runtime/dist/actions.js
+index 1f38678..872610f 100644
+--- a/node_modules/@remix-run/server-runtime/dist/actions.js
++++ b/node_modules/@remix-run/server-runtime/dist/actions.js
+@@ -17,6 +17,23 @@ function throwIfPotentialCSRFAttack(headers) {
+   let originDomain = typeof originHeader === "string" && originHeader !== "null" ? new URL(originHeader).host : originHeader;
+   let host = parseHostHeader(headers);
+   if (originDomain && (!host || originDomain !== host.value)) {
++    // calderyn: allow trusted proxied origins from the app's env allowlist. The
++    // dashboard runs behind the marketing-apex reverse proxy, which forwards form
++    // posts with Origin=<public host> but x-forwarded-host=<internal host>; that is
++    // not CSRF. Only origins in the same allowlist checkSameOrigin() uses bypass,
++    // and checkSameOrigin() remains the authoritative gate in every dashboard action.
++    if (typeof originHeader === "string" && originHeader !== "null") {
++      try {
++        let __allowed = [process.env.DASHBOARD_PUBLIC_URL, process.env.SHOPIFY_APP_URL]
++          .concat((process.env.DASHBOARD_ALLOWED_ORIGINS || "").split(","));
++        let __originOrigin = new URL(originHeader).origin;
++        for (let __entry of __allowed) {
++          let __t = (__entry || "").trim();
++          if (!__t) continue;
++          try { if (new URL(__t).origin === __originOrigin) return; } catch (__e) {}
++        }
++      } catch (__e) {}
++    }
+     if (host) {
+       // This seems to be an CSRF attack. We should not proceed with the action.
+       throw new Error(`${host.type} header does not match \`origin\` header from a forwarded ` + `action request. Aborting the action.`);
+diff --git a/node_modules/@remix-run/server-runtime/dist/esm/actions.js b/node_modules/@remix-run/server-runtime/dist/esm/actions.js
+index ab8e4cb..ac55a35 100644
+--- a/node_modules/@remix-run/server-runtime/dist/esm/actions.js
++++ b/node_modules/@remix-run/server-runtime/dist/esm/actions.js
+@@ -13,6 +13,23 @@ function throwIfPotentialCSRFAttack(headers) {
+   let originDomain = typeof originHeader === "string" && originHeader !== "null" ? new URL(originHeader).host : originHeader;
+   let host = parseHostHeader(headers);
+   if (originDomain && (!host || originDomain !== host.value)) {
++    // calderyn: allow trusted proxied origins from the app's env allowlist. The
++    // dashboard runs behind the marketing-apex reverse proxy, which forwards form
++    // posts with Origin=<public host> but x-forwarded-host=<internal host>; that is
++    // not CSRF. Only origins in the same allowlist checkSameOrigin() uses bypass,
++    // and checkSameOrigin() remains the authoritative gate in every dashboard action.
++    if (typeof originHeader === "string" && originHeader !== "null") {
++      try {
++        let __allowed = [process.env.DASHBOARD_PUBLIC_URL, process.env.SHOPIFY_APP_URL]
++          .concat((process.env.DASHBOARD_ALLOWED_ORIGINS || "").split(","));
++        let __originOrigin = new URL(originHeader).origin;
++        for (let __entry of __allowed) {
++          let __t = (__entry || "").trim();
++          if (!__t) continue;
++          try { if (new URL(__t).origin === __originOrigin) return; } catch (__e) {}
++        }
++      } catch (__e) {}
++    }
+     if (host) {
+       // This seems to be an CSRF attack. We should not proceed with the action.
+       throw new Error(`${host.type} header does not match \`origin\` header from a forwarded ` + `action request. Aborting the action.`);
