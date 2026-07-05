@@ -2,12 +2,14 @@ import {
   useState,
   useEffect,
   useId,
-  useMemo,
   useRef,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { blendedRoas, money, moneyK, SEV_STYLE } from "./format";
+import { reduced } from "./hero/hero-motion";
 import { CDIcon } from "./icons";
 import { PlatformIcon } from "../PlatformIcon";
 import type { DailyRow, Severity, Grade, Platform, Toast } from "./view-models";
@@ -602,28 +604,58 @@ export function RingGauge({
   );
 }
 
+/** 60 tick endpoints around the gauge ring — pure geometry, shared by every
+ *  instance and every frame of the sweep; only the lit state depends on pct. */
+const TICK_GEOMETRY = Array.from({ length: 60 }, (_, i) => {
+  const a = -Math.PI / 2 + (i / 60) * Math.PI * 2;
+  const r1 = 93;
+  const r2 = 82;
+  return {
+    x1: (100 + r1 * Math.cos(a)).toFixed(2),
+    y1: (100 + r1 * Math.sin(a)).toFixed(2),
+    x2: (100 + r2 * Math.cos(a)).toFixed(2),
+    y2: (100 + r2 * Math.sin(a)).toFixed(2),
+  };
+});
+
 /** Circular calibration gauge (ticks + arc + knob), driven by a real pct.
  *  Shared by Mission Control's autopilot card and the Autopilot screen's
- *  calibration panel. */
-export function TickGauge({ pct, size }: { pct: number; size: number }) {
-  const clamped = Math.max(0, Math.min(100, pct));
-  const ticks = useMemo(() => {
-    const out: { x1: string; y1: string; x2: string; y2: string; lit: boolean }[] = [];
-    for (let i = 0; i < 60; i++) {
-      const a = -Math.PI / 2 + (i / 60) * Math.PI * 2;
-      const lit = (i / 60) * 100 <= clamped + 0.01;
-      const r1 = 93;
-      const r2 = 82;
-      out.push({
-        x1: (100 + r1 * Math.cos(a)).toFixed(2),
-        y1: (100 + r1 * Math.sin(a)).toFixed(2),
-        x2: (100 + r2 * Math.cos(a)).toFixed(2),
-        y2: (100 + r2 * Math.sin(a)).toFixed(2),
-        lit,
+ *  calibration panel. With `sweepFrom0`, the dial sweeps 0 → pct (arc, knob,
+ *  tick lighting and the % readout together) on reveal and again whenever pct
+ *  changes; without it, the existing CSS-transition behavior is untouched.
+ *  Reduced motion lands directly on the final value. */
+export function TickGauge({
+  pct,
+  size,
+  sweepFrom0 = false,
+}: {
+  pct: number;
+  size: number;
+  sweepFrom0?: boolean;
+}) {
+  const target = Math.max(0, Math.min(100, pct));
+  const [swept, setSwept] = useState(0);
+  useGSAP(
+    () => {
+      if (!sweepFrom0) return;
+      if (reduced()) {
+        setSwept(target);
+        return;
+      }
+      const state = { p: 0 };
+      gsap.to(state, {
+        p: target,
+        duration: 1.1,
+        ease: "power3.out",
+        onUpdate: () => setSwept(state.p),
       });
-    }
-    return out;
-  }, [clamped]);
+    },
+    { dependencies: [target, sweepFrom0], revertOnUpdate: true },
+  );
+  const clamped = sweepFrom0 ? swept : target;
+  // GSAP owns every frame of the sweep — the stock CSS transitions on the arc
+  // and knob would smear each step by 0.9s, so they're off in sweep mode.
+  const noCssTransition = sweepFrom0 ? { transition: "none" } : undefined;
   const arcOffset = (100 - clamped).toFixed(2);
   const deg = ((clamped / 100) * 360).toFixed(2);
   // SVG gradient ids must be document-unique — this is a shared component and
@@ -638,18 +670,21 @@ export function TickGauge({ pct, size }: { pct: number; size: number }) {
             <stop offset="1" stopColor="var(--live)" />
           </linearGradient>
         </defs>
-        {ticks.map((t, i) => (
-          <line
-            key={i}
-            x1={t.x1}
-            y1={t.y1}
-            x2={t.x2}
-            y2={t.y2}
-            stroke={t.lit ? "var(--live)" : "var(--gauge-dim)"}
-            strokeWidth={t.lit ? 2.6 : 2}
-            strokeLinecap="round"
-          />
-        ))}
+        {TICK_GEOMETRY.map((t, i) => {
+          const lit = (i / 60) * 100 <= clamped + 0.01;
+          return (
+            <line
+              key={i}
+              x1={t.x1}
+              y1={t.y1}
+              x2={t.x2}
+              y2={t.y2}
+              stroke={lit ? "var(--live)" : "var(--gauge-dim)"}
+              strokeWidth={lit ? 2.6 : 2}
+              strokeLinecap="round"
+            />
+          );
+        })}
         <circle cx="100" cy="100" r="72" stroke="var(--gauge-track)" strokeWidth="6" />
         <circle
           className="cd-gauge-arc"
@@ -663,8 +698,9 @@ export function TickGauge({ pct, size }: { pct: number; size: number }) {
           strokeDasharray="100"
           strokeDashoffset={arcOffset}
           transform="rotate(-90 100 100)"
+          style={noCssTransition}
         />
-        <g className="cd-gauge-dot" style={{ transform: `rotate(${deg}deg)` }}>
+        <g className="cd-gauge-dot" style={{ transform: `rotate(${deg}deg)`, ...noCssTransition }}>
           <circle cx="100" cy="28" r="11" fill="var(--live)" opacity="0.22" />
           <circle cx="100" cy="28" r="5" fill="var(--gauge-knob)" />
         </g>

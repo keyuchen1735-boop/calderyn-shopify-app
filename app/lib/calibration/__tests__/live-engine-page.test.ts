@@ -39,7 +39,7 @@ function sku(p: Partial<SKU> & Pick<SKU, "title" | "sku" | "velocity" | "days_of
   } as unknown as SKU;
 }
 
-function stubClient(): Client {
+function stubClient(over: { audit?: AuditEntry[]; campaigns?: unknown[]; skus?: SKU[] } = {}): Client {
   return {
     calibration: {
       liveEngine: async () => ({
@@ -79,7 +79,7 @@ function stubClient(): Client {
       ],
     },
     audit: {
-      list: async () => [
+      list: async () => over.audit ?? [
         auditRow({ id: "e1", action_kind: "pause_campaign", actor: "autopilot", target: "Alpine Crew Sock", dollar_impact_at_exec: 121000, created_at: iso(0.02), trigger_reason: "Auto-pause: Campaign is losing money" }),
         auditRow({ id: "e2", action_kind: "pause_campaign", actor: "merchant", target: "Summit Tee retarget", detector_id: "sku_stockout_vs_spend", dollar_impact_at_exec: 50000, created_at: iso(0.1) }),
         auditRow({ id: "e3", action_kind: "pause_campaign", actor: "merchant", undo_of: "e1", target: "Alpine Crew Sock", dollar_impact_at_exec: -121000, created_at: iso(0.05) }),
@@ -87,7 +87,7 @@ function stubClient(): Client {
       ],
     },
     skus: {
-      list: async () => [
+      list: async () => over.skus ?? [
         sku({ title: "Basecamp Water Bottle", sku: "BWB", velocity: 2, days_of_cover: 9, on_hand: 18 }),
         sku({ title: "NeverOut Hoodie", sku: "NOH", velocity: 0, days_of_cover: 999, on_hand: 50 }),
         sku({ title: "Slow Mover", sku: "SLM", velocity: 0.1, days_of_cover: 300, on_hand: 30 }),
@@ -109,7 +109,7 @@ function stubClient(): Client {
       ],
     },
     campaigns: {
-      list: async () => [
+      list: async () => over.campaigns ?? [
         { id: "c1", name: "Meta Retargeting", roas_7d: 1.83, status: "active" },
         { id: "c2", name: "Google Brand PMax", roas_7d: 3.2, status: "active" },
       ],
@@ -202,6 +202,44 @@ describe("buildLiveEnginePageData", () => {
     expect(camp?.text).toContain("Summit Logo Tee"); // winning campaign excluded
     expect(d.predictions.filter((p) => p.kind === "campaign")).toHaveLength(1);
     expect(d.predictions.find((p) => p.kind === "alert")?.text).toContain("Summit Tee");
+  });
+
+  it("resolves uuid trace targets to display names and omits unresolvable ones", async () => {
+    const CAMPAIGN_ID = "4667a797-1717-4b6c-a3be-ac98210ce56f";
+    const SKU_ID = "97800413-b4e3-4816-aa70-ed1ed31a89a8";
+    const GHOST_ID = "deadbeef-0000-4000-8000-000000000000";
+    const client = stubClient({
+      audit: [
+        auditRow({ id: "u1", action_kind: "pause_campaign", actor: "autopilot", target: CAMPAIGN_ID }),
+        auditRow({ id: "u2", action_kind: "pause_campaign", actor: "merchant", target: SKU_ID }),
+        auditRow({ id: "u3", action_kind: "pause_campaign", actor: "autopilot", target: GHOST_ID }),
+        auditRow({ id: "u4", action_kind: "pause_campaign", actor: "autopilot", target: "Summer Drop retargeting" }),
+      ],
+      campaigns: [{ id: CAMPAIGN_ID, name: "Summer Drop Retargeting", roas_7d: 1.2, status: "active" }],
+      skus: [sku({ id: SKU_ID, title: "Alpine Mug", sku: "ALM", velocity: 1, days_of_cover: 40, on_hand: 9 })],
+    });
+    const d = await buildLiveEnginePageData(client, undefined, NOW);
+    const byId = (id: string) => d.trace.find((t) => t.id === id)!;
+
+    // campaign uuid → campaign name, everywhere the target is shown
+    expect(byId("u1").text).toBe("Pause campaign: Summer Drop Retargeting");
+    expect(byId("u1").title).toBe("Pause campaign · Summer Drop Retargeting");
+    expect(byId("u1").evidence).toContain("Target: Summer Drop Retargeting");
+    // sku_dim uuid → SKU title
+    expect(byId("u2").text).toBe("You approved pause campaign on Alpine Mug");
+    // unresolvable uuid → target omitted entirely, never rendered raw
+    expect(byId("u3").text).toBe("Pause campaign");
+    expect(byId("u3").title).toBe("Pause campaign");
+    expect(byId("u3").evidence.some((l) => l.startsWith("Target:"))).toBe(false);
+    // human-readable target passes through unchanged
+    expect(byId("u4").text).toBe("Pause campaign: Summer Drop retargeting");
+    // pipeline titles get the same resolution
+    expect(d.pipeline.some((c) => c.title === "Pause campaign: Summer Drop Retargeting")).toBe(true);
+    // no bare entity uuid anywhere in the merchant-facing payload
+    const raw = JSON.stringify(d);
+    expect(raw).not.toContain(CAMPAIGN_ID);
+    expect(raw).not.toContain(SKU_ID);
+    expect(raw).not.toContain(GHOST_ID);
   });
 
   it("produces no em or en dashes anywhere in the merchant-facing payload", async () => {
