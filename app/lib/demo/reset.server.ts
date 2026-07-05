@@ -61,7 +61,6 @@ export const SHOWCASE_WIPE_ORDER = [
   "autopilot_run_lock",
   "campaign_direction_reason",
   "purchase_order_draft",
-  "sku_reorder_belief",
   "creative_screen_run",
   "campaign_draft",
   // assistant
