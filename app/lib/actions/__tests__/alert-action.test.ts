@@ -143,6 +143,28 @@ describe("executeInventoryAlertAction — org_mode routing", () => {
     );
   });
 
+  it("live: moves stock with a null admin (owned-native shop, no connected Shopify store)", async () => {
+    getOrgMode.mockResolvedValue("live");
+    // An owned-native shop has no Shopify session, so the route passes admin: null.
+    // The owned branch must never touch it.
+    const res = await run("reallocate_inventory", { admin: null });
+    expect(res.outcome).toBe("succeeded");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith(
+      expect.objectContaining({ variantId: "var-1", quantity: 21 }),
+    );
+  });
+
+  it("mirror: a null admin fails with shopify_required rather than dereferencing null", async () => {
+    getOrgMode.mockResolvedValue("mirror");
+    await expect(run("reallocate_inventory", { admin: null })).rejects.toMatchObject({
+      code: "shopify_required",
+      status: 422,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(actionsExecute).not.toHaveBeenCalled();
+  });
+
   it("live: 422s when the plan's refs aren't linked to the owned store", async () => {
     getOrgMode.mockResolvedValue("live");
     resolveOwnedMoveTarget.mockResolvedValue(null);

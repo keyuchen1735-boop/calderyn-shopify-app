@@ -334,6 +334,30 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
     expect(res.outcome).toBe("succeeded");
   });
 
+  it("live: applies the owned price with a null admin (owned-native shop, no Shopify store)", async () => {
+    getOrgMode.mockResolvedValue("live");
+    const c = client(alert({}));
+    const res = await executeAdjustPriceAlertAction({
+      ...base,
+      client: c as never,
+      admin: null, // owned-native shops have no Shopify session
+      sb: okSb(),
+    });
+    expect(setOwnedVariantPrice).toHaveBeenCalledWith("shop-1", "sku-1", 1700);
+    expect(readVariantPrice).not.toHaveBeenCalled();
+    expect(res.outcome).toBe("succeeded");
+  });
+
+  it("mirror: a null admin fails with shopify_required rather than dereferencing null", async () => {
+    getOrgMode.mockResolvedValue("mirror");
+    const c = client(alert({}));
+    await expect(
+      executeAdjustPriceAlertAction({ ...base, client: c as never, admin: null, sb: okSb() }),
+    ).rejects.toMatchObject({ code: "shopify_required", status: 422 });
+    expect(setVariantPrice).not.toHaveBeenCalled();
+    expect(c.actions.execute).not.toHaveBeenCalled();
+  });
+
   it("dual_run: writes Shopify AND mirrors the applied price into the owned catalog", async () => {
     getOrgMode.mockResolvedValue("dual_run");
     const c = client(alert({}));

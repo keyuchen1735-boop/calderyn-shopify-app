@@ -44,7 +44,10 @@ export interface AlertActionClient {
 
 export async function executeInventoryAlertAction(opts: {
   client: AlertActionClient;
-  admin: AdminGraphqlClient;
+  /** Shopify Admin client, or null for an owned-native shop (no connected store).
+   *  Only dereferenced on the Shopify write branch (mirror/importing/dual_run);
+   *  the owned (`live`) branch never touches it. */
+  admin: AdminGraphqlClient | null;
   sb: SupabaseClient;
   shopId: string;
   alertId: string;
@@ -158,6 +161,16 @@ export async function executeInventoryAlertAction(opts: {
         });
       }
     } else {
+      if (!admin) {
+        // The authoritative write for this mode goes to Shopify, but this shop has
+        // no connected store. Owned-native shops route to the branch above, so this
+        // is an invalid state — fail visibly rather than dereference null (rule 12).
+        throw new CalderynError({
+          code: "shopify_required",
+          status: 422,
+          message: "Connect a Shopify store to use this action.",
+        });
+      }
       try {
         ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
       } catch (err) {
