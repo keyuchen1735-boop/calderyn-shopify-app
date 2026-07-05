@@ -148,6 +148,9 @@ export interface DashboardCtx {
   // --- chrome ---
   toast: (text: string, icon?: string, tone?: string) => void;
   relTime: (ts: number) => string;
+  /** Open the Ask Calderyn assistant panel (same panel the sidebar button
+   *  opens). Home's prompt bar and the global ⌘K shortcut ride this. */
+  openAssistant: () => void;
 
   /** Calibration headline; null until loaded or when no data yet. */
   calibration: { pct: number | null; updated_at: string | null; nearGraduation: number } | null;

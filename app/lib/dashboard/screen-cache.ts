@@ -65,7 +65,7 @@ export function prefetchScreenData<T>(key: string, fetcher: () => Promise<T>): P
 // ---- shared keys -----------------------------------------------------------
 // Single-fetch screens use a plain string; parameterized screens build theirs
 // so the same filter always lands on the same entry. Catalog's default key is
-// shared with Mission Control's storefront card (identical request).
+// shared with Home's first-run catalog signal (identical request).
 
 export const SCREEN_CACHE_KEYS = {
   liveAnalytics: "live-analytics",

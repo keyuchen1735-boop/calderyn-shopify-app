@@ -71,6 +71,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     relTime: () => "just now",
     refresh: () => {},
     refreshCalibration: () => {},
+    openAssistant: () => {},
     refreshLiveEngine: () => {},
     loading: false,
   };
