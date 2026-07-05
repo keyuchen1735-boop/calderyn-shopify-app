@@ -50,4 +50,21 @@ describe("store settings repo", () => {
       { onConflict: "shop_id" },
     );
   });
+
+  it("passes the vibe through both directions, defaulting reads to minimal", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { store_name: "Acme", palette: DEFAULT_PALETTE, logo_url: null, voice_tagline: null, vibe: "warm" }, error: null });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle }) }) });
+    expect((await getStoreSettings(realShop)).vibe).toBe("warm");
+    maybeSingle.mockResolvedValue({ data: { store_name: "Acme", vibe: "not-a-vibe" }, error: null });
+    expect((await getStoreSettings(realShop)).vibe).toBe("minimal");
+  });
+
+  it("save omits the vibe column when unset so the stored value is untouched", async () => {
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    fromMock.mockReturnValue({ upsert });
+    await saveStoreSettings(realShop, { storeName: "Acme", palette: DEFAULT_PALETTE, logoUrl: null, voiceTagline: null });
+    expect(upsert.mock.calls[0][0]).not.toHaveProperty("vibe");
+    await saveStoreSettings(realShop, { storeName: "Acme", palette: DEFAULT_PALETTE, logoUrl: null, voiceTagline: null, vibe: "bold" });
+    expect(upsert.mock.calls[1][0]).toMatchObject({ vibe: "bold" });
+  });
 });

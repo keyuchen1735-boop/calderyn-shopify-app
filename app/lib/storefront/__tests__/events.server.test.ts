@@ -76,4 +76,22 @@ describe("trackStorefrontEvent", () => {
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
+
+  it("stamps experiment exposure columns only when a variant was served", async () => {
+    const experimentId = "99999999-8888-7777-6666-555555555555";
+    await trackStorefrontEvent(req({ ua: "Mozilla/5.0" }), SHOP, "page_view", {
+      experimentId,
+      variantKey: "b",
+    });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].experiment_id).toBe(experimentId);
+    expect(inserted[0].variant_key).toBe("b");
+    // Without an experiment the row keeps the exact pre-experiment column set
+    // (asserted key-for-key in the first test above).
+    inserted.length = 0;
+    await trackStorefrontEvent(req({ ua: "Mozilla/5.0" }), SHOP, "page_view");
+    expect(inserted).toHaveLength(1);
+    expect("experiment_id" in inserted[0]).toBe(false);
+    expect("variant_key" in inserted[0]).toBe(false);
+  });
 });

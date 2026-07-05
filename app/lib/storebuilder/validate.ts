@@ -12,7 +12,9 @@ export interface DroppedRef { blockId: string; kind: "type" | "docKind" | "produ
 export interface ValidationResult { doc: BlockDocument; dropped: DroppedRef[]; missingFunctional: BlockType[] }
 
 export function requiredFunctionalBlocks(pageKey: PageKey): BlockType[] {
-  return pageKey === "pdp" ? ["addToCart", "variantPicker", "price"] : [];
+  // productTitle is display, not buy-path, but a product page without the
+  // product's name is as broken to a buyer as one without a buy button.
+  return pageKey === "pdp" ? ["addToCart", "variantPicker", "price", "productTitle"] : [];
 }
 
 export function validateDocument(input: BlockDocument, valid: ValidIds): ValidationResult {

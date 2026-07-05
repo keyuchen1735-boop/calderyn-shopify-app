@@ -5,6 +5,7 @@
 // order/list.server.ts + payments/summary.server.ts conventions (explicit row
 // caps that degrade to a floor with a console.warn, never a failed screen).
 import { getSupabase } from "~/lib/supabase.server";
+import { readPaged } from "~/lib/db/read-paged.server";
 import type {
   AgenticStats,
   ChannelSalesRow,
@@ -27,9 +28,12 @@ export type {
   TopProductSalesRow,
 };
 
-// Order states that count as a sale. `refunded` stays in gross (the sale
-// happened) and is subtracted again as the refund line — net = gross − refunds.
-const SALE_STATES = ["paid", "fulfilled", "refunded"] as const;
+// Order states that count as a sale (order/state.ts vocabulary). `refunded`
+// stays in gross (the sale happened) and is subtracted again as the refund
+// line — net = gross − refunds. `partially_refunded` also stays in gross; its
+// refunded portion lives in refund_fact, not on the order row, so this read
+// does not net it out (previously the whole order silently vanished instead).
+const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
 
 // Caps on window reads. Far above pilot volume; if a shop ever exceeds them the
 // aggregates degrade to a floor rather than failing the screen (and the warn
@@ -77,35 +81,6 @@ interface EventRow {
   session_id: string;
   type: string;
   created_at: string;
-}
-
-// PostgREST clamps any single response to its max-rows setting (1,000 by
-// default on Supabase) REGARDLESS of .limit(), so reaching the caps requires
-// explicit .range() pages — a bare .limit(10_000) silently returns one page
-// and the cap-warn would never fire.
-const PAGE = 1000;
-
-async function readPaged<T>(
-  label: string,
-  shopId: string,
-  cap: number,
-  fetchPage: (
-    from: number,
-    to: number,
-  ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
-): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; from < cap; from += PAGE) {
-    const { data, error } = await fetchPage(from, Math.min(from + PAGE, cap) - 1);
-    if (error) throw new Error(`${label} read failed: ${error.message}`);
-    const page = (data ?? []) as T[];
-    rows.push(...page);
-    if (page.length < PAGE) return rows; // short page = window exhausted
-  }
-  console.warn(
-    `[analytics.commerce] ${label} window capped at ${cap} rows for shop ${shopId}; stats under-report`,
-  );
-  return rows;
 }
 
 async function readWindowOrders(shopId: string, sinceIso: string): Promise<OrderRow[]> {

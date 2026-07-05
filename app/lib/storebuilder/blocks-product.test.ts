@@ -27,9 +27,9 @@ const html = (t: string, ctx: RenderContext) =>
   renderToStaticMarkup(createElement(find(t).Component, { props: find(t).validateProps({}), ctx }));
 
 describe("template + functional blocks", () => {
-  it("registers the 5 types with the right flavor + template-only doc kinds", () => {
+  it("registers the 6 types with the right flavor + template-only doc kinds", () => {
     expect(STARTER_PRODUCT_BLOCKS.map((b) => b.type).sort()).toEqual(
-      ["addToCart", "collectionGrid", "price", "productGallery", "variantPicker"],
+      ["addToCart", "collectionGrid", "price", "productGallery", "productTitle", "variantPicker"],
     );
     for (const b of STARTER_PRODUCT_BLOCKS) expect(b.allowedDocKinds).toEqual(["template"]);
     const flavor = Object.fromEntries(STARTER_PRODUCT_BLOCKS.map((b) => [b.type, b.flavor]));

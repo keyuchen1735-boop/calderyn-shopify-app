@@ -9,6 +9,10 @@ import type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioVibe,
+  StudioExperiment,
+  StudioExperimentReport,
+  StudioExperimentState,
 } from "~/lib/storebuilder/studio-types";
 
 export type {
@@ -19,6 +23,10 @@ export type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioVibe,
+  StudioExperiment,
+  StudioExperimentReport,
+  StudioExperimentState,
 };
 
 export async function fetchStudio(): Promise<StudioState> {
@@ -42,6 +50,44 @@ export async function setStudioAccent(color: string): Promise<string> {
     color,
   });
   return data.accent;
+}
+
+/** Set the storefront design vibe (minimal | bold | warm). */
+export async function setStudioVibe(vibe: StudioVibe): Promise<StudioVibe> {
+  const data = await apiSend<{ vibe: StudioVibe }>("POST", "/dashboard/api/store", {
+    action: "vibe",
+    vibe,
+  });
+  return data.vibe;
+}
+
+/** Start a one-at-a-time home-page A/B test. The server picks the concrete
+ *  challenger from its deterministic library; name is an optional override. */
+export async function startStoreExperiment(spec: {
+  kind: "headline" | "vibe";
+  name?: string;
+}): Promise<StudioExperiment> {
+  const data = await apiSend<{ experiment: StudioExperiment }>("POST", "/dashboard/api/store", {
+    action: "experiment-start",
+    kind: spec.kind,
+    ...(spec.name ? { name: spec.name } : {}),
+  });
+  return data.experiment;
+}
+
+/** Decide the running experiment: ship applies the challenger to the live
+ *  store; keep/stop retain the champion. Returns the decided experiment with
+ *  its final report. */
+export async function decideStoreExperiment(
+  id: string,
+  decision: "ship" | "keep" | "stop",
+): Promise<StudioExperiment> {
+  const data = await apiSend<{ experiment: StudioExperiment }>("POST", "/dashboard/api/store", {
+    action: "experiment-decide",
+    id,
+    decision,
+  });
+  return data.experiment;
 }
 
 /** Kick off a real store generation. An empty brief generates from the catalog

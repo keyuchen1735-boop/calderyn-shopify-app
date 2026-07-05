@@ -3,44 +3,48 @@
 // publishes that. loadStudioState exposes what's missing (products, checkout)
 // so the UI can warn — warn, not gate.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { publishStudioStore, loadStudioState } from "./studio.server";
+import { publishStudioStore, loadStudioState, saveStudioVibe } from "./studio.server";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts } = vi.hoisted(() => ({
-  fromMock: vi.fn(),
-  pageDoc: {
-    loadDraftDoc: vi.fn(),
-    loadPublishedDoc: vi.fn(),
-    saveDraft: vi.fn(),
-    publishDoc: vi.fn(),
-  },
-  catalogMock: {
-    listProducts: vi.fn(),
-    listCollections: vi.fn(),
-  },
-  connectMock: { getConnectedAccount: vi.fn() },
-  adminListProducts: vi.fn(),
-}));
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock } =
+  vi.hoisted(() => ({
+    fromMock: vi.fn(),
+    pageDoc: {
+      loadDraftDoc: vi.fn(),
+      loadPublishedDoc: vi.fn(),
+      saveDraft: vi.fn(),
+      publishDoc: vi.fn(),
+    },
+    catalogMock: {
+      listProducts: vi.fn(),
+      listCollections: vi.fn(),
+    },
+    connectMock: { getConnectedAccount: vi.fn() },
+    adminListProducts: vi.fn(),
+    experimentsMock: { latestStudioExperiment: vi.fn(), hasRunningExperiment: vi.fn() },
+    settingsMock: { getStoreSettings: vi.fn(), saveStoreSettings: vi.fn() },
+  }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 vi.mock("./page-document.server", () => pageDoc);
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => catalogMock }));
 vi.mock("~/lib/payments/connect.server", () => connectMock);
 vi.mock("~/lib/catalog/catalog.server", () => ({ listProducts: adminListProducts }));
+vi.mock("~/lib/experiments/store-experiment.server", () => experimentsMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
-  getStoreSettings: vi.fn().mockResolvedValue({
-    storeName: "Test Store",
-    palette: { primary: "#0f766e" },
-    logoUrl: null,
-    voiceTagline: null,
-  }),
-  saveStoreSettings: vi.fn(),
+  getStoreSettings: settingsMock.getStoreSettings,
+  saveStoreSettings: settingsMock.saveStoreSettings,
 }));
 
 const shop = "11111111-1111-1111-1111-111111111111";
+
+// Per-table read results (maybeSingle) and a recorder for upsert payloads;
+// tables without a configured result read as "no row".
+const tableResults: Record<string, { data: unknown; error: unknown }> = {};
+const upserts: Array<{ table: string; row: Record<string, unknown> }> = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,11 +56,31 @@ beforeEach(() => {
   pageDoc.loadPublishedDoc.mockResolvedValue(null);
   pageDoc.saveDraft.mockResolvedValue(undefined);
   pageDoc.publishDoc.mockResolvedValue(undefined);
-  // latestGeneration query (select→eq→order→limit→maybeSingle) and the
-  // shopOrgSlug lookup (select→eq→maybeSingle) — no rows for either.
-  const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-  fromMock.mockReturnValue({
-    select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle }) }), maybeSingle }) }),
+  experimentsMock.latestStudioExperiment.mockResolvedValue(null);
+  experimentsMock.hasRunningExperiment.mockResolvedValue(false);
+  settingsMock.getStoreSettings.mockResolvedValue({
+    storeName: "Test Store",
+    palette: { primary: "#0f766e" },
+    logoUrl: null,
+    voiceTagline: null,
+    vibe: "minimal",
+  });
+  settingsMock.saveStoreSettings.mockResolvedValue(undefined);
+  for (const key of Object.keys(tableResults)) delete tableResults[key];
+  upserts.length = 0;
+  fromMock.mockImplementation((table: string) => {
+    const chain: Record<string, unknown> = {};
+    chain.select = () => chain;
+    chain.eq = () => chain;
+    chain.order = () => chain;
+    chain.limit = () => chain;
+    chain.maybeSingle = () =>
+      Promise.resolve(tableResults[table] ?? { data: null, error: null });
+    chain.upsert = (row: Record<string, unknown>) => {
+      upserts.push({ table, row });
+      return Promise.resolve({ error: null });
+    };
+    return chain;
   });
 });
 
@@ -134,7 +158,7 @@ describe("loadStudioState readiness", () => {
     connectMock.getConnectedAccount.mockRejectedValue(new Error("db blip"));
     const state = await loadStudioState(shop);
     expect(state.checkoutReady).toBe(false);
-    expect(state.storefrontPath).toBe("/storefront"); // load survived
+    expect(state.storefrontUrl).toBe("/storefront"); // load survived
   });
 
   it("counts draft products separately so the UI can say where attachments went", async () => {
@@ -149,5 +173,99 @@ describe("publishStudioStore demo guard", () => {
   it("rejects non-uuid (demo/fixture) shops with a clean 422 instead of a raw 500", async () => {
     await expect(publishStudioStore("demo-shop")).rejects.toMatchObject({ status: 422 });
     expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("publishStudioStore PDP buy-path integrity", () => {
+  it("injects the missing functional blocks from registry defaults before publishing a pdp draft", async () => {
+    const pdpDraft = {
+      kind: "template",
+      pageKey: "pdp",
+      blocks: [{ id: "g", type: "productGallery", layout: { x: 0, y: 0, w: 12, h: 4 }, props: {} }],
+    };
+    pageDoc.loadDraftDoc.mockImplementation(async (_shop: string, pageKey: string) =>
+      pageKey === "pdp" ? pdpDraft : null,
+    );
+    await publishStudioStore(shop);
+    const savedPdp = pageDoc.saveDraft.mock.calls.find((c) => c[1] === "pdp")?.[2] as {
+      blocks: Array<{ type: string }>;
+    };
+    expect(savedPdp.blocks.map((b) => b.type)).toEqual(
+      expect.arrayContaining(["productGallery", "price", "variantPicker", "addToCart"]),
+    );
+    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "pdp");
+  });
+});
+
+describe("loadStudioState v2 fields", () => {
+  it("defaults the vibe to minimal and reads the stored vibe from StoreSettings", async () => {
+    let state = await loadStudioState(shop);
+    expect(state.settings.vibe).toBe("minimal");
+    settingsMock.getStoreSettings.mockResolvedValue({
+      storeName: "Test Store",
+      palette: { primary: "#0f766e" },
+      logoUrl: null,
+      voiceTagline: null,
+      vibe: "bold",
+    });
+    state = await loadStudioState(shop);
+    expect(state.settings.vibe).toBe("bold");
+  });
+
+  it("exposes orgSlug and the absolute tenant storefront URL when the shop has one", async () => {
+    tableResults.shops = { data: { org_slug: "peak-pine-a1b2c3" }, error: null };
+    const state = await loadStudioState(shop);
+    expect(state.orgSlug).toBe("peak-pine-a1b2c3");
+    expect(state.storefrontUrl).toBe("https://peak-pine-a1b2c3.calderyncompany.com/storefront");
+  });
+
+  it("keeps the app path for domain-keyed shops with no org_slug", async () => {
+    const state = await loadStudioState(shop);
+    expect(state.orgSlug).toBeNull();
+    expect(state.storefrontUrl).toBe("/storefront");
+  });
+
+  it("embeds the latest experiment from the experiments lib", async () => {
+    const exp = {
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "Sharper headline",
+      why: "Tests a product-led hero headline against your current copy on the home page.",
+      pageKey: "home" as const,
+      state: "running" as const,
+      startedAt: "2026-07-05T00:00:00.000Z",
+      decidedAt: null,
+      report: null,
+    };
+    experimentsMock.latestStudioExperiment.mockResolvedValue(exp);
+    const state = await loadStudioState(shop);
+    expect(state.experiment).toEqual(exp);
+    expect(experimentsMock.latestStudioExperiment).toHaveBeenCalledWith(shop);
+  });
+});
+
+describe("saveStudioVibe", () => {
+  it("saves the vibe through the StoreSettings contract, preserving the other brand fields", async () => {
+    await saveStudioVibe(shop, "warm");
+    expect(settingsMock.saveStoreSettings).toHaveBeenCalledWith(
+      shop,
+      expect.objectContaining({ storeName: "Test Store", vibe: "warm", logoUrl: null }),
+    );
+  });
+
+  it("rejects non-uuid (demo/fixture) shops with a clean 422", async () => {
+    await expect(saveStudioVibe("demo-shop", "bold")).rejects.toMatchObject({ status: 422 });
+    expect(settingsMock.saveStoreSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("publishStudioStore experiment guard", () => {
+  it("409s instead of overwriting arm A while an experiment is running", async () => {
+    experimentsMock.hasRunningExperiment.mockResolvedValue(true);
+    await expect(publishStudioStore(shop)).rejects.toMatchObject({
+      status: 409,
+      code: "experiment_running",
+    });
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
   });
 });

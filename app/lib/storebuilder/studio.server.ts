@@ -10,6 +10,8 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
 import { getConnectedAccount } from "~/lib/payments/connect.server";
 import { listProducts as listAdminProducts } from "~/lib/catalog/catalog.server";
+import { hasRunningExperiment, latestStudioExperiment } from "~/lib/experiments/store-experiment.server";
+import { injectMissingFunctionalBlocks } from "~/lib/storegen/sanitize";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
@@ -20,6 +22,7 @@ import type {
   StudioHero,
   StudioProduct,
   StudioState,
+  StudioVibe,
 } from "./studio-types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -99,8 +102,11 @@ async function draftProductCount(shopId: string): Promise<number> {
   return total;
 }
 
-/** shops.org_slug for first-party tenants; null for Shopify-mirror shops. */
+/** shops.org_slug — the owned-tenant identity the public storefront resolves
+ *  by Host. Null for domain-keyed Shopify tenants and demo (non-uuid) shops.
+ *  Fail-soft: a URL nicety must never fail the whole studio load. */
 async function shopOrgSlug(shopId: string): Promise<string | null> {
+  if (!UUID_RE.test(shopId)) return null;
   const { data, error } = await getSupabase()
     .from("shops")
     .select("org_slug")
@@ -110,12 +116,12 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
     console.error("[studio] org_slug lookup failed", { shopId, error: error.message });
     return null;
   }
-  return data?.org_slug ? String(data.org_slug) : null;
+  return typeof data?.org_slug === "string" && data.org_slug ? data.org_slug : null;
 }
 
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -125,6 +131,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       checkoutReady(shopId),
       draftProductCount(shopId),
       shopOrgSlug(shopId),
+      latestStudioExperiment(shopId),
     ]);
 
   const doc = draft ?? published;
@@ -139,6 +146,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     settings: {
       storeName: settings.storeName,
       accent: settings.palette.primary || DEFAULT_PALETTE.primary,
+      vibe: settings.vibe,
       logoUrl: settings.logoUrl,
       tagline: settings.voiceTagline,
     },
@@ -150,17 +158,17 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     hasDraft: draft != null,
     hasPublished: published != null,
     generation,
-    // store_settings has no custom-domain column; the storefront is served at
-    // the fixed app path. First-party tenants also get their registered
-    // <org_slug>.calderyncompany.com host (see storefront/vercel-domain.server).
-    storefrontPath: "/storefront",
-    // tenantDomain keeps this host provably identical to the one registered
-    // with Vercel at provisioning. In dev the relative path is the one that
-    // reaches the environment under test, so no absolute URL is advertised.
+    orgSlug,
+    // The public storefront resolves tenants by Host, so on the dashboard
+    // origin the fixed app path renders the demo shell — the real tenant URL
+    // needs the org_slug subdomain. tenantDomain keeps the host provably
+    // identical to the one registered with Vercel at provisioning; in dev the
+    // relative path is the one that reaches the environment under test.
     storefrontUrl:
       orgSlug && process.env.NODE_ENV !== "development"
         ? `https://${tenantDomain(orgSlug)}/storefront`
-        : null,
+        : "/storefront",
+    experiment,
   };
 }
 
@@ -213,6 +221,28 @@ export async function saveStudioAccent(shopId: string, color: string): Promise<v
   });
 }
 
+/** Persist the storefront design vibe through the StoreSettings contract
+ *  (settings.server.ts owns the store_settings row shape; the save seeds the
+ *  row for shops that have never saved settings and re-saves the other brand
+ *  fields as currently stored). Vibe value is validated at the route boundary. */
+export async function saveStudioVibe(shopId: string, vibe: StudioVibe): Promise<void> {
+  if (!UUID_RE.test(shopId)) {
+    throw new CalderynError({
+      code: "demo_shop",
+      status: 422,
+      message: "This demo store can't change its design vibe.",
+    });
+  }
+  const settings = await getStoreSettings(shopId);
+  await saveStoreSettings(shopId, {
+    storeName: settings.storeName,
+    palette: settings.palette,
+    logoUrl: settings.logoUrl,
+    voiceTagline: settings.voiceTagline,
+    vibe,
+  });
+}
+
 /** Publish every drafted page in the publishable set (home/collection/pdp),
  *  validating each draft first (page-document.server.ts caller obligation).
  *  Publishing is never gated: with nothing drafted, the default home doc is
@@ -227,9 +257,22 @@ export async function publishStudioStore(shopId: string): Promise<void> {
       message: "This demo store can't publish changes.",
     });
   }
+  // Publishing mid-test would change arm A under the running experiment, and
+  // a later "ship" would overwrite the newer published home (and draft) with
+  // the challenger clone frozen at start time — refuse until it is decided.
+  if (await hasRunningExperiment(shopId)) {
+    throw new CalderynError({
+      code: "experiment_running",
+      status: 409,
+      message: "An experiment is running on your home page. Decide it before publishing.",
+    });
+  }
   const valid = await catalogValidIds(shopId);
   const publishPage = async (pageKey: PageKey, doc: BlockDocument) => {
-    const { doc: clean } = validateDocument(doc, valid);
+    const { doc: clean, missingFunctional } = validateDocument(doc, valid);
+    // A published PDP can never lack the buy path (validateDocument reports
+    // missingFunctional but does not enforce it).
+    if (missingFunctional.length > 0) injectMissingFunctionalBlocks(clean, pageKey);
     await saveDraft(shopId, pageKey, clean);
     await publishDoc(shopId, pageKey);
   };

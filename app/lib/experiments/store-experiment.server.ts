@@ -1,0 +1,670 @@
+// app/lib/experiments/store-experiment.server.ts
+// One-at-a-time home-page A/B experiments for the owned storefront (spec
+// 2026-07-05-store-studio-v2-design.md D4). The champion stays in
+// page_document.published_json; the challenger doc and optional settings
+// overrides live on the store_experiment row. Server-only: service-role
+// client, shop_id threaded on every query. Non-uuid (demo) shops: reads
+// return null, writes refuse with a clean 422.
+import { getSupabase } from "~/lib/supabase.server";
+import { CalderynError } from "~/lib/calderyn.server";
+import { isUuid } from "~/lib/ids";
+import { readPaged } from "~/lib/db/read-paged.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
+import { getStoreSettings, saveStoreSettings } from "~/lib/storefront/settings.server";
+import { loadPublishedDoc, saveDraft, publishDoc } from "~/lib/storebuilder/page-document.server";
+import { validateDocument, type ValidIds } from "~/lib/storebuilder/validate";
+import type { Block, BlockDocument } from "~/lib/storebuilder/types";
+import type {
+  StudioExperiment,
+  StudioExperimentReport,
+  StudioExperimentState,
+  StudioVibe,
+} from "~/lib/storebuilder/studio-types";
+
+export type StoreExperimentKind = "headline" | "vibe";
+export type StoreExperimentDecision = "ship" | "keep" | "stop";
+export interface StoreExperimentSpec {
+  kind: StoreExperimentKind;
+  name?: string;
+}
+
+/** What the storefront serving path needs per request: the challenger doc and
+ *  any settings overrides for arm B. */
+export interface RunningExperiment {
+  id: string;
+  pageKey: "home";
+  name: string;
+  why: string;
+  startedAt: string;
+  variantDoc: BlockDocument;
+  variantSettings: { vibe?: StudioVibe } | null;
+}
+
+const VIBES: StudioVibe[] = ["minimal", "bold", "warm"];
+
+// Copy bounds mirror the generator's COPY_BOUNDS (storegen/sanitize.ts) so a
+// templated challenger can never exceed what a generated doc may hold.
+const HEADLINE_MAX = 120;
+const SUBHEAD_MAX = 200;
+
+// Report reads use the shared readPaged pager (app/lib/db/read-paged.server.ts):
+// PostgREST clamps every response at 1000 rows regardless of .limit(), so
+// window reads page with .range() up to an explicit cap and degrade to a
+// floor with a warn.
+const EVENT_ROW_CAP = 50_000;
+const ORDER_ROW_CAP = 10_000;
+const MIN_SESSIONS_PER_ARM = 30;
+// Every order state where the sale happened (order/state.ts vocabulary): a
+// partial refund must not make a conversion vanish while a full refund keeps
+// counting.
+const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
+
+// ---------------------------------------------------------------------------
+// Arm assignment — deterministic, no cookie, no table.
+
+/**
+ * 50/50 arm assignment from a stable hash of (visitorId, experimentId): the
+ * same visitor always sees the same arm for a given experiment, and a new
+ * experiment reshuffles. FNV-1a with an xor-fold so the decision bit mixes
+ * the whole hash, not just the last character.
+ *
+ * FROZEN: do not touch this hash. It must stay bit-identical forever — any
+ * change reshuffles every visitor already bucketed into a live experiment.
+ */
+export function assignArm(visitorId: string, experimentId: string): "a" | "b" {
+  const key = `${visitorId}:${experimentId}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h >>>= 0;
+  return (((h >>> 16) ^ h) & 1) === 0 ? "a" : "b";
+}
+
+// ---------------------------------------------------------------------------
+// Running-experiment lookup — the per-request storefront hot path.
+
+// Short-TTL cache for hits AND misses, mirroring the slug cache in
+// storefront/shop.server.ts: entries expire so a start/decide on another
+// instance is visible within a minute, and the size cap bounds the map.
+const CACHE_TTL_MS = 60_000;
+const CACHE_MAX_ENTRIES = 1_000;
+const runningCache = new Map<string, { exp: RunningExperiment | null; expiresAt: number }>();
+
+// Short-TTL cache for computed reports, same shape as the running-experiment
+// cache above: a report sweep reads two full event/order windows, so a busy
+// studio screen polling the same running experiment must not re-sweep on
+// every request. Keyed shopId:experimentId so one shop's start/decide never
+// stales another's.
+const REPORT_CACHE_TTL_MS = 30_000;
+const REPORT_CACHE_MAX_ENTRIES = 500;
+const reportCache = new Map<string, { report: StudioExperimentReport; expiresAt: number }>();
+
+function reportCacheKey(shopId: string, experimentId: string): string {
+  return `${shopId}:${experimentId}`;
+}
+
+/** Drop every cached report for this shop (start/decide hooks: the report a
+ *  caller sees right after either must reflect the new state, not a stale
+ *  pre-change sweep). */
+function invalidateReportCache(shopId: string): void {
+  const prefix = `${shopId}:`;
+  for (const key of reportCache.keys()) {
+    if (key.startsWith(prefix)) reportCache.delete(key);
+  }
+}
+
+/** Drop every cached running-experiment resolution (start/decide hooks, tests). */
+export function clearStoreExperimentCache(): void {
+  runningCache.clear();
+  reportCache.clear();
+}
+
+export async function getRunningExperiment(shopId: string): Promise<RunningExperiment | null> {
+  if (!isUuid(shopId)) return null;
+
+  const cached = runningCache.get(shopId);
+  if (cached && cached.expiresAt > Date.now()) return cached.exp;
+
+  const { data, error } = await getSupabase()
+    .from("store_experiment")
+    .select("id, name, why, started_at, variant_doc, variant_settings")
+    .eq("shop_id", shopId)
+    .eq("state", "running")
+    .maybeSingle();
+  if (error) throw error;
+  const exp: RunningExperiment | null = data
+    ? {
+        id: String(data.id),
+        pageKey: "home",
+        name: String(data.name),
+        why: String(data.why ?? ""),
+        startedAt: String(data.started_at),
+        variantDoc: data.variant_doc as BlockDocument,
+        variantSettings: shapeVariantSettings(data.variant_settings),
+      }
+    : null;
+
+  if (runningCache.size >= CACHE_MAX_ENTRIES) {
+    // FIFO-evict the oldest entry (Map preserves insertion order).
+    const oldest = runningCache.keys().next().value;
+    if (oldest !== undefined) runningCache.delete(oldest);
+  }
+  runningCache.set(shopId, { exp, expiresAt: Date.now() + CACHE_TTL_MS });
+
+  return exp;
+}
+
+/** The running or most recent experiment as the studio DTO, with a fresh
+ *  report attached (report failures degrade to null rather than failing the
+ *  studio load — same posture as checkoutReady). */
+export async function latestStudioExperiment(shopId: string): Promise<StudioExperiment | null> {
+  if (!isUuid(shopId)) return null;
+  const { data, error } = await getSupabase()
+    .from("store_experiment")
+    .select("id, name, why, state, started_at, decided_at")
+    .eq("shop_id", shopId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const exp = shapeStudioExperiment(data);
+  exp.report = await reportOrNull(shopId, exp);
+  return exp;
+}
+
+/**
+ * Direct (uncached) check for write-path guards. Publishing or regenerating
+ * mid-test would change arm A under the experiment — and a later "ship" would
+ * overwrite that newer work with the frozen challenger clone — so publish and
+ * generate refuse while a test is running. Non-uuid (demo) shops never have
+ * rows and read as false.
+ */
+export async function hasRunningExperiment(shopId: string): Promise<boolean> {
+  if (!isUuid(shopId)) return false;
+  const { data, error } = await getSupabase()
+    .from("store_experiment")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("state", "running")
+    .maybeSingle();
+  if (error) throw error;
+  return data != null;
+}
+
+// ---------------------------------------------------------------------------
+// Start — deterministic challenger library, never fake-AI.
+
+export async function startExperiment(
+  shopId: string,
+  spec: StoreExperimentSpec,
+): Promise<StudioExperiment> {
+  if (!isUuid(shopId)) {
+    throw new CalderynError({
+      code: "demo_shop",
+      status: 422,
+      message: "This demo store can't run experiments.",
+    });
+  }
+  const sb = getSupabase();
+
+  // Direct read (not the 60s cache): a stale cache entry must not block or
+  // permit a start — the partial unique index below is the true arbiter.
+  if (await hasRunningExperiment(shopId)) {
+    throw new CalderynError({
+      code: "experiment_running",
+      status: 409,
+      message: "An experiment is already running — decide it before starting another.",
+    });
+  }
+
+  const published = await loadPublishedDoc(shopId, "home");
+  if (!published) {
+    throw new CalderynError({
+      code: "nothing_published",
+      status: 422,
+      message: "Publish your store before starting an experiment.",
+    });
+  }
+
+  const challenger = await buildChallenger(shopId, spec.kind, published);
+  const name = spec.name?.trim() || challenger.name;
+
+  const { data, error } = await sb
+    .from("store_experiment")
+    .insert({
+      shop_id: shopId,
+      page_key: "home",
+      name,
+      why: challenger.why,
+      variant_doc: challenger.doc,
+      variant_settings: challenger.settings,
+    })
+    .select("id, name, why, state, started_at, decided_at")
+    .single();
+  if (error) {
+    // 23505 = the store_experiment_one_running index caught a racing start.
+    if ((error as { code?: string }).code === "23505") {
+      throw new CalderynError({
+        code: "experiment_running",
+        status: 409,
+        message: "An experiment is already running — decide it before starting another.",
+      });
+    }
+    throw error;
+  }
+
+  runningCache.delete(shopId);
+  invalidateReportCache(shopId);
+  return shapeStudioExperiment(data);
+}
+
+interface Challenger {
+  name: string;
+  why: string;
+  doc: BlockDocument;
+  settings: { vibe: StudioVibe } | null;
+}
+
+async function buildChallenger(
+  shopId: string,
+  kind: StoreExperimentKind,
+  published: BlockDocument,
+): Promise<Challenger> {
+  if (kind === "vibe") {
+    const current = (await getStoreSettings(shopId)).vibe;
+    const next = VIBES[(VIBES.indexOf(current) + 1) % VIBES.length];
+    return {
+      name: `Try the ${next} look`,
+      why: `Tests the ${next} design vibe against your current ${current} look on the home page.`,
+      doc: published,
+      settings: { vibe: next },
+    };
+  }
+
+  // headline: clone the published home doc and patch the hero copy with a
+  // curated, product-led headline templated from the real catalog nouns.
+  const heroIndex = published.blocks.findIndex((b) => b.type === "hero");
+  if (heroIndex === -1) {
+    throw new CalderynError({
+      code: "no_hero_block",
+      status: 422,
+      message: "The published home page has no hero section to test.",
+    });
+  }
+  const [settings, products] = await Promise.all([
+    getStoreSettings(shopId),
+    getCatalog().listProducts(shopId),
+  ]);
+  const topProduct = products[0]?.title?.trim();
+  const headline = clip(
+    topProduct ? `Start with ${topProduct}` : `New season, new picks at ${settings.storeName}`,
+    HEADLINE_MAX,
+  );
+  const subhead = clip(
+    topProduct
+      ? `The most-loved pick at ${settings.storeName}, ready to ship today.`
+      : "Fresh arrivals, fair prices and fast checkout.",
+    SUBHEAD_MAX,
+  );
+  const blocks: Block[] = published.blocks.map((b, i) =>
+    i === heroIndex ? { ...b, props: { ...b.props, headline, subhead } } : b,
+  );
+  return {
+    name: "Sharper headline",
+    why: "Tests a product-led hero headline against your current copy on the home page.",
+    doc: { ...published, blocks },
+    settings: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Report — distinct-session math over exposure rows + the order attribution
+// stamp, live-analytics style.
+
+export async function experimentReport(
+  shopId: string,
+  experiment: Pick<StudioExperiment, "id" | "startedAt">,
+): Promise<StudioExperimentReport> {
+  if (!isUuid(shopId)) return emptyReport();
+
+  const sinceIso = new Date(experiment.startedAt).toISOString();
+  const [events, orders] = await Promise.all([
+    readExposureEvents(shopId, experiment.id),
+    readStampedOrders(shopId, experiment.id, sinceIso),
+  ]);
+
+  // Exposure = distinct page_view sessions per arm.
+  const sessions = { a: new Set<string>(), b: new Set<string>() };
+  // checkout_complete exposure sessions double as the conversion fallback for
+  // orders that predate (or lost) the attribution stamp.
+  const purchases = { a: new Set<string>(), b: new Set<string>() };
+  for (const e of events) {
+    const arm = armKey(e.variant_key);
+    if (!arm) continue;
+    const sid = String(e.session_id);
+    if (e.type === "page_view") sessions[arm].add(sid);
+    else if (e.type === "checkout_complete") purchases[arm].add(sid);
+  }
+
+  // Authoritative conversions: orders stamped at checkout origination (the
+  // paid-flip webhook has no cookies, so the stamp is written up front and
+  // survives the 30-day event trim). Orders without a session id still count
+  // once each, keyed by order id.
+  for (const o of orders) {
+    const attr =
+      o.attribution && typeof o.attribution === "object"
+        ? (o.attribution as Record<string, unknown>)
+        : {};
+    const arm = armKey(attr.variant_key);
+    if (!arm) continue;
+    const sid =
+      typeof attr.live_session_id === "string" && attr.live_session_id
+        ? attr.live_session_id
+        : `order:${o.id}`;
+    purchases[arm].add(sid);
+  }
+
+  // Conversions can exceed the page_view exposure count: the retention sweep
+  // trims storefront_event rows while stamped orders persist, and the checkout
+  // stamp covers every assigned visitor even if they never viewed the tested
+  // home page. Clamp sessions to at least the conversions so rates stay <= 1
+  // and the z-test never takes sqrt of a negative (NaN confidence).
+  const aConversions = purchases.a.size;
+  const bConversions = purchases.b.size;
+  const aSessions = Math.max(sessions.a.size, aConversions);
+  const bSessions = Math.max(sessions.b.size, bConversions);
+
+  const rA = aSessions > 0 ? aConversions / aSessions : 0;
+  const rB = bSessions > 0 ? bConversions / bSessions : 0;
+
+  return {
+    aSessions,
+    bSessions,
+    aConversions,
+    bConversions,
+    lift: rA > 0 ? (rB - rA) / rA : null,
+    confidence: zConfidence(aSessions, aConversions, bSessions, bConversions),
+  };
+}
+
+function armKey(v: unknown): "a" | "b" | null {
+  return v === "a" || v === "b" ? v : null;
+}
+
+function emptyReport(): StudioExperimentReport {
+  return { aSessions: 0, bSessions: 0, aConversions: 0, bConversions: 0, lift: null, confidence: null };
+}
+
+interface ExposureEventRow {
+  session_id: string;
+  variant_key: string | null;
+  type: string;
+}
+
+async function readExposureEvents(shopId: string, experimentId: string): Promise<ExposureEventRow[]> {
+  return readPaged<ExposureEventRow>("storefront_event", shopId, EVENT_ROW_CAP, (from, to) =>
+    getSupabase()
+      .from("storefront_event")
+      .select("session_id, variant_key, type")
+      .eq("shop_id", shopId)
+      .eq("experiment_id", experimentId)
+      .order("created_at", { ascending: false })
+      .range(from, to),
+  );
+}
+
+interface StampedOrderRow {
+  id: string;
+  attribution: unknown;
+}
+
+async function readStampedOrders(
+  shopId: string,
+  experimentId: string,
+  sinceIso: string,
+): Promise<StampedOrderRow[]> {
+  return readPaged<StampedOrderRow>("orders", shopId, ORDER_ROW_CAP, (from, to) =>
+    getSupabase()
+      .from("orders")
+      .select("id, attribution")
+      .eq("shop_id", shopId)
+      .in("state", [...SALE_STATES])
+      .gte("created_at", sinceIso)
+      .eq("attribution->>experiment_id", experimentId)
+      .order("created_at", { ascending: false })
+      .range(from, to),
+  );
+}
+
+/**
+ * Two-proportion z-test confidence as an integer percentage, clamped to 0-99
+ * (a report never claims certainty). Null under 30 sessions per arm — too
+ * little exposure for the normal approximation to mean anything.
+ */
+function zConfidence(aS: number, aC: number, bS: number, bC: number): number | null {
+  if (aS < MIN_SESSIONS_PER_ARM || bS < MIN_SESSIONS_PER_ARM) return null;
+  const pooled = (aC + bC) / (aS + bS);
+  const se = Math.sqrt(pooled * (1 - pooled) * (1 / aS + 1 / bS));
+  if (se === 0) return 0;
+  const z = Math.abs(bC / bS - aC / aS) / se;
+  const confidence = Math.round((2 * phi(z) - 1) * 100);
+  return Math.max(0, Math.min(99, confidence));
+}
+
+function phi(z: number): number {
+  return 0.5 * (1 + erf(z / Math.SQRT2));
+}
+
+// Abramowitz & Stegun 7.1.26 polynomial approximation (|error| < 1.5e-7),
+// plenty for a 0-99 integer confidence readout.
+function erf(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-ax * ax);
+  return sign * y;
+}
+
+// ---------------------------------------------------------------------------
+// Decide — guarded state flip, then apply.
+
+export async function decideExperiment(
+  shopId: string,
+  experimentId: string,
+  decision: StoreExperimentDecision,
+): Promise<StudioExperiment> {
+  if (!isUuid(shopId)) {
+    throw new CalderynError({
+      code: "demo_shop",
+      status: 422,
+      message: "This demo store can't run experiments.",
+    });
+  }
+  const sb = getSupabase();
+
+  const { data: row, error } = await sb
+    .from("store_experiment")
+    .select("id, name, why, state, started_at, decided_at, variant_doc, variant_settings")
+    .eq("shop_id", shopId)
+    .eq("id", experimentId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!row) {
+    throw new CalderynError({
+      code: "experiment_not_found",
+      status: 404,
+      message: "No such experiment.",
+    });
+  }
+  if (row.state !== "running") {
+    throw new CalderynError({
+      code: "experiment_not_running",
+      status: 409,
+      message: "This experiment has already been decided.",
+    });
+  }
+
+  const state: StudioExperimentState =
+    decision === "ship" ? "decided_ship" : decision === "keep" ? "decided_keep" : "stopped";
+  const decidedAt = new Date().toISOString();
+
+  // The .eq("state","running")-guarded flip is the concurrency lock: a racing
+  // decide matches zero rows here and never double-applies the variant.
+  const { data: flipped, error: flipError } = await sb
+    .from("store_experiment")
+    .update({ state, decided_at: decidedAt })
+    .eq("shop_id", shopId)
+    .eq("id", experimentId)
+    .eq("state", "running")
+    .select("id");
+  if (flipError) throw flipError;
+  if (!flipped || flipped.length === 0) {
+    throw new CalderynError({
+      code: "experiment_not_running",
+      status: 409,
+      message: "This experiment has already been decided.",
+    });
+  }
+  runningCache.delete(shopId);
+  invalidateReportCache(shopId);
+
+  if (decision === "ship") {
+    try {
+      await applyVariant(shopId, {
+        variantDoc: row.variant_doc as BlockDocument,
+        variantSettings: shapeVariantSettings(row.variant_settings),
+      });
+    } catch (applyErr) {
+      // The flip-first order above is only the keep/ship race lock; the spec's
+      // real order is apply-then-decide. If the apply fails (catalog read,
+      // saveDraft/publishDoc, settings upsert), revert the row to running so
+      // the merchant can ship again — otherwise the experiment is permanently
+      // decided_ship while the champion stays live, and every retry 409s.
+      const { error: revertError } = await sb
+        .from("store_experiment")
+        .update({ state: "running", decided_at: null })
+        .eq("shop_id", shopId)
+        .eq("id", experimentId)
+        .eq("state", state);
+      if (revertError) {
+        // Best-effort: a failed revert (e.g. a racing start already owns the
+        // one-running slot) leaves the row decided_ship — log loudly so an
+        // operator can see the unapplied win instead of it vanishing.
+        console.error(
+          `[store-experiment] ship apply failed AND revert failed for ${experimentId}; row left decided_ship with champion live`,
+          revertError,
+        );
+      }
+      runningCache.delete(shopId);
+      throw applyErr;
+    }
+  }
+
+  const exp = shapeStudioExperiment({ ...row, state, decided_at: decidedAt });
+  exp.report = await reportOrNull(shopId, exp);
+  return exp;
+}
+
+async function applyVariant(
+  shopId: string,
+  variant: { variantDoc: BlockDocument; variantSettings: { vibe?: StudioVibe } | null },
+): Promise<void> {
+  if (variant.variantSettings?.vibe) {
+    await saveVibe(shopId, variant.variantSettings.vibe);
+    return;
+  }
+  // Headline challenger: its doc becomes the new published home page.
+  // validateDocument before publishDoc is a page-document caller obligation.
+  const valid = await catalogValidIds(shopId);
+  const { doc: clean } = validateDocument(variant.variantDoc, valid);
+  await saveDraft(shopId, "home", clean);
+  await publishDoc(shopId, "home");
+}
+
+// ---------------------------------------------------------------------------
+// Shared row/settings helpers.
+
+// Vibe persists through the StoreSettings contract (settings.server.ts owns
+// the store_settings row shape); the re-save keeps the other brand fields as
+// currently stored.
+async function saveVibe(shopId: string, vibe: StudioVibe): Promise<void> {
+  const settings = await getStoreSettings(shopId);
+  await saveStoreSettings(shopId, {
+    storeName: settings.storeName,
+    palette: settings.palette,
+    logoUrl: settings.logoUrl,
+    voiceTagline: settings.voiceTagline,
+    vibe,
+  });
+}
+
+async function catalogValidIds(shopId: string): Promise<ValidIds> {
+  const catalog = getCatalog();
+  const [products, collections] = await Promise.all([
+    catalog.listProducts(shopId),
+    catalog.listCollections(shopId),
+  ]);
+  return {
+    productIds: new Set(products.map((p) => p.id)),
+    collectionHandles: new Set(collections.map((c) => c.handle)),
+  };
+}
+
+function shapeVariantSettings(raw: unknown): { vibe?: StudioVibe } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = (raw as Record<string, unknown>).vibe;
+  return VIBES.includes(v as StudioVibe) ? { vibe: v as StudioVibe } : null;
+}
+
+function shapeStudioExperiment(row: {
+  id: unknown;
+  name: unknown;
+  why: unknown;
+  state: unknown;
+  started_at: unknown;
+  decided_at: unknown;
+}): StudioExperiment {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    why: String(row.why ?? ""),
+    pageKey: "home",
+    state: row.state as StudioExperimentState,
+    startedAt: String(row.started_at),
+    decidedAt: row.decided_at == null ? null : String(row.decided_at),
+    report: null,
+  };
+}
+
+async function reportOrNull(
+  shopId: string,
+  exp: Pick<StudioExperiment, "id" | "startedAt">,
+): Promise<StudioExperimentReport | null> {
+  const key = reportCacheKey(shopId, exp.id);
+  const cached = reportCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.report;
+  try {
+    const report = await experimentReport(shopId, exp);
+    if (reportCache.size >= REPORT_CACHE_MAX_ENTRIES) {
+      // FIFO-evict the oldest entry (Map preserves insertion order).
+      const oldest = reportCache.keys().next().value;
+      if (oldest !== undefined) reportCache.delete(oldest);
+    }
+    reportCache.set(key, { report, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+    return report;
+  } catch (err) {
+    console.error("[store-experiment] report read failed; omitting report", err);
+    return null;
+  }
+}
+
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) : s;
+}

@@ -1,14 +1,20 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, jsonOk, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import {
   loadStudioState,
   saveStudioHero,
   saveStudioAccent,
+  saveStudioVibe,
   publishStudioStore,
 } from "~/lib/storebuilder/studio.server";
+import { decideExperiment, startExperiment } from "~/lib/experiments/store-experiment.server";
 import { generateStore } from "~/lib/storegen/generate.server";
-import { checkAiQuota, quotaTrusted } from "~/lib/ai-quota.server";
+import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { CalderynError } from "~/lib/calderyn.server";
+import { isUuid } from "~/lib/ids";
+import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import { quotaTrusted } from "~/lib/ai-quota.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -19,9 +25,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const HERO_TEXT_MAX = 300;
-// A brief is a short prompt, not a document; the cap bounds LLM input spend
-// (the brief is interpolated into several generation prompts per run).
-const BRIEF_MAX = 4000;
+const STUDIO_VIBES: readonly string[] = ["minimal", "bold", "warm"];
+const EXPERIMENT_KINDS: readonly string[] = ["headline", "vibe"];
+const EXPERIMENT_DECISIONS: readonly string[] = ["ship", "keep", "stop"];
+const EXPERIMENT_NAME_MAX = 80;
 
 function heroText(v: unknown): string | null {
   if (typeof v !== "string") return null;
@@ -67,38 +74,33 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     case "generate": {
-      // Each run is a paid multi-prompt Anthropic call; cap per shop to bound
-      // LLM spend abuse (same posture as the assistant endpoint).
-      if (!(await rateLimit(`storegen:${session.shopId}`, 5, 60_000))) {
-        return jsonError(429, "rate_limited", "Too many generations. Please wait a moment.");
-      }
       if (b.brief !== undefined && typeof b.brief !== "string") {
         return jsonError(422, "invalid_brief");
       }
-      if (typeof b.brief === "string" && b.brief.length > BRIEF_MAX) {
-        return jsonError(422, "brief_too_long", "Keep the brief under 4,000 characters.");
-      }
-      const brief = typeof b.brief === "string" && b.brief.trim() ? b.brief.trim() : undefined;
-      // Daily cap + cooldown on top of the burst limit — after validation so
-      // rejected requests never burn the day's allowance (see ai-quota.server).
-      const quota = await checkAiQuota({
-        shopId: session.shopId,
-        feature: "designer",
-        trusted: quotaTrusted(session),
+      const rawBrief = typeof b.brief === "string" ? b.brief : undefined;
+      return dashboardJson(async () => {
+        // Brief cap, burst limit, mid-test refusal AND the daily AI quota are
+        // shared with dashboard.builder.generate.tsx (guard.server.ts) — one
+        // shop gets one coherent budget across both paid entry points.
+        await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
+        const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
+        try {
+          // Real generation — can take several seconds; awaited deliberately.
+          const result = await generateStore({
+            shopId: session.shopId,
+            mode: brief ? "brief" : "catalog",
+            brief,
+          });
+          return { runId: result.runId, status: result.status };
+        } catch (err) {
+          console.error("[dashboard.api.store] store generation failed", err);
+          throw new CalderynError({
+            code: "generation_failed",
+            status: 502,
+            message: "Store generation failed. Please try again.",
+          });
+        }
       });
-      if (!quota.allowed) return jsonError(429, quota.code, quota.message);
-      try {
-        // Real generation — can take several seconds; awaited deliberately.
-        const result = await generateStore({
-          shopId: session.shopId,
-          mode: brief ? "brief" : "catalog",
-          brief,
-        });
-        return jsonOk({ runId: result.runId, status: result.status });
-      } catch (err) {
-        console.error("[dashboard.api.store] store generation failed", err);
-        return jsonError(502, "generation_failed", "Store generation failed — please try again.");
-      }
     }
 
     case "publish": {
@@ -106,6 +108,54 @@ export async function action({ request }: ActionFunctionArgs) {
         await publishStudioStore(session.shopId);
         return { publishedAt: new Date().toISOString() };
       });
+    }
+
+    case "vibe": {
+      const vibe = typeof b.vibe === "string" ? b.vibe : "";
+      if (!STUDIO_VIBES.includes(vibe)) {
+        return jsonError(422, "invalid_vibe", "Vibe must be minimal, bold or warm.");
+      }
+      return dashboardJson(async () => {
+        await saveStudioVibe(session.shopId, vibe as StudioVibe);
+        return { vibe };
+      });
+    }
+
+    case "experiment-start": {
+      // Starting a test writes a row and reads the catalog; cap per shop to
+      // bound abuse the same way generate does.
+      if (!(await rateLimit(`experiment:${session.shopId}`, 10, 60_000))) {
+        return jsonError(429, "rate_limited", "Too many experiment starts. Please wait a moment.");
+      }
+      const kind = typeof b.kind === "string" ? b.kind : "";
+      if (!EXPERIMENT_KINDS.includes(kind)) {
+        return jsonError(422, "invalid_kind", "Experiment kind must be headline or vibe.");
+      }
+      if (b.name !== undefined && typeof b.name !== "string") {
+        return jsonError(422, "invalid_name");
+      }
+      const name = typeof b.name === "string" && b.name.trim() ? b.name.trim() : undefined;
+      if (name && name.length > EXPERIMENT_NAME_MAX) {
+        return jsonError(422, "invalid_name", "Keep the test name under 80 characters.");
+      }
+      return dashboardJson(async () => ({
+        experiment: await startExperiment(session.shopId, {
+          kind: kind as "headline" | "vibe",
+          name,
+        }),
+      }));
+    }
+
+    case "experiment-decide": {
+      const id = typeof b.id === "string" ? b.id : "";
+      if (!isUuid(id)) return jsonError(422, "invalid_id");
+      const decision = typeof b.decision === "string" ? b.decision : "";
+      if (!EXPERIMENT_DECISIONS.includes(decision)) {
+        return jsonError(422, "invalid_decision", "Decision must be ship, keep or stop.");
+      }
+      return dashboardJson(async () => ({
+        experiment: await decideExperiment(session.shopId, id, decision as "ship" | "keep" | "stop"),
+      }));
     }
 
     default:
