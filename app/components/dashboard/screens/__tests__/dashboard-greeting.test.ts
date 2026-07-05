@@ -22,6 +22,7 @@ const ctx: DashboardCtx = {
   shopDomain: "test.myshopify.com",
   storeLabel: "test.myshopify.com",
   demoMode: false,
+  canDeleteAccount: false,
   // Established-store hint so the greeting path (not the setup guide's static
   // "Welcome.") is what the clock-independence assertion exercises.
   hasCatalog: true,

@@ -18,6 +18,7 @@ function makeCtx(overrides: Partial<DashboardCtx>): DashboardCtx {
     shopDomain: "test.myshopify.com",
     storeLabel: "test.myshopify.com",
     demoMode: false,
+    canDeleteAccount: false,
     hasCatalog: true,
     nav: { screen: "dashboard", param: null, sub: null },
     navigate: () => {},

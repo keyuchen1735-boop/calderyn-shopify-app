@@ -32,25 +32,50 @@ export function normalizePhone(raw: string): string | null {
   return hasPlus ? `+${digits}` : digits;
 }
 
-export interface OnboardingProfile {
+export interface OnboardingContact {
   phone: string;
   referralSource: ReferralSource;
   referralOther: string | null;
 }
 
-/** Persist the onboarding profile and mark the user onboarded, in one update. */
-export async function setOnboardingProfile(
+/**
+ * Step 1: persist phone + referral. Deliberately does NOT set onboarded_at — the
+ * gate keys on onboarded_at, so leaving it null keeps the user on the import step
+ * (step 2) until they connect or explicitly skip. completeOnboarding() flips it.
+ */
+export async function saveOnboardingContact(
   userId: string,
-  profile: OnboardingProfile,
+  contact: OnboardingContact,
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("users")
     .update({
-      phone: profile.phone,
-      referral_source: profile.referralSource,
-      referral_source_other: profile.referralSource === "other" ? profile.referralOther : null,
-      onboarded_at: new Date().toISOString(),
+      phone: contact.phone,
+      referral_source: contact.referralSource,
+      referral_source_other: contact.referralSource === "other" ? contact.referralOther : null,
     })
     .eq("id", userId);
   if (error) throw error;
+}
+
+/** Step 2: mark the user onboarded once the import step has been answered. */
+export async function completeOnboarding(userId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("users")
+    .update({ onboarded_at: new Date().toISOString() })
+    .eq("id", userId);
+  if (error) throw error;
+}
+
+/** Which onboarding step a user is on: phone present ⇒ contact done (show import). */
+export async function getOnboardingProgress(
+  userId: string,
+): Promise<{ phone: string | null }> {
+  const { data, error } = await getSupabase()
+    .from("users")
+    .select("phone")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return { phone: (data?.phone as string | null) ?? null };
 }
