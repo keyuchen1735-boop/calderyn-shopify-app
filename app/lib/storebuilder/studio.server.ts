@@ -4,6 +4,7 @@
 // store_settings and store_generation through the service-role client the
 // underlying libs already use.
 import { getSupabase } from "~/lib/supabase.server";
+import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
@@ -98,9 +99,23 @@ async function draftProductCount(shopId: string): Promise<number> {
   return total;
 }
 
+/** shops.org_slug for first-party tenants; null for Shopify-mirror shops. */
+async function shopOrgSlug(shopId: string): Promise<string | null> {
+  const { data, error } = await getSupabase()
+    .from("shops")
+    .select("org_slug")
+    .eq("id", shopId)
+    .maybeSingle();
+  if (error) {
+    console.error("[studio] org_slug lookup failed", { shopId, error: error.message });
+    return null;
+  }
+  return data?.org_slug ? String(data.org_slug) : null;
+}
+
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -109,6 +124,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       latestGeneration(shopId),
       checkoutReady(shopId),
       draftProductCount(shopId),
+      shopOrgSlug(shopId),
     ]);
 
   const doc = draft ?? published;
@@ -135,8 +151,16 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     hasPublished: published != null,
     generation,
     // store_settings has no custom-domain column; the storefront is served at
-    // the fixed app path.
+    // the fixed app path. First-party tenants also get their registered
+    // <org_slug>.calderyncompany.com host (see storefront/vercel-domain.server).
     storefrontPath: "/storefront",
+    // tenantDomain keeps this host provably identical to the one registered
+    // with Vercel at provisioning. In dev the relative path is the one that
+    // reaches the environment under test, so no absolute URL is advertised.
+    storefrontUrl:
+      orgSlug && process.env.NODE_ENV !== "development"
+        ? `https://${tenantDomain(orgSlug)}/storefront`
+        : null,
   };
 }
 

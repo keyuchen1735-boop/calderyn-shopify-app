@@ -59,6 +59,9 @@ export interface StudioState {
   generation: StudioGeneration | null;
   /** Where the public storefront is served (no custom-domain support yet). */
   storefrontPath: string;
+  /** Absolute tenant URL (https://<org_slug>.calderyncompany.com/storefront)
+   *  for first-party shops; null for Shopify-mirror shops with no org_slug. */
+  storefrontUrl: string | null;
 }
 
 /** POST {action:"generate"} response. A hard failure (nothing produced at all)
