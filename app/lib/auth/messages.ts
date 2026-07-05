@@ -23,6 +23,10 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   app_not_installed:
     "Your store approved the connection, but we couldn't finish setting it up on our side. Nothing is lost — try again in a moment.",
   invalid_shop: "Enter your store's .myshopify.com domain, like example.myshopify.com.",
+  invalid_phone: "Enter a valid phone number so we can reach you.",
+  invalid_referral: "Pick how you heard about us.",
+  save_failed: "We couldn't save that just now. Try again.",
+  not_first_party: "That action isn't available on this account.",
 };
 
 export const AUTH_NOTICE_MESSAGES: Record<string, string> = {
