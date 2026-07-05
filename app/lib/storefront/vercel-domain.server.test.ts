@@ -41,8 +41,9 @@ describe("registerTenantDomain", () => {
   });
 
   it("treats an already-registered domain as success", async () => {
+    // The code the live API actually returns for a same-project duplicate.
     fetchMock.mockResolvedValue(
-      jsonResponse(409, { error: { code: "domain_already_exists", message: "exists" } }),
+      jsonResponse(409, { error: { code: "domain_already_in_use", message: "in use" } }),
     );
     await expect(registerTenantDomain("shop-abc123")).resolves.toBe(true);
   });

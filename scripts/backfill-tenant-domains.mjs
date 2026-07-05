@@ -20,7 +20,11 @@ const project = process.env.VERCEL_PROJECT_ID || "shopify-app";
 const teamQs = process.env.VERCEL_TEAM_ID
   ? `?teamId=${encodeURIComponent(process.env.VERCEL_TEAM_ID)}`
   : "";
-const BENIGN = new Set(["domain_already_exists", "domain_already_in_use_by_project"]);
+const BENIGN = new Set([
+  "domain_already_in_use", // live-verified: same-project duplicate returns this
+  "domain_already_exists",
+  "domain_already_in_use_by_project",
+]);
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

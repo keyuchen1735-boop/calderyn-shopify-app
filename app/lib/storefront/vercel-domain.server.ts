@@ -14,8 +14,14 @@ const TENANT_ZONE = "calderyncompany.com";
 const REQUEST_TIMEOUT_MS = 5_000;
 
 // Vercel error codes that mean the hostname is already attached (re-provision,
-// manual add, backfill overlap) — success for our purposes.
-const BENIGN_CODES = new Set(["domain_already_exists", "domain_already_in_use_by_project"]);
+// manual add, backfill overlap) — success for our purposes. Live-verified
+// 2026-07-05: re-adding a domain this project already owns returns 409
+// "domain_already_in_use".
+const BENIGN_CODES = new Set([
+  "domain_already_in_use",
+  "domain_already_exists",
+  "domain_already_in_use_by_project",
+]);
 
 export function tenantDomain(orgSlug: string): string {
   return `${orgSlug}.${TENANT_ZONE}`;
