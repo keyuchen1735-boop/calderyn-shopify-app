@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:client-bundle": "node scripts/verify-client-bundle.mjs"
+    "verify:client-bundle": "node scripts/verify-client-bundle.mjs",
+    "postinstall": "patch-package"
   },
   "type": "module",
   "engines": {
@@ -71,6 +72,7 @@
     "@vercel/remix": "^2.16.7",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3",
     "vite": "^6.4.3",
