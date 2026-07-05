@@ -136,13 +136,23 @@ describe("recordRejection", () => {
     expect((row.applied_rule as Record<string, unknown>).cents).toBe(500);
   });
 
-  it("floors pair_dollar_cap candidate cents to minimum 1", async () => {
-    const { sb, rpc } = makeStub();
-    await recordRejection("shop-1", { ...BASE, reason: "too_aggressive", dollarImpactCents: 0 }, sb);
-    expect(rpc).toHaveBeenCalledWith(
-      "calibration_tighten_dollar_cap",
-      expect.objectContaining({ p_candidate_cents: 1 }),
+  it("writes no dollar cap when the rejected impact is $0 (never a 1-cent brick)", async () => {
+    // A $0 impact has nothing to cap. Flooring the candidate to 1 cent would
+    // write a permanent 1-cent cap — and because caps are tighten-only, no later
+    // reject could ever loosen it, silently vetoing every future move for the
+    // pair. The cap RPC must not fire and no cap rule row is written; the reject
+    // still records (beta bump) so the signal is not lost.
+    const { sb, rpc, ruleInsert } = makeStub();
+    const receipt = await recordRejection(
+      "shop-1",
+      { ...BASE, reason: "too_aggressive", dollarImpactCents: 0 },
+      sb,
     );
+    expect(rpc).not.toHaveBeenCalledWith("calibration_tighten_dollar_cap", expect.anything());
+    expect(rpc).toHaveBeenCalledWith("calibration_record_rejection", expect.anything());
+    expect(ruleInsert).not.toHaveBeenCalled();
+    expect(receipt.savedAsRule).toBe(false);
+    expect(receipt.ruleKind).toBeNull();
   });
 
   it("falls back to a plain rule insert (no supersede) when the tighten RPC errors", async () => {
