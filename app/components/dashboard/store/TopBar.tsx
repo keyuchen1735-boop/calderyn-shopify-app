@@ -163,7 +163,7 @@ const TopBar = forwardRef<
   const running = experiment && experiment.state === "running" ? experiment : null;
 
   return (
-    <div className="cd-stage-bar">
+    <div className="cd-studio-bar">
       <button type="button" className="cd-pill-url" onClick={onOpenStorefront} title="Open your storefront in a new tab">
         <span>{storefrontUrl.replace(/^https?:\/\//, "")}</span>
         <CDIcon name="external" size={12} strokeWidth={1.9} />
