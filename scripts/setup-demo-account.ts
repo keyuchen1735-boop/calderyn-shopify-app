@@ -17,6 +17,7 @@ import { getSupabase } from "../app/lib/supabase.server";
 import { hashPassword } from "../app/lib/auth/password.server";
 import { findUserByEmail, createUser, normalizeEmail } from "../app/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "../app/lib/auth/tenant.server";
+import { registerTenantDomain } from "../app/lib/storefront/vercel-domain.server";
 import { markEmailVerified } from "../app/lib/auth/verify.server";
 import { resetDemoShowcase, type ShowcaseResetClient } from "../app/lib/demo/reset.server";
 
@@ -77,6 +78,11 @@ if (shopRow) {
   if (error) throw new Error(`org_slug claim failed: ${error.message}`);
   console.log(`shop provisioned (${shopId}), org_slug → ${ORG_SLUG}`);
 }
+
+// The provisioning hook registers the throwaway random slug's domain; the demo
+// shop's real host is the fixed slug, so ensure THAT one is registered
+// (idempotent; skipped with a warning when VERCEL_TOKEN is unset).
+await registerTenantDomain(ORG_SLUG);
 
 // 3) Demo flags BEFORE the reset — resetDemoShowcase refuses non-demo shops.
 const { error: flagErr } = await sb

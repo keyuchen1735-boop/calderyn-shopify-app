@@ -8,6 +8,7 @@ import { getSupabase, resolveShopId } from "~/lib/supabase.server";
 import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
 import { parseAssistantRequest } from "~/lib/assistant/request.server";
 import { AssistantTurnError, runConversationTurn } from "~/lib/assistant/turn.server";
+import { checkAiQuota } from "~/lib/ai-quota.server";
 import type { ChatMessage, ConversationSummary } from "~/lib/assistant/types";
 
 type LoaderPayload = {
@@ -39,6 +40,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const parsed = parseAssistantRequest(form);
   if (!parsed.ok) {
     return json({ error: { code: parsed.code, message: parsed.message } }, { status: 400 });
+  }
+  // Daily cap + cooldown, keyed by shop UUID so both assistant surfaces share
+  // one allowance; checked after validation so rejected requests never burn
+  // the day's allowance. Installed Shopify shops are trusted tier by
+  // construction.
+  let quotaKey = session.shop;
+  try {
+    quotaKey = await resolveShopId(session.shop);
+  } catch {
+    // Transient mapping failure: fall back to the domain key rather than
+    // blocking the turn (the limiter itself also fails open by design).
+  }
+  const quota = await checkAiQuota({ shopId: quotaKey, feature: "assistant", trusted: true });
+  if (!quota.allowed) {
+    return json(
+      { error: { code: quota.code.toUpperCase(), message: quota.message } },
+      { status: 429 },
+    );
   }
 
   try {

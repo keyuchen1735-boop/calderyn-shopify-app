@@ -10,6 +10,10 @@ const { sessionMock, generateMock, rateLimitMock, runningMock } = vi.hoisted(() 
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireVerifiedSession: sessionMock }));
 vi.mock("~/lib/dashboard/http.server", () => ({ requireSameOrigin: () => {}, rateLimit: rateLimitMock }));
+vi.mock("~/lib/ai-quota.server", () => ({
+  checkAiQuota: vi.fn().mockResolvedValue({ allowed: true }),
+  quotaTrusted: () => false,
+}));
 vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperiment: runningMock }));
 

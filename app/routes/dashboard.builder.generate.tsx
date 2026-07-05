@@ -8,6 +8,7 @@ import { requireSameOrigin } from "~/lib/dashboard/http.server";
 import { generateStore } from "~/lib/storegen/generate.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
+import { quotaTrusted } from "~/lib/ai-quota.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   // Match the dashboard.api.* convention: same-origin (CSRF) + email-verified.
@@ -19,10 +20,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const briefRaw = form.get("brief");
   const rawBrief = typeof briefRaw === "string" ? briefRaw : undefined;
   try {
-    // Rate limit, brief cap and mid-test refusal shared with
-    // /dashboard/api/store's generate action (guard.server.ts) — one shop
-    // gets 5 paid generation runs a minute across both entry points.
-    await assertCanGenerate(session.shopId, rawBrief);
+    // Brief cap, burst limit, mid-test refusal and the daily designer quota
+    // shared with /dashboard/api/store's generate action (guard.server.ts) —
+    // one shop gets one coherent budget across both paid entry points.
+    await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
   } catch (err) {
     if (err instanceof CalderynError) throw new Response(err.message, { status: err.status });
     throw err;

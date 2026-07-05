@@ -14,6 +14,7 @@ import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import { quotaTrusted } from "~/lib/ai-quota.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -78,10 +79,10 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       const rawBrief = typeof b.brief === "string" ? b.brief : undefined;
       return dashboardJson(async () => {
-        // Rate limit, brief cap and mid-test refusal shared with
-        // dashboard.builder.generate.tsx (guard.server.ts) — one shop gets 5
-        // paid generation runs a minute across both entry points.
-        await assertCanGenerate(session.shopId, rawBrief);
+        // Brief cap, burst limit, mid-test refusal AND the daily AI quota are
+        // shared with dashboard.builder.generate.tsx (guard.server.ts) — one
+        // shop gets one coherent budget across both paid entry points.
+        await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
         const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
         try {
           // Real generation — can take several seconds; awaited deliberately.
@@ -96,7 +97,7 @@ export async function action({ request }: ActionFunctionArgs) {
           throw new CalderynError({
             code: "generation_failed",
             status: 502,
-            message: "Store generation failed — please try again.",
+            message: "Store generation failed. Please try again.",
           });
         }
       });

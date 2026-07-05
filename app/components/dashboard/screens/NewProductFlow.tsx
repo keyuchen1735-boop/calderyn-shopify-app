@@ -532,7 +532,12 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
     } catch (err) {
       if (!aliveRef.current) return;
       const code = err instanceof DashboardApiError ? err.code : null;
-      if (code === "invalid_prompt" || code === "rate_limited") {
+      if (
+        code === "invalid_prompt" ||
+        code === "rate_limited" ||
+        code === "ai_cooldown" ||
+        code === "ai_daily_limit"
+      ) {
         // User-actionable — surface the server's guidance, don't fall back.
         setDrafting(false);
         app.toast(err instanceof DashboardApiError ? err.message : "Try a shorter prompt.", "warn");

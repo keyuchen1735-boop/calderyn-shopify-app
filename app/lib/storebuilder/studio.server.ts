@@ -4,6 +4,7 @@
 // store_settings and store_generation through the service-role client the
 // underlying libs already use.
 import { getSupabase } from "~/lib/supabase.server";
+import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
@@ -102,7 +103,8 @@ async function draftProductCount(shopId: string): Promise<number> {
 }
 
 /** shops.org_slug — the owned-tenant identity the public storefront resolves
- *  by Host. Null for domain-keyed Shopify tenants and demo (non-uuid) shops. */
+ *  by Host. Null for domain-keyed Shopify tenants and demo (non-uuid) shops.
+ *  Fail-soft: a URL nicety must never fail the whole studio load. */
 async function shopOrgSlug(shopId: string): Promise<string | null> {
   if (!UUID_RE.test(shopId)) return null;
   const { data, error } = await getSupabase()
@@ -110,7 +112,10 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
     .select("org_slug")
     .eq("id", shopId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    console.error("[studio] org_slug lookup failed", { shopId, error: error.message });
+    return null;
+  }
   return typeof data?.org_slug === "string" && data.org_slug ? data.org_slug : null;
 }
 
@@ -156,9 +161,13 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     orgSlug,
     // The public storefront resolves tenants by Host, so on the dashboard
     // origin the fixed app path renders the demo shell — the real tenant URL
-    // needs the org_slug subdomain. Domain-keyed Shopify tenants and dev keep
-    // the app path.
-    storefrontUrl: orgSlug ? `https://${orgSlug}.calderyncompany.com/storefront` : "/storefront",
+    // needs the org_slug subdomain. tenantDomain keeps the host provably
+    // identical to the one registered with Vercel at provisioning; in dev the
+    // relative path is the one that reaches the environment under test.
+    storefrontUrl:
+      orgSlug && process.env.NODE_ENV !== "development"
+        ? `https://${tenantDomain(orgSlug)}/storefront`
+        : "/storefront",
     experiment,
   };
 }
