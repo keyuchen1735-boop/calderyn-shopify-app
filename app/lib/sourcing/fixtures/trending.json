@@ -1,0 +1,44 @@
+[
+  {
+    "provider": "fixture",
+    "externalId": "fx-1",
+    "title": "Mini Portable Blender",
+    "category": "Kitchen",
+    "imageUrls": ["https://cdn.example.com/fx-1.jpg"],
+    "unitCostCents": 850,
+    "moq": 1,
+    "leadTimeDays": 9,
+    "supplier": {
+      "provider": "fixture",
+      "externalSupplierId": "sup-a",
+      "name": "Shenzhen HomeGoods",
+      "reliabilityScore": 0.92
+    },
+    "signals": [
+      { "kind": "order_volume_30d", "value": 8200 },
+      { "kind": "order_volume_7d", "value": 3100 },
+      { "kind": "trend_index", "value": 88 }
+    ]
+  },
+  {
+    "provider": "fixture",
+    "externalId": "fx-2",
+    "title": "LED Sunset Lamp",
+    "category": "Home",
+    "imageUrls": ["https://cdn.example.com/fx-2.jpg"],
+    "unitCostCents": 420,
+    "moq": 1,
+    "leadTimeDays": 14,
+    "supplier": {
+      "provider": "fixture",
+      "externalSupplierId": "sup-b",
+      "name": "Yiwu Lighting",
+      "reliabilityScore": 0.81
+    },
+    "signals": [
+      { "kind": "order_volume_30d", "value": 2400 },
+      { "kind": "order_volume_7d", "value": 300 },
+      { "kind": "trend_index", "value": 41 }
+    ]
+  }
+]
