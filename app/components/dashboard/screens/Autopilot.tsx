@@ -6,7 +6,7 @@ import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import type { RejectReason } from "~/lib/types";
-import type { ActionKind, DashboardCtx } from "../context";
+import type { DashboardCtx } from "../context";
 import type { WatchGroup } from "../engine-events";
 import type {
   LiveEngineFeatureVM,
@@ -14,32 +14,8 @@ import type {
   TraceEventVM,
 } from "../../../lib/calibration/live-engine-types";
 import type { AuditVM, QueueProposalVM } from "../view-models";
+import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
 import { flaggedGroups } from "../overview/features-model";
-
-// Kinds that are safe to run one-click from the trainer rows: no dialog inputs
-// (adjust_price shows a price, create_po_draft asks quantity/cost — those
-// review steps live on the alert's own detail, so the row routes there instead
-// of silently executing with defaults). Mirrors Mission Control's to-do card.
-const ONE_CLICK_KINDS: ActionKind[] = [
-  "pause_campaign",
-  "reduce_campaign_budget",
-  "increase_campaign_budget",
-  "exclude_geo",
-  "reallocate_inventory",
-  "discontinue_sku",
-  "reallocate_spend_sku",
-];
-
-function oneClickKind(k: string): k is ActionKind {
-  return (ONE_CLICK_KINDS as string[]).includes(k);
-}
-
-const CAMPAIGN_KINDS = new Set([
-  "pause_campaign",
-  "reduce_campaign_budget",
-  "increase_campaign_budget",
-  "exclude_geo",
-]);
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -80,14 +56,11 @@ function CalibrationTrainer({
   // resolvable campaign id. Everything else renders "Review" and opens the
   // alert's own detail — never a button that can't succeed, never a silent
   // default on a kind that deserves a review step (price, PO quantities).
-  const canOneClick = (p: QueueProposalVM): boolean => {
-    if (!oneClickKind(p.action_kind)) return false;
-    const alert = app.alerts.find((a) => a.id === p.alertId);
-    if (!alert) return false;
-    if (CAMPAIGN_KINDS.has(p.action_kind) && !alert.campaign_id) return false;
-    if (p.action_kind === "exclude_geo" && !alert.region) return false;
-    return true;
-  };
+  const canOneClick = (p: QueueProposalVM): boolean =>
+    canOneClickAlert(
+      app.alerts.find((a) => a.id === p.alertId),
+      p.action_kind,
+    );
 
   const approve = async (p: QueueProposalVM) => {
     if (teachingBusy) return;

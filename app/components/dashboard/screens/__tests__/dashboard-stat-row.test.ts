@@ -125,6 +125,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     relTime: () => "just now",
     refresh: () => {},
     refreshCalibration: () => {},
+    openAssistant: () => {},
     refreshLiveEngine: () => {},
     loading: false,
     ...overrides,

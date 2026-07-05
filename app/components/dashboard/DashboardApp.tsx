@@ -75,7 +75,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "Grow",
     items: [
-      { id: "dashboard", label: "Mission Control", icon: "gauge" },
+      { id: "dashboard", label: "Home", icon: "home" },
       { id: "autopilot", label: "Autopilot", icon: "bolt" },
       { id: "campaigns", label: "Campaigns", icon: "megaphone" },
       { id: "analytics", label: "Analytics", icon: "chart" },
@@ -283,6 +283,27 @@ export default function DashboardApp({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [moreOpen]);
+
+  // Cmd/Ctrl+K opens the assistant from anywhere (Home's prompt bar advertises
+  // it). Bare chord only — Shift/Alt variants stay with the browser (Ctrl+
+  // Shift+K is Firefox's console), and typing contexts keep their keystrokes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      if (e.key.toLowerCase() !== "k") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setAssistantSignal((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // The account menu dismisses on Escape or any pointer press outside its wrap
   // (there's no backdrop element — it floats over the sidebar foot).
@@ -969,6 +990,8 @@ export default function DashboardApp({
     [pushFeed, toast],
   );
 
+  const openAssistant = useCallback(() => setAssistantSignal((n) => n + 1), []);
+
   const app: DashboardCtx = {
     t,
     shopDomain,
@@ -997,6 +1020,7 @@ export default function DashboardApp({
     pushAdDraft,
     toast,
     relTime,
+    openAssistant,
     refresh,
     refreshLiveEngine,
     loading,

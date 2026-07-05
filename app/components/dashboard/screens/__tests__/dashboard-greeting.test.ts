@@ -46,6 +46,7 @@ const ctx: DashboardCtx = {
   relTime: () => "",
   refresh: () => {},
   refreshCalibration: () => {},
+  openAssistant: () => {},
   refreshLiveEngine: () => {},
   loading: true,
 };
