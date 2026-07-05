@@ -1208,7 +1208,7 @@ export default function DashboardApp({
           ))}
         </nav>
         <div className="cd-side-foot">
-          <div style={{ display: "flex", flexDirection: "column", gap: 1, margin: "0 -4px", padding: "0 4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {FOOT_NAV.map((item) => (
               <button
                 key={item.id}
