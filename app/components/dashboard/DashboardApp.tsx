@@ -61,6 +61,7 @@ import ScreenCustomers from "./screens/Customers";
 import ScreenShipping from "./screens/Shipping";
 import ScreenPayments from "./screens/Payments";
 import ScreenStore from "./screens/Store";
+import ScreenDiscover from "./screens/Discover";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
 
@@ -119,6 +120,7 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   "import-shopify": "settings",
   cutover: "settings",
   agentic: "analytics",
+  discover: "storefront",
 };
 
 // On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
@@ -163,6 +165,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   shipping: ScreenShipping,
   payments: ScreenPayments,
   storefront: ScreenStore,
+  discover: ScreenDiscover,
   "products-po": ScreenPurchaseOrders,
   "products-transfers": ScreenTransfers,
 };
