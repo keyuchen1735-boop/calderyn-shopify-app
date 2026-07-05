@@ -744,41 +744,41 @@ export default function Store({ app }: { app: DashboardCtx }) {
                   </Btn>
                 </div>
               )}
-            </div>
 
-            {confirmingPublish && publishPieces.length > 0 && (
-              <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
-                <div className="cd-buildlist">
-                  {publishPieces.map((piece) => (
-                    <div key={piece.key} className="cd-build-step">
-                      <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
-                      <div>
-                        <div className="cd-build-title">{piece.label}</div>
-                        <button
-                          type="button"
-                          className="cd-chip"
-                          style={{ marginTop: 6 }}
-                          onClick={() => {
-                            setConfirmingPublish(false);
-                            app.navigate(piece.screen);
-                          }}
-                        >
-                          {piece.action}
-                        </button>
+              {confirmingPublish && publishPieces.length > 0 && (
+                <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
+                  <div className="cd-buildlist">
+                    {publishPieces.map((piece) => (
+                      <div key={piece.key} className="cd-build-step">
+                        <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
+                        <div>
+                          <div className="cd-build-title">{piece.label}</div>
+                          <button
+                            type="button"
+                            className="cd-chip"
+                            style={{ marginTop: 6 }}
+                            onClick={() => {
+                              setConfirmingPublish(false);
+                              app.navigate(piece.screen);
+                            }}
+                          >
+                            {piece.action}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
+                    <Btn kind="primary" small onClick={() => void runPublish()} disabled={publishing || building}>
+                      Publish anyway
+                    </Btn>
+                    <Btn small onClick={() => setConfirmingPublish(false)}>
+                      Keep editing
+                    </Btn>
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
-                  <Btn kind="primary" small onClick={() => void runPublish()} disabled={publishing || building}>
-                    Publish anyway
-                  </Btn>
-                  <Btn small onClick={() => setConfirmingPublish(false)}>
-                    Keep editing
-                  </Btn>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 
