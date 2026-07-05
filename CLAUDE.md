@@ -1,21 +1,30 @@
-# Project: calderyn (Shopify Embedded App)
+# Project: calderyn (native commerce platform — dashboard webapp)
+
+## Scope — READ FIRST (updated 2026-07-05)
+Calderyn has pivoted to a **standalone commerce platform**. The Shopify embedded app era is over; this repo's name is historical.
+
+- **The product is the native Calderyn dashboard**: `app/routes/dashboard.*`, `app/components/dashboard/`, plus the owned storefront (`app/routes/storefront.*`), cron/engine routes, and shared server code in `app/lib/`. ALL new features, fixes, polish, and design work happen here. When a request doesn't name a surface, it means the dashboard.
+- **The Shopify embedded admin app is LEGACY-FROZEN**: `app/routes/app.*`, `app/components/calderyn/` (Polaris views), App Bridge, Shopify webhooks/auth glue. Do NOT build features, mirror changes, refactor, or polish there — not even "while I'm at it" — unless the user explicitly names the embedded app. It stays compiling (it shares the build), but it gets zero product investment.
+- **Exception — import path stays alive:** the Import-from-Shopify pipeline (Admin API ingest, `cron.import`, promote-from-mirror) is the migration funnel for new merchants and IS maintained. Shopify code that serves *importing a merchant's data* is active; Shopify code that serves *running the store on Shopify* is legacy.
+- The old extension⇄dashboard **parity rule is RETIRED**. There is one surface. Never spend effort checking or mirroring the embedded app.
 
 ## Stack
 - **Runtime:** Node.js 20.10+, ES modules (`"type": "module"`).
-- **Framework:** Remix (Vite) + `@shopify/shopify-app-remix` for OAuth, webhooks, session.
-- **UI:** React 18 + Shopify Polaris + App Bridge React (embedded admin).
-- **Data:** Prisma ORM against SQLite (`prisma/dev.sqlite`) in dev; session storage via `@shopify/shopify-app-session-storage-prisma`.
+- **Framework:** Remix (Vite). First-party auth (email+password / Google sign-in) via `app/lib/auth/` — NOT Shopify OAuth.
+- **UI (dashboard):** React 18, custom `cd-*` design system in `app/styles/dashboard.css`, GSAP for motion, Lucide icons via the `CDIcon` registry. No Polaris in the dashboard.
+- **Data:** Supabase Postgres (prod, project `ajgrmnvzxfxxlwrxcgnu`) with RLS; PostgREST clamps responses at 1000 rows.
 - **Tooling:** TypeScript (strict), ESLint (`@remix-run/eslint-config`), Prettier, GraphQL codegen.
+- Legacy embedded stack (`@shopify/shopify-app-remix`, Polaris, App Bridge, Prisma session storage) still compiles but is frozen — see Scope.
 
 ## Language & style
 - **TypeScript only** for app code. No `any` without a written justification; prefer `unknown` + narrowing. Treat `tsc --noEmit` as authoritative.
 - **Server vs client split:** files ending `.server.ts(x)` are server-only; never import them from a client module. Mirror with `.client.ts(x)` when needed.
 - **Routes:** filesystem routes under `app/routes/` using `@remix-run/fs-routes` conventions. Loaders/actions return typed `json()` responses; never leak Prisma models — shape DTOs.
-- **Shopify auth:** every admin route must call `authenticate.admin(request)` from `app/shopify.server.ts` before any data access. Webhooks go through `authenticate.webhook`.
-- **GraphQL:** use the Admin client from the authenticated session. Run `graphql-codegen` after editing `.graphql` files; do not hand-edit generated types.
-- **UI:** compose with Polaris primitives. No raw CSS frameworks. App Bridge for navigation, toasts, modals — not `window.*`.
-- **Icons:** the dashboard surface standardizes on **Lucide** (`lucide-react`), exposed only through the `CDIcon` registry in `app/components/dashboard/icons.tsx`. To add a dashboard icon, import the component from `lucide-react` and add one line to `CD_ICONS` — do not hand-draw SVGs or pull in other icon sets. The embedded admin (`app/routes/app.*`) uses `@shopify/polaris-icons` instead (Polaris convention / App Store review); do not use Lucide there.
-- **DB:** all schema changes go through `prisma migrate dev`; never edit `migrations/` by hand. Wrap multi-step writes in `prisma.$transaction`.
+- **Auth:** every dashboard route/API goes through `requireDashboardSession(request)` (and `requireSameOrigin` for writes) before any data access; the shop/tenant comes from the session, never the request body.
+- **UI:** compose with the existing `cd-*` design-system primitives in `app/components/dashboard/` (Card, Btn, Toggle, etc.). No raw CSS frameworks, no Polaris in dashboard code.
+- **Icons:** **Lucide** (`lucide-react`) only, exposed through the `CDIcon` registry in `app/components/dashboard/icons.tsx`. To add an icon, import it from `lucide-react` and add one line to `CD_ICONS` — do not hand-draw SVGs or pull in other icon sets.
+- **Legacy-only (do not apply to new work):** Shopify Admin GraphQL + `graphql-codegen`, `authenticate.admin`/`authenticate.webhook`, Polaris/App Bridge conventions — these govern the frozen `app/routes/app.*` surface and the import pipeline only.
+- **DB:** product data lives in Supabase Postgres — schema changes ship as SQL migrations (checked in, applied to prod via the supabase MCP/CLI), every table shop-scoped with RLS. Prisma/SQLite remains only for the legacy embedded session store; don't put product data there.
 - **Secrets:** read from `process.env` server-side only. Never reference env in client bundles. Update `.env.example` when adding a key.
 - **Secret storage:** put all secrets and client IDs (Shopify API key/secret, OAuth client IDs, tokens) in `.env.local` only — never `.env`, never source. Ensure `.env.local` is listed in `.gitignore` and never committed.
 
@@ -30,20 +39,17 @@
 
 ## Best practices (Karpathy contract applies, plus repo-specific)
 - Loaders are read-only; mutations go in actions. Return `redirect()` after successful actions to avoid double-submit.
-- Validate inbound form data at the action boundary — do not trust `FormData` shapes.
-- Surface every Shopify API error with `response.errors` checked; do not swallow GraphQL `userErrors`.
-- Idempotent webhook handlers — Shopify retries. Key off `X-Shopify-Webhook-Id` if dedup is needed.
+- Validate inbound form/JSON data at the action boundary — do not trust request body shapes.
+- Surface every upstream API error (Supabase, ad platforms, import-pipeline Shopify calls); never swallow error payloads.
+- Idempotent webhook/cron handlers — retries happen. Dedup on the provider's event id where one exists.
 - No new top-level dependencies without flagging the tradeoff (bundle size, license, maintenance).
 - Match existing file layout (`app/components`, `app/lib`, `app/routes`). New shared logic goes in `app/lib/`, not inline in routes.
 
-## Dashboard parity (MANDATORY for every feature change)
-Calderyn ships on two surfaces: this Shopify extension and the **Calderyn dashboard** (a separate, already-built monorepo on its own stack — raw `postgres`/`withShopContext`, `apps/web`, its own non-Polaris UI). They share the same product brain, so any feature change here MUST be reflected in the dashboard too.
+## Where the dashboard lives (single surface — parity rule RETIRED 2026-07-05)
+The old rule that every feature must be mirrored between the Shopify extension and the dashboard is **dead**. The dashboard is the only product surface; nothing gets mirrored to `app/routes/app.*`, and no time is spent checking the embedded app for parity.
 
-- **Where the dashboard lives:** the dashboard is reached at https://calderyncompany.com/dashboard via https://github.com/Mezoh/calderyn-waitlist (the apex marketing site, whose `vercel.json` proxies `/dashboard/*` → `app.calderyncompany.com`). `app.calderyncompany.com` is the Vercel project `shopify-app` — i.e. **this repo's `app/routes/dashboard.*` routes are the dashboard code**; mirror changes are implemented there. Touch `Mezoh/calderyn-waitlist` only when the proxy/CSP or marketing surface itself changes. (Do NOT use `keyuchen1735-boop/Calderyn-Shopify` or `calderyn-portal` for parity work — older parallel codebases, not deployed.)
-
-- **Scope:** new routes, new merchant-facing behavior, schema changes that surface in UI, detector/label changes, new actions. Pure infra/internal edits (auth glue, webhook plumbing not visible to users) are exempt.
-- **Mirror, don't redesign or port.** The dashboard's UI already exists — slot the feature into its existing patterns/components. Do NOT copy Polaris JSX; translate the feature's behavior + data contract into the dashboard's own primitives. The repos diverge at the DB layer, so the dashboard side is a re-implementation against its own stack — **match the contract, not the code.**
-- Treat the dashboard mirror as part of the same task, not a follow-up. If only one side can ship in a given change, say so explicitly and leave a TODO for the dashboard side — never silently ship single-sided.
+- **Deployment path:** merchants reach the dashboard at https://calderyncompany.com/dashboard via https://github.com/Mezoh/calderyn-waitlist (the apex marketing site, whose `vercel.json` proxies `/dashboard/*` → `app.calderyncompany.com`). `app.calderyncompany.com` is the Vercel project `shopify-app` — i.e. **this repo's `app/routes/dashboard.*` routes are the dashboard code.** Touch `Mezoh/calderyn-waitlist` only when the proxy/CSP or marketing surface itself changes. (Do NOT use `keyuchen1735-boop/Calderyn-Shopify` or `calderyn-portal` — older parallel codebases, not deployed.)
+- New dashboard screens must plug into the session screen-cache: seed + write-through + add a `WARM_TARGETS` entry (see `app/lib/dashboard/screen-cache.ts` / `prefetch.ts`) so every tab paints instantly.
 
 ## Feature isolation (MANDATORY for new feature work)
 - **Always implement new features in an isolated git worktree.** Before starting any new feature, create a dedicated worktree (e.g. `git worktree add ../calderyn-<feature> -b feat/<feature>`) and do all the work there — never on top of the current workspace or directly on `main`. This prevents clashes with in-flight work, keeps unrelated changes out of the diff, and lets parallel features proceed without stepping on each other.
@@ -67,7 +73,7 @@ A "major commit" = anything beyond a typo/comment/doc nit: route changes, schema
 If any step fails: **stop, surface the failure, fix the root cause.** Do not `--no-verify`, do not skip with `// eslint-disable`, do not narrow types to silence `tsc`. Per rule 12, never report success when a step was bypassed.
 
 ## Commit hygiene
-- One logical change per commit. Reference the route/module touched in the subject (e.g. `routes/app._index: fix loader error path`).
+- One logical change per commit. Reference the route/module touched in the subject (e.g. `dashboard/Autopilot: fix loader error path`).
 - Never commit `.env`, `prisma/dev.sqlite`, or anything under `.shopify/`.
 - **Auto-commit completed features.** Once a feature is done and verified, commit it without waiting to be asked — but only after the Pre-commit gate above is fully green (every step run, results shown). The gate is a hard precondition; never auto-commit past a failing or skipped check (rule 12). If on the default branch, branch first. Do not push or open a PR automatically — that still waits for an explicit request.
 
