@@ -3,11 +3,16 @@
 // route (server) and the dashboard SPA client. No server imports — this module
 // must stay safe to pull into the browser bundle.
 
+/** Mirrors the store_settings.vibe check constraint — the design pack the
+ *  storefront CSS keys off ([data-vibe]). */
+export type StudioVibe = "minimal" | "bold" | "warm";
+
 /** Brand chrome shown in the studio preview, shaped from store_settings. */
 export interface StudioSettings {
   storeName: string;
   /** Palette primary (falls back to the storefront default palette). */
   accent: string;
+  vibe: StudioVibe;
   logoUrl: string | null;
   tagline: string | null;
 }
@@ -40,6 +45,34 @@ export interface StudioGeneration {
   createdAt: string;
 }
 
+/** Mirrors the store_experiment.state check constraint. */
+export type StudioExperimentState = "running" | "decided_ship" | "decided_keep" | "stopped";
+
+export interface StudioExperimentReport {
+  /** Distinct sessions that saw each arm (page_view exposure rows). */
+  aSessions: number;
+  bSessions: number;
+  /** Distinct converted sessions per arm (orders attribution stamp, unioned
+   *  with checkout_complete exposure sessions as fallback). */
+  aConversions: number;
+  bConversions: number;
+  /** (rB - rA) / rA; null when arm A has no conversions to compare against. */
+  lift: number | null;
+  /** Two-proportion z-test confidence, 0-99; null under 30 sessions per arm. */
+  confidence: number | null;
+}
+
+export interface StudioExperiment {
+  id: string;
+  name: string;
+  why: string;
+  pageKey: "home";
+  state: StudioExperimentState;
+  startedAt: string;
+  decidedAt: string | null;
+  report: StudioExperimentReport | null;
+}
+
 export interface StudioState {
   settings: StudioSettings;
   /** From the draft home doc's hero block (published as fallback); null when
@@ -57,8 +90,14 @@ export interface StudioState {
   hasPublished: boolean;
   /** Latest store_generation row, or null when the shop has never generated. */
   generation: StudioGeneration | null;
-  /** Where the public storefront is served (no custom-domain support yet). */
-  storefrontPath: string;
+  /** shops.org_slug — null for domain-keyed Shopify tenants and the demo shop. */
+  orgSlug: string | null;
+  /** Absolute tenant URL when org_slug exists, else the fixed app path (which
+   *  on the dashboard origin resolves to the demo shell). */
+  storefrontUrl: string;
+  /** The running or most recent experiment, with a fresh report; null when the
+   *  shop has never run one. */
+  experiment: StudioExperiment | null;
 }
 
 /** POST {action:"generate"} response. A hard failure (nothing produced at all)

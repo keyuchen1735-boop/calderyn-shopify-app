@@ -29,6 +29,25 @@ function boundCopy(props: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/** Inject any missing required functional block from registry defaults, mutating
+ *  doc.blocks in place, stacked below the existing blocks in display order (price →
+ *  variantPicker → addToCart, matching fallback.ts) — the required list is ordered by
+ *  importance, so it's reversed for top-to-bottom stacking. Shared by the generator
+ *  (assembleDocument, below) and the studio's publish-time guarantee
+ *  (storebuilder/studio.server.ts) — a generated or published page can never lack its
+ *  buy-path blocks. */
+export function injectMissingFunctionalBlocks(doc: BlockDocument, pageKey: PageKey): void {
+  const present = new Set(doc.blocks.map((b) => b.type));
+  let y = doc.blocks.reduce((m, b) => Math.max(m, b.layout.y + b.layout.h), 0);
+  for (const type of [...requiredFunctionalBlocks(pageKey)].reverse()) {
+    if (present.has(type)) continue;
+    const meta = getBlockMeta(type);
+    if (!meta) continue;
+    doc.blocks.push({ id: `${pageKey}-${type}-injected`, type, props: { ...meta.defaultProps }, layout: { ...meta.defaultLayout, y } });
+    y += meta.defaultLayout.h;
+  }
+}
+
 export function assembleDocument(
   pageKey: PageKey, kind: DocKind, plan: BlockPlan, valid: ValidIds,
 ): { doc: BlockDocument; dropped: DroppedRef[] } {
@@ -48,16 +67,6 @@ export function assembleDocument(
   const result = validateDocument({ kind, pageKey, blocks }, valid);
 
   // 3) PDP buy-path guarantee: inject any missing required functional block from its defaults.
-  // Inject in display order (price → variantPicker → addToCart) to match fallback.ts — the
-  // required list is ordered by importance, so reverse it for top-to-bottom stacking.
-  const present = new Set(result.doc.blocks.map((b) => b.type));
-  let y = result.doc.blocks.reduce((m, b) => Math.max(m, b.layout.y + b.layout.h), 0);
-  for (const type of [...requiredFunctionalBlocks(pageKey)].reverse()) {
-    if (present.has(type)) continue;
-    const meta = getBlockMeta(type);
-    if (!meta) continue;
-    result.doc.blocks.push({ id: `${pageKey}-${type}-injected`, type, props: { ...meta.defaultProps }, layout: { ...meta.defaultLayout, y } });
-    y += meta.defaultLayout.h;
-  }
+  injectMissingFunctionalBlocks(result.doc, pageKey);
   return { doc: result.doc, dropped: result.dropped };
 }

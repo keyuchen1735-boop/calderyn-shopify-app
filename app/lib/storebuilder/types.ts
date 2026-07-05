@@ -12,7 +12,7 @@ export type BlockType =
   | "hero" | "richText" | "image" | "button" // static
   | "productGrid" | "collectionList" // dynamic (singleton)
   | "productGallery" | "collectionGrid" // dynamic (template, read ctx.record)
-  | "price" | "variantPicker" // dynamic (template, PDP display)
+  | "productTitle" | "price" | "variantPicker" // dynamic (template, PDP display)
   | "addToCart"; // functional (template, PDP buy action)
 
 export interface GridCell { x: number; y: number; w: number; h: number }

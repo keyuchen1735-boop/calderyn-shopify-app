@@ -36,6 +36,15 @@ export interface VisitorSession {
 
 const SID_VALUE_RE = /^([0-9a-f-]{36})\.(r|n)$/;
 
+/** Read the visitor id off the request if one is already set, without minting
+ *  a new one or issuing a Set-Cookie — for read-only lookups (e.g. layout-level
+ *  experiment bucketing) that must never have a side effect on a request that
+ *  isn't already tracked. */
+export async function peekVisitorId(request: Request): Promise<string | null> {
+  const vidRaw: unknown = await vidCookie().parse(request.headers.get("Cookie"));
+  return typeof vidRaw === "string" && vidRaw.length > 0 ? vidRaw : null;
+}
+
 /** Read-or-create the visitor + session identity for this request. */
 export async function ensureVisitorSession(request: Request): Promise<VisitorSession> {
   const cookieHeader = request.headers.get("Cookie");

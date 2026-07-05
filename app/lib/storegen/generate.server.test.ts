@@ -3,14 +3,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
 import { generateStore } from "./generate.server";
 
-const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
+const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
-  saveSettingsMock: vi.fn(), recGenMock: vi.fn(), recPropMock: vi.fn(),
+  saveSettingsMock: vi.fn(), hasSettingsMock: vi.fn(), recGenMock: vi.fn(), recPropMock: vi.fn(),
 }));
 vi.mock("~/lib/assistant/anthropic.server", () => ({ getAnthropic: () => ({ messages: { create: createMock } }), digestModel: () => "claude-haiku-4-5" }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ saveDraft: saveDraftMock }));
-vi.mock("~/lib/storefront/settings.server", () => ({ saveStoreSettings: saveSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
+vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: async (shopId: string) => ({ shopId, storeName: "", logoUrl: null, palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" }, voiceTagline: null, vibe: "minimal" }), saveStoreSettings: saveSettingsMock, hasStoreSettings: hasSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
 vi.mock("./audit.server", () => ({ recordGeneration: recGenMock, recordProposal: recPropMock }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
@@ -23,8 +23,9 @@ const catalog = (): StorefrontCatalog => ({
 const reply = (text: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 } });
 
 beforeEach(() => {
-  for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, recGenMock, recPropMock]) m.mockReset();
+  for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock]) m.mockReset();
   getCatalogMock.mockReturnValue(catalog());
+  hasSettingsMock.mockResolvedValue(false);
 });
 
 describe("generateStore", () => {
@@ -42,6 +43,28 @@ describe("generateStore", () => {
     expect(result.status).toBe("draft");
     expect(recGenMock).toHaveBeenCalled();
     expect(recPropMock).toHaveBeenCalled();
+  });
+
+  it("does not clobber an existing merchant vibe on a re-generation", async () => {
+    hasSettingsMock.mockResolvedValue(true);
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go","vibe":"bold"}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).not.toHaveProperty("vibe");
+  });
+
+  it("passes the brand vibe through on the first-ever branding", async () => {
+    hasSettingsMock.mockResolvedValue(false);
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go","vibe":"bold"}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).toMatchObject({ vibe: "bold" });
   });
 
   it("falls back per-doc when a doc call returns junk (home survives a bad pdp)", async () => {

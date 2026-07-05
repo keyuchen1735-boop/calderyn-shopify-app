@@ -3,87 +3,66 @@ import {
   useEffect,
   useRef,
   useState,
-  type ChangeEvent as ReactChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Btn, Placeholder } from "../ui";
-import { CDIcon } from "../icons";
-import { timeAgo } from "../format";
 import {
   DashboardApiError,
   fetchImportStatus,
   IMPORT_IN_PROGRESS,
+  saveProduct,
   type ImportRunVM,
 } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   addProductFromImage,
+  decideStoreExperiment,
   fetchStudio,
-  saveStudioHero,
-  setStudioAccent,
   generateStudioStore,
   publishStudioStore,
-  type StudioState,
+  saveStudioHero,
+  setStudioAccent,
+  setStudioVibe,
+  startStoreExperiment,
   type StudioHero,
+  type StudioState,
+  type StudioVibe,
 } from "~/lib/dashboard/store-client";
-import { buildStep, missingPieces, type BuildPhase, type MissingPiece } from "./store-logic";
+import {
+  decideWelcomeBranch,
+  isDeterministicChatIntent,
+  missingPieces,
+  parseChatIntent,
+  parseProductLine,
+  shouldShowWelcome,
+  type BuildPhase,
+  type ChatIntent,
+  type MissingPiece,
+} from "./store-logic";
 import type { DashboardCtx } from "../context";
-
-type Tool = "select" | "edit" | "comment" | "markup" | "tweak";
-
-const TOOLS: { key: Tool; icon: string; title: string }[] = [
-  { key: "select", icon: "cursor", title: "Select" },
-  { key: "edit", icon: "pencil", title: "Edit copy" },
-  { key: "comment", icon: "comment", title: "Comment (session note)" },
-  { key: "markup", icon: "pen", title: "Markup (session sketch)" },
-  { key: "tweak", icon: "sliders", title: "Tweak accent" },
-];
-
-const SWATCHES = ["#2D7FF9", "#1F8A5B", "#C2410C", "#7C5CFC"];
-
-const QUICK_PROMPTS = [
-  "A minimal home page that leads with our bestsellers",
-  "A warm, earthy brand voice with a bold hero",
-  "A seasonal sale layout with a strong call to action",
-];
+import ChatRail from "../store/ChatRail";
+import TopBar, { type Device } from "../store/TopBar";
+import WelcomeOverlay from "../store/WelcomeOverlay";
+import { confettiFrom } from "../store/confetti";
+import type { ChatAction, ChatMsg } from "../store/chat-types";
+import type { PageKey } from "~/lib/storebuilder/types";
 
 // The draft home document's default hero copy (app/lib/storebuilder/default-doc.ts) —
-// the seed for the copy editor before a real doc loads.
+// the seed used before a real doc loads.
 const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our latest" };
 
-const GEN_LABEL: Record<string, string> = {
-  draft: "draft ready",
-  failed: "AI unavailable — starter layout",
-  no_products: "draft ready — no products",
-};
-
 // The studio canvas is a same-origin iframe of the server-rendered draft store
-// (see app/routes/dashboard.store.preview.tsx). It renders the ACTUAL generated
-// BlockDocument with the real storefront styles, so a prompt visibly rebuilds
-// the page. A version counter in the src forces a reload after every mutation.
+// (see app/routes/dashboard.store.preview.tsx) — the ACTUAL generated
+// BlockDocument with the real storefront styles. A version counter in the src
+// forces a reload after every mutation.
 const PREVIEW_PATH = "/dashboard/store/preview";
 
-interface Pin {
-  id: number;
-  x: number;
-  y: number;
-  text: string;
-}
-
-// Once-per-SPA-session guard for the first-visit auto-build. Module-scoped so
-// remounts (navigate away and back) can't re-fire a generation while one is
-// already running or after one failed — the server's generation audit row only
-// lands when a run completes.
-let autoBuildAttempted = false;
+const PAGE_LABEL: Record<string, string> = { home: "home", pdp: "product", collection: "collection" };
+const VIBE_LABEL: Record<StudioVibe, string> = { minimal: "clean, minimal", bold: "bold, dramatic", warm: "warm, earthy" };
 
 const clampPct = (v: number): number => Math.min(100, Math.max(0, v));
-
-function pctPoint(e: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElement>): {
-  x: number;
-  y: number;
-} {
+function pctPoint(e: ReactPointerEvent<HTMLElement>): { x: number; y: number } {
   const rect = e.currentTarget.getBoundingClientRect();
   return {
     x: clampPct(((e.clientX - rect.left) / rect.width) * 100),
@@ -93,39 +72,13 @@ function pctPoint(e: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElemen
 
 export default function Store({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
+
   // Seeded from the session cache so a return visit paints instantly; the
   // mount refresh below revalidates and writes back through.
   const [data, setData] = useState<StudioState | null>(() =>
     cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio),
   );
   const [loading, setLoading] = useState(true);
-  const [tool, setTool] = useState<Tool>("select");
-
-  // Bumping this re-navigates the preview iframe, so it re-pulls the draft after
-  // a generate/edit/accent/publish and the merchant watches the store update.
-  const [previewVersion, setPreviewVersion] = useState(0);
-  const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
-  const previewSrc = `${PREVIEW_PATH}?v=${previewVersion}`;
-
-  // Session-local annotations — pins and markup strokes live in component
-  // state only and are never persisted.
-  const [pins, setPins] = useState<Pin[]>([]);
-  const [pending, setPending] = useState<{ x: number; y: number } | null>(null);
-  const [pendingText, setPendingText] = useState("");
-  const pinSeq = useRef(0);
-  const [strokes, setStrokes] = useState<string[]>([]);
-  const drawing = useRef<string[] | null>(null);
-
-  const [prompt, setPrompt] = useState("");
-  const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [accentBusy, setAccentBusy] = useState(false);
-  // Pre-publish warning panel visibility. The pieces themselves are derived
-  // from `data` at render so they can never go stale. Warn-only: the panel
-  // offers to fix each piece inline, but "Publish anyway" always proceeds.
-  const [confirmingPublish, setConfirmingPublish] = useState(false);
-  const [attaching, setAttaching] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -135,18 +88,116 @@ export default function Store({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
+  // --- chat thread ----------------------------------------------------------
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const msgSeq = useRef(0);
+  const newId = () => {
+    msgSeq.current += 1;
+    return msgSeq.current;
+  };
+  const pushMsg = useCallback((msg: ChatMsg) => setMessages((m) => [...m, msg]), []);
+  const [prompt, setPrompt] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  // Chat action buttons (Undo, "Make it bolder"…) live inside `messages` and
+  // can be clicked long after the render that created them, so the overlap
+  // guard below must read a ref (always current) rather than the `chatBusy`
+  // state closed over at creation time — the state itself only drives the
+  // composer's disabled attribute, which is always rendered fresh.
+  const chatBusyRef = useRef(false);
+  const setChatBusyBoth = (v: boolean) => {
+    chatBusyRef.current = v;
+    setChatBusy(v);
+  };
+  const [attaching, setAttaching] = useState(false);
+  const buildingRef = useRef(false);
+  const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
+
+  // --- preview / canvas -------------------------------------------------------
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
+  const [page, setPage] = useState<PageKey>("home");
+  const [device, setDevice] = useState<Device>("desktop");
+  const badgeRef = useRef<HTMLSpanElement>(null);
+
+  // --- markup (session-only strokes + note -> chat message) -----------------
+  const [markupOn, setMarkupOn] = useState(false);
+  const [strokes, setStrokes] = useState<string[]>([]);
+  const drawing = useRef<string[] | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+
+  // --- publish ----------------------------------------------------------------
+  const [publishing, setPublishing] = useState(false);
+  // Reached from the "Looks good, publish it" chip stored inside a chat
+  // message (long-lived, unlike the TopBar's Publish button) — same
+  // stale-closure concern as chatBusyRef above, so the guard reads a ref.
+  const publishingRef = useRef(false);
+  const setPublishingBoth = (v: boolean) => {
+    publishingRef.current = v;
+    setPublishing(v);
+  };
+  const [confirmingPublish, setConfirmingPublish] = useState(false);
+
+  // --- experiments --------------------------------------------------------------
+  const [decidingExperiment, setDecidingExperiment] = useState(false);
+
+  // --- deterministic mutation ordering ------------------------------------------
+  // Vibe/accent/hero edits and publish all race against the same store_settings
+  // row and draft doc; queuing every deterministic edit onto one chain (mirrors
+  // the old per-field heroSaveChain, generalized to all three) guarantees they
+  // land in request order and that publish always sees the last one committed.
+  const mutationChain = useRef<Promise<void>>(Promise.resolve());
+  const queueMutation = <T,>(run: () => Promise<T>): Promise<T> => {
+    const settled = mutationChain.current.then(run);
+    mutationChain.current = settled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return settled;
+  };
+
+  // --- welcome overlay ---------------------------------------------------------
+  // Only evaluated after a FRESH fetch resolves — never against the cache seed,
+  // which may be stale or belong to an already-built session.
+  const freshLoadedRef = useRef(false);
+  const [welcomeVisible, setWelcomeVisible] = useState(false);
+  const [importRun, setImportRun] = useState<ImportRunVM | null>(null);
+  const porting = importRun != null && IMPORT_IN_PROGRESS.has(importRun.state);
+
   const refresh = useCallback(async () => {
     const s = await fetchStudio();
     cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, s);
-    if (aliveRef.current) setData(s);
+    if (!aliveRef.current) return;
+    setData(s);
+    if (!freshLoadedRef.current) {
+      freshLoadedRef.current = true;
+      if (shouldShowWelcome(s)) setWelcomeVisible(true);
+    }
   }, []);
 
+  useEffect(() => {
+    setLoading(true);
+    refresh()
+      .catch((err: unknown) => {
+        if (!aliveRef.current) return;
+        const msg = err instanceof DashboardApiError ? err.message : "Could not load your store.";
+        toast(msg, "warn", "critical");
+      })
+      .finally(() => {
+        if (aliveRef.current) setLoading(false);
+      });
+  }, [refresh, toast]);
+
+  // A build/publish/import landing for real dismisses the overlay; it never
+  // re-opens once dismissed just because data changed again.
+  useEffect(() => {
+    if (welcomeVisible && data && !shouldShowWelcome(data)) setWelcomeVisible(false);
+  }, [data, welcomeVisible]);
+
   // Shopify port watcher: the OAuth callback auto-starts an import and lands
-  // the merchant here, so the studio shows the pull streaming in, reloads
-  // itself once when the run finishes, and says so when it fails. Polls only
-  // while a run is in progress; a transient poll failure retries rather than
-  // silently killing the watch mid-import.
-  const [porting, setPorting] = useState(false);
+  // the merchant here, so the welcome overlay shows the pull streaming in with
+  // real counts, then reloads once the run finishes. Polls only while a run is
+  // in progress; a transient poll failure retries rather than killing the watch.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -160,24 +211,28 @@ export default function Store({ app }: { app: DashboardCtx }) {
       } catch {
         if (!alive) return;
         misses += 1;
-        // ponytail: 5 consecutive misses ends the watch; a page reload restarts it.
-        if (misses <= 5) timer = setTimeout(() => void tick(), 3000);
-        else setPorting(false);
+        if (misses <= 5) {
+          timer = setTimeout(() => void tick(), 3000);
+          return;
+        }
+        // 6th consecutive failure: stop polling and clear the run so the
+        // derived porting state clears instead of sticking forever — a
+        // reload restarts the watch (matches the old behavior's recovery path).
+        setImportRun(null);
         return;
       }
       if (!alive) return;
+      setImportRun(run);
       if (run && IMPORT_IN_PROGRESS.has(run.state)) {
         sawRun = true;
-        setPorting(true);
         timer = setTimeout(() => void tick(), 3000);
         return;
       }
-      setPorting(false);
       if (sawRun && run?.state === "done") {
         toast("Your Shopify data is in", "download");
         void refresh().then(reloadPreview).catch(() => {});
       } else if (sawRun && run?.state === "error") {
-        toast("Import didn't finish — retry from Settings → Import.", "warn", "critical");
+        toast("Import didn't finish. Retry from Settings → Import.", "warn", "critical");
       }
     };
     void tick();
@@ -187,110 +242,206 @@ export default function Store({ app }: { app: DashboardCtx }) {
     };
   }, [refresh, reloadPreview, toast]);
 
-  useEffect(() => {
-    setLoading(true);
-    refresh()
-      .catch((err: unknown) => {
-        if (!aliveRef.current) return;
-        const msg =
-          err instanceof DashboardApiError ? err.message : "Could not load your store.";
-        toast(msg, "warn", "critical");
-      })
-      .finally(() => {
-        if (aliveRef.current) setLoading(false);
-      });
-  }, [refresh, toast]);
-
-  const building = buildPhase?.kind === "running";
-  const hero = data?.hero ?? DEFAULT_HERO;
-  const accent = data?.settings.accent ?? "#0f766e";
-  const storefrontPath = data?.storefrontPath ?? "/storefront";
-
-  const openStorefront = () => {
-    window.open(storefrontPath, "_blank", "noopener");
-  };
-
-  // --- edit tool: hero copy popover ---------------------------------------
-  // save-hero persists BOTH fields, so payloads build from the LATEST committed
-  // copy (heroRef) and saves run one at a time (heroSaveChain); publish awaits
-  // the chain so it never snapshots a draft mid-save. The canvas is now an
-  // iframe, so editing happens in a fields popover rather than in place.
-  const heroRef = useRef<StudioHero>(DEFAULT_HERO);
-  useEffect(() => {
-    heroRef.current = hero;
-  }, [hero]);
-  const heroSaveChain = useRef<Promise<void>>(Promise.resolve());
-  const [heroDraft, setHeroDraft] = useState<StudioHero>(DEFAULT_HERO);
-  // Re-seed each field from the persisted copy INDEPENDENTLY: both inputs share
-  // one heroDraft, so a single effect keyed on the whole object would reset the
-  // field the merchant is mid-editing whenever the other field commits. Split
-  // per field so committing (or an external refresh of) one never touches the
-  // other's in-progress text.
-  useEffect(() => {
-    setHeroDraft((h) => ({ ...h, headline: hero.headline }));
-  }, [hero.headline]);
-  useEffect(() => {
-    setHeroDraft((h) => ({ ...h, subhead: hero.subhead }));
-  }, [hero.subhead]);
-
-  const commitHero = (field: keyof StudioHero, rawNext: string): Promise<void> => {
-    const next = rawNext.replace(/\s+/g, " ").trim();
-    const run = async () => {
-      const prev = heroRef.current[field];
-      if (next === prev) return;
-      if (field === "headline" && !next) {
-        setHeroDraft((h) => ({ ...h, headline: prev }));
-        toast("Headline can't be empty.", "warn", "critical");
-        return;
-      }
-      try {
-        const saved = await saveStudioHero({ ...heroRef.current, [field]: next });
-        heroRef.current = saved;
-        if (!aliveRef.current) return;
-        // save-hero writes the draft doc, so hasDraft is now genuinely true.
-        setData((d) => (d ? { ...d, hero: saved, hasDraft: true } : d));
-        // Sync only the field that was committed — never the whole object, or a
-        // save resolving mid-edit would wipe the other field's in-progress text.
-        setHeroDraft((h) => ({ ...h, [field]: saved[field] }));
-        reloadPreview();
-        toast("Copy updated");
-      } catch (err) {
-        if (!aliveRef.current) return;
-        setHeroDraft(heroRef.current);
-        const msg = err instanceof DashboardApiError ? err.message : "Could not save copy.";
-        toast(msg, "warn", "critical");
-      }
-    };
-    heroSaveChain.current = heroSaveChain.current.then(run);
-    return heroSaveChain.current;
-  };
-
-  // --- comment tool --------------------------------------------------------
-  const onCommentClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
-    setPending(pctPoint(e));
-    setPendingText("");
-  };
-
-  const pinInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && pending && pendingText.trim()) {
-      pinSeq.current += 1;
-      setPins((p) => [...p, { id: pinSeq.current, x: pending.x, y: pending.y, text: pendingText.trim() }]);
-      setPending(null);
-      setPendingText("");
-    } else if (e.key === "Escape") {
-      setPending(null);
-      setPendingText("");
+  // --- generate (chat and welcome both funnel through here) -------------------
+  // The working-card message snapshots its OWN phase (updated only by this
+  // call, via its own workingId) rather than reading the shared `buildPhase`
+  // state — otherwise a later, unrelated build would flip an older, already-
+  // finished card in the thread back to "running" (buildPhase is shared app-
+  // wide for the TopBar badge / canvas veil / welcome overlay).
+  const runBuild = async (brief: string, opts?: { firstBuild?: boolean }) => {
+    if (buildingRef.current) return;
+    buildingRef.current = true;
+    const runningPhase: BuildPhase = { kind: "running" };
+    setBuildPhase(runningPhase);
+    const workingId = newId();
+    pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
+    try {
+      const receipt = await generateStudioStore(brief.trim());
+      // Re-pull the whole studio state — generation rewrites brand settings,
+      // drafts and the generation audit row — then reload the preview.
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+      const donePhase: BuildPhase = { kind: "done", status: receipt.status };
+      setBuildPhase(donePhase);
+      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
+      const reply =
+        receipt.status === "failed"
+          ? // Honest failure (rule 12): the AI designer was unreachable, so this
+            // is a deterministic starter layout, not the prompted design.
+            "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
+          : opts?.firstBuild
+            ? "Here's your first draft: home, product and collection pages, built from your catalog. Tell me what to change, or publish when it feels right."
+            : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
+      const actions: ChatAction[] | undefined =
+        receipt.status !== "failed" && opts?.firstBuild
+          ? [
+              { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
+              { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
+              { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
+            ]
+          : undefined;
+      pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
+      const failedPhase: BuildPhase = { kind: "failed", message: msg };
+      setBuildPhase(failedPhase);
+      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
+      pushMsg({ id: newId(), kind: "ai-text", text: msg });
+      toast(msg, "warn", "critical");
+    } finally {
+      buildingRef.current = false;
     }
   };
 
-  // --- markup tool ----------------------------------------------------------
+  // --- deterministic chat edits (vibe / accent / headline) --------------------
+  const snapshotNow = (): { vibe: StudioVibe; accent: string; hero: StudioHero } => ({
+    vibe: data?.settings.vibe ?? "minimal",
+    accent: data?.settings.accent ?? "#0f766e",
+    hero: data?.hero ?? DEFAULT_HERO,
+  });
+
+  const runUndo = async (snap: { vibe: StudioVibe; accent: string; hero: StudioHero }) => {
+    if (chatBusyRef.current) return;
+    setChatBusyBoth(true);
+    try {
+      // Sequential, not parallel: vibe and accent both read-modify-write the
+      // same store_settings row, so running them concurrently risks a lost
+      // update.
+      await setStudioVibe(snap.vibe);
+      await setStudioAccent(snap.accent);
+      await saveStudioHero(snap.hero);
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+      pushMsg({ id: newId(), kind: "ai-text", text: "Undone." });
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't undo that.";
+      toast(msg, "warn", "critical");
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
+  const withUndo = (snap: { vibe: StudioVibe; accent: string; hero: StudioHero }): ChatAction[] => [
+    { label: "Undo", onClick: () => void runUndo(snap) },
+  ];
+
+  const runDeterministic = async (
+    intent: Extract<ChatIntent, { kind: "vibe" | "accent" | "hero" }>,
+    opts?: { pageLabel?: string },
+  ) => {
+    if (chatBusyRef.current) return;
+    const snap = snapshotNow();
+    setChatBusyBoth(true);
+    const thinkId = newId();
+    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    try {
+      let replyText: string;
+      if (intent.kind === "vibe") {
+        await queueMutation(() => setStudioVibe(intent.vibe));
+        replyText = `Switched to a ${VIBE_LABEL[intent.vibe]} look. It's in the preview now.`;
+      } else if (intent.kind === "accent") {
+        await queueMutation(() => setStudioAccent(intent.color));
+        replyText = "Updated the accent color. It's in the preview now.";
+      } else {
+        const saved = await queueMutation(() => saveStudioHero({ ...(data?.hero ?? DEFAULT_HERO), headline: intent.headline }));
+        replyText = `Updated the headline to "${saved.headline}".`;
+      }
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+      const prefix = opts?.pageLabel ? `You marked up the ${opts.pageLabel} page: ` : "";
+      setMessages((m) =>
+        m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: prefix + replyText, actions: withUndo(snap) } : x)),
+      );
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change.";
+      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
+  const runExperiment = async (expKind: "headline" | "vibe") => {
+    if (chatBusyRef.current) return;
+    setChatBusyBoth(true);
+    const thinkId = newId();
+    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    try {
+      const exp = await startStoreExperiment({ kind: expKind });
+      if (!aliveRef.current) return;
+      setData((d) => (d ? { ...d, experiment: exp } : d));
+      setMessages((m) =>
+        m.map((x) =>
+          x.id === thinkId
+            ? {
+                id: thinkId,
+                kind: "ai-text",
+                text: `Started a test on your ${exp.name}. ${exp.why} I'll let you know how it's doing; check the pill up top.`,
+              }
+            : x,
+        ),
+      );
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't start a test right now.";
+      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
+  const runChatIntent = (intent: ChatIntent) => {
+    if (isDeterministicChatIntent(intent)) {
+      void runDeterministic(intent);
+    } else if (intent.kind === "experiment") {
+      void runExperiment(intent.expKind);
+    } else {
+      void runBuild(intent.brief);
+    }
+  };
+
+  const onComposerSend = () => {
+    const text = prompt.trim();
+    if (!text || chatBusyRef.current || buildingRef.current) return;
+    setPrompt("");
+    pushMsg({ id: newId(), kind: "user-text", text });
+    runChatIntent(parseChatIntent(text));
+  };
+
+  // --- markup: draw on the preview, note it, send to chat ---------------------
+  const exitMarkup = () => {
+    setMarkupOn(false);
+    setStrokes([]);
+    drawing.current = null;
+    setNoteOpen(false);
+    setNoteText("");
+  };
+
+  const onToggleMarkup = () => {
+    if (markupOn) exitMarkup();
+    else setMarkupOn(true);
+  };
+
+  const onPageChange = (p: PageKey) => {
+    if (markupOn) exitMarkup(); // stroke coords are relative to the frame; a page swap invalidates them
+    setPage(p);
+  };
+  const onDeviceChange = (d: Device) => {
+    if (markupOn) exitMarkup();
+    setDevice(d);
+  };
+
   const onDrawStart = (e: ReactPointerEvent<HTMLButtonElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = pctPoint(e);
     drawing.current = [`${p.x.toFixed(2)} ${p.y.toFixed(2)}`];
     setStrokes((s) => [...s, `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}`]);
   };
-
   const onDrawMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (!drawing.current) return;
     const p = pctPoint(e);
@@ -299,121 +450,154 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const d = `M ${pts[0]}` + pts.slice(1).map((pt) => ` L ${pt}`).join("");
     setStrokes((s) => [...s.slice(0, -1), d]);
   };
-
   const onDrawEnd = () => {
+    if (drawing.current && strokes.length > 0) setNoteOpen(true);
     drawing.current = null;
   };
 
-  const clearMarks = () => {
-    setStrokes([]);
-    setPins([]);
-    setPending(null);
-    setPendingText("");
-  };
-
-  // --- tweak tool -------------------------------------------------------------
-  const applyAccent = async (color: string) => {
-    if (accentBusy) return;
-    setAccentBusy(true);
-    try {
-      const saved = await setStudioAccent(color);
-      if (aliveRef.current) {
-        setData((d) => (d ? { ...d, settings: { ...d.settings, accent: saved } } : d));
-        reloadPreview();
-      }
-    } catch (err) {
-      if (aliveRef.current) {
-        const msg =
-          err instanceof DashboardApiError ? err.message : "Could not update the accent.";
-        toast(msg, "warn", "critical");
-      }
-    } finally {
-      if (aliveRef.current) setAccentBusy(false);
+  const submitMarkupNote = () => {
+    const note = noteText.trim();
+    if (!note) return;
+    const pageLabel = PAGE_LABEL[page] ?? "store";
+    const intent = parseChatIntent(note);
+    pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
+    exitMarkup();
+    if (isDeterministicChatIntent(intent)) {
+      void runDeterministic(intent, { pageLabel });
+    } else {
+      // A markup scribble is a narrower channel than the composer: an
+      // unmatched note reads as "noted", never a full rebuild or a test.
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: `Noted on the ${pageLabel} page: "${note}". I'll keep it in mind; nothing's changed yet.`,
+      });
     }
   };
 
-  // --- generate + publish -------------------------------------------------------
-  const runBuild = useCallback(
-    async (brief: string) => {
-      if (building) return;
-      setBuildPhase({ kind: "running" });
-      try {
-        const receipt = await generateStudioStore(brief.trim());
-        // Re-pull the whole studio state — generation rewrites brand settings,
-        // drafts and the generation audit row — then reload the preview so the
-        // merchant sees the store that was just built.
-        await refresh();
-        reloadPreview();
-        if (!aliveRef.current) return;
-        setBuildPhase({ kind: "done", status: receipt.status });
-        if (receipt.status === "failed") {
-          // Honest failure (rule 12): the AI was unreachable, so this is a
-          // deterministic starter layout, not the prompted design.
-          toast(
-            "The AI designer is unavailable right now — showing a starter layout. Add Anthropic credits and try Build again.",
-            "warn",
-            "critical",
-          );
-        }
-      } catch (err) {
-        if (!aliveRef.current) return;
-        const msg =
-          err instanceof DashboardApiError ? err.message : "Store generation failed.";
-        setBuildPhase({ kind: "failed", message: msg });
-        toast(msg, "warn", "critical");
-      }
-    },
-    [building, refresh, reloadPreview, toast],
-  );
-
-  // First visit with nothing built yet: kick off a design immediately instead
-  // of waiting for a prompt — the merchant lands on a drafted store. The
-  // once-guard is module-scoped (below, outside the component) because the
-  // store_generation row is only written when a run finishes, so a per-mount
-  // ref would re-fire the build on every navigate-away-and-back mid-run.
-  useEffect(() => {
-    if (loading || !data || autoBuildAttempted) return;
-    if (data.hasDraft || data.hasPublished || data.generation) return;
-    autoBuildAttempted = true;
-    void runBuild("");
-  }, [loading, data, runBuild]);
-
-  // Chat-box attachments → draft products (title from filename, image attached).
-  const onAttachFiles = async (e: ReactChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.currentTarget.files ?? []);
-    e.currentTarget.value = "";
-    if (files.length === 0) return;
+  // --- chat-box attachments -> draft products ----------------------------------
+  const onAttachFiles = async (files: File[]) => {
     if (attaching) {
-      toast("Still adding the previous images — try again in a moment.");
+      toast("Still adding the previous images. Try again in a moment.");
       return;
     }
     setAttaching(true);
+    for (const f of files) {
+      pushMsg({ id: newId(), kind: "user-image", imageUrl: URL.createObjectURL(f), caption: f.name });
+    }
     const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
     if (!aliveRef.current) return;
-    results.forEach((r, i) => {
-      if (r.status === "fulfilled" && !r.value.imageError) {
-        toast(`Added "${r.value.title}" as a draft product`);
-      } else if (r.status === "fulfilled") {
-        // Partial add: the product exists but has no image — say so, or a
-        // retry would mint a duplicate.
-        toast(`Added draft "${r.value.title}", but its image failed to upload — add one in Products.`, "warn", "critical");
-      } else {
-        const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
-        toast(`Couldn't add "${files[i].name}" — ${msg}`, "warn", "critical");
+    const lines = results.map((r, i) => {
+      if (r.status === "fulfilled" && !r.value.imageError) return `Added "${r.value.title}" as a draft product.`;
+      if (r.status === "fulfilled") {
+        return `Added draft "${r.value.title}", but its image failed to upload. Add one in Products.`;
       }
+      const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
+      return `Couldn't add "${files[i].name}": ${msg}.`;
     });
+    pushMsg({ id: newId(), kind: "ai-text", text: lines.join(" ") });
+    const failedCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.imageError)).length;
+    if (failedCount > 0) {
+      const shortSummary =
+        failedCount === results.length
+          ? "Couldn't add those images. See chat for details."
+          : `${failedCount} of ${results.length} images had a problem. See chat for details.`;
+      toast(shortSummary, "warn", "critical");
+    }
     try {
       await refresh();
+      reloadPreview();
     } finally {
       if (aliveRef.current) setAttaching(false);
     }
   };
 
-  // Publish click: warn about missing pieces first (products, payments) with
-  // inline fixes — but never gate. "Publish anyway" runs the same publish.
+  // --- welcome overlay actions --------------------------------------------------
+  const onWelcomeBuildPlain = () => void runBuild("", { firstBuild: true });
+
+  const onWelcomeBuildWithVibe = async (vibe: StudioVibe) => {
+    try {
+      await setStudioVibe(vibe);
+    } catch (err) {
+      // A failed vibe pre-set isn't fatal — the build still runs, just against
+      // whatever vibe is currently stored. Say so and keep going.
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't set that look. Building anyway.";
+      toast(msg, "warn", "critical");
+    }
+    void runBuild("", { firstBuild: true });
+  };
+
+  const onWelcomeAddProduct = async (line: string) => {
+    const parsed = parseProductLine(line);
+    // A priced product goes live in the catalog so the first build can design
+    // around it (the whole point of this branch); without a price it stays a
+    // draft, since the storefront can't sell it yet. Active physical products
+    // must ship-complete (validate.ts), so the one-liner gets standard small-
+    // parcel defaults the merchant can correct in Products.
+    const active = parsed.priceCents != null;
+    try {
+      await saveProduct({
+        title: parsed.title,
+        status: active ? "active" : "draft",
+        variants: [
+          active
+            ? { retailPriceCents: parsed.priceCents ?? undefined, weightGrams: 500, lengthMm: 200, widthMm: 150, heightMm: 100 }
+            : { retailPriceCents: parsed.priceCents ?? undefined },
+        ],
+      });
+      toast(
+        active
+          ? `"${parsed.title}" added with standard parcel shipping defaults; adjust in Products.`
+          : `Draft product "${parsed.title}" created.`,
+      );
+      await refresh();
+      void runBuild("", { firstBuild: true });
+    } catch (err) {
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't create that product.";
+      toast(msg, "warn", "critical");
+    }
+  };
+
+  // --- publish ------------------------------------------------------------------
+  const openStorefront = () => {
+    if (data) window.open(data.storefrontUrl, "_blank", "noopener");
+  };
+
+  const runPublish = async () => {
+    if (!data || publishingRef.current) return;
+    const firstPublish = !data.hasPublished;
+    setConfirmingPublish(false);
+    setPublishingBoth(true);
+    try {
+      // Flush any in-flight deterministic edit first, so the published
+      // snapshot matches the last requested vibe/accent/hero change.
+      await mutationChain.current;
+      await publishStudioStore();
+      if (!aliveRef.current) return;
+      setData((d) => (d ? { ...d, hasPublished: true } : d));
+      reloadPreview();
+      if (firstPublish) {
+        confettiFrom(badgeRef.current);
+        const actions: ChatAction[] = [{ label: "Open my store", kind: "primary", onClick: openStorefront }];
+        if (!data.checkoutReady) {
+          actions.push({ label: "Connect payouts", onClick: () => app.navigate("payments") });
+        }
+        pushMsg({ id: newId(), kind: "ai-text", text: `Your store is live at ${data.storefrontUrl}.`, actions });
+      } else {
+        toast("Published to your storefront");
+      }
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";
+      toast(msg, "warn", "critical");
+    } finally {
+      if (aliveRef.current) setPublishingBoth(false);
+    }
+  };
+
   const publishPieces: MissingPiece[] = data ? missingPieces(data) : [];
   const onPublishClick = () => {
-    if (!data || publishing) return;
+    if (!data || publishingRef.current) return;
     if (publishPieces.length > 0) {
       setConfirmingPublish(true);
       return;
@@ -421,27 +605,27 @@ export default function Store({ app }: { app: DashboardCtx }) {
     void runPublish();
   };
 
-  const runPublish = async () => {
-    if (publishing) return;
-    setConfirmingPublish(false);
-    setPublishing(true);
+  const onDecideExperiment = async (decision: "ship" | "keep" | "stop") => {
+    if (!data?.experiment || decidingExperiment) return;
+    setDecidingExperiment(true);
     try {
-      // Flush any in-flight hero save first, so the published snapshot matches
-      // the copy on screen.
-      await heroSaveChain.current;
-      await publishStudioStore();
+      const exp = await decideStoreExperiment(data.experiment.id, decision);
       if (!aliveRef.current) return;
-      setData((d) => (d ? { ...d, hasPublished: true } : d));
-      // Publishing seeds a draft when none existed — reload so the preview
-      // reflects whatever is now live.
+      setData((d) => (d ? { ...d, experiment: exp } : d));
       reloadPreview();
-      toast("Published to your storefront");
+      const text =
+        decision === "ship"
+          ? `Shipped: the winning ${exp.name} is live for everyone.`
+          : decision === "keep"
+            ? "Kept the original. The idea stays in my back pocket."
+            : "Stopped the test early.";
+      pushMsg({ id: newId(), kind: "ai-text", text });
     } catch (err) {
       if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update the test.";
       toast(msg, "warn", "critical");
     } finally {
-      if (aliveRef.current) setPublishing(false);
+      if (aliveRef.current) setDecidingExperiment(false);
     }
   };
 
@@ -466,303 +650,149 @@ export default function Store({ app }: { app: DashboardCtx }) {
     );
   }
 
-  const stateAttr = building ? "building" : data.hasPublished ? "built" : "idle";
-  const stateLabel = building ? "Building" : data.hasPublished ? "Live" : data.hasDraft ? "Draft" : "Idle";
-  const step = buildPhase ? buildStep(buildPhase) : null;
+  const building = buildPhase?.kind === "running";
+  const branch = decideWelcomeBranch({
+    shopDomain: app.shopDomain,
+    productCount: data.productCount,
+    draftProductCount: data.draftProductCount,
+    importInProgress: porting,
+  });
+  const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
       <div className="cd-studio">
-        <div className="cd-studio-bar">
-          <div className="cd-dot3" aria-hidden="true">
-            <i style={{ background: "var(--red)" }} />
-            <i style={{ background: "var(--orange)" }} />
-            <i style={{ background: "var(--green)" }} />
-          </div>
-          <button
-            type="button"
-            className="cd-url"
-            style={{ border: 0, cursor: "pointer", font: "inherit", fontSize: 12 }}
-            onClick={openStorefront}
-            title="Open your storefront in a new tab"
-          >
-            {storefrontPath}
-          </button>
-          <span className="cd-build-state" data-state={stateAttr}>
-            {stateLabel}
-          </span>
-          {porting && (
-            <span className="cd-build-state" data-state="building">
-              Importing data
-            </span>
-          )}
-          <div className="cd-studio-tools">
-            {TOOLS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className="cd-tool"
-                data-active={tool === t.key ? "1" : "0"}
-                title={t.title}
-                aria-label={t.title}
-                onClick={() => setTool(t.key)}
-              >
-                <CDIcon name={t.icon} size={15} strokeWidth={1.9} />
-              </button>
-            ))}
-          </div>
-          {(strokes.length > 0 || pins.length > 0) && (
-            <Btn small onClick={clearMarks}>
-              Clear
-            </Btn>
-          )}
-          <Btn kind="primary" small onClick={onPublishClick} disabled={publishing || building}>
-            {publishing ? "Publishing…" : "Publish"}
-          </Btn>
-        </div>
+        <ChatRail
+          messages={messages}
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          onSend={onComposerSend}
+          busy={chatBusy || building}
+          attaching={attaching}
+          onAttachFiles={onAttachFiles}
+        />
 
-        <div className="cd-studio-canvas" data-tool={tool} data-building={building ? "1" : "0"}>
-          <div className="cd-canvas-page">
-            {/* Live preview of the actual generated draft (server-rendered, real
-                storefront styles). sandbox: same-origin only, no scripts — a
-                static, display-only render that reloads on every mutation. */}
-            <iframe
-              key="store-preview"
-              className="cd-canvas-frame"
-              title="Store preview"
-              src={previewSrc}
-              sandbox="allow-same-origin"
-            />
+        <div className="cd-stage">
+          <TopBar
+            ref={badgeRef}
+            storefrontUrl={data.storefrontUrl}
+            onOpenStorefront={openStorefront}
+            hasPublished={data.hasPublished}
+            building={building}
+            experiment={data.experiment}
+            onDecideExperiment={(d) => void onDecideExperiment(d)}
+            decidingExperiment={decidingExperiment}
+            page={page}
+            onPageChange={onPageChange}
+            device={device}
+            onDeviceChange={onDeviceChange}
+            markupOn={markupOn}
+            onToggleMarkup={onToggleMarkup}
+            onPublish={onPublishClick}
+            publishing={publishing}
+          />
 
-            <svg
-              className="cd-mark-layer"
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
-              {strokes.map((d, i) => (
-                <path
-                  key={i}
-                  d={d}
-                  fill="none"
-                  stroke="var(--live)"
-                  strokeWidth={1.4}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  vectorEffect="non-scaling-stroke"
-                />
-              ))}
-            </svg>
-
-            {(tool === "comment" || tool === "markup") && (
-              <button
-                type="button"
-                className="cd-capture"
-                aria-label={tool === "comment" ? "Add a session note pin" : "Draw session markup"}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  padding: 0,
-                  cursor: "crosshair",
-                  touchAction: "none",
-                }}
-                onClick={tool === "comment" ? onCommentClick : undefined}
-                onPointerDown={tool === "markup" ? onDrawStart : undefined}
-                onPointerMove={tool === "markup" ? onDrawMove : undefined}
-                onPointerUp={tool === "markup" ? onDrawEnd : undefined}
-                onPointerCancel={tool === "markup" ? onDrawEnd : undefined}
+          <div className="cd-stage-page">
+            <div className="cd-canvas-frame-wrap" data-device={device}>
+              <iframe
+                key="store-preview"
+                className="cd-canvas-frame"
+                title="Store preview"
+                src={previewSrc}
+                sandbox="allow-same-origin"
               />
-            )}
-
-            {pins.map((p, i) => (
-              <div
-                key={p.id}
-                className="cd-pin"
-                style={{ left: `${p.x}%`, top: `${p.y}%` }}
-                title={p.text}
-              >
-                {i + 1}
-              </div>
-            ))}
-
-            {pending && (
-              <div className="cd-pin-input" style={{ left: `${pending.x}%`, top: `${pending.y}%` }}>
-                <input
-                  autoFocus
-                  value={pendingText}
-                  placeholder="Note (this session only)"
-                  aria-label="Session note"
-                  onChange={(e) => setPendingText(e.target.value)}
-                  onKeyDown={pinInputKeyDown}
-                />
-              </div>
-            )}
-          </div>
-
-          {step && buildPhase && (
-            <div className="cd-build-float">
-              <div className="cd-buildlist">
-                <div className="cd-build-step">
-                  <span
-                    className="cd-build-dot"
-                    data-st={step.dot}
-                    style={step.dotColor ? { background: step.dotColor } : undefined}
+              <div className="cd-canvas-veil" data-on={building ? "1" : "0"} />
+              <svg className="cd-mark-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                {strokes.map((d, i) => (
+                  <path
+                    key={i}
+                    d={d}
+                    fill="none"
+                    stroke="var(--red)"
+                    strokeWidth={1.6}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
                   />
-                  <div>
-                    <div className="cd-build-title">{step.title}</div>
-                    <div className="cd-build-sub">{step.sub}</div>
-                  </div>
-                </div>
-              </div>
-              {buildPhase.kind !== "running" && (
-                <div style={{ padding: "0 18px 10px" }}>
-                  <button type="button" className="cd-chip" onClick={() => setBuildPhase(null)}>
-                    Dismiss
-                  </button>
+                ))}
+              </svg>
+              {markupOn && (
+                <button
+                  type="button"
+                  className="cd-mark-capture"
+                  aria-label="Draw on the page"
+                  onPointerDown={onDrawStart}
+                  onPointerMove={onDrawMove}
+                  onPointerUp={onDrawEnd}
+                  onPointerCancel={onDrawEnd}
+                />
+              )}
+              {noteOpen && (
+                <div className="cd-mark-note">
+                  <input
+                    autoFocus
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
+                      if (e.key === "Enter" && noteText.trim()) submitMarkupNote();
+                    }}
+                    placeholder="What should change here?"
+                    aria-label="Markup note"
+                  />
+                  <Btn kind="primary" small onClick={submitMarkupNote}>
+                    Send
+                  </Btn>
                 </div>
               )}
             </div>
-          )}
 
-          {confirmingPublish && publishPieces.length > 0 && (
-            <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
-              <div className="cd-buildlist">
-                {publishPieces.map((piece) => (
-                  <div key={piece.key} className="cd-build-step">
-                    <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
-                    <div>
-                      <div className="cd-build-title">{piece.label}</div>
-                      <button
-                        type="button"
-                        className="cd-chip"
-                        style={{ marginTop: 6 }}
-                        onClick={() => {
-                          setConfirmingPublish(false);
-                          app.navigate(piece.screen);
-                        }}
-                      >
-                        {piece.action}
-                      </button>
+            {confirmingPublish && publishPieces.length > 0 && (
+              <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
+                <div className="cd-buildlist">
+                  {publishPieces.map((piece) => (
+                    <div key={piece.key} className="cd-build-step">
+                      <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
+                      <div>
+                        <div className="cd-build-title">{piece.label}</div>
+                        <button
+                          type="button"
+                          className="cd-chip"
+                          style={{ marginTop: 6 }}
+                          onClick={() => {
+                            setConfirmingPublish(false);
+                            app.navigate(piece.screen);
+                          }}
+                        >
+                          {piece.action}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
+                  <Btn kind="primary" small onClick={() => void runPublish()} disabled={publishing || building}>
+                    Publish anyway
+                  </Btn>
+                  <Btn small onClick={() => setConfirmingPublish(false)}>
+                    Keep editing
+                  </Btn>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
-                <Btn
-                  kind="primary"
-                  small
-                  onClick={() => void runPublish()}
-                  disabled={publishing || building}
-                >
-                  Publish anyway
-                </Btn>
-                <Btn small onClick={() => setConfirmingPublish(false)}>
-                  Keep editing
-                </Btn>
-              </div>
-            </div>
-          )}
-
-          {tool === "edit" && (
-            <div className="cd-edit-pop">
-              <div className="cd-build-title">Home hero copy</div>
-              <div className="cd-build-sub">Saved to your storefront draft.</div>
-              <label className="cd-edit-label" htmlFor="cd-hero-eyebrow">
-                Eyebrow
-              </label>
-              <input
-                id="cd-hero-eyebrow"
-                className="cd-edit-field"
-                value={heroDraft.subhead}
-                aria-label="Hero eyebrow"
-                onChange={(e) => setHeroDraft((h) => ({ ...h, subhead: e.target.value }))}
-                onBlur={(e) => void commitHero("subhead", e.target.value)}
-              />
-              <label className="cd-edit-label" htmlFor="cd-hero-headline">
-                Headline
-              </label>
-              <input
-                id="cd-hero-headline"
-                className="cd-edit-field"
-                value={heroDraft.headline}
-                aria-label="Hero headline"
-                onChange={(e) => setHeroDraft((h) => ({ ...h, headline: e.target.value }))}
-                onBlur={(e) => void commitHero("headline", e.target.value)}
-              />
-            </div>
-          )}
-
-          {tool === "tweak" && (
-            <div className="cd-tweak-pop">
-              <div className="cd-build-title">Accent color</div>
-              <div className="cd-build-sub">Saved to your storefront brand kit.</div>
-              <div className="cd-swatches">
-                {SWATCHES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className="cd-swatch"
-                    style={{ background: c }}
-                    data-active={c.toLowerCase() === accent.toLowerCase() ? "1" : "0"}
-                    aria-label={`Set accent ${c}`}
-                    disabled={accentBusy}
-                    onClick={() => void applyAccent(c)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="cd-studio-foot">
-          <div className="cd-prompt-row">
-            <span className="cd-prompt-ic">
-              <CDIcon name="sparkle" size={18} />
-            </span>
-            <textarea
-              className="cd-prompt-in"
-              rows={1}
-              placeholder="Describe a page or change…"
-              aria-label="Describe a page or change"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              hidden
-              onChange={(e) => void onAttachFiles(e)}
-            />
-            <button
-              type="button"
-              className="cd-tool"
-              title="Attach images to add products"
-              aria-label="Attach images to add products"
-              disabled={attaching}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <CDIcon name="paperclip" size={15} strokeWidth={1.9} />
-            </button>
-            <Btn kind="primary" onClick={() => void runBuild(prompt)} disabled={building}>
-              {building ? "Building…" : "Build"}
-            </Btn>
-          </div>
-          <div className="cd-prompt-chips">
-            {QUICK_PROMPTS.map((c) => (
-              <button key={c} type="button" className="cd-chip" onClick={() => setPrompt(c)}>
-                {c}
-              </button>
-            ))}
-            {data.generation && (
-              <span className="cd-caption" style={{ marginLeft: "auto", alignSelf: "center" }}>
-                Last build {timeAgo(data.generation.createdAt)} ·{" "}
-                {GEN_LABEL[data.generation.status] ?? data.generation.status}
-              </span>
             )}
           </div>
         </div>
+
+        {welcomeVisible && (
+          <WelcomeOverlay
+            branch={branch}
+            importRun={importRun}
+            buildPhase={buildPhase}
+            productCount={data.productCount}
+            onBuildPlain={onWelcomeBuildPlain}
+            onBuildWithVibe={(vibe) => void onWelcomeBuildWithVibe(vibe)}
+            onAddProduct={(line) => void onWelcomeAddProduct(line)}
+          />
+        )}
       </div>
     </div>
   );

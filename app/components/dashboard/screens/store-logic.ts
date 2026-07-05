@@ -1,6 +1,7 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
+import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
   /** Live (active) products the storefront actually renders. */
@@ -59,10 +60,10 @@ export function buildStep(phase: BuildPhase): BuildStepView {
   }
   return {
     dot: "done",
-    title: "Draft ready — review and publish",
+    title: "Draft ready: review and publish",
     sub:
       phase.status === "no_products"
-        ? "No products yet — attach images below to add some, or publish as is."
+        ? "No products yet. Attach images below to add some, or publish as is."
         : "Home, collection and product pages were drafted.",
   };
 }
@@ -80,13 +81,13 @@ export function missingPieces(state: StoreReadiness): MissingPiece[] {
             key: "products",
             label: `${state.draftProductCount} draft product${
               state.draftProductCount === 1 ? " is" : "s are"
-            } unfinished — the storefront will publish without them.`,
+            } unfinished; the storefront will publish without them.`,
             action: "Finish products",
             screen: "catalog",
           }
         : {
             key: "products",
-            label: "No products yet — the storefront will publish without a catalog.",
+            label: "No products yet. The storefront will publish without a catalog.",
             action: "Add products",
             screen: "catalog",
           },
@@ -95,10 +96,209 @@ export function missingPieces(state: StoreReadiness): MissingPiece[] {
   if (!state.checkoutReady) {
     pieces.push({
       key: "checkout",
-      label: "Payments aren't fully set up — finish Stripe onboarding to get paid for orders.",
+      label: "Payments aren't fully set up. Finish Stripe onboarding to get paid for orders.",
       action: "Set up payments",
       screen: "payments",
     });
   }
   return pieces;
+}
+
+// ---- chat intent parsing (the "Build with Calderyn" rail) ------------------
+//
+// The chat is client-orchestrated, not an LLM turn: a message maps to exactly
+// ONE of a small set of real API calls, and the reply is generated from that
+// real call's result. Deterministic edits (vibe word, accent color, an
+// explicit headline rewrite) win first because they're unambiguous and cheap;
+// "test/optimize" starts a real experiment; everything else becomes a real
+// generateStudioStore() brief — the chat never fakes a change it didn't make.
+
+export type ChatIntent =
+  | { kind: "vibe"; vibe: StudioVibe }
+  | { kind: "accent"; color: string }
+  | { kind: "hero"; headline: string }
+  | { kind: "experiment"; expKind: "headline" | "vibe" }
+  | { kind: "generate"; brief: string };
+
+const VIBE_WORDS: Record<StudioVibe, RegExp> = {
+  bold: /\b(bold|dark|dramatic|loud)\b/i,
+  warm: /\b(warm|earthy|cozy|craft|rustic)\b/i,
+  minimal: /\b(minimal|clean|simple|quiet)\b/i,
+};
+const VIBE_PRIORITY: StudioVibe[] = ["bold", "warm", "minimal"];
+
+// Curated color words -> hex, matching the storefront accent palette. A raw
+// #rrggbb typed by the merchant wins over a word match.
+const ACCENT_WORDS: Record<string, string> = {
+  blue: "#2D7FF9",
+  green: "#1F8A5B",
+  orange: "#C2410C",
+  purple: "#7C5CFC",
+  teal: "#0F766E",
+  red: "#DB4B41",
+};
+
+// Requires an explicit rewrite instruction ("headline to ..."); bare
+// criticism ("the headline is boring") falls through to the other checks
+// instead of silently becoming the new headline.
+const HERO_QUOTE_RE = /headline (?:to say|to|says?|reading) ["']?([^"']{4,60})["']?$/i;
+const HEX_RE = /#[0-9a-f]{6}\b/i;
+const EXPERIMENT_RE = /\b(test|optimi[sz]e|experiment|a\/b)\b/i;
+const EXPERIMENT_VIBE_HINT_RE = /\b(vibe|look|style|design)\b/i;
+
+/** Parse a chat (or markup-note) message into the one real action it maps to. */
+export function parseChatIntent(text: string): ChatIntent {
+  const t = text.trim();
+
+  const heroMatch = t.match(HERO_QUOTE_RE);
+  if (heroMatch) return { kind: "hero", headline: heroMatch[1].trim() };
+
+  for (const vibe of VIBE_PRIORITY) {
+    if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
+  }
+
+  const hex = t.match(HEX_RE);
+  if (hex) return { kind: "accent", color: hex[0].toLowerCase() };
+  for (const word of Object.keys(ACCENT_WORDS)) {
+    if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
+  }
+
+  if (EXPERIMENT_RE.test(t)) {
+    return { kind: "experiment", expKind: EXPERIMENT_VIBE_HINT_RE.test(t) ? "vibe" : "headline" };
+  }
+
+  return { kind: "generate", brief: t };
+}
+
+/** The subset of intents that are cheap, deterministic edits with a real
+ *  setter — used to gate the markup-note flow, where an unmatched scribble
+ *  should read as "noted" rather than kick off a full rebuild or a test. */
+export function isDeterministicChatIntent(
+  intent: ChatIntent,
+): intent is Extract<ChatIntent, { kind: "vibe" | "accent" | "hero" }> {
+  return intent.kind === "vibe" || intent.kind === "accent" || intent.kind === "hero";
+}
+
+// ---- welcome overlay (first run) --------------------------------------------
+
+export type WelcomeBranch = { kind: "importing" } | { kind: "empty" } | { kind: "ready" };
+
+export interface WelcomeSignals {
+  /** DashboardCtx.shopDomain — null for owned (non-Shopify) stores. */
+  shopDomain: string | null;
+  productCount: number;
+  draftProductCount: number;
+  importInProgress: boolean;
+}
+
+/** Which first-run branch the welcome overlay shows. An in-progress Shopify
+ *  import always wins (the merchant is mid-connect, nothing to build yet);
+ *  a Shopify-less shop with no catalog at all needs a product before a build
+ *  is worth doing; everyone else can jump straight to building. */
+export function decideWelcomeBranch(signals: WelcomeSignals): WelcomeBranch {
+  if (signals.importInProgress) return { kind: "importing" };
+  if (signals.shopDomain === null && signals.productCount === 0 && signals.draftProductCount === 0) {
+    return { kind: "empty" };
+  }
+  return { kind: "ready" };
+}
+
+/** The welcome overlay's subline copy: importing wins over everything (nothing
+ *  to build yet); a live build phase reports its own progress; otherwise the
+ *  branch decides between the empty-catalog prompt and the ready state, which
+ *  itself names the product count when there is one. */
+export function welcomeSubline(params: {
+  branch: WelcomeBranch;
+  buildPhase: BuildPhase | null;
+  productCount: number;
+}): string {
+  const { branch, buildPhase, productCount } = params;
+  if (branch.kind === "importing") {
+    return "Bringing your Shopify store over. I'll start building the moment it lands.";
+  }
+  if (buildPhase) {
+    return buildPhase.kind === "running" ? "Building your store. This usually takes about a minute." : buildStep(buildPhase).sub;
+  }
+  if (branch.kind === "empty") {
+    return "I'm Calderyn. Your store is empty so far. Let's get you something to sell, then I'll build everything around it.";
+  }
+  if (productCount > 0) {
+    return `I've read the ${productCount} product${productCount === 1 ? "" : "s"} you have so far. Give me a minute and I'll build your store around ${productCount === 1 ? "it" : "them"}.`;
+  }
+  return "Let's build your store. You can add products anytime; I'll design around whatever you have.";
+}
+
+/** Whether the first-run welcome overlay should show at all. Only meaningful
+ *  after a FRESH fetch — the session-cache seed used for the instant first
+ *  paint may be stale (or belong to a different, already-built session), so
+ *  callers must not evaluate this against the cache seed. */
+export function shouldShowWelcome(state: {
+  hasDraft: boolean;
+  hasPublished: boolean;
+  generation: unknown;
+}): boolean {
+  return !state.hasDraft && !state.hasPublished && !state.generation;
+}
+
+export interface ParsedProductLine {
+  title: string;
+  /** Null when no price was typed — never fabricate a number the merchant
+   *  didn't give. */
+  priceCents: number | null;
+}
+
+/** "Hand-poured cedar candle, $18" -> { title: "Hand-poured Cedar Candle",
+ *  priceCents: 1800 }. A trailing dollar amount becomes the price; whatever's
+ *  left becomes a short title-cased name (first 6 words). */
+export function parseProductLine(text: string): ParsedProductLine {
+  const trimmed = text.trim();
+  const priceMatch = trimmed.match(/\$?\s?(\d{1,4}(?:\.\d{1,2})?)\s*$/);
+  const priceCents = priceMatch ? Math.round(parseFloat(priceMatch[1]) * 100) : null;
+  const withoutPrice = priceMatch
+    ? trimmed.slice(0, priceMatch.index).replace(/[,$\s]+$/, "")
+    : trimmed;
+  const words = withoutPrice.split(/\s+/).filter(Boolean).slice(0, 6);
+  const title = words
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ")
+    .replace(/[.,!?]+$/, "");
+  return { title: title || "First product", priceCents };
+}
+
+// ---- Shopify import progress (folded into the welcome overlay) -------------
+
+export interface ImportStepRow {
+  title: string;
+  sub: string;
+  state: "run" | "done" | "wait";
+}
+
+interface ImportRunLike {
+  state: "pulling" | "promoting" | "done" | "error";
+  counts: { products: number; variants: number; collections: number; balances: number } | null;
+}
+
+/** Live import-progress rows for the welcome overlay — grounded in the real
+ *  run state and counts, never a synthetic timer standing in for real numbers. */
+export function importStepRows(run: ImportRunLike | null): ImportStepRow[] {
+  const pulling = run?.state === "pulling";
+  const promoting = run?.state === "promoting";
+  const counts = run?.counts ?? null;
+  return [
+    {
+      title: "Connecting to your Shopify store",
+      sub: "secure sign-in",
+      state: run ? "done" : "run",
+    },
+    {
+      title: "Importing products, collections and stock",
+      sub: counts ? `${counts.products} products so far` : "reading your catalog",
+      state: pulling ? "run" : run ? "done" : "wait",
+    },
+    {
+      title: "Bringing everything into Calderyn",
+      sub: "organizing what was imported",
+      state: promoting ? "run" : pulling || !run ? "wait" : "done",
+    },
+  ];
 }

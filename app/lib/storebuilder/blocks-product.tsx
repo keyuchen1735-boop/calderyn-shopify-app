@@ -27,6 +27,22 @@ const productGallery: BlockMeta<GalleryProps> = {
   },
 };
 
+// Every doc-driven PDP needs the product's NAME on the page; static blocks
+// can't carry per-record text, so this reads ctx.record like price does.
+const productTitle: BlockMeta = {
+  type: "productTitle", flavor: "dynamic", allowedDocKinds: ["template"],
+  defaultProps: {}, defaultLayout: { x: 6, y: 0, w: 6, h: 1 },
+  validateProps: () => ({}),
+  catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  Component: ({ ctx }) => {
+    const p = recProduct(ctx);
+    if (!p) return null;
+    return createElement("div", { className: "cd-block cd-block--product-title" },
+      createElement("h1", { className: "cd-pdp__title" }, p.title),
+      p.description ? createElement("p", { className: "cd-pdp__description" }, p.description) : null);
+  },
+};
+
 const price: BlockMeta = {
   type: "price", flavor: "dynamic", allowedDocKinds: ["template"],
   defaultProps: {}, defaultLayout: { x: 6, y: 0, w: 6, h: 1 },
@@ -93,4 +109,4 @@ const collectionGrid: BlockMeta = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous BlockMeta<P> union; registry narrows by type
-export const STARTER_PRODUCT_BLOCKS: BlockMeta<any>[] = [productGallery, price, variantPicker, addToCart, collectionGrid];
+export const STARTER_PRODUCT_BLOCKS: BlockMeta<any>[] = [productGallery, productTitle, price, variantPicker, addToCart, collectionGrid];

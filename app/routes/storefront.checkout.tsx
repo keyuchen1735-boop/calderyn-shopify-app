@@ -13,6 +13,7 @@ import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.serve
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
+import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout } from "~/lib/order/checkout.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
@@ -60,6 +61,28 @@ async function buyerCheckoutPrefill(request: Request, shopId: string): Promise<C
   } catch (err) {
     console.error(`[checkout] buyer prefill failed for shop ${shopId} (continuing as guest):`, err);
     return null;
+  }
+}
+
+/**
+ * Stamp {experiment_id, variant_key} onto the order's attribution when a home-page
+ * A/B test is running (D4) — snake_case to match the keys experimentReport reads
+ * back off orders.attribution. Bucketing reuses the same visitor id assignArm uses
+ * on the storefront, so a buyer's checkout always attributes to the arm they were
+ * actually shown. Failure-isolated: a lookup hiccup must never break checkout, so
+ * it degrades to no stamp (the order still records live_session_id).
+ */
+async function checkoutExperimentAttribution(
+  shopId: string,
+  visitorId: string,
+): Promise<Record<string, string>> {
+  try {
+    const experiment = await getRunningExperiment(shopId);
+    if (!experiment) return {};
+    return { experiment_id: experiment.id, variant_key: assignArm(visitorId, experiment.id) };
+  } catch (err) {
+    console.error(`[checkout] experiment lookup failed for shop ${shopId} (continuing without attribution):`, err);
+    return {};
   }
 }
 
@@ -218,6 +241,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // Live View funnel's "purchased" count on paid orders instead of on the
   // buyer happening to revisit the confirmation page.
   const visitor = await ensureVisitorSession(request);
+  const experimentAttribution = await checkoutExperimentAttribution(shopId, visitor.visitorId);
 
   try {
     const result = await createCheckout(
@@ -239,7 +263,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
         consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
       },
-      { live_session_id: visitor.sessionId },
+      { live_session_id: visitor.sessionId, ...experimentAttribution },
     );
 
     // Return the client secret + confirmation token AND the amounts actually charged (subtotal +

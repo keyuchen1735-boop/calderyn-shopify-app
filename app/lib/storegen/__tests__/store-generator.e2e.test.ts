@@ -300,7 +300,7 @@ describe("store generator e2e", () => {
     // Home must render against an empty catalog without throwing or blanking the hero.
     const home = await loadDraftDoc(SHOP, "home");
     const html = await renderDoc(home!, undefined, EMPTY_CATALOG);
-    expect(html).toContain("My Store");
+    expect(html).toContain("Your store"); // brand fallback now derives from the shop, not a placeholder
     expect(html).toContain("cd-store__grid");
   });
 

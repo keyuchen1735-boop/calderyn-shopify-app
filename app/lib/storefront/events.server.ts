@@ -18,6 +18,14 @@ export type StorefrontEventType =
   | "checkout_start"
   | "checkout_complete";
 
+export interface StorefrontEventOpts {
+  productId?: string | null;
+  /** A/B exposure stamp: set only when a running experiment's variant was
+   *  actually served to this request. */
+  experimentId?: string | null;
+  variantKey?: string | null;
+}
+
 /**
  * Record one storefront event and return the visitor/session Set-Cookie
  * headers the caller must attach to its response. Cookies are always
@@ -27,10 +35,10 @@ export async function trackStorefrontEvent(
   request: Request,
   shopId: string,
   type: StorefrontEventType,
-  opts: { productId?: string | null } = {},
+  opts: StorefrontEventOpts = {},
 ): Promise<Headers> {
   const session = await ensureVisitorSession(request);
-  await insertEvent(request, shopId, type, session, opts.productId ?? null);
+  await insertEvent(request, shopId, type, session, opts);
   return session.headers;
 }
 
@@ -39,7 +47,7 @@ async function insertEvent(
   shopId: string,
   type: StorefrontEventType,
   s: VisitorSession,
-  productId: string | null,
+  opts: StorefrontEventOpts,
 ): Promise<void> {
   try {
     // Fixture tenants (resolveStorefrontShop's "demo-shop") never reach the DB.
@@ -53,9 +61,14 @@ async function insertEvent(
       is_returning: s.isReturning,
       type,
       path: new URL(request.url).pathname,
-      product_id: productId,
+      product_id: opts.productId ?? null,
       country: request.headers.get("x-vercel-ip-country"),
       city: request.headers.get("x-vercel-ip-city"),
+      // Stamp columns only when a variant was served, so rows outside an
+      // experiment keep the exact pre-experiment column set.
+      ...(opts.experimentId
+        ? { experiment_id: opts.experimentId, variant_key: opts.variantKey ?? null }
+        : {}),
     });
     if (error) throw error;
   } catch (err) {

@@ -44,13 +44,13 @@ describe("validateDocument", () => {
 
   it("reports a pdp template missing required functional blocks", () => {
     const result = validateDocument({ kind: "template", pageKey: "pdp", blocks: [] }, valid);
-    expect(result.missingFunctional.sort()).toEqual(["addToCart", "price", "variantPicker"]);
+    expect(result.missingFunctional.sort()).toEqual(["addToCart", "price", "productTitle", "variantPicker"]);
   });
 
   it("a pdp template with all functional blocks reports nothing missing", () => {
     const block = (type: string) => ({ id: type, type, layout: { x: 0, y: 0, w: 6, h: 1 }, props: {} });
     const result = validateDocument(
-      { kind: "template", pageKey: "pdp", blocks: [block("addToCart"), block("variantPicker"), block("price")] as never },
+      { kind: "template", pageKey: "pdp", blocks: [block("addToCart"), block("variantPicker"), block("price"), block("productTitle")] as never },
       valid,
     );
     expect(result.missingFunctional).toEqual([]);

@@ -55,6 +55,7 @@ export default function StoreDraftPreview() {
   return (
     <div
       className="cd-store"
+      data-vibe={settings.vibe}
       style={{ background: settings.palette.background, color: settings.palette.text }}
     >
       <header className="cd-store__header">
