@@ -104,6 +104,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     });
   }
 
+  // A user who has not finished onboarding must land on it regardless of the
+  // requested `dest` — enforcing the gate at the auth boundary, not delegating to
+  // whatever route return_to happens to point at (some don't re-check onboarding).
+  // `dest` is preserved through onboarding as return_to so an interrupted flow
+  // (e.g. the connector consent ?t=…) resumes once onboarding completes.
+  const onboardingDest =
+    dest === "/dashboard" ? "/dashboard/onboarding" : `/dashboard/onboarding?return_to=${encodeURIComponent(dest)}`;
+  const afterAuth = (onboardedAt: string | null) => (onboardedAt ? dest : onboardingDest);
+
   // Path 1: user already linked this Google account and has a shop.
   const byGoogleSub = await findUserByGoogleSub(sub);
   if (byGoogleSub && byGoogleSub.shopId) {
@@ -111,7 +120,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
-    return redirect(dest, { headers });
+    return redirect(afterAuth(byGoogleSub.onboardedAt), { headers });
   }
 
   // Path 2: user exists by email (signed up with password) - link the Google sub.
@@ -128,7 +137,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookieHeader(raw));
     headers.append("Set-Cookie", CLEAR_GOAUTH);
-    return redirect(dest, { headers });
+    return redirect(afterAuth(byEmail.onboardedAt), { headers });
   }
 
   // Path 3: brand-new user - send them to name-your-store with a signed token.
