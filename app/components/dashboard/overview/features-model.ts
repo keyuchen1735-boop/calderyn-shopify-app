@@ -17,6 +17,14 @@ export interface FeatureRowVM {
   recommended: boolean;
   moneyCents: number;
   actions: number;
+  /** Two-bar graduation progress for unlocked-but-unproven pairs; null once
+   *  proven (nothing left to earn) and for locked catalog rows (no pair yet).
+   *  The toggle stays live either way — the graduation gate, not this text,
+   *  decides when autonomy actually bites. */
+  progress: { done: number; needed: number; unit: "approvals" | "outcomes" } | null;
+  /** Detector label ("Campaign is losing money") — the row's hover text for
+   *  unlocked pairs; null for locked rows (they carry the locked tooltip). */
+  watching: string | null;
 }
 
 export interface FeatureGroupVM {
@@ -156,6 +164,14 @@ export function buildFeatureGroups(features: LiveEngineFeatureVM[]): FeatureGrou
       recommended: f.recommended,
       moneyCents: f.moneyCents,
       actions: f.actions,
+      // Approvals gate first, then proven outcomes — mirror the two-bar order
+      // the trainer chips used so "3/3" can't masquerade as complete.
+      progress: f.proven
+        ? null
+        : f.approvals < f.approvalsNeeded
+          ? { done: f.approvals, needed: f.approvalsNeeded, unit: "approvals" }
+          : { done: f.outcomes, needed: f.outcomesNeeded, unit: "outcomes" },
+      watching: f.watching || null,
     });
   }
 
@@ -174,6 +190,8 @@ export function buildFeatureGroups(features: LiveEngineFeatureVM[]): FeatureGrou
       recommended: false,
       moneyCents: 0,
       actions: 0,
+      progress: null,
+      watching: null,
     });
   }
 

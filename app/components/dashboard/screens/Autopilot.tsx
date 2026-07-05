@@ -9,13 +9,13 @@ import type { RejectReason } from "~/lib/types";
 import type { DashboardCtx } from "../context";
 import type { WatchGroup } from "../engine-events";
 import type {
-  LiveEngineFeatureVM,
   LiveEnginePageData,
   TraceEventVM,
 } from "../../../lib/calibration/live-engine-types";
 import type { AuditVM, QueueProposalVM } from "../view-models";
 import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
-import { flaggedGroups } from "../overview/features-model";
+import { buildFeatureGroups, countEnabled, flaggedGroups } from "../overview/features-model";
+import AutopilotFeatures from "../overview/AutopilotFeatures";
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -25,18 +25,17 @@ const REJECT_CHIPS: { label: string; reason: RejectReason; note?: string }[] = [
   { label: "Doesn't fit", reason: "other", note: "Doesn't fit my brand" },
 ];
 
-/** Calibration split panel: the tick gauge on the left, the real pending queue
- *  as approve/reject teaching rows on the right, and the store's unlocked
- *  feature ladder as the footer. Shown only while calibration is incomplete. */
+/** Calibration split panel: the tick gauge on the left and the real pending
+ *  queue as approve/reject teaching rows on the right. Shown only while
+ *  calibration is incomplete; the feature switchboard card below carries the
+ *  unlock progress and the per-feature toggles. */
 function CalibrationTrainer({
   app,
   pct,
-  features,
   onReview,
 }: {
   app: DashboardCtx;
   pct: number;
-  features: LiveEngineFeatureVM[];
   onReview: (p: QueueProposalVM) => void;
 }) {
   const [approving, setApproving] = useState<string | null>(null);
@@ -229,42 +228,6 @@ function CalibrationTrainer({
               Nothing waiting. Calderyn is scanning.
             </div>
           )}
-
-          {features.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 8,
-                padding: "14px 20px 18px",
-                marginTop: "auto",
-                borderTop: "0.5px solid var(--hairline)",
-              }}
-            >
-              {features.map((f) => (
-                <span
-                  key={`${f.detectorId}:${f.actionKind}`}
-                  className="cd-unlock-chip"
-                  data-on={f.enabled ? "1" : "0"}
-                  title={f.watching}
-                >
-                  {f.name}
-                  {f.enabled ? (
-                    <b className="tabular-nums">✓</b>
-                  ) : !f.proven ? (
-                    // Two-bar graduation gate: approvals first, then proven
-                    // dollar outcomes — show whichever gate is still holding
-                    // the unlock so "3/3" can't masquerade as complete.
-                    <b className="tabular-nums">
-                      {f.approvals < f.approvalsNeeded
-                        ? `${f.approvals}/${f.approvalsNeeded}`
-                        : `${f.outcomes}/${f.outcomesNeeded} outcomes`}
-                    </b>
-                  ) : null}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -452,9 +415,11 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
     return () => clearInterval(id);
   }, [refreshLiveEngine]);
 
-  const featureOn = data ? data.features.filter((f) => f.enabled).length : 0;
-  const running = !!data && data.autopilotEnabled && featureOn > 0;
   const flagged = useMemo(() => flaggedGroups(app.actionQueue), [app.actionQueue]);
+  const featureGroups = useMemo(() => (data ? buildFeatureGroups(data.features) : []), [data]);
+  // One count for the whole screen: the header pill and the switchboard badge
+  // both read the deduped model, so they can never disagree.
+  const running = !!data && data.autopilotEnabled && countEnabled(featureGroups) > 0;
   const pct = data?.calibrationPct ?? null;
   // A store the engine has never seen anything from has no meaningful
   // calibration score yet; showing one would be noise. Gated on data being
@@ -482,18 +447,20 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
           />
         </Card>
       ) : data ? (
-        data.calibrationPct !== null && data.calibrationPct < 100 ? (
-          <CalibrationTrainer
-            app={app}
-            pct={data.calibrationPct}
-            features={data.features}
-            // Non-one-click proposals review on the alert's own detail — that's
-            // where the real fix buttons (price, PO, snooze) live.
-            onReview={(p) => app.navigate("alerts", p.alertId)}
-          />
-        ) : (
-          <LiveEnginePanel app={app} data={data} flagged={flagged} />
-        )
+        <>
+          {data.calibrationPct !== null && data.calibrationPct < 100 ? (
+            <CalibrationTrainer
+              app={app}
+              pct={data.calibrationPct}
+              // Non-one-click proposals review on the alert's own detail — that's
+              // where the real fix buttons (price, PO, snooze) live.
+              onReview={(p) => app.navigate("alerts", p.alertId)}
+            />
+          ) : (
+            <LiveEnginePanel app={app} data={data} flagged={flagged} />
+          )}
+          <AutopilotFeatures groups={featureGroups} app={app} />
+        </>
       ) : (
         <Card>
           <Placeholder

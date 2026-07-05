@@ -82,6 +82,39 @@ describe("buildFeatureGroups", () => {
     expect(rows[0].locked).toBe(false);
   });
 
+  it("carries two-bar graduation progress: approvals gate first, then outcomes, null once proven", () => {
+    const groups = buildFeatureGroups([
+      feat({ detectorId: "campaign_below_breakeven", proven: false, approvals: 1, approvalsNeeded: 3 }),
+      feat({
+        detectorId: "sku_stockout_vs_spend",
+        proven: false,
+        approvals: 3,
+        approvalsNeeded: 3,
+        outcomes: 1,
+        outcomesNeeded: 2,
+      }),
+      feat({ detectorId: "margin_erosion", actionKind: "adjust_price", proven: true }),
+    ]);
+    const rows = groups.flatMap((g) => g.rows);
+    expect(rows.find((r) => r.detectorId === "campaign_below_breakeven")!.progress).toEqual({
+      done: 1,
+      needed: 3,
+      unit: "approvals",
+    });
+    expect(rows.find((r) => r.detectorId === "sku_stockout_vs_spend")!.progress).toEqual({
+      done: 1,
+      needed: 2,
+      unit: "outcomes",
+    });
+    expect(rows.find((r) => r.detectorId === "margin_erosion")!.progress).toBeNull();
+    // locked catalog rows have no pair, so no progress and no watching text
+    expect(rows.filter((r) => r.locked).every((r) => r.progress === null && r.watching === null)).toBe(true);
+    // unlocked rows keep the detector's watching label for the row tooltip
+    expect(rows.find((r) => r.detectorId === "campaign_below_breakeven")!.watching).toBe(
+      "Campaign is losing money",
+    );
+  });
+
   it("uses the simpler catalog display name for an unlocked feature", () => {
     const groups = buildFeatureGroups([
       feat({ detectorId: "campaign_below_breakeven", name: "Pause money-losing campaigns" }),
