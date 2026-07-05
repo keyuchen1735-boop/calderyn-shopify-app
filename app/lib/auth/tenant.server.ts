@@ -1,6 +1,7 @@
 // app/lib/auth/tenant.server.ts
 import { randomBytes } from "node:crypto";
 import { getSupabase, seedShippedAutopilotFeatures } from "../supabase.server";
+import { registerTenantDomain } from "../storefront/vercel-domain.server";
 
 export function slugify(displayName: string): string {
   const base = displayName
@@ -35,6 +36,17 @@ export async function provisionOwnedShop(
     }
     const shopId = String(data.id);
     await seedShippedAutopilotFeatures(shopId, sb);
+    // Best-effort and off the signup critical path: attach the tenant's
+    // calderyncompany.com subdomain to the Vercel project so the storefront
+    // URL serves with a valid cert. waitUntil keeps the promise alive on
+    // Vercel and no-ops locally; registerTenantDomain never throws, only
+    // logs, and failures are replayable via scripts/backfill-tenant-domains.
+    try {
+      const { waitUntil } = await import("@vercel/functions");
+      waitUntil(registerTenantDomain(String(data.org_slug)));
+    } catch {
+      void registerTenantDomain(String(data.org_slug));
+    }
     return { shopId, orgSlug: String(data.org_slug) };
   }
   throw lastError;

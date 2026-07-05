@@ -205,9 +205,13 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const hero = data?.hero ?? DEFAULT_HERO;
   const accent = data?.settings.accent ?? "#0f766e";
   const storefrontPath = data?.storefrontPath ?? "/storefront";
+  // Prefer the shop's own subdomain once provisioning has registered it; the
+  // relative app path stays as the fallback for Shopify-mirror shops.
+  const storefrontUrl = data?.storefrontUrl ?? null;
+  const storefrontLabel = storefrontUrl ? storefrontUrl.replace(/^https:\/\//, "") : storefrontPath;
 
   const openStorefront = () => {
-    window.open(storefrontPath, "_blank", "noopener");
+    window.open(storefrontUrl ?? storefrontPath, "_blank", "noopener");
   };
 
   // --- edit tool: hero copy popover ---------------------------------------
@@ -486,7 +490,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             onClick={openStorefront}
             title="Open your storefront in a new tab"
           >
-            {storefrontPath}
+            {storefrontLabel}
           </button>
           <span className="cd-build-state" data-state={stateAttr}>
             {stateLabel}

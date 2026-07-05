@@ -32,8 +32,12 @@ Live and verified over HTTPS with correct per-tenant routing:
 `mvp-rehearsal-co-36ea83.calderyncompany.com/storefront`. The old vercel.app
 aliases keep working as fallbacks.
 
-**Launching a new shop's storefront URL is now one command** (the wildcard
-already resolves; this attaches the host to the project and issues the cert):
+**New shops register their storefront host automatically at signup.**
+`provisionOwnedShop` calls the Vercel API (`app/lib/storefront/vercel-domain.server.ts`,
+needs `VERCEL_TOKEN` in the app env) to attach `<org_slug>.calderyncompany.com`
+to the project and issue the cert — best-effort, never blocks signup. For
+one-offs the manual command still works, and existing shops (or failed
+registrations) can be replayed with `node scripts/backfill-tenant-domains.mjs`:
 
     vercel domains add <shop-slug>.calderyncompany.com
 

@@ -52,10 +52,11 @@ beforeEach(() => {
   pageDoc.loadPublishedDoc.mockResolvedValue(null);
   pageDoc.saveDraft.mockResolvedValue(undefined);
   pageDoc.publishDoc.mockResolvedValue(undefined);
-  // latestGeneration query — no rows.
+  // latestGeneration query (select→eq→order→limit→maybeSingle) and the
+  // shopOrgSlug lookup (select→eq→maybeSingle) — no rows for either.
   const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
   fromMock.mockReturnValue({
-    select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle }) }) }) }),
+    select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle }) }), maybeSingle }) }),
   });
 });
 
