@@ -8,6 +8,7 @@ import {
   publishStudioStore,
 } from "~/lib/storebuilder/studio.server";
 import { generateStore } from "~/lib/storegen/generate.server";
+import { checkAiQuota, quotaTrusted } from "~/lib/ai-quota.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -78,6 +79,14 @@ export async function action({ request }: ActionFunctionArgs) {
         return jsonError(422, "brief_too_long", "Keep the brief under 4,000 characters.");
       }
       const brief = typeof b.brief === "string" && b.brief.trim() ? b.brief.trim() : undefined;
+      // Daily cap + cooldown on top of the burst limit — after validation so
+      // rejected requests never burn the day's allowance (see ai-quota.server).
+      const quota = await checkAiQuota({
+        shopId: session.shopId,
+        feature: "designer",
+        trusted: quotaTrusted(session),
+      });
+      if (!quota.allowed) return jsonError(429, quota.code, quota.message);
       try {
         // Real generation — can take several seconds; awaited deliberately.
         const result = await generateStore({

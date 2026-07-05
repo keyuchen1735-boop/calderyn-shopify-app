@@ -9,6 +9,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getAnthropic, listingDraftModel } from "~/lib/assistant/anthropic.server";
+import { checkAiQuota, quotaTrusted } from "~/lib/ai-quota.server";
 import {
   cleanInt,
   cleanString,
@@ -111,7 +112,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(`listing-draft:${session.shopId}`, 15, 60_000))) {
     return jsonError(429, "rate_limited", "Too many prompts. Give it a few seconds.");
   }
-
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -125,6 +125,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const current = parseCurrent(body.current);
   if (!current) return jsonError(422, "invalid_current");
+  // Daily cap + cooldown on top of the burst limit — after validation so
+  // rejected requests never burn the day's allowance (see ai-quota.server).
+  const quota = await checkAiQuota({
+    shopId: session.shopId,
+    feature: "listing",
+    trusted: quotaTrusted(session),
+  });
+  if (!quota.allowed) return jsonError(429, quota.code, quota.message);
 
   return dashboardJson(async () => {
     let planRaw: unknown = null;
