@@ -101,6 +101,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     shopDomain: "test.myshopify.com",
     storeLabel: "test.myshopify.com",
     demoMode: false,
+    hasCatalog: true,
     nav: { screen: "dashboard", param: null, sub: null },
     navigate: () => {},
   setNightMode: () => {},
@@ -128,6 +129,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     openAssistant: () => {},
     refreshLiveEngine: () => {},
     loading: false,
+    booted: true,
     ...overrides,
   };
 }

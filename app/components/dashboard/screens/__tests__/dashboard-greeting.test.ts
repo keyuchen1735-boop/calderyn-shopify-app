@@ -22,6 +22,9 @@ const ctx: DashboardCtx = {
   shopDomain: "test.myshopify.com",
   storeLabel: "test.myshopify.com",
   demoMode: false,
+  // Established-store hint so the greeting path (not the setup guide's static
+  // "Welcome.") is what the clock-independence assertion exercises.
+  hasCatalog: true,
   nav: { screen: "dashboard", param: null, sub: null },
   navigate: () => {},
   setNightMode: () => {},
@@ -49,6 +52,7 @@ const ctx: DashboardCtx = {
   openAssistant: () => {},
   refreshLiveEngine: () => {},
   loading: true,
+  booted: false,
 };
 
 describe("dashboard greeting — hydration safety", () => {

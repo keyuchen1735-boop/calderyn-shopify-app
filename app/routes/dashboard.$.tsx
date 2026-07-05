@@ -57,25 +57,46 @@ export async function loader({ request }: LoaderFunctionArgs) {
     throw new Response("Not found", { status: 404 });
   }
   const session = await requireVerifiedSession(request);
-  const { data } = await getSupabase()
-    .from("shops")
-    .select("display_name, shop_domain, demo_mode")
-    .eq("id", session.shopId)
-    .maybeSingle();
+  const sb = getSupabase();
+  const [shopRes, productRes] = await Promise.all([
+    sb
+      .from("shops")
+      .select("display_name, shop_domain, demo_mode")
+      .eq("id", session.shopId)
+      .maybeSingle(),
+    // Existence probe: does the shop have any catalog product? Home keys its
+    // FIRST paint off this (established layout vs setup guide) so the SSR HTML
+    // is already the right page; the client's catalog fetch stays the
+    // authority once it lands. Probe failure defaults to "established" — the
+    // setup guide must never flash at a veteran store over a blip.
+    sb.from("product_dim").select("id").eq("shop_id", session.shopId).limit(1),
+  ]);
+  const data = shopRes.data;
   const storeLabel =
     (data?.display_name as string | null) ||
     (data?.shop_domain as string | null) ||
     "Your store";
-  return { shopDomain: session.shopDomain, storeLabel, demoMode: data?.demo_mode === true };
+  const hasCatalog = productRes.error ? true : (productRes.data?.length ?? 0) > 0;
+  return {
+    shopDomain: session.shopDomain,
+    storeLabel,
+    demoMode: data?.demo_mode === true,
+    hasCatalog,
+  };
 }
 
 export default function DashboardRoute() {
-  const { shopDomain, storeLabel, demoMode } = useLoaderData<typeof loader>();
+  const { shopDomain, storeLabel, demoMode, hasCatalog } = useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
     <DashboardErrorBoundary>
-      <DashboardApp shopDomain={shopDomain} storeLabel={storeLabel} demoMode={demoMode} />
+      <DashboardApp
+        shopDomain={shopDomain}
+        storeLabel={storeLabel}
+        demoMode={demoMode}
+        hasCatalog={hasCatalog}
+      />
     </DashboardErrorBoundary>
   );
 }
