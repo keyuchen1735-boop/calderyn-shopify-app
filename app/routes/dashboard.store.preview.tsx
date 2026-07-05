@@ -47,7 +47,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const record: RenderContext["record"] =
     page === "home" ? undefined : { product: products[0], collection: collections[0] };
   const data = await resolveRenderData(doc, shopId, catalog, record);
-  return json({ doc, data, record, settings });
+  // Shape a display-only DTO — never ship the internal shop_id to the browser
+  // (the preview only needs the visible branding fields).
+  const settingsDto = {
+    storeName: settings.storeName,
+    logoUrl: settings.logoUrl,
+    palette: settings.palette,
+  };
+  return json({ doc, data, record, settings: settingsDto });
 }
 
 export default function StoreDraftPreview() {
