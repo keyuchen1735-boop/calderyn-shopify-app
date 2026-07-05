@@ -283,7 +283,7 @@ export function Btn({
   className = "",
 }: {
   children: ReactNode;
-  kind?: "primary" | "secondary";
+  kind?: "primary" | "secondary" | "danger";
   icon?: string;
   onClick?: () => void;
   disabled?: boolean;

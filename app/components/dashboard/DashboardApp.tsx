@@ -186,6 +186,7 @@ export default function DashboardApp({
   storeLabel,
   demoMode = false,
   hasCatalog,
+  canDeleteAccount = false,
 }: {
   shopDomain: string | null;
   storeLabel: string;
@@ -194,6 +195,9 @@ export default function DashboardApp({
    *  DashboardCtx.hasCatalog). Required so the loader stays the single owner
    *  of the fallback policy (its probe-error default). */
   hasCatalog: boolean;
+  /** First-party account → Settings shows the self-delete Danger zone. Legacy
+   *  Shopify (shop-based) sessions have no users row and are exempt. */
+  canDeleteAccount?: boolean;
 }) {
   // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
   // localStorage. Initialised to true so the server render and first client render
@@ -1018,6 +1022,7 @@ export default function DashboardApp({
     storeLabel,
     demoMode,
     hasCatalog,
+    canDeleteAccount,
     nav,
     navigate,
     setNightMode,

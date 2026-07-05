@@ -336,6 +336,8 @@
   .cd-btn-primary:hover { opacity: 0.88; }
   .cd-btn-secondary { background: var(--gray-bg); color: var(--accent); }
   .cd-btn-secondary:hover { background: rgba(120, 120, 128, 0.14); }
+  .cd-btn-danger { background: var(--red); color: #fff; }
+  .cd-btn-danger:hover { opacity: 0.88; }
   .cd-btn-sm { padding: 5.5px 12px; font-size: calc(12.5px * var(--type-scale)); }
 
   /* ============ meters ============ */

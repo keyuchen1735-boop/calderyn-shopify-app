@@ -17,6 +17,7 @@ import {
   startPayoutOnboarding,
   fetchPayoutLoginLink,
   resetDemoData,
+  deleteAccount,
   DashboardApiError,
   type UnmatchedShipCharges,
   type BillingStatus,
@@ -409,6 +410,31 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       app.toast(message, "x", "critical");
     } finally {
       setResetBusy(false);
+    }
+  };
+
+  // Permanent account deletion (Danger zone, first-party accounts only). Opening
+  // the row reveals a "type DELETE" field; the button stays disabled until it
+  // matches exactly, and the server re-checks the same word. On success the
+  // session is already gone, so hard-navigate to the signed-out signup page.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const deleteFoldId = useId();
+  const handleDeleteAccount = async () => {
+    if (deleteBusy || deleteConfirm !== "DELETE") return;
+    setDeleteBusy(true);
+    try {
+      await deleteAccount();
+      // Nothing signed-in should paint against a deleted account — drop the
+      // whole session cache, then leave the SPA entirely.
+      clearScreenCache();
+      window.location.assign("/signup?notice=account_deleted");
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't delete your account. Try again.";
+      app.toast(message, "x", "critical");
+      setDeleteBusy(false);
     }
   };
 
@@ -1125,6 +1151,65 @@ export default function Settings({ app }: { app: DashboardCtx }) {
               {resetBusy ? "Resetting…" : resetArmed ? "Confirm reset" : "Reset demo data"}
             </Btn>
           </SettingRow>
+        </SettingsCard>
+      )}
+
+      {sub === "general" && app.canDeleteAccount && (
+        <SettingsCard>
+          <CardLabel>Danger zone</CardLabel>
+          <SettingRow
+            label="Delete account"
+            sub="Permanently delete your account and store, including every product, order, campaign, and setting. This frees your email to sign up again and can't be undone."
+          >
+            {deleteOpen ? (
+              <Btn
+                small
+                disabled={deleteBusy}
+                onClick={() => {
+                  setDeleteOpen(false);
+                  setDeleteConfirm("");
+                }}
+              >
+                Cancel
+              </Btn>
+            ) : (
+              <Btn small onClick={() => setDeleteOpen(true)}>
+                Delete account
+              </Btn>
+            )}
+          </SettingRow>
+          {deleteOpen && (
+            <div id={deleteFoldId} className="cd-setting">
+              <div className="min-w-0 flex-1">
+                <label htmlFor={`${deleteFoldId}-input`} className="cd-row-title">
+                  Type <b>DELETE</b> to confirm
+                </label>
+                <div className="cd-caption" style={{ maxWidth: "46ch" }}>
+                  This immediately and permanently deletes everything.
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id={`${deleteFoldId}-input`}
+                  className="cd-input"
+                  value={deleteConfirm}
+                  onChange={(e) => setDeleteConfirm(e.target.value)}
+                  disabled={deleteBusy}
+                  autoComplete="off"
+                  aria-label="Type DELETE to confirm account deletion"
+                  placeholder="DELETE"
+                />
+                <Btn
+                  small
+                  kind="danger"
+                  disabled={deleteBusy || deleteConfirm !== "DELETE"}
+                  onClick={() => void handleDeleteAccount()}
+                >
+                  {deleteBusy ? "Deleting…" : "Permanently delete"}
+                </Btn>
+              </div>
+            </div>
+          )}
         </SettingsCard>
       )}
 
