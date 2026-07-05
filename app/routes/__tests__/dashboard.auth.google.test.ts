@@ -197,7 +197,7 @@ describe("google callback loader", () => {
       const nonce = "testnonce";
       mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
-      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1" });
+      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1", onboardedAt: "2026-01-01T00:00:00Z" });
 
       const { loader } = await import("../dashboard.auth.google_.callback");
       const req = callbackRequest({ code: "code", state: nonce }, nonce);
@@ -213,7 +213,7 @@ describe("google callback loader", () => {
       const nonce = "testnonce";
       mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
-      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1" });
+      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1", onboardedAt: "2026-01-01T00:00:00Z" });
 
       const { loader } = await import("../dashboard.auth.google_.callback");
       // Cookie format is `nonce:enc(returnTo)` — see dashboard.auth.google.
@@ -225,6 +225,30 @@ describe("google callback loader", () => {
       expect(res.status).toBe(302);
       expect(res.headers.get("Location")).toBe("/dashboard/connect?t=abc");
     });
+
+    // The reported bug: a returning Google user who never finished onboarding must
+    // be sent to onboarding, NOT dropped at `dest` (which may be an ungated route).
+    // The requested `dest` is preserved as return_to so the flow resumes after.
+    it("routes a returning-but-un-onboarded user to onboarding, preserving return_to for resume", async () => {
+      const nonce = "testnonce";
+      mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
+      mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "u@e.com", emailVerified: true });
+      mockFindUserByGoogleSub.mockResolvedValue({ id: "u1", shopId: "shop1", onboardedAt: null });
+
+      const { loader } = await import("../dashboard.auth.google_.callback");
+      const req = callbackRequest(
+        { code: "code", state: nonce },
+        `${nonce}:${encodeURIComponent("/dashboard/connect?t=abc")}`,
+      );
+      const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        `/dashboard/onboarding?return_to=${encodeURIComponent("/dashboard/connect?t=abc")}`,
+      );
+      // Session is still minted — the user is authenticated, just gated.
+      const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("Set-Cookie") ?? ""];
+      expect(cookies.join("; ")).toContain("__Host-calderyn_dash=");
+    });
   });
 
   describe("email-link user (path 2)", () => {
@@ -233,7 +257,7 @@ describe("google callback loader", () => {
       mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
       mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "existing@e.com", emailVerified: true });
       mockFindUserByGoogleSub.mockResolvedValue(null);
-      mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com" });
+      mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com", onboardedAt: "2026-01-01T00:00:00Z" });
       mockResolveShopForUser.mockResolvedValue("shop-existing");
 
       const { loader } = await import("../dashboard.auth.google_.callback");
@@ -247,6 +271,24 @@ describe("google callback loader", () => {
       const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("Set-Cookie") ?? ""];
       const joined = cookies.join("; ");
       expect(joined).toContain("__Host-calderyn_dash=");
+    });
+
+    it("routes an email-matched user who never onboarded to /dashboard/onboarding", async () => {
+      const nonce = "testnonce";
+      mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
+      mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "existing@e.com", emailVerified: true });
+      mockFindUserByGoogleSub.mockResolvedValue(null);
+      mockFindUserByEmail.mockResolvedValue({ id: "u-existing", email: "existing@e.com", onboardedAt: null });
+      mockResolveShopForUser.mockResolvedValue("shop-existing");
+
+      const { loader } = await import("../dashboard.auth.google_.callback");
+      const req = callbackRequest({ code: "code", state: nonce }, nonce);
+      const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
+      // The Google sub is still linked even though onboarding is pending.
+      expect(mockSetGoogleSub).toHaveBeenCalledWith("u-existing", "gsub");
     });
   });
 

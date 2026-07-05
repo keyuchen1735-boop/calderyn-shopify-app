@@ -145,7 +145,7 @@ function unverifiedFirstParty(s: DashboardSession): boolean {
 // A first-party user (email/Google) who hasn't finished the post-signup onboarding
 // screen yet. Shopify (shop-based) sessions have no users row — userId is null —
 // so they are exempt by construction.
-function needsOnboarding(s: DashboardSession): boolean {
+export function needsOnboarding(s: DashboardSession): boolean {
   return s.userId != null && s.onboardedAt == null;
 }
 

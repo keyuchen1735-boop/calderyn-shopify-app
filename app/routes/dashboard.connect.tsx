@@ -16,6 +16,7 @@ import { Form, useLoaderData } from "@remix-run/react";
 
 import {
   getSessionFromRequest,
+  needsOnboarding,
   requireDashboardSession,
 } from "~/lib/dashboard/session.server";
 import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
@@ -50,6 +51,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const url = new URL(request.url);
     const returnTo = `/dashboard/connect${url.search}`;
     return redirect(`/dashboard/signin?return_to=${encodeURIComponent(returnTo)}`);
+  }
+  // A first-party user who hasn't finished onboarding can land here via return_to;
+  // the gate must hold on every route, not just the /dashboard shell. Preserve this
+  // connect URL (incl. ?t=) so the consent flow resumes once onboarding completes.
+  if (needsOnboarding(session)) {
+    const returnTo = `/dashboard/connect${new URL(request.url).search}`;
+    return redirect(`/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}`);
   }
 
   const token = new URL(request.url).searchParams.get("t") ?? "";

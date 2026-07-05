@@ -120,6 +120,20 @@ describe("/dashboard/connect loader", () => {
     expect(r.headers.get("location")).toBe("/dashboard");
   });
 
+  it("routes an un-onboarded first-party session to onboarding, preserving the connect ?t= token", async () => {
+    // A signed-in first-party user who never finished onboarding must not render
+    // the consent page — but the pending OAuth token must survive so the flow
+    // resumes at /dashboard/connect?t=… once onboarding completes.
+    getSessionFromRequest.mockResolvedValue({
+      shopId: "s", shopDomain: null, userId: "u1", sessionId: "sess", emailVerified: true, onboardedAt: null,
+    });
+    const r = (await loader(loaderReq(TOKEN) as never)) as Response;
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe(
+      `/dashboard/onboarding?return_to=${encodeURIComponent(`/dashboard/connect?t=${TOKEN}`)}`,
+    );
+  });
+
   it("renders consent data for a valid token + dashboard session", async () => {
     verifyMock.mockResolvedValue(ctxFixture());
     getClientMock.mockResolvedValue(clientFixture());

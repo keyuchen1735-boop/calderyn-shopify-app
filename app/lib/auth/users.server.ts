@@ -18,15 +18,19 @@ export function isValidEmail(raw: string): boolean {
 
 export async function findUserByEmail(
   email: string,
-): Promise<{ id: string; passwordHash: string } | null> {
+): Promise<{ id: string; passwordHash: string; onboardedAt: string | null } | null> {
   const { data, error } = await getSupabase()
     .from("users")
-    .select("id, password_hash")
+    .select("id, password_hash, onboarded_at")
     .eq("email", normalizeEmail(email))
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return { id: String(data.id), passwordHash: String(data.password_hash) };
+  return {
+    id: String(data.id),
+    passwordHash: String(data.password_hash),
+    onboardedAt: (data.onboarded_at as string | null) ?? null,
+  };
 }
 
 export async function createUser(
@@ -61,17 +65,21 @@ export async function verifyUserCredentials(
 
 export async function findUserByGoogleSub(
   sub: string,
-): Promise<{ id: string; shopId: string | null } | null> {
+): Promise<{ id: string; shopId: string | null; onboardedAt: string | null } | null> {
   const { data, error } = await getSupabase()
     .from("users")
-    .select("id, membership(shop_id)")
+    .select("id, membership(shop_id), onboarded_at")
     .eq("google_sub", sub)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
   const m = (data.membership as { shop_id?: string }[] | { shop_id?: string } | null);
   const shopId = Array.isArray(m) ? (m[0]?.shop_id ?? null) : (m?.shop_id ?? null);
-  return { id: String(data.id), shopId: shopId == null ? null : String(shopId) };
+  return {
+    id: String(data.id),
+    shopId: shopId == null ? null : String(shopId),
+    onboardedAt: (data.onboarded_at as string | null) ?? null,
+  };
 }
 
 export async function setGoogleSub(userId: string, sub: string): Promise<void> {

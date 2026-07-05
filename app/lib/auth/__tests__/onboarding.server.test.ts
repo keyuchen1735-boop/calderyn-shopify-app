@@ -3,14 +3,27 @@ import {
   normalizePhone,
   isReferralSource,
   REFERRAL_SOURCES,
-  setOnboardingProfile,
+  saveOnboardingContact,
+  completeOnboarding,
+  getOnboardingProgress,
 } from "../onboarding.server";
 
 const update = vi.fn();
-const eq = vi.fn();
+const updateEq = vi.fn();
+const select = vi.fn();
+const selectEq = vi.fn();
+const maybeSingle = vi.fn();
 vi.mock("~/lib/supabase.server", () => ({
-  getSupabase: () => ({ from: () => ({ update }) }),
+  getSupabase: () => ({ from: () => ({ update, select }) }),
 }));
+
+beforeEach(() => {
+  updateEq.mockReset().mockResolvedValue({ error: null });
+  update.mockReset().mockReturnValue({ eq: updateEq });
+  maybeSingle.mockReset().mockResolvedValue({ data: null, error: null });
+  selectEq.mockReset().mockReturnValue({ maybeSingle });
+  select.mockReset().mockReturnValue({ eq: selectEq });
+});
 
 describe("normalizePhone", () => {
   it("normalizes an international number, preserving the leading +", () => {
@@ -42,14 +55,13 @@ describe("isReferralSource", () => {
   });
 });
 
-describe("setOnboardingProfile", () => {
-  beforeEach(() => {
-    eq.mockReset().mockResolvedValue({ error: null });
-    update.mockReset().mockReturnValue({ eq });
-  });
-
-  it("writes the four columns incl. onboarded_at, scoped by user id", async () => {
-    await setOnboardingProfile("u1", {
+// Onboarding is a two-step flow: step 1 saves contact (phone + referral) but does
+// NOT mark the user onboarded; step 2 (the import choice) is what completes it.
+// Keeping onboarded_at off the contact write is what lets the gate hold the user
+// on the import step until they connect or explicitly skip.
+describe("saveOnboardingContact", () => {
+  it("writes phone + referral scoped by user id, but does NOT set onboarded_at", async () => {
+    await saveOnboardingContact("u1", {
       phone: "+14155550123",
       referralSource: "google_search",
       referralOther: null,
@@ -59,14 +71,15 @@ describe("setOnboardingProfile", () => {
         phone: "+14155550123",
         referral_source: "google_search",
         referral_source_other: null,
-        onboarded_at: expect.any(String),
       }),
     );
-    expect(eq).toHaveBeenCalledWith("id", "u1");
+    // The contact step must not flip the completion flag — that is step 2's job.
+    expect(update.mock.calls[0][0]).not.toHaveProperty("onboarded_at");
+    expect(updateEq).toHaveBeenCalledWith("id", "u1");
   });
 
   it("persists free text only when the source is 'other'", async () => {
-    await setOnboardingProfile("u1", {
+    await saveOnboardingContact("u1", {
       phone: "4155550123",
       referralSource: "other",
       referralOther: "a friend at a meetup",
@@ -80,9 +93,46 @@ describe("setOnboardingProfile", () => {
   });
 
   it("throws when the update errors", async () => {
-    eq.mockResolvedValueOnce({ error: { message: "boom" } });
+    updateEq.mockResolvedValueOnce({ error: { message: "boom" } });
     await expect(
-      setOnboardingProfile("u1", { phone: "4155550123", referralSource: "youtube", referralOther: null }),
+      saveOnboardingContact("u1", { phone: "4155550123", referralSource: "youtube", referralOther: null }),
     ).rejects.toBeTruthy();
+  });
+});
+
+describe("completeOnboarding", () => {
+  it("sets onboarded_at scoped by user id, and touches nothing else", async () => {
+    await completeOnboarding("u1");
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ onboarded_at: expect.any(String) }),
+    );
+    // Completion only flips the flag; it must not clobber the saved contact fields.
+    expect(update.mock.calls[0][0]).not.toHaveProperty("phone");
+    expect(update.mock.calls[0][0]).not.toHaveProperty("referral_source");
+    expect(updateEq).toHaveBeenCalledWith("id", "u1");
+  });
+
+  it("throws when the update errors", async () => {
+    updateEq.mockResolvedValueOnce({ error: { message: "boom" } });
+    await expect(completeOnboarding("u1")).rejects.toBeTruthy();
+  });
+});
+
+describe("getOnboardingProgress", () => {
+  it("returns the saved phone for the user, scoped by id", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: { phone: "4155550123" }, error: null });
+    const p = await getOnboardingProgress("u1");
+    expect(p).toEqual({ phone: "4155550123" });
+    expect(selectEq).toHaveBeenCalledWith("id", "u1");
+  });
+
+  it("returns a null phone when the row is missing", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    expect(await getOnboardingProgress("u1")).toEqual({ phone: null });
+  });
+
+  it("throws on a read error", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
+    await expect(getOnboardingProgress("u1")).rejects.toBeTruthy();
   });
 });
