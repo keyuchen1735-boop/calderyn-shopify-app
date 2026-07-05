@@ -174,7 +174,9 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     return { cardQueue: remaining.filter((p) => !batchIds.has(p.alertId)), batch: eligible };
   }, [remaining, handledSession, alertsById]);
 
-  const current: QueueProposalVM | null = cardQueue[0] ?? null;
+  // Freeze the deck while a batch run is in flight so an in-flight item can't
+  // leak a live single-approve card and get double-submitted.
+  const current: QueueProposalVM | null = batchLeft !== null ? null : (cardQueue[0] ?? null);
   const showBatch = !current && !batchDismissed && batch.length >= 2;
   const atStake = remaining.reduce((a, p) => a + (p.dollar_impact || 0), 0);
   // Session-stable counter: totals don't rewind when refresh() drops an
