@@ -83,6 +83,8 @@ export type DashboardSession = {
   sessionId: string;
   emailVerified: boolean;
   onboardedAt: string | null;
+  /** users.created_at for first-party accounts; null for Shopify sessions. */
+  accountCreatedAt: string | null;
 };
 
 export async function getSessionFromRequest(
@@ -94,7 +96,7 @@ export async function getSessionFromRequest(
   const sb = getSupabase();
   const { data, error } = await sb
     .from("dashboard_sessions")
-    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at, user:users(email_verified, onboarded_at)")
+    .select("id, shop_id, shop_domain, user_id, expires_at, revoked_at, user:users(email_verified, onboarded_at, created_at)")
     .eq("token_hash", hashSessionToken(raw))
     .maybeSingle();
   if (error) throw error;
@@ -129,6 +131,10 @@ export async function getSessionFromRequest(
       data.user_id == null
         ? null
         : ((data.user as { onboarded_at?: string | null } | null)?.onboarded_at ?? null),
+    accountCreatedAt:
+      data.user_id == null
+        ? null
+        : ((data.user as { created_at?: string | null } | null)?.created_at ?? null),
   };
 }
 

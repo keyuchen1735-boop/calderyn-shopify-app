@@ -11,6 +11,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
 import { validateAssistantInput } from "~/lib/assistant/request.server";
 import { AssistantTurnError, runConversationTurn } from "~/lib/assistant/turn.server";
+import { checkAiQuota, quotaTrusted } from "~/lib/ai-quota.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -34,7 +35,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(`assistant:${session.shopId}`, 10, 60_000))) {
     return jsonError(429, "rate_limited", "Too many messages. Please wait a moment.");
   }
-
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -44,6 +44,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const parsed = validateAssistantInput(body.message, body.conversation_id);
   if (!parsed.ok) return jsonError(422, parsed.code.toLowerCase(), parsed.message);
+  // Daily cap + cooldown on top of the burst limit — after validation so
+  // rejected requests never burn the day's allowance (see ai-quota.server).
+  const quota = await checkAiQuota({
+    shopId: session.shopId,
+    feature: "assistant",
+    trusted: quotaTrusted(session),
+  });
+  if (!quota.allowed) return jsonError(429, quota.code, quota.message);
 
   return dashboardJson(async () => {
     try {
