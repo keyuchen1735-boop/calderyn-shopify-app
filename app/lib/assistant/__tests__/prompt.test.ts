@@ -9,7 +9,9 @@ describe("buildSystemPrompt", () => {
     expect(blocks[0].text).toBe(ASSISTANT_SYSTEM_INSTRUCTIONS);
     expect(blocks[0].cache_control).toEqual({ type: "ephemeral" });
 
-    expect(blocks[1].text).toBe("SNAPSHOT-XYZ");
+    // Snapshot is fenced as data so shop-derived text can't read as
+    // instructions; the content itself must ride inside unchanged.
+    expect(blocks[1].text).toBe("<shop_snapshot>\nSNAPSHOT-XYZ\n</shop_snapshot>");
     expect(blocks[1].cache_control).toEqual({ type: "ephemeral" });
   });
 
