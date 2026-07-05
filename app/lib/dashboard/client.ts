@@ -607,6 +607,17 @@ export async function resetDemoData(): Promise<DemoResetSummary> {
   return data.summary;
 }
 
+/** Permanently delete the signed-in first-party account (and its store when the
+ * user is its sole member). Irreversible; the caller collects a typed "DELETE"
+ * confirmation, which the server re-validates. On success the session cookie is
+ * cleared server-side — the caller should hard-navigate to a signed-out page. */
+export async function deleteAccount(): Promise<void> {
+  await apiSend<{ ok: boolean }>("POST", "/dashboard/api/account", {
+    intent: "delete",
+    confirm: "DELETE",
+  });
+}
+
 export async function fetchConsent(): Promise<boolean> {
   const data = await apiGet<{ consent: boolean }>("/dashboard/api/consent");
   return Boolean(data.consent);

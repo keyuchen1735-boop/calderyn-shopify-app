@@ -3,16 +3,9 @@ import { redirect } from "@remix-run/node";
 import {
   getSessionFromRequest,
   revokeSession,
-  clearSessionCookieHeader,
+  authClearCookieHeaders,
 } from "~/lib/dashboard/session.server";
 import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import {
-  expireCookieHeader,
-  clearShopHintCookieHeader,
-  STATE_COOKIE_NAME,
-  GOAUTH_COOKIE,
-} from "~/lib/dashboard/cookies.server";
-import { SHOP_HINT_COOKIE_NAME as CONNECT_SHOP_HINT } from "~/lib/connect-deeplink.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -28,16 +21,12 @@ export async function action({ request }: ActionFunctionArgs) {
     /* best effort — the cookies are cleared regardless */
   }
 
-  // Logout means the browser keeps no auth-adjacent state: the session token,
-  // both remembered-shop hints (dashboard + connector surfaces), and any
-  // in-flight OAuth state nonces — an abandoned authorize tab must not be able
-  // to re-mint a session after an explicit sign-out.
+  // Logout means the browser keeps no auth-adjacent state: an abandoned
+  // authorize tab must not be able to re-mint a session after an explicit
+  // sign-out. authClearCookieHeaders() is the one teardown shared with account
+  // deletion.
   const headers = new Headers();
-  headers.append("Set-Cookie", clearSessionCookieHeader());
-  headers.append("Set-Cookie", clearShopHintCookieHeader());
-  headers.append("Set-Cookie", expireCookieHeader(CONNECT_SHOP_HINT));
-  headers.append("Set-Cookie", expireCookieHeader(STATE_COOKIE_NAME));
-  headers.append("Set-Cookie", expireCookieHeader(GOAUTH_COOKIE));
+  for (const cookie of authClearCookieHeaders()) headers.append("Set-Cookie", cookie);
 
   // Document form POSTs need a page to land on, not a JSON body; fetch callers
   // (Accept: */* or application/json) keep the JSON contract.

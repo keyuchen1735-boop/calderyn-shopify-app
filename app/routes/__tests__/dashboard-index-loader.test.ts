@@ -23,7 +23,8 @@ describe("dashboard splat loader", () => {
     stubProducts([{ id: "p1" }]);
     const { loader } = await import("../dashboard.$");
     const res = await loader({ request: new Request("https://app.x/dashboard") } as never);
-    expect(res).toMatchObject({ storeLabel: "Acme Goods", shopDomain: null });
+    // canDeleteAccount tracks session.userId — a first-party account here.
+    expect(res).toMatchObject({ storeLabel: "Acme Goods", shopDomain: null, canDeleteAccount: true });
   });
 
   it("falls back to shop_domain for a Shopify shop", async () => {
