@@ -22,9 +22,11 @@ vi.mock("../../po/draft.server", () => ({
 }));
 
 const getOrgMode = vi.hoisted(() => vi.fn());
+const shopHasShopifyConnection = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: never[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: never[]) => shopHasShopifyConnection(...a),
 }));
 
 const getOwnedVariantPricing = vi.hoisted(() => vi.fn());
@@ -107,6 +109,7 @@ describe("executeAdjustPriceAlertAction", () => {
     }));
     getCurrentUnitCostCents.mockResolvedValue(800);
     getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true); // default: a Shopify-connected shop
     getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
     setOwnedVariantPrice.mockResolvedValue({ priorPriceCents: 1500 });
   });
@@ -277,6 +280,7 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
     }));
     getCurrentUnitCostCents.mockResolvedValue(800);
     getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true); // default: a Shopify-connected shop
     getOwnedVariantPricing.mockResolvedValue({ variantId: "sku-1", currentPriceCents: 1500 });
     setOwnedVariantPrice.mockResolvedValue({ priorPriceCents: 1500 });
   });
@@ -348,14 +352,27 @@ describe("executeAdjustPriceAlertAction — org_mode routing", () => {
     expect(res.outcome).toBe("succeeded");
   });
 
-  it("mirror: a null admin fails with shopify_required rather than dereferencing null", async () => {
+  it("mirror + Shopify-connected: a null admin fails with shopify_required rather than dereferencing null", async () => {
     getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
     const c = client(alert({}));
     await expect(
       executeAdjustPriceAlertAction({ ...base, client: c as never, admin: null, sb: okSb() }),
     ).rejects.toMatchObject({ code: "shopify_required", status: 422 });
     expect(setVariantPrice).not.toHaveBeenCalled();
     expect(c.actions.execute).not.toHaveBeenCalled();
+  });
+
+  it("native shop (no Shopify connection): writes the owned price at ANY org_mode, never Shopify", async () => {
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(false);
+    const c = client(alert({}));
+    const res = await executeAdjustPriceAlertAction({ ...base, client: c as never, admin: null, sb: okSb() });
+    expect(setOwnedVariantPrice).toHaveBeenCalledWith("shop-1", "sku-1", 1700);
+    expect(setVariantPrice).not.toHaveBeenCalled();
+    expect(readVariantPrice).not.toHaveBeenCalled();
+    expect(c.actions.execute).toHaveBeenCalledWith(expect.objectContaining({ writeTarget: "owned_sot" }));
+    expect(res.outcome).toBe("succeeded");
   });
 
   it("dual_run: writes Shopify AND mirrors the applied price into the owned catalog", async () => {

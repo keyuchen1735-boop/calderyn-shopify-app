@@ -5,6 +5,7 @@ import {
   isLegalOrgTransition,
   assertLegalOrgTransition,
   getOrgMode,
+  shopHasShopifyConnection,
   transitionOrgMode,
   type OrgMode,
 } from "../org-mode.server";
@@ -37,6 +38,7 @@ vi.mock("../go-live.server", () => ({
 function makeSb(opts: {
   shopFound?: boolean;
   shopMode?: string | null;
+  shopDomain?: string | null;
   updateRows?: Array<{ id: string }>;
   transitionRow?: Record<string, unknown>;
   onInsert?: (row: unknown) => void;
@@ -58,7 +60,10 @@ function makeSb(opts: {
         return b;
       },
       maybeSingle: async () => ({
-        data: opts.shopFound === false ? null : { org_mode: opts.shopMode ?? null },
+        data:
+          opts.shopFound === false
+            ? null
+            : { org_mode: opts.shopMode ?? null, shop_domain: opts.shopDomain ?? null },
         error: null,
       }),
       single: async () => ({ data: opts.transitionRow ?? { id: "t1" }, error: null }),
@@ -118,6 +123,23 @@ describe("getOrgMode", () => {
   it("throws on an unknown stored mode", async () => {
     currentSb = makeSb({ shopMode: "bogus" });
     await expect(getOrgMode("shop-1")).rejects.toThrow(/unknown org_mode/);
+  });
+});
+
+describe("shopHasShopifyConnection", () => {
+  it("true when the shop has a shop_domain (a connected Shopify store)", async () => {
+    currentSb = makeSb({ shopDomain: "acme.myshopify.com" });
+    expect(await shopHasShopifyConnection("shop-1")).toBe(true);
+  });
+
+  it("false for a native shop (no shop_domain) — Shopify is import-only, so it stays owned", async () => {
+    currentSb = makeSb({ shopDomain: null });
+    expect(await shopHasShopifyConnection("shop-1")).toBe(false);
+  });
+
+  it("throws when the shop is absent", async () => {
+    currentSb = makeSb({ shopFound: false });
+    await expect(shopHasShopifyConnection("nope")).rejects.toThrow(/not found/);
   });
 });
 

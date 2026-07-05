@@ -104,6 +104,10 @@ vi.mock("../../../shopify.server", () => ({
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getOrgMode: vi.fn(async () => "mirror"),
+  // These routes cover Shopify-connected shops (shopDomain set); pin the connection
+  // probe so the executors take the Shopify write branch. Native-shop routing (no
+  // connection → owned at any mode) is covered in the executor unit tests.
+  shopHasShopifyConnection: vi.fn(async () => true),
 }));
 
 // Mirrors the transfer plan the regional_spend_starved_stock detector emits

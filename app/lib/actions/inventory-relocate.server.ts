@@ -17,7 +17,7 @@ import {
   priorExecutionForKey,
   type ExecutedAudit,
 } from "./execute.server";
-import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { applyOwnedInventoryMove } from "./owned-writes.server";
 
 export interface InventoryRelocationInput {
@@ -136,9 +136,12 @@ export async function executeInventoryRelocation(
   // into the owned engine best-effort. A failure on the authoritative branch is recorded
   // visibly as a failed audit row (rule 12), never a fake success; a dual_run mirror failure
   // never fails the action — it is recorded on the audit row instead.
+  // A NATIVE shop (no connected Shopify store) is always owned-authoritative — Shopify is
+  // import-only for it. A Shopify-connected shop follows the cutover state machine.
   const orgMode = await getOrgMode(shopId);
-  const owned = writesToOwned(orgMode);
-  const dual = dualWrites(orgMode);
+  const hasShopify = await shopHasShopifyConnection(shopId);
+  const owned = !hasShopify || writesToOwned(orgMode);
+  const dual = hasShopify && dualWrites(orgMode);
   let outcome: ExecutedAudit["outcome"] = "succeeded";
   let lastError: string | null = null;
   let operationId: string | null = null;

@@ -18,7 +18,7 @@ import { readVariantPrice, setVariantPrice } from "../shopify/price.server";
 import type { AdminGraphqlClient } from "../shopify/inventory.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import type { AlertActionClient } from "./alert-action.server";
-import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { getOwnedVariantPricing, setOwnedVariantPrice } from "./owned-writes.server";
 
 export interface ResolvedSkuVariant {
@@ -107,9 +107,12 @@ export async function executeAdjustPriceAlertAction(opts: {
   // exactly as before, and `dual_run` ALSO mirrors the applied price into the owned catalog
   // best-effort. The guardrail cap is anchored on whichever current price we read, so the
   // safety envelope is identical on both branches — only the WRITE target changes.
+  // A NATIVE shop (no connected Shopify store) is always owned-authoritative — Shopify is
+  // import-only for it. A Shopify-connected shop follows the cutover state machine.
   const orgMode = await getOrgMode(shopId);
-  const owned = writesToOwned(orgMode);
-  const dual = dualWrites(orgMode);
+  const hasShopify = await shopHasShopifyConnection(shopId);
+  const owned = !hasShopify || writesToOwned(orgMode);
+  const dual = hasShopify && dualWrites(orgMode);
 
   // `current.priceCents` anchors the suggestion + cap; `ownedVariantId` / `shopifyTarget`
   // carry the write handle for the branch we're on.

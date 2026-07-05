@@ -84,6 +84,28 @@ export function dualWrites(mode: OrgMode): boolean {
   return mode === "dual_run";
 }
 
+/**
+ * True iff the shop has a connected Shopify store (a non-null shop_domain).
+ *
+ * Platform model: a NATIVE shop (first-party signup that never connected Shopify) has no
+ * shop_domain. Shopify is import-only for it — there is nothing to write BACK to — so it is
+ * ALWAYS owned-authoritative for store mutations, regardless of org_mode. The org_mode
+ * state machine (mirror/importing/dual_run keeping Shopify authoritative) only makes sense
+ * for a shop being migrated OFF a real Shopify store; a native shop has nothing to mirror.
+ * Store-action executors combine this with getOrgMode: `owned = !hasShopify ||
+ * writesToOwned(orgMode)`, `dual = hasShopify && dualWrites(orgMode)`.
+ *
+ * Throws if the shop is absent (never guess at the routing target).
+ */
+export async function shopHasShopifyConnection(shopId: string): Promise<boolean> {
+  if (!shopId) throw new Error("shopId is required");
+  const sb = getSupabase();
+  const { data, error } = await sb.from("shops").select("shop_domain").eq("id", shopId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`shop ${shopId} not found`);
+  return (data as Record<string, unknown>).shop_domain != null;
+}
+
 /** Read a shop's current mode. Defaults to `mirror` when the column is null; throws if the
  *  shop is absent or holds an unknown mode (never guess at the routing target). */
 export async function getOrgMode(shopId: string): Promise<OrgMode> {
