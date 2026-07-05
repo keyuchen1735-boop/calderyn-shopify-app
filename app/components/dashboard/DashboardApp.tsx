@@ -5,6 +5,7 @@ import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { bootDashboardData } from "~/lib/dashboard/boot";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
@@ -184,10 +185,15 @@ export default function DashboardApp({
   shopDomain,
   storeLabel,
   demoMode = false,
+  hasCatalog,
 }: {
   shopDomain: string | null;
   storeLabel: string;
   demoMode?: boolean;
+  /** Loader-side product-existence hint — seeds Home's first paint (see
+   *  DashboardCtx.hasCatalog). Required so the loader stays the single owner
+   *  of the fallback policy (its probe-error default). */
+  hasCatalog: boolean;
 }) {
   // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
   // localStorage. Initialised to true so the server render and first client render
@@ -418,35 +424,38 @@ export default function DashboardApp({
   }, [nav.screen, nav.param, campaigns]);
 
   // ----- initial load + refresh -----
-  // Everything runs concurrently. Only fetchAlerts needs campaigns (to derive
-  // campaign_id), so it chains off the in-flight campaigns promise instead of
-  // the whole batch waiting a full round-trip for it (same shape as live.ts).
+  // Progressive: every endpoint runs concurrently and each state slice applies
+  // the moment its own fetch resolves (boot.ts), so the Home's deck, gauge and
+  // strip fill in as their data lands instead of the whole screen waiting for
+  // the slowest call. `booted` flips only after a load completes with every
+  // slice applied — the honest empty-states ("All clear", "standing by") and
+  // the autopilot kickoff key off it, because a partially failed boot must
+  // never be presented (or acted on) as a complete picture.
+  const [booted, setBooted] = useState(false);
+  // Overlapping runs (a focus-refresh landing mid-boot) must not interleave:
+  // per-slice applies from a superseded run are dropped so state can't mix
+  // generations (old alerts beside new queue).
+  const loadGen = useRef(0);
   const load = useCallback(async () => {
-    const campsP = client.fetchCampaigns();
-    const [camps, ov, al, au, gr, integ, co, cal, aq, le] = await Promise.all([
-      campsP,
-      client.fetchOverview(),
-      campsP.then((c) => client.fetchAlerts(undefined, c)),
-      client.fetchAudit(),
-      client.fetchGuardrails(),
-      client.fetchIntegrations(),
-      client.fetchConsent(),
-      client.fetchCalibration(),
-      client.fetchActionQueue(),
-      // The Overview hero embeds the Live Engine; a failure here must not blank
-      // the whole dashboard.
-      client.fetchLiveEngine().catch(() => null),
-    ]);
-    setCampaigns(camps);
-    setOverview(ov);
-    setAlerts(al);
-    setAudit(au);
-    setGuardrails(gr);
-    setIntegrations(integ);
-    setConsent(co);
-    setCalibration(cal);
-    setActionQueue(aq);
-    setLiveEngine(le);
+    const gen = ++loadGen.current;
+    const fresh =
+      <T,>(set: (v: T) => void) =>
+      (v: T) => {
+        if (loadGen.current === gen) set(v);
+      };
+    await bootDashboardData({
+      campaigns: fresh(setCampaigns),
+      overview: fresh(setOverview),
+      alerts: fresh(setAlerts),
+      audit: fresh(setAudit),
+      guardrails: fresh(setGuardrails),
+      integrations: fresh(setIntegrations),
+      consent: fresh(setConsent),
+      calibration: fresh(setCalibration),
+      actionQueue: fresh(setActionQueue),
+      liveEngine: fresh(setLiveEngine),
+    });
+    if (loadGen.current === gen) setBooted(true);
   }, []);
 
   useEffect(() => {
@@ -534,10 +543,13 @@ export default function DashboardApp({
   // it's closed). One banner per landed action, then re-pull audit + alerts so
   // Action history shows the new "Autopilot" rows and resolved alerts drop.
   // Fires ONCE per mount (autopilotRan ref): the run is idempotent server-side,
-  // and the live poller already streams any later cron actions.
+  // and the live poller already streams any later cron actions. Gated on
+  // `booted` (a fully-successful load), not `loading` — with the progressive
+  // boot, guardrails can be set by a PARTIALLY failed load, and a broken boot
+  // must never trigger real actions.
   const autopilotRan = useRef(false);
   useEffect(() => {
-    if (autopilotRan.current || loading || !guardrails) return;
+    if (autopilotRan.current || !booted || !guardrails) return;
     if (!guardrails.autopilot_enabled) return;
     autopilotRan.current = true;
     (async () => {
@@ -563,7 +575,7 @@ export default function DashboardApp({
         toast(msg, "warn", "critical");
       }
     })();
-  }, [loading, guardrails, campaigns, toast]);
+  }, [booted, guardrails, campaigns, toast]);
 
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
@@ -997,6 +1009,7 @@ export default function DashboardApp({
     shopDomain,
     storeLabel,
     demoMode,
+    hasCatalog,
     nav,
     navigate,
     setNightMode,
@@ -1024,6 +1037,7 @@ export default function DashboardApp({
     refresh,
     refreshLiveEngine,
     loading,
+    booted,
   };
 
   // CSS tokens applied on .cd-root. --accent is deliberately NOT set here: an

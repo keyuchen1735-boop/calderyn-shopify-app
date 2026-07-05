@@ -84,6 +84,11 @@ export interface DashboardCtx {
   storeLabel: string;
   /** True for seeded demo shops (shops.demo_mode) — gates the Settings demo-reset card. */
   demoMode: boolean;
+  /** Server-side hint from the route loader: the shop has at least one catalog
+   *  product. Decides Home's FIRST paint (established layout vs setup guide)
+   *  before the client's catalog fetch confirms — the fetch stays authoritative
+   *  once it lands. */
+  hasCatalog: boolean;
   /** Current screen + optional route param. */
   nav: NavState;
   /** Navigate to a screen; pushes the dedicated URL and scrolls main to top.
@@ -170,4 +175,9 @@ export interface DashboardCtx {
    *  reconcile a single feature-autonomy toggle without refetching everything. */
   refreshLiveEngine: () => void;
   loading: boolean;
+  /** True once a load has completed with EVERY slice applied. Distinct from
+   *  !loading: a failed boot also flips loading off, but must not be presented
+   *  as a complete picture — honest empty-states ("All clear", "standing by")
+   *  key off `booted` so they can never be claimed off missing data. */
+  booted: boolean;
 }

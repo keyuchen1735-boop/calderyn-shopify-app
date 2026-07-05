@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { Btn, Card, TickGauge } from "../ui";
+import { Btn, Card, SkelBar, TickGauge } from "../ui";
 import { hasEngineSignals } from "../first-run";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
@@ -102,11 +102,12 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   }, [commerce]);
 
   // catalogTotal is the first-run signal: 0 = brand-new store, null = not yet
-  // known. While null, both the setup guide AND the veteran sections stay off —
-  // painting one layout and swapping it wholesale when the count lands reads
-  // as a bug (progressive fill is fine, bait-and-switch is not). Errors keep
-  // it null so the guide never shows on a transient failure. Fetched directly
-  // (not via prefetch) so returning after adding a product flips the state.
+  // fetched. Until the fetch lands, the loader's `hasCatalog` hint decides the
+  // layout — so the FIRST paint (including SSR) is already the right page
+  // (established layout vs setup guide) instead of a void that swaps in
+  // wholesale seconds later. The client fetch stays authoritative once it
+  // resolves (returning after adding a product flips the state); errors keep
+  // the hint's verdict, so the guide never flashes on a transient failure.
   const seededCatalog = cachedScreenData<{ products: ProductSummaryVM[]; total: number }>(
     catalogCacheKey("", undefined),
   );
@@ -120,14 +121,13 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         if (alive) setCatalogTotal(p.total);
       })
       .catch(() => {
-        // Keep whatever the cache seeded; first-run stays undecided on errors.
+        // Keep whatever the cache or the loader hint decided.
       });
     return () => {
       alive = false;
     };
   }, []);
-  const catalogKnown = catalogTotal !== null;
-  const freshStore = catalogTotal === 0;
+  const freshStore = catalogTotal !== null ? catalogTotal === 0 : !app.hasCatalog;
 
   // ---- decision deck ----
   // The queue is triaged, not listed: the biggest asks get one card at a time,
@@ -272,7 +272,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
 
   const subline = freshStore
     ? `Let's get ${app.storeLabel} ready to sell.`
-    : app.loading
+    : !app.booted
       ? ""
       : autoToday.count > 0
         ? `I handled ${autoToday.count} ${autoToday.count === 1 ? "thing" : "things"} today and saved ${money(autoToday.cents)}.`
@@ -287,27 +287,43 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
 
   const engine = app.liveEngine;
   const pct = app.calibration?.pct ?? engine?.calibrationPct ?? null;
-  // The old card gated its zero-state on !loading too — without it, every
-  // established store flashes "standing by" while the first fetch is in flight.
-  const dormant = !app.loading && (freshStore || !hasEngineSignals(app));
+  // Zero-states are claims about the data, so they require the FULL picture
+  // (app.booted): keyed on !loading alone, an in-flight or partially failed
+  // boot would flash "standing by" at every established store.
+  const dormant = app.booted && (freshStore || !hasEngineSignals(app));
   const graduated = !dormant && pct !== null && pct >= 100;
   const engineOn = Boolean(engine?.autopilotEnabled) && !dormant;
   const trace = engine?.trace.slice(0, 2) ?? [];
+
+  // Until a load has delivered the full picture and no ask has landed yet, the
+  // deck holds a skeleton card — the real page structure, honestly loading —
+  // never a premature "All clear" and never a void. Keyed on booted (not
+  // loading) so a FAILED boot keeps the skeleton + error toast instead of
+  // claiming an all-clear off data that never arrived.
+  const deckLoading = !app.booted && !current && !showBatch;
 
   // ---- deck motion ----
   // Advancing the deck slides the incoming card in from the right (enter-only:
   // React unmounts the outgoing card instantly, and the enter slide is the
   // signature move). The first paint of the deck lands statically — only a
-  // change of the current card animates. Reduced motion lands on final state.
+  // change of the current card animates; the skeleton→content swap counts as
+  // first paint, not an advance. Reduced motion lands on final state.
   const deckRef = useRef<HTMLDivElement | null>(null);
-  const deckShown = catalogKnown && !freshStore;
-  const deckKey = !deckShown ? null : current ? current.alertId : showBatch ? "batch" : "done";
+  const deckKey = freshStore
+    ? null
+    : deckLoading
+      ? "loading"
+      : current
+        ? current.alertId
+        : showBatch
+          ? "batch"
+          : "done";
   const lastDeckKey = useRef<string | null>(null);
   useGSAP(
     () => {
       const prev = lastDeckKey.current;
       lastDeckKey.current = deckKey;
-      if (!deckKey || prev === null || prev === deckKey || reduced()) return;
+      if (!deckKey || prev === null || prev === "loading" || prev === deckKey || reduced()) return;
       gsap.from(".cd-deck-card", {
         x: 26,
         autoAlpha: 0,
@@ -351,10 +367,18 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     <div className="cd-screen cd-home" data-screen-label="Home">
       <header>
         <h1 className="cd-h1">{freshStore ? "Welcome." : `${greet}.`}</h1>
-        {subline && <p className="cd-sub">{subline}</p>}
+        {subline ? (
+          <p className="cd-sub">{subline}</p>
+        ) : (
+          // Reserve the subline's line while the agent's one-liner loads so
+          // the whole page doesn't shift down when it lands.
+          <p className="cd-sub">
+            <SkelBar width={260} maxWidth="70%" />
+          </p>
+        )}
       </header>
 
-      {catalogKnown && !freshStore && (
+      {!freshStore && (
         <Card className="cd-hmet" pad={false} onClick={() => app.navigate("analytics", null, "live")}>
           <div className="cd-hmet-cell">
             <span className="cd-hmet-l">Sales · today</span>
@@ -463,9 +487,26 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Card>
       )}
 
-      {catalogKnown && !freshStore && (
+      {!freshStore && (
         <div className="cd-deck" ref={deckRef}>
-          {current ? (
+          {deckLoading ? (
+            // No complete load yet and no ask landed — hold the deck's shape
+            // with a shimmer card instead of claiming "All clear" before we know.
+            <div className="cd-deck-card" aria-hidden="true">
+              <div className="cd-deck-top">
+                <SkelBar width={110} />
+              </div>
+              <div className="cd-deck-title">
+                <SkelBar width="52%" height={16} />
+              </div>
+              <div className="cd-deck-sub">
+                <SkelBar width="78%" />
+              </div>
+              <div className="cd-deck-foot">
+                <SkelBar width={96} height={30} radius={15} />
+              </div>
+            </div>
+          ) : current ? (
             <>
               {stacked > 2 && <div className="cd-deck-sh s2" />}
               {stacked > 1 && <div className="cd-deck-sh s1" />}
@@ -545,8 +586,15 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       <Card className="cd-hm-engine" pad={false} onClick={() => app.navigate("autopilot")}>
         <div className="cd-hm-engine-in">
           {/* A dormant engine shows an empty dial even when a stale calibration
-              row exists — "standing by" and a lit gauge contradict each other. */}
-          <TickGauge pct={dormant ? 0 : (pct ?? 0)} size={108} sweepFrom0 />
+              row exists — "standing by" and a lit gauge contradict each other.
+              While the boot hasn't answered yet, the readout is a dash: a lit
+              "0%" before data reads as a real (alarming) score. */}
+          <TickGauge
+            pct={dormant ? 0 : (pct ?? 0)}
+            size={108}
+            sweepFrom0
+            pending={!app.booted && pct === null}
+          />
           <div className="cd-hm-engine-body">
             <div className="cd-hm-engine-head">
               <LiveMark on={engineOn} />
@@ -595,7 +643,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                 ))
               ) : (
                 <div className="cd-hm-scanline">
-                  {app.loading ? "Connecting to the engine" : "Recent scans and actions land here."}
+                  {app.booted ? "Recent scans and actions land here." : "Connecting to the engine"}
                 </div>
               )}
             </div>

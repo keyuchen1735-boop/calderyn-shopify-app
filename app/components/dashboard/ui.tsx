@@ -623,15 +623,19 @@ const TICK_GEOMETRY = Array.from({ length: 60 }, (_, i) => {
  *  calibration panel. With `sweepFrom0`, the dial sweeps 0 → pct (arc, knob,
  *  tick lighting and the % readout together) on reveal and again whenever pct
  *  changes; without it, the existing CSS-transition behavior is untouched.
- *  Reduced motion lands directly on the final value. */
+ *  Reduced motion lands directly on the final value. `pending` renders a dash
+ *  readout for a dial whose value hasn't loaded yet — a lit "0%" would read as
+ *  a real (alarming) score. */
 export function TickGauge({
   pct,
   size,
   sweepFrom0 = false,
+  pending = false,
 }: {
   pct: number;
   size: number;
   sweepFrom0?: boolean;
+  pending?: boolean;
 }) {
   const target = Math.max(0, Math.min(100, pct));
   const [swept, setSwept] = useState(0);
@@ -707,8 +711,14 @@ export function TickGauge({
       </svg>
       <div className="cd-gauge-c">
         <div className="cd-gauge-num">
-          <b>{Math.round(clamped)}</b>
-          <i>%</i>
+          {pending ? (
+            <b>—</b>
+          ) : (
+            <>
+              <b>{Math.round(clamped)}</b>
+              <i>%</i>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -755,6 +765,28 @@ export function ToastHost({ toasts }: { toasts: Toast[] }) {
 }
 
 /* ---------- Loading skeleton ---------- */
+/** Single inline shimmer bar for in-card loading placeholders (a subline, a
+ *  deck-card row) — the inline sibling of TableSkeleton below. */
+export function SkelBar({
+  width,
+  height = 12,
+  radius,
+  maxWidth,
+}: {
+  width: number | string;
+  height?: number;
+  radius?: number;
+  maxWidth?: string;
+}) {
+  return (
+    <span
+      className="cd-skel-bar"
+      aria-hidden="true"
+      style={{ display: "inline-block", verticalAlign: "middle", width, height, maxWidth, borderRadius: radius }}
+    />
+  );
+}
+
 // Shimmering table-shaped rows for list screens while their fetch is in
 // flight. Reads as "content is coming" instead of a bare centered spinner.
 export function TableSkeleton({ rows = 7 }: { rows?: number }) {
