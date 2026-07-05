@@ -108,10 +108,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
-    if (!session.shopDomain) {
-      throw jsonError(422, "shopify_required", "Connect a Shopify store to use this action.");
-    }
-    const { admin } = await unauthenticated.admin(session.shopDomain);
+    // reallocate_inventory and adjust_price route by the shop's cutover mode: at
+    // `live` the write lands in Calderyn's own engine and needs no Shopify admin,
+    // so an owned-native shop (no connected Shopify store) can still run them. We
+    // therefore resolve the Shopify Admin client only when the shop has one and let
+    // each executor demand it on its Shopify-bound branch (they surface a clear
+    // shopify_required error if it's genuinely missing). discontinue_sku always
+    // archives on live Shopify, so it still requires a connected store here.
+    const admin = session.shopDomain
+      ? (await unauthenticated.admin(session.shopDomain)).admin
+      : null;
     if (kind === "adjust_price") {
       // new_price_cents is an optional merchant override; omit → engine suggestion.
       // The executor bounds either to ±the price cap and reads the live price.
@@ -133,6 +139,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "discontinue_sku") {
+      if (!admin) {
+        // Discontinue archives the product on live Shopify — there is no owned
+        // equivalent yet, so this action requires a connected store (rule 12).
+        throw jsonError(422, "shopify_required", "Connect a Shopify store to use this action.");
+      }
       const { auditId, outcome, acknowledged } = await executeDiscontinueAlertAction({
         client,
         admin,

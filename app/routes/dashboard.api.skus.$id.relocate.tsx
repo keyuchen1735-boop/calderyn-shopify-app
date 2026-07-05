@@ -39,13 +39,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const skuId = String(params.id ?? "");
   if (!skuId) return jsonError(422, "missing_sku_id");
 
-  if (!session.shopDomain) {
-    return jsonError(422, "shopify_required", "Connect a Shopify store to relocate inventory.");
-  }
-  const shopDomain = session.shopDomain;
-
   return dashboardJson(async () => {
-    const { admin } = await unauthenticated.admin(shopDomain);
+    // The relocation routes by the shop's cutover mode: at `live` the move lands in
+    // Calderyn's own inventory engine and needs no Shopify admin, so an owned-native
+    // shop (no connected store) can relocate too. Resolve the Shopify Admin client
+    // only when the shop has one; the executor demands it on its Shopify-bound branch.
+    const admin = session.shopDomain
+      ? (await unauthenticated.admin(session.shopDomain)).admin
+      : null;
     try {
       const result = await executeInventoryRelocation(
         session.shopId,

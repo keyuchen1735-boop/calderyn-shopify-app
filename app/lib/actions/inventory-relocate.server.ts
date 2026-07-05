@@ -17,7 +17,7 @@ import {
   priorExecutionForKey,
   type ExecutedAudit,
 } from "./execute.server";
-import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { applyOwnedInventoryMove } from "./owned-writes.server";
 
 export interface InventoryRelocationInput {
@@ -39,7 +39,8 @@ export class RelocationError extends Error {
       | "SAME_LOCATION"
       | "SKU_NOT_FOUND"
       | "INVALID_TRANSFER_PLAN"
-      | "QTY_EXCEEDS_AVAILABLE",
+      | "QTY_EXCEEDS_AVAILABLE"
+      | "SHOPIFY_REQUIRED",
     message: string,
   ) {
     super(message);
@@ -51,7 +52,9 @@ export async function executeInventoryRelocation(
   shopId: string,
   input: InventoryRelocationInput,
   sb: SupabaseClient,
-  admin: AdminGraphqlClient,
+  /** Shopify Admin client, or null for an owned-native shop (no connected store).
+   *  Only used on the Shopify write branch; the owned (`live`) branch never touches it. */
+  admin: AdminGraphqlClient | null,
 ): Promise<ExecutedAudit> {
   // 1. Idempotency — replayed key returns the REAL prior outcome with no side effects.
   const prior = await priorExecutionForKey(shopId, input.idempotencyKey, sb);
@@ -133,9 +136,12 @@ export async function executeInventoryRelocation(
   // into the owned engine best-effort. A failure on the authoritative branch is recorded
   // visibly as a failed audit row (rule 12), never a fake success; a dual_run mirror failure
   // never fails the action — it is recorded on the audit row instead.
+  // A NATIVE shop (no connected Shopify store) is always owned-authoritative — Shopify is
+  // import-only for it. A Shopify-connected shop follows the cutover state machine.
   const orgMode = await getOrgMode(shopId);
-  const owned = writesToOwned(orgMode);
-  const dual = dualWrites(orgMode);
+  const hasShopify = await shopHasShopifyConnection(shopId);
+  const owned = !hasShopify || writesToOwned(orgMode);
+  const dual = hasShopify && dualWrites(orgMode);
   let outcome: ExecutedAudit["outcome"] = "succeeded";
   let lastError: string | null = null;
   let operationId: string | null = null;
@@ -158,6 +164,12 @@ export async function executeInventoryRelocation(
       ownedParams.owned_from_location_id = from.id;
       ownedParams.owned_to_location_id = to.id;
     } else {
+      if (!admin) {
+        // Shopify-authoritative mode but no connected store; owned-native shops route
+        // to the owned branch above. Throw a validation error (the catch below rethrows
+        // RelocationError, so this records no audit row — rule 12), not a failed move.
+        throw new RelocationError("SHOPIFY_REQUIRED", "Connect a Shopify store to relocate inventory.");
+      }
       ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, {
         inventoryItemId: inventoryItemId,
         fromLocationId: input.fromLocationId,
@@ -186,6 +198,10 @@ export async function executeInventoryRelocation(
       }
     }
   } catch (err) {
+    // A RelocationError is a validation/config failure (e.g. no connected store), not a
+    // move that was attempted and failed — surface it with no audit row, like the checks
+    // above the try, rather than recording a fake failed move (rule 12).
+    if (err instanceof RelocationError) throw err;
     outcome = "failed";
     lastError = err instanceof Error ? err.message : String(err);
   }

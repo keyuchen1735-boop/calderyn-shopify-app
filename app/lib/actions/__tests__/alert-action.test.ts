@@ -16,9 +16,11 @@ vi.mock("../snooze.server", () => ({
   snoozeAlert: (...a: unknown[]) => snoozeAlert(...a),
 }));
 const getOrgMode = vi.hoisted(() => vi.fn());
+const shopHasShopifyConnection = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: unknown[]) => shopHasShopifyConnection(...a),
 }));
 const resolveOwnedMoveTarget = vi.hoisted(() => vi.fn());
 const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
@@ -104,6 +106,7 @@ beforeEach(() => {
   acknowledgeAlert.mockResolvedValue(true);
   snoozeAlert.mockResolvedValue(true);
   getOrgMode.mockResolvedValue("mirror");
+  shopHasShopifyConnection.mockResolvedValue(true); // default: a Shopify-connected shop
   resolveOwnedMoveTarget.mockResolvedValue({
     variantId: "var-1",
     fromLocationId: "loc-9",
@@ -140,6 +143,45 @@ describe("executeInventoryAlertAction — org_mode routing", () => {
         }),
         writeTarget: "owned_sot",
       }),
+    );
+  });
+
+  it("live: moves stock with a null admin (owned-native shop, no connected Shopify store)", async () => {
+    getOrgMode.mockResolvedValue("live");
+    // An owned-native shop has no Shopify session, so the route passes admin: null.
+    // The owned branch must never touch it.
+    const res = await run("reallocate_inventory", { admin: null });
+    expect(res.outcome).toBe("succeeded");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith(
+      expect.objectContaining({ variantId: "var-1", quantity: 21 }),
+    );
+  });
+
+  it("mirror + Shopify-connected: a null admin fails with shopify_required rather than dereferencing null", async () => {
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
+    await expect(run("reallocate_inventory", { admin: null })).rejects.toMatchObject({
+      code: "shopify_required",
+      status: 422,
+    });
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(actionsExecute).not.toHaveBeenCalled();
+  });
+
+  it("native shop (no Shopify connection): routes to the owned engine at ANY org_mode, never Shopify", async () => {
+    // A native shop has nothing to write back to Shopify, so even at the default `mirror`
+    // it must use the owned engine — not error with shopify_required.
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(false);
+    const res = await run("reallocate_inventory", { admin: null });
+    expect(res.outcome).toBe("succeeded");
+    expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+    expect(applyOwnedInventoryMove).toHaveBeenCalledWith(
+      expect.objectContaining({ variantId: "var-1", quantity: 21 }),
+    );
+    expect(actionsExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ writeTarget: "owned_sot" }),
     );
   });
 

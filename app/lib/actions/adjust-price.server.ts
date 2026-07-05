@@ -18,7 +18,7 @@ import { readVariantPrice, setVariantPrice } from "../shopify/price.server";
 import type { AdminGraphqlClient } from "../shopify/inventory.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import type { AlertActionClient } from "./alert-action.server";
-import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { getOwnedVariantPricing, setOwnedVariantPrice } from "./owned-writes.server";
 
 export interface ResolvedSkuVariant {
@@ -48,7 +48,10 @@ export async function resolveSkuVariant(
 
 export async function executeAdjustPriceAlertAction(opts: {
   client: AlertActionClient;
-  admin: AdminGraphqlClient;
+  /** Shopify Admin client, or null for an owned-native shop (no connected store).
+   *  Only dereferenced on the Shopify write branch; the owned (`live`) branch
+   *  reads/writes the owned catalog and never touches it. */
+  admin: AdminGraphqlClient | null;
   sb: SupabaseClient;
   shopId: string;
   alertId: string;
@@ -104,15 +107,22 @@ export async function executeAdjustPriceAlertAction(opts: {
   // exactly as before, and `dual_run` ALSO mirrors the applied price into the owned catalog
   // best-effort. The guardrail cap is anchored on whichever current price we read, so the
   // safety envelope is identical on both branches — only the WRITE target changes.
+  // A NATIVE shop (no connected Shopify store) is always owned-authoritative — Shopify is
+  // import-only for it. A Shopify-connected shop follows the cutover state machine.
   const orgMode = await getOrgMode(shopId);
-  const owned = writesToOwned(orgMode);
-  const dual = dualWrites(orgMode);
+  const hasShopify = await shopHasShopifyConnection(shopId);
+  const owned = !hasShopify || writesToOwned(orgMode);
+  const dual = hasShopify && dualWrites(orgMode);
 
   // `current.priceCents` anchors the suggestion + cap; `ownedVariantId` / `shopifyTarget`
   // carry the write handle for the branch we're on.
   let current: { priceCents: number };
   let ownedVariantId: string | null = null;
-  let shopifyTarget: { variantGid: string; productGid: string; skuId: string } | null = null;
+  // `admin` rides along on the target: it's non-null on the Shopify branch (guarded
+  // below), so the write site doesn't have to re-narrow it.
+  let shopifyTarget:
+    | { variantGid: string; productGid: string; skuId: string; admin: AdminGraphqlClient }
+    | null = null;
 
   if (owned) {
     const priced = await getOwnedVariantPricing(shopId, alert.sku);
@@ -126,6 +136,16 @@ export async function executeAdjustPriceAlertAction(opts: {
     ownedVariantId = priced.variantId;
     current = { priceCents: priced.currentPriceCents };
   } else {
+    if (!admin) {
+      // Shopify is the authoritative price target for this mode, but this shop has
+      // no connected store. Owned-native shops route to the `owned` branch above, so
+      // this is an invalid state — fail visibly rather than dereference null (rule 12).
+      throw new CalderynError({
+        code: "shopify_required",
+        status: 422,
+        message: "Connect a Shopify store to use this action.",
+      });
+    }
     const target = await resolveSkuVariant(sb, shopId, alert.sku);
     if (!target) {
       throw new CalderynError({
@@ -147,7 +167,7 @@ export async function executeAdjustPriceAlertAction(opts: {
       });
     }
     current = { priceCents: live.priceCents };
-    shopifyTarget = { variantGid: target.variantGid, productGid: live.productGid, skuId: target.skuId };
+    shopifyTarget = { variantGid: target.variantGid, productGid: live.productGid, skuId: target.skuId, admin };
   }
 
   const capPct = guardrails.max_price_change_pct;
@@ -252,7 +272,7 @@ export async function executeAdjustPriceAlertAction(opts: {
   } else if (shopifyTarget) {
     let applied: { priceCents: number };
     try {
-      applied = await setVariantPrice(admin, {
+      applied = await setVariantPrice(shopifyTarget.admin, {
         productGid: shopifyTarget.productGid,
         variantId: shopifyTarget.variantGid,
         newPriceCents: finalPriceCents,

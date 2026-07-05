@@ -71,6 +71,20 @@ describe("dashboard.api.skus.$id.relocate", () => {
     );
   });
 
+  it("owned-native shop (no Shopify store) relocates with admin: null, no Shopify auth", async () => {
+    requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: null });
+    const res = await action({ request: post(BODY), params: { id: "sku-1" }, context: {} } as never);
+    expect((res as Response).status).toBe(200);
+    // No Shopify admin resolved; the executor still runs (it routes to the owned engine).
+    expect(unauthenticatedAdmin).not.toHaveBeenCalled();
+    expect(executeInventoryRelocation).toHaveBeenCalledWith(
+      "shop-1",
+      expect.anything(),
+      expect.anything(),
+      null,
+    );
+  });
+
   it("rejects non-POST", async () => {
     const res = await action({
       request: new Request("https://x/", { method: "GET" }),

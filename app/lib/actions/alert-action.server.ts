@@ -18,7 +18,7 @@ import { inventoryAdjustQuantitiesForShop } from "../demo/showcase.server";
 import type { ActionKind, Alert, AuditEntry, GuardrailConfig } from "../types";
 import { discontinueProduct } from "../shopify/product.server";
 import { resolveSkuForDiscontinue, setDoNotReorder } from "./discontinue.server";
-import { getOrgMode, writesToOwned, dualWrites } from "../cutover/org-mode.server";
+import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { resolveOwnedMoveTarget, applyOwnedInventoryMove } from "./owned-writes.server";
 import type { WriteTarget } from "./execute.server";
 
@@ -44,7 +44,10 @@ export interface AlertActionClient {
 
 export async function executeInventoryAlertAction(opts: {
   client: AlertActionClient;
-  admin: AdminGraphqlClient;
+  /** Shopify Admin client, or null for an owned-native shop (no connected store).
+   *  Only dereferenced on the Shopify write branch (mirror/importing/dual_run);
+   *  the owned (`live`) branch never touches it. */
+  admin: AdminGraphqlClient | null;
   sb: SupabaseClient;
   shopId: string;
   alertId: string;
@@ -119,11 +122,15 @@ export async function executeInventoryAlertAction(opts: {
     // refs; every other mode adjusts Shopify as before, and dual_run ALSO mirrors the
     // move into the owned engine best-effort (recorded on the audit, never fatal).
     const orgMode = await getOrgMode(shopId);
-    // Authoritative target: owned engine at `live`, Shopify Admin otherwise
-    // (dual_run's owned mirror is best-effort, so Shopify stays authoritative).
-    writeTarget = writesToOwned(orgMode) ? "owned_sot" : "shopify_admin";
+    // A NATIVE shop (no connected Shopify store) is always owned-authoritative — Shopify is
+    // import-only for it. A Shopify-connected shop follows the cutover state machine (owned
+    // at `live`, Shopify otherwise; dual_run's owned mirror is best-effort).
+    const hasShopify = await shopHasShopifyConnection(shopId);
+    const owned = !hasShopify || writesToOwned(orgMode);
+    const dual = hasShopify && dualWrites(orgMode);
+    writeTarget = owned ? "owned_sot" : "shopify_admin";
     let operationId: string;
-    if (writesToOwned(orgMode)) {
+    if (owned) {
       const target = await resolveOwnedMoveTarget(shopId, {
         inventoryItemId: plan.inventoryItemId,
         fromLocationGid: plan.fromLocationId,
@@ -158,6 +165,16 @@ export async function executeInventoryAlertAction(opts: {
         });
       }
     } else {
+      if (!admin) {
+        // The authoritative write for this mode goes to Shopify, but this shop has
+        // no connected store. Owned-native shops route to the branch above, so this
+        // is an invalid state — fail visibly rather than dereference null (rule 12).
+        throw new CalderynError({
+          code: "shopify_required",
+          status: 422,
+          message: "Connect a Shopify store to use this action.",
+        });
+      }
       try {
         ({ operationId } = await inventoryAdjustQuantitiesForShop(shopId, admin, plan, sb));
       } catch (err) {
@@ -167,7 +184,7 @@ export async function executeInventoryAlertAction(opts: {
           message: err instanceof Error ? err.message : "Shopify inventory adjustment failed.",
         });
       }
-      if (dualWrites(orgMode)) {
+      if (dual) {
         try {
           const target = await resolveOwnedMoveTarget(shopId, {
             inventoryItemId: plan.inventoryItemId,

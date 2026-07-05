@@ -20,9 +20,11 @@ vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
 }));
 
 const getOrgMode = vi.hoisted(() => vi.fn());
+const shopHasShopifyConnection = vi.hoisted(() => vi.fn());
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
   ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: unknown[]) => shopHasShopifyConnection(...a),
 }));
 
 const applyOwnedInventoryMove = vi.hoisted(() => vi.fn());
@@ -73,6 +75,7 @@ beforeEach(() => {
   }));
   inventoryAdjustQuantities.mockResolvedValue({ operationId: "gid://op/1" });
   getOrgMode.mockResolvedValue("mirror");
+  shopHasShopifyConnection.mockResolvedValue(true); // default: a Shopify-connected shop
   applyOwnedInventoryMove.mockResolvedValue({ transferId: "tr-1" });
   skuRow = {
     id: "sku-1",
@@ -240,6 +243,21 @@ describe("executeInventoryRelocation", () => {
       expect(audit.params.owned_variant_id).toBe("sku-1");
       expect(audit.params.owned_from_location_id).toBe("loc-a");
       expect(audit.params.owned_to_location_id).toBe("loc-b");
+      expect(audit.write_target).toBe("owned_sot");
+    });
+
+    it("native shop (no Shopify connection): moves via the owned engine at ANY org_mode, admin null", async () => {
+      // A native shop has no Shopify store to write to, so even at the default `mirror` the
+      // move must land in the owned engine — never a shopify_required error.
+      getOrgMode.mockResolvedValue("mirror");
+      shopHasShopifyConnection.mockResolvedValue(false);
+      const res = await executeInventoryRelocation(SHOP, INPUT, mockSb(), null);
+      expect(res.outcome).toBe("succeeded");
+      expect(applyOwnedInventoryMove).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP, variantId: "sku-1", quantity: 40 }),
+      );
+      expect(inventoryAdjustQuantities).not.toHaveBeenCalled();
+      const [, , audit] = insertAuditWithIdempotency.mock.calls[0];
       expect(audit.write_target).toBe("owned_sot");
     });
 
