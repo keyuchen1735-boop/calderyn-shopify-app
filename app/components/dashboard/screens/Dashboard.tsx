@@ -129,6 +129,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   }, []);
   const freshStore = catalogTotal !== null ? catalogTotal === 0 : !app.hasCatalog;
 
+  // ---- prompt bar (the front door to Ask Calderyn) ----
+  const [ask, setAsk] = useState("");
+  const askRef = useRef<HTMLInputElement | null>(null);
+
   // ---- decision deck ----
   // The queue is triaged, not listed: the biggest asks get one card at a time,
   // the reversible one-click remainder folds into a single batch card, and the
@@ -651,17 +655,50 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </div>
       </Card>
 
-      <button
-        type="button"
-        className="cd-promptbar"
-        onClick={() => (freshStore ? app.navigate("product-editor", "new") : app.openAssistant())}
-      >
-        <LiveMark on={false} />
-        <span className="cd-promptbar-ph">
-          {freshStore ? "Describe your first product…" : "Tell Calderyn what to do…"}
-        </span>
-        <CDIcon name="arrowRight" size={15} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
-      </button>
+      {freshStore ? (
+        // Fresh store: the bar routes to the prompt-first product flow — no
+        // free text here, the editor owns the description.
+        <button
+          type="button"
+          className="cd-promptbar"
+          onClick={() => app.navigate("product-editor", "new")}
+        >
+          <LiveMark on={false} />
+          <span className="cd-promptbar-ph">Describe your first product…</span>
+          <CDIcon name="arrowRight" size={15} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
+        </button>
+      ) : (
+        // The page bar is only an entry point — the conversation lives in the
+        // assistant panel, so Home never floods. Submitting hands the text off
+        // and the panel opens with it as the first turn.
+        <form
+          className="cd-promptbar cd-promptbar-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const text = ask.trim();
+            // With text: the panel opens and sends it as the next turn.
+            // Empty: still open the panel (the bar's old click behavior — the
+            // thread stays reachable from here without typing).
+            app.openAssistant(text || undefined);
+            setAsk("");
+          }}
+          onClick={() => askRef.current?.focus()}
+        >
+          <LiveMark on={false} />
+          <input
+            ref={askRef}
+            className="cd-promptbar-in"
+            type="text"
+            placeholder="Tell Calderyn what to do…"
+            aria-label="Ask Calderyn"
+            value={ask}
+            onChange={(e) => setAsk(e.target.value)}
+          />
+          <button type="submit" className="cd-promptbar-send" aria-label="Send to Calderyn">
+            <CDIcon name="arrowRight" size={15} strokeWidth={1.9} />
+          </button>
+        </form>
+      )}
     </div>
   );
 }

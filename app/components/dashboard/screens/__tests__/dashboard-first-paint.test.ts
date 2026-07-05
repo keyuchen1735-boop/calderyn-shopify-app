@@ -93,4 +93,17 @@ describe("Home first paint (pre-fetch SSR)", () => {
     expect(html).toContain("cd-skel-bar");
     expect(html).toContain("<b>—</b>");
   });
+
+  it("an established store's prompt bar is a real text input that submits to the assistant", () => {
+    const html = renderToString(h(Dashboard, { app: makeCtx({ hasCatalog: true, loading: true }) }));
+    expect(html).toContain("cd-promptbar-in");
+    expect(html).toContain('placeholder="Tell Calderyn what to do…"');
+    expect(html).toContain("cd-promptbar-send");
+  });
+
+  it("a fresh store's prompt bar stays a button into the product flow (typed text has nowhere to go)", () => {
+    const html = renderToString(h(Dashboard, { app: makeCtx({ hasCatalog: false, loading: true }) }));
+    expect(html).toContain("Describe your first product…");
+    expect(html).not.toContain("cd-promptbar-in");
+  });
 });

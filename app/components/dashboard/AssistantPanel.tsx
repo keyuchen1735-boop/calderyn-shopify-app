@@ -118,9 +118,13 @@ function DraftActionCard({
 export default function AssistantPanel({
   app,
   openSignal,
+  prompt,
 }: {
   app: DashboardCtx;
   openSignal?: number;
+  /** A hand-off from Home's prompt bar: open the panel and send this text as
+   *  the next user turn. `n` makes re-sends of the same text distinct. */
+  prompt?: { n: number; text: string } | null;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -181,7 +185,9 @@ export default function AssistantPanel({
           createdAt: new Date().toISOString(),
         },
       ]);
-      setInput("");
+      // Clear the composer only when it's what was sent — a queued Home-bar
+      // prompt must not wipe a draft sitting in the textarea.
+      setInput((cur) => (cur === raw ? "" : cur));
       setSending(true);
       setErrorText(null);
       try {
@@ -211,6 +217,37 @@ export default function AssistantPanel({
     setErrorText(null);
     inputRef.current?.focus();
   };
+
+  // Prompts handed off from Home open the panel and join a queue; the queue
+  // drains one at a time, only while the panel is OPEN (closing the panel
+  // cancels whatever hasn't sent — nothing may post invisibly later), only
+  // once history has loaded (sending sooner would race the history fetch,
+  // whose setMessages(h.messages) replaces the thread and would wipe the
+  // optimistic user bubble), and never mid-send. A queue — not a single slot —
+  // so rapid submissions from the bar all arrive instead of overwriting.
+  const [queuedPrompts, setQueuedPrompts] = useState<{ n: number; text: string }[]>([]);
+  useEffect(() => {
+    if (!prompt?.text) return;
+    setOpen(true);
+    // Keyed on n so a re-run with the same hand-off (StrictMode) can't
+    // enqueue it twice.
+    setQueuedPrompts((q) => (q.some((p) => p.n === prompt.n) ? q : [...q, prompt]));
+  }, [prompt]);
+  useEffect(() => {
+    if (!open || queuedPrompts.length === 0 || !historyLoaded || sending) return;
+    const [next, ...rest] = queuedPrompts;
+    setQueuedPrompts(rest);
+    void sendText(next.text);
+  }, [open, queuedPrompts, historyLoaded, sending, sendText]);
+  useEffect(() => {
+    if (!open) setQueuedPrompts([]);
+  }, [open]);
+
+  // Opening the panel is a context switch — put the caret in the composer so
+  // the next keystrokes land in the conversation, not behind the dialog.
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
 
   if (!open) return null;
 
