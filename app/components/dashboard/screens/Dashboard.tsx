@@ -1,6 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { Btn, Card, TickGauge } from "../ui";
 import { hasEngineSignals } from "../first-run";
+import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import { CalderynHexMark } from "~/components/CalderynHexMark";
@@ -291,6 +294,59 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const engineOn = Boolean(engine?.autopilotEnabled) && !dormant;
   const trace = engine?.trace.slice(0, 2) ?? [];
 
+  // ---- deck motion ----
+  // Advancing the deck slides the incoming card in from the right (enter-only:
+  // React unmounts the outgoing card instantly, and the enter slide is the
+  // signature move). The first paint of the deck lands statically — only a
+  // change of the current card animates. Reduced motion lands on final state.
+  const deckRef = useRef<HTMLDivElement | null>(null);
+  const deckShown = catalogKnown && !freshStore;
+  const deckKey = !deckShown ? null : current ? current.alertId : showBatch ? "batch" : "done";
+  const lastDeckKey = useRef<string | null>(null);
+  useGSAP(
+    () => {
+      const prev = lastDeckKey.current;
+      lastDeckKey.current = deckKey;
+      if (!deckKey || prev === null || prev === deckKey || reduced()) return;
+      gsap.from(".cd-deck-card", {
+        x: 26,
+        autoAlpha: 0,
+        duration: 0.32,
+        ease: "power2.out",
+        clearProps: "opacity,visibility,transform",
+      });
+    },
+    { dependencies: [deckKey], scope: deckRef },
+  );
+
+  // ---- trace motion ----
+  // Rows the engine genuinely just delivered (ids not present on the previous
+  // refresh) tick in; everything else stays put. The first delivery paints
+  // statically, and no timer ever fakes activity.
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const knownTraceIds = useRef<Set<string> | null>(null);
+  const traceKey = trace.map((t) => t.id).join("|");
+  useGSAP(
+    () => {
+      const prev = knownTraceIds.current;
+      if (engine) knownTraceIds.current = new Set(trace.map((t) => t.id));
+      if (!prev || reduced() || !feedRef.current) return;
+      const rows = trace
+        .filter((t) => !prev.has(t.id))
+        .map((t) => feedRef.current?.querySelector(`[data-tid="${CSS.escape(t.id)}"]`))
+        .filter((el): el is Element => Boolean(el));
+      if (rows.length === 0) return;
+      gsap.from(rows, {
+        autoAlpha: 0,
+        y: -8,
+        duration: 0.45,
+        ease: "power2.out",
+        clearProps: "opacity,visibility,transform",
+      });
+    },
+    { dependencies: [traceKey, Boolean(engine)] },
+  );
+
   return (
     <div className="cd-screen cd-home" data-screen-label="Home">
       <header>
@@ -324,7 +380,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       )}
 
       {freshStore && (
-        <Card className="cd-pad-lg" pad={false}>
+        <Card className="cd-su-card" pad={false}>
           <div className="cd-su-head">
             <span className="cd-su-title">Set up your store</span>
             <div className="cd-su-meter" aria-hidden="true">
@@ -408,7 +464,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       )}
 
       {catalogKnown && !freshStore && (
-        <div className="cd-deck">
+        <div className="cd-deck" ref={deckRef}>
           {current ? (
             <>
               {stacked > 2 && <div className="cd-deck-sh s2" />}
@@ -490,7 +546,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         <div className="cd-hm-engine-in">
           {/* A dormant engine shows an empty dial even when a stale calibration
               row exists — "standing by" and a lit gauge contradict each other. */}
-          <TickGauge pct={dormant ? 0 : (pct ?? 0)} size={108} />
+          <TickGauge pct={dormant ? 0 : (pct ?? 0)} size={108} sweepFrom0 />
           <div className="cd-hm-engine-body">
             <div className="cd-hm-engine-head">
               <LiveMark on={engineOn} />
@@ -511,7 +567,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                     : ""}
               </span>
             </div>
-            <div className="cd-hm-engine-feed">
+            <div className="cd-hm-engine-feed" ref={feedRef}>
               {dormant ? (
                 <>
                   <div className="cd-hm-scanline">I'll reorder stock before you sell out</div>
@@ -519,7 +575,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                 </>
               ) : trace.length > 0 ? (
                 trace.map((t) => (
-                  <div key={t.id} className="cd-hm-scanline">
+                  <div key={t.id} data-tid={t.id} className="cd-hm-scanline">
                     <span
                       className="cd-hm-scan-text"
                       style={t.tag === "BLOCKED" ? { color: "var(--orange)" } : undefined}

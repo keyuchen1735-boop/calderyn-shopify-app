@@ -24,6 +24,7 @@ import type { calderynClient } from "../calderyn.server";
 import type { ActionKind, AuditEntry } from "../types";
 import { pairConfidenceBreakdown } from "./confidence";
 import { effectiveGraduationThreshold } from "./graduation";
+import { isUuid } from "../ids";
 import { ACTION_LABELS, DETECTOR_LABELS } from "../labels";
 import { projectedStockoutDate, formatStockoutDate } from "../inventory-demand";
 import { fmtMoney } from "../format";
@@ -175,6 +176,24 @@ export async function buildLiveEnginePageData(
       campaigns.map((c) => ({ name: c.name, roas7d: c.roas_7d, status: c.status })),
     );
 
+    /* Some audit rows carry a bare entity id (campaign uuid, sku_dim uuid) as
+       their target. Resolve ids to the display names the rest of the app uses
+       (campaign name, SKU title) from the rows already loaded above; anything
+       unresolvable is omitted entirely rather than shown as a raw uuid. */
+    const targetNames = new Map<string, string>();
+    for (const s of skus) {
+      const label = s.title || s.sku;
+      if (s.id && label) targetNames.set(String(s.id).toLowerCase(), label);
+    }
+    for (const c of campaigns) {
+      if (c.id && c.name) targetNames.set(String(c.id).toLowerCase(), c.name);
+    }
+    const displayTarget = (raw: string | null | undefined): string => {
+      const t = (raw ?? "").trim();
+      if (!isUuid(t)) return t;
+      return targetNames.get(t.toLowerCase()) ?? "";
+    };
+
     const evMap = new Map(pairEv.map((p) => [`${p.detectorId}:${p.actionKind}`, p]));
     const breakdownFor = (detectorId: string, actionKind: ActionKind) => {
       const ev = evMap.get(`${detectorId}:${actionKind}`);
@@ -223,10 +242,12 @@ export async function buildLiveEnginePageData(
       .slice(0, 2)
       .map((e) => {
         const { bd, threshold } = breakdownFor(e.detector_id, e.action_kind);
+        const label = ACTION_LABELS[e.action_kind] ?? e.action_kind;
+        const subject = displayTarget(e.target) || DETECTOR_LABELS[e.detector_id] || "";
         return {
           detectorId: e.detector_id,
           actionKind: e.action_kind,
-          title: `${ACTION_LABELS[e.action_kind] ?? e.action_kind}: ${e.target || DETECTOR_LABELS[e.detector_id] || ""}`.trim(),
+          title: subject ? `${label}: ${subject}` : label,
           context: e.trigger_reason || DETECTOR_LABELS[e.detector_id] || "Handled on its own",
           factors: bd.factors,
           confidence: bd.confidence,
@@ -254,7 +275,7 @@ export async function buildLiveEnginePageData(
       const tag = traceTag(e);
       const actionLabel = ACTION_LABELS[e.action_kind] ?? e.action_kind;
       const detectorLabel = e.detector_id ? DETECTOR_LABELS[e.detector_id] ?? e.detector_id : "";
-      const target = e.target || "";
+      const target = displayTarget(e.target);
       const money = Number(e.dollar_impact_at_exec ?? 0); // already cents
       const dec = decisionCopy(tag, e.failure_reason);
 
