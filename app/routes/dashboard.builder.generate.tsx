@@ -16,6 +16,11 @@ export async function action({ request }: ActionFunctionArgs) {
   const mode = form.get("mode");
   if (mode !== "brief" && mode !== "catalog") throw new Response("invalid mode", { status: 400 });
   const briefRaw = form.get("brief");
+  // Same 4,000-char bound as dashboard.api.store — the brief is interpolated
+  // into several generation prompts per run, so its length is LLM input spend.
+  if (typeof briefRaw === "string" && briefRaw.length > 4000) {
+    throw new Response("Keep the brief under 4,000 characters.", { status: 422 });
+  }
   const brief = typeof briefRaw === "string" && briefRaw.trim() ? briefRaw.trim() : undefined;
   // Same paid-Anthropic posture as dashboard.api.store's generate case: burst
   // limit plus the shared per-shop daily designer allowance, checked after
