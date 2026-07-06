@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { startTestTransaction, TEST_CHARGE_CENTS , refundTestOrders } from "../test-transaction.server";
+
+
 const hoisted = vi.hoisted(() => ({
   getOrgMode: vi.fn(),
   getConnectedAccount: vi.fn(),
@@ -21,8 +24,6 @@ vi.mock("~/lib/supabase.server", () => ({
     }),
   }),
 }));
-
-import { startTestTransaction, TEST_CHARGE_CENTS } from "../test-transaction.server";
 
 describe("startTestTransaction", () => {
   beforeEach(() => {
@@ -59,8 +60,6 @@ describe("startTestTransaction", () => {
     await expect(startTestTransaction("shop-1")).rejects.toThrow(/Connect Stripe/i);
   });
 });
-
-import { refundTestOrders } from "../test-transaction.server";
 
 const refundHoisted = vi.hoisted(() => ({
   executeRefundAction: vi.fn(),

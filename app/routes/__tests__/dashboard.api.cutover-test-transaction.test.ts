@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { action } from "../dashboard.api.cutover-test-transaction";
+
 const h = vi.hoisted(() => ({
   requireDashboardSession: vi.fn(),
   requireSameOrigin: vi.fn(),
@@ -11,8 +13,6 @@ vi.mock("~/lib/dashboard/http.server", async () => {
   return { ...actual, requireSameOrigin: h.requireSameOrigin };
 });
 vi.mock("~/lib/cutover/test-transaction.server", () => ({ startTestTransaction: h.startTestTransaction }));
-
-import { action } from "../dashboard.api.cutover-test-transaction";
 
 describe("POST /dashboard/api/cutover-test-transaction", () => {
   beforeEach(() => {
