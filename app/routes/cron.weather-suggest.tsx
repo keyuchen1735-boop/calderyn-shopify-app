@@ -12,7 +12,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return new Response("Unauthorized", { status: 401 });
   }
   const sb = getSupabase();
-  const summary = { shops: 0, suggested: 0, skipped: 0, failed: 0, errors: [] as string[] };
+  const summary = {
+    shops: 0,
+    suggested: 0,
+    skipped: 0,
+    // Why shops were skipped, keyed by RunResult.skippedReason. A wall of
+    // "no_eligible_campaigns" looks very different from calm-weather
+    // "no_suggestion" days — the flat skipped count alone can't tell an outage
+    // from a sunny week.
+    skippedReasons: {} as Record<string, number>,
+    failed: 0,
+    errors: [] as string[],
+  };
 
   const { data: rows, error: listErr } = await sb
     .from("guardrail_config")
@@ -31,7 +42,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (r.ok) {
       summary.shops += 1;
       summary.suggested += r.value.suggested;
-      if (r.value.suggested === 0) summary.skipped += 1;
+      if (r.value.suggested === 0) {
+        summary.skipped += 1;
+        const reason = r.value.skippedReason ?? "unknown";
+        summary.skippedReasons[reason] = (summary.skippedReasons[reason] ?? 0) + 1;
+      }
     } else {
       summary.failed += 1;
       const message = r.error instanceof Error ? r.error.message : String(r.error);
