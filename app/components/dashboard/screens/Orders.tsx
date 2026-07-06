@@ -10,6 +10,7 @@ import {
   type OrderRow,
   type OrdersPage,
 } from "~/lib/dashboard/orders-client";
+import type { ImportedOrderRow } from "~/lib/order/imported-list-types";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
@@ -51,7 +52,8 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
-// Shopify financial statuses on imported (historical) orders → dashboard pill.
+// Shopify financial statuses on migrated orders → dashboard pill. Same visual
+// vocabulary as the native badge so the merged list reads as one history.
 const IMPORTED_STATUS: Record<string, { label: string; tone: "success" | "warn" | "neutral" }> = {
   paid: { label: "Paid", tone: "success" },
   partially_paid: { label: "Partially paid", tone: "warn" },
@@ -72,31 +74,72 @@ function ImportedStatusPill({ status }: { status: string }) {
   return <Pill tone={s.tone}>{s.label}</Pill>;
 }
 
-function StatBlock({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div>
-      <div className="cd-caption">{label}</div>
-      <div className="tabular-nums" style={{ fontSize: 20, fontWeight: 650, letterSpacing: "-0.01em" }}>
-        {value}
-      </div>
-      {sub && <div className="cd-caption">{sub}</div>}
-    </div>
-  );
+// One display row across both origins: native Calderyn orders and migrated
+// Shopify orders render in a single unified list, newest first.
+type DisplayOrder = {
+  id: string;
+  ref: string;
+  createdAt: string | null;
+  customer: string | null;
+  totalCents: number;
+  state: string;
+  source: "calderyn" | "shopify";
+  // The native OrderRow (for the refund modal) when this row is a Calderyn
+  // order; null for migrated orders (their money lives at Shopify).
+  refundRow: OrderRow | null;
+};
+
+function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | null): DisplayOrder[] {
+  const rows: DisplayOrder[] = [];
+  for (const o of native ?? []) {
+    rows.push({
+      id: o.id,
+      ref: o.ref,
+      createdAt: o.createdAt,
+      customer: o.buyerEmail,
+      totalCents: o.totalCents,
+      state: o.state,
+      source: "calderyn",
+      refundRow: o,
+    });
+  }
+  for (const o of imported ?? []) {
+    rows.push({
+      id: o.id,
+      ref: o.ref,
+      createdAt: o.processedAt,
+      customer: null,
+      totalCents: o.totalCents,
+      state: o.financialStatus,
+      source: "shopify",
+      refundRow: null,
+    });
+  }
+  rows.sort((a, b) => {
+    const at = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const bt = b.createdAt ? Date.parse(b.createdAt) : 0;
+    return bt - at;
+  });
+  return rows;
 }
 
-// The Orders "Imported" subtab: read-only historical orders + refunds brought
-// over by Import-from-Shopify. Summary spans every imported order; the table
-// shows the most recent slice (see the server reader's RECENT_LIMIT).
-function ImportedOrdersView({
+// The visible list is bounded; the merged history can be thousands of orders.
+const ORDERS_VISIBLE = 100;
+
+function UnifiedOrdersList({
+  native,
   imported,
+  totalCount,
   loading,
-  app,
+  onRefund,
 }: {
-  imported: ImportedOrdersPage | null;
+  native: OrderRow[] | null;
+  imported: ImportedOrderRow[] | null;
+  totalCount: number;
   loading: boolean;
-  app: DashboardCtx;
+  onRefund: (order: OrderRow) => void;
 }) {
-  if (!imported) {
+  if (native == null && imported == null) {
     return (
       <Card pad={false}>
         {loading ? (
@@ -104,89 +147,74 @@ function ImportedOrdersView({
         ) : (
           <Placeholder
             icon="doc"
-            title="Imported orders unavailable"
-            sub="Could not load imported history just now. Refresh to try again."
+            title="Orders unavailable"
+            sub="Could not load orders just now. Refresh to try again."
           />
         )}
       </Card>
     );
   }
 
-  const { summary, orders, totalCount, shownCount } = imported;
-
-  if (totalCount === 0) {
+  const merged = mergeOrders(native, imported);
+  if (merged.length === 0) {
     return (
       <Card pad={false}>
         <Placeholder
           icon="doc"
-          title="No imported orders yet"
-          sub="Bring your Shopify order history over from Settings, Import from Shopify. It lands here as read-only history."
-          actionLabel="Import from Shopify"
-          onAction={() => app.navigate("import-shopify", null, null)}
+          title="No orders yet"
+          sub="Orders from your storefront and from AI shopping assistants land here."
         />
       </Card>
     );
   }
 
-  const span =
-    summary.firstOrderAt && summary.lastOrderAt
-      ? `${timeAgo(summary.firstOrderAt)} to ${timeAgo(summary.lastOrderAt)}`
-      : undefined;
-  const cols = "1fr 1fr 1.2fr 1fr 1fr";
-
+  const shown = merged.slice(0, ORDERS_VISIBLE);
+  const cols = "1fr 1.4fr 1fr 1fr 1fr auto";
   return (
-    <>
-      <Card>
-        <div className="flex flex-wrap gap-8">
-          <StatBlock label="Orders" value={summary.orderCount.toLocaleString("en-US")} sub={span} />
-          <StatBlock label="Gross revenue" value={money(summary.grossCents)} />
-          <StatBlock
-            label="Refunded"
-            value={money(summary.refundedCents)}
-            sub={`${summary.refundCount.toLocaleString("en-US")} refund${summary.refundCount === 1 ? "" : "s"}`}
-          />
-          <StatBlock label="Net revenue" value={money(summary.netCents)} />
-        </div>
-        <p className="cd-caption" style={{ marginTop: 14 }}>
-          Historical orders from your Shopify store. They were paid on Shopify, so they are read-only
-          here; issue any refunds in Shopify.
-        </p>
-      </Card>
-
-      <Card pad={false}>
-        <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
-          <span>Order</span>
-          <span>Date</span>
-          <span>Status</span>
-          <span style={{ textAlign: "right" }}>Total</span>
-          <span style={{ textAlign: "right" }}>Refunded</span>
-        </div>
-        {orders.map((r) => (
-          <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: cols }}>
-            <div className="cd-row-title tabular-nums">{r.ref}</div>
-            <div className="cd-caption">{r.processedAt ? timeAgo(r.processedAt) : ""}</div>
+    <Card pad={false}>
+      <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
+        <span>Order</span>
+        <span>Customer</span>
+        <span>Total</span>
+        <span>Date</span>
+        <span>Status</span>
+        <span />
+      </div>
+      {shown.map((r) => {
+        const refundable = r.refundRow && REFUNDABLE_STATES.has(r.state) ? r.refundRow : null;
+        return (
+          <div key={`${r.source}:${r.id}`} className="cd-trow" style={{ gridTemplateColumns: cols }}>
             <div>
-              <ImportedStatusPill status={r.financialStatus} />
+              <div className="cd-row-title tabular-nums">{r.ref}</div>
+              {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
             </div>
-            <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-              {money(r.totalCents)}
+            <div className="truncate">{r.customer ?? (r.source === "shopify" ? "" : "Guest")}</div>
+            <div className="cd-row-num tabular-nums">{money(r.totalCents)}</div>
+            <div className="cd-caption">{r.createdAt ? timeAgo(r.createdAt) : ""}</div>
+            <div>
+              {r.source === "shopify" ? (
+                <ImportedStatusPill status={r.state} />
+              ) : (
+                <StateBadge state={r.state} />
+              )}
             </div>
-            <div
-              className="cd-row-num tabular-nums"
-              style={{ textAlign: "right", color: r.refundedCents > 0 ? "var(--orange)" : "var(--text-3)" }}
-            >
-              {money(r.refundedCents)}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {refundable ? (
+                <Btn small icon="rotate" onClick={() => onRefund(refundable)}>
+                  Refund
+                </Btn>
+              ) : null}
             </div>
           </div>
-        ))}
-        {shownCount < totalCount && (
-          <div className="cd-caption" style={{ padding: "10px 16px", textAlign: "center" }}>
-            Showing the most recent {shownCount.toLocaleString("en-US")} of{" "}
-            {totalCount.toLocaleString("en-US")} orders.
-          </div>
-        )}
-      </Card>
-    </>
+        );
+      })}
+      {totalCount > shown.length && (
+        <div className="cd-caption" style={{ padding: "10px 16px", textAlign: "center" }}>
+          Showing the most recent {shown.length.toLocaleString("en-US")} of{" "}
+          {totalCount.toLocaleString("en-US")} orders.
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -198,11 +226,11 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   );
   const [loading, setLoading] = useState(true);
   const [refundOrder, setRefundOrder] = useState<OrderRow | null>(null);
+  // Migrated Shopify order history, merged into the main list so the Orders
+  // screen shows the whole store as one continuous history.
   const [imported, setImported] = useState<ImportedOrdersPage | null>(() =>
     cachedScreenData<ImportedOrdersPage>(SCREEN_CACHE_KEYS.importedOrders),
   );
-  // Loading unless the cache already seeded it, so a cold open paints the
-  // skeleton, not a one-frame "unavailable" error before the fetch starts.
   const [importedLoading, setImportedLoading] = useState(imported === null);
   const toast = app.toast;
 
@@ -234,31 +262,18 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     };
   }, [load]);
 
-  const sub = app.nav.sub ?? "orders";
-
-  // Lazy-load imported history the first time its subtab opens (most sessions
-  // never do); the idle prefetch may have already seeded it. Write-through so a
-  // return visit paints instantly.
+  // Load migrated order history on mount (revalidating any warm-cache seed) so
+  // it merges into the main list. Its own failure is non-critical: the native
+  // orders still render, so this only warns, it never blanks the screen.
   useEffect(() => {
-    if (sub !== "imported" || imported) return;
-    // Adopt a payload the idle warm-up cached after mount instead of refetching.
-    const cached = cachedScreenData<ImportedOrdersPage>(SCREEN_CACHE_KEYS.importedOrders);
-    if (cached) {
-      setImported(cached);
-      return;
-    }
     const signal = { alive: true };
-    setImportedLoading(true);
     fetchImportedOrders()
       .then((p) => {
         cacheScreenData(SCREEN_CACHE_KEYS.importedOrders, p);
         if (signal.alive) setImported(p);
       })
-      .catch((err: unknown) => {
-        if (!signal.alive) return;
-        const msg =
-          err instanceof DashboardApiError ? err.message : "Could not load imported orders.";
-        toast(msg, "warn", "critical");
+      .catch(() => {
+        /* migrated history is additive; native orders own the error UX */
       })
       .finally(() => {
         if (signal.alive) setImportedLoading(false);
@@ -266,12 +281,17 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     return () => {
       signal.alive = false;
     };
-  }, [sub, imported, toast]);
+  }, []);
+
+  const sub = app.nav.sub ?? "orders";
 
   // Lists are capped server-side at 100 rows — past the cap the true total is
   // unknown here, so the badge says "100+" instead of posing as a count.
-  const count = (n: number | undefined) =>
-    n == null ? null : n >= 100 ? "100+" : String(n);
+  const count = (n: number | undefined) => (n == null ? null : n >= 100 ? "100+" : String(n));
+  // Unified order count = native rows shown + the true migrated total.
+  const ordersTotal = (page?.orders.length ?? 0) + (imported?.totalCount ?? 0);
+  const ordersCount =
+    page || imported ? ordersTotal.toLocaleString("en-US") : null;
 
   return (
     <div className="cd-screen">
@@ -285,16 +305,21 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         app={app}
         activeKey={sub}
         tabs={[
-          { key: "orders", label: "Orders", screen: "orders", sub: "orders", count: count(page?.orders.length) },
-          { key: "imported", label: "Imported", screen: "orders", sub: "imported", count: imported ? imported.totalCount.toLocaleString("en-US") : null },
+          { key: "orders", label: "Orders", screen: "orders", sub: "orders", count: ordersCount },
           { key: "labels", label: "Shipping charges", screen: "orders", sub: "labels", count: count(page?.shipCharges.length) },
           { key: "drafts", label: "Draft carts", screen: "orders", sub: "drafts", count: count(page?.drafts.length) },
           { key: "abandoned", label: "Abandoned", screen: "orders", sub: "abandoned", count: count(page?.abandoned.length) },
         ]}
       />
 
-      {sub === "imported" ? (
-        <ImportedOrdersView imported={imported} loading={importedLoading} app={app} />
+      {sub === "orders" ? (
+        <UnifiedOrdersList
+          native={page?.orders ?? null}
+          imported={imported?.orders ?? null}
+          totalCount={ordersTotal}
+          loading={loading && importedLoading}
+          onRefund={setRefundOrder}
+        />
       ) : !page ? (
         <Card pad={false}>
           {loading ? (
@@ -305,48 +330,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               title="Orders unavailable"
               sub="Could not load orders just now. Refresh to try again."
             />
-          )}
-        </Card>
-      ) : sub === "orders" ? (
-        <Card pad={false}>
-          {page.orders.length === 0 ? (
-            <Placeholder
-              icon="doc"
-              title="No orders yet"
-              sub="Orders from your storefront and from AI shopping assistants land here."
-            />
-          ) : (
-            <>
-              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.6fr 1fr 1fr 1fr auto" }}>
-                <span>Order</span>
-                <span>Customer</span>
-                <span>Total</span>
-                <span>Attributed to</span>
-                <span>State</span>
-                <span />
-              </div>
-              {page.orders.map((r) => (
-                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.6fr 1fr 1fr 1fr auto" }}>
-                  <div>
-                    <div className="cd-row-title tabular-nums">{r.ref}</div>
-                    <div className="cd-caption">{timeAgo(r.createdAt)}</div>
-                  </div>
-                  <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
-                  <div className="cd-row-num tabular-nums">{money(r.totalCents)}</div>
-                  <div className="cd-caption truncate">{r.attribution ?? "Direct"}</div>
-                  <div>
-                    <StateBadge state={r.state} />
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    {REFUNDABLE_STATES.has(r.state) && (
-                      <Btn small icon="rotate" onClick={() => setRefundOrder(r)}>
-                        Refund
-                      </Btn>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </>
           )}
         </Card>
       ) : sub === "labels" ? (
