@@ -14,8 +14,21 @@ export interface CustomerImportResult {
   blocked: boolean; // protected-customer-data access not granted yet
 }
 
-function isAccessDenied(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("ACCESS_DENIED");
+// Shopify's protected-customer-data gate. The denial reaches us in one of two
+// shapes depending on how the Admin client surfaces it: the raw API message the
+// merchant sees ("This app is not approved to use the email field. See
+// …/protected-customer-data…"), or — when the GraphQL body errors get
+// stringified — the ACCESS_DENIED extensions code. Match all of them so a shop
+// without approval degrades to `blocked` and the rest of the import still lands,
+// rather than the whole run failing.
+function isProtectedCustomerDataError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const m = err.message;
+  return (
+    m.includes("ACCESS_DENIED") ||
+    /not approved to use/i.test(m) ||
+    /protected[- ]customer[- ]data/i.test(m)
+  );
 }
 
 async function hasShippingAddress(shopId: string, buyerId: string): Promise<boolean> {
@@ -69,8 +82,19 @@ async function importOne(shopId: string, c: AdminCustomer): Promise<void> {
 
 export async function importCustomers(shopDomain: string, shopId: string): Promise<CustomerImportResult> {
   const result: CustomerImportResult = { imported: 0, skipped: 0, blocked: false };
+  // Only the Shopify customer PULL is protected-customer-data gated. Track when
+  // we're awaiting the next page so a buyer-WRITE failure (importOne → Supabase)
+  // can never be misclassified as `blocked` and silently swallowed — a write
+  // error must fail the run visibly, whatever its message happens to contain.
+  const iterator = fetchCustomers(shopDomain)[Symbol.asyncIterator]();
+  let pulling = false;
   try {
-    for await (const c of fetchCustomers(shopDomain)) {
+    while (true) {
+      pulling = true;
+      const next = await iterator.next();
+      pulling = false;
+      if (next.done) break;
+      const c = next.value;
       if (!c.email || !c.email.includes("@")) {
         result.skipped += 1;
         continue;
@@ -79,8 +103,8 @@ export async function importCustomers(shopDomain: string, shopId: string): Promi
       result.imported += 1;
     }
   } catch (err) {
-    if (isAccessDenied(err)) return { ...result, blocked: true };
-    throw err; // anything else fails the run visibly (state='error')
+    if (pulling && isProtectedCustomerDataError(err)) return { ...result, blocked: true };
+    throw err; // buyer-write errors and non-PCD pull errors fail the run visibly
   }
   return result;
 }
