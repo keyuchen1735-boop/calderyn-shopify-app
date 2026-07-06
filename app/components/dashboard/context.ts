@@ -44,7 +44,9 @@ export type Screen =
   | "products-po"
   | "products-transfers"
   // Store studio (BUILD group) — draft/publish editor over page_document.
-  | "storefront";
+  | "storefront"
+  // Viral product sourcing (BUILD group, under Store) - /dashboard/store/discover
+  | "discover";
 
 export interface NavState {
   screen: Screen;
