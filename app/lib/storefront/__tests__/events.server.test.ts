@@ -17,6 +17,8 @@ vi.mock("../../supabase.server", () => ({
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { trackStorefrontEvent } from "../events.server";
+// eslint-disable-next-line import/first -- see above
+import type { VisitorSession } from "../visitor-cookie.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
 
@@ -75,6 +77,29 @@ describe("trackStorefrontEvent", () => {
     expect(headers).toBeInstanceOf(Headers);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("uses a pre-computed session without re-minting a second visitor id", async () => {
+    const headers = new Headers();
+    headers.append("Set-Cookie", "cd_vid=fixed");
+    const session: VisitorSession = {
+      visitorId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      sessionId: "ffffffff-1111-2222-3333-444444444444",
+      isReturning: false,
+      headers,
+    };
+    // Request carries no cd_vid cookie: a re-derive would mint a different id.
+    const returned = await trackStorefrontEvent(
+      req({ ua: "Mozilla/5.0" }),
+      SHOP,
+      "page_view",
+      { experimentId: "99999999-8888-7777-6666-555555555555", variantKey: "b" },
+      session,
+    );
+    expect(returned).toBe(session.headers);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].visitor_id).toBe(session.visitorId);
+    expect(inserted[0].session_id).toBe(session.sessionId);
   });
 
   it("stamps experiment exposure columns only when a variant was served", async () => {

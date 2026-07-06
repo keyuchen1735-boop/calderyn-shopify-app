@@ -69,10 +69,10 @@ function resolveExperimentArm(experiment: RunningExperiment | null, visitorId: s
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const catalog = getCatalog();
-  // The visitor id backing both live analytics and A/B bucketing (D4). trackStorefrontEvent
-  // re-derives its own session below (it owns the cd_vid/cd_sid Set-Cookie contract), which
-  // is a no-op re-read once cd_vid is already on the request; only a visitor's very first-ever
-  // hit (no cookie yet) can mint a second id there, so bucketing settles on the second page view.
+  // The visitor id backing both live analytics and A/B bucketing (D4). The session is minted
+  // once here and threaded into trackStorefrontEvent below (5th arg), so the served arm, the
+  // exposure row, and the persisted cd_vid/cd_sid Set-Cookie all key off this one id — including
+  // on a visitor's very first-ever hit, when no cookie is on the request yet.
   //
   // None of these three reads depend on each other, so they run concurrently; only the
   // arm assignment (sync, below) needs both the visitor id and the experiment lookup.
@@ -90,7 +90,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     experimentId: arm.experimentId,
     variantKey: arm.variantKey,
-  });
+  }, visitor);
   return json({ doc, data }, { headers: track });
 }
 

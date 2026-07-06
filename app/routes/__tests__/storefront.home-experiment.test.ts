@@ -97,7 +97,10 @@ describe("home A/B serving", () => {
       "demo-shop",
       "page_view",
       { experimentId: "exp-1", variantKey: "b" },
+      expect.objectContaining({ visitorId: expect.any(String), sessionId: expect.any(String) }),
     );
+    // The exposure row's visitor is the exact id A/B bucketing keyed off.
+    expect(trackStorefrontEventMock.mock.calls[0][4].visitorId).toBe(assignArmMock.mock.calls[0][0]);
 
     loaderDataRef.current = data;
     const html = renderToStaticMarkup(createElement(StorefrontHome));
@@ -119,7 +122,10 @@ describe("home A/B serving", () => {
       "demo-shop",
       "page_view",
       { experimentId: "exp-1", variantKey: "a" },
+      expect.objectContaining({ visitorId: expect.any(String), sessionId: expect.any(String) }),
     );
+    // The exposure row's visitor is the exact id A/B bucketing keyed off.
+    expect(trackStorefrontEventMock.mock.calls[0][4].visitorId).toBe(assignArmMock.mock.calls[0][0]);
 
     loaderDataRef.current = data;
     const html = renderToStaticMarkup(createElement(StorefrontHome));
@@ -138,6 +144,7 @@ describe("home A/B serving", () => {
       "demo-shop",
       "page_view",
       { experimentId: null, variantKey: null },
+      expect.objectContaining({ visitorId: expect.any(String), sessionId: expect.any(String) }),
     );
   });
 
@@ -152,6 +159,7 @@ describe("home A/B serving", () => {
       "demo-shop",
       "page_view",
       { experimentId: null, variantKey: null },
+      expect.objectContaining({ visitorId: expect.any(String), sessionId: expect.any(String) }),
     );
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
