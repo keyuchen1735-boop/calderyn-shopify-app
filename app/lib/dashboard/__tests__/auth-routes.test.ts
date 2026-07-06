@@ -116,37 +116,29 @@ describe("dashboard.login loader", () => {
     );
   });
 
-  it("redirects straight to the shop-less authorize URL when no shop is known", async () => {
-    const res = (await loginLoader({
+  it("renders the store-domain form (no redirect) when no shop is known", async () => {
+    // Shopify's authorization code grant is per-shop — there is no shop-less
+    // authorize endpoint — so the store domain must be collected before we can
+    // build a working authorize URL.
+    const res = await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login"),
       params: {},
       context: {},
-    })) as Response;
-    // No store-domain form: Shopify identifies the store on its side.
-    expect(res.status).toBe(302);
-    const loc = new URL(res.headers.get("Location")!);
-    expect(loc.origin + loc.pathname).toBe("https://admin.shopify.com/admin/oauth/authorize");
-    expect(loc.searchParams.get("client_id")).toBe("client-1");
-    expect(loc.searchParams.get("redirect_uri")).toBe(
-      "https://calderyncompany.com/dashboard/auth/callback",
-    );
-    const cookie = res.headers.get("Set-Cookie")!;
-    // Shop unknown at initiation — the state cookie pins the nonce to `*`.
-    const stateValue = decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]);
-    expect(stateValue).toBe(`${loc.searchParams.get("state")}:*`);
+    });
+    expect((res as { mode: string }).mode).toBe("form");
   });
 
-  it("goes shop-less even when a remembered-shop hint exists (Shopify owns store identity)", async () => {
-    const res = (await loginLoader({
+  it("prefills the domain form from the remembered-shop hint", async () => {
+    const res = await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login", {
         headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
       }),
       params: {},
       context: {},
-    })) as Response;
-    expect(res.status).toBe(302);
-    const loc = new URL(res.headers.get("Location")!);
-    expect(loc.host).toBe("admin.shopify.com");
+    });
+    const data = res as { mode: string; hintShop: string | null };
+    expect(data.mode).toBe("form");
+    expect(data.hintShop).toBe("remembered.myshopify.com");
   });
 
   it("does not auto-redirect (loop) when bounced back with an error", async () => {

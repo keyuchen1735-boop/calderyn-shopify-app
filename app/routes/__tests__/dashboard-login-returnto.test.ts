@@ -87,27 +87,28 @@ describe("/dashboard/login carries a validated return_to into the state cookie",
     expect(cookie).not.toContain("evil.example");
   });
 
-  it("goes shop-less and still carries return_to when there is no shop and no cookie", async () => {
-    const r = (await loader(
+  it("renders the domain form and preserves return_to when there is no shop", async () => {
+    const r = await loader(
       req(
         "https://app.calderyncompany.com/dashboard/login?return_to=%2Fdashboard%2Fconnect%3Ft%3Dabc",
       ) as never,
-    )) as Response;
-    // No store-domain form: straight into OAuth with the shop pinned to `*`.
-    // The connector destination survives the round-trip in the state cookie.
-    expect(r.status).toBe(302);
-    const cookie = r.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain(`:*:${encodeURIComponent("/dashboard/connect?t=abc")}`);
+    );
+    // No shop chosen yet → the domain form renders; the state cookie is set
+    // only once we redirect to a specific shop's authorize endpoint. The
+    // connector destination is carried on the form (hidden field) meanwhile.
+    const data = r as { mode: string; returnTo: string | null };
+    expect(data.mode).toBe("form");
+    expect(data.returnTo).toBe("/dashboard/connect?t=abc");
   });
 
-  it("omits the return_to cookie field when none is given", async () => {
+  it("pins the state cookie to the chosen shop with no return_to field when none is given", async () => {
     const r = (await loader(
-      req("https://app.calderyncompany.com/dashboard/login") as never,
+      req("https://app.calderyncompany.com/dashboard/login?shop=myshop.myshopify.com") as never,
     )) as Response;
     expect(r.status).toBe(302);
     const cookie = r.headers.get("set-cookie") ?? "";
     const value = decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]);
-    expect(value.endsWith(":*")).toBe(true);
+    expect(value.endsWith(":myshop.myshopify.com")).toBe(true);
     expect(value.split(":")).toHaveLength(2);
   });
 });
