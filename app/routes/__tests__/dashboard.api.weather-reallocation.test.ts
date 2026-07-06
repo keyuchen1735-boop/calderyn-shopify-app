@@ -53,6 +53,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { action } from "../dashboard.api.weather-reallocation";
 
 const post = (body: unknown) =>
