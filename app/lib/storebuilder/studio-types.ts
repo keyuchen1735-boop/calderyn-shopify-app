@@ -7,12 +7,22 @@
  *  storefront CSS keys off ([data-vibe]). */
 export type StudioVibe = "minimal" | "bold" | "warm";
 
+/** Mirrors the store_settings.type_style check constraint. "classic" defers to
+ *  the vibe's font (no [data-type] override); editorial/rounded set their own. */
+export type StudioTypeStyle = "classic" | "editorial" | "rounded";
+
+/** Mirrors the store_settings.density check constraint (storefront [data-density]
+ *  spacing pack). "standard" = today's spacing. */
+export type StudioDensity = "compact" | "standard" | "roomy";
+
 /** Brand chrome shown in the studio preview, shaped from store_settings. */
 export interface StudioSettings {
   storeName: string;
   /** Palette primary (falls back to the storefront default palette). */
   accent: string;
   vibe: StudioVibe;
+  typeStyle?: StudioTypeStyle;
+  density?: StudioDensity;
   logoUrl: string | null;
   tagline: string | null;
 }
