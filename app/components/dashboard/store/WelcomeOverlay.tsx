@@ -22,6 +22,7 @@ const VIBE_CARDS: { vibe: StudioVibe; label: string; mini: string }[] = [
 ];
 
 export default function WelcomeOverlay({
+  authBase,
   branch,
   importRun,
   buildPhase,
@@ -30,6 +31,7 @@ export default function WelcomeOverlay({
   onBuildWithVibe,
   onAddProduct,
 }: {
+  authBase?: string;
   branch: WelcomeBranch;
   importRun: ImportRunVM | null;
   buildPhase: BuildPhase | null;
@@ -141,6 +143,7 @@ export default function WelcomeOverlay({
 
   const step = branch.kind !== "importing" && buildPhase ? buildStep(buildPhase) : null;
   const working = step != null;
+  const dashboardLoginHref = authBase ? `${authBase.replace(/\/+$/, "")}/dashboard/login` : "/dashboard/login";
 
   const subline = welcomeSubline({ branch, buildPhase, productCount });
 
@@ -180,7 +183,7 @@ export default function WelcomeOverlay({
                 <div className="cd-welcome-actions" ref={actionsRef}>
                   {branch.kind === "empty" ? (
                     <>
-                      <a href="/dashboard/login" className="cd-btn cd-btn-primary cd-welcome-big">
+                      <a href={dashboardLoginHref} className="cd-btn cd-btn-primary cd-welcome-big">
                         Connect Shopify
                       </a>
                       <Btn className="cd-welcome-big" onClick={() => setStage("add-product")}>

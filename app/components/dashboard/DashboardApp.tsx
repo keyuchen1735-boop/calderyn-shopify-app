@@ -185,12 +185,14 @@ function nextFeedId(): string {
 }
 
 export default function DashboardApp({
+  authBase = "",
   shopDomain,
   storeLabel,
   demoMode = false,
   hasCatalog,
   canDeleteAccount = false,
 }: {
+  authBase?: string;
   shopDomain: string | null;
   storeLabel: string;
   demoMode?: boolean;
@@ -1021,6 +1023,7 @@ export default function DashboardApp({
 
   const app: DashboardCtx = {
     t,
+    authBase,
     shopDomain,
     storeLabel,
     demoMode,

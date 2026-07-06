@@ -11,6 +11,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   rateLimit: vi.fn().mockResolvedValue(true),
   clientIpKey: () => "k",
   checkSameOrigin: vi.fn(() => null),
+  publicBaseUrl: () => "https://calderyncompany.com",
   wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
   // Mirror the real guard: only same-origin /dashboard paths pass, else null.
@@ -194,7 +195,7 @@ describe("onboarding action — import step", () => {
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "connect" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard/login");
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/login");
     expect(completeOnboarding).toHaveBeenCalledWith("u1");
   });
   it("refuses to complete the import step when contact was never saved (no half-filled profile)", async () => {

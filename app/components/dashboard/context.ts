@@ -80,6 +80,8 @@ export type ActionKind =
 
 export interface DashboardCtx {
   t: DashboardTheme;
+  /** Public dashboard origin where OAuth callback cookies live. Empty in single-host dev. */
+  authBase?: string;
   /** Shop myshopify domain, for building Shopify admin deep-links. Null for owned (non-Shopify) stores. */
   shopDomain: string | null;
   /** Human-readable store label: display_name, shop_domain, or "Your store" fallback. */
