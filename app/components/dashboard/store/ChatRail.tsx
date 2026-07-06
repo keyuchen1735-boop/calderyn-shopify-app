@@ -3,11 +3,12 @@
 // happens on send/attach. Each "ai-working" message carries its own phase
 // snapshot (see chat-types.ts), so an older, already-finished card in history
 // can never be flipped back to "running" by a later, unrelated build.
-import { useEffect, useRef, type ChangeEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
 import { CDIcon } from "../icons";
 import { buildStep } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 import type { ChatMsg } from "./chat-types";
+import type { StudioDesignModel } from "~/lib/dashboard/store-client";
 
 // The brand hexagon mark, matching the sidebar's inline SVG exactly (see
 // DashboardApp.tsx) — sized down for the rail header.
@@ -89,6 +90,8 @@ export default function ChatRail({
   busy,
   attaching,
   onAttachFiles,
+  model,
+  onModelChange,
 }: {
   messages: ChatMsg[];
   prompt: string;
@@ -97,9 +100,15 @@ export default function ChatRail({
   busy: boolean;
   attaching: boolean;
   onAttachFiles: (files: File[]) => void;
+  model: StudioDesignModel;
+  onModelChange: (m: StudioDesignModel) => void;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Drag-and-drop target state: a counter, not a boolean, because dragenter/
+  // dragleave fire for every child crossed and a plain flag would flicker off.
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -124,8 +133,37 @@ export default function ChatRail({
     if (files.length > 0) onAttachFiles(files);
   };
 
+  const dragHasFiles = (e: DragEvent<HTMLDivElement>) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDropping(true);
+  };
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (dragHasFiles(e)) e.preventDefault(); // without this the browser opens the file instead
+  };
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDropping(false);
+  };
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDropping(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) onAttachFiles(files);
+  };
+
   return (
-    <div className="cd-rail">
+    <div
+      className="cd-rail"
+      data-drop={dropping ? "1" : "0"}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="cd-rail-head">
         <RailMark />
         <b>Build with Calderyn</b>
@@ -165,6 +203,16 @@ export default function ChatRail({
               hidden
               onChange={onFileChange}
             />
+            <select
+              className="cd-composer-model"
+              aria-label="Design model"
+              title="Design model"
+              value={model}
+              onChange={(e) => onModelChange(e.target.value as StudioDesignModel)}
+            >
+              <option value="sonnet">Sonnet 5</option>
+              <option value="opus">Opus 4.8</option>
+            </select>
             <button
               type="button"
               className="cd-composer-send"
