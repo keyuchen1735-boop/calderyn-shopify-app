@@ -17,23 +17,22 @@ export function expireCookieHeader(name: string): string {
  *  stored as `nonce:shop[:enc(returnTo)]`. */
 export const STATE_COOKIE_NAME = "__Host-dash_oauth";
 
-/** Legacy shop-less state-cookie sentinel. dashboard.login no longer starts
- *  shop-less OAuth (the authorize grant is per-shop, so a store domain is
- *  always collected first) and never writes this now; dashboard.auth.callback
- *  still accepts it only so a round-trip begun before that change completes
- *  instead of failing. `*` can never collide with a real shop: it fails
- *  isValidShopDomain. */
+/** Shop field of the state cookie when OAuth is initiated shop-less (no ?shop=
+ *  — Shopify's admin authorize resolves the merchant's store). This is the
+ *  default /dashboard/login connect path: dashboard.login writes it, and
+ *  dashboard.auth.callback MUST keep accepting it or every shop-less sign-in
+ *  breaks. `*` can never collide with a real shop: it fails isValidShopDomain. */
 export const SHOPLESS_STATE_SHOP = "*";
 
 /** Google-signin CSRF nonce for /dashboard/auth/google → its callback. */
 export const GOAUTH_COOKIE = "__Host-calderyn_goauth";
 
-// Remembered shop for the Shopify entry (/dashboard/login): pre-fills the store
-// domain so a returning Shopify-identity merchant doesn't have to re-type it.
-// Set only after a successful OAuth callback (never on an unauthenticated GET —
-// a crafted link could otherwise plant it). It no longer triggers any automatic
-// redirect into Shopify authorize; sign-in is always an explicit user action.
-// Not a secret: constrained to *.myshopify.com, the same trust boundary as ?shop=.
+// Remembered shop for the Shopify entry (/dashboard/login): set only after a
+// successful OAuth callback (never on an unauthenticated GET — a crafted link
+// could otherwise plant it). Steers the bounce-back error page's retry link at
+// the right store; it never triggers an automatic redirect into Shopify
+// authorize — sign-in is always an explicit user action. Not a secret:
+// constrained to *.myshopify.com, the same trust boundary as ?shop=.
 export const SHOP_HINT_COOKIE_NAME = "__Host-dash_shop";
 const SHOP_HINT_MAX_AGE = 90 * 86_400; // 90 days
 

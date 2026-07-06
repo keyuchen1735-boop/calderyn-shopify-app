@@ -116,29 +116,36 @@ describe("dashboard.login loader", () => {
     );
   });
 
-  it("renders the store-domain form (no redirect) when no shop is known", async () => {
-    // Shopify's authorization code grant is per-shop — there is no shop-less
-    // authorize endpoint — so the store domain must be collected before we can
-    // build a working authorize URL.
-    const res = await loginLoader({
+  it("redirects to the shop-less authorize URL when no shop is known", async () => {
+    // No store domain: Shopify's admin authorize signs the merchant in and
+    // resolves their store, so we never collect a domain. The state cookie pins
+    // the `*` sentinel; the callback binds the shop from the signed params.
+    const res = (await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login"),
       params: {},
       context: {},
-    });
-    expect((res as { mode: string }).mode).toBe("form");
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe("https://admin.shopify.com/admin/oauth/authorize");
+    expect(loc.searchParams.get("redirect_uri")).toBe(
+      "https://calderyncompany.com/dashboard/auth/callback",
+    );
+    const cookie = res.headers.get("Set-Cookie")!;
+    const stateValue = decodeURIComponent(cookie.match(/__Host-dash_oauth=([^;]+)/)![1]);
+    expect(stateValue).toBe(`${loc.searchParams.get("state")}:*`);
   });
 
-  it("prefills the domain form from the remembered-shop hint", async () => {
-    const res = await loginLoader({
+  it("goes shop-less even when a remembered-shop hint exists (Shopify owns store identity)", async () => {
+    const res = (await loginLoader({
       request: new Request("https://calderyncompany.com/dashboard/login", {
         headers: { Cookie: "__Host-dash_shop=remembered.myshopify.com" },
       }),
       params: {},
       context: {},
-    });
-    const data = res as { mode: string; hintShop: string | null };
-    expect(data.mode).toBe("form");
-    expect(data.hintShop).toBe("remembered.myshopify.com");
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("Location")!).host).toBe("admin.shopify.com");
   });
 
   it("bounces OAuth init (with shop) to the canonical public host when begun on another origin", async () => {
@@ -160,9 +167,9 @@ describe("dashboard.login loader", () => {
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
-  it("bounces the domain-form step to the canonical host too (no shop yet)", async () => {
-    // The form must render on the canonical host so its submit (and the cookie
-    // that submit triggers) also lands there.
+  it("bounces shop-less OAuth init to the canonical host too (no shop yet)", async () => {
+    // Shop-less init sets a `*` state cookie; it too must land on the canonical
+    // host (where the callback returns), so it routes through the apex first.
     const res = (await loginLoader({
       request: new Request("https://app.calderyncompany.com/dashboard/login"),
       params: {},

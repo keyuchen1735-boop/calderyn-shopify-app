@@ -32,11 +32,13 @@ export function normalizeShopInput(raw: string): string {
 }
 
 // Shopify's authorization code grant is per-shop
-// (https://{shop}/admin/oauth/authorize) and there is no shop-less authorize
-// endpoint — so the shop is always known here (collected at /dashboard/login).
-// The per-shop endpoint enforces the app's registered redirect_urls.
+// (https://{shop}/admin/oauth/authorize). When the store domain is known
+// (the embedded app's "Open dashboard" deep link) we target it directly; when
+// it isn't, we start at Shopify's admin authorize entry, which signs the
+// merchant in and resolves their store before consent — so no store domain is
+// collected on our side. Both forms enforce the app's registered redirect_urls.
 export function buildAuthorizeUrl(opts: {
-  shop: string;
+  shop: string | null;
   clientId: string;
   scopes: string;
   redirectUri: string;
@@ -48,7 +50,10 @@ export function buildAuthorizeUrl(opts: {
     redirect_uri: opts.redirectUri,
     state: opts.state,
   });
-  return `https://${opts.shop}/admin/oauth/authorize?${sp.toString()}`;
+  const base = opts.shop
+    ? `https://${opts.shop}/admin/oauth/authorize`
+    : "https://admin.shopify.com/admin/oauth/authorize";
+  return `${base}?${sp.toString()}`;
 }
 
 /**
