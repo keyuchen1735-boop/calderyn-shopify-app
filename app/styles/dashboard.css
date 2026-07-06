@@ -1611,7 +1611,7 @@
 .cd-sug-title { font-size: 13.5px; font-weight: 560; letter-spacing: -0.008em; }
 .cd-sug-gain { font-size: 12px; font-weight: 650; color: var(--live); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cd-reject-panel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 2px 20px 12px 57px; }
-/* Autopilot calibration queue — explainable action cards */
+/* Autopilot calibration queue: explainable action cards */
 .cd-actcard {
   display: flex;
   flex-direction: column;
