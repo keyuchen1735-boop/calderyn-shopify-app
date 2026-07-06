@@ -22,13 +22,30 @@ const ctx = (): RenderContext => ({
 });
 
 describe("starter blocks", () => {
-  it("registers exactly the 6 starter types with stable flavors", () => {
+  it("registers exactly the 7 starter types with stable flavors", () => {
     expect(STARTER_BLOCKS.map((b) => b.type).sort()).toEqual(
-      ["button", "collectionList", "hero", "image", "productGrid", "richText"],
+      ["button", "collectionList", "featureRow", "hero", "image", "productGrid", "richText"],
     );
     const flavor = Object.fromEntries(STARTER_BLOCKS.map((b) => [b.type, b.flavor]));
     expect(flavor.hero).toBe("static");
+    expect(flavor.featureRow).toBe("static");
     expect(flavor.productGrid).toBe("dynamic");
+  });
+
+  it("featureRow renders a card per value prop (accepts text/body), and nothing when empty", () => {
+    const fr = STARTER_BLOCKS.find((b) => b.type === "featureRow")!;
+    const clean = fr.validateProps({
+      heading: "Why us",
+      items: [{ title: "Made to last", body: "Built well." }, { title: "Free shipping", text: "On every order." }],
+    }) as { items: { title: string; body: string }[] };
+    expect(clean.items).toHaveLength(2);
+    expect(clean.items[1].body).toBe("On every order."); // `text` alias accepted
+    const html = renderToStaticMarkup(createElement(fr.Component, { props: clean, ctx: ctx() }));
+    expect(html).toContain("Made to last");
+    expect(html).toContain("cd-feature");
+    // No items → renders nothing, so a hollow/empty block never leaves a bare heading.
+    const empty = renderToStaticMarkup(createElement(fr.Component, { props: fr.validateProps({ heading: "x", items: [] }), ctx: ctx() }));
+    expect(empty).toBe("");
   });
 
   it("validateProps fills defaults and coerces bad input without throwing on recoverable shape", () => {

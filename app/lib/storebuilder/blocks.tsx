@@ -87,6 +87,37 @@ const button: BlockMeta<ButtonProps> = {
     createElement("a", { className: "cd-block cd-block--button", href: (ctx.links ?? STOREFRONT_LINKS).href(props.href) }, props.label),
 };
 
+interface FeatureItem { title: string; body: string }
+interface FeatureRowProps { heading: string; items: FeatureItem[] }
+// A product-independent value-prop row (up to 4 cards). Central to the "hollow" store: it fills a
+// no-catalog home with real structure instead of an empty product grid. Renders nothing when it
+// has no items, so a malformed/empty block never leaves a bare heading behind.
+const featureRow: BlockMeta<FeatureRowProps> = {
+  type: "featureRow", flavor: "static", allowedDocKinds: ["singleton", "template"],
+  defaultProps: { heading: "", items: [] },
+  defaultLayout: { x: 0, y: 0, w: 12, h: 3 },
+  validateProps: (raw) => {
+    const r = asRecord(raw);
+    const items = (Array.isArray(r.items) ? r.items : [])
+      .slice(0, 4)
+      .map((it) => { const o = asRecord(it); return { title: str(o.title).slice(0, 60), body: str(o.body, str(o.text)).slice(0, 180) }; })
+      .filter((it) => it.title || it.body);
+    return { heading: str(r.heading).slice(0, 80), items };
+  },
+  catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  Component: ({ props }) =>
+    props.items.length === 0
+      ? null
+      : createElement("section", { className: "cd-block cd-block--features" },
+          props.heading ? createElement("h2", { className: "cd-features__heading" }, props.heading) : null,
+          createElement("div", { className: "cd-features__grid" },
+            props.items.map((it, i) =>
+              createElement("div", { key: i, className: "cd-feature" },
+                createElement("span", { className: "cd-feature__rule", "aria-hidden": "true" }),
+                it.title ? createElement("h3", { className: "cd-feature__title" }, it.title) : null,
+                it.body ? createElement("p", { className: "cd-feature__body" }, it.body) : null)))),
+};
+
 // ── dynamic ───────────────────────────────────────────────────────────────
 type GridSource = { kind: "all" } | { kind: "collection"; handle: string } | { kind: "ids"; ids: string[] };
 interface ProductGridProps { source: GridSource; heading: string }
@@ -142,4 +173,4 @@ const collectionList: BlockMeta<CollectionListProps> = {
 
 // Exported as a plain array; the registry indexes it by type (Task 3).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous BlockMeta<P> union; registry narrows by type
-export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, productGrid, collectionList];
+export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, featureRow, productGrid, collectionList];

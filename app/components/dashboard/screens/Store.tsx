@@ -279,12 +279,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
           ? [
               { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
               { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
-              // Publish only once there's a real, previewable catalog: a no_products build
-              // lands on the empty "prompt anything" canvas (showPromptCanvas), which unmounts
-              // the stage and its publish-confirm dialog, so the chip would have nowhere to open.
-              ...(receipt.status === "draft"
-                ? ([{ label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() }] as ChatAction[])
-                : []),
+              { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
             ]
           : undefined;
       pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
@@ -664,7 +659,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     importInProgress: porting,
   });
   const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
-  // No live products yet → invite a prompt instead of a hollow fallback store.
+  // Before the first build → invite a prompt; after one build the full studio takes over.
   const promptCanvas = showPromptCanvas(data);
 
   return (

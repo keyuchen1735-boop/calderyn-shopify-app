@@ -41,6 +41,9 @@ interface Voice {
   story(noun: string | null, storeName: string): string;
   ctaLabel: string;
   closingLabel: string;
+  // Product-independent value props — the backbone of the no-catalog "hollow" store.
+  featuresHeading: string;
+  features: { title: string; body: string }[];
 }
 
 // One voice per vibe: distinct sentence shape and word choice, not just a palette swap, so the
@@ -54,6 +57,12 @@ const VOICE: Record<StudioVibe, Voice> = {
       `${storeName || "This shop"} keeps a tight catalog on purpose: every piece earns its place before it ships${noun ? `, starting with ${low(noun)}` : ""}. Fewer options, chosen with more care.`,
     ctaLabel: "Shop the edit",
     closingLabel: "See everything",
+    featuresHeading: "Why it's different",
+    features: [
+      { title: "Considered by design", body: "Every detail is deliberate. Nothing here is filler." },
+      { title: "Made to last", body: "Chosen materials, built to outlive the trend cycle." },
+      { title: "Quietly guaranteed", body: "Thirty days to change your mind — no fuss." },
+    ],
   },
   bold: {
     heroHeadline: (noun, storeName) => (noun ? `${cap(noun)}. No compromises.` : storeName || "No compromises."),
@@ -63,6 +72,12 @@ const VOICE: Record<StudioVibe, Voice> = {
       `${storeName || "This shop"} does not chase trends.${noun ? ` ${cap(noun)} is built to outlast the season it shipped in.` : " Every piece is built to outlast the season it shipped in."}`,
     ctaLabel: "Shop now",
     closingLabel: "View the full range",
+    featuresHeading: "Built different",
+    features: [
+      { title: "Engineered, not decorated", body: "Function first. Every choice earns its place." },
+      { title: "Zero compromise", body: "We don't cut the corners you can't see." },
+      { title: "Backed hard", body: "If it fails, we make it right. Simple." },
+    ],
   },
   warm: {
     heroHeadline: (noun, storeName) => (noun ? `A little more ${low(noun)} in your day` : storeName || "Made for slow mornings"),
@@ -72,6 +87,12 @@ const VOICE: Record<StudioVibe, Voice> = {
       `Every ${noun ? low(noun) : "item"} at ${storeName || "this shop"} is made in small batches, by hand, with time to get it right. Nothing rushed, nothing mass-produced.`,
     ctaLabel: "Shop the collection",
     closingLabel: "Browse everything",
+    featuresHeading: "Made with care",
+    features: [
+      { title: "Small batches", body: "Made by hand, in numbers small enough to get right." },
+      { title: "Honest materials", body: "Natural, traceable, and kinder to the planet." },
+      { title: "Sent like a gift", body: "Wrapped with care, because it should feel special." },
+    ],
   },
 };
 
@@ -93,12 +114,19 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
 
   const products = context?.products ?? [];
   const collections = context?.collections ?? [];
-  // No catalog nouns to draw on (empty catalog, or no context passed at all) — the pre-v2
-  // universal fallback: hero + all-products grid, referencing no specific catalog id, never blanks.
+  // No catalog to draw on (empty catalog, or no context at all). Rather than a bare hero over an
+  // empty product grid, compose a complete brand story that stands on its own: a gradient hero (no
+  // image needed), a CTA, a value-prop row, an editorial line and a closing CTA — a "hollow" but
+  // genuinely designed store, in the vibe's voice, that never reads as broken or unfinished.
   if (products.length === 0 && collections.length === 0) {
+    const vibe: StudioVibe = context?.vibe ?? "minimal";
+    const voice = VOICE[vibe];
     return { kind: "singleton", pageKey: "home", blocks: [
-      { id: "fb-hero", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: brand.storeName || "Welcome", subhead: brand.tagline || "Shop our latest" } },
-      { id: "fb-grid", type: "productGrid", layout: { x: 0, y: 2, w: 12, h: 6 }, props: { source: { kind: "all" }, heading: "Shop all" } },
+      { id: "fb-hero", type: "hero", layout: { x: 0, y: 0, w: 12, h: 3 }, props: { headline: clip(voice.heroHeadline(null, brand.storeName), HEADLINE_MAX), subhead: clip(brand.tagline || voice.heroSubhead(null), SUBHEAD_MAX) } },
+      { id: "fb-cta", type: "button", layout: { x: 0, y: 3, w: 3, h: 1 }, props: { label: clip(voice.ctaLabel, LABEL_MAX), href: "/storefront" } },
+      { id: "fb-features", type: "featureRow", layout: { x: 0, y: 4, w: 12, h: 3 }, props: { heading: voice.featuresHeading, items: voice.features } },
+      { id: "fb-story", type: "richText", layout: { x: 0, y: 7, w: 12, h: 2 }, props: { html: clip(voice.story(null, brand.storeName), HTML_MAX) } },
+      { id: "fb-cta-2", type: "button", layout: { x: 0, y: 9, w: 3, h: 1 }, props: { label: clip(voice.closingLabel, LABEL_MAX), href: "/storefront" } },
     ] };
   }
 

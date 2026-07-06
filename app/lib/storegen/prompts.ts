@@ -14,8 +14,8 @@ export interface CatalogMenu {
 
 // Allowed block types per page (must match the registry's allowedDocKinds).
 const ALLOWED: Record<"home" | "collection" | "pdp", string[]> = {
-  home: ["hero", "richText", "image", "button", "productGrid", "collectionList"],
-  collection: ["hero", "richText", "image", "button", "collectionGrid"],
+  home: ["hero", "richText", "image", "button", "featureRow", "productGrid", "collectionList"],
+  collection: ["hero", "richText", "image", "button", "featureRow", "collectionGrid"],
   pdp: ["hero", "richText", "image", "button", "productGallery", "productTitle", "price", "variantPicker", "addToCart"],
 };
 function allowedFor(pageKey: PageKey): string[] {
@@ -79,7 +79,7 @@ export function docSystemPrompt(pageKey: PageKey): string {
     "Output ONLY a JSON object, no markdown, of the exact shape:",
     '{"blocks":[{"type": string, "props": object, "layout": {"x":int,"y":int,"w":int,"h":int}}]}',
     `- type MUST be one of: ${types.join(", ")}. Any other type is discarded.`,
-    "- props carry copy: hero {headline<=120, subhead<=200}, richText {html<=2000 plain text}, button {label<=40, href}, productGrid {heading<=80, source}.",
+    "- props carry copy: hero {headline<=120, subhead<=200}, richText {html<=2000 plain text}, button {label<=40, href}, featureRow {heading<=80, items:[{title<=60, body<=180}] up to 4}, productGrid {heading<=80, source}.",
     '- For productGrid, source is {"kind":"all"} or {"kind":"collection","handle":<a real handle>} or {"kind":"ids","ids":[<real ids>]}.',
     "- Reference ONLY product ids / collection handles from the provided catalog menu. Inventing ids gets them dropped.",
     "- layout uses a 12-column grid: 0<=x, 1<=w<=12, x+w<=12, h>=1. Order top-to-bottom by y.",
