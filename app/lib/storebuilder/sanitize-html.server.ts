@@ -8,12 +8,17 @@
 // write path — generator, studio, experiments — is covered uniformly. Never store un-sanitized HTML.
 import sanitizeHtml from "sanitize-html";
 import type { BlockDocument } from "./types";
+import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 
 // A full designed page with inline CSS; also caps abuse / DB bloat.
 const MAX_HTML = 100_000;
 
-export function sanitizeStoreHtml(html: unknown): string {
+/** opts.links (generator only) rewrites any collection/product deep-link with an unknown handle to
+ *  the shop home, so every link on the generated page resolves. Omit it for the security-only
+ *  re-sanitize at persistence (no catalog in scope) — links are already normalized by then. */
+export function sanitizeStoreHtml(html: unknown, opts?: { links?: StorefrontLinkSet }): string {
   if (typeof html !== "string" || !html) return "";
+  const links = opts?.links;
   const cleaned = sanitizeHtml(html.slice(0, MAX_HTML), {
     allowedTags: [
       "div", "section", "article", "header", "footer", "nav", "main", "aside", "figure", "figcaption",
@@ -61,11 +66,16 @@ export function sanitizeStoreHtml(html: unknown): string {
     parser: { lowerCaseTags: true, lowerCaseAttributeNames: true },
     // sanitize-html drops HTML comments by default → no AI/provenance leak into browser source.
     transformTags: {
-      // External links open in a new tab with noopener (no reverse-tabnabbing); internal stay plain.
-      a: (tagName, attribs) =>
-        /^https?:\/\//i.test(attribs.href ?? "")
-          ? { tagName, attribs: { ...attribs, target: "_blank", rel: "noopener noreferrer nofollow" } }
-          : { tagName, attribs },
+      // External links open in a new tab with noopener (no reverse-tabnabbing). Internal links stay
+      // plain, but when a catalog link-set is supplied an unknown collection/product handle is
+      // rewritten to the shop home so the link can never 404.
+      a: (tagName, attribs) => {
+        const href = attribs.href ?? "";
+        if (/^https?:\/\//i.test(href))
+          return { tagName, attribs: { ...attribs, target: "_blank", rel: "noopener noreferrer nofollow" } };
+        if (links && href) return { tagName, attribs: { ...attribs, href: normalizeStorefrontHref(href, links) } };
+        return { tagName, attribs };
+      },
     },
   });
   // sanitize-html passes <style> CSS through verbatim; strip the two CSS vectors it does not:
