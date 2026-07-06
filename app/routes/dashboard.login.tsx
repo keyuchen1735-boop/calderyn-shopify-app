@@ -41,6 +41,10 @@ type LoginPageData = {
   hintShop: string | null;
 };
 
+// Marks the pass that runs once the browser has been routed to the canonical
+// public host, so the host bounce inside the loader fires at most once.
+const OAUTH_HOST_MARKER = "_oh";
+
 export async function loader({ request }: LoaderFunctionArgs) {
   if (!(await rateLimit(clientIpKey(request, "dash-login"), 10, 60_000))) {
     throw jsonError(429, "rate_limited");
@@ -74,6 +78,34 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return { mode: "error", returnTo, errorCode, shop: shop ?? hintShop, hintShop } satisfies LoginPageData;
   }
 
+  // The Shopify OAuth callback always lands on the canonical public host
+  // (redirect_uri below = publicBaseUrl), but the __Host- state cookie set just
+  // before that redirect is locked to the exact host serving this request. A
+  // merchant who reaches this flow on the app origin (app.calderyncompany.com —
+  // where the marketing site's /login redirect drops them) would set the cookie
+  // there and lose it when Shopify returns to the apex, so the callback finds no
+  // state and fails with oauth_failed. Route the whole flow (the domain form and
+  // the cookie-minting redirect) through the canonical host once so the cookie
+  // and the callback share an origin. The apex proxy presents every request to
+  // this server as the app origin, so the marker — not the host comparison
+  // alone — is what breaks the self-redirect loop.
+  const publicUrl = publicBaseUrl();
+  if (publicUrl && !url.searchParams.has(OAUTH_HOST_MARKER)) {
+    let canonicalHost: string | null = null;
+    try {
+      canonicalHost = new URL(publicUrl).host;
+    } catch {
+      canonicalHost = null;
+    }
+    if (canonicalHost && url.host !== canonicalHost) {
+      const dest = new URL(`${publicUrl}/dashboard/login`);
+      if (shop) dest.searchParams.set("shop", shop);
+      if (returnTo) dest.searchParams.set("return_to", returnTo);
+      dest.searchParams.set(OAUTH_HOST_MARKER, "1");
+      return redirect(dest.toString());
+    }
+  }
+
   if (!shop) {
     // No store domain yet (direct visit, /login's "Continue with Shopify",
     // connect redirect): ask for it. There is no shop-less authorize endpoint,
@@ -83,7 +115,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const state = randomBytes(16).toString("hex");
-  const publicUrl = publicBaseUrl();
   const authorizeUrl = buildAuthorizeUrl({
     shop,
     clientId: process.env.SHOPIFY_API_KEY ?? "",

@@ -141,6 +141,70 @@ describe("dashboard.login loader", () => {
     expect(data.hintShop).toBe("remembered.myshopify.com");
   });
 
+  it("bounces OAuth init (with shop) to the canonical public host when begun on another origin", async () => {
+    // The __Host- state cookie is locked to the initiating host; the callback
+    // always lands on the canonical host (DASHBOARD_PUBLIC_URL). A ?shop= flow
+    // begun on the app origin must be routed to the canonical host BEFORE the
+    // cookie is minted, or the callback finds no state and fails oauth_failed.
+    const res = (await loginLoader({
+      request: new Request("https://app.calderyncompany.com/dashboard/login?shop=x.myshopify.com"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe("https://calderyncompany.com/dashboard/login");
+    expect(loc.searchParams.get("shop")).toBe("x.myshopify.com");
+    expect(loc.searchParams.get("_oh")).toBe("1");
+    // No cookie here — it must be set on the canonical host, not the app origin.
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  it("bounces the domain-form step to the canonical host too (no shop yet)", async () => {
+    // The form must render on the canonical host so its submit (and the cookie
+    // that submit triggers) also lands there.
+    const res = (await loginLoader({
+      request: new Request("https://app.calderyncompany.com/dashboard/login"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/login?_oh=1");
+  });
+
+  it("carries return_to through the canonical-host bounce", async () => {
+    const res = (await loginLoader({
+      request: new Request(
+        "https://app.calderyncompany.com/dashboard/login?shop=x.myshopify.com&return_to=%2Fdashboard%2Fconnect%3Ft%3Dabc",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.searchParams.get("return_to")).toBe("/dashboard/connect?t=abc");
+    expect(loc.searchParams.get("_oh")).toBe("1");
+  });
+
+  it("mints the state cookie and enters Shopify OAuth once the host marker is present", async () => {
+    // Second pass: the browser is now on the canonical host (marker set), so the
+    // cookie is minted here and the redirect_uri matches the callback host.
+    const res = (await loginLoader({
+      request: new Request(
+        "https://app.calderyncompany.com/dashboard/login?shop=x.myshopify.com&_oh=1",
+      ),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe("https://x.myshopify.com/admin/oauth/authorize");
+    expect(loc.searchParams.get("redirect_uri")).toBe(
+      "https://calderyncompany.com/dashboard/auth/callback",
+    );
+    expect(res.headers.get("Set-Cookie")).toContain("__Host-dash_oauth=");
+  });
+
   it("does not auto-redirect (loop) when bounced back with an error", async () => {
     const res = (await loginLoader({
       request: new Request(
