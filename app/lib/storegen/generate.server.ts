@@ -10,7 +10,8 @@ import { getStoreSettings, saveStoreSettings, hasStoreSettings } from "~/lib/sto
 import type { BlockDocument, DocKind, PageKey } from "~/lib/storebuilder/types";
 import type { ValidIds } from "~/lib/storebuilder/validate";
 import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
-import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, type CatalogMenu } from "./prompts";
+import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, type CatalogMenu } from "./prompts";
+import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { assembleDocument } from "./sanitize";
 import { fallbackDoc, type FallbackContext } from "./fallback";
 import { recordGeneration, recordProposal } from "./audit.server";
@@ -22,6 +23,11 @@ const TOKEN_BUDGET = Number(process.env.STOREGEN_TOKEN_BUDGET ?? 20000);
  *  STOREGEN_MODEL without moving the digest crons (github/social summaries) off their own model. */
 function storegenModel(): string {
   return process.env.STOREGEN_MODEL || digestModel();
+}
+/** The home page is generated as a full HTML page (not a block plan); that benefits from a stronger
+ *  design model than the digest/Haiku default. Override with STOREGEN_HTML_MODEL. */
+function storegenHtmlModel(): string {
+  return process.env.STOREGEN_HTML_MODEL || "claude-sonnet-5";
 }
 const PAGES: { pageKey: PageKey; kind: DocKind }[] = [
   { pageKey: "home", kind: "singleton" },
@@ -35,23 +41,6 @@ export interface GenerateResult { runId: string; status: GenerateStatus; tokenCo
 
 function textOf(msg: { content: { type: string; text?: string }[] }): string {
   return msg.content.map((b) => (b.type === "text" ? b.text ?? "" : "")).join("").trim();
-}
-
-/** Deterministically back the home hero with a real product image when the composed doc left it
- *  blank. The model has no image URLs to reference, so an AI-composed hero is always text-only
- *  without this — the plain hero that made "the redesign not come through". Fills only the first
- *  empty hero; one that already carries an image (the fallback sets one) is left untouched. */
-function injectHeroImage(doc: BlockDocument, imageUrl: string): BlockDocument {
-  if (!imageUrl) return doc;
-  let filled = false;
-  const blocks = doc.blocks.map((b) => {
-    if (filled || b.type !== "hero") return b;
-    const cur = (b.props as { imageUrl?: unknown }).imageUrl;
-    if (typeof cur === "string" && cur) return b;
-    filled = true;
-    return { ...b, props: { ...b.props, imageUrl } };
-  });
-  return filled ? { ...doc, blocks } : doc;
 }
 
 export async function generateStore(input: GenerateInput): Promise<GenerateResult> {
@@ -79,12 +68,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const skipLlm = products.length === 0 && collections.length === 0 && !input.brief;
   const client = getAnthropic();
 
-  async function call(system: string, user: string): Promise<string | null> {
+  async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number }): Promise<string | null> {
     if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     llmAttempts += 1;
     try {
-      const msg = await client.messages.create({ model, max_tokens: 1500, system, messages: [{ role: "user", content: user }] });
+      const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content: user }] });
       const u = (msg as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
@@ -134,33 +123,40 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
     vibe: brand.vibe,
   };
-  // First product with imagery → the deterministic home-hero backdrop for BOTH paths (the AI never
-  // sets one since it has no image URLs). Empty when the catalog has no images (hollow store).
-  const heroImage = products.find((p) => p.images[0]?.url)?.images[0]?.url ?? "";
-
-  // Stage 2 — per doc kind, isolated.
+  // Stage 2 — per doc kind, isolated. The HOME page is generated as a complete, self-contained HTML
+  // page (a single rawHtml block) so it reads as a real designed storefront even with zero product
+  // imagery — the fixed block vocabulary could only ever stack styled text. The template pages
+  // (collection/pdp) stay on the block-plan path since they drive live commerce. rawHtml is
+  // sanitized here and again at saveDraft (the security boundary), so nothing unsafe is ever stored.
   const docs: Record<string, BlockDocument> = {};
   const proposals: Record<string, unknown> = {};
+  const fbBrand = { storeName: brand.storeName, tagline: brand.voiceTagline };
+  const briefArg = input.mode === "brief" ? input.brief : undefined;
   for (const { pageKey, kind } of PAGES) {
-    const sys = docSystemPrompt(pageKey);
-    const user = buildDocUserMessage(pageKey, { brand, brief: input.mode === "brief" ? input.brief : undefined, menu });
-    const text = await call(sys, user);
-    const plan = text ? parseBlockPlan(text) : null;
-    proposals[pageKey] = plan ?? { fallback: true };
     let doc: BlockDocument;
-    try {
-      if (plan) {
-        const assembled = assembleDocument(pageKey, kind, plan, valid);
+    if (pageKey === "home") {
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brand, briefArg, menu), { model: storegenHtmlModel(), maxTokens: 8000 });
+      // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
+      // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
+      const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";
+      const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped) : "";
+      proposals.home = clean ? { rawHtml: true } : { fallback: true };
+      doc = clean
+        ? { kind: "singleton", pageKey: "home", blocks: [{ id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: clean } }] }
+        : fallbackDoc(pageKey, fbBrand, fallbackContext);
+    } else {
+      const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand, brief: briefArg, menu }));
+      const plan = text ? parseBlockPlan(text) : null;
+      proposals[pageKey] = plan ?? { fallback: true };
+      try {
+        const assembled = plan ? assembleDocument(pageKey, kind, plan, valid) : null;
         // A plan that validates down to nothing is a failure → fall back.
-        doc = assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline }, fallbackContext);
-      } else {
-        doc = fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline }, fallbackContext);
+        doc = assembled && assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, fbBrand, fallbackContext);
+      } catch (err) {
+        console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
+        doc = fallbackDoc(pageKey, fbBrand, fallbackContext);
       }
-    } catch (err) {
-      console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
-      doc = fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline }, fallbackContext);
     }
-    if (pageKey === "home") doc = injectHeroImage(doc, heroImage);
     docs[pageKey] = doc;
     await saveDraft(input.shopId, pageKey, doc);
   }

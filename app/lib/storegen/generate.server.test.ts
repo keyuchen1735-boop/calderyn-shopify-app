@@ -106,25 +106,33 @@ describe("generateStore", () => {
     expect(hero.props.imageUrl).toBe("/i/hero.jpg");
   });
 
-  it("injects the top catalog product's image into an AI-composed home hero that has none", async () => {
-    // With credits ON the AI composes the home, but its hero is text-only — the model has no
-    // image URLs to reference, so it never sets imageUrl. The generator must inject the top
-    // product's image so the AI path renders a full-bleed image hero, not the plain text hero
-    // that made "the redesign not come through".
-    getCatalogMock.mockReturnValue({
-      listProducts: async () => [{ ...product("1"), images: [{ url: "/i/hero.jpg", alt: null }] }],
-      getProduct: async (_s: string, h: string) => product(h.replace("h-", "")),
-      listCollections: async () => [{ handle: "summer", title: "Summer" }],
-    });
+  it("generates the home as a single sanitized rawHtml block (flashy HTML, not a text stack)", async () => {
+    // The home page is an AI-authored full HTML page so it reads as a real designed storefront with
+    // zero product imagery. The generator sanitizes it (script/handlers stripped) before it is stored.
     createMock
-      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
-      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{"x":0,"y":0,"w":12,"h":2}}]}')) // AI home: text hero, no imageUrl
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#7c3aed","background":"#0b0b0f","text":"#fff"},"voiceTagline":"","vibe":"bold"}')) // brand
+      .mockResolvedValueOnce(reply('<div class="ai-store"><style>.ai-store .hero{background:linear-gradient(135deg,#7c3aed,#000)}</style><section class="hero"><h1>Built different</h1></section></div><script>steal()</script>')) // home HTML (+ injected script)
       .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
       .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
-    await generateStore({ shopId: realShop, mode: "catalog" });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a bold gym brand" });
     const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
-    const hero = homeDraft.blocks.find((b: { type: string }) => b.type === "hero")!;
-    expect(hero.props.imageUrl).toBe("/i/hero.jpg");
+    expect(homeDraft.blocks).toHaveLength(1);
+    expect(homeDraft.blocks[0].type).toBe("rawHtml");
+    const html = homeDraft.blocks[0].props.html as string;
+    expect(html).toContain("Built different");
+    expect(html).toContain("linear-gradient"); // design preserved
+    expect(html).not.toMatch(/<script/i); // sanitized at the generator boundary
+  });
+
+  it("falls back to the designed hollow store when the home HTML call returns no markup (junk/refusal)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValue(reply("I cannot help with that.")); // home HTML has no tags → miss → fallback
+    await generateStore({ shopId: realShop, mode: "brief", brief: "anything" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const types = homeDraft.blocks.map((b: { type: string }) => b.type);
+    expect(types).not.toContain("rawHtml"); // fell back
+    expect(types).toContain("hero"); // designed hollow/fallback store, never blank
   });
 
   it("flags no_products on an empty catalog and still writes drafts", async () => {
