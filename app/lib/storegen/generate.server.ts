@@ -111,7 +111,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // model prompts, so the fallback path (today's path: the API key is at its limit) still reads
   // designed instead of generic when every call errors.
   const fallbackContext: FallbackContext = {
-    products: products.map((p) => ({ title: p.title })),
+    products: products.map((p) => ({ title: p.title, imageUrl: p.images[0]?.url })),
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
     vibe: brand.vibe,
   };

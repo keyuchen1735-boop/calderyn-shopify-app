@@ -89,4 +89,27 @@ describe("dashboard.store.preview loader", () => {
     // loadDraftDoc is called with the resolved page — must be "home", not "bogus".
     expect(loadDraftMock).toHaveBeenCalledWith(SHOP, "home");
   });
+
+  it("binds the pdp preview to the clicked product via ?handle (not just the first product)", async () => {
+    const special = { id: "p9", handle: "special-tee", title: "Special Tee", description: "", images: [], variants: [], collections: [] };
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [{ ...special, id: "p1", handle: "first-product" }],
+      listCollections: async () => [],
+      getProduct: async (_s: string, h: string) => (h === "special-tee" ? special : null),
+    });
+    loadDraftMock.mockResolvedValue(null);
+    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=pdp&handle=special-tee");
+    expect(record.product.handle).toBe("special-tee"); // the clicked product, not products[0]
+  });
+
+  it("binds the collection preview to the clicked collection via ?handle", async () => {
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [],
+      listCollections: async () => [{ handle: "winter", title: "Winter" }, { handle: "summer", title: "Summer" }],
+      getProduct: async () => null,
+    });
+    loadDraftMock.mockResolvedValue(null);
+    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=collection&handle=summer");
+    expect(record.collection.handle).toBe("summer"); // the clicked collection, not collections[0]
+  });
 });

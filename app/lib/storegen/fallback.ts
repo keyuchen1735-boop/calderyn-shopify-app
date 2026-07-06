@@ -14,7 +14,7 @@ export interface BrandFacts { storeName: string; tagline: string }
  *  empty catalog) keeps the original universal fallback — hero + all-products grid, referencing
  *  no specific catalog id, so an empty-catalog run never blanks and never invents a ref. */
 export interface FallbackContext {
-  products?: { title: string }[];
+  products?: { title: string; imageUrl?: string }[];
   collections?: { handle: string; title: string }[];
   vibe?: StudioVibe;
 }
@@ -109,6 +109,9 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
   const noun = (topCollection?.title || topProduct?.title || "").trim() || null;
   // Collection-sourced when the catalog has one — a real handle, never invented (D2/D4).
   const source = topCollection ? { kind: "collection" as const, handle: topCollection.handle } : { kind: "all" as const };
+  // The first product with imagery becomes the hero backdrop — deterministic, always renders, and
+  // turns the plain text hero into a full-bleed image hero on the no-credits path (empty when none).
+  const heroImage = products.find((p) => p.imageUrl)?.imageUrl ?? "";
 
   const blocks: Block[] = [];
   let y = 0;
@@ -120,6 +123,7 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
   push("fb-hero", "hero", 2, 12, {
     headline: clip(voice.heroHeadline(noun, brand.storeName), HEADLINE_MAX),
     subhead: clip(brand.tagline || voice.heroSubhead(noun), SUBHEAD_MAX),
+    imageUrl: heroImage,
   });
   push("fb-cta", "button", 1, 3, { label: clip(voice.ctaLabel, LABEL_MAX), href: "/storefront" });
   push("fb-grid", "productGrid", 6, 12, { source, heading: clip(voice.gridHeading(noun), HEADING_MAX) });

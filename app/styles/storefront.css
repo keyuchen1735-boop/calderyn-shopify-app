@@ -305,3 +305,21 @@ button.cd-block--addtocart { justify-content: center; padding: 0.85rem 1.4rem; b
 .cd-block--product-title { margin: 0 0 calc(var(--cd-gap) * 0.75); }
 .cd-pdp__title { font-family: var(--cd-font-display); font-size: 1.85rem; line-height: 1.15; margin: 0; }
 .cd-pdp__description { color: color-mix(in srgb, currentColor 72%, transparent); margin: 0.5rem 0 0; line-height: 1.6; }
+
+/* ---- image hero (hero block carrying a background image) ------------------------------------ */
+/* A safe <img>.cd-hero__bg sits behind the copy; a bottom-up scrim keeps the headline readable
+   on any photo. Falls back to the plain text hero above whenever no image is set. */
+.cd-block--hero[data-has-image] {
+  position: relative; isolation: isolate; overflow: hidden;
+  border-radius: var(--cd-radius);
+  min-height: clamp(300px, 40vw, 520px);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: calc(var(--cd-gap) * 2.5);
+}
+.cd-hero__bg { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; }
+.cd-block--hero[data-has-image]::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.25) 45%, rgba(0, 0, 0, 0.05));
+}
+.cd-block--hero[data-has-image] .cd-hero__headline { color: #ffffff; }
+.cd-block--hero[data-has-image] .cd-hero__subhead { color: rgba(255, 255, 255, 0.88); max-width: 46ch; }

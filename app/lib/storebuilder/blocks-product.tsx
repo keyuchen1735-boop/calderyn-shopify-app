@@ -6,6 +6,7 @@
 // price + variantPicker are the display pair; the required-on-PDP invariant ensures all three appear.
 import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
+import { STOREFRONT_LINKS } from "./links";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { formatMoney as money } from "~/lib/storefront/money";
 
@@ -99,9 +100,10 @@ const collectionGrid: BlockMeta = {
   Component: ({ ctx }) => {
     const handle = ctx.record?.collection?.handle;
     const products = handle ? (ctx.data.productsByCollection[handle] ?? []) : [];
+    const links = ctx.links ?? STOREFRONT_LINKS;
     return createElement("div", { className: "cd-block cd-store__grid" },
       products.map((p) =>
-        createElement("a", { key: p.id, className: "cd-product-card", href: `/storefront/products/${p.handle}` },
+        createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
           p.images[0] ? createElement("img", { className: "cd-product-card__img", src: p.images[0].url, alt: p.images[0].alt ?? p.title }) : null,
           createElement("span", { className: "cd-product-card__title" }, p.title),
           createElement("span", { className: "cd-product-card__price" }, p.variants[0] ? money(p.variants[0].priceCents, p.variants[0].currency) : ""))));
