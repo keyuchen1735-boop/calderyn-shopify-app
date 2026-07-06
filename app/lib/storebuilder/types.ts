@@ -3,13 +3,14 @@
 // bind to these shapes. Adding a new block type = a new registry entry, NOT a change here.
 import type { ReactNode } from "react";
 import type { StoreProduct, StoreCollection } from "~/lib/storefront/catalog";
+import type { StoreLinks } from "./links";
 
 export type DocKind = "singleton" | "template";
 export type PageKey = "home" | "collection" | "pdp" | `page:${string}`;
 export type BlockFlavor = "static" | "dynamic" | "functional";
 
 export type BlockType =
-  | "hero" | "richText" | "image" | "button" // static
+  | "hero" | "richText" | "image" | "button" | "featureRow" // static
   | "productGrid" | "collectionList" // dynamic (singleton)
   | "productGallery" | "collectionGrid" // dynamic (template, read ctx.record)
   | "productTitle" | "price" | "variantPicker" // dynamic (template, PDP display)
@@ -42,6 +43,9 @@ export interface RenderData {
 export interface RenderContext {
   data: RenderData;
   record?: { product?: StoreProduct; collection?: StoreCollection };
+  // How blocks build catalog/CTA hrefs. Absent → the live storefront paths (STOREFRONT_LINKS);
+  // the studio preview passes PREVIEW_LINKS so links navigate within the preview iframe.
+  links?: StoreLinks;
 }
 
 // Refs a block instance depends on — drives id-validation AND data resolution.

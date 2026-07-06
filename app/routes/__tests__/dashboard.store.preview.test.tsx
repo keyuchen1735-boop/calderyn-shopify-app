@@ -28,6 +28,9 @@ const settings = {
   palette: { primary: "#000", background: "#fff", text: "#111" },
   logoUrl: null,
   voiceTagline: "Tagline",
+  vibe: "minimal",
+  typeStyle: "editorial",
+  density: "roomy",
 };
 const catalog = {
   listProducts: async () => [],
@@ -70,6 +73,13 @@ describe("dashboard.store.preview loader", () => {
     expect(html).toContain("Small batch");
   });
 
+  it("carries typeStyle/density in the preview settings DTO so the canvas matches the published store", async () => {
+    loadDraftMock.mockResolvedValue(null);
+    const { settings: dto } = await loaderData("https://app.example.com/dashboard/store/preview");
+    expect(dto.typeStyle).toBe("editorial");
+    expect(dto.density).toBe("roomy");
+  });
+
   it("falls back to the never-blank default home doc when there is no draft", async () => {
     loadDraftMock.mockResolvedValue(null);
     const { doc } = await loaderData("https://app.example.com/dashboard/store/preview");
@@ -88,5 +98,28 @@ describe("dashboard.store.preview loader", () => {
     await loaderData("https://app.example.com/dashboard/store/preview?page=bogus");
     // loadDraftDoc is called with the resolved page — must be "home", not "bogus".
     expect(loadDraftMock).toHaveBeenCalledWith(SHOP, "home");
+  });
+
+  it("binds the pdp preview to the clicked product via ?handle (not just the first product)", async () => {
+    const special = { id: "p9", handle: "special-tee", title: "Special Tee", description: "", images: [], variants: [], collections: [] };
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [{ ...special, id: "p1", handle: "first-product" }],
+      listCollections: async () => [],
+      getProduct: async (_s: string, h: string) => (h === "special-tee" ? special : null),
+    });
+    loadDraftMock.mockResolvedValue(null);
+    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=pdp&handle=special-tee");
+    expect(record.product.handle).toBe("special-tee"); // the clicked product, not products[0]
+  });
+
+  it("binds the collection preview to the clicked collection via ?handle", async () => {
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [],
+      listCollections: async () => [{ handle: "winter", title: "Winter" }, { handle: "summer", title: "Summer" }],
+      getProduct: async () => null,
+    });
+    loadDraftMock.mockResolvedValue(null);
+    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=collection&handle=summer");
+    expect(record.collection.handle).toBe("summer"); // the clicked collection, not collections[0]
   });
 });

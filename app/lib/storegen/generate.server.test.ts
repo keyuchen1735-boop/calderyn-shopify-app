@@ -67,6 +67,17 @@ describe("generateStore", () => {
     expect(saveSettingsMock.mock.calls[0][1]).toMatchObject({ vibe: "bold" });
   });
 
+  it("passes the brand typeStyle/density through on the first-ever branding", async () => {
+    hasSettingsMock.mockResolvedValue(false);
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go","vibe":"bold","typeStyle":"editorial","density":"roomy"}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).toEqual(expect.objectContaining({ typeStyle: "editorial", density: "roomy" }));
+  });
+
   it("falls back per-doc when a doc call returns junk (home survives a bad pdp)", async () => {
     createMock
       .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
@@ -76,6 +87,44 @@ describe("generateStore", () => {
     await generateStore({ shopId: realShop, mode: "catalog" });
     const pdpDraft = saveDraftMock.mock.calls.find((c) => c[1] === "pdp")![2];
     expect(pdpDraft.blocks.map((b: { type: string }) => b.type)).toContain("addToCart"); // fallback PDP is buyable
+  });
+
+  it("uses the top catalog product's image as the hero backdrop in the fallback home doc", async () => {
+    // Catalog product carries an image; the home doc falls back (junk LLM reply) → the deterministic
+    // hero must still pick up that image so the no-credits store looks designed, not plain.
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [{ ...product("1"), images: [{ url: "/i/hero.jpg", alt: null }] }],
+      getProduct: async (_s: string, h: string) => product(h.replace("h-", "")),
+      listCollections: async () => [{ handle: "summer", title: "Summer" }],
+    });
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValue(reply("garbage not json")); // every doc call → deterministic fallback
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const hero = homeDraft.blocks.find((b: { type: string }) => b.type === "hero")!;
+    expect(hero.props.imageUrl).toBe("/i/hero.jpg");
+  });
+
+  it("injects the top catalog product's image into an AI-composed home hero that has none", async () => {
+    // With credits ON the AI composes the home, but its hero is text-only — the model has no
+    // image URLs to reference, so it never sets imageUrl. The generator must inject the top
+    // product's image so the AI path renders a full-bleed image hero, not the plain text hero
+    // that made "the redesign not come through".
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [{ ...product("1"), images: [{ url: "/i/hero.jpg", alt: null }] }],
+      getProduct: async (_s: string, h: string) => product(h.replace("h-", "")),
+      listCollections: async () => [{ handle: "summer", title: "Summer" }],
+    });
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{"x":0,"y":0,"w":12,"h":2}}]}')) // AI home: text hero, no imageUrl
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const hero = homeDraft.blocks.find((b: { type: string }) => b.type === "hero")!;
+    expect(hero.props.imageUrl).toBe("/i/hero.jpg");
   });
 
   it("flags no_products on an empty catalog and still writes drafts", async () => {

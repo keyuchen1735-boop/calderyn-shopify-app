@@ -5,6 +5,7 @@
 // throw only on irrecoverable shape (renderBlocks/validateDocument catch and skip).
 import { createElement } from "react";
 import type { BlockMeta, RenderContext } from "./types";
+import { STOREFRONT_LINKS } from "./links";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { formatMoney } from "~/lib/storefront/money";
 
@@ -30,15 +31,21 @@ function money(p: StoreProduct): string {
 }
 
 // ── static ────────────────────────────────────────────────────────────────
-interface HeroProps { headline: string; subhead: string }
+interface HeroProps { headline: string; subhead: string; imageUrl: string }
 const hero: BlockMeta<HeroProps> = {
   type: "hero", flavor: "static", allowedDocKinds: ["singleton", "template"],
-  defaultProps: { headline: "Welcome", subhead: "Shop our latest" },
+  defaultProps: { headline: "Welcome", subhead: "Shop our latest", imageUrl: "" },
   defaultLayout: { x: 0, y: 0, w: 12, h: 2 },
-  validateProps: (raw) => { const r = asRecord(raw); return { headline: str(r.headline, "Welcome"), subhead: str(r.subhead, "Shop our latest") }; },
+  // imageUrl is optional: an empty/unsafe src renders the classic text hero, a safe one turns it
+  // into a full-bleed image hero (see [data-has-image] in storefront.css). Same src allowlist as
+  // the image block — AI/merchant URLs are untrusted.
+  validateProps: (raw) => { const r = asRecord(raw); return { headline: str(r.headline, "Welcome"), subhead: str(r.subhead, "Shop our latest"), imageUrl: safeImageSrc(r.imageUrl) }; },
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  // A real <img> behind the copy (not a CSS background) keeps the same safe-src allowlist and lets
+  // the browser lazy-load it; the scrim + white text live in storefront.css under [data-has-image].
   Component: ({ props }) =>
-    createElement("section", { className: "cd-block cd-block--hero" },
+    createElement("section", { className: "cd-block cd-block--hero", ...(props.imageUrl ? { "data-has-image": "1" } : {}) },
+      props.imageUrl ? createElement("img", { className: "cd-hero__bg", src: props.imageUrl, alt: "", "aria-hidden": "true", loading: "lazy" }) : null,
       createElement("h1", { className: "cd-hero__headline" }, props.headline),
       createElement("p", { className: "cd-hero__subhead" }, props.subhead)),
 };
@@ -76,8 +83,39 @@ const button: BlockMeta<ButtonProps> = {
   defaultLayout: { x: 0, y: 0, w: 3, h: 1 },
   validateProps: (raw) => { const r = asRecord(raw); return { label: str(r.label, "Shop now"), href: safeHref(r.href, "/storefront") }; },
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  Component: ({ props, ctx }) =>
+    createElement("a", { className: "cd-block cd-block--button", href: (ctx.links ?? STOREFRONT_LINKS).href(props.href) }, props.label),
+};
+
+interface FeatureItem { title: string; body: string }
+interface FeatureRowProps { heading: string; items: FeatureItem[] }
+// A product-independent value-prop row (up to 4 cards). Central to the "hollow" store: it fills a
+// no-catalog home with real structure instead of an empty product grid. Renders nothing when it
+// has no items, so a malformed/empty block never leaves a bare heading behind.
+const featureRow: BlockMeta<FeatureRowProps> = {
+  type: "featureRow", flavor: "static", allowedDocKinds: ["singleton", "template"],
+  defaultProps: { heading: "", items: [] },
+  defaultLayout: { x: 0, y: 0, w: 12, h: 3 },
+  validateProps: (raw) => {
+    const r = asRecord(raw);
+    const items = (Array.isArray(r.items) ? r.items : [])
+      .slice(0, 4)
+      .map((it) => { const o = asRecord(it); return { title: str(o.title).slice(0, 60), body: str(o.body, str(o.text)).slice(0, 180) }; })
+      .filter((it) => it.title || it.body);
+    return { heading: str(r.heading).slice(0, 80), items };
+  },
+  catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
   Component: ({ props }) =>
-    createElement("a", { className: "cd-block cd-block--button", href: props.href }, props.label),
+    props.items.length === 0
+      ? null
+      : createElement("section", { className: "cd-block cd-block--features" },
+          props.heading ? createElement("h2", { className: "cd-features__heading" }, props.heading) : null,
+          createElement("div", { className: "cd-features__grid" },
+            props.items.map((it, i) =>
+              createElement("div", { key: i, className: "cd-feature" },
+                createElement("span", { className: "cd-feature__rule", "aria-hidden": "true" }),
+                it.title ? createElement("h3", { className: "cd-feature__title" }, it.title) : null,
+                it.body ? createElement("p", { className: "cd-feature__body" }, it.body) : null)))),
 };
 
 // ── dynamic ───────────────────────────────────────────────────────────────
@@ -103,15 +141,16 @@ const productGrid: BlockMeta<ProductGridProps> = {
     productIds: props.source.kind === "ids" ? props.source.ids : [],
     collectionHandles: props.source.kind === "collection" ? [props.source.handle] : [],
   }),
-  Component: ({ props, ctx }) =>
-    createElement("section", { className: "cd-block cd-block--grid" },
+  Component: ({ props, ctx }) => {
+    const links = ctx.links ?? STOREFRONT_LINKS;
+    return createElement("section", { className: "cd-block cd-block--grid" },
       props.heading ? createElement("h2", { className: "cd-grid__heading" }, props.heading) : null,
       createElement("div", { className: "cd-store__grid" },
         gridProducts(props.source, ctx).map((p) =>
-          createElement("a", { key: p.id, className: "cd-product-card", href: `/storefront/products/${p.handle}` },
+          createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
             p.images[0] ? createElement("img", { className: "cd-product-card__img", src: p.images[0].url, alt: p.images[0].alt ?? p.title }) : null,
             createElement("span", { className: "cd-product-card__title" }, p.title),
-            createElement("span", { className: "cd-product-card__price" }, money(p)))))),
+            createElement("span", { className: "cd-product-card__price" }, money(p)))))); },
 };
 
 interface CollectionListProps { heading: string }
@@ -129,9 +168,9 @@ const collectionList: BlockMeta<CollectionListProps> = {
     createElement("nav", { className: "cd-block cd-block--collections" },
       props.heading ? createElement("h2", { className: "cd-collections__heading" }, props.heading) : null,
       ctx.data.collections.map((c) =>
-        createElement("a", { key: c.handle, href: `/storefront/collections/${c.handle}` }, c.title))),
+        createElement("a", { key: c.handle, href: (ctx.links ?? STOREFRONT_LINKS).collection(c.handle) }, c.title))),
 };
 
 // Exported as a plain array; the registry indexes it by type (Task 3).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous BlockMeta<P> union; registry narrows by type
-export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, productGrid, collectionList];
+export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, featureRow, productGrid, collectionList];

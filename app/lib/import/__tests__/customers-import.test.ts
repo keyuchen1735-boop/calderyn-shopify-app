@@ -1,8 +1,10 @@
 // Customer import: Shopify customers → the buyer PII store. The behaviors that
-// matter: no-email customers are counted (not silently dropped), ACCESS_DENIED
-// classifies as blocked (protected-customer-data approval pending), addresses
-// are only added once (re-import idempotency), marketing consent is recorded
-// only for explicit SUBSCRIBED/UNSUBSCRIBED states.
+// matter: no-email customers are counted (not silently dropped), the
+// protected-customer-data denial — in either the plain API-message form the
+// merchant sees or the ACCESS_DENIED code form — classifies as blocked
+// (approval pending) rather than failing the run, addresses are only added once
+// (re-import idempotency), marketing consent is recorded only for explicit
+// SUBSCRIBED/UNSUBSCRIBED states.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AdminCustomer } from "~/lib/ingest/shopify-admin.server";
 
@@ -90,7 +92,17 @@ describe("importCustomers", () => {
     expect(r).toEqual({ imported: 1, skipped: 1, blocked: false });
   });
 
-  it("classifies ACCESS_DENIED as blocked, not an error", async () => {
+  it("classifies the protected-customer-data denial (plain API message) as blocked, not an error", async () => {
+    // The exact message Shopify's Admin client throws when the app lacks
+    // protected-customer-data approval — no "ACCESS_DENIED" substring in it.
+    fetchError = new Error(
+      "This app is not approved to use the email field. See https://shopify.dev/docs/apps/launch/protected-customer-data for more details.",
+    );
+    const r = await importCustomers("s.myshopify.com", "shop-1");
+    expect(r.blocked).toBe(true);
+  });
+
+  it("also classifies the ACCESS_DENIED code form as blocked", async () => {
     fetchError = new Error('Admin GraphQL error: [{"extensions":{"code":"ACCESS_DENIED"}}]');
     const r = await importCustomers("s.myshopify.com", "shop-1");
     expect(r.blocked).toBe(true);
@@ -99,6 +111,15 @@ describe("importCustomers", () => {
   it("rethrows non-access errors so the run lands in state=error", async () => {
     fetchError = new Error("ECONNRESET");
     await expect(importCustomers("s.myshopify.com", "shop-1")).rejects.toThrow("ECONNRESET");
+  });
+
+  it("does not misclassify a buyer-WRITE failure as blocked, even if its message looks PCD-ish", async () => {
+    // Protected-customer-data denial can only come from the Shopify pull; a
+    // buyer-write (Supabase) error must fail the run loudly, never masquerade as
+    // `blocked` (which would silently swallow it and file a dishonest report).
+    customers.push(customer({ email: "a@example.com" }));
+    upsertGuestBuyer.mockRejectedValueOnce(new Error("ACCESS_DENIED: buyer_dim row-level security"));
+    await expect(importCustomers("s.myshopify.com", "shop-1")).rejects.toThrow("ACCESS_DENIED");
   });
 
   it("adds the default address once and skips it on re-import", async () => {

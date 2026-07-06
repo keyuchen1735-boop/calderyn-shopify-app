@@ -3,9 +3,9 @@ import { describe, it, expect } from "vitest";
 import { getBlockMeta, BLOCK_REGISTRY } from "./registry";
 
 describe("block registry", () => {
-  it("indexes all 12 blocks by type", () => {
+  it("indexes all 13 blocks by type", () => {
     expect(Object.keys(BLOCK_REGISTRY).sort()).toEqual([
-      "addToCart", "button", "collectionGrid", "collectionList", "hero",
+      "addToCart", "button", "collectionGrid", "collectionList", "featureRow", "hero",
       "image", "price", "productGallery", "productGrid", "productTitle", "richText", "variantPicker",
     ]);
   });

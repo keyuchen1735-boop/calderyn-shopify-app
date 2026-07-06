@@ -4,7 +4,7 @@
 // service-role client, shop_id-scoped, non-uuid (demo) shops skip the DB and get defaults
 // so the storefront never blanks.
 import { getSupabase } from "~/lib/supabase.server";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import type { StudioVibe, StudioTypeStyle, StudioDensity } from "~/lib/storebuilder/studio-types";
 
 export interface StoreSettings {
   shopId: string;
@@ -14,6 +14,8 @@ export interface StoreSettings {
   voiceTagline: string | null;
   /** Design vibe the storefront CSS packs key off ([data-vibe]). */
   vibe: StudioVibe;
+  typeStyle: StudioTypeStyle;
+  density: StudioDensity;
 }
 export interface StoreSettingsInput {
   storeName: string;
@@ -23,21 +25,25 @@ export interface StoreSettingsInput {
   /** Optional: when omitted the stored vibe is left untouched (new rows take
    *  the column default 'minimal'). */
   vibe?: StudioVibe;
+  typeStyle?: StudioTypeStyle;
+  density?: StudioDensity;
 }
 
 export const DEFAULT_PALETTE = { primary: "#0f766e", background: "#ffffff", text: "#111827" };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Mirrors the store_settings.vibe check constraint. */
 const VIBES: readonly StudioVibe[] = ["minimal", "bold", "warm"];
+const TYPE_STYLES: readonly StudioTypeStyle[] = ["classic", "editorial", "rounded"];
+const DENSITIES: readonly StudioDensity[] = ["compact", "standard", "roomy"];
 
 function defaults(shopId: string): StoreSettings {
-  return { shopId, storeName: "Calderyn Demo Store", logoUrl: null, palette: DEFAULT_PALETTE, voiceTagline: null, vibe: "minimal" };
+  return { shopId, storeName: "Calderyn Demo Store", logoUrl: null, palette: DEFAULT_PALETTE, voiceTagline: null, vibe: "minimal", typeStyle: "classic", density: "standard" };
 }
 
 export async function getStoreSettings(shopId: string): Promise<StoreSettings> {
   if (!UUID_RE.test(shopId)) return defaults(shopId);
   const { data, error } = await getSupabase()
-    .from("store_settings").select("store_name, palette, logo_url, voice_tagline, vibe").eq("shop_id", shopId).maybeSingle();
+    .from("store_settings").select("store_name, palette, logo_url, voice_tagline, vibe, type_style, density").eq("shop_id", shopId).maybeSingle();
   if (error) throw error;
   if (!data) {
     // A real shop that hasn't run the store generator yet still has a brand:
@@ -56,6 +62,8 @@ export async function getStoreSettings(shopId: string): Promise<StoreSettings> {
     palette: (data.palette as StoreSettings["palette"]) ?? DEFAULT_PALETTE,
     voiceTagline: (data.voice_tagline as string | null) ?? null,
     vibe: VIBES.includes(data.vibe as StudioVibe) ? (data.vibe as StudioVibe) : "minimal",
+    typeStyle: TYPE_STYLES.includes(data.type_style as StudioTypeStyle) ? (data.type_style as StudioTypeStyle) : "classic",
+    density: DENSITIES.includes(data.density as StudioDensity) ? (data.density as StudioDensity) : "standard",
   };
 }
 
@@ -78,6 +86,8 @@ export async function saveStoreSettings(shopId: string, input: StoreSettingsInpu
   // Omitted vibe leaves the stored value untouched (upsert only writes the
   // columns present in the payload); new rows take the column default.
   if (input.vibe !== undefined) row.vibe = input.vibe;
+  if (input.typeStyle !== undefined) row.type_style = input.typeStyle;
+  if (input.density !== undefined) row.density = input.density;
   const { error } = await getSupabase().from("store_settings").upsert(row, { onConflict: "shop_id" });
   if (error) throw error;
 }

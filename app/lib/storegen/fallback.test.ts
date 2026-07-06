@@ -6,9 +6,12 @@ import { validateDocument } from "~/lib/storebuilder/validate";
 const valid = { productIds: new Set<string>(), collectionHandles: new Set<string>() };
 
 describe("fallbackDoc", () => {
-  it("home → hero + all-products grid (no specific ids), validates clean", () => {
+  it("home with no catalog → a self-contained hollow store (hero, CTA, features, story, CTA), validates clean", () => {
     const doc = fallbackDoc("home", { storeName: "Acme", tagline: "Go" });
-    expect(doc.blocks.map((b) => b.type)).toEqual(["hero", "productGrid"]);
+    expect(doc.blocks.map((b) => b.type)).toEqual(["hero", "button", "featureRow", "richText", "button"]);
+    // Real value props stand in for the missing catalog — never an empty product grid.
+    const features = doc.blocks.find((b) => b.type === "featureRow")!.props as { items: unknown[] };
+    expect(features.items.length).toBeGreaterThanOrEqual(3);
     expect(validateDocument(doc, valid).dropped).toHaveLength(0);
   });
   it("pdp → gallery + price + variantPicker + addToCart (buy-path complete)", () => {
@@ -62,6 +65,22 @@ describe("fallbackDoc", () => {
       const grid = doc.blocks.find((b) => b.type === "productGrid")!;
       expect(grid.props.source).toEqual({ kind: "all" });
       expect(grid.props.heading).toContain("Cotton Tee");
+    });
+
+    it("uses the first available product image as the hero background", () => {
+      const doc = fallbackDoc("home", brand, {
+        products: [{ title: "Cotton Tee", imageUrl: "/i/tee.jpg" }],
+        collections: [{ handle: "summer", title: "Summer" }],
+        vibe: "minimal",
+      });
+      const hero = doc.blocks.find((b) => b.type === "hero")!;
+      expect((hero.props as { imageUrl?: string }).imageUrl).toBe("/i/tee.jpg");
+    });
+
+    it("leaves the hero image empty when no product carries imagery", () => {
+      const doc = fallbackDoc("home", brand, { products: [{ title: "Cotton Tee" }], vibe: "minimal" });
+      const hero = doc.blocks.find((b) => b.type === "hero")!;
+      expect((hero.props as { imageUrl?: string }).imageUrl ?? "").toBe("");
     });
 
     it("gives each vibe a distinct voice over the same catalog nouns", () => {

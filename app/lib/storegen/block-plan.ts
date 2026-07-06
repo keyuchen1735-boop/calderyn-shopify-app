@@ -3,7 +3,7 @@
 // list of block intents (full props + optional layout) — sanitize.ts + validateDocument turn it
 // into a safe BlockDocument. Parsers never throw; they return null or drop malformed entries.
 import type { GridCell } from "~/lib/storebuilder/types";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import type { StudioVibe, StudioTypeStyle, StudioDensity } from "~/lib/storebuilder/studio-types";
 
 export interface PlanBlock { type: string; props: Record<string, unknown>; layout?: Partial<GridCell> }
 export interface BlockPlan { blocks: PlanBlock[] }
@@ -12,6 +12,11 @@ export interface BrandPlan {
   palette: { primary: string; background: string; text: string };
   voiceTagline: string;
   vibe: StudioVibe;
+  // Optional on the type so BrandPlan literals elsewhere (the generate.server
+  // fallback, test fixtures) need not restate them; parseBrandPlan always sets
+  // both, defaulting to classic/standard.
+  typeStyle?: StudioTypeStyle;
+  density?: StudioDensity;
 }
 
 /** A tasteful, AA-contrast (text-on-background) hex triad the brand prompt offers BY NAME so the
@@ -35,6 +40,8 @@ export const PALETTE_LIBRARY: readonly NamedPalette[] = [
 ];
 const DEFAULT_PALETTE = PALETTE_LIBRARY[0]; // Evergreen — the pre-v2 hardcoded default, unchanged
 const VIBES: readonly StudioVibe[] = ["minimal", "bold", "warm"];
+const TYPE_STYLES: readonly StudioTypeStyle[] = ["classic", "editorial", "rounded"];
+const DENSITIES: readonly StudioDensity[] = ["compact", "standard", "roomy"];
 
 function paletteByName(raw: unknown): NamedPalette | null {
   if (typeof raw !== "string") return null;
@@ -109,6 +116,8 @@ export function parseBrandPlan(raw: string): BrandPlan | null {
   const pal = asRecord(p.palette);
   const resolved = paletteByName(p.paletteName) ?? nearestPaletteByHue(pal.primary);
   const vibe = VIBES.includes(p.vibe as StudioVibe) ? (p.vibe as StudioVibe) : "minimal";
+  const typeStyle = TYPE_STYLES.includes(p.typeStyle as StudioTypeStyle) ? (p.typeStyle as StudioTypeStyle) : "classic";
+  const density = DENSITIES.includes(p.density as StudioDensity) ? (p.density as StudioDensity) : "standard";
   // Enforce the prompt's length limits here: brand text is model output derived from
   // untrusted catalog text and flows on to saveStoreSettings/DB.
   return {
@@ -116,5 +125,7 @@ export function parseBrandPlan(raw: string): BrandPlan | null {
     palette: { primary: resolved.primary, background: resolved.background, text: resolved.text },
     voiceTagline: typeof p.voiceTagline === "string" ? p.voiceTagline.slice(0, 120) : "",
     vibe,
+    typeStyle,
+    density,
   };
 }

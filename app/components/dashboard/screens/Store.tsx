@@ -36,6 +36,7 @@ import {
   parseChatIntent,
   parseProductLine,
   shouldShowWelcome,
+  showPromptCanvas,
   type BuildPhase,
   type ChatIntent,
   type MissingPiece,
@@ -658,6 +659,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
     importInProgress: porting,
   });
   const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
+  // Before the first build → invite a prompt; after one build the full studio takes over.
+  const promptCanvas = showPromptCanvas(data);
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -673,6 +676,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
         />
 
         <div className="cd-stage">
+          {promptCanvas ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Placeholder
+                icon="sparkle"
+                title="Prompt anything"
+                sub="Tell Calderyn what to build and it appears here."
+              />
+            </div>
+          ) : (
+            <>
           <TopBar
             ref={badgeRef}
             storefrontUrl={data.storefrontUrl}
@@ -780,10 +793,13 @@ export default function Store({ app }: { app: DashboardCtx }) {
               )}
             </div>
           </div>
+            </>
+          )}
         </div>
 
         {welcomeVisible && (
           <WelcomeOverlay
+            authBase={app.authBase}
             branch={branch}
             importRun={importRun}
             buildPhase={buildPhase}

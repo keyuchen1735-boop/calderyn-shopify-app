@@ -37,6 +37,23 @@ function textOf(msg: { content: { type: string; text?: string }[] }): string {
   return msg.content.map((b) => (b.type === "text" ? b.text ?? "" : "")).join("").trim();
 }
 
+/** Deterministically back the home hero with a real product image when the composed doc left it
+ *  blank. The model has no image URLs to reference, so an AI-composed hero is always text-only
+ *  without this — the plain hero that made "the redesign not come through". Fills only the first
+ *  empty hero; one that already carries an image (the fallback sets one) is left untouched. */
+function injectHeroImage(doc: BlockDocument, imageUrl: string): BlockDocument {
+  if (!imageUrl) return doc;
+  let filled = false;
+  const blocks = doc.blocks.map((b) => {
+    if (filled || b.type !== "hero") return b;
+    const cur = (b.props as { imageUrl?: unknown }).imageUrl;
+    if (typeof cur === "string" && cur) return b;
+    filled = true;
+    return { ...b, props: { ...b.props, imageUrl } };
+  });
+  return filled ? { ...doc, blocks } : doc;
+}
+
 export async function generateStore(input: GenerateInput): Promise<GenerateResult> {
   const runId = crypto.randomUUID();
   const model = storegenModel();
@@ -93,6 +110,8 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       palette: existing.palette,
       voiceTagline: existing.voiceTagline ?? "",
       vibe: existing.vibe ?? "minimal",
+      typeStyle: existing.typeStyle ?? "classic",
+      density: existing.density ?? "standard",
     };
   }
   if (UUID_RE.test(input.shopId)) {
@@ -103,7 +122,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     const firstBrand = !(await hasStoreSettings(input.shopId));
     await saveStoreSettings(input.shopId, {
       storeName: brand.storeName, palette: brand.palette, logoUrl: null, voiceTagline: brand.voiceTagline,
-      ...(firstBrand || explicitBrief ? { vibe: brand.vibe } : {}),
+      ...(firstBrand || explicitBrief ? { vibe: brand.vibe, typeStyle: brand.typeStyle, density: brand.density } : {}),
     });
   }
 
@@ -111,10 +130,13 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // model prompts, so the fallback path (today's path: the API key is at its limit) still reads
   // designed instead of generic when every call errors.
   const fallbackContext: FallbackContext = {
-    products: products.map((p) => ({ title: p.title })),
+    products: products.map((p) => ({ title: p.title, imageUrl: p.images[0]?.url })),
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
     vibe: brand.vibe,
   };
+  // First product with imagery → the deterministic home-hero backdrop for BOTH paths (the AI never
+  // sets one since it has no image URLs). Empty when the catalog has no images (hollow store).
+  const heroImage = products.find((p) => p.images[0]?.url)?.images[0]?.url ?? "";
 
   // Stage 2 — per doc kind, isolated.
   const docs: Record<string, BlockDocument> = {};
@@ -138,6 +160,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
       doc = fallbackDoc(pageKey, { storeName: brand.storeName, tagline: brand.voiceTagline }, fallbackContext);
     }
+    if (pageKey === "home") doc = injectHeroImage(doc, heroImage);
     docs[pageKey] = doc;
     await saveDraft(input.shopId, pageKey, doc);
   }

@@ -240,6 +240,15 @@ export function shouldShowWelcome(state: {
   return !state.hasDraft && !state.hasPublished && !state.generation;
 }
 
+/** The studio shows the empty "prompt anything" canvas only until the merchant's
+ *  first build — no draft, no published store, no generation on record. After one
+ *  prompt the studio hands off to the full store interface and all tools, even
+ *  before there are products: a hollow store still previews (and does so
+ *  stunningly, via the fallback composition). */
+export function showPromptCanvas(state: { hasDraft: boolean; hasPublished: boolean; generation: unknown }): boolean {
+  return !state.hasDraft && !state.hasPublished && !state.generation;
+}
+
 export interface ParsedProductLine {
   title: string;
   /** Null when no price was typed — never fabricate a number the merchant

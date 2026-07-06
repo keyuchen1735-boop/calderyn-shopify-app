@@ -21,6 +21,7 @@ a { color: inherit; }
 .cd-store {
   --cd-container: 1120px;
   --cd-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --cd-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --cd-weight-display: 650;
   --cd-tracking-display: -0.01em;
   --cd-radius: 10px;
@@ -45,6 +46,7 @@ a { color: inherit; }
   max-width: var(--cd-container);
   margin: 0 auto;
   padding: 0 var(--cd-gap);
+  font-family: var(--cd-font-body);
 }
 
 .cd-store[data-vibe="bold"] {
@@ -90,6 +92,19 @@ a { color: inherit; }
   --cd-canvas-radius: 22px;
 }
 
+/* ---- typeStyle packs — classic intentionally omitted (defers to the vibe's font) ---- */
+.cd-store[data-type="editorial"] {
+  --cd-font-display: ui-serif, Georgia, "Times New Roman", serif;
+  --cd-tracking-display: 0em;
+}
+.cd-store[data-type="rounded"] {
+  --cd-font-display: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+/* ---- density packs — standard intentionally omitted (base --cd-gap) ---- */
+.cd-store[data-density="compact"] { --cd-gap: 12px; }
+.cd-store[data-density="roomy"]   { --cd-gap: 24px; }
+
 /* ---- chrome -------------------------------------------------------------------------------- */
 .cd-store__header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cd-gap); padding: calc(var(--cd-gap) * 1.25) 0; border-bottom: 1px solid var(--cd-hairline); }
 .cd-store__logo { display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit; font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); font-size: 1.05rem; letter-spacing: var(--cd-tracking-display); }
@@ -98,8 +113,11 @@ a { color: inherit; }
 .cd-store__account-nav { margin-left: auto; display: flex; align-items: center; gap: calc(var(--cd-gap) * 1.25); }
 .cd-store__account, .cd-store__cart { font-size: 0.92rem; padding-bottom: 2px; border-bottom: 1px solid transparent; transition: border-color 0.15s ease; }
 .cd-store__account:hover, .cd-store__cart:hover { border-color: currentColor; }
-.cd-store__nav { display: flex; gap: var(--cd-gap); padding: var(--cd-gap) 0; }
-.cd-store__nav a { text-decoration: none; color: inherit; }
+/* Category bar — the store chrome that reads as a real storefront (For Him / For Her …). Centered,
+   spaced small-caps with a hover underline; vibe display font so it matches the store's type. */
+.cd-store__nav { display: flex; flex-wrap: wrap; justify-content: center; gap: clamp(16px, 3vw, 40px); padding: calc(var(--cd-gap) * 0.75) 0; border-bottom: 1px solid var(--cd-hairline); }
+.cd-store__nav a { text-decoration: none; color: inherit; font-family: var(--cd-font-display); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding-bottom: 3px; border-bottom: 2px solid transparent; transition: border-color 0.15s ease; }
+.cd-store__nav a:hover { border-color: currentColor; }
 .cd-store__footer { padding: calc(var(--cd-gap) * 1.5) 0; border-top: 1px solid var(--cd-hairline); color: var(--cd-muted); font-size: 0.85rem; }
 
 /* Top-level content wrappers double as the "canvas": transparent in minimal/bold (no visual
@@ -305,3 +323,63 @@ button.cd-block--addtocart { justify-content: center; padding: 0.85rem 1.4rem; b
 .cd-block--product-title { margin: 0 0 calc(var(--cd-gap) * 0.75); }
 .cd-pdp__title { font-family: var(--cd-font-display); font-size: 1.85rem; line-height: 1.15; margin: 0; }
 .cd-pdp__description { color: color-mix(in srgb, currentColor 72%, transparent); margin: 0.5rem 0 0; line-height: 1.6; }
+
+/* ---- image hero (hero block carrying a background image) ------------------------------------ */
+/* A safe <img>.cd-hero__bg sits behind the copy; a bottom-up scrim keeps the headline readable
+   on any photo. Falls back to the plain text hero above whenever no image is set. */
+.cd-block--hero[data-has-image] {
+  position: relative; isolation: isolate; overflow: hidden;
+  border-radius: var(--cd-radius);
+  min-height: clamp(300px, 40vw, 520px);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: calc(var(--cd-gap) * 2.5);
+}
+.cd-hero__bg { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; }
+.cd-block--hero[data-has-image]::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.25) 45%, rgba(0, 0, 0, 0.05));
+}
+.cd-block--hero[data-has-image] .cd-hero__headline { color: #ffffff; }
+.cd-block--hero[data-has-image] .cd-hero__subhead { color: rgba(255, 255, 255, 0.88); max-width: 46ch; }
+
+/* ---- gradient hero (no-image) + feature row: the self-contained "hollow" store ------------- */
+/* When a hero carries no image it becomes a designed panel rather than bare text: a soft glow of
+   the brand primary over the surface, generous space, and larger display type. --cd-primary is
+   set inline from the merchant palette by the layout route (falls back to the default green). */
+.cd-store:not([data-vibe="bold"]) .cd-block--hero:not([data-has-image]) {
+  padding: clamp(40px, 6vw, 84px) clamp(26px, 5vw, 56px);
+  border-radius: calc(var(--cd-radius) * 1.5);
+  border: 1px solid var(--cd-surface-border);
+  overflow: hidden;
+  background:
+    radial-gradient(130% 130% at 12% 0%, color-mix(in srgb, var(--cd-primary, #0f766e) 24%, transparent), transparent 58%),
+    radial-gradient(120% 120% at 100% 100%, color-mix(in srgb, var(--cd-primary, #0f766e) 14%, transparent), transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--cd-primary, #0f766e) 7%, var(--cd-surface)), var(--cd-surface));
+}
+/* Bold keeps its full-bleed dark band, now lit with a brand-primary glow in the top corner. */
+[data-vibe="bold"] .cd-block--hero:not([data-has-image]) {
+  background:
+    radial-gradient(90% 150% at 12% 0%, color-mix(in srgb, var(--cd-primary, #0f766e) 45%, transparent), transparent 62%),
+    var(--cd-hero-bg);
+}
+.cd-block--hero:not([data-has-image]) .cd-hero__headline { font-size: clamp(2.1rem, 1.4rem + 3.4vw, 3.4rem); }
+.cd-block--hero:not([data-has-image]) .cd-hero__subhead { font-size: 1.15rem; max-width: 44ch; }
+
+/* Feature row — the value-prop trio that gives a catalog-less store real structure. */
+.cd-block--features { padding: clamp(8px, 2vw, 24px) 0; }
+.cd-features__heading {
+  font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); letter-spacing: var(--cd-tracking-display);
+  font-size: clamp(1.4rem, 1rem + 1.6vw, 1.9rem); margin: 0 0 clamp(16px, 3vw, 30px); text-align: center;
+}
+.cd-features__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(14px, 2.4vw, 28px); }
+.cd-feature {
+  padding: clamp(20px, 2.4vw, 30px); border-radius: var(--cd-radius);
+  background: var(--cd-surface); border: 1px solid var(--cd-surface-border); box-shadow: var(--cd-shadow-card);
+}
+.cd-feature__rule { display: block; width: 34px; height: 3px; border-radius: 3px; background: var(--cd-primary, currentColor); margin-bottom: 16px; }
+.cd-feature__title { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); font-size: 1.12rem; margin: 0 0 8px; color: var(--cd-card-ink); }
+.cd-feature__body { margin: 0; color: var(--cd-card-muted); line-height: 1.6; font-size: 0.96rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .cd-feature { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+  .cd-feature:hover { transform: translateY(-3px); box-shadow: var(--cd-shadow-card-hover); border-color: color-mix(in srgb, var(--cd-primary, #0f766e) 40%, var(--cd-surface-border)); }
+}
