@@ -784,6 +784,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
 
         {welcomeVisible && (
           <WelcomeOverlay
+            authBase={app.authBase}
             branch={branch}
             importRun={importRun}
             buildPhase={buildPhase}

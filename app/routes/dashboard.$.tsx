@@ -13,6 +13,7 @@ import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { useLoaderData, useRouteError } from "@remix-run/react";
 
 import { requireVerifiedSession } from "~/lib/dashboard/session.server";
+import { publicBaseUrl } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 import DashboardApp from "~/components/dashboard/DashboardApp";
 import {
@@ -78,6 +79,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     "Your store";
   const hasCatalog = productRes.error ? true : (productRes.data?.length ?? 0) > 0;
   return {
+    authBase: publicBaseUrl(),
     shopDomain: session.shopDomain,
     storeLabel,
     demoMode: data?.demo_mode === true,
@@ -86,12 +88,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function DashboardRoute() {
-  const { shopDomain, storeLabel, demoMode, hasCatalog } = useLoaderData<typeof loader>();
+  const { authBase, shopDomain, storeLabel, demoMode, hasCatalog } = useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
     <DashboardErrorBoundary>
       <DashboardApp
+        authBase={authBase}
         shopDomain={shopDomain}
         storeLabel={storeLabel}
         demoMode={demoMode}

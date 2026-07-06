@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
+import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
 import { normalizePhone, isReferralSource, setOnboardingProfile } from "~/lib/auth/onboarding.server";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
@@ -73,7 +73,10 @@ export async function action({ request }: ActionFunctionArgs) {
   // Optional Shopify port: hand off to the existing OAuth → callback → #13 import
   // machine (it runs startImport + kickDrainSoon and steers to the store/import
   // screen). The required fields are already saved above.
-  if (intent === "connect") return redirect("/dashboard/login");
+  if (intent === "connect") {
+    const authBase = publicBaseUrl();
+    return redirect(authBase ? `${authBase}/dashboard/login` : "/dashboard/login");
+  }
   return redirect(nextAfterOnboarding(session.emailVerified));
 }
 

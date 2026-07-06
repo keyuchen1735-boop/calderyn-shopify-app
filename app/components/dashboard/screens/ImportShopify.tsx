@@ -6,6 +6,10 @@ import { SettingsSubTabs } from "../subtabs";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError, IMPORT_IN_PROGRESS } from "~/lib/dashboard/client";
 
+function dashboardLoginHref(authBase?: string): string {
+  return authBase ? `${authBase.replace(/\/+$/, "")}/dashboard/login` : "/dashboard/login";
+}
+
 // Import from Shopify (#13.promote): a one-click, re-runnable migration that pulls the last
 // 12 months of the merchant's Shopify store into Calderyn's owned tables. Starts a background
 // run and polls it to completion, then shows an honest report of what was (and wasn't) imported.
@@ -75,7 +79,7 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
           </p>
           <a
             className="cd-btn cd-btn-primary"
-            href="/dashboard/login"
+            href={dashboardLoginHref(app.authBase)}
             style={{ marginTop: 12, display: "inline-flex" }}
           >
             Connect Shopify

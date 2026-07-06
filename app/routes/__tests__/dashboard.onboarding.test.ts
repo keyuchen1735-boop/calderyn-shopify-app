@@ -4,6 +4,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   rateLimit: vi.fn().mockResolvedValue(true),
   clientIpKey: () => "k",
   checkSameOrigin: vi.fn(() => null),
+  publicBaseUrl: () => "https://calderyncompany.com",
   wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
 }));
@@ -110,7 +111,7 @@ describe("onboarding action", () => {
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "connect", phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard/login");
+    expect(res.headers.get("Location")).toBe("https://calderyncompany.com/dashboard/login");
     expect(setOnboardingProfile).toHaveBeenCalled();
   });
   it("rejects a shop-based (userId null) session with 400 not_first_party", async () => {
