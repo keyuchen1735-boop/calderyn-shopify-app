@@ -3,7 +3,7 @@
 // Rehost sweep (#9, cron.assets). product_media rows written by the import
 // promote path and the sourcing pick path carry third-party hotlinks in
 // external_url (Shopify CDN / supplier CDNs). This sweep captures each pending
-// hotlink into owned storage via persistExternalImage and rewrites the row to
+// hotlink into owned storage via mirrorShopifyImage and rewrites the row to
 // the owned public URL, preserving the original in source_url. Write sites stay
 // untouched: whatever they hotlink — including rows written before any inline
 // adoption — the sweep heals on its next run.
@@ -12,16 +12,21 @@
 // keeps its hotlink, rehost_attempts is incremented (capped so dead URLs stop
 // consuming budget), and every skip class is counted in the returned summary.
 import { getSupabase } from "~/lib/supabase.server";
-import { persistExternalImage } from "./persist.server";
+import { mapWithConcurrency } from "~/lib/ads/concurrency";
+import { mirrorShopifyImage, SHOP_ASSETS_BUCKET } from "./persist.server";
 
 /** Substring of every owned public URL (any Supabase host) — the "already ours" predicate. */
-export const OWNED_URL_MARKER = "/storage/v1/object/public/shop-assets/";
+export const OWNED_URL_MARKER = `/storage/v1/object/public/${SHOP_ASSETS_BUCKET}/`;
 /** Rows at this many failed fetches are permanently skipped (dead URL). */
 export const MAX_REHOST_ATTEMPTS = 5;
 /** ponytail: fixed batch caps sized to the 300s function budget (worst case
  *  CONCURRENCY-parallel 15s fetches); a backlog drains across nightly runs. */
 const SWEEP_LIMIT = 50;
 const CONCURRENCY = 5;
+/** Sibling-read bound; pending products are ≤SWEEP_LIMIT with a handful of
+ *  images each, so this is generous — but never trust PostgREST's silent
+ *  1000-row clamp to be "enough" (rule 12: bound it ourselves, visibly). */
+const SIBLING_READ_LIMIT = 2000;
 
 export interface SweepResult {
   /** Pending rows picked up this run. */
@@ -32,7 +37,7 @@ export interface SweepResult {
   failed: number;
   /** Rows whose product no longer exists; skipped loudly. */
   orphaned: number;
-  /** Re-inserted hotlink duplicates of an already-rehosted row, deleted. */
+  /** Hotlink duplicates of an already-rehosted image, deleted before re-persisting. */
   deduped: number;
 }
 
@@ -43,16 +48,13 @@ interface PendingRow {
   rehost_attempts: number;
 }
 
-async function inPools<T>(items: T[], size: number, fn: (item: T) => Promise<void>): Promise<void> {
-  for (let i = 0; i < items.length; i += size) {
-    await Promise.all(items.slice(i, i + size).map(fn));
-  }
-}
-
 /**
- * One bounded sweep pass: rehost up to `limit` pending hotlinks, then delete
- * hotlink rows a re-promote/re-pick re-inserted for an already-rehosted image
- * (same product, external_url equal to a sibling's source_url).
+ * One bounded sweep pass. Order matters: dedup runs BEFORE rehosting — a
+ * re-promote/re-pick re-inserts an already-captured hotlink as a fresh pending
+ * row (the (product_id, external_url) upsert key changed when we rewrote the
+ * original), and rehosting that row first would mint a second owned copy the
+ * dedup could then never recognize. Deleting it while it still carries the
+ * hotlink also self-heals any dupes a previous crashed run left behind.
  */
 export async function sweepPendingMedia(limit = SWEEP_LIMIT): Promise<SweepResult> {
   const sb = getSupabase();
@@ -69,80 +71,83 @@ export async function sweepPendingMedia(limit = SWEEP_LIMIT): Promise<SweepResul
     .order("id", { ascending: true })
     .limit(limit);
   if (pending.error) throw pending.error;
-  const rows = (pending.data ?? []) as PendingRow[];
+  let rows = (pending.data ?? []) as PendingRow[];
   result.scanned = rows.length;
+  if (rows.length === 0) return result;
+
+  // Dedup pass: a pending hotlink equal to a sibling row's source_url is a
+  // re-insert of an image we already own — delete it instead of re-persisting.
+  const pendingProducts = [...new Set(rows.map((r) => r.product_id))];
+  const siblings = await sb
+    .from("product_media")
+    .select("product_id, source_url")
+    .in("product_id", pendingProducts)
+    .not("source_url", "is", null)
+    .limit(SIBLING_READ_LIMIT);
+  if (siblings.error) throw siblings.error;
+  const rehostedByProduct = new Map<string, Set<string>>();
+  for (const m of (siblings.data ?? []) as Array<{ product_id: string; source_url: string }>) {
+    const set = rehostedByProduct.get(m.product_id) ?? new Set<string>();
+    set.add(m.source_url);
+    rehostedByProduct.set(m.product_id, set);
+  }
+  const dupIds = rows
+    .filter((r) => rehostedByProduct.get(r.product_id)?.has(r.external_url))
+    .map((r) => r.id);
+  if (dupIds.length > 0) {
+    const del = await sb.from("product_media").delete().in("id", dupIds);
+    if (del.error) throw del.error;
+    result.deduped = dupIds.length;
+    const dupSet = new Set(dupIds);
+    rows = rows.filter((r) => !dupSet.has(r.id));
+  }
   if (rows.length === 0) return result;
 
   // product_media carries no shop_id; resolve it through product_dim. A row whose
   // product is gone is unrecoverable here — skip it visibly, never silently.
-  const productIds = [...new Set(rows.map((r) => r.product_id))];
-  const products = await sb.from("product_dim").select("id, shop_id").in("id", productIds);
+  const products = await sb
+    .from("product_dim")
+    .select("id, shop_id")
+    .in("id", [...new Set(rows.map((r) => r.product_id))]);
   if (products.error) throw products.error;
   const shopByProduct = new Map(
     ((products.data ?? []) as Array<{ id: string; shop_id: string }>).map((p) => [p.id, p.shop_id]),
   );
 
-  const touchedProducts = new Set<string>();
-  await inPools(rows, CONCURRENCY, async (row) => {
+  const outcomes = await mapWithConcurrency(rows, CONCURRENCY, async (row) => {
     const shopId = shopByProduct.get(row.product_id);
     if (!shopId) {
-      result.orphaned++;
       console.error(`[assets] rehost skipped media ${row.id}: product ${row.product_id} not found`);
-      return;
+      return "orphaned" as const;
     }
-    const out = await persistExternalImage(shopId, row.external_url, "product", "mirrored");
-    if (out.persisted) {
-      const upd = await sb
-        .from("product_media")
-        .update({ external_url: out.url, source_url: row.external_url })
-        .eq("id", row.id);
-      if (upd.error) {
-        result.failed++;
-        console.error(`[assets] rehost stored but row update failed for media ${row.id}`, upd.error);
-        return;
-      }
-      result.rehosted++;
-      touchedProducts.add(row.product_id);
-    } else {
-      // persistExternalImage already logged the cause; bound future retries.
-      result.failed++;
+    const out = await mirrorShopifyImage(shopId, row.external_url);
+    if (!out.persisted) {
+      // mirrorShopifyImage already logged the cause; bound future retries.
       const upd = await sb
         .from("product_media")
         .update({ rehost_attempts: row.rehost_attempts + 1 })
         .eq("id", row.id);
       if (upd.error) console.error(`[assets] attempts bump failed for media ${row.id}`, upd.error);
+      return "failed" as const;
     }
+    const upd = await sb
+      .from("product_media")
+      .update({ external_url: out.url, source_url: row.external_url })
+      .eq("id", row.id);
+    if (upd.error) {
+      console.error(`[assets] rehost stored but row update failed for media ${row.id}`, upd.error);
+      return "failed" as const;
+    }
+    return "rehosted" as const;
   });
 
-  // Dedup: promote/pick upserts key on (product_id, external_url), so after a
-  // rewrite the same hotlink can be re-inserted as a NEW row next run. Any row
-  // whose external_url matches a sibling's source_url is that duplicate.
-  if (touchedProducts.size > 0) {
-    const siblings = await sb
-      .from("product_media")
-      .select("id, product_id, external_url, source_url")
-      .in("product_id", [...touchedProducts]);
-    if (siblings.error) throw siblings.error;
-    const all = (siblings.data ?? []) as Array<{
-      id: string;
-      product_id: string;
-      external_url: string | null;
-      source_url: string | null;
-    }>;
-    const rehostedByProduct = new Map<string, Set<string>>();
-    for (const m of all) {
-      if (!m.source_url) continue;
-      if (!rehostedByProduct.has(m.product_id)) rehostedByProduct.set(m.product_id, new Set());
-      rehostedByProduct.get(m.product_id)!.add(m.source_url);
-    }
-    const dupIds = all
-      .filter((m) => !m.source_url && m.external_url != null)
-      .filter((m) => rehostedByProduct.get(m.product_id)?.has(m.external_url as string))
-      .map((m) => m.id);
-    if (dupIds.length > 0) {
-      const del = await sb.from("product_media").delete().in("id", dupIds);
-      if (del.error) throw del.error;
-      result.deduped = dupIds.length;
+  for (const o of outcomes) {
+    if (!o.ok) {
+      // mapWithConcurrency isolates per-item throws; count and surface them.
+      result.failed++;
+      console.error("[assets] rehost worker threw", o.error);
+    } else {
+      result[o.value]++;
     }
   }
 
