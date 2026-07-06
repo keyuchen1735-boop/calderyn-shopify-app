@@ -53,6 +53,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     storeName: settings.storeName,
     logoUrl: settings.logoUrl,
     palette: settings.palette,
+    // The preview keys its styling off [data-vibe]; keep vibe in the DTO so the
+    // frame matches what will publish (shop_id stays omitted).
+    vibe: settings.vibe,
   };
   return json({ doc, data, record, settings: settingsDto });
 }
