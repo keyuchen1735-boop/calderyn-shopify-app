@@ -714,7 +714,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 src={previewSrc}
                 sandbox="allow-same-origin"
               />
-              <div className="cd-canvas-veil" data-on={building ? "1" : "0"} />
+              <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
+                {/* Branded storefront skeleton: paints instantly on Build so a generation reads as
+                    the store forming, not a dimmed stale page. Tinted with the shop's primary. */}
+                <div className="cd-canvas-skel" style={{ ["--cd-skel" as string]: data.settings.accent }}>
+                  <div className="cd-canvas-skel__hero" />
+                  <div className="cd-canvas-skel__row" />
+                  <div className="cd-canvas-skel__row cd-canvas-skel__row--short" />
+                  <div className="cd-canvas-skel__grid"><span /><span /><span /></div>
+                </div>
+              </div>
               <svg className="cd-mark-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                 {strokes.map((d, i) => (
                   <path
