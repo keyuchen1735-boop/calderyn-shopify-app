@@ -67,4 +67,20 @@ describe("store settings repo", () => {
     await saveStoreSettings(realShop, { storeName: "Acme", palette: DEFAULT_PALETTE, logoUrl: null, voiceTagline: null, vibe: "bold" });
     expect(upsert.mock.calls[1][0]).toMatchObject({ vibe: "bold" });
   });
+
+  it("passes typeStyle/density through both directions, defaulting an invalid density to standard", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { store_name: "Acme", palette: DEFAULT_PALETTE, logo_url: null, voice_tagline: null, type_style: "editorial", density: "not-a-density" },
+      error: null,
+    });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle }) }) });
+    const s = await getStoreSettings(realShop);
+    expect(s.typeStyle).toBe("editorial");
+    expect(s.density).toBe("standard");
+
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    fromMock.mockReturnValue({ upsert });
+    await saveStoreSettings(realShop, { storeName: "Acme", palette: DEFAULT_PALETTE, logoUrl: null, voiceTagline: null, typeStyle: "editorial" });
+    expect(upsert.mock.calls[0][0]).toMatchObject({ type_style: "editorial" });
+  });
 });
