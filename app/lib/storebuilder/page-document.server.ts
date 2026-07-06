@@ -4,6 +4,11 @@
 // snake_case rows kept out of callers (json columns ARE the BlockDocument, so they pass through).
 import { getSupabase } from "~/lib/supabase.server";
 import type { BlockDocument, PageKey } from "./types";
+// The security boundary for AI/merchant-authored store HTML (the rawHtml block): sanitize at the
+// persistence layer so no unsafe html is ever stored. saveDraft is the primary write path; the
+// experiment variant_doc write applies the same helper (see store-experiment.server.ts), and
+// publishDoc only ever copies an already-sanitized draft.
+import { sanitizeDocHtml } from "./sanitize-html.server";
 
 // ponytail: the fixture/demo storefront resolves a non-uuid shop ("demo-shop") and has no DB
 // row; a uuid column query would error. Treat non-uuid shops as "no persisted doc" so the
@@ -30,8 +35,9 @@ export async function loadDraftDoc(shopId: string, pageKey: PageKey): Promise<Bl
 /** Upsert the editable draft. The doc's own `kind` is the row's kind. */
 export async function saveDraft(shopId: string, pageKey: PageKey, doc: BlockDocument): Promise<void> {
   if (!persistableShop(shopId)) throw new Error(`saveDraft requires a real (uuid) shop_id, got ${shopId}`);
+  const safe = sanitizeDocHtml(doc); // sanitize any AI/merchant rawHtml before it ever reaches the DB
   const { error } = await getSupabase().from("page_document").upsert(
-    { shop_id: shopId, page_key: pageKey, kind: doc.kind, draft_json: doc, updated_at: new Date().toISOString() },
+    { shop_id: shopId, page_key: pageKey, kind: safe.kind, draft_json: safe, updated_at: new Date().toISOString() },
     { onConflict: "shop_id,page_key" },
   );
   if (error) throw error;

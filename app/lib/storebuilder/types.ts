@@ -10,7 +10,7 @@ export type PageKey = "home" | "collection" | "pdp" | `page:${string}`;
 export type BlockFlavor = "static" | "dynamic" | "functional";
 
 export type BlockType =
-  | "hero" | "richText" | "image" | "button" | "featureRow" // static
+  | "hero" | "richText" | "image" | "button" | "featureRow" | "rawHtml" // static
   | "productGrid" | "collectionList" // dynamic (singleton)
   | "productGallery" | "collectionGrid" // dynamic (template, read ctx.record)
   | "productTitle" | "price" | "variantPicker" // dynamic (template, PDP display)

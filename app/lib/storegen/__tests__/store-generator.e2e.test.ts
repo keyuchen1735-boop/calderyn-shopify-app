@@ -145,12 +145,11 @@ const reply = (text: string, tokens = 30) => ({
 
 // Canonical valid plans (one per page) reused across scenarios.
 const BRAND = '{"storeName":"Summit Goods","palette":{"primary":"#0f766e","background":"#ffffff","text":"#111827"},"voiceTagline":"Gear for the climb"}';
-const HOME_PLAN = JSON.stringify({
-  blocks: [
-    { type: "hero", props: { headline: "Summit Goods", subhead: "Gear for the climb" }, layout: { x: 0, y: 0, w: 12, h: 2 } },
-    { type: "productGrid", props: { source: { kind: "all" }, heading: "Shop all" }, layout: { x: 0, y: 2, w: 12, h: 6 } },
-  ],
-});
+// The home is generated as a full self-contained HTML page (rawHtml block), not a block plan.
+const HOME_HTML =
+  '<div class="ai-store"><style>.ai-store .hero{background:linear-gradient(135deg,#0f766e,#0b3b34);color:#fff;padding:120px 24px}.ai-store h1{font-size:clamp(2.5rem,6vw,5rem);margin:0}</style>' +
+  '<section class="hero"><h1>Summit Goods</h1><p>Gear for the climb</p><a href="/storefront">Shop the range</a></section>' +
+  '<section class="story"><h2>Built for the ascent</h2><p>Durable packs and weather-ready shells for every trail.</p></section></div>';
 const COLLECTION_PLAN = JSON.stringify({
   blocks: [{ type: "collectionGrid", props: {}, layout: { x: 0, y: 0, w: 12, h: 6 } }],
 });
@@ -194,7 +193,7 @@ describe("store generator e2e", () => {
   it("1. AI happy path: all 3 docs generated, persisted, and render correctly", async () => {
     createMock
       .mockResolvedValueOnce(reply(BRAND))
-      .mockResolvedValueOnce(reply(HOME_PLAN))
+      .mockResolvedValueOnce(reply(HOME_HTML))
       .mockResolvedValueOnce(reply(COLLECTION_PLAN))
       .mockResolvedValueOnce(reply(PDP_PLAN));
 
@@ -216,12 +215,12 @@ describe("store generator e2e", () => {
     expect(db.captured.store_generation).toHaveLength(1);
     expect(db.captured.store_generation_proposal).toHaveLength(1);
 
-    // Home: AI hero copy + a product grid + a real fixture product title.
+    // Home: the AI-authored HTML page (one sanitized rawHtml block). Brand copy survives; the live
+    // catalog grid now lives on the collection page, not the home.
+    expect(home!.blocks[0].type).toBe("rawHtml");
     const homeHtml = await renderDoc(home!);
     expect(homeHtml).toContain("Summit Goods");
     expect(homeHtml).toContain("Gear for the climb");
-    expect(homeHtml).toContain("cd-store__grid");
-    expect(homeHtml).toContain("Cotton Tee");
 
     // Collection: the record collection's products render in a grid.
     const collHtml = await renderDoc(collection!, { collection: { handle: "apparel", title: "Apparel" } });
@@ -247,7 +246,7 @@ describe("store generator e2e", () => {
     const pdpNoBuy = JSON.stringify({ blocks: [{ type: "richText", props: { text: "Buy this thing" }, layout: { x: 0, y: 0, w: 12, h: 2 } }] });
     createMock
       .mockResolvedValueOnce(reply(BRAND))
-      .mockResolvedValueOnce(reply(HOME_PLAN))
+      .mockResolvedValueOnce(reply(HOME_HTML))
       .mockResolvedValueOnce(reply(COLLECTION_PLAN))
       .mockResolvedValueOnce(reply(pdpNoBuy));
 
@@ -266,15 +265,16 @@ describe("store generator e2e", () => {
   it("3. isolated fallback: a garbage PDP response does not poison a good home doc", async () => {
     createMock
       .mockResolvedValueOnce(reply(BRAND))
-      .mockResolvedValueOnce(reply(HOME_PLAN))
+      .mockResolvedValueOnce(reply(HOME_HTML))
       .mockResolvedValueOnce(reply(COLLECTION_PLAN))
       .mockResolvedValueOnce(reply("this is not json at all <<<"));
 
     await generateStore({ shopId: SHOP, mode: "catalog" });
 
-    // Home draft is the AI document — distinctive AI hero copy survived.
+    // Home draft is the AI HTML document — isolated from the bad PDP, its brand copy survived.
     const home = await loadDraftDoc(SHOP, "home");
-    expect(home!.blocks.find((b) => b.type === "hero")!.props.headline).toBe("Summit Goods");
+    expect(home!.blocks[0].type).toBe("rawHtml");
+    expect(home!.blocks[0].props.html as string).toContain("Summit Goods");
 
     // PDP draft is the deterministic fallback (its hand-authored block ids), yet still buyable.
     const pdp = await loadDraftDoc(SHOP, "pdp");

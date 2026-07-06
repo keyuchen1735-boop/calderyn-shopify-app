@@ -383,3 +383,9 @@ button.cd-block--addtocart { justify-content: center; padding: 0.85rem 1.4rem; b
   .cd-feature { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
   .cd-feature:hover { transform: translateY(-3px); box-shadow: var(--cd-shadow-card-hover); border-color: color-mix(in srgb, var(--cd-primary, #0f766e) 40%, var(--cd-surface-border)); }
 }
+
+/* ---- AI-authored full-page home (rawHtml block) -------------------------------------------- */
+/* The generator's AI-HTML path emits a complete, self-contained page. Break it out of the store's
+   max-width so its hero and colour bands span edge-to-edge (its own CSS is scoped under .ai-store,
+   so it never clobbers the store chrome); the header/nav/footer still frame it above and below. */
+.cd-block--rawhtml { margin: 0; width: 100vw; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); }

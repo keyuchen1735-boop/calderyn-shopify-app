@@ -118,6 +118,25 @@ const featureRow: BlockMeta<FeatureRowProps> = {
                 it.body ? createElement("p", { className: "cd-feature__body" }, it.body) : null)))),
 };
 
+interface RawHtmlProps { html: string }
+// A complete, pre-sanitized HTML home authored by the generator's AI-HTML path — the escape hatch
+// from the fixed block vocabulary, so a store can look fully designed (gradients, big type, sections,
+// inline SVG) WITHOUT depending on product imagery. SECURITY: props.html is sanitized server-side at
+// the persistence boundary (saveDraft → sanitizeStoreHtml); this block renders it verbatim and must
+// NEVER be handed un-sanitized html. validateProps stays a cheap string/length coerce so no
+// sanitizer is pulled into the client bundle.
+const rawHtml: BlockMeta<RawHtmlProps> = {
+  type: "rawHtml", flavor: "static", allowedDocKinds: ["singleton", "template"],
+  defaultProps: { html: "" },
+  defaultLayout: { x: 0, y: 0, w: 12, h: 12 },
+  validateProps: (raw) => ({ html: str(asRecord(raw).html).slice(0, 100000) }),
+  catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  Component: ({ props }) =>
+    props.html
+      ? createElement("div", { className: "cd-block cd-block--rawhtml", dangerouslySetInnerHTML: { __html: props.html } })
+      : null,
+};
+
 // ── dynamic ───────────────────────────────────────────────────────────────
 type GridSource = { kind: "all" } | { kind: "collection"; handle: string } | { kind: "ids"; ids: string[] };
 interface ProductGridProps { source: GridSource; heading: string }
@@ -173,4 +192,4 @@ const collectionList: BlockMeta<CollectionListProps> = {
 
 // Exported as a plain array; the registry indexes it by type (Task 3).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous BlockMeta<P> union; registry narrows by type
-export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, featureRow, productGrid, collectionList];
+export const STARTER_BLOCKS: BlockMeta<any>[] = [hero, richText, image, button, featureRow, rawHtml, productGrid, collectionList];
