@@ -212,6 +212,21 @@ describe("loadStudioState v2 fields", () => {
     expect(state.settings.vibe).toBe("bold");
   });
 
+  it("exposes typeStyle and density from StoreSettings in the studio DTO", async () => {
+    settingsMock.getStoreSettings.mockResolvedValue({
+      storeName: "Test Store",
+      palette: { primary: "#0f766e" },
+      logoUrl: null,
+      voiceTagline: null,
+      vibe: "minimal",
+      typeStyle: "editorial",
+      density: "roomy",
+    });
+    const state = await loadStudioState(shop);
+    expect(state.settings.typeStyle).toBe("editorial");
+    expect(state.settings.density).toBe("roomy");
+  });
+
   it("exposes orgSlug and the absolute tenant storefront URL when the shop has one", async () => {
     tableResults.shops = { data: { org_slug: "peak-pine-a1b2c3" }, error: null };
     const state = await loadStudioState(shop);
