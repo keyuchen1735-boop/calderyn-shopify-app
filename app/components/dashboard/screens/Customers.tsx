@@ -578,7 +578,8 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           {wx.length === 0 ? (
             <div className="cd-caption" style={{ padding: "16px 20px" }}>
               No weather suggestions right now. When the next 3 days&apos; forecast favors
-              shifting budget between regions, they&apos;ll appear here.
+              shifting budget between regions, they&apos;ll appear here. Suggestions need at
+              least two active campaigns that each target a single US region.
             </div>
           ) : (
             wx.map((s) => (

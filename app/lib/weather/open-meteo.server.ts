@@ -22,6 +22,13 @@ interface OpenMeteoLocation {
   };
 }
 
+/**
+ * How many days each forecast (and therefore each suggestion) covers. The
+ * suggestion narrative and the panel's visibility window both derive from
+ * this — bumping it here keeps all three in step.
+ */
+export const FORECAST_HORIZON_DAYS = 3;
+
 const DAILY = "temperature_2m_max,temperature_2m_min,precipitation_sum,snowfall_sum,daylight_duration";
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
@@ -47,7 +54,7 @@ export async function fetchRegionForecasts(
   const lon = points.map((p) => p.lon).join(",");
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&daily=${DAILY}&forecast_days=3&timezone=UTC`;
+    `&daily=${DAILY}&forecast_days=${FORECAST_HORIZON_DAYS}&timezone=UTC`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 8000);

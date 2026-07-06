@@ -8,7 +8,7 @@ import type { RegionCode } from "../ads/actions";
 import { regionForGeoTargets } from "../ads/geo-regions";
 import { favorability, type RegionForecast } from "../weather/score";
 import { REGION_CENTROIDS } from "../weather/regions";
-import { fetchRegionForecasts } from "../weather/open-meteo.server";
+import { FORECAST_HORIZON_DAYS, fetchRegionForecasts } from "../weather/open-meteo.server";
 
 export const SCORE_GAP_FLOOR = 0.15;
 export const MAX_CUT_FRACTION = 0.9;
@@ -66,7 +66,7 @@ export function buildSuggestion(
   if (capped < MIN_MOVE_CENTS) return null;
 
   const narrative =
-    `Next 3 days: ${destRegion} weather favors demand (score ${destScore.toFixed(2)}) ` +
+    `Next ${FORECAST_HORIZON_DAYS} days: ${destRegion} weather favors demand (score ${destScore.toFixed(2)}) ` +
     `vs ${sourceRegion} (${sourceScore.toFixed(2)}). Shift ${dollars(capped)}/day from ` +
     `"${source.name}" to "${dest.name}".`;
 
@@ -100,7 +100,9 @@ export async function loadGeoSegmentedCampaigns(
 
   const out: EligibleCampaign[] = [];
   for (const c of (data ?? []) as CampaignRow[]) {
-    if (c.daily_budget_cents == null) continue;
+    // A $0/day campaign must not become a region's representative: as the
+    // source giver it would zero out the whole move for the day.
+    if (c.daily_budget_cents == null || c.daily_budget_cents <= 0) continue;
     const region = regionForGeoTargets(c.geo_targets ?? []);
     if (!region) continue;
     out.push({ campaignId: c.id, region, dailyBudgetCents: c.daily_budget_cents, name: c.name });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { runWeatherSuggestForShop } from "../weather-suggest.server";
+import { loadGeoSegmentedCampaigns, runWeatherSuggestForShop } from "../weather-suggest.server";
 import type { RegionCode } from "../../ads/actions";
 import type { RegionForecast } from "../../weather/score";
 
@@ -13,7 +13,8 @@ const CONFLICT_KEY = ["shop_id", "suggested_on", "source_campaign_id", "dest_cam
 // tests assert what ends up stored — including that ON CONFLICT DO NOTHING
 // (ignoreDuplicates) never touches an existing row.
 function fakeSb(opts: {
-  sensitivity: number;
+  /** null = shop has no guardrail_config row at all. */
+  sensitivity: number | null;
   campaigns: Array<Record<string, unknown>>;
   existingSuggestions?: Array<Record<string, unknown>>;
 }) {
@@ -25,7 +26,7 @@ function fakeSb(opts: {
     chain.eq = vi.fn(() => chain);
     chain.not = vi.fn(() => chain);
     chain.maybeSingle = vi.fn(async () =>
-      tableName === "guardrail_config"
+      tableName === "guardrail_config" && opts.sensitivity != null
         ? { data: { weather_sensitivity: opts.sensitivity }, error: null }
         : { data: null, error: null },
     );
@@ -81,6 +82,23 @@ describe("runWeatherSuggestForShop", () => {
     expect(ff).not.toHaveBeenCalled();
     expect(calls.upserts).toHaveLength(0);
   });
+  it("skips a shop with no guardrail_config row at all", async () => {
+    const { sb, calls } = fakeSb({ sensitivity: null, campaigns: TWO_REGION_CAMPAIGNS });
+    const ff = vi.fn(async () => forecasts);
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts: ff, today: "2026-07-06" });
+    expect(r.suggested).toBe(0);
+    expect(ff).not.toHaveBeenCalled();
+    expect(calls.upserts).toHaveLength(0);
+  });
+  it("excludes zero-budget campaigns from eligibility", async () => {
+    // An active $0/day campaign must not become a region's representative —
+    // it would be picked as the source giver and zero out the whole move.
+    const { sb } = fakeSb({
+      sensitivity: 50,
+      campaigns: [{ id: "z1", name: "Zero", status: "active", daily_budget_cents: 0, geo_targets: ["us-west"] }],
+    });
+    expect(await loadGeoSegmentedCampaigns(SHOP, sb)).toEqual([]);
+  });
   it("writes a pending suggestion for a two-region shop", async () => {
     const { sb, table } = fakeSb({ sensitivity: 50, campaigns: TWO_REGION_CAMPAIGNS });
     const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
@@ -133,5 +151,8 @@ describe("runWeatherSuggestForShop", () => {
     expect(r.suggested).toBe(0);
     expect(table).toHaveLength(1);
     expect(table[0].status).toBe("pending");
+    // The existing row's payload survives untouched — a DO UPDATE regression
+    // would clobber amount_cents with the freshly computed value.
+    expect(table[0].amount_cents).toBe(1234);
   });
 });
