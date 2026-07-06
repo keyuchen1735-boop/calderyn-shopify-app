@@ -185,4 +185,14 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ business_hours_only: true })).toBeNull();
     expect(validateGuardrailPatch({ business_hours_only: "yes" as unknown as boolean })).not.toBeNull();
   });
+
+  it("weather_sensitivity: whole-percent 0..100, 0 allowed (feature off)", () => {
+    expect(validateGuardrailPatch({ weather_sensitivity: 0 })).toBeNull();
+    expect(validateGuardrailPatch({ weather_sensitivity: 50 })).toBeNull();
+    expect(validateGuardrailPatch({ weather_sensitivity: 100 })).toBeNull();
+    expect(validateGuardrailPatch({ weather_sensitivity: -1 })).toBe("invalid_weather_sensitivity");
+    expect(validateGuardrailPatch({ weather_sensitivity: 101 })).toBe("invalid_weather_sensitivity");
+    expect(validateGuardrailPatch({ weather_sensitivity: 12.5 })).toBe("invalid_weather_sensitivity");
+    expect(validateGuardrailPatch({ weather_sensitivity: NaN })).toBe("invalid_weather_sensitivity");
+  });
 });
