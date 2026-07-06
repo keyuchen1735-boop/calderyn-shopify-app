@@ -3,11 +3,13 @@
 // line-less owned order tagged channel='test', then hands it to the existing checkout
 // session + webhook path — no new payment logic.
 import { randomBytes } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { getOrgMode } from "~/lib/cutover/org-mode.server";
 import { getConnectedAccount } from "~/lib/payments/connect.server";
 import { upsertGuestBuyer } from "~/lib/buyer/identity.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
+import { executeRefundAction } from "~/lib/actions/refund.server";
 
 /** Stripe's minimum chargeable amount (USD). ponytail: fixed 50c/usd; per-currency
  *  minimums if a non-USD test store ever needs it. */
@@ -54,4 +56,34 @@ export async function startTestTransaction(shopId: string): Promise<{ url: strin
     confirmationToken: row.confirmation_token,
   });
   return { url: session.url };
+}
+
+/**
+ * Post-cutover cleanup: full-refund every paid channel='test' probe order for the shop.
+ * Called by transitionOrgMode AFTER the -> live commit, so the probe was still `paid`
+ * when the gate ran. Fail-loud but non-blocking (rule 12): the cutover already committed,
+ * so a refund failure is logged + swallowed, never thrown back onto the live move. The
+ * `capture` ledger row persists regardless, so captured_charge stays satisfied.
+ */
+export async function refundTestOrders(shopId: string, sb: SupabaseClient): Promise<void> {
+  const { data, error } = await sb
+    .from("orders")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("channel", "test");
+  if (error) {
+    console.error(`[cutover] failed to list test orders for shop ${shopId}`, error);
+    return;
+  }
+  for (const row of (data ?? []) as Array<{ id: string }>) {
+    try {
+      await executeRefundAction(
+        shopId,
+        { orderId: row.id, idempotencyKey: `test-refund:${row.id}`, triggerReason: "go_live_test_cleanup" },
+        sb,
+      );
+    } catch (err) {
+      console.error(`[cutover] failed to refund test order ${row.id} for shop ${shopId}`, err);
+    }
+  }
 }

@@ -59,3 +59,40 @@ describe("startTestTransaction", () => {
     await expect(startTestTransaction("shop-1")).rejects.toThrow(/Connect Stripe/i);
   });
 });
+
+import { refundTestOrders } from "../test-transaction.server";
+
+const refundHoisted = vi.hoisted(() => ({
+  executeRefundAction: vi.fn(),
+}));
+vi.mock("~/lib/actions/refund.server", () => ({ executeRefundAction: refundHoisted.executeRefundAction }));
+
+describe("refundTestOrders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    refundHoisted.executeRefundAction.mockResolvedValue({ outcome: "succeeded" });
+  });
+
+  // Supabase seam: getSupabase().from('orders').select().eq().eq() resolves to paid test orders.
+  function stubSupabaseWith(rows: Array<{ id: string }>) {
+    const eq2 = () => Promise.resolve({ data: rows, error: null });
+    const eq1 = () => ({ eq: eq2 });
+    return { from: () => ({ select: () => ({ eq: eq1 }) }) };
+  }
+
+  it("full-refunds every paid channel='test' order", async () => {
+    const sb = stubSupabaseWith([{ id: "o1" }, { id: "o2" }]) as never;
+    await refundTestOrders("shop-1", sb);
+    expect(refundHoisted.executeRefundAction).toHaveBeenCalledTimes(2);
+    expect(refundHoisted.executeRefundAction.mock.calls[0][1]).toMatchObject({ orderId: "o1" });
+  });
+
+  it("logs loudly and does NOT throw when a refund fails (cutover already committed)", async () => {
+    const sb = stubSupabaseWith([{ id: "o1" }]) as never;
+    refundHoisted.executeRefundAction.mockRejectedValueOnce(new Error("stripe down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(refundTestOrders("shop-1", sb)).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});

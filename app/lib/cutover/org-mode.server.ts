@@ -9,6 +9,7 @@
 
 import { getSupabase } from "~/lib/supabase.server";
 import { assertGoLiveGates, stampMigrationRunCutover } from "./go-live.server";
+import { refundTestOrders } from "./test-transaction.server";
 import { CutoverBlockedError } from "./errors";
 
 export const ORG_MODES = ["mirror", "importing", "dual_run", "live"] as const;
@@ -188,6 +189,16 @@ export async function transitionOrgMode(
       await stampMigrationRunCutover(shopId, goLiveRunId);
     } catch (err) {
       console.error(`[cutover] failed to stamp cutover_at on migration_run ${goLiveRunId}`, err);
+    }
+  }
+
+  // The ->live move committed: unwind any go-live test-transaction probe. Best-effort —
+  // the cutover already committed, so a cleanup failure is surfaced, never rolled back.
+  if (to === "live") {
+    try {
+      await refundTestOrders(shopId, sb);
+    } catch (err) {
+      console.error(`[cutover] test-order cleanup failed after go-live for shop ${shopId}`, err);
     }
   }
 
