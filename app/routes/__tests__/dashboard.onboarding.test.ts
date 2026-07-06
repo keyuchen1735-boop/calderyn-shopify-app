@@ -117,21 +117,21 @@ describe("onboarding action — contact step", () => {
   it("422s an invalid phone", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
-    const res = (await action({ request: form({ phone: "123", referral_source: "google_search" }) } as never)) as Response;
+    const res = (await action({ request: form({ intent: "contact", phone: "123", referral_source: "google_search" }) } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "invalid_phone" });
   });
   it("422s an invalid referral", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
-    const res = (await action({ request: form({ phone: "4155550123", referral_source: "myspace" }) } as never)) as Response;
+    const res = (await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "myspace" }) } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "invalid_referral" });
   });
   it("saves contact WITHOUT completing, then advances to the import step", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
-    const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
+    const res = (await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "google_search" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
     expect(saveOnboardingContact).toHaveBeenCalledWith("u1", expect.objectContaining({ phone: "4155550123", referralSource: "google_search" }));
@@ -141,22 +141,32 @@ describe("onboarding action — contact step", () => {
   it("carries a validated return_to through the step-1 → step-2 hop", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
-    const res = (await action({ request: form({ phone: "4155550123", referral_source: "google_search", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
+    const res = (await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "google_search", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard/onboarding?return_to=" + encodeURIComponent("/dashboard/connect?t=abc"));
   });
   it("forwards the 'other' free-text to saveOnboardingContact", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
-    await action({ request: form({ phone: "4155550123", referral_source: "other", referral_source_other: "a friend at a meetup" }, false) } as never);
+    await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "other", referral_source_other: "a friend at a meetup" }, false) } as never);
     expect(saveOnboardingContact).toHaveBeenCalledWith("u1", expect.objectContaining({ referralSource: "other", referralOther: "a friend at a meetup" }));
   });
   it("clamps referral_source_other to 120 chars at the action boundary", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");
     const long = "x".repeat(300);
-    await action({ request: form({ phone: "4155550123", referral_source: "other", referral_source_other: long }, false) } as never);
+    await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "other", referral_source_other: long }, false) } as never);
     const call = saveOnboardingContact.mock.calls[0][1] as { referralOther: string };
     expect(call.referralOther).toHaveLength(120);
+  });
+
+  it("fails visibly on a POST with no recognized intent (never a silent contact submit)", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request: form({}, true) } as never)) as Response;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_intent" });
+    expect(saveOnboardingContact).not.toHaveBeenCalled();
+    expect(completeOnboarding).not.toHaveBeenCalled();
   });
 });
 
@@ -270,13 +280,16 @@ describe("onboarding render", () => {
     expect(html).not.toContain('name="return_to"');
   });
 
-  it("import step renders both the connect and skip submits with their intents", async () => {
+  it("import step carries connect + skip as hidden intent fields, not submit-button values", async () => {
     const html = await render({ step: "import", error: null, returnTo: null });
     expect(html).toContain("Bring your store over");
-    expect(html).toContain('value="connect"');
-    expect(html).toContain('value="skip"');
-    // The skip is a real submit affordance, not just a link.
-    expect(html).toContain("skip for now");
+    // The intent must ride a hidden input: a submit button's own name/value is
+    // an unreliable carrier and was silently dropped in production, so the
+    // action mis-read the click as a contact submit and bounced back here.
+    expect(html).toContain('type="hidden" name="intent" value="connect"');
+    expect(html).toContain('type="hidden" name="intent" value="skip"');
+    expect(html).toContain("Connect Shopify");
+    expect(html).toContain("Skip for now");
   });
 
   it("threads a return_to into the step form as a hidden field so it survives submit", async () => {

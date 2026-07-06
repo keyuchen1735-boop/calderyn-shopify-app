@@ -73,10 +73,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const state = url.searchParams.get("state") ?? "";
 
   const cookieState = readStateCookie(request);
-  // A shop-less initiation (no ?shop= at /dashboard/login) pins the sentinel
-  // instead of a shop: identity then comes from the HMAC-verified callback
-  // params — signed with our app secret — plus the code exchange below proving
-  // shop control. A pinned real shop must still match exactly.
+  // Normal round-trips pin a real shop and must match exactly. The `*` sentinel
+  // (legacy shop-less initiation, no longer emitted by /dashboard/login) is
+  // still accepted so an OAuth flow begun before that change completes:
+  // identity then comes from the HMAC-verified callback params — signed with
+  // our app secret — plus the code exchange below proving shop control.
   const hmacOk = verifyShopifyHmac(url.searchParams, process.env.SHOPIFY_API_SECRET ?? "");
   if (
     !isValidShopDomain(shop) ||

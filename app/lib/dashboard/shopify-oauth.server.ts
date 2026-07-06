@@ -13,8 +13,30 @@ export function isValidShopDomain(shop: string): boolean {
   return SHOP_DOMAIN_RE.test(shop);
 }
 
+/**
+ * Coerces merchant-typed store input into a candidate shop domain. Handles the
+ * shapes a merchant actually types — a bare handle ("acme"), the full domain,
+ * or a pasted "https://acme.myshopify.com/…" URL (scheme + path stripped) — but
+ * does NOT itself validate: the caller must still run isValidShopDomain, so a
+ * non-myshopify value ("evil.com") is passed through unchanged and rejected
+ * downstream.
+ */
+export function normalizeShopInput(raw: string): string {
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "") // drop a pasted scheme
+    .replace(/\/.*$/, ""); // drop any path/query
+  // A bare handle (no dot) is the store name — complete it.
+  return s && !s.includes(".") ? `${s}.myshopify.com` : s;
+}
+
+// Shopify's authorization code grant is per-shop
+// (https://{shop}/admin/oauth/authorize) and there is no shop-less authorize
+// endpoint — so the shop is always known here (collected at /dashboard/login).
+// The per-shop endpoint enforces the app's registered redirect_urls.
 export function buildAuthorizeUrl(opts: {
-  shop: string | null;
+  shop: string;
   clientId: string;
   scopes: string;
   redirectUri: string;
@@ -26,14 +48,7 @@ export function buildAuthorizeUrl(opts: {
     redirect_uri: opts.redirectUri,
     state: opts.state,
   });
-  // Shop-less entry: Shopify's unified admin authenticates the merchant and
-  // forwards the grant to their store, so we never ask for the domain. If this
-  // path ever regresses, the callback's ?error bounce renders the friendly
-  // retry page rather than looping.
-  const base = opts.shop
-    ? `https://${opts.shop}/admin/oauth/authorize`
-    : "https://admin.shopify.com/admin/oauth/authorize";
-  return `${base}?${sp.toString()}`;
+  return `https://${opts.shop}/admin/oauth/authorize?${sp.toString()}`;
 }
 
 /**

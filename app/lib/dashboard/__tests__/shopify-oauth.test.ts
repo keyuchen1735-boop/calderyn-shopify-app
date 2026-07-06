@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 import {
   isValidShopDomain,
+  normalizeShopInput,
   buildAuthorizeUrl,
   verifyShopifyHmac,
   exchangeCodeForToken,
@@ -18,6 +19,21 @@ describe("isValidShopDomain", () => {
     expect(isValidShopDomain("-bad.myshopify.com")).toBe(false);
     expect(isValidShopDomain("")).toBe(false);
     expect(isValidShopDomain("https://x.myshopify.com")).toBe(false);
+  });
+});
+
+describe("normalizeShopInput", () => {
+  it("appends .myshopify.com to a bare handle", () => {
+    expect(normalizeShopInput("acme")).toBe("acme.myshopify.com");
+    expect(normalizeShopInput("  ACME  ")).toBe("acme.myshopify.com");
+  });
+  it("passes a full domain through and strips a pasted scheme/path", () => {
+    expect(normalizeShopInput("acme.myshopify.com")).toBe("acme.myshopify.com");
+    expect(normalizeShopInput("https://acme.myshopify.com/admin")).toBe("acme.myshopify.com");
+  });
+  it("does not rescue a non-myshopify domain (still rejected downstream)", () => {
+    expect(isValidShopDomain(normalizeShopInput("evil.com"))).toBe(false);
+    expect(isValidShopDomain(normalizeShopInput(""))).toBe(false);
   });
 });
 
