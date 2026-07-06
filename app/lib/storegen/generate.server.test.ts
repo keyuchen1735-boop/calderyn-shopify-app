@@ -124,6 +124,18 @@ describe("generateStore", () => {
     expect(html).not.toMatch(/<script/i); // sanitized at the generator boundary
   });
 
+  it("honors the merchant's design-model choice on the home HTML call only", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand
+      .mockResolvedValueOnce(reply("<div><h1>Hi</h1></div>")) // home HTML
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand", designModel: "opus" });
+    const models = createMock.mock.calls.map((c) => (c[0] as { model: string }).model);
+    expect(models.filter((m) => m === "claude-opus-4-8")).toHaveLength(1); // the design call
+    expect(models.filter((m) => m === "claude-haiku-4-5")).toHaveLength(3); // brand + block plans stay cheap
+  });
+
   it("falls back to the designed hollow store when the home HTML call returns no markup (junk/refusal)", async () => {
     createMock
       .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
