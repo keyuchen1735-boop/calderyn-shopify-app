@@ -3,6 +3,110 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-06
+
+### Triage — 38 commits since last night's base `89059ad`; a GENUINE companion nightly PR #326 existed
+Window = the 2026-07-05 feature batch merged after last night's `89059ad` base: viral sourcing #17 backend
+(`233ebf7`), store studio v2 #315, ai-quota #312, self-service account deletion #323, onboarding import step
+#324, apex-proxy CSRF patch #321/#322, owned-inventory-without-Shopify #320, autopilot per-feature toggles
+#318, tenant-domain autoregister #313, prompt hardening #314. Fanned out **4 read-only bug-hunters** (auth/
+onboarding/delete/CSRF · store-studio/AI/quota · owned-inventory+autopilot money-path · viral-sourcing
+backend) + **2 open-PR reviewers** (#325, #326). 2 clusters → NONE; **2 real landed bugs fixed**. Shipped
+**PR #327** (draft), branch `fix/nightly-2026-07-06`, commits `c82eb5c` + `4c1d166`.
+
+- **Companion nightly PR #326 (author Mezoh, base == our main `c11d629`) was GENUINE.** Its body claimed
+  "No commits landed in the last 24 hours" — that claim is UNRELIABLE (38 commits landed since `89059ad`),
+  but #326 broadened scope anyway and did cover the viral-sourcing backend + store.preview. Re-derive the
+  window from `git log 89059ad..HEAD` (last night's base) yourself; don't trust the "zero commits" line.
+
+### Bug #1 fixed — main was RED on typecheck (a #310 regression)
+- **`app/routes/dashboard.store.preview.tsx`** (#310 / `c11d629`). #310's "don't leak shop_id" DTO fix narrowed
+  the loader payload to `{storeName, logoUrl, palette}`, but the component reads `settings.vibe` (line 65) for
+  the `[data-vibe]` styling hook → `tsc --noEmit` failed repo-wide (TS2339 `Property 'vibe' does not exist`)
+  AND the framed draft lost the merchant's vibe. Fix: re-add `vibe: settings.vibe` to the DTO (shop_id stays
+  omitted). Companion PR #326's fix #1 is the identical fix — carried it as a **focused single-commit unblock**
+  in our own PR so main can go green immediately without adopting #326's bundled sourcing changes.
+- **Lesson (DTO narrowing breaks the consumer's typecheck):** a "don't-leak-internal-fields" DTO fix that
+  narrows a loader payload must be cross-checked against EVERY field the component reads off
+  `useLoaderData<typeof loader>()` — a dropped *visible* field both degrades the UI AND breaks tsc repo-wide.
+  Same family as the write-then-blank round-trip drop, but at the loader→component boundary. Also: a companion
+  nightly PR fixing "main is red" does NOT help main until merged — carry the unblock in your own focused PR.
+
+### Bug #2 fixed — storefront A/B exposure attributed to the WRONG visitor on a first-ever visit (#315)
+- **`app/routes/storefront._index.tsx` + `app/lib/storefront/events.server.ts`** (#315 / `0efb200`, store-studio
+  v2 A/B experiments). First-ever visitor (no `cd_vid` cookie) mints the visitor session TWICE: the loader
+  mints id#1 and buckets the served home doc + the exposure `page_view` row's `variant_key` off
+  `assignArm(id#1)`, then `trackStorefrontEvent` calls `ensureVisitorSession(request)` AGAIN on the still-
+  cookieless request → `randomUUID()` mints id#2; the loader returns id#2's Set-Cookie so the BROWSER persists
+  id#2 and the exposure row's `visitor_id`=id#2 while `variant_key`=arm(id#1). Every later request reads id#2 →
+  order attribution keys off `assignArm(id#2)`, independent of the arm actually served → ~50% of first-session
+  visitors split exposure vs conversion across arms, biasing the experiment report and ship/keep/stop calls.
+  The inline comment claimed "bucketing settles on the second page view" — it's actually a first-page
+  exposure/attribution SPLIT. Fix (surgical): thread the single already-minted `VisitorSession` into
+  `trackStorefrontEvent` (optional 5th param `session?`; `const s = session ?? await ensureVisitorSession(request)`;
+  return `s.headers`); product/checkout callers pass no session → unchanged. Added an events.server test
+  (passed session not re-minted) + extended the home-experiment test (exposure row visitorId == bucketing id).
+- **Lesson (double-mint identity across a loader→emitter seam):** when a loader derives a "read-or-create"
+  identity (visitor/session id via its own `ensureX(request)`) for a DECISION (A/B bucketing) and a downstream
+  side-effecting helper re-derives the SAME identity independently, a first request with no persisted cookie
+  mints two different ids — the one the decision used and the one persisted/recorded diverge. Any
+  read-or-create-identity helper must be called ONCE per request and threaded, never re-derived downstream.
+
+### Open-PR review this run
+- **#325** (viral-sourcing discovery UI, author keyuchen1735-boop): posted ONE high-confidence bug —
+  `pickProduct` (`discover.server.ts`) is NOT idempotent: the `unique(shop_id, product_id)` constraint added on
+  `sourced_product_link` can never fire because `createProduct` mints a fresh `product_id` each pick (random
+  handle bytes); there is no `unique(shop_id, source_product_id)`. Product+media+link are persisted BEFORE
+  `generateStore` with no txn, so a `generateStore` throw returns 500 while the product already exists → retry
+  duplicates the catalog + re-runs generateStore; a re-pick also duplicates. Fix: `unique(shop_id,
+  source_product_id)` + short-circuit/upsert on that pair. Plus minor notes: `listDiscoverFeed` has no
+  tiebreaker (score-only order, 0–100 integer buckets → nondeterministic ties); demo/reset `SHOWCASE_WIPE_ORDER`
+  omits `sourced_product_link` (orphan rows, no FK cascade); `source_product_signal` `.insert()` (not upsert)
+  each ingest = audit bloat but **write-only (nothing reads it back) → NOT a correctness bug**.
+- **#326** (companion nightly, author Mezoh): GENUINE, 5 fixes — vibe DTO; sourcing real-decay via `first_seen_at`;
+  sourcing swallowed-write→throw; CJ range-price NaN→low-end; discover supplier embed array-normalize. Reviewed
+  all 5 → correct (decay 86.4M ms/day units; `first_seen_at` NOT in the upsert payload so preserved on re-ingest;
+  `scored++` not double-counted; CJ handles range/single/empty/non-numeric; embed unwrap mirrors `pickProduct`).
+  Posted NONE.
+
+### False positives cleared this run (do NOT re-flag)
+- **Account deletion #323:** `deleteAccount` takes userId/shopId from session ONLY, sole-member guard by shop_id
+  fails safe, service-role (BYPASSRLS) client so deletes apply, user-first then shop, gated by requireSameOrigin
+  + allow-unverified session + first-party + server-revalidated `confirm==="DELETE"` + per-user rate-limit,
+  `authClearCookieHeaders` tears down all auth cookies. Clean.
+- **Onboarding enforcement #324:** `needsOnboarding` enforced at shell (requireVerifiedSession), APIs
+  (requireDashboardSession→403), Google callback (afterAuth), dashboard.connect loader; action guards
+  replayed/already-onboarded (409/redirect), requires saved contact before completeOnboarding, validates
+  return_to via safeDashboardReturnTo, same-origin; no redirect loop; the Path-2 unverified-merge hijack
+  protection (`if (!emailVerified)`) is INTACT — #324 did NOT regress it. Clean.
+- **CSRF apex-proxy patch #321/#322:** the `patches/@remix-run+server-runtime` patch only early-returns (skips
+  the Remix throw) when `Origin` is in the SAME env allowlist `checkSameOrigin` uses (DASHBOARD_PUBLIC_URL /
+  SHOPIFY_APP_URL / DASHBOARD_ALLOWED_ORIGINS); untrusted origins still throw; Origin is not browser-forgeable;
+  requireSameOrigin stays authoritative on writes; fails closed on an empty allowlist. Clean.
+- **Owned-inventory-without-Shopify #320 + cutover org-mode (`c9235df`):** `getOrgMode` + `shopHasShopifyConnection`
+  throw on Supabase error AND on missing shop (fail-CLOSED); `owned = !hasShopify || writesToOwned(orgMode)` only
+  reaches the owned engine when the DB confirms no shop_domain; native shop → owned=true so `admin` (null) never
+  deref'd; genuine Shopify-required paths throw `shopify_required` (not a silent no-op); adjust-price owned/Shopify
+  branches mutually exclusive (no double authoritative write); RelocationError rethrow only for SHOPIFY_REQUIRED
+  (real failed moves still hit the `outcome="failed"` audit). Clean.
+- **Autopilot per-feature toggles #318:** each row toggles by its own `{detectorId, actionKind}`, keyed
+  `${detectorId}:${actionKind}`, `on` initializes from `row.enabled` (unlocked) / `false` (locked) — no
+  cross-feature write, no default-ON. Clean.
+- **Store-studio/AI cluster #315/#312/#314/#313:** ai-quota scoping/off-by-one/cooldown correct + fail-open
+  documented-intentional; `assignArm` deterministic; commerce tool validation sound; `readPaged` caps are
+  1000-multiples (no partial-window early-return); Vercel domain register best-effort, never blocks provisioning;
+  no `.server` leak; prompt-injection hex defense holds. (The A/B double-mint above was the ONE real find here.)
+- **Viral-sourcing score math:** cannot go NaN/negative or exceed 100; ingest column names + onConflict targets
+  match the migration DDL; pick path shop-scoped; no sourcing table is referenced by a wipe path lacking a
+  migration (the PGRST205 class from 2026-07-05 does NOT recur here).
+
+### Gate / environment
+- `npm ci` again WORKS (exit 0), Node v22.22.2. Full gate on the fix tree (`4c1d166`): setup 0 · typecheck 0 ·
+  lint 0 (13 pre-existing warnings, 0 errors, none on touched files) · build 0 (verifier: **245** client files
+  clean) · vitest **573 files / 4207 passed / 12 skipped / 0 failed**.
+- Vercel bot posts the routine "Building"→"Ready" preview-deploy comment on every nightly PR (twice: PENDING
+  then DEPLOYED) — NOT a review comment, no action.
+
 ## 2026-07-05
 
 ### Triage — ~40 commits (PRs #302–#309 + demo-showcase merge); a GENUINE companion nightly PR existed
