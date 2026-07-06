@@ -98,6 +98,21 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
   const [drift, setDrift] = useState<client.DriftReportVM | null>(null);
   const [driftBusy, setDriftBusy] = useState(false);
   const [driftError, setDriftError] = useState<string | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  const runTestTransaction = useCallback(async () => {
+    setTestBusy(true);
+    setTestError(null);
+    try {
+      const { url } = await client.startTestTransaction();
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      setTestError(e instanceof Error ? e.message : "Could not start test transaction");
+    } finally {
+      setTestBusy(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -299,6 +314,30 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
             </li>
           ))}
         </ul>
+        {status.mode === "dual_run" &&
+          status.gates.checks.some(
+            (c) => !c.pass && (c.name === "paid_order" || c.name === "captured_charge"),
+          ) && (
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="cd-btn cd-btn-secondary"
+                onClick={runTestTransaction}
+                disabled={testBusy}
+              >
+                <span>{testBusy ? "Starting…" : "Run a test transaction"}</span>
+              </button>
+              <p className="cd-caption" style={{ marginTop: 8 }}>
+                Opens a secure Stripe checkout for a 50¢ charge to prove your payment setup.
+                It's automatically refunded when you go live.
+              </p>
+              {testError && (
+                <p className="cd-caption" style={{ marginTop: 8 }}>
+                  {testError}
+                </p>
+              )}
+            </div>
+          )}
       </Card>
 
       {status.mode === "dual_run" && (

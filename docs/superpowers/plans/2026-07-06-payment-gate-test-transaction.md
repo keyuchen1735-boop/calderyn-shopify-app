@@ -56,6 +56,7 @@ const hoisted = vi.hoisted(() => ({
   getOrgMode: vi.fn(),
   getConnectedAccount: vi.fn(),
   createCommerceCheckoutSession: vi.fn(),
+  upsertGuestBuyer: vi.fn(),
   insertReturn: vi.fn(),
 }));
 
@@ -64,6 +65,7 @@ vi.mock("~/lib/payments/connect.server", () => ({ getConnectedAccount: hoisted.g
 vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
   createCommerceCheckoutSession: hoisted.createCommerceCheckoutSession,
 }));
+vi.mock("~/lib/buyer/identity.server", () => ({ upsertGuestBuyer: hoisted.upsertGuestBuyer }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: () => ({
@@ -79,6 +81,7 @@ describe("startTestTransaction", () => {
     vi.clearAllMocks();
     hoisted.getOrgMode.mockResolvedValue("dual_run");
     hoisted.getConnectedAccount.mockResolvedValue({ id: "acct_1" });
+    hoisted.upsertGuestBuyer.mockResolvedValue({ id: "buyer-1" });
     hoisted.insertReturn.mockResolvedValue({
       data: { id: "order-123", confirmation_token: "tok-abc" },
       error: null,
@@ -128,6 +131,7 @@ import { randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { getOrgMode } from "~/lib/cutover/org-mode.server";
 import { getConnectedAccount } from "~/lib/payments/connect.server";
+import { upsertGuestBuyer } from "~/lib/buyer/identity.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 
 /** Stripe's minimum chargeable amount (USD). ponytail: fixed 50c/usd; per-currency
@@ -145,11 +149,16 @@ export async function startTestTransaction(shopId: string): Promise<{ url: strin
     throw new Error("Connect Stripe before running a test transaction.");
   }
 
+  // orders.buyer_id is NOT NULL (order_spine.sql:122) — every money-path order carries a
+  // buyer, so the probe reuses the same guest-buyer upsert the storefront checkout uses.
+  const buyer = await upsertGuestBuyer(shopId, { email: "test-probe@calderyn.internal" });
+
   const confirmationToken = randomBytes(32).toString("base64url");
   const { data, error } = await getSupabase()
     .from("orders")
     .insert({
       shop_id: shopId,
+      buyer_id: buyer.id,
       channel: "test",
       subtotal_cents: TEST_CHARGE_CENTS,
       shipping_cents: 0,
@@ -157,7 +166,7 @@ export async function startTestTransaction(shopId: string): Promise<{ url: strin
       total_cents: TEST_CHARGE_CENTS,
       currency: "usd",
       confirmation_token: confirmationToken,
-      // state defaults to 'checkout_pending'; no buyer, no lines, no inventory reserved.
+      // state defaults to 'checkout_pending'; no lines, no inventory reserved.
     })
     .select("id, confirmation_token")
     .single();
@@ -179,7 +188,7 @@ export async function startTestTransaction(shopId: string): Promise<{ url: strin
 Run: `npx vitest run app/lib/cutover/__tests__/test-transaction.server.test.ts`
 Expected: PASS (3 tests).
 
-> NOTE: if the `orders` table has a NOT NULL `buyer_id`, Step 3's insert will fail at runtime. Verify with: `grep -rn "buyer_id" supabase/migrations | grep -i "not null"`. If NOT NULL, import `upsertGuestBuyer` from `~/lib/order/checkout.server` and set `buyer_id: (await upsertGuestBuyer(shopId, { email: "test-probe@calderyn.internal" })).id` before the insert (add a matching mock in the test). Current default checkout sets `buyer_id`, so this guard is likely needed.
+> RESOLVED: `orders.buyer_id` is NOT NULL (`order_spine.sql:122`), so the probe upserts a guest buyer first via `upsertGuestBuyer(shopId, { email }): Promise<Buyer>` from `~/lib/buyer/identity.server` (returns a `Buyer` with `.id`) — already wired into Step 3's code and the Step 1 test mock above.
 
 - [ ] **Step 5: Commit**
 
@@ -398,23 +407,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
 > NOTE: confirm the `jsonError(status, code, detail?)` signature matches usage in `app/routes/dashboard.api.cutover.tsx` (it does there: `jsonError(409, "cutover_blocked", err.message)`). `dashboardJson` and `requireSameOrigin` come from the same `~/lib/dashboard/http.server` module.
 
-- [ ] **Step 4: Add the client function** in `app/lib/dashboard/client.ts` (near `fetchCutoverStatus`)
+- [ ] **Step 4: Add the client function** in `app/lib/dashboard/client.ts` (near `fetchPayoutLoginLink`, line ~703)
+
+Use the existing `apiSend` helper (convention — matches `fetchPayoutLoginLink`). It sets the `Origin` header for the `requireSameOrigin` CSRF guard, redirects on 401, and throws `toApiError(res)` (which surfaces the server's `detail` message) on non-ok — so no hand-rolled fetch/error handling. `dashboardJson`→`jsonOk` returns the body directly (verified: `fetchPayoutLoginLink` gets `{ url }` with no `data` wrapper), so `apiSend<{ url: string }>` unwraps to `{ url }`.
 
 ```ts
 export async function startTestTransaction(): Promise<{ url: string }> {
-  const res = await fetch("/dashboard/api/cutover-test-transaction", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? "Could not start test transaction");
-  }
-  return (await res.json()) as { url: string };
+  return apiSend<{ url: string }>("POST", "/dashboard/api/cutover-test-transaction");
 }
 ```
-
-> NOTE: match the existing fetch/error convention in `client.ts` — inspect a sibling like `fetchPayoutLoginLink` (line ~703) and mirror how it reads the error body and unwraps the JSON envelope (the API wraps via `dashboardJson`; confirm whether callers get `{ url }` directly or `{ data: { url } }` and adjust the return unwrap to match).
 
 - [ ] **Step 5: Run tests + typecheck**
 

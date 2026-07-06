@@ -70,11 +70,21 @@ added in `20260630120000_agentic_order_channel.sql`).
   currency, confirmationToken })` → real Stripe Checkout URL.
 - Return `{ url }`.
 
-### 3. Webhook — unchanged
-`processStripeEvent` keys off `metadata.order_ref` (set by
-`createCommerceCheckoutSession`), so it flips the probe order `paid` and writes
-the `capture` ledger row with no dependence on order lines. Gate turns green on
-its own.
+### 3. Webhook — one reconciliation branch added
+`processStripeEvent` clears the probe via `metadata.order_ref` (set by
+`createCommerceCheckoutSession`), flipping the order `paid` and writing the
+`capture` ledger row with no dependence on order lines.
+
+**Correction (found in final review):** hosted Stripe Checkout never pre-creates
+a `payment_intent` DB row (only the Payment Element path did), so
+`payment_intent.succeeded` hit the RPC's `payment_intent not found` raise and
+500-looped — the probe never reached `paid`. Fix: a `checkout.session.completed`
+branch in `processStripeEvent` reconciles (idempotent upsert) the
+`payment_intent` row from the completed session before the paired
+`payment_intent.succeeded` event does the capture/transition. Single-capture
+invariant preserved (only the PI event writes the ledger). **Ops requirement:**
+the Stripe webhook endpoint must be subscribed to `checkout.session.completed`
+in addition to `payment_intent.*`.
 
 ### 4. Cutover UI — `app/components/dashboard/screens/Cutover.tsx`
 A card beneath the two payment checks: **"Run a test transaction"** button →
