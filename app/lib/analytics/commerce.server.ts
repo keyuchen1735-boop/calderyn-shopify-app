@@ -110,6 +110,52 @@ async function readWindowEvents(shopId: string, sinceIso: string): Promise<Event
   );
 }
 
+interface ImportedOrderWindowRow {
+  total_cents: number | null;
+  shipping_cents: number | null;
+  tax_cents: number | null;
+  processed_at: string | null;
+}
+
+// Migrated Shopify orders in the window. Folded into the totals so a just-
+// migrated store's revenue / orders / trends reflect its real trailing
+// performance instead of resetting to zero at cutover. These historical facts
+// carry no buyer, attribution, or fulfillment, so they feed gross / orders /
+// daily and a single "Shopify" channel, but NOT returning% / fulfilled / top
+// products / the storefront funnel (all native-only, by construction).
+async function readWindowImportedOrders(
+  shopId: string,
+  sinceIso: string,
+): Promise<ImportedOrderWindowRow[]> {
+  return readPaged<ImportedOrderWindowRow>("imported_order", shopId, ORDER_ROW_CAP, (from, to) =>
+    getSupabase()
+      .from("imported_order")
+      .select("total_cents, shipping_cents, tax_cents, processed_at")
+      .eq("shop_id", shopId)
+      .gte("processed_at", sinceIso)
+      .order("processed_at", { ascending: false })
+      .range(from, to),
+  );
+}
+
+/** Sum of migrated refund amounts (imported_refund) processed in the window. */
+async function readWindowImportedRefundCents(shopId: string, sinceIso: string): Promise<number> {
+  const rows = await readPaged<{ subtotal_cents: number | null }>(
+    "imported_refund",
+    shopId,
+    ORDER_ROW_CAP,
+    (from, to) =>
+      getSupabase()
+        .from("imported_refund")
+        .select("subtotal_cents")
+        .eq("shop_id", shopId)
+        .gte("processed_at", sinceIso)
+        .order("processed_at", { ascending: false })
+        .range(from, to),
+  );
+  return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);
+}
+
 /** Top products by line revenue (title_snapshot × unit_price_cents × quantity)
  *  across the window's sale orders, read in bounded id chunks. */
 async function topProductsForOrders(
@@ -211,10 +257,12 @@ export async function loadCommerceAnalytics(
   const dayKeys: string[] = [];
   for (let i = 0; i < days; i++) dayKeys.push(utcDayKey(new Date(start + i * 86_400_000)));
 
-  const [orders, events, agentic] = await Promise.all([
+  const [orders, events, agentic, importedOrders, importedRefundCents] = await Promise.all([
     readWindowOrders(shopId, sinceIso),
     readWindowEvents(shopId, sinceIso),
     agenticStats(shopId, now, sinceIso),
+    readWindowImportedOrders(shopId, sinceIso),
+    readWindowImportedRefundCents(shopId, sinceIso),
   ]);
 
   // --- per-day order aggregation ---
@@ -253,6 +301,26 @@ export async function loadCommerceAnalytics(
     acc.grossCents += total;
     byChannel.set(label, acc);
   }
+
+  // Fold migrated Shopify history into the same accumulators (see reader note):
+  // gross/shipping/tax, per-day gross + order count, and a "Shopify" channel
+  // bucket. Buyers and fulfillment are absent on these facts, so returning% and
+  // fulfilled stay native-only.
+  for (const o of importedOrders) {
+    const day = String(o.processed_at ?? "").slice(0, 10);
+    const total = Number(o.total_cents ?? 0);
+    gross += total;
+    shipping += Number(o.shipping_cents ?? 0);
+    tax += Number(o.tax_cents ?? 0);
+    grossByDay.set(day, (grossByDay.get(day) ?? 0) + total);
+    ordersByDay.set(day, (ordersByDay.get(day) ?? 0) + 1);
+    const acc = byChannel.get("Shopify") ?? { label: "Shopify", grossCents: 0, agentic: false };
+    acc.grossCents += total;
+    byChannel.set("Shopify", acc);
+  }
+  // Real migrated refund amounts (imported_refund), the counterpart to the
+  // order-state refund signal used for native orders above.
+  refund += importedRefundCents;
 
   // --- distinct-session aggregation (page views per day + funnel stages) ---
   const sessionsByDay = new Map<string, Set<string>>();
@@ -293,7 +361,7 @@ export async function loadCommerceAnalytics(
   for (const n of ordersByBuyer.values()) if (n > 1) repeatBuyers += 1;
   const totals: CommerceTotals = {
     grossCents: gross,
-    orders: orders.length,
+    orders: orders.length + importedOrders.length,
     fulfilled,
     returningPct: ordersByBuyer.size > 0 ? (repeatBuyers / ordersByBuyer.size) * 100 : null,
     refundCents: refund,

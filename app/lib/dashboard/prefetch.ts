@@ -16,7 +16,7 @@ import {
   fetchSkus,
   fetchUnmatchedShipCharges,
 } from "./client";
-import { fetchOrdersPage } from "./orders-client";
+import { fetchImportedOrders, fetchOrdersPage } from "./orders-client";
 import { fetchCustomersPage } from "./customers-client";
 import { fetchShippingSummary } from "./shipping-client";
 import { fetchPaymentsPage } from "./payments-client";
@@ -52,6 +52,9 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
   [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],
+  // Historical import history: warmed late (only imported shops have rows, and
+  // most sessions never open the subtab), but seeded so the first open paints.
+  [SCREEN_CACHE_KEYS.importedOrders, fetchImportedOrders],
   [SCREEN_CACHE_KEYS.liveAnalytics, fetchLiveAnalytics],
   [catalogCacheKey("", undefined), () => fetchProducts()],
 ];
