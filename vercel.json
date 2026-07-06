@@ -50,6 +50,7 @@
     { "path": "/cron/gdpr", "schedule": "0 4 * * *" },
     { "path": "/cron/action-retry", "schedule": "*/15 * * * *" },
     { "path": "/cron/autopilot", "schedule": "0,30 * * * *" },
+    { "path": "/cron/weather-suggest", "schedule": "0 7 * * *" },
     { "path": "/cron/ingest-quickbooks", "schedule": "0 5 * * *" },
     { "path": "/cron/ingest-ship-costs", "schedule": "0 6 * * *" },
     { "path": "/cron/mcp-oauth-cleanup", "schedule": "0 4 * * *" },
