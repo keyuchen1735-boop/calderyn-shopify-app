@@ -76,7 +76,7 @@ export default function StoreDraftPreview() {
     <div
       className="cd-store"
       data-vibe={settings.vibe}
-      style={{ background: settings.palette.background, color: settings.palette.text }}
+      style={{ background: settings.palette.background, color: settings.palette.text, ["--cd-primary" as string]: settings.palette.primary }}
     >
       <header className="cd-store__header">
         {/* The logo returns to the home preview; account/cart have no preview page,

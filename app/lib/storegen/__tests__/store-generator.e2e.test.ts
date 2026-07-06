@@ -301,7 +301,7 @@ describe("store generator e2e", () => {
     const home = await loadDraftDoc(SHOP, "home");
     const html = await renderDoc(home!, undefined, EMPTY_CATALOG);
     expect(html).toContain("Your store"); // brand fallback now derives from the shop, not a placeholder
-    expect(html).toContain("cd-store__grid");
+    expect(html).toContain("cd-block--features"); // hollow store shows real value props, not an empty product grid
   });
 
   it("5. budget breach: brand call trips the token budget, all 3 docs are deterministic fallbacks", async () => {

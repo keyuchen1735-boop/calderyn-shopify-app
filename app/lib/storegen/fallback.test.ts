@@ -6,9 +6,12 @@ import { validateDocument } from "~/lib/storebuilder/validate";
 const valid = { productIds: new Set<string>(), collectionHandles: new Set<string>() };
 
 describe("fallbackDoc", () => {
-  it("home → hero + all-products grid (no specific ids), validates clean", () => {
+  it("home with no catalog → a self-contained hollow store (hero, CTA, features, story, CTA), validates clean", () => {
     const doc = fallbackDoc("home", { storeName: "Acme", tagline: "Go" });
-    expect(doc.blocks.map((b) => b.type)).toEqual(["hero", "productGrid"]);
+    expect(doc.blocks.map((b) => b.type)).toEqual(["hero", "button", "featureRow", "richText", "button"]);
+    // Real value props stand in for the missing catalog — never an empty product grid.
+    const features = doc.blocks.find((b) => b.type === "featureRow")!.props as { items: unknown[] };
+    expect(features.items.length).toBeGreaterThanOrEqual(3);
     expect(validateDocument(doc, valid).dropped).toHaveLength(0);
   });
   it("pdp → gallery + price + variantPicker + addToCart (buy-path complete)", () => {

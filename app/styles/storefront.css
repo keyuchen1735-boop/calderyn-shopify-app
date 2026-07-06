@@ -323,3 +323,45 @@ button.cd-block--addtocart { justify-content: center; padding: 0.85rem 1.4rem; b
 }
 .cd-block--hero[data-has-image] .cd-hero__headline { color: #ffffff; }
 .cd-block--hero[data-has-image] .cd-hero__subhead { color: rgba(255, 255, 255, 0.88); max-width: 46ch; }
+
+/* ---- gradient hero (no-image) + feature row: the self-contained "hollow" store ------------- */
+/* When a hero carries no image it becomes a designed panel rather than bare text: a soft glow of
+   the brand primary over the surface, generous space, and larger display type. --cd-primary is
+   set inline from the merchant palette by the layout route (falls back to the default green). */
+.cd-store:not([data-vibe="bold"]) .cd-block--hero:not([data-has-image]) {
+  padding: clamp(40px, 6vw, 84px) clamp(26px, 5vw, 56px);
+  border-radius: calc(var(--cd-radius) * 1.5);
+  border: 1px solid var(--cd-surface-border);
+  overflow: hidden;
+  background:
+    radial-gradient(130% 130% at 12% 0%, color-mix(in srgb, var(--cd-primary, #0f766e) 24%, transparent), transparent 58%),
+    radial-gradient(120% 120% at 100% 100%, color-mix(in srgb, var(--cd-primary, #0f766e) 14%, transparent), transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--cd-primary, #0f766e) 7%, var(--cd-surface)), var(--cd-surface));
+}
+/* Bold keeps its full-bleed dark band, now lit with a brand-primary glow in the top corner. */
+[data-vibe="bold"] .cd-block--hero:not([data-has-image]) {
+  background:
+    radial-gradient(90% 150% at 12% 0%, color-mix(in srgb, var(--cd-primary, #0f766e) 45%, transparent), transparent 62%),
+    var(--cd-hero-bg);
+}
+.cd-block--hero:not([data-has-image]) .cd-hero__headline { font-size: clamp(2.1rem, 1.4rem + 3.4vw, 3.4rem); }
+.cd-block--hero:not([data-has-image]) .cd-hero__subhead { font-size: 1.15rem; max-width: 44ch; }
+
+/* Feature row — the value-prop trio that gives a catalog-less store real structure. */
+.cd-block--features { padding: clamp(8px, 2vw, 24px) 0; }
+.cd-features__heading {
+  font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); letter-spacing: var(--cd-tracking-display);
+  font-size: clamp(1.4rem, 1rem + 1.6vw, 1.9rem); margin: 0 0 clamp(16px, 3vw, 30px); text-align: center;
+}
+.cd-features__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(14px, 2.4vw, 28px); }
+.cd-feature {
+  padding: clamp(20px, 2.4vw, 30px); border-radius: var(--cd-radius);
+  background: var(--cd-surface); border: 1px solid var(--cd-surface-border); box-shadow: var(--cd-shadow-card);
+}
+.cd-feature__rule { display: block; width: 34px; height: 3px; border-radius: 3px; background: var(--cd-primary, currentColor); margin-bottom: 16px; }
+.cd-feature__title { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); font-size: 1.12rem; margin: 0 0 8px; color: var(--cd-card-ink); }
+.cd-feature__body { margin: 0; color: var(--cd-card-muted); line-height: 1.6; font-size: 0.96rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .cd-feature { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+  .cd-feature:hover { transform: translateY(-3px); box-shadow: var(--cd-shadow-card-hover); border-color: color-mix(in srgb, var(--cd-primary, #0f766e) 40%, var(--cd-surface-border)); }
+}

@@ -16,12 +16,14 @@ import {
 } from "../store-logic";
 
 describe("showPromptCanvas", () => {
-  it("shows the empty prompt canvas until the shop has at least one live product", () => {
-    // No live products -> invite a prompt instead of a generic fallback store,
-    // even after the merchant has prompted (a draft with no catalog).
-    expect(showPromptCanvas({ productCount: 0 })).toBe(true);
-    // A real catalog -> render the store preview.
-    expect(showPromptCanvas({ productCount: 2 })).toBe(false);
+  it("shows the empty prompt canvas only until the merchant's first build", () => {
+    const fresh = { hasDraft: false, hasPublished: false, generation: null };
+    expect(showPromptCanvas(fresh)).toBe(true);
+    // Any of a draft, a publish, or a generation record means they've built once —
+    // hand off to the full store studio (even with no products yet).
+    expect(showPromptCanvas({ ...fresh, hasDraft: true })).toBe(false);
+    expect(showPromptCanvas({ ...fresh, hasPublished: true })).toBe(false);
+    expect(showPromptCanvas({ ...fresh, generation: { id: "g1" } })).toBe(false);
   });
 });
 
