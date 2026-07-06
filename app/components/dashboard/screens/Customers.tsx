@@ -507,6 +507,13 @@ export default function Customers({ app }: { app: DashboardCtx }) {
             sub: "segments",
             count: count(page?.segments.length),
           },
+          {
+            key: "weather",
+            label: "Weather",
+            screen: "customers",
+            sub: "weather",
+            count: wx.length > 0 ? String(wx.length) : null,
+          },
         ]}
       />
 
@@ -523,39 +530,8 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       ) : sub === "segments" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {wx.length > 0 && (
-            <Card pad={false}>
-              <CardHead>
-                <div>
-                  <div className="cd-row-title">Weather segments</div>
-                  <div className="cd-caption">
-                    Forecast-driven budget shifts across regions
-                  </div>
-                </div>
-              </CardHead>
-              {wx.map((s) => (
-                <div
-                  key={s.id}
-                  className="cd-trow"
-                  style={{ display: "flex", gap: 12, alignItems: "center" }}
-                >
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div className="cd-row-title">{`${money(s.amountCents)}/day`}</div>
-                    <div className="cd-caption">{s.narrative}</div>
-                  </div>
-                  <Btn small kind="primary" onClick={() => onWeather(s.id, "apply")}>
-                    Approve
-                  </Btn>
-                  <Btn small onClick={() => onWeather(s.id, "dismiss")}>
-                    Dismiss
-                  </Btn>
-                </div>
-              ))}
-            </Card>
-          )}
-          <Card pad={false}>
-            <div className="cd-seg-search">
+        <Card pad={false}>
+          <div className="cd-seg-search">
               <CDIcon name="search" size={15} style={{ color: "var(--text-3)" }} />
               <input
                 className="cd-seg-search-in"
@@ -591,7 +567,40 @@ export default function Customers({ app }: { app: DashboardCtx }) {
               ))
             )}
           </Card>
-        </div>
+      ) : sub === "weather" ? (
+        <Card pad={false}>
+          <CardHead>
+            <div>
+              <div className="cd-row-title">Weather segments</div>
+              <div className="cd-caption">Forecast-driven budget shifts across regions</div>
+            </div>
+          </CardHead>
+          {wx.length === 0 ? (
+            <div className="cd-caption" style={{ padding: "16px 20px" }}>
+              No weather suggestions right now. When the next 3 days&apos; forecast favors
+              shifting budget between regions, they&apos;ll appear here.
+            </div>
+          ) : (
+            wx.map((s) => (
+              <div
+                key={s.id}
+                className="cd-trow"
+                style={{ display: "flex", gap: 12, alignItems: "center" }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="cd-row-title">{`${money(s.amountCents)}/day`}</div>
+                  <div className="cd-caption">{s.narrative}</div>
+                </div>
+                <Btn small kind="primary" onClick={() => onWeather(s.id, "apply")}>
+                  Approve
+                </Btn>
+                <Btn small onClick={() => onWeather(s.id, "dismiss")}>
+                  Dismiss
+                </Btn>
+              </div>
+            ))
+          )}
+        </Card>
       ) : (
         <>
           <div className="cd-stat-grid" style={{ marginBottom: 14 }}>
