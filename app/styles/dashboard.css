@@ -1840,6 +1840,20 @@
 .cd-canvas-frame { display: block; width: 100%; flex: 1; min-height: 320px; border: 0; background: #fff; }
 .cd-canvas-veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px); background: color-mix(in srgb, var(--bg) 45%, transparent); }
 .cd-canvas-veil[data-on="1"] { display: flex; }
+/* Building skeleton: a storefront-shaped shimmer shown while a store generates, so the wait reads
+   as the store forming rather than a dimmed, stale page. --cd-skel is the shop's primary (set
+   inline). It lives inside the veil, which display:none hides when idle, so the sweep never paints
+   off-screen; the sweep also honors prefers-reduced-motion. */
+.cd-canvas-skel { position: absolute; inset: 0; overflow: hidden; background: var(--card-solid); display: flex; flex-direction: column; gap: 14px; }
+.cd-canvas-skel > * { flex: none; }
+.cd-canvas-skel__hero { height: 46%; background: linear-gradient(135deg, var(--cd-skel, #0f766e), color-mix(in srgb, var(--cd-skel, #0f766e) 55%, #000)); }
+.cd-canvas-skel__row { height: 22px; margin: 0 24px; border-radius: 8px; background: color-mix(in srgb, var(--cd-skel, #0f766e) 16%, var(--card-solid)); }
+.cd-canvas-skel__row--short { width: 55%; }
+.cd-canvas-skel__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 8px 24px 24px; }
+.cd-canvas-skel__grid span { aspect-ratio: 4 / 3; border-radius: 12px; background: color-mix(in srgb, var(--cd-skel, #0f766e) 12%, var(--card-solid)); }
+.cd-canvas-skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, #fff 55%, transparent) 50%, transparent 70%); animation: cd-skel-sweep 1.35s ease-in-out infinite; }
+@keyframes cd-skel-sweep { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .cd-canvas-skel::after { animation: none; opacity: 0; } }
 .cd-mark-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; }
 .cd-mark-capture { position: absolute; inset: 0; z-index: 7; background: transparent; border: 0; padding: 0; cursor: crosshair; touch-action: none; }
 .cd-mark-note { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 8; display: flex; gap: 8px; align-items: center; background: var(--card-solid); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 8px; width: min(360px, 88%); }

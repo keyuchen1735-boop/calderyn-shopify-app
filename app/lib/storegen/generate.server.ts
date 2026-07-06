@@ -127,47 +127,56 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
     vibe: brand.vibe,
   };
-  // Stage 2 — per doc kind, isolated. The HOME page is generated as a complete, self-contained HTML
-  // page (a single rawHtml block) so it reads as a real designed storefront even with zero product
-  // imagery — the fixed block vocabulary could only ever stack styled text. The template pages
-  // (collection/pdp) stay on the block-plan path since they drive live commerce. rawHtml is
-  // sanitized here and again at saveDraft (the security boundary), so nothing unsafe is ever stored.
+  // Stage 2 — the three pages are independent, so build them CONCURRENTLY. The HOME page (a full
+  // self-contained HTML page from the stronger model) is the long pole; running collection/pdp
+  // alongside it collapses wall-clock from the sum of all three to ~the home call alone, which is
+  // what the merchant actually waits on before the preview paints. Each page still parses, validates
+  // and falls back in isolation (rule 12); rawHtml is sanitized here and again at saveDraft (the
+  // security boundary). Draft rows use distinct keys, so the concurrent saveDraft calls never contend.
   const docs: Record<string, BlockDocument> = {};
   const proposals: Record<string, unknown> = {};
   const fbBrand = { storeName: brand.storeName, tagline: brand.voiceTagline };
   const briefArg = input.mode === "brief" ? input.brief : undefined;
-  for (const { pageKey, kind } of PAGES) {
-    let doc: BlockDocument;
+  // `brand` is non-null from here; capture it as a const so the concurrent buildPage closures
+  // below keep the narrowing (a captured `let` reverts to BrandPlan | null inside a closure).
+  const brandPlan: BrandPlan = brand;
+
+  async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brand, briefArg, menu), { model: storegenHtmlModel(), maxTokens: 8000 });
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), { model: storegenHtmlModel(), maxTokens: 8000 });
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
       const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";
       const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped, { links: linkSet }) : "";
-      proposals.home = clean ? { rawHtml: true } : { fallback: true };
-      doc = clean
+      const doc: BlockDocument = clean
         ? { kind: "singleton", pageKey: "home", blocks: [{ id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: clean } }] }
         : fallbackDoc(pageKey, fbBrand, fallbackContext);
-    } else {
-      const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand, brief: briefArg, menu }));
-      const plan = text ? parseBlockPlan(text) : null;
-      // Rewrite any block link (e.g. a button href) to a guaranteed-live target before assembly.
-      if (plan) for (const b of plan.blocks) {
-        if (typeof b.props.href === "string") b.props.href = normalizeStorefrontHref(b.props.href, linkSet);
-      }
-      proposals[pageKey] = plan ?? { fallback: true };
-      try {
-        const assembled = plan ? assembleDocument(pageKey, kind, plan, valid) : null;
-        // A plan that validates down to nothing is a failure → fall back.
-        doc = assembled && assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, fbBrand, fallbackContext);
-      } catch (err) {
-        console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
-        doc = fallbackDoc(pageKey, fbBrand, fallbackContext);
-      }
+      return { pageKey, doc, proposal: clean ? { rawHtml: true } : { fallback: true } };
     }
-    docs[pageKey] = doc;
-    await saveDraft(input.shopId, pageKey, doc);
+    const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand: brandPlan, brief: briefArg, menu }));
+    const plan = text ? parseBlockPlan(text) : null;
+    // Rewrite any block link (e.g. a button href) to a guaranteed-live target before assembly.
+    if (plan) for (const b of plan.blocks) {
+      if (typeof b.props.href === "string") b.props.href = normalizeStorefrontHref(b.props.href, linkSet);
+    }
+    try {
+      const assembled = plan ? assembleDocument(pageKey, kind, plan, valid) : null;
+      // A plan that validates down to nothing is a failure → fall back.
+      const doc = assembled && assembled.doc.blocks.length > 0 ? assembled.doc : fallbackDoc(pageKey, fbBrand, fallbackContext);
+      return { pageKey, doc, proposal: plan ?? { fallback: true } };
+    } catch (err) {
+      console.error(`[storegen] assemble failed for ${pageKey}; using fallback`, err);
+      return { pageKey, doc: fallbackDoc(pageKey, fbBrand, fallbackContext), proposal: { fallback: true } };
+    }
   }
+
+  const built = await Promise.all(PAGES.map(({ pageKey, kind }) => buildPage(pageKey, kind)));
+  for (const { pageKey, doc, proposal } of built) {
+    docs[pageKey] = doc;
+    proposals[pageKey] = proposal;
+  }
+  // Persist concurrently — distinct draft keys, home first in PAGES so it lands earliest.
+  await Promise.all(built.map(({ pageKey, doc }) => saveDraft(input.shopId, pageKey, doc)));
 
   // The AI was reached but produced nothing (every call errored) → the docs
   // above are all deterministic fallbacks that ignore the brief. Surface that as
