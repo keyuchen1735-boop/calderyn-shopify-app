@@ -1605,11 +1605,7 @@
 .cd-calib-split { display: grid; grid-template-columns: 320px minmax(0, 1fr); align-items: stretch; }
 .cd-calib-left { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 34px 24px; border-right: 0.5px solid var(--hairline-strong); }
 @media (max-width: 900px) { .cd-calib-split { grid-template-columns: 1fr; } .cd-calib-left { border-right: 0; border-bottom: 0.5px solid var(--hairline-strong); } }
-.cd-sug-row { display: flex; align-items: center; gap: 13px; padding: 13px 20px; }
-.cd-sug-row + .cd-sug-row { box-shadow: inset 0 0.5px 0 var(--hairline-strong); }
 .cd-sug-ico { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; background: var(--gray-bg); color: var(--text-2); }
-.cd-sug-title { font-size: 13.5px; font-weight: 560; letter-spacing: -0.008em; }
-.cd-sug-gain { font-size: 12px; font-weight: 650; color: var(--live); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cd-reject-panel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 2px 20px 12px 57px; }
 /* Autopilot calibration queue: explainable action cards */
 .cd-actcard {

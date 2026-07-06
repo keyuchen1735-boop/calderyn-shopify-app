@@ -144,7 +144,7 @@ function CalibrationTrainer({
             <Fragment key={p.alertId}>
               <div className="cd-actcard">
                 <div className="cd-actcard-hd">
-                  <span className="cd-sug-ico cd-actcard-ico">
+                  <span className="cd-sug-ico">
                     <CDIcon name={CD_ACTION_ICON[p.action_kind] ?? "bolt"} size={17} strokeWidth={1.8} />
                   </span>
                   <div className="cd-actcard-title">
