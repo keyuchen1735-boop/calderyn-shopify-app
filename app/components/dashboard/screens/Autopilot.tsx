@@ -5,7 +5,7 @@ import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
-import type { RejectReason } from "~/lib/types";
+import type { ActionKind, RejectReason } from "~/lib/types";
 import type { DashboardCtx } from "../context";
 import type { WatchGroup } from "../engine-events";
 import type {
@@ -16,6 +16,8 @@ import type { AuditVM, QueueProposalVM } from "../view-models";
 import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
 import { buildFeatureGroups, countEnabled, flaggedGroups } from "../overview/features-model";
 import AutopilotFeatures from "../overview/AutopilotFeatures";
+import { featureLabel } from "~/lib/labels";
+import { moneyVerb, reasonLines } from "./autopilot-cards";
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -133,53 +135,67 @@ function CalibrationTrainer({
             <span className="cd-caption">{queue.length} left</span>
           </div>
 
+          <div className="cd-caption" style={{ padding: "0 20px 6px", lineHeight: 1.4 }}>
+            Calderyn spotted these while watching your store. Approve the good calls to
+            teach it, and soon it handles them for you.
+          </div>
+
           {queue.map((p) => (
             <Fragment key={p.alertId}>
-              <div className="cd-sug-row" style={{ padding: "10px 20px" }}>
-                <span className="cd-sug-ico">
-                  <CDIcon name={CD_ACTION_ICON[p.action_kind] ?? "bolt"} size={17} strokeWidth={1.8} />
-                </span>
-                <div
-                  className="cd-sug-title"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {p.title}
+              <div className="cd-actcard">
+                <div className="cd-actcard-hd">
+                  <span className="cd-sug-ico">
+                    <CDIcon name={CD_ACTION_ICON[p.action_kind] ?? "bolt"} size={17} strokeWidth={1.8} />
+                  </span>
+                  <div className="cd-actcard-title">
+                    {featureLabel(p.detector_id, p.action_kind as ActionKind)}
+                    <div className="cd-actcard-subj">{p.title}</div>
+                  </div>
+                  <span className="cd-actcard-conf">
+                    <b className="tabular-nums">{p.confidence}%</b> sure
+                  </span>
                 </div>
-                <span className="cd-sug-gain">{p.confidence}%</span>
-                <span className="cd-caption" style={{ whiteSpace: "nowrap" }}>
-                  confidence
-                </span>
-                <button
-                  type="button"
-                  className="cd-btn cd-btn-secondary cd-btn-sm"
-                  aria-expanded={rejecting === p.alertId}
-                  aria-controls={`cd-reject-${p.alertId}`}
-                  disabled={teachingBusy}
-                  onClick={() => {
-                    setRejecting((cur) => (cur === p.alertId ? null : p.alertId));
-                    setNote("");
-                  }}
-                >
-                  Reject
-                </button>
-                <Btn
-                  kind="primary"
-                  small
-                  disabled={teachingBusy}
-                  onClick={() => approve(p)}
-                >
-                  {approving === p.alertId
-                    ? "Approving…"
-                    : canOneClick(p)
-                      ? "Approve"
-                      : "Review"}
-                </Btn>
+
+                {(() => {
+                  const r = reasonLines(p.reasoning, p.detector_id);
+                  return (
+                    <div className="cd-actcard-why">
+                      <span className="cd-actcard-why-cat">Why: {r.category}.</span>
+                      {r.narrative ? ` ${r.narrative}` : ""}
+                    </div>
+                  );
+                })()}
+
+                <div className="cd-actcard-foot">
+                  {p.dollar_impact !== 0 && (
+                    <span className="cd-actcard-money">
+                      {moneyVerb(p.action_kind)}{" "}
+                      <b className="tabular-nums">~{money(p.dollar_impact)}</b>
+                    </span>
+                  )}
+                  <div className="cd-actcard-acts">
+                    <button
+                      type="button"
+                      className="cd-btn cd-btn-secondary cd-btn-sm"
+                      aria-expanded={rejecting === p.alertId}
+                      aria-controls={`cd-reject-${p.alertId}`}
+                      disabled={teachingBusy}
+                      onClick={() => {
+                        setRejecting((cur) => (cur === p.alertId ? null : p.alertId));
+                        setNote("");
+                      }}
+                    >
+                      Not now
+                    </button>
+                    <Btn kind="primary" small disabled={teachingBusy} onClick={() => approve(p)}>
+                      {approving === p.alertId
+                        ? "Doing…"
+                        : canOneClick(p)
+                          ? "Do it"
+                          : "Review"}
+                    </Btn>
+                  </div>
+                </div>
               </div>
               {rejecting === p.alertId && (
                 <div className="cd-reject-panel" id={`cd-reject-${p.alertId}`}>

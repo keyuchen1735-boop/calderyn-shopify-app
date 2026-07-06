@@ -1607,12 +1607,67 @@
 .cd-calib-split { display: grid; grid-template-columns: 320px minmax(0, 1fr); align-items: stretch; }
 .cd-calib-left { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 34px 24px; border-right: 0.5px solid var(--hairline-strong); }
 @media (max-width: 900px) { .cd-calib-split { grid-template-columns: 1fr; } .cd-calib-left { border-right: 0; border-bottom: 0.5px solid var(--hairline-strong); } }
-.cd-sug-row { display: flex; align-items: center; gap: 13px; padding: 13px 20px; }
-.cd-sug-row + .cd-sug-row { box-shadow: inset 0 0.5px 0 var(--hairline-strong); }
 .cd-sug-ico { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; background: var(--gray-bg); color: var(--text-2); }
-.cd-sug-title { font-size: 13.5px; font-weight: 560; letter-spacing: -0.008em; }
-.cd-sug-gain { font-size: 12px; font-weight: 650; color: var(--live); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cd-reject-panel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 2px 20px 12px 57px; }
+/* Autopilot calibration queue: explainable action cards */
+.cd-actcard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--card);
+}
+.cd-actcard + .cd-actcard { margin-top: 10px; }
+.cd-actcard-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cd-actcard-hd .cd-sug-ico { flex-shrink: 0; }
+.cd-actcard-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.3;
+}
+.cd-actcard-subj {
+  font-weight: 400;
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cd-actcard-conf {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.cd-actcard-conf b { color: var(--text-1); }
+.cd-actcard-why {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.cd-actcard-why-cat { color: var(--text-1); font-weight: 500; }
+.cd-actcard-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cd-actcard-money {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-right: auto;
+}
+.cd-actcard-money b { color: var(--text-1); }
+.cd-actcard-acts { display: flex; gap: 8px; }
 .cd-reject-chip { font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 0; cursor: pointer; font-family: inherit; background: var(--gray-bg); color: var(--text-2); }
 .cd-reject-chip:hover { color: var(--red); background: var(--red-bg); }
 .cd-alert-detail { padding: 2px 20px 16px 35px; box-shadow: inset 0 0.5px 0 var(--hairline); }
