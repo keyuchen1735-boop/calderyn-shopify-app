@@ -704,6 +704,11 @@ export async function fetchPayoutLoginLink(): Promise<{ url: string }> {
   return apiSend<{ url: string }>("POST", "/dashboard/api/billing", { intent: "login-link" });
 }
 
+/** Originate a 50c go-live test transaction and return the Stripe Checkout url. */
+export async function startTestTransaction(): Promise<{ url: string }> {
+  return apiSend<{ url: string }>("POST", "/dashboard/api/cutover-test-transaction");
+}
+
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
   const data = await apiGet<{ integrations: Record<string, Integration> }>(
     "/dashboard/api/integrations",
