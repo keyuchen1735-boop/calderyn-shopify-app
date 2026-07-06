@@ -8,7 +8,21 @@
 
 A new daily candidate generator that ranks the 4 US regions by their 3-day
 weather forecast and proposes ad-budget reallocations between **geo-segmented
-campaigns**, flowing into the existing Action Queue for human approval.
+campaigns**, surfaced as a **standalone suggestions panel under Customers →
+Segments** for human approval. (The 4 geo-weather buckets are themselves
+geographic customer segments — hence the placement.)
+
+> **Approval-surface decision (2026-07-06, revised after codebase discovery):**
+> The original "flows into the existing Action Queue" plan is not achievable —
+> the queue is *derived from open `alert` rows*, and `reallocate_budget` is
+> deliberately excluded from being an approvable queue item
+> (`queueActionRunnable` in `app/lib/calibration/queue.server.ts`). Rather than
+> edit shared calibration code (regression risk to all reallocations) or build a
+> new alert-emitting detector, weather suggestions live in their own
+> `weather_suggestion` table and render in a dedicated Segments panel. Each row's
+> **Approve** button POSTs to a thin new dashboard API route that calls the
+> existing `executeReallocation` directly (guardrail-checked). Lowest blast
+> radius on shared code; fully human-in-the-loop.
 
 The hypothesis: worse/colder weather (rain, snow, cold, short daylight) drives
 more indoor mobile browsing and e-commerce traffic, independent of day-of-week.
@@ -33,11 +47,18 @@ money. It is not a new autopilot engine.
 - **Geo buckets:** `app/lib/ads/geo-regions.ts` — 4 internal `RegionCode`s
   (`us-west`, `us-east`, `us-south`, `us-central`), each mapped to US states and
   to platform geo-target IDs.
-- **Approval flow:** the Action Queue — `app/routes/dashboard.api.queue._index.tsx`,
-  `calderynClient(shopId).queue`, reject/approve routes.
-- **Guardrails:** `app/lib/actions/guardrails.server.ts` + `guardrail_config`
-  table (daily action cap, `max_budget_cut_pct`, cooldowns, etc.), UI via
-  `app/components/dashboard/GuardrailField.tsx`.
+- **Money mover (human path):** the existing manual reallocate call in
+  `app/routes/app.campaigns._index.tsx` (`executeReallocation`, no guardrail
+  gate) is the convention the new dashboard Approve route mirrors.
+- **Guardrail knob UI:** `guardrail_config` table + `GuardrailField`
+  (`app/components/dashboard/GuardrailField.tsx`) + `PATCHABLE_KEYS` allowlist
+  (`app/routes/dashboard.api.guardrails.tsx`) — reused only to host the new
+  `weather_sensitivity` dial (not the autopilot cap evaluator).
+- **Screen/panel host:** the Customers screen's Segments subtab
+  (`app/components/dashboard/screens/Customers.tsx`), fed by
+  `/dashboard/api/customers` (`app/routes/dashboard.api.customers._index.tsx`,
+  `CustomersPage`) — the weather panel rides this existing payload + cache key,
+  so no new screen-cache/`WARM_TARGETS` wiring is needed.
 - **Cron pattern:** `app/routes/cron.autopilot.tsx` (auth via
   `isAuthorizedCron`, list opted-in shops, `mapWithConcurrency`, JSON summary),
   schedules declared in `vercel.json`.
@@ -53,44 +74,59 @@ is existing machinery.
 | `app/lib/weather/open-meteo.server.ts` | Fetch a 3-day forecast for the 4 centroids in one batched Open-Meteo call. Returns per-region daily `{temp_c, precip_mm, snow_cm, daylight_h}`. Plain `fetch`, no SDK, **no new npm dependency**. Timeout + typed parse. | Open-Meteo HTTP API |
 | `app/lib/weather/score.ts` | **Pure** function: forecast → favorability score per region in [0,1], normalized across the 4 regions. Colder + more precip/snow + shorter daylight → higher. Carries a `demo()`/self-check asserting the core invariants. | none (pure) |
 | `app/lib/actions/weather-reallocation-suggest.server.ts` | For a shop: load campaigns, keep only **geo-segmented** ones (a campaign's `geo_targets` map cleanly to exactly one `RegionCode`), group by region, fetch scores, pick source region (lowest score, has eligible spend) → dest region (highest score), size the move within existing guardrail caps × `weather_sensitivity`, emit `reallocate_budget` candidate(s) tagged `source: 'weather'` with a human-readable reason. Mirrors `reallocation-suggest.server.ts`. | weather/score, weather/open-meteo, ads adapter, guardrails |
-| `app/routes/cron.weather-autopilot.tsx` | Daily cron. Auth via `isAuthorizedCron`; list shops with `weather_sensitivity > 0`; `mapWithConcurrency` → call the suggester → enqueue proposals into the Action Queue; return a JSON summary (proposed / skipped-ineligible / errored per shop). | cron-auth, the suggester, queue enqueue |
-| `guardrail_config.weather_sensitivity` | New `numeric` column, range 0..1, **default 0 (OFF)**. Scales reallocation aggressiveness; 0 disables. Exposed as one `GuardrailField` slider/row. | guardrail migration + UI |
+| `weather_suggestion` table | Persisted daily suggestions: `id, shop_id, suggested_on (date), source_region, dest_region, source_campaign_id, dest_campaign_id, amount_cents, source_score, dest_score, narrative, status ('pending'\|'applied'\|'dismissed'), created_at`. Idempotent on `(shop_id, suggested_on, source_campaign_id, dest_campaign_id)`. | New migration |
+| `app/routes/cron.weather-suggest.tsx` | Daily cron. Auth via `isAuthorizedCron`; list shops with `weather_sensitivity > 0`; `mapWithConcurrency` → call the suggester → **upsert** rows into `weather_suggestion`; JSON summary (suggested / skipped-ineligible / errored per shop). | cron-auth, the suggester, mapWithConcurrency |
+| Segments panel (Weather) | A `<Card>` under the Customers → Segments screen listing today's `pending` `weather_suggestion` rows with narrative + **Approve** / **Dismiss** buttons. | New component + loader wiring |
+| `app/routes/dashboard.api.weather-reallocation.tsx` | Thin write route. `requireSameOrigin` + `requireDashboardSession`; body `{ suggestionId, intent: "apply"\|"dismiss" }`. Apply: load the `pending` suggestion (shop-scoped), call `executeReallocation` (alertId `null`, actor `"merchant"`, triggerReason `"weather"`, `idempotencyKey = "weather:" + suggestionId`), mark the row `applied`. Dismiss: mark `dismissed`. **Mirrors the existing manual reallocate path (`app.campaigns._index.tsx`) — no `checkGuardrails` (those caps require `autopilot_enabled` and are an autopilot concept; the human approver is the gate here).** | requireDashboardSession, executeReallocation |
+| `guardrail_config.weather_sensitivity` | New `int` column (0..100, percent), **default 0 (OFF)**. Scales reallocation aggressiveness; 0 disables. Exposed as one `GuardrailField` row. | guardrail migration + UI |
 
 ### Cadence
 Daily (weather is a daily signal). The existing autopilot runs every 30 min —
 wrong cadence here; it would re-propose constantly against a slow-moving 3-day
-forecast. Hence a **separate** `cron.weather-autopilot.tsx` + one `vercel.json`
-`crons` entry.
+forecast. Hence a **separate** `cron.weather-suggest.tsx` + one `vercel.json`
+`crons` entry (schedule `0 7 * * *`).
 
 ### Action kind
-Reuse `reallocate_budget` — no new `action_kind` enum value. Weather proposals
-are distinguished by a `source: 'weather'` tag / reason string
-(e.g. `weather_demand_shift`) so the queue card can explain itself.
+The Approve route reuses the existing `reallocate_budget` action via
+`executeReallocation` — no new `action_kind` enum value. The
+`weather_suggestion.status` column (not the action queue) tracks
+pending/applied/dismissed.
 
 ## Data flow
 
 ```
-daily cron (cron.weather-autopilot)
+daily cron (cron.weather-suggest)
   └─ for each shop with weather_sensitivity > 0  (mapWithConcurrency)
        ├─ fetch 4-region 3-day forecast (Open-Meteo)         [open-meteo.server]
        ├─ score → favorability[region] in [0,1]              [score.ts, pure]
-       ├─ load geo-segmented campaigns, group by region      [ads adapter]
+       ├─ load geo-segmented campaigns, group by region      [suggester]
        ├─ rank: source = lowest-score region w/ eligible spend
        │        dest   = highest-score region
-       ├─ size move = f(guardrail caps, weather_sensitivity) [guardrails]
-       └─ enqueue reallocate_budget proposal (source:'weather', reason)
-                                                              [existing queue]
-── human approves in Action Queue ──▶ executeReallocation moves money  [existing]
+       ├─ size move = f(guardrail caps, weather_sensitivity) [suggester]
+       └─ upsert pending row into weather_suggestion         [new table]
+
+Segments panel (rides /dashboard/api/customers payload) ── today's pending rows
+merchant clicks Approve ─▶ dashboard.api.weather-reallocation {intent:"apply"}
+     └─ executeReallocation (moves money) ─▶ mark row 'applied'
+merchant clicks Dismiss ─▶ same route {intent:"dismiss"} ─▶ mark row 'dismissed'
 ```
 
-Example proposal reason: *"Next 3 days: us-east forecast cold + rain
+### Sizing (deterministic, in the suggester — not the model, not the route)
+`amount_cents = round(source_daily_budget_cents × (weather_sensitivity/100) ×
+scoreGap)`, where `scoreGap = dest_score − source_score` (both in [0,1]).
+Guards: skip if `scoreGap < 0.15` (noise floor), skip if `amount_cents < 100`
+($1 floor), and clamp to `floor(source_daily_budget_cents × 0.9)` so the move
+always leaves the source budget positive (`executeReallocation` rejects
+amounts ≥ source budget). `weather_sensitivity` is the merchant's single dial.
+
+Example narrative: *"Next 3 days: us-east forecast cold + rain
 (favorability 0.82) vs us-west warm/clear (0.31) → shift $X/day."*
 
 ## Eligibility & scope
 
 - **Geo-segmented campaigns only.** A campaign is eligible when its `geo_targets`
   resolve to exactly one `RegionCode`. Merchants running purely **national**
-  campaigns get **no proposals** — the feature has nothing to reallocate
+  campaigns get **no suggestions** — the feature has nothing to reallocate
   *between*. Accepted MVP limitation (national-campaign fallback is explicitly
   out of scope; see Deferred).
 - **Opt-in, default OFF** (`weather_sensitivity = 0`) → zero regression, no
@@ -98,17 +134,22 @@ Example proposal reason: *"Next 3 days: us-east forecast cold + rain
 
 ## Error handling & integrity (fail visibly — never fabricate)
 
-- Open-Meteo timeout/error → skip that shop's run, log it, **propose nothing**.
+- Open-Meteo timeout/error → skip that shop's run, log it, **write nothing**.
   Never synthesize or stale-fill a forecast.
 - Campaign with no clean single-region mapping → ineligible; counted in the cron
   summary's `skipped` tally (not silently dropped).
-- Idempotency: **one open weather proposal per (shop, source-region,
-  dest-region) per day.** A re-run the same day enqueues no duplicates.
+- Idempotency: **one row per (shop, suggested_on, source_campaign, dest_campaign)**
+  via a unique constraint + upsert. A re-run the same day updates in place, never
+  duplicates.
 - `weather_sensitivity = 0`, guardrail cap 0, or no eligible source spend →
-  clean no-op.
-- All existing guardrail caps (`max_budget_cut_pct`, daily action cap,
-  cooldowns, min spend) apply unchanged — weather proposals are ordinary
-  `reallocate_budget` actions.
+  clean no-op (no rows written).
+- Sizing caps are applied in the **suggester** (see Sizing above); the Approve
+  route does not re-gate through autopilot guardrails (deliberate — matches the
+  manual reallocate path). `executeReallocation` re-validates ownership + that
+  the move leaves the source budget positive at click time.
+- Approving a stale/already-applied suggestion is rejected (status must be
+  `pending` → else 409); `executeReallocation`'s deterministic
+  `idempotencyKey = "weather:" + suggestionId` is the final replay backstop.
 
 ## Testing (behavior, not coverage theater)
 
@@ -118,7 +159,13 @@ Example proposal reason: *"Next 3 days: us-east forecast cold + rain
 - `weather-reallocation-suggest.server.ts`: correct source/dest selection;
   national/multi-region campaigns skipped; guardrail caps respected;
   `weather_sensitivity = 0` → empty; no eligible source spend → empty.
-- Idempotency: second same-day run → no duplicate proposals.
+- Cron upsert idempotency: second same-day run → no duplicate rows (unique
+  constraint holds).
+- Apply route: success → `executeReallocation` called + row `applied`;
+  non-pending row → 409; wrong-shop suggestion id → 404; dismiss → row
+  `dismissed`, no reallocation.
+- Sizing (pure): `scoreGap < 0.15` → skipped; amount clamped below source
+  budget; `weather_sensitivity = 0` → amount 0 → skipped.
 - `open-meteo.server.ts`: parse a mocked API response into the typed shape;
   timeout path → throws / caller skips.
 
@@ -150,9 +197,12 @@ Example proposal reason: *"Next 3 days: us-east forecast cold + rain
 
 ## Rollout
 
-1. Migration: add `weather_sensitivity` to `guardrail_config` (default 0).
+1. Migrations: `weather_suggestion` table + `weather_sensitivity` column on
+   `guardrail_config` (default 0).
 2. Ship weather lib + suggester + cron behind the default-OFF knob (no shop
    affected until they opt in).
-3. Add the `GuardrailField` UI row so a merchant can enable + tune it.
-4. Dogfood on one geo-segmented test shop; verify proposals appear in the queue
-   with correct reasons and that approval triggers a real reallocation.
+3. Add the Segments panel + Approve/Dismiss route + client function.
+4. Add the `GuardrailField` UI row so a merchant can enable + tune it.
+5. Dogfood on one geo-segmented test shop: set `weather_sensitivity > 0`, run the
+   cron, confirm suggestions render in the Segments panel with correct
+   narratives, and that Approve triggers a real reallocation (audit row written).
