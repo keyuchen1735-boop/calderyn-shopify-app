@@ -67,6 +67,17 @@ describe("generateStore", () => {
     expect(saveSettingsMock.mock.calls[0][1]).toMatchObject({ vibe: "bold" });
   });
 
+  it("passes the brand typeStyle/density through on the first-ever branding", async () => {
+    hasSettingsMock.mockResolvedValue(false);
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go","vibe":"bold","typeStyle":"editorial","density":"roomy"}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).toEqual(expect.objectContaining({ typeStyle: "editorial", density: "roomy" }));
+  });
+
   it("falls back per-doc when a doc call returns junk (home survives a bad pdp)", async () => {
     createMock
       .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))

@@ -93,6 +93,8 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       palette: existing.palette,
       voiceTagline: existing.voiceTagline ?? "",
       vibe: existing.vibe ?? "minimal",
+      typeStyle: existing.typeStyle ?? "classic",
+      density: existing.density ?? "standard",
     };
   }
   if (UUID_RE.test(input.shopId)) {
@@ -103,7 +105,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     const firstBrand = !(await hasStoreSettings(input.shopId));
     await saveStoreSettings(input.shopId, {
       storeName: brand.storeName, palette: brand.palette, logoUrl: null, voiceTagline: brand.voiceTagline,
-      ...(firstBrand || explicitBrief ? { vibe: brand.vibe } : {}),
+      ...(firstBrand || explicitBrief ? { vibe: brand.vibe, typeStyle: brand.typeStyle, density: brand.density } : {}),
     });
   }
 
