@@ -1,34 +1,64 @@
 import { describe, it, expect, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { runWeatherSuggestForShop } from "../weather-suggest.server";
 import type { RegionCode } from "../../ads/actions";
 import type { RegionForecast } from "../../weather/score";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 
-function fakeSb(opts: { sensitivity: number; campaigns: Array<Record<string, unknown>> }) {
+const CONFLICT_KEY = ["shop_id", "suggested_on", "source_campaign_id", "dest_campaign_id"] as const;
+
+// Minimal chainable Supabase stub. weather_suggestion is modelled as a real
+// in-memory table with the unique-key conflict semantics of the migration, so
+// tests assert what ends up stored — including that ON CONFLICT DO NOTHING
+// (ignoreDuplicates) never touches an existing row.
+function fakeSb(opts: {
+  sensitivity: number;
+  campaigns: Array<Record<string, unknown>>;
+  existingSuggestions?: Array<Record<string, unknown>>;
+}) {
+  const table: Array<Record<string, unknown>> = (opts.existingSuggestions ?? []).map((r) => ({ ...r }));
   const calls = { upserts: [] as unknown[] };
-  function builder(table: string) {
+  function builder(tableName: string) {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn(() => chain);
     chain.eq = vi.fn(() => chain);
     chain.not = vi.fn(() => chain);
     chain.maybeSingle = vi.fn(async () =>
-      table === "guardrail_config"
+      tableName === "guardrail_config"
         ? { data: { weather_sensitivity: opts.sensitivity }, error: null }
         : { data: null, error: null },
     );
     chain.then = (res: (v: { data: unknown; error: null }) => void) => {
-      if (table === "ad_campaign_dim") return Promise.resolve({ data: opts.campaigns, error: null }).then(res);
+      if (tableName === "ad_campaign_dim") return Promise.resolve({ data: opts.campaigns, error: null }).then(res);
       return Promise.resolve({ data: null, error: null }).then(res);
     };
-    chain.upsert = vi.fn((rows: unknown) => {
-      calls.upserts.push(rows);
-      return { select: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: { id: "s1" }, error: null })) })) };
-    });
+    chain.upsert = vi.fn(
+      (rows: Array<Record<string, unknown>>, upsertOpts?: { ignoreDuplicates?: boolean }) => {
+        calls.upserts.push(rows);
+        const inserted: Array<Record<string, unknown>> = [];
+        for (const row of rows) {
+          const existing = table.find((t) => CONFLICT_KEY.every((k) => t[k] === row[k]));
+          if (existing) {
+            // Conflict: DO NOTHING when ignoreDuplicates, else DO UPDATE.
+            if (!upsertOpts?.ignoreDuplicates) Object.assign(existing, row);
+          } else {
+            table.push({ ...row });
+            inserted.push({ ...row });
+          }
+        }
+        const result = { data: inserted, error: null };
+        const ret: Record<string, unknown> = {
+          select: vi.fn(() => ret),
+          then: (res: (v: typeof result) => unknown) => Promise.resolve(result).then(res),
+        };
+        return ret;
+      },
+    );
     return chain;
   }
-  const sb = { from: vi.fn((t: string) => builder(t)) } as unknown as import("@supabase/supabase-js").SupabaseClient;
-  return { sb, calls };
+  const sb = { from: vi.fn((t: string) => builder(t)) } as unknown as SupabaseClient;
+  return { sb, calls, table };
 }
 
 const forecasts = new Map<RegionCode, RegionForecast>([
@@ -36,6 +66,11 @@ const forecasts = new Map<RegionCode, RegionForecast>([
   ["us-east", { avgTempC: 2, precipMm: 25, snowCm: 3, avgDaylightH: 9 }],
 ]);
 const fetchForecasts = vi.fn(async () => forecasts);
+
+const TWO_REGION_CAMPAIGNS = [
+  { id: "w1", name: "West", status: "active", daily_budget_cents: 10000, geo_targets: ["us-west"] },
+  { id: "e1", name: "East", status: "active", daily_budget_cents: 5000, geo_targets: ["us-east"] },
+];
 
 describe("runWeatherSuggestForShop", () => {
   it("skips when sensitivity is 0 (no fetch, no write)", async () => {
@@ -46,19 +81,12 @@ describe("runWeatherSuggestForShop", () => {
     expect(ff).not.toHaveBeenCalled();
     expect(calls.upserts).toHaveLength(0);
   });
-  it("upserts a suggestion for a two-region shop", async () => {
-    const { sb, calls } = fakeSb({
-      sensitivity: 50,
-      campaigns: [
-        { id: "w1", name: "West", status: "active", daily_budget_cents: 10000, geo_targets: ["us-west"] },
-        { id: "e1", name: "East", status: "active", daily_budget_cents: 5000, geo_targets: ["us-east"] },
-      ],
-    });
+  it("writes a pending suggestion for a two-region shop", async () => {
+    const { sb, table } = fakeSb({ sensitivity: 50, campaigns: TWO_REGION_CAMPAIGNS });
     const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
     expect(r.suggested).toBe(1);
-    expect(calls.upserts).toHaveLength(1);
-    const row = (calls.upserts[0] as Record<string, unknown>[])[0] ?? calls.upserts[0];
-    expect(row).toMatchObject({ shop_id: SHOP, suggested_on: "2026-07-06", status: "pending" });
+    expect(table).toHaveLength(1);
+    expect(table[0]).toMatchObject({ shop_id: SHOP, suggested_on: "2026-07-06", status: "pending" });
   });
   it("skips a shop with no geo-segmented campaigns", async () => {
     const { sb, calls } = fakeSb({
@@ -68,5 +96,42 @@ describe("runWeatherSuggestForShop", () => {
     const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
     expect(r.suggested).toBe(0);
     expect(calls.upserts).toHaveLength(0);
+  });
+  it("never resurrects an already-actioned suggestion on a same-day re-run", async () => {
+    const dismissed = {
+      shop_id: SHOP,
+      suggested_on: "2026-07-06",
+      source_campaign_id: "w1",
+      dest_campaign_id: "e1",
+      status: "dismissed",
+    };
+    const { sb, table } = fakeSb({
+      sensitivity: 50,
+      campaigns: TWO_REGION_CAMPAIGNS,
+      existingSuggestions: [dismissed],
+    });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r.suggested).toBe(0);
+    expect(table).toHaveLength(1);
+    expect(table[0].status).toBe("dismissed");
+  });
+  it("leaves an existing pending suggestion in place without duplicating", async () => {
+    const pending = {
+      shop_id: SHOP,
+      suggested_on: "2026-07-06",
+      source_campaign_id: "w1",
+      dest_campaign_id: "e1",
+      status: "pending",
+      amount_cents: 1234,
+    };
+    const { sb, table } = fakeSb({
+      sensitivity: 50,
+      campaigns: TWO_REGION_CAMPAIGNS,
+      existingSuggestions: [pending],
+    });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r.suggested).toBe(0);
+    expect(table).toHaveLength(1);
+    expect(table[0].status).toBe("pending");
   });
 });

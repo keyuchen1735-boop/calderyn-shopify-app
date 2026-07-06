@@ -115,7 +115,11 @@ export interface RunDeps {
 
 export interface RunResult {
   suggested: number;
-  skippedReason?: "sensitivity_off" | "no_eligible_campaigns" | "no_suggestion";
+  skippedReason?:
+    | "sensitivity_off"
+    | "no_eligible_campaigns"
+    | "no_suggestion"
+    | "already_suggested_today";
 }
 
 /**
@@ -148,24 +152,34 @@ export async function runWeatherSuggestForShop(
   if (!suggestion) return { suggested: 0, skippedReason: "no_suggestion" };
 
   const today = deps.today ?? new Date().toISOString().slice(0, 10);
-  const { error } = await sb.from("weather_suggestion").upsert(
-    [
+  const { data: inserted, error } = await sb
+    .from("weather_suggestion")
+    .upsert(
+      [
+        {
+          shop_id: shopId,
+          suggested_on: today,
+          source_region: suggestion.sourceRegion,
+          dest_region: suggestion.destRegion,
+          source_campaign_id: suggestion.sourceCampaignId,
+          dest_campaign_id: suggestion.destCampaignId,
+          amount_cents: suggestion.amountCents,
+          source_score: suggestion.sourceScore,
+          dest_score: suggestion.destScore,
+          narrative: suggestion.narrative,
+          status: "pending",
+        },
+      ],
       {
-        shop_id: shopId,
-        suggested_on: today,
-        source_region: suggestion.sourceRegion,
-        dest_region: suggestion.destRegion,
-        source_campaign_id: suggestion.sourceCampaignId,
-        dest_campaign_id: suggestion.destCampaignId,
-        amount_cents: suggestion.amountCents,
-        source_score: suggestion.sourceScore,
-        dest_score: suggestion.destScore,
-        narrative: suggestion.narrative,
-        status: "pending",
+        onConflict: "shop_id,suggested_on,source_campaign_id,dest_campaign_id",
+        // ON CONFLICT DO NOTHING: a same-day re-run must never resurrect a row
+        // the merchant already actioned (dismissed/applied/failed) or clobber a
+        // live pending one back to a fresh state.
+        ignoreDuplicates: true,
       },
-    ],
-    { onConflict: "shop_id,suggested_on,source_campaign_id,dest_campaign_id" },
-  );
+    )
+    .select("id");
   if (error) throw error;
-  return { suggested: 1 };
+  const count = (inserted ?? []).length;
+  return count > 0 ? { suggested: count } : { suggested: 0, skippedReason: "already_suggested_today" };
 }
