@@ -961,6 +961,28 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                   }}
                 />
               </SettingRow>
+              <SettingRow
+                label="Weather sensitivity"
+                sub="Shift ad budget toward regions with demand-favoring weather. 0 turns it off."
+              >
+                <GuardrailField
+                  value={g.weather_sensitivity}
+                  presets={[
+                    { value: 0, label: "Off" },
+                    { value: 25, label: "25%" },
+                    { value: 50, label: "50%" },
+                  ]}
+                  fromInput={(raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 0 && n <= 100 ? n : null;
+                  }}
+                  suffix="%"
+                  disabled={saving}
+                  onCommit={(v) => {
+                    if (v !== null) commit("weather_sensitivity", v);
+                  }}
+                />
+              </SettingRow>
               <BusinessHoursEditor
                 enabled={g.business_hours_only}
                 start={g.business_hours.start}

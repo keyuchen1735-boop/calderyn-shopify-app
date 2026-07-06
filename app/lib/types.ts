@@ -269,6 +269,8 @@ export interface GuardrailConfig {
   /** Max units autopilot may move in a single reallocate_inventory action; null
    *  means no unit cap (unlimited). */
   autopilot_max_inventory_units_per_move: number | null;
+  /** Weather-reallocation aggressiveness dial (0..100 percent). 0 = feature OFF. */
+  weather_sensitivity: number;
 }
 
 /** Why a merchant rejected a calibration proposal. Used by the feedback

@@ -60,6 +60,7 @@ const GUARDRAILS: GuardrailVM = {
   max_price_change_pct: 15,
   autopilot_max_price_change_pct: 10,
   autopilot_max_inventory_units_per_move: null,
+  weather_sensitivity: 0,
 };
 
 function auditEntry(
