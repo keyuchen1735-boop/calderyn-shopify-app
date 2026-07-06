@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   piCreate: vi.fn(),
   constructEvent: vi.fn(),
   insert: vi.fn(),
+  upsert: vi.fn(),
   rpc: vi.fn(),
   transitionOrder: vi.fn(),
   emitPaidOrder: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: () => ({
       insert: h.insert,
+      upsert: h.upsert,
       update: () => ({ eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }),
     }),
     rpc: h.rpc,
@@ -68,6 +70,7 @@ beforeEach(() => {
     occurredAt: "2026-06-29T12:00:00.000Z",
   });
   h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
+  h.upsert.mockResolvedValue({ error: null });
 });
 
 describe("createPaymentIntent", () => {
@@ -260,6 +263,62 @@ describe("processStripeEvent", () => {
     const res = await processStripeEvent("raw-body", "sig");
     expect(res).toEqual({ status: 200, processed: false, duplicate: false });
     expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  describe("checkout.session.completed (hosted Checkout reconciliation)", () => {
+    const sessionEvent = {
+      id: "evt_cs",
+      type: "checkout.session.completed",
+      created: 1_700_000_000,
+      data: {
+        object: {
+          id: "cs_1",
+          payment_intent: "pi_hosted_1",
+          amount_total: 50,
+          currency: "usd",
+          metadata: { shop_id: "shop-1", order_ref: "order-9" },
+        },
+      },
+    };
+
+    it("provisions the payment_intent row from the session and does no money work", async () => {
+      h.constructEvent.mockReturnValue(sessionEvent);
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      // Reconciles the row keyed by the hosted PI id, idempotent on stripe_pi_id.
+      expect(h.upsert).toHaveBeenCalledWith(
+        {
+          shop_id: "shop-1",
+          stripe_pi_id: "pi_hosted_1",
+          order_ref: "order-9",
+          amount_cents: 50,
+          currency: "usd",
+        },
+        { onConflict: "stripe_pi_id" },
+      );
+      // No capture / transition here — the paired payment_intent.succeeded event does that.
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("ACKs (200) and writes nothing when the session lacks shop_id or a payment_intent", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue({
+        ...sessionEvent,
+        id: "evt_cs_bad",
+        data: { object: { id: "cs_2", amount_total: 50, currency: "usd", metadata: {} } },
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(h.upsert).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/missing shop_id or payment_intent/));
+      warn.mockRestore();
+    });
   });
 
   describe("paid transition + warehouse emission", () => {

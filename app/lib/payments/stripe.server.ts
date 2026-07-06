@@ -99,6 +99,47 @@ export async function processStripeEvent(
     return { status: 400, processed: false, duplicate: false };
   }
 
+  // Hosted Stripe Checkout (createCommerceCheckoutSession) does not pre-create a payment_intent
+  // row the way the Payment Element path (createPaymentIntent) does — the PaymentIntent is born
+  // inside Stripe. On checkout.session.completed the session carries that PI id plus our
+  // shop_id/order_ref metadata, so we RECONCILE the row here. We do NOT capture or transition
+  // here: the paired payment_intent.succeeded event does the money work through the normal path
+  // below, now that the row exists. Idempotent (onConflict) so a redelivered session.completed is
+  // a no-op, and the single-capture invariant holds (only the PI event writes the ledger).
+  // ponytail: if payment_intent.succeeded is delivered BEFORE this event, its RPC 500s ("PI not
+  // found") and Stripe retries — the row lands here first on the retry, so it self-heals. Fold the
+  // provisioning into the succeeded path too if that transient retry ever proves costly.
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const sShopId = session.metadata?.shop_id;
+    const piId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id;
+    if (!sShopId || !piId) {
+      // Not ours (no shop_id) or a non-PaymentIntent session (e.g. setup mode) — ACK so Stripe
+      // stops retrying, and surface it (rule 12) rather than 500-looping on an event not ours.
+      console.warn(
+        `[stripe] checkout.session.completed ${event.id}: missing shop_id or payment_intent; skipped`,
+      );
+      return { status: 200, processed: false, duplicate: false };
+    }
+    const { error: upsertErr } = await getSupabase()
+      .from("payment_intent")
+      .upsert(
+        {
+          shop_id: sShopId,
+          stripe_pi_id: piId,
+          order_ref: session.metadata?.order_ref ?? null,
+          amount_cents: session.amount_total ?? 0,
+          currency: session.currency ?? "usd",
+        },
+        { onConflict: "stripe_pi_id" },
+      );
+    if (upsertErr) throw upsertErr;
+    return { status: 200, processed: true, duplicate: false };
+  }
+
   // Only money-moving / status events touch the DB; ack everything else so Stripe stops retrying.
   if (event.type !== "payment_intent.succeeded" && event.type !== "payment_intent.payment_failed") {
     return { status: 200, processed: false, duplicate: false };
