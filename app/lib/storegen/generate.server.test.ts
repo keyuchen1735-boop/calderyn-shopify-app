@@ -102,6 +102,22 @@ describe("generateStore", () => {
     expect(createMock).toHaveBeenCalled();
   });
 
+  it("feeds an explicit brief into the brand stage (brief steers name/palette/vibe, not just page copy)", async () => {
+    // The bug: the brand call only ever saw the catalog, so "make it colorful"
+    // could never change the store's look — only the per-page copy stage got the brief.
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"","vibe":"warm"}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "make it warm and colorful" });
+    const brandUserMsg = createMock.mock.calls[0][0].messages[0].content as string;
+    expect(brandUserMsg).toContain("make it warm and colorful");
+  });
+
+  it("lets an explicit brief re-set vibe on a rebuild (full restyle), unlike an auto catalog rebuild", async () => {
+    hasSettingsMock.mockResolvedValue(true); // already branded once
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"","vibe":"bold"}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "make it bold and dramatic" });
+    expect(saveSettingsMock.mock.calls[0][1]).toMatchObject({ vibe: "bold" });
+  });
+
   it("reports 'failed' when every LLM call errors (out of credits / API down), still writing fallback docs", async () => {
     // Every call rejects → all docs are deterministic fallbacks that ignore the
     // brief. The run still produces a publishable store, but its status must be
