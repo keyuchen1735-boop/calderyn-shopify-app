@@ -81,8 +81,17 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(clientIpKey(request, "dash-onboarding"), 10, 60_000))) return fail(429, "rate_limited");
 
   const fd = await request.formData().catch(() => new FormData());
-  const intent = String(fd.get("intent") ?? "contact");
+  const intent = String(fd.get("intent") ?? "");
   const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
+
+  // Every onboarding form posts an explicit intent (contact | connect | skip).
+  // A missing/unknown one must fail visibly, not silently fall through to the
+  // contact handler with an empty phone — that silent default is what turned a
+  // dropped-intent submit into a confusing bounce loop instead of a clear error
+  // (rule 12: fail visibly, not silently).
+  if (intent !== "contact" && intent !== "connect" && intent !== "skip") {
+    return fail(400, "invalid_intent");
+  }
 
   // Step 2 — the import choice completes onboarding. Guard: contact must already be
   // saved, so we never mark a user onboarded with a blank phone/referral profile.
@@ -196,27 +205,27 @@ function ContactStep({ error, returnTo }: { error: string | null; returnTo: stri
 }
 
 function ImportStep({ error, returnTo }: { error: string | null; returnTo: string | null }) {
+  // connect and skip each get their own form with the intent as a hidden field.
+  // A submit button's own name/value is an unreliable carrier (it's dropped
+  // unless the button is the recognized submitter); a hidden input always
+  // serializes — the same pattern the contact step above relies on.
   return (
     <>
       <h1 className="cd-auth-title">Bring your store over</h1>
-      <p className="cd-auth-sub">
-        Connect Shopify and we'll import your products, orders and customers. No store yet? Skip and
-        set one up later.
-      </p>
+      <p className="cd-auth-sub">Connect Shopify to import your products, orders, and customers.</p>
       <AuthError code={error} />
       <AuthForm action="/dashboard/onboarding">
+        <input type="hidden" name="intent" value="connect" />
         {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
-        <button className="cd-auth-submit" type="submit" name="intent" value="connect">
-          Connect Shopify — bring your data over
+        <button className="cd-auth-submit" type="submit">
+          Connect Shopify
         </button>
-        <button
-          className="cd-auth-linkbtn"
-          type="submit"
-          name="intent"
-          value="skip"
-          style={{ marginTop: 12 }}
-        >
-          I don't sell on Shopify — skip for now
+      </AuthForm>
+      <AuthForm action="/dashboard/onboarding" style={{ marginTop: 12 }}>
+        <input type="hidden" name="intent" value="skip" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+        <button className="cd-auth-linkbtn" type="submit">
+          Skip for now
         </button>
       </AuthForm>
     </>
