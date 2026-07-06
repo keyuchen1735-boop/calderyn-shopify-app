@@ -127,12 +127,13 @@ const PRIMARY_TABS: ScreenId[] = ["dashboard", "campaigns", "orders", "alerts"];
 
 const DASHBOARD_THEME = {
   dark: true,
-  // Design tokens: the 1.06 type scale the fresh design ships with (its root
-  // sets --type-scale:1.06). Accent lives in the CSS token blocks per theme.
-  density: "balanced",
+  // Design tokens. type scale multiplies every --type-scale font size; density
+  // multiplies spacing. Both are dialed below the 1.0 base for a tighter,
+  // more information-dense layout. Accent lives in the CSS token blocks per theme.
+  density: "compact",
   radius: 14,
   glass: 0.72,
-  typeScale: 1.06,
+  typeScale: 0.9,
 };
 
 // Persisted night-mode preference (per browser). Dark is the default.
