@@ -68,6 +68,22 @@ describe("storefront layout", () => {
     expect(html).toContain("cd-store");
     expect(html).toContain("Demo Store");
   });
+
+  it("renders typeStyle/density as data attributes", () => {
+    loaderDataRef.current = {
+      settings: {
+        shopId: "demo-shop",
+        storeName: "Demo Store",
+        logoUrl: null,
+        palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
+        typeStyle: "editorial",
+        density: "roomy",
+      },
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontLayout));
+    expect(html).toContain('data-type="editorial"');
+    expect(html).toContain('data-density="roomy"');
+  });
 });
 
 describe("storefront home", () => {

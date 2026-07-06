@@ -21,6 +21,7 @@ a { color: inherit; }
 .cd-store {
   --cd-container: 1120px;
   --cd-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --cd-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --cd-weight-display: 650;
   --cd-tracking-display: -0.01em;
   --cd-radius: 10px;
@@ -45,6 +46,7 @@ a { color: inherit; }
   max-width: var(--cd-container);
   margin: 0 auto;
   padding: 0 var(--cd-gap);
+  font-family: var(--cd-font-body);
 }
 
 .cd-store[data-vibe="bold"] {
@@ -89,6 +91,19 @@ a { color: inherit; }
   --cd-canvas-pad: clamp(20px, 4vw, 40px);
   --cd-canvas-radius: 22px;
 }
+
+/* ---- typeStyle packs — classic intentionally omitted (defers to the vibe's font) ---- */
+.cd-store[data-type="editorial"] {
+  --cd-font-display: ui-serif, Georgia, "Times New Roman", serif;
+  --cd-tracking-display: 0em;
+}
+.cd-store[data-type="rounded"] {
+  --cd-font-display: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+/* ---- density packs — standard intentionally omitted (base --cd-gap) ---- */
+.cd-store[data-density="compact"] { --cd-gap: 12px; }
+.cd-store[data-density="roomy"]   { --cd-gap: 24px; }
 
 /* ---- chrome -------------------------------------------------------------------------------- */
 .cd-store__header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cd-gap); padding: calc(var(--cd-gap) * 1.25) 0; border-bottom: 1px solid var(--cd-hairline); }

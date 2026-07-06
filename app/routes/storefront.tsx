@@ -57,6 +57,8 @@ export default function StorefrontLayout() {
     <div
       className="cd-store"
       data-vibe={experimentVibe ?? settings.vibe}
+      data-type={settings.typeStyle ?? "classic"}
+      data-density={settings.density ?? "standard"}
       style={{ background: settings.palette.background, color: settings.palette.text, ["--cd-primary" as string]: settings.palette.primary }}
     >
       <header className="cd-store__header">
