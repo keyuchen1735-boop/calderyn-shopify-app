@@ -58,6 +58,7 @@
     { "path": "/cron/autopilot-train", "schedule": "0 4 * * *" },
     { "path": "/cron/calibration-recompute", "schedule": "45 * * * *" },
     { "path": "/cron/social-digest", "schedule": "0 14 * * 5" },
-    { "path": "/cron/inventory-reaper", "schedule": "*/5 * * * *" }
+    { "path": "/cron/inventory-reaper", "schedule": "*/5 * * * *" },
+    { "path": "/cron/sourcing", "schedule": "0 2 * * *" }
   ]
 }
