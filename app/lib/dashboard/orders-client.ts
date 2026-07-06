@@ -8,11 +8,18 @@ import type {
   ShipChargeRow,
   OrdersPage,
 } from "~/lib/order/list-types";
+import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
+export type { ImportedOrdersPage };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
+}
+
+/** Historical orders + refunds brought over by Import-from-Shopify (read-only). */
+export async function fetchImportedOrders(): Promise<ImportedOrdersPage> {
+  return apiGet<ImportedOrdersPage>("/dashboard/api/orders/imported");
 }
 
 export interface RefundResult {

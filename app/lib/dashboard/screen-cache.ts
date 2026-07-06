@@ -70,6 +70,7 @@ export function prefetchScreenData<T>(key: string, fetcher: () => Promise<T>): P
 export const SCREEN_CACHE_KEYS = {
   liveAnalytics: "live-analytics",
   orders: "orders",
+  importedOrders: "imported-orders",
   customers: "customers",
   collections: "collections",
   shipping: "shipping",
