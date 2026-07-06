@@ -86,3 +86,21 @@ export function SettingsSubTabs({ app }: { app: DashboardCtx }) {
         : (app.nav.sub ?? "general");
   return <SubTabs app={app} tabs={SETTINGS_TABS} activeKey={active} />;
 }
+
+// The Store surface (BUILD group): the studio builder + the viral-product
+// Discover feed sit side by side on one subtab bar.
+const STORE_TABS: SubTabDef[] = [
+  { key: "store", label: "Store", screen: "storefront" },
+  { key: "discover", label: "Discover", screen: "discover" },
+];
+
+const STORE_ACTIVE: Partial<Record<Screen, string>> = {
+  storefront: "store",
+  discover: "discover",
+};
+
+export function StoreSubTabs({ app }: { app: DashboardCtx }) {
+  return (
+    <SubTabs app={app} tabs={STORE_TABS} activeKey={STORE_ACTIVE[app.nav.screen] ?? "store"} />
+  );
+}
