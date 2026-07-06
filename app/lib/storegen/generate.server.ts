@@ -12,6 +12,7 @@ import type { ValidIds } from "~/lib/storebuilder/validate";
 import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
 import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, type CatalogMenu } from "./prompts";
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
+import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 import { assembleDocument } from "./sanitize";
 import { fallbackDoc, type FallbackContext } from "./fallback";
 import { recordGeneration, recordProposal } from "./audit.server";
@@ -54,6 +55,9 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
   };
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
+  // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
+  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   let tokenCost = 0;
   let budgetHit = false;
   // Distinguish "the model was never called" (skipLlm / budget) from "the model
@@ -139,7 +143,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
       const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";
-      const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped) : "";
+      const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped, { links: linkSet }) : "";
       proposals.home = clean ? { rawHtml: true } : { fallback: true };
       doc = clean
         ? { kind: "singleton", pageKey: "home", blocks: [{ id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: clean } }] }
@@ -147,6 +151,10 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     } else {
       const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand, brief: briefArg, menu }));
       const plan = text ? parseBlockPlan(text) : null;
+      // Rewrite any block link (e.g. a button href) to a guaranteed-live target before assembly.
+      if (plan) for (const b of plan.blocks) {
+        if (typeof b.props.href === "string") b.props.href = normalizeStorefrontHref(b.props.href, linkSet);
+      }
       proposals[pageKey] = plan ?? { fallback: true };
       try {
         const assembled = plan ? assembleDocument(pageKey, kind, plan, valid) : null;
