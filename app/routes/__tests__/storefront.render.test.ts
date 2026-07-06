@@ -68,6 +68,63 @@ describe("storefront layout", () => {
     expect(html).toContain("cd-store");
     expect(html).toContain("Demo Store");
   });
+
+  it("renders typeStyle/density as data attributes", () => {
+    loaderDataRef.current = {
+      settings: {
+        shopId: "demo-shop",
+        storeName: "Demo Store",
+        logoUrl: null,
+        palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
+        typeStyle: "editorial",
+        density: "roomy",
+      },
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontLayout));
+    expect(html).toContain('data-type="editorial"');
+    expect(html).toContain('data-density="roomy"');
+  });
+
+  it("renders a category nav link per collection in the header", () => {
+    loaderDataRef.current = {
+      settings: {
+        shopId: "demo-shop",
+        storeName: "Demo Store",
+        logoUrl: null,
+        palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
+      },
+      collections: [
+        { handle: "for-him", title: "For Him" },
+        { handle: "for-her", title: "For Her" },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontLayout));
+    expect(html).toContain("cd-store__nav");
+    expect(html).toContain("For Him");
+    expect(html).toContain('href="/storefront/collections/for-him"');
+    expect(html).toContain('href="/storefront/collections/for-her"');
+  });
+
+  it("omits the category nav when there are no collections (never a bare empty bar)", () => {
+    loaderDataRef.current = {
+      settings: {
+        shopId: "demo-shop",
+        storeName: "Demo Store",
+        logoUrl: null,
+        palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
+      },
+      collections: [],
+    };
+    const html = renderToStaticMarkup(createElement(StorefrontLayout));
+    expect(html).not.toContain("cd-store__nav");
+  });
+
+  it("loads collections for the category nav (failure-isolated in the loader)", async () => {
+    const res = await layoutLoader({ request: req(), params: {}, context: {} });
+    const data = await res.json();
+    expect(Array.isArray(data.collections)).toBe(true);
+    expect(data.collections.length).toBeGreaterThan(0);
+  });
 });
 
 describe("storefront home", () => {

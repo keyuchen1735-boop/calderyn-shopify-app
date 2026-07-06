@@ -147,6 +147,8 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       storeName: settings.storeName,
       accent: settings.palette.primary || DEFAULT_PALETTE.primary,
       vibe: settings.vibe,
+      typeStyle: settings.typeStyle,
+      density: settings.density,
       logoUrl: settings.logoUrl,
       tagline: settings.voiceTagline,
     },

@@ -66,6 +66,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     logoUrl: settings.logoUrl,
     palette: settings.palette,
     vibe: settings.vibe,
+    typeStyle: settings.typeStyle,
+    density: settings.density,
   };
   return json({ doc, data, record, settings: settingsDto });
 }
@@ -76,6 +78,8 @@ export default function StoreDraftPreview() {
     <div
       className="cd-store"
       data-vibe={settings.vibe}
+      data-type={settings.typeStyle ?? "classic"}
+      data-density={settings.density ?? "standard"}
       style={{ background: settings.palette.background, color: settings.palette.text, ["--cd-primary" as string]: settings.palette.primary }}
     >
       <header className="cd-store__header">

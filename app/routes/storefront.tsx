@@ -6,6 +6,7 @@ import { useLoaderData, Outlet } from "@remix-run/react";
 import storefrontCss from "~/styles/storefront.css?url";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
 import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
@@ -42,21 +43,38 @@ async function resolveLayoutExperimentVibe(shopId: string, request: Request): Pr
   }
 }
 
+/** Collections for the header category nav — the store chrome that makes a page read as a real
+ *  storefront (For Him / For Her …) rather than a bare hero. Failure-isolated (a catalog hiccup
+ *  must never break the shell) and capped so a large catalog can't overflow the bar. */
+async function loadNavCollections(shopId: string): Promise<{ handle: string; title: string }[]> {
+  try {
+    const cols = await getCatalog().listCollections(shopId);
+    return cols.slice(0, 6).map((c) => ({ handle: c.handle, title: c.title }));
+  } catch (err) {
+    console.error(`[storefront] nav collections lookup failed for shop ${shopId}:`, err);
+    return [];
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   // Public, multi-tenant entry: resolve the tenant from the request, then scope
   // every downstream read by this shopId (no Postgres RLS on this surface).
   const shopId = await resolveStorefrontShop(request);
   const settings = await getStoreSettings(shopId);
   const experimentVibe = await resolveLayoutExperimentVibe(shopId, request);
-  return json({ settings, experimentVibe: experimentVibe ?? null });
+  const collections = await loadNavCollections(shopId);
+  return json({ settings, experimentVibe: experimentVibe ?? null, collections });
 }
 
 export default function StorefrontLayout() {
-  const { settings, experimentVibe } = useLoaderData<typeof loader>();
+  const { settings, experimentVibe, collections } = useLoaderData<typeof loader>();
+  const navCollections = collections ?? [];
   return (
     <div
       className="cd-store"
       data-vibe={experimentVibe ?? settings.vibe}
+      data-type={settings.typeStyle ?? "classic"}
+      data-density={settings.density ?? "standard"}
       style={{ background: settings.palette.background, color: settings.palette.text, ["--cd-primary" as string]: settings.palette.primary }}
     >
       <header className="cd-store__header">
@@ -73,6 +91,15 @@ export default function StorefrontLayout() {
           </a>
         </nav>
       </header>
+      {navCollections.length > 0 ? (
+        <nav className="cd-store__nav">
+          {navCollections.map((c) => (
+            <a key={c.handle} href={`/storefront/collections/${c.handle}`}>
+              {c.title}
+            </a>
+          ))}
+        </nav>
+      ) : null}
       <main>
         <Outlet />
       </main>

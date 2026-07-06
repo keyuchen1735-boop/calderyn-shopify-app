@@ -28,6 +28,9 @@ const settings = {
   palette: { primary: "#000", background: "#fff", text: "#111" },
   logoUrl: null,
   voiceTagline: "Tagline",
+  vibe: "minimal",
+  typeStyle: "editorial",
+  density: "roomy",
 };
 const catalog = {
   listProducts: async () => [],
@@ -68,6 +71,13 @@ describe("dashboard.store.preview loader", () => {
     const html = renderToStaticMarkup(<>{renderBlocks(doc, { data })}</>);
     expect(html).toContain("Handmade soy candles");
     expect(html).toContain("Small batch");
+  });
+
+  it("carries typeStyle/density in the preview settings DTO so the canvas matches the published store", async () => {
+    loadDraftMock.mockResolvedValue(null);
+    const { settings: dto } = await loaderData("https://app.example.com/dashboard/store/preview");
+    expect(dto.typeStyle).toBe("editorial");
+    expect(dto.density).toBe("roomy");
   });
 
   it("falls back to the never-blank default home doc when there is no draft", async () => {
