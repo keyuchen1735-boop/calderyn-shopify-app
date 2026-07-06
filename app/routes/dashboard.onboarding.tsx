@@ -1,35 +1,66 @@
 // app/routes/dashboard.onboarding.tsx
-// Post-signup onboarding for first-party (email/Google) users: a required phone
-// number + "how did you hear about us", plus an optional hand-off to the existing
-// Shopify OAuth + #13 import/cutover flow. Runs right after signup, before the
-// email-verify gate; the onboarding gate in session.server redirects here.
+// Post-signup onboarding for first-party (email/Google) users, in two steps run
+// before the dashboard on every path:
+//   1. contact - required phone + "how did you hear about us"
+//   2. import  - bring a Shopify store over, or explicitly skip
+// Only step 2 marks the user onboarded (onboarded_at), so the session gate in
+// session.server holds the user here until the import step is answered. A
+// validated return_to is threaded through so a flow interrupted by the gate
+// resumes at its original destination.
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import { useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import dashboard from "~/styles/dashboard.css?url";
 import { getSessionFromRequest } from "~/lib/dashboard/session.server";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
-import { normalizePhone, isReferralSource, setOnboardingProfile } from "~/lib/auth/onboarding.server";
+import {
+  rateLimit,
+  clientIpKey,
+  checkSameOrigin,
+  jsonError,
+  wantsJson,
+  safeDashboardReturnTo,
+  publicBaseUrl,
+} from "~/lib/dashboard/http.server";
+import {
+  normalizePhone,
+  isReferralSource,
+  saveOnboardingContact,
+  completeOnboarding,
+  getOnboardingProgress,
+} from "~/lib/auth/onboarding.server";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
-export const meta: MetaFunction = () => [{ title: "Almost there — Calderyn" }];
+export const meta: MetaFunction = () => [{ title: "Almost there - Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
 
-// Where a first-party user goes once onboarding is done: unverified email users
-// still owe the verify gate; verified (Google) users land on the dashboard.
 function nextAfterOnboarding(emailVerified: boolean): string {
   return emailVerified ? "/dashboard" : "/dashboard/verify-needed";
+}
+
+function onboardingHref(returnTo: string | null): string {
+  return returnTo ? `/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}` : "/dashboard/onboarding";
+}
+
+function dashboardLoginHref(): string {
+  const authBase = publicBaseUrl();
+  return authBase ? `${authBase.replace(/\/+$/, "")}/dashboard/login` : "/dashboard/login";
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await getSessionFromRequest(request);
   if (!session) return redirect("/login");
-  // Shopify (shop-based) sessions and already-onboarded users don't belong here.
   if (session.userId == null || session.onboardedAt != null) {
     return redirect(nextAfterOnboarding(session.emailVerified));
   }
-  return { error: new URL(request.url).searchParams.get("error") };
+  const url = new URL(request.url);
+  const { phone } = await getOnboardingProgress(session.userId);
+  const step: "contact" | "import" = phone ? "import" : "contact";
+  return {
+    step,
+    error: url.searchParams.get("error"),
+    returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
+  };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -40,27 +71,54 @@ export async function action({ request }: ActionFunctionArgs) {
     wantsJson(request) ? jsonError(status, code) : redirect(`/dashboard/onboarding?error=${code}`);
 
   const session = await getSessionFromRequest(request);
-  // No live session (expired/revoked while this first-post-signup screen sat open):
-  // HTML posts go to /login, JSON clients get a 401 — never a raw JSON body painted
-  // into the browser tab (mirrors the loader's graceful handling).
   if (!session) return wantsJson(request) ? jsonError(401, "unauthenticated") : redirect("/login");
 
-  // Only first-party users onboard; a shop-based session has no users row to write.
   if (session.userId == null) return fail(400, "not_first_party");
+  if (session.onboardedAt != null) {
+    return wantsJson(request)
+      ? jsonError(409, "already_onboarded")
+      : redirect(nextAfterOnboarding(session.emailVerified));
+  }
   if (!(await rateLimit(clientIpKey(request, "dash-onboarding"), 10, 60_000))) return fail(429, "rate_limited");
 
   const fd = await request.formData().catch(() => new FormData());
-  const intent = String(fd.get("intent") ?? "finish");
+  const intent = String(fd.get("intent") ?? "");
+  const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
+
+  if (intent !== "contact" && intent !== "connect" && intent !== "skip") {
+    return fail(400, "invalid_intent");
+  }
+
+  if (intent === "connect" || intent === "skip") {
+    let phone: string | null;
+    try {
+      ({ phone } = await getOnboardingProgress(session.userId));
+    } catch (err) {
+      console.error("[onboarding] progress read failed", err);
+      return fail(500, "save_failed");
+    }
+    if (!phone) {
+      return wantsJson(request) ? jsonError(400, "contact_required") : redirect(onboardingHref(returnTo));
+    }
+    try {
+      await completeOnboarding(session.userId);
+    } catch (err) {
+      console.error("[onboarding] complete failed", err);
+      return fail(500, "save_failed");
+    }
+    if (intent === "connect") return redirect(dashboardLoginHref());
+    return redirect(returnTo ?? nextAfterOnboarding(session.emailVerified));
+  }
+
   const phone = normalizePhone(String(fd.get("phone") ?? ""));
   const referral = String(fd.get("referral_source") ?? "");
-  // Clamp the free text at the boundary — never trust the browser maxLength.
   const referralOther = String(fd.get("referral_source_other") ?? "").trim().slice(0, 120) || null;
 
   if (!phone) return fail(422, "invalid_phone");
   if (!isReferralSource(referral)) return fail(422, "invalid_referral");
 
   try {
-    await setOnboardingProfile(session.userId, {
+    await saveOnboardingContact(session.userId, {
       phone,
       referralSource: referral,
       referralOther: referral === "other" ? referralOther : null,
@@ -69,26 +127,19 @@ export async function action({ request }: ActionFunctionArgs) {
     console.error("[onboarding] save failed", err);
     return fail(500, "save_failed");
   }
-
-  // Optional Shopify port: hand off to the existing OAuth → callback → #13 import
-  // machine (it runs startImport + kickDrainSoon and steers to the store/import
-  // screen). The required fields are already saved above.
-  if (intent === "connect") {
-    const authBase = publicBaseUrl();
-    return redirect(authBase ? `${authBase}/dashboard/login` : "/dashboard/login");
-  }
-  return redirect(nextAfterOnboarding(session.emailVerified));
+  return redirect(onboardingHref(returnTo));
 }
 
-export default function Onboarding() {
-  const { error } = useLoaderData<typeof loader>();
+function ContactStep({ error, returnTo }: { error: string | null; returnTo: string | null }) {
   const [referral, setReferral] = useState("");
   return (
-    <AuthShell>
+    <>
       <h1 className="cd-auth-title">Almost there</h1>
-      <p className="cd-auth-sub">Two quick things, then your dashboard.</p>
+      <p className="cd-auth-sub">Two quick things, then bring your store over.</p>
       <AuthError code={error} />
       <AuthForm action="/dashboard/onboarding">
+        <input type="hidden" name="intent" value="contact" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <label className="cd-auth-label" htmlFor="phone">
           Phone
         </label>
@@ -135,17 +186,45 @@ export default function Onboarding() {
             aria-label="How you heard about us"
           />
         )}
-        <AuthSubmit label="Continue" pendingLabel="Saving…" />
-        <button
-          className="cd-auth-linkbtn"
-          type="submit"
-          name="intent"
-          value="connect"
-          style={{ marginTop: 12 }}
-        >
-          Connect Shopify — bring your data over
+        <AuthSubmit label="Continue" pendingLabel="Saving..." />
+      </AuthForm>
+    </>
+  );
+}
+
+function ImportStep({ error, returnTo }: { error: string | null; returnTo: string | null }) {
+  return (
+    <>
+      <h1 className="cd-auth-title">Bring your store over</h1>
+      <p className="cd-auth-sub">Connect Shopify to import your products, orders, and customers.</p>
+      <AuthError code={error} />
+      <AuthForm action="/dashboard/onboarding">
+        <input type="hidden" name="intent" value="connect" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+        <button className="cd-auth-submit" type="submit">
+          Connect Shopify
         </button>
       </AuthForm>
+      <AuthForm action="/dashboard/onboarding" style={{ marginTop: 12 }}>
+        <input type="hidden" name="intent" value="skip" />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
+        <button className="cd-auth-linkbtn" type="submit">
+          Skip for now
+        </button>
+      </AuthForm>
+    </>
+  );
+}
+
+export default function Onboarding() {
+  const { step, error, returnTo } = useLoaderData<typeof loader>();
+  return (
+    <AuthShell>
+      {step === "import" ? (
+        <ImportStep error={error} returnTo={returnTo} />
+      ) : (
+        <ContactStep error={error} returnTo={returnTo} />
+      )}
     </AuthShell>
   );
 }

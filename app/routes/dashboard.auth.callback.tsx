@@ -73,18 +73,39 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const state = url.searchParams.get("state") ?? "";
 
   const cookieState = readStateCookie(request);
-  // A shop-less initiation (no ?shop= at /dashboard/login) pins the sentinel
-  // instead of a shop: identity then comes from the HMAC-verified callback
-  // params — signed with our app secret — plus the code exchange below proving
-  // shop control. A pinned real shop must still match exactly.
+  // Normal round-trips pin a real shop and must match exactly. The `*` sentinel
+  // (legacy shop-less initiation, no longer emitted by /dashboard/login) is
+  // still accepted so an OAuth flow begun before that change completes:
+  // identity then comes from the HMAC-verified callback params — signed with
+  // our app secret — plus the code exchange below proving shop control.
+  const hmacOk = verifyShopifyHmac(url.searchParams, process.env.SHOPIFY_API_SECRET ?? "");
   if (
     !isValidShopDomain(shop) ||
     !code ||
     !cookieState ||
     cookieState.nonce !== state ||
     (cookieState.shop !== shop && cookieState.shop !== SHOPLESS_STATE_SHOP) ||
-    !verifyShopifyHmac(url.searchParams, process.env.SHOPIFY_API_SECRET ?? "")
+    !hmacOk
   ) {
+    // The guard previously failed silently, masking which precondition rejected
+    // the round-trip. Log booleans + param/header NAMES only — never the token,
+    // secret, code, or hmac value.
+    const cookieHeader = request.headers.get("Cookie") ?? "";
+    console.error("[dashboard.auth.callback] oauth_failed at guard", {
+      shopValid: isValidShopDomain(shop),
+      hasCode: !!code,
+      hasStateCookie: !!cookieState,
+      nonceMatch: cookieState ? cookieState.nonce === state : null,
+      shopMatch: cookieState
+        ? cookieState.shop === shop || cookieState.shop === SHOPLESS_STATE_SHOP
+        : null,
+      hmacOk,
+      cookieHeaderPresent: cookieHeader.length > 0,
+      stateCookieInHeader: cookieHeader.includes(STATE_COOKIE_NAME),
+      paramKeys: [...url.searchParams.keys()].sort().join(","),
+      xForwardedHost: request.headers.get("x-forwarded-host"),
+      host: request.headers.get("host"),
+    });
     return failure;
   }
 
@@ -94,7 +115,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     clientId: process.env.SHOPIFY_API_KEY ?? "",
     clientSecret: process.env.SHOPIFY_API_SECRET ?? "",
   });
-  if (!grant) return failure;
+  if (!grant) {
+    console.error("[dashboard.auth.callback] oauth_failed: token exchange returned null", { shop });
+    return failure;
+  }
 
   // Keep the offline token: the import/ingest pipelines read this session row
   // (unauthenticated.admin), and for a shop that connects here before ever

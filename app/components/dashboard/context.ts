@@ -44,7 +44,9 @@ export type Screen =
   | "products-po"
   | "products-transfers"
   // Store studio (BUILD group) — draft/publish editor over page_document.
-  | "storefront";
+  | "storefront"
+  // Viral product sourcing (BUILD group, under Store) - /dashboard/store/discover
+  | "discover";
 
 export interface NavState {
   screen: Screen;
@@ -86,6 +88,9 @@ export interface DashboardCtx {
   storeLabel: string;
   /** True for seeded demo shops (shops.demo_mode) — gates the Settings demo-reset card. */
   demoMode: boolean;
+  /** True for first-party (email / Google) accounts — gates the Settings
+   *  "Danger zone" self-delete card. Legacy Shopify sessions have no users row. */
+  canDeleteAccount: boolean;
   /** Server-side hint from the route loader: the shop has at least one catalog
    *  product. Decides Home's FIRST paint (established layout vs setup guide)
    *  before the client's catalog fetch confirms — the fetch stays authoritative

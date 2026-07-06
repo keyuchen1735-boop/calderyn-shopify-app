@@ -61,6 +61,7 @@ import ScreenCustomers from "./screens/Customers";
 import ScreenShipping from "./screens/Shipping";
 import ScreenPayments from "./screens/Payments";
 import ScreenStore from "./screens/Store";
+import ScreenDiscover from "./screens/Discover";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
 
@@ -119,6 +120,7 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   "import-shopify": "settings",
   cutover: "settings",
   agentic: "analytics",
+  discover: "storefront",
 };
 
 // On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
@@ -163,6 +165,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   shipping: ScreenShipping,
   payments: ScreenPayments,
   storefront: ScreenStore,
+  discover: ScreenDiscover,
   "products-po": ScreenPurchaseOrders,
   "products-transfers": ScreenTransfers,
 };
@@ -187,6 +190,7 @@ export default function DashboardApp({
   storeLabel,
   demoMode = false,
   hasCatalog,
+  canDeleteAccount = false,
 }: {
   authBase?: string;
   shopDomain: string | null;
@@ -196,6 +200,9 @@ export default function DashboardApp({
    *  DashboardCtx.hasCatalog). Required so the loader stays the single owner
    *  of the fallback policy (its probe-error default). */
   hasCatalog: boolean;
+  /** First-party account → Settings shows the self-delete Danger zone. Legacy
+   *  Shopify (shop-based) sessions have no users row and are exempt. */
+  canDeleteAccount?: boolean;
 }) {
   // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
   // localStorage. Initialised to true so the server render and first client render
@@ -1021,6 +1028,7 @@ export default function DashboardApp({
     storeLabel,
     demoMode,
     hasCatalog,
+    canDeleteAccount,
     nav,
     navigate,
     setNightMode,

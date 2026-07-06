@@ -78,6 +78,23 @@ describe("generateStore", () => {
     expect(pdpDraft.blocks.map((b: { type: string }) => b.type)).toContain("addToCart"); // fallback PDP is buyable
   });
 
+  it("uses the top catalog product's image as the hero backdrop in the fallback home doc", async () => {
+    // Catalog product carries an image; the home doc falls back (junk LLM reply) → the deterministic
+    // hero must still pick up that image so the no-credits store looks designed, not plain.
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => [{ ...product("1"), images: [{ url: "/i/hero.jpg", alt: null }] }],
+      getProduct: async (_s: string, h: string) => product(h.replace("h-", "")),
+      listCollections: async () => [{ handle: "summer", title: "Summer" }],
+    });
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValue(reply("garbage not json")); // every doc call → deterministic fallback
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const hero = homeDraft.blocks.find((b: { type: string }) => b.type === "hero")!;
+    expect(hero.props.imageUrl).toBe("/i/hero.jpg");
+  });
+
   it("flags no_products on an empty catalog and still writes drafts", async () => {
     getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
     createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'));
@@ -100,6 +117,22 @@ describe("generateStore", () => {
     createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'));
     await generateStore({ shopId: realShop, mode: "brief", brief: "warm earthy brand" });
     expect(createMock).toHaveBeenCalled();
+  });
+
+  it("feeds an explicit brief into the brand stage (brief steers name/palette/vibe, not just page copy)", async () => {
+    // The bug: the brand call only ever saw the catalog, so "make it colorful"
+    // could never change the store's look — only the per-page copy stage got the brief.
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"","vibe":"warm"}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "make it warm and colorful" });
+    const brandUserMsg = createMock.mock.calls[0][0].messages[0].content as string;
+    expect(brandUserMsg).toContain("make it warm and colorful");
+  });
+
+  it("lets an explicit brief re-set vibe on a rebuild (full restyle), unlike an auto catalog rebuild", async () => {
+    hasSettingsMock.mockResolvedValue(true); // already branded once
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"","vibe":"bold"}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "make it bold and dramatic" });
+    expect(saveSettingsMock.mock.calls[0][1]).toMatchObject({ vibe: "bold" });
   });
 
   it("reports 'failed' when every LLM call errors (out of credits / API down), still writing fallback docs", async () => {

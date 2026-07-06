@@ -64,6 +64,22 @@ describe("fallbackDoc", () => {
       expect(grid.props.heading).toContain("Cotton Tee");
     });
 
+    it("uses the first available product image as the hero background", () => {
+      const doc = fallbackDoc("home", brand, {
+        products: [{ title: "Cotton Tee", imageUrl: "/i/tee.jpg" }],
+        collections: [{ handle: "summer", title: "Summer" }],
+        vibe: "minimal",
+      });
+      const hero = doc.blocks.find((b) => b.type === "hero")!;
+      expect((hero.props as { imageUrl?: string }).imageUrl).toBe("/i/tee.jpg");
+    });
+
+    it("leaves the hero image empty when no product carries imagery", () => {
+      const doc = fallbackDoc("home", brand, { products: [{ title: "Cotton Tee" }], vibe: "minimal" });
+      const hero = doc.blocks.find((b) => b.type === "hero")!;
+      expect((hero.props as { imageUrl?: string }).imageUrl ?? "").toBe("");
+    });
+
     it("gives each vibe a distinct voice over the same catalog nouns", () => {
       const headline = (vibe: "minimal" | "bold" | "warm") =>
         (fallbackDoc("home", brand, { ...oneCollection, vibe }).blocks[0].props as { headline: string }).headline;

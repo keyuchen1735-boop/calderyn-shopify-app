@@ -44,10 +44,21 @@ export async function campaignSpend7dCents(
       .eq("campaign_id", campaignId)
       .gte("day", sinceDay);
     if (error) throw new Error(error.message);
+    // Fail closed on an absent/empty read (contract above): an active, budgeted
+    // dedicated campaign with zero ad_spend_fact rows in the window is far more
+    // likely a sync gap than a verified $0 — returning 0 here would let the
+    // caller act on spend that was never actually confirmed. Treat "no rows" as
+    // "cannot verify" so the alert stays queued for the merchant instead.
+    if (data == null || data.length === 0) {
+      console.warn(
+        `[dedicated-campaign] no spend rows for ${campaignId} in the window — treating as unverifiable (fail closed)`,
+      );
+      return null;
+    }
     // PostgREST clamps responses at ~1000 rows. Today the fact grain is one
     // row per (campaign, day) — max 7 rows here — but if the grain ever gets
     // finer, a clamped page would silently under-count. Fail closed instead.
-    if ((data ?? []).length >= 1000) {
+    if (data.length >= 1000) {
       console.error(
         `[dedicated-campaign] spend read for ${campaignId} hit the row clamp — refusing a partial sum`,
       );

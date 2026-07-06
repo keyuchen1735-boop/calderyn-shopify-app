@@ -1,7 +1,7 @@
 // app/routes/dashboard.builder.preview.tsx
 // Read-only preview of the generated DRAFT store across home/collection/PDP (no editor yet).
 // Uses the same renderBlocks as the live storefront; templates preview against a sample record.
-// Phase C adds the imagery-candidate list + enhance action here.
+// Also hosts the imagery-candidate list + enhance action (generate → own → override).
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";

@@ -84,11 +84,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     storeLabel,
     demoMode: data?.demo_mode === true,
     hasCatalog,
+    // First-party (email / Google) accounts can self-delete from Settings;
+    // legacy Shopify (shop-based) sessions have no users row and are exempt.
+    canDeleteAccount: session.userId != null,
   };
 }
 
 export default function DashboardRoute() {
-  const { authBase, shopDomain, storeLabel, demoMode, hasCatalog } = useLoaderData<typeof loader>();
+  const { authBase, shopDomain, storeLabel, demoMode, hasCatalog, canDeleteAccount } =
+    useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
@@ -99,6 +103,7 @@ export default function DashboardRoute() {
         storeLabel={storeLabel}
         demoMode={demoMode}
         hasCatalog={hasCatalog}
+        canDeleteAccount={canDeleteAccount}
       />
     </DashboardErrorBoundary>
   );

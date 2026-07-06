@@ -14,6 +14,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     shopDomain: null,
     storeLabel: "Acme",
     demoMode: false,
+    canDeleteAccount: false,
     hasCatalog: false,
     nav: { screen: "import-shopify", param: null, sub: null },
     navigate: () => {},

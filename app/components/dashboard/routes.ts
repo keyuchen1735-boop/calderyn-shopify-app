@@ -47,6 +47,8 @@ function seg(nav: NavState): string {
       return "payments";
     case "storefront":
       return "store";
+    case "discover":
+      return "store/discover";
     case "alerts":
       return param ? `alerts/${encodeURIComponent(param)}` : "alerts";
     case "audit":
@@ -121,7 +123,9 @@ export function parsePath(pathname: string): NavState | null {
     case "payments":
       return b ? null : { screen: "payments", param: null, sub: null };
     case "store":
-      return b ? null : { screen: "storefront", param: null, sub: null };
+      if (!b) return { screen: "storefront", param: null, sub: null };
+      if (b === "discover") return { screen: "discover", param: null, sub: null };
+      return null;
     case "alerts":
       return { screen: "alerts", param: b ?? null, sub: null };
     case "history":

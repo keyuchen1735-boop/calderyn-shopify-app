@@ -8,7 +8,13 @@ import { redirect } from "@remix-run/node";
 import { createHmac, randomBytes } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
 import { resurfaceAllSnoozes } from "../actions/snooze.server";
-import { expireCookieHeader } from "./cookies.server";
+import {
+  expireCookieHeader,
+  clearShopHintCookieHeader,
+  STATE_COOKIE_NAME,
+  GOAUTH_COOKIE,
+} from "./cookies.server";
+import { SHOP_HINT_COOKIE_NAME as CONNECT_SHOP_HINT } from "../connect-deeplink.server";
 
 export const SESSION_COOKIE_NAME = "__Host-calderyn_dash";
 const SESSION_TTL_MS = 30 * 86_400_000; // 30 days
@@ -42,6 +48,22 @@ export function sessionCookieHeader(raw: string): string {
 
 export function clearSessionCookieHeader(): string {
   return expireCookieHeader(SESSION_COOKIE_NAME);
+}
+
+/**
+ * Every auth-adjacent cookie the browser must not keep once a session ends: the
+ * session token, both remembered-shop hints (dashboard + connector surfaces),
+ * and any in-flight OAuth state nonces. Shared by logout and account deletion so
+ * the two teardowns can never drift — a cookie added here is expired by both.
+ */
+export function authClearCookieHeaders(): string[] {
+  return [
+    clearSessionCookieHeader(),
+    clearShopHintCookieHeader(),
+    expireCookieHeader(CONNECT_SHOP_HINT),
+    expireCookieHeader(STATE_COOKIE_NAME),
+    expireCookieHeader(GOAUTH_COOKIE),
+  ];
 }
 
 export function readSessionTokenFromCookie(request: Request): string | null {
@@ -145,7 +167,7 @@ function unverifiedFirstParty(s: DashboardSession): boolean {
 // A first-party user (email/Google) who hasn't finished the post-signup onboarding
 // screen yet. Shopify (shop-based) sessions have no users row — userId is null —
 // so they are exempt by construction.
-function needsOnboarding(s: DashboardSession): boolean {
+export function needsOnboarding(s: DashboardSession): boolean {
   return s.userId != null && s.onboardedAt == null;
 }
 

@@ -341,7 +341,14 @@ export async function recordRejection(
   // Build the jsonb rule value for this reason.
   let appliedRule: Record<string, unknown> | null = null;
   let capRuleWritten = false;
-  if (eff.ruleKind === "pair_dollar_cap") {
+  // A dollar cap is only meaningful when the rejected proposal carried a real
+  // positive impact. On a $0 (or missing) impact the candidate cap floors to
+  // 1 cent (Math.max(1, round(0.75 * 0))); because caps are tighten-only and
+  // never loosen, that 1-cent cap would permanently veto every future move for
+  // the pair. Skip the cap write entirely when there's nothing to cap — the
+  // beta bump and the sizing/min-spend restraints below still apply.
+  const capHasImpact = input.dollarImpactCents > 0;
+  if (eff.ruleKind === "pair_dollar_cap" && capHasImpact) {
     // Tighten-only (compounding): the candidate cap is 75% of the rejected
     // impact, but a learning write may NEVER loosen an existing cap — a later
     // reject of a larger proposal must not widen what autopilot may cut. The
@@ -448,7 +455,10 @@ export async function recordRejection(
   }
 
   // 3. Write calibration_rule if the effect produces one.
-  if (eff.ruleKind !== null && !capRuleWritten) {
+  // Skip the pair_dollar_cap fallback when there was no impact to cap (see the
+  // capHasImpact note above) — otherwise it would write an empty/1-cent cap.
+  const skipEmptyCap = eff.ruleKind === "pair_dollar_cap" && !capHasImpact;
+  if (eff.ruleKind !== null && !capRuleWritten && !skipEmptyCap) {
     try {
       if (eff.ruleKind === "pair_dollar_cap") {
         // Fallback only: the atomic calibration_tighten_dollar_cap RPC above is
@@ -520,7 +530,7 @@ export async function recordRejection(
     delta,
     before: confBefore,
     after: confAfter,
-    savedAsRule: eff.ruleKind !== null || blackoutRuleWritten,
-    ruleKind: blackoutRuleWritten ? "pair_blackout_hours" : eff.ruleKind,
+    savedAsRule: (eff.ruleKind !== null && !skipEmptyCap) || blackoutRuleWritten,
+    ruleKind: blackoutRuleWritten ? "pair_blackout_hours" : skipEmptyCap ? null : eff.ruleKind,
   };
 }

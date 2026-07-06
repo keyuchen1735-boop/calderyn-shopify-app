@@ -36,10 +36,11 @@ export async function trackStorefrontEvent(
   shopId: string,
   type: StorefrontEventType,
   opts: StorefrontEventOpts = {},
+  session?: VisitorSession,
 ): Promise<Headers> {
-  const session = await ensureVisitorSession(request);
-  await insertEvent(request, shopId, type, session, opts);
-  return session.headers;
+  const s = session ?? (await ensureVisitorSession(request));
+  await insertEvent(request, shopId, type, s, opts);
+  return s.headers;
 }
 
 async function insertEvent(

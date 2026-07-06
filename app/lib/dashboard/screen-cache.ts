@@ -77,6 +77,7 @@ export const SCREEN_CACHE_KEYS = {
   billing: "billing",
   agentic: "agentic",
   storeStudio: "store-studio",
+  discover: "discover",
   transfers: "transfers",
   inventorySkus: "inventory-skus",
   locations: "locations",
