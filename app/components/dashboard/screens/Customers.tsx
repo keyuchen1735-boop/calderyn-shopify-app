@@ -7,9 +7,11 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchCustomersPage,
   fetchCustomerDetail,
+  applyWeatherSuggestion,
   type CustomersPage,
   type CustomerDetail,
   type CustomerSegment,
+  type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
@@ -384,8 +386,23 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [segFilter, setSegFilter] = useState("All");
   const [segQuery, setSegQuery] = useState("");
+  const [wx, setWx] = useState<WeatherSuggestionDTO[]>(page?.weatherSuggestions ?? []);
   const toast = app.toast;
   const buyerId = app.nav.param;
+
+  useEffect(() => {
+    setWx(page?.weatherSuggestions ?? []);
+  }, [page]);
+
+  const onWeather = async (id: string, intent: "apply" | "dismiss") => {
+    setWx((cur) => cur.filter((s) => s.id !== id));
+    try {
+      await applyWeatherSuggestion(id, intent);
+      toast(intent === "apply" ? "Budget shifted" : "Suggestion dismissed", "check");
+    } catch {
+      toast("Could not update suggestion", "x", "critical");
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -506,43 +523,75 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       ) : sub === "segments" ? (
-        <Card pad={false}>
-          <div className="cd-seg-search">
-            <CDIcon name="search" size={15} style={{ color: "var(--text-3)" }} />
-            <input
-              className="cd-seg-search-in"
-              placeholder="Search segments"
-              aria-label="Search segments"
-              value={segQuery}
-              onChange={(e) => setSegQuery(e.target.value)}
-            />
-          </div>
-          <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
-            <span>Name</span>
-            <span style={{ textAlign: "right" }}>% of customers</span>
-            <span style={{ textAlign: "right" }}>Customers</span>
-          </div>
-          {segMatches.length === 0 ? (
-            <div className="cd-caption" style={{ padding: "16px 20px" }}>
-              No segments match your search.
-            </div>
-          ) : (
-            segMatches.map((s) => (
-              <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="cd-row-title truncate">{s.name}</div>
-                  <div className="cd-caption truncate">{s.basis}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {wx.length > 0 && (
+            <Card pad={false}>
+              <CardHead>
+                <div>
+                  <div className="cd-row-title">Weather segments</div>
+                  <div className="cd-caption">
+                    Forecast-driven budget shifts across regions
+                  </div>
                 </div>
-                <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                  {s.pct}
+              </CardHead>
+              {wx.map((s) => (
+                <div
+                  key={s.id}
+                  className="cd-trow"
+                  style={{ display: "flex", gap: 12, alignItems: "center" }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="cd-row-title">{`${money(s.amountCents)}/day`}</div>
+                    <div className="cd-caption">{s.narrative}</div>
+                  </div>
+                  <Btn small kind="primary" onClick={() => onWeather(s.id, "apply")}>
+                    Approve
+                  </Btn>
+                  <Btn small onClick={() => onWeather(s.id, "dismiss")}>
+                    Dismiss
+                  </Btn>
                 </div>
-                <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                  {s.count}
-                </div>
-              </div>
-            ))
+              ))}
+            </Card>
           )}
-        </Card>
+          <Card pad={false}>
+            <div className="cd-seg-search">
+              <CDIcon name="search" size={15} style={{ color: "var(--text-3)" }} />
+              <input
+                className="cd-seg-search-in"
+                placeholder="Search segments"
+                aria-label="Search segments"
+                value={segQuery}
+                onChange={(e) => setSegQuery(e.target.value)}
+              />
+            </div>
+            <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
+              <span>Name</span>
+              <span style={{ textAlign: "right" }}>% of customers</span>
+              <span style={{ textAlign: "right" }}>Customers</span>
+            </div>
+            {segMatches.length === 0 ? (
+              <div className="cd-caption" style={{ padding: "16px 20px" }}>
+                No segments match your search.
+              </div>
+            ) : (
+              segMatches.map((s) => (
+                <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="cd-row-title truncate">{s.name}</div>
+                    <div className="cd-caption truncate">{s.basis}</div>
+                  </div>
+                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                    {s.pct}
+                  </div>
+                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                    {s.count}
+                  </div>
+                </div>
+              ))
+            )}
+          </Card>
+        </div>
       ) : (
         <>
           <div className="cd-stat-grid" style={{ marginBottom: 14 }}>
