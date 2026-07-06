@@ -9,10 +9,21 @@ import {
   isDeterministicChatIntent,
   decideWelcomeBranch,
   shouldShowWelcome,
+  showPromptCanvas,
   parseProductLine,
   importStepRows,
   welcomeSubline,
 } from "../store-logic";
+
+describe("showPromptCanvas", () => {
+  it("shows the empty prompt canvas until the shop has at least one live product", () => {
+    // No live products -> invite a prompt instead of a generic fallback store,
+    // even after the merchant has prompted (a draft with no catalog).
+    expect(showPromptCanvas({ productCount: 0 })).toBe(true);
+    // A real catalog -> render the store preview.
+    expect(showPromptCanvas({ productCount: 2 })).toBe(false);
+  });
+});
 
 describe("missingPieces", () => {
   it("returns nothing when the store has live products and can take payment", () => {

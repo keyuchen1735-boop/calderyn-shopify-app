@@ -240,6 +240,16 @@ export function shouldShowWelcome(state: {
   return !state.hasDraft && !state.hasPublished && !state.generation;
 }
 
+/** The studio shows the empty "prompt anything" canvas instead of a store
+ *  preview until the shop has something real to render — at least one live
+ *  product. Product-less shops (including a fresh prompt against an empty
+ *  catalog, where the fallback store is just generic filler) get the
+ *  invitation to build, not a hollow placeholder store. Drafts don't count:
+ *  productCount is live storefront products, the only thing the preview shows. */
+export function showPromptCanvas(state: { productCount: number }): boolean {
+  return state.productCount === 0;
+}
+
 export interface ParsedProductLine {
   title: string;
   /** Null when no price was typed — never fabricate a number the merchant
