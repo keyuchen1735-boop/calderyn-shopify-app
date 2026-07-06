@@ -50,4 +50,17 @@ describe("parseBrandPlan", () => {
     const black = parseBrandPlan('{"storeName":"Acme","palette":{"primary":"#000000","background":"#fff","text":"#000"}}');
     expect(black?.palette).toEqual({ primary: PALETTE_LIBRARY[0].primary, background: PALETTE_LIBRARY[0].background, text: PALETTE_LIBRARY[0].text });
   });
+  it("parses typeStyle and density, defaulting invalid/missing to classic/standard", () => {
+    const ok = parseBrandPlan('{"storeName":"Acme","paletteName":"Midnight","vibe":"bold","typeStyle":"editorial","density":"roomy","voiceTagline":"Go"}');
+    expect(ok?.typeStyle).toBe("editorial");
+    expect(ok?.density).toBe("roomy");
+
+    const bad = parseBrandPlan('{"storeName":"Acme","paletteName":"Midnight","vibe":"bold","typeStyle":"comic-sans","density":"huge"}');
+    expect(bad?.typeStyle).toBe("classic");
+    expect(bad?.density).toBe("standard");
+
+    const missing = parseBrandPlan('{"storeName":"Acme","paletteName":"Midnight","vibe":"bold"}');
+    expect(missing?.typeStyle).toBe("classic");
+    expect(missing?.density).toBe("standard");
+  });
 });
