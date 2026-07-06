@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as httpServer from "~/lib/dashboard/http.server";
 
 const { requireSameOrigin, requireDashboardSession, executeReallocation } = vi.hoisted(() => ({
   requireSameOrigin: vi.fn(),
@@ -7,7 +8,7 @@ const { requireSameOrigin, requireDashboardSession, executeReallocation } = vi.h
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession }));
 vi.mock("~/lib/dashboard/http.server", async () => {
-  const actual = await vi.importActual<typeof import("~/lib/dashboard/http.server")>("~/lib/dashboard/http.server");
+  const actual = await vi.importActual<typeof httpServer>("~/lib/dashboard/http.server");
   return { ...actual, requireSameOrigin };
 });
 vi.mock("~/lib/actions/reallocate.server", () => ({ executeReallocation }));
