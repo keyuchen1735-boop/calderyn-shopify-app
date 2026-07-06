@@ -27,7 +27,12 @@ interface CjProduct {
 }
 
 function normalize(p: CjProduct): NormalizedSourceProduct {
-  const unitCostCents = Math.round(Number(p.sellPrice ?? "0") * 100);
+  // CJ's sellPrice is often a range string (e.g. "1.50-3.00"); Number() on that
+  // is NaN, which would poison unit_cost_cents (an integer NOT NULL column) and
+  // every downstream score. Take the low end and guard against an unparseable
+  // value so a bad price degrades to 0 rather than corrupting the row.
+  const low = Number.parseFloat(String(p.sellPrice ?? "0").split("-")[0].trim());
+  const unitCostCents = Number.isFinite(low) ? Math.round(low * 100) : 0;
   return {
     provider: "cj",
     externalId: p.pid,
