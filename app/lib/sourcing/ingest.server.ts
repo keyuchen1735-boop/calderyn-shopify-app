@@ -22,24 +22,31 @@ export interface ScoredRow {
   score: ReturnType<typeof scoreVirality> & { phase: ScoringPhase };
 }
 
+/** Pure: score one normalized product at a given age into an upsert-ready row. */
+export function scoreProduct(
+  product: NormalizedSourceProduct,
+  phase: ScoringPhase,
+  firstSeenDaysAgo: number,
+): ScoredRow {
+  const result = scoreVirality({
+    orderVolume30d: sig(product, "order_volume_30d"),
+    orderVolume7d: sig(product, "order_volume_7d"),
+    trendIndex: sig(product, "trend_index"),
+    firstSeenDaysAgo,
+    unitCostCents: product.unitCostCents,
+    suggestedRetailCents: suggestedRetailCents(product.unitCostCents),
+    leadTimeDays: product.leadTimeDays,
+  });
+  return { product, firstSeenDaysAgo, score: { ...result, phase } };
+}
+
 /** Pure: turn normalized products into scored rows ready to upsert. */
 export function toUpsertRows(
   products: NormalizedSourceProduct[],
   phase: ScoringPhase,
   firstSeenDaysAgo: number,
 ): ScoredRow[] {
-  return products.map((product) => {
-    const result = scoreVirality({
-      orderVolume30d: sig(product, "order_volume_30d"),
-      orderVolume7d: sig(product, "order_volume_7d"),
-      trendIndex: sig(product, "trend_index"),
-      firstSeenDaysAgo,
-      unitCostCents: product.unitCostCents,
-      suggestedRetailCents: suggestedRetailCents(product.unitCostCents),
-      leadTimeDays: product.leadTimeDays,
-    });
-    return { product, firstSeenDaysAgo, score: { ...result, phase } };
-  });
+  return products.map((product) => scoreProduct(product, phase, firstSeenDaysAgo));
 }
 
 /** Count platform users for the phase gate. Tolerant: if the users table isn't
@@ -69,9 +76,11 @@ export async function runSourcingIngest(
   try {
     const products = await adapter.getTrending(TRENDING_LIMIT);
     let scored = 0;
-    for (const row of toUpsertRows(products, phase, 0)) {
-      const p = row.product;
-      const { data: sup } = await sb
+    for (const p of products) {
+      // Surface every write error (repo rule): a swallowed failure here would let
+      // the run report success with a wrong `scored` count and silently drop the
+      // product from the Discover feed. Throw so the catch below records it.
+      const { data: sup, error: supError } = await sb
         .from("supplier")
         .upsert(
           {
@@ -84,8 +93,9 @@ export async function runSourcingIngest(
         )
         .select("id")
         .single();
+      if (supError) throw supError;
 
-      const { data: sp } = await sb
+      const { data: sp, error: spError } = await sb
         .from("source_product")
         .upsert(
           {
@@ -102,19 +112,34 @@ export async function runSourcingIngest(
           },
           { onConflict: "provider,external_id" },
         )
-        .select("id")
+        .select("id, first_seen_at")
         .single();
+      if (spError) throw spError;
       if (!sp?.id) continue;
 
-      await sb
-        .from("source_product_signal")
-        .insert(p.signals.map((s) => ({ source_product_id: sp.id, kind: s.kind, value: s.value })));
-      await sb
+      // Score with the product's REAL age: first_seen_at is set on first insert
+      // and preserved across re-ingests (not in the upsert payload), so decay
+      // actually fades a long-saturated product instead of always resolving to 1.
+      const firstSeenDaysAgo = sp.first_seen_at
+        ? Math.max(0, (Date.now() - Date.parse(String(sp.first_seen_at))) / 86_400_000)
+        : 0;
+      const row = scoreProduct(p, phase, firstSeenDaysAgo);
+
+      if (p.signals.length) {
+        const { error: sigError } = await sb
+          .from("source_product_signal")
+          .insert(
+            p.signals.map((s) => ({ source_product_id: sp.id, kind: s.kind, value: s.value })),
+          );
+        if (sigError) throw sigError;
+      }
+      const { error: scoreError } = await sb
         .from("source_product_score")
         .upsert(
           { source_product_id: sp.id, score: row.score.score, phase, decay: row.score.decay },
           { onConflict: "source_product_id" },
         );
+      if (scoreError) throw scoreError;
       scored += 1;
     }
     if (runId)
