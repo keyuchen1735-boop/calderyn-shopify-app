@@ -16,13 +16,21 @@ describe("generator prompts", () => {
     expect(BRAND_SYSTEM_PROMPT).toContain("vibe");
     for (const p of PALETTE_LIBRARY) expect(BRAND_SYSTEM_PROMPT).toContain(p.name);
   });
+  it("brand prompt instructs typeStyle and density with their allowed values", () => {
+    expect(BRAND_SYSTEM_PROMPT).toContain('"typeStyle"');
+    expect(BRAND_SYSTEM_PROMPT).toContain('"density"');
+    expect(BRAND_SYSTEM_PROMPT).toContain("classic");
+    expect(BRAND_SYSTEM_PROMPT).toContain("editorial");
+    expect(BRAND_SYSTEM_PROMPT).toContain("compact");
+    expect(BRAND_SYSTEM_PROMPT).toContain("roomy");
+  });
   it("the home prompt carries composition guidance + a real-block-type few-shot; other pages don't", () => {
     const home = docSystemPrompt("home");
-    expect(home).toContain("this order");
+    expect(home).toContain("Vary the composition");
     expect(home).toContain("collectionList");
     expect(home).not.toContain("addToCart"); // the few-shot must use only home-allowed types
-    expect(docSystemPrompt("collection")).not.toContain("this order");
-    expect(docSystemPrompt("pdp")).not.toContain("this order");
+    expect(docSystemPrompt("collection")).not.toContain("Vary the composition");
+    expect(docSystemPrompt("pdp")).not.toContain("Vary the composition");
   });
   it("every page's copy rules ban clichés, exclamation marks and emoji", () => {
     for (const page of ["home", "collection", "pdp"] as const) {
