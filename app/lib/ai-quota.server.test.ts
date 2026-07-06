@@ -9,9 +9,34 @@ import { checkAiQuota, quotaTrusted } from "./ai-quota.server";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("checkAiQuota", () => {
+  it("is unmetered in local development, skipping both buckets", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const verdict = await checkAiQuota({ shopId: "shop-1", feature: "designer", trusted: false });
+    expect(verdict.allowed).toBe(true);
+    expect(h.rateLimit).not.toHaveBeenCalled();
+  });
+
+  it("is unmetered for a shop in AI_QUOTA_BYPASS_SHOPS, even in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AI_QUOTA_BYPASS_SHOPS", "shop-a, shop-b");
+    const verdict = await checkAiQuota({ shopId: "shop-b", feature: "designer", trusted: false });
+    expect(verdict.allowed).toBe(true);
+    expect(h.rateLimit).not.toHaveBeenCalled();
+  });
+
+  it("still caps a production shop that is not on the allowlist", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AI_QUOTA_BYPASS_SHOPS", "shop-a");
+    h.rateLimit.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const verdict = await checkAiQuota({ shopId: "shop-z", feature: "designer", trusted: false });
+    expect(verdict).toMatchObject({ allowed: false, code: "ai_daily_limit" });
+    expect(h.rateLimit).toHaveBeenCalledTimes(2);
+  });
+
   it("allows when both buckets are within limits, touching cooldown then daily", async () => {
     h.rateLimit.mockResolvedValue(true);
     const verdict = await checkAiQuota({ shopId: "shop-1", feature: "designer", trusted: false });

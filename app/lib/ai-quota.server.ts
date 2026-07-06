@@ -37,6 +37,20 @@ export type QuotaVerdict =
   | { allowed: false; code: "ai_cooldown" | "ai_daily_limit"; message: string };
 
 /**
+ * Shops that skip all AI caps: local development (iterating on the designer
+ * would otherwise burn the day's cap on test runs — Vitest "test" and Vercel
+ * "production" stay metered) and any shop id in AI_QUOTA_BYPASS_SHOPS
+ * (comma-separated). The allowlist lives in the deployment env, not source, so
+ * exempting an account is a config change; empty allowlist = every shop capped.
+ * ponytail: env allowlist; move to a shop_settings flag if it outgrows a handful.
+ */
+function isQuotaBypassed(shopId: string): boolean {
+  if (process.env.NODE_ENV === "development") return true;
+  const raw = process.env.AI_QUOTA_BYPASS_SHOPS;
+  return !!raw && raw.split(",").some((s) => s.trim() === shopId);
+}
+
+/**
  * Record one hit for `feature` against the shop's cooldown and daily buckets
  * and report whether the request may proceed. Cooldown is checked first so a
  * hammering client burns its own cooldown window, not the shop's daily
@@ -47,6 +61,7 @@ export async function checkAiQuota(opts: {
   feature: AiFeature;
   trusted: boolean;
 }): Promise<QuotaVerdict> {
+  if (isQuotaBypassed(opts.shopId)) return { allowed: true };
   const cfg = QUOTAS[opts.feature];
   const cd = await rateLimit(`ai:cd:${opts.feature}:${opts.shopId}`, 1, cfg.cooldownMs);
   if (!cd) {
