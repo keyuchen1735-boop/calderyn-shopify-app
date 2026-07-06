@@ -113,8 +113,11 @@ a { color: inherit; }
 .cd-store__account-nav { margin-left: auto; display: flex; align-items: center; gap: calc(var(--cd-gap) * 1.25); }
 .cd-store__account, .cd-store__cart { font-size: 0.92rem; padding-bottom: 2px; border-bottom: 1px solid transparent; transition: border-color 0.15s ease; }
 .cd-store__account:hover, .cd-store__cart:hover { border-color: currentColor; }
-.cd-store__nav { display: flex; gap: var(--cd-gap); padding: var(--cd-gap) 0; }
-.cd-store__nav a { text-decoration: none; color: inherit; }
+/* Category bar — the store chrome that reads as a real storefront (For Him / For Her …). Centered,
+   spaced small-caps with a hover underline; vibe display font so it matches the store's type. */
+.cd-store__nav { display: flex; flex-wrap: wrap; justify-content: center; gap: clamp(16px, 3vw, 40px); padding: calc(var(--cd-gap) * 0.75) 0; border-bottom: 1px solid var(--cd-hairline); }
+.cd-store__nav a { text-decoration: none; color: inherit; font-family: var(--cd-font-display); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding-bottom: 3px; border-bottom: 2px solid transparent; transition: border-color 0.15s ease; }
+.cd-store__nav a:hover { border-color: currentColor; }
 .cd-store__footer { padding: calc(var(--cd-gap) * 1.5) 0; border-top: 1px solid var(--cd-hairline); color: var(--cd-muted); font-size: 0.85rem; }
 
 /* Top-level content wrappers double as the "canvas": transparent in minimal/bold (no visual
