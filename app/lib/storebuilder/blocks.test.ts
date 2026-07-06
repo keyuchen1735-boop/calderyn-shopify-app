@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { STARTER_BLOCKS } from "./blocks";
+import { PREVIEW_LINKS } from "./links";
 import type { RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 
@@ -68,9 +69,50 @@ describe("starter blocks", () => {
     expect(ok.href).toBe("/products");
   });
 
+  it("hero keeps a safe imageUrl and renders it as a background image; text-only when absent", () => {
+    const hero = STARTER_BLOCKS.find((b) => b.type === "hero")!;
+    const withImg = hero.validateProps({ headline: "Hi", subhead: "yo", imageUrl: "/i/hero.jpg" }) as { imageUrl: string };
+    expect(withImg.imageUrl).toBe("/i/hero.jpg");
+    // An unsafe src (data:/other schemes) is dropped — same allowlist as the image block.
+    const junk = hero.validateProps({ headline: "Hi", imageUrl: "data:image/png;base64,iVBORw0KGgo=" }) as { imageUrl: string };
+    expect(junk.imageUrl).toBe("");
+
+    const withImgHtml = renderToStaticMarkup(
+      createElement(hero.Component, { props: hero.validateProps({ headline: "Hi", subhead: "yo", imageUrl: "/i/hero.jpg" }), ctx: ctx() }),
+    );
+    expect(withImgHtml).toContain("/i/hero.jpg"); // the hero renders the image
+    expect(withImgHtml).toContain("data-has-image"); // flags itself so the CSS gives it the overlay treatment
+    expect(withImgHtml).toContain("Hi"); // headline still present, layered over the image
+
+    const textOnlyHtml = renderToStaticMarkup(
+      createElement(hero.Component, { props: hero.validateProps({ headline: "Hi", subhead: "yo" }), ctx: ctx() }),
+    );
+    expect(textOnlyHtml).not.toContain("<img"); // no image → the classic text hero, unchanged
+  });
+
   it("renders collectionList against resolved data", () => {
     const cl = STARTER_BLOCKS.find((b) => b.type === "collectionList")!;
     const html = renderToStaticMarkup(createElement(cl.Component, { props: cl.validateProps({}), ctx: ctx() }));
     expect(html).toContain("Summer");
+  });
+
+  it("routes catalog + CTA links through ctx.links (live storefront by default, preview when overridden)", () => {
+    const grid = STARTER_BLOCKS.find((b) => b.type === "productGrid")!;
+    const gridProps = grid.validateProps({ source: { kind: "all" } });
+    const gridDefault = renderToStaticMarkup(createElement(grid.Component, { props: gridProps, ctx: ctx() }));
+    expect(gridDefault).toContain('href="/storefront/products/h-1"'); // live storefront by default
+    const gridPreview = renderToStaticMarkup(createElement(grid.Component, { props: gridProps, ctx: { ...ctx(), links: PREVIEW_LINKS } }));
+    // & is HTML-escaped to &amp; in the markup, so assert the params separately.
+    expect(gridPreview).toContain("/dashboard/store/preview?page=pdp"); // preview stays inside the iframe
+    expect(gridPreview).toContain("handle=h-1");
+
+    const cl = STARTER_BLOCKS.find((b) => b.type === "collectionList")!;
+    const clPreview = renderToStaticMarkup(createElement(cl.Component, { props: cl.validateProps({}), ctx: { ...ctx(), links: PREVIEW_LINKS } }));
+    expect(clPreview).toContain("/dashboard/store/preview?page=collection");
+    expect(clPreview).toContain("handle=summer");
+
+    const button = STARTER_BLOCKS.find((b) => b.type === "button")!;
+    const btnPreview = renderToStaticMarkup(createElement(button.Component, { props: button.validateProps({ href: "/storefront" }), ctx: { ...ctx(), links: PREVIEW_LINKS } }));
+    expect(btnPreview).toContain("/dashboard/store/preview?page=home"); // a /storefront CTA folds back into the preview home
   });
 });
