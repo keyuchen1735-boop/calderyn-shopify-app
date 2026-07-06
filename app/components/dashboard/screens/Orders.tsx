@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -40,6 +40,10 @@ const STATE_LABEL: Record<string, string> = {
 // Only an owned order that has captured money (and isn't already fully refunded) can be
 // refunded through Calderyn — mirrors REFUNDABLE_STATES in refund.server.ts.
 const REFUNDABLE_STATES = new Set(["paid", "fulfilled", "partially_refunded"]);
+
+// Migrated Shopify orders whose money was captured at Shopify: Calderyn can't
+// reverse that charge, so the merchant is told, plainly, to refund it in Shopify.
+const SHOPIFY_REFUND_HINT_STATES = new Set(["paid", "partially_refunded", "partially_paid"]);
 
 function StateBadge({ state }: { state: string }) {
   return (
@@ -203,6 +207,12 @@ function UnifiedOrdersList({
                 <Btn small icon="rotate" onClick={() => onRefund(refundable)}>
                   Refund
                 </Btn>
+              ) : r.source === "shopify" && SHOPIFY_REFUND_HINT_STATES.has(r.state) ? (
+                <Tooltip content="This order was paid through Shopify. To refund it, issue the refund from your Shopify admin.">
+                  <span className="cd-caption" style={{ cursor: "help" }}>
+                    Refund in Shopify
+                  </span>
+                </Tooltip>
               ) : null}
             </div>
           </div>
