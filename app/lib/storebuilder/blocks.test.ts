@@ -22,13 +22,14 @@ const ctx = (): RenderContext => ({
 });
 
 describe("starter blocks", () => {
-  it("registers exactly the 7 starter types with stable flavors", () => {
+  it("registers exactly the 8 starter types with stable flavors", () => {
     expect(STARTER_BLOCKS.map((b) => b.type).sort()).toEqual(
-      ["button", "collectionList", "featureRow", "hero", "image", "productGrid", "richText"],
+      ["button", "collectionList", "featureRow", "hero", "image", "productGrid", "rawHtml", "richText"],
     );
     const flavor = Object.fromEntries(STARTER_BLOCKS.map((b) => [b.type, b.flavor]));
     expect(flavor.hero).toBe("static");
     expect(flavor.featureRow).toBe("static");
+    expect(flavor.rawHtml).toBe("static");
     expect(flavor.productGrid).toBe("dynamic");
   });
 

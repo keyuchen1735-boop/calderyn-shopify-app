@@ -12,6 +12,7 @@ import { readPaged } from "~/lib/db/read-paged.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings } from "~/lib/storefront/settings.server";
 import { loadPublishedDoc, saveDraft, publishDoc } from "~/lib/storebuilder/page-document.server";
+import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument, type ValidIds } from "~/lib/storebuilder/validate";
 import type { Block, BlockDocument } from "~/lib/storebuilder/types";
 import type {
@@ -239,7 +240,10 @@ export async function startExperiment(
       page_key: "home",
       name,
       why: challenger.why,
-      variant_doc: challenger.doc,
+      // variant_doc reaches the public storefront (arm B) without passing through saveDraft, so
+      // enforce the same rawHtml sanitization here rather than relying on it being cloned from an
+      // already-sanitized published doc.
+      variant_doc: sanitizeDocHtml(challenger.doc),
       variant_settings: challenger.settings,
     })
     .select("id, name, why, state, started_at, decided_at")
