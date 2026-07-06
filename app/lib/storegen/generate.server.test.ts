@@ -209,4 +209,26 @@ describe("generateStore", () => {
     expect(createMock).toHaveBeenCalledTimes(1); // budget tripped after brand → no doc calls
     expect(saveDraftMock).toHaveBeenCalledTimes(3); // every doc still written via fallback
   });
+
+  it("builds the three pages concurrently — home does not block collection/pdp (latency)", async () => {
+    // Regression guard for the parallel Stage 2: the three page calls must be in flight together.
+    // Each doc call blocks until all three have started; if the generator ever re-serializes them,
+    // the first waits forever for the others and this test times out instead of passing.
+    let calls = 0;
+    let inflight = 0;
+    let release!: () => void;
+    const allStarted = new Promise<void>((r) => { release = r; });
+    createMock.mockImplementation(async () => {
+      calls += 1;
+      // Call #1 is the Stage 1 brand call — resolve it immediately so Stage 2 can begin.
+      if (calls === 1) return reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}');
+      inflight += 1;
+      if (inflight === 3) release();
+      await allStarted; // deadlocks (→ timeout) if the three calls are serialized
+      return reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
+    });
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(inflight).toBe(3);
+    expect(saveDraftMock).toHaveBeenCalledTimes(3);
+  }, 3000);
 });
