@@ -119,6 +119,16 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     }
   }
 
+  if ("weather_sensitivity" in patch) {
+    const v = patch.weather_sensitivity;
+    // Whole-percent 0..100. Unlike the autopilot caps, 0 is VALID — it means the
+    // weather-reallocation feature is OFF (the opt-in default). Reject negatives,
+    // non-integers, out-of-range, and NaN at the boundary.
+    if (!isFiniteNum(v) || !Number.isInteger(v) || v < 0 || v > 100) {
+      return "invalid_weather_sensitivity";
+    }
+  }
+
   if ("business_hours_only" in patch && typeof patch.business_hours_only !== "boolean") {
     return "invalid_business_hours_only";
   }

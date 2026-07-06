@@ -178,6 +178,8 @@ export interface GuardrailVM {
   autopilot_max_price_change_pct: number;
   /** Max units autopilot may move in a single reallocate_inventory action; null = no cap. */
   autopilot_max_inventory_units_per_move: number | null;
+  /** Weather-reallocation aggressiveness dial (0..100 percent). 0 = feature OFF. */
+  weather_sensitivity: number;
 }
 
 export interface DailyRow {

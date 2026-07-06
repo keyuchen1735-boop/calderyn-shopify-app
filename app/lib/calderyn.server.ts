@@ -346,6 +346,7 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
       r.autopilot_max_inventory_units_per_move == null
         ? null
         : Number(r.autopilot_max_inventory_units_per_move),
+    weather_sensitivity: Number(r.weather_sensitivity ?? 0),
   };
 }
 
@@ -1357,6 +1358,7 @@ export function calderynClient(shop: string) {
           if (patch.autopilot_max_price_change_pct !== undefined) updates.autopilot_max_price_change_pct = patch.autopilot_max_price_change_pct;
           // null is meaningful (clear the unit cap), so test `!== undefined`.
           if (patch.autopilot_max_inventory_units_per_move !== undefined) updates.autopilot_max_inventory_units_per_move = patch.autopilot_max_inventory_units_per_move;
+          if (patch.weather_sensitivity !== undefined) updates.weather_sensitivity = patch.weather_sensitivity;
 
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase

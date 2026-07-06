@@ -10,6 +10,7 @@
 // Google calls.
 
 import type { RegionCode } from "./actions";
+import { VALID_REGIONS } from "./actions";
 
 export type UsState =
   | "AL" | "AK" | "AZ" | "AR" | "CA" | "CO" | "CT" | "DE" | "DC" | "FL"
@@ -69,4 +70,40 @@ export const US_STATE_NAMES: Record<UsState, string> = {
  * adgeolocation search resolves to numeric region keys. */
 export function regionStateNames(region: RegionCode): string[] {
   return REGION_STATES[region].map((s) => US_STATE_NAMES[s]);
+}
+
+// Reverse index: Google geo-target numeric id -> our RegionCode. Built from the
+// same REGION_STATES + GOOGLE_STATE_ID maps used to target campaigns, so it can
+// never drift from the forward mapping.
+const GOOGLE_ID_TO_REGION: Record<string, RegionCode> = (() => {
+  const idx: Record<string, RegionCode> = {};
+  (Object.keys(REGION_STATES) as RegionCode[]).forEach((region) => {
+    for (const st of REGION_STATES[region]) idx[GOOGLE_STATE_ID[st]] = region;
+  });
+  return idx;
+})();
+
+const REGION_SET = new Set<string>(VALID_REGIONS);
+
+/**
+ * Resolve a campaign's `geo_targets` to exactly ONE RegionCode, or null if it
+ * targets zero/multiple/unrecognized regions (→ ineligible for weather moves).
+ * Accepts RegionCode literals ("us-west", seed shops) and Google
+ * geoTargetConstants ("geoTargetConstants/21167") or bare numeric ids. Any
+ * unrecognized entry makes the whole campaign ineligible.
+ */
+export function regionForGeoTargets(geoTargets: string[]): RegionCode | null {
+  if (geoTargets.length === 0) return null;
+  const regions = new Set<RegionCode>();
+  for (const t of geoTargets) {
+    if (REGION_SET.has(t)) {
+      regions.add(t as RegionCode);
+      continue;
+    }
+    const id = t.match(/geoTargetConstants\/(\d+)/)?.[1] ?? t.match(/^(\d+)$/)?.[1];
+    const region = id ? GOOGLE_ID_TO_REGION[id] : undefined;
+    if (!region) return null;
+    regions.add(region);
+  }
+  return regions.size === 1 ? [...regions][0] : null;
 }
