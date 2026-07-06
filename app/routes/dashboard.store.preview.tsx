@@ -53,6 +53,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     storeName: settings.storeName,
     logoUrl: settings.logoUrl,
     palette: settings.palette,
+    vibe: settings.vibe,
   };
   return json({ doc, data, record, settings: settingsDto });
 }
