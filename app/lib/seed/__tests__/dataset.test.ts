@@ -6,6 +6,7 @@
 // should still hold.
 import { describe, it, expect } from "vitest";
 import { generateSeedDataset, SANDBOX_CAMPAIGN_IDS, type SeedConfig } from "../dataset";
+import { regionForGeoTargets } from "../../ads/geo-regions";
 
 const CONFIG: SeedConfig = {
   shopId: "24c18b19-3a4f-4651-9446-969726c30223",
@@ -344,6 +345,19 @@ describe("generateSeedDataset: inventory + derived facts", () => {
       expect(c.daily_budget_cents).toBeGreaterThan(0);
       expect(c.currency).toBe("USD");
     }
+  });
+
+  it("seeds weather-reallocation-eligible campaigns in at least two regions", () => {
+    // The weather suggester only proposes moves between campaigns that resolve
+    // to exactly one region each, in DIFFERENT regions. A demo shop must be
+    // able to demonstrate the feature.
+    const regions = new Set(
+      ds.campaigns
+        .filter((c) => c.status === "active" && c.daily_budget_cents > 0)
+        .map((c) => regionForGeoTargets(c.geo_targets))
+        .filter((r): r is NonNullable<typeof r> => r !== null),
+    );
+    expect(regions.size).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps every spend row funnel-coherent with platform-plausible rates", () => {
