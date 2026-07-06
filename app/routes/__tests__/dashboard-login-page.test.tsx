@@ -1,7 +1,6 @@
-// /dashboard/login renders either the store-domain form (form mode, when no
-// shop is known yet) or the bounce-back error states (error mode) — both on
-// the dashboard design system (AuthShell), never raw JSON. A submitted domain
-// re-enters the loader as ?shop= and redirects into per-shop Shopify OAuth.
+// /dashboard/login GETs 302 into Shopify OAuth, so this component only ever
+// renders the bounce-back error states (oauth_failed, app_not_installed,
+// invalid_shop) on the dashboard design system (AuthShell), never raw JSON.
 import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -13,16 +12,7 @@ vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current 
 import DashboardLoginPage from "../dashboard.login";
 
 describe("/dashboard/login page", () => {
-  it("renders the store-domain form in form mode, prefilled from the remembered shop", () => {
-    loaderDataRef.current = { mode: "form", hintShop: "remembered.myshopify.com", returnTo: null, errorCode: null, shop: null };
-    const html = renderToStaticMarkup(createElement(DashboardLoginPage));
-    expect(html).toContain("cd-auth-card");
-    expect(html).toContain('name="shop"');
-    expect(html).toContain('action="/dashboard/login"');
-    expect(html).toContain('value="remembered.myshopify.com"');
-  });
-
-  it("renders no store-domain input in error mode — the retry targets the known shop", () => {
+  it("renders no store-domain input — the retry targets the known shop", () => {
     loaderDataRef.current = { mode: "error", hintShop: null, returnTo: null, errorCode: "oauth_failed", shop: null };
     const html = renderToStaticMarkup(createElement(DashboardLoginPage));
     expect(html).toContain("cd-auth-card");
