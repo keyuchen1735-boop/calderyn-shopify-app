@@ -36,6 +36,7 @@ import {
   parseChatIntent,
   parseProductLine,
   shouldShowWelcome,
+  showPromptCanvas,
   type BuildPhase,
   type ChatIntent,
   type MissingPiece,
@@ -278,7 +279,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
           ? [
               { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
               { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
-              { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
+              // Publish only once there's a real, previewable catalog: a no_products build
+              // lands on the empty "prompt anything" canvas (showPromptCanvas), which unmounts
+              // the stage and its publish-confirm dialog, so the chip would have nowhere to open.
+              ...(receipt.status === "draft"
+                ? ([{ label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() }] as ChatAction[])
+                : []),
             ]
           : undefined;
       pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
@@ -658,6 +664,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
     importInProgress: porting,
   });
   const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
+  // No live products yet → invite a prompt instead of a hollow fallback store.
+  const promptCanvas = showPromptCanvas(data);
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -673,6 +681,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
         />
 
         <div className="cd-stage">
+          {promptCanvas ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Placeholder
+                icon="sparkle"
+                title="Prompt anything"
+                sub="Tell Calderyn what to build and it appears here."
+              />
+            </div>
+          ) : (
+            <>
           <TopBar
             ref={badgeRef}
             storefrontUrl={data.storefrontUrl}
@@ -780,6 +798,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
               )}
             </div>
           </div>
+            </>
+          )}
         </div>
 
         {welcomeVisible && (
