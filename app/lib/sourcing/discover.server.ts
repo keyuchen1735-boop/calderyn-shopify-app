@@ -56,6 +56,14 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
   return ((data ?? []) as unknown as FeedRow[]).flatMap((row) => {
     const p = row.source_product;
     if (!p) return [];
+    // Supabase infers a to-one embed loosely (sometimes as an array); normalize
+    // it, same as pickProduct — otherwise a single-element array read as an
+    // object drops every supplier name/reliability in the feed.
+    const supRaw = (p as { supplier: unknown }).supplier;
+    const sup = (Array.isArray(supRaw) ? supRaw[0] : supRaw) as {
+      name?: string;
+      reliability_score?: number | null;
+    } | null;
     const retail = suggestedRetailCents(p.unit_cost_cents);
     const item: DiscoverFeedItem = {
       sourceProductId: String(p.id),
@@ -66,8 +74,8 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
       suggestedRetailCents: retail,
       marginPct: retail > 0 ? (retail - p.unit_cost_cents) / retail : 0,
       leadTimeDays: Number(p.lead_time_days),
-      supplierName: p.supplier?.name ?? "Unknown",
-      supplierReliability: p.supplier?.reliability_score ?? null,
+      supplierName: sup?.name ?? "Unknown",
+      supplierReliability: sup?.reliability_score ?? null,
       score: Number(row.score),
     };
     return [item];
