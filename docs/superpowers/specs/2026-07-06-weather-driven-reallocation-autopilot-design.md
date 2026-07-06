@@ -125,10 +125,17 @@ Example narrative: *"Next 3 days: us-east forecast cold + rain
 ## Eligibility & scope
 
 - **Geo-segmented campaigns only.** A campaign is eligible when its `geo_targets`
-  resolve to exactly one `RegionCode`. Merchants running purely **national**
-  campaigns get **no suggestions** — the feature has nothing to reallocate
-  *between*. Accepted MVP limitation (national-campaign fallback is explicitly
-  out of scope; see Deferred).
+  resolve to exactly one `RegionCode` (via `regionForGeoTargets`). Campaigns
+  targeting multiple regions or with empty `geo_targets` are ineligible.
+  Merchants running purely **national** campaigns get **no suggestions** — the
+  feature has nothing to reallocate *between*. Accepted MVP limitation.
+- **Google-campaign-only in practice.** `geo_targets` is populated only for
+  Google campaigns (`geoTargetConstants/<id>` resource names) and for seeded
+  demo shops (`RegionCode` literals). Meta and TikTok transforms write
+  `geo_targets: []`, so their campaigns are never geo-attributable and cannot be
+  a source or dest. `regionForGeoTargets` therefore accepts two input forms:
+  `RegionCode` literals (seed) and Google geoTargetConstants (live). A move
+  requires **both** source and dest to resolve to a single region.
 - **Opt-in, default OFF** (`weather_sensitivity = 0`) → zero regression, no
   surprise money moves for any existing shop.
 
@@ -180,6 +187,10 @@ Example narrative: *"Next 3 days: us-east forecast cold + rain
    entire reason for propose-only + dampening knob + default OFF.
 3. The proposal/outcome history this generates is the **training data** for a
    future v2 that learns per-merchant weather coefficients.
+4. **Google-only reach** (see Eligibility): until Meta/TikTok ingest starts
+   populating `geo_targets`, only advertisers running region-split Google
+   campaigns (or seeded demo shops) see any suggestions. Adding Meta/TikTok geo
+   ingest is the highest-leverage way to widen reach later.
 
 ## Deferred (YAGNI now — recorded for later)
 
