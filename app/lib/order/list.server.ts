@@ -54,6 +54,10 @@ export async function listOrders(shopId: string): Promise<OrderRow[]> {
       "id, buyer_id, state, financial_status, total_cents, currency, attribution, created_at",
     )
     .eq("shop_id", shopId)
+    // Exclude go-live 50c test-probe orders (channel='test') so the merchant's Orders screen never
+    // lists phantom $0.50 orders to test-probe@calderyn.internal. channel is NOT NULL (default
+    // 'storefront'), so .neq legitimately drops none of the real orders.
+    .neq("channel", "test")
     .or(`state.neq.checkout_pending,created_at.gte.${cutoff}`)
     .order("created_at", { ascending: false })
     .limit(LIST_LIMIT);

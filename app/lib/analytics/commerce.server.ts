@@ -91,6 +91,9 @@ async function readWindowOrders(shopId: string, sinceIso: string): Promise<Order
       )
       .eq("shop_id", shopId)
       .in("state", [...SALE_STATES])
+      // Exclude go-live 50c test-probe orders (channel='test') so they never inflate GMV / order
+      // count / Net sales. channel is NOT NULL (default 'storefront'), so .neq drops none legitimately.
+      .neq("channel", "test")
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
       .range(from, to),
