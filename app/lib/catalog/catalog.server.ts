@@ -4,7 +4,7 @@ import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
 import { collectionHandle, productHandleBase } from "./handle";
-import type { ProductInput, ProductStatus, ProductSummary, ProductDetail } from "./types";
+import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
 
@@ -288,6 +288,19 @@ async function ownedCollectionIds(sb: Supa, shopId: string, ids: string[] | unde
   return (data ?? []).map((r: { id: string }) => String(r.id));
 }
 
+// Whether a NEW variant should be inventory-tracked. Tracked means entered stock
+// gates storefront availability (a tracked variant is sold out at 0). We track a
+// physical variant the merchant gave a stock number (including 0); a digital
+// product (requiresShipping === false) or one left with blank stock stays
+// untracked = always available (make-to-order / digital). An explicit
+// inventoryTracked from the caller always wins. Applied only to newly-created
+// variants — an existing variant keeps its stored flag (never silently flipped).
+function trackedForNewVariant(v: VariantInput): boolean {
+  if (v.inventoryTracked !== undefined) return v.inventoryTracked;
+  if (v.requiresShipping === false) return false;
+  return v.inventoryOnHand !== undefined;
+}
+
 async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<void> {
   const sb = getSupabase();
   const perOption = await writeOptions(sb, productId, input.options ?? []);
@@ -299,7 +312,7 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .insert({
         shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
         retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
-        inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: v.inventoryTracked ?? null,
+        inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
       })
       .select("id")
@@ -419,7 +432,14 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       if (uErr) throw uErr;
       if (!upd?.length) continue;
     } else {
-      const { data: ins, error: iErr } = await sb.from("variant_dim").insert({ shop_id: shopId, product_id: productId, ...fields }).select("id").single();
+      // New variant added during an edit: derive the tracked flag (fields keeps
+      // v.inventoryTracked ?? null, which preserves an existing variant's stored
+      // flag on the update branch above but would wrongly leave a new one untracked).
+      const { data: ins, error: iErr } = await sb
+        .from("variant_dim")
+        .insert({ shop_id: shopId, product_id: productId, ...fields, inventory_tracked: trackedForNewVariant(v) })
+        .select("id")
+        .single();
       if (iErr) throw iErr;
       variantId = String(ins.id);
       // A brand-new variant added during an edit needs its starting stock backed
