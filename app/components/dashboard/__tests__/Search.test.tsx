@@ -127,9 +127,21 @@ describe("Search AI-access toggle", () => {
 });
 
 describe("search route registration", () => {
-  it("seg and parsePath are exact inverses for the search screen", () => {
-    expect(pathFor({ screen: "search", param: null, sub: null })).toBe("/dashboard/search");
-    expect(parsePath("/dashboard/search")).toEqual({ screen: "search", param: null, sub: null });
+  it("seg and parsePath are exact inverses for the search screen (nested under Store > Preferences)", () => {
+    expect(pathFor({ screen: "search", param: null, sub: null })).toBe(
+      "/dashboard/store/preferences",
+    );
+    expect(parsePath("/dashboard/store/preferences")).toEqual({
+      screen: "search",
+      param: null,
+      sub: null,
+    });
+  });
+
+  it("retires the old top-level /dashboard/search path", () => {
+    // Search moved under Store; the legacy segment no longer resolves and
+    // canonicalizes to Mission Control.
+    expect(parsePath("/dashboard/search")).toBeNull();
   });
 
   it("exposes a stable cache key", () => {

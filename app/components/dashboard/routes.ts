@@ -23,7 +23,8 @@ function seg(nav: NavState): string {
     case "analytics":
       return sub === "live" ? "analytics/live" : "analytics";
     case "search":
-      return "search";
+      // Merchant SEO/AIO surface, nested under Store as "Preferences".
+      return "store/preferences";
     case "orders":
       return sub && sub !== "orders" ? `orders/${sub}` : "orders";
     case "catalog":
@@ -42,7 +43,9 @@ function seg(nav: NavState): string {
       return `products/${encodeURIComponent(param ?? "new")}`;
     case "customers":
       if (param) return `customers/${encodeURIComponent(param)}`;
-      return sub === "segments" ? "customers/segments" : "customers";
+      if (sub === "segments") return "customers/segments";
+      if (sub === "weather") return "customers/weather";
+      return "customers";
     case "shipping":
       return "shipping";
     case "payments":
@@ -104,8 +107,6 @@ export function parsePath(pathname: string): NavState | null {
     case "analytics":
       if (!b) return { screen: "analytics", param: null, sub: "perf" };
       return is(ANALYTICS_SUBTABS, b) ? { screen: "analytics", param: null, sub: b } : null;
-    case "search":
-      return b ? null : { screen: "search", param: null, sub: null };
     case "orders":
       if (!b) return { screen: "orders", param: null, sub: "orders" };
       return is(ORDERS_SUBTABS, b) ? { screen: "orders", param: null, sub: b } : null;
@@ -121,6 +122,7 @@ export function parsePath(pathname: string): NavState | null {
     case "customers":
       if (!b) return { screen: "customers", param: null, sub: "directory" };
       if (b === "segments") return { screen: "customers", param: null, sub: "segments" };
+      if (b === "weather") return { screen: "customers", param: null, sub: "weather" };
       return { screen: "customers", param: b, sub: null };
     case "shipping":
       return b ? null : { screen: "shipping", param: null, sub: null };
@@ -129,6 +131,8 @@ export function parsePath(pathname: string): NavState | null {
     case "store":
       if (!b) return { screen: "storefront", param: null, sub: null };
       if (b === "discover") return { screen: "discover", param: null, sub: null };
+      // Preferences hosts the merchant SEO/AIO (Search) surface.
+      if (b === "preferences") return { screen: "search", param: null, sub: null };
       return null;
     case "alerts":
       return { screen: "alerts", param: b ?? null, sub: null };

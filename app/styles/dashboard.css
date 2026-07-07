@@ -213,7 +213,8 @@
       background: color-mix(in oklch, black 28%, transparent);
     }
     .cd-more-sheet {
-      width: 100%; background: var(--card-solid); border-radius: 20px 20px 0 0;
+      width: 100%; max-height: 82vh; overflow-y: auto;
+      background: var(--card-solid); border-radius: 20px 20px 0 0;
       padding: 8px 14px calc(16px + env(safe-area-inset-bottom, 0px));
       box-shadow: 0 -12px 40px -12px rgba(0, 0, 0, 0.4);
       animation: cd-sheet-up 0.22s ease;
@@ -228,6 +229,22 @@
     }
     .cd-more-item svg { color: var(--accent); opacity: 0.85; }
     .cd-more-item[data-active="1"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    /* Disclosed sub-views under a section, shown inline so every sub-view stays
+       reachable on phones (the rail is hidden at this width). */
+    .cd-more-sec { display: flex; flex-direction: column; }
+    .cd-more-subnav { display: flex; flex-direction: column; padding-left: 30px; margin: 0 0 4px; }
+    .cd-more-subitem {
+      position: relative; display: flex; align-items: center;
+      padding: 10px 12px 10px 16px; border: 0; background: none; border-radius: 9px;
+      cursor: pointer; font-family: inherit; text-align: left;
+      font-size: calc(13.5px * var(--type-scale)); font-weight: 500; color: var(--text-2);
+    }
+    .cd-more-subitem::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+      width: 1.5px; background: var(--hairline-strong);
+    }
+    .cd-more-subitem[data-active="1"] { color: var(--accent); font-weight: 600; }
+    .cd-more-subitem[data-active="1"]::before { background: var(--accent); }
     /* Utility actions (Ask Calderyn / Report a bug) separated from the screen nav. */
     .cd-more-group { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--hairline); }
     .cd-more-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px 2px; margin-top: 6px; border-top: 0.5px solid var(--hairline); }
@@ -1553,14 +1570,40 @@
 .cd-acct-mi[data-danger="1"] { color: var(--red); }
 .cd-acct-sep { height: 0.5px; background: var(--hairline); margin: 5px 6px; }
 
-/* ---- subtabs ---- */
-.cd-subtabs { display: flex; gap: 2px; border-bottom: 0.5px solid var(--hairline-strong); margin-bottom: 18px; flex-wrap: wrap; }
-.cd-subtab { display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px 11px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 13.5px; font-weight: 540; color: var(--text-3); letter-spacing: -0.01em; position: relative; }
-.cd-subtab:hover { color: var(--text-1); }
-.cd-subtab[data-active="1"] { color: var(--text-1); font-weight: 600; }
-.cd-subtab[data-active="1"]::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -0.5px; height: 2px; background: var(--accent); border-radius: 2px; }
-.cd-subtab-count { font-size: 11px; font-weight: 600; color: var(--text-3); background: var(--gray-bg); padding: 1px 7px; border-radius: 999px; }
-.cd-subtab[data-active="1"] .cd-subtab-count { color: var(--text-2); }
+/* ---- expandable rail sub-nav ---- */
+/* A section that owns sub-views discloses them indented beneath its parent row,
+   joined by a left rail that lights on the active child. The subtab navigation
+   lives here in the rail, so screens no longer carry an in-page tab bar. */
+.cd-nav-sec { display: flex; flex-direction: column; gap: 1px; }
+.cd-nav-parent .cd-nav-caret {
+  margin-left: auto; color: var(--text-3); opacity: 0.85; flex-shrink: 0;
+  transform: rotate(-90deg); transition: transform 0.16s ease;
+}
+.cd-nav-parent[data-expanded="1"] .cd-nav-caret { transform: rotate(0deg); opacity: 1; }
+.cd-nav-parent[data-active="1"] .cd-nav-caret { color: var(--accent); }
+.cd-subnav { display: flex; flex-direction: column; padding-left: 19px; margin: 1px 0 5px; }
+.cd-subnav-item {
+  position: relative; display: flex; align-items: center;
+  padding: calc(6px * var(--density)) 10px calc(6px * var(--density)) 22px;
+  border: 0; background: none; border-radius: 8px; cursor: pointer;
+  font-family: inherit; text-align: left;
+  font-size: calc(12.75px * var(--type-scale)); font-weight: 460;
+  color: var(--text-2); letter-spacing: -0.006em;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+/* per-row rail segment; stacked rows read as one continuous line, accent on active */
+.cd-subnav-item::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 1.5px; background: var(--hairline-strong); transition: background 0.13s ease;
+}
+.cd-subnav-item:hover { background: rgba(120, 120, 128, 0.1); color: var(--text-1); }
+.cd-subnav-item[data-active="1"] { color: var(--accent); font-weight: 600; }
+.cd-subnav-item[data-active="1"]::before { background: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .cd-nav-parent .cd-nav-caret,
+  .cd-subnav-item,
+  .cd-subnav-item::before { transition: none; }
+}
 
 /* ---- calm mission control ---- */
 .cd-display { font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif; font-size: calc(40px * var(--type-scale)); font-weight: 500; letter-spacing: -0.015em; line-height: 1.04; color: var(--text-1); margin: 0; }

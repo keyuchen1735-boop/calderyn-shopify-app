@@ -4,7 +4,6 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
 import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
-import { ProductsSubTabs } from "../subtabs";
 import { money } from "../format";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
@@ -139,8 +138,6 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
           </Btn>
         </div>
       </header>
-
-      <ProductsSubTabs app={app} />
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <input

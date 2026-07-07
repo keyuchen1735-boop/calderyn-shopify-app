@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Btn, Card, Pill, Placeholder } from "../ui";
-import { ProductsSubTabs } from "../subtabs";
 import { timeAgo } from "../format";
 import { DashboardApiError, receiveTransfer } from "~/lib/dashboard/client";
 import {
@@ -95,8 +94,6 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           <p className="cd-sub">Stock transfers</p>
         </div>
       </header>
-
-      <ProductsSubTabs app={app} />
 
       <Card pad={false}>
         {!rows ? (

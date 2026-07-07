@@ -66,14 +66,30 @@ import ScreenSearch from "./screens/Search";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
 
+interface NavChild {
+  /** Stable key for React + active-child matching. */
+  key: string;
+  label: string;
+  /** Screen this child opens (may equal the parent's id, or a sibling screen). */
+  screen: ScreenId;
+  /** Subtab within `screen`; null when the child is its own screen. */
+  sub?: string | null;
+}
+
 interface NavItem {
   id: ScreenId;
   label: string;
   icon: string;
+  /** When present, the item is expandable: clicking it opens its first child's
+   *  view and discloses the children indented beneath it in the rail. */
+  children?: NavChild[];
 }
 
 // Grouped IA: the growth brain on top (Calderyn's wedge), owned commerce under
 // RUN, the storefront under BUILD. Alerts / History / Settings ride the foot.
+// Sections with sub-views carry `children`; the rail discloses them indented
+// beneath the active section, so navigation lives in the rail (not an in-page
+// sub-tab bar).
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "Grow",
@@ -81,36 +97,97 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { id: "dashboard", label: "Home", icon: "home" },
       { id: "autopilot", label: "Autopilot", icon: "bolt" },
       { id: "campaigns", label: "Campaigns", icon: "megaphone" },
-      { id: "analytics", label: "Analytics", icon: "chart" },
-      { id: "search", label: "Search", icon: "search" },
+      {
+        id: "analytics",
+        label: "Analytics",
+        icon: "chart",
+        children: [
+          { key: "perf", label: "Performance", screen: "analytics", sub: "perf" },
+          { key: "live", label: "Live", screen: "analytics", sub: "live" },
+        ],
+      },
     ],
   },
   {
     label: "Run",
     items: [
-      { id: "orders", label: "Orders", icon: "doc" },
-      { id: "catalog", label: "Products", icon: "tag" },
-      { id: "customers", label: "Customers", icon: "user" },
+      {
+        id: "orders",
+        label: "Orders",
+        icon: "doc",
+        children: [
+          { key: "orders", label: "Orders", screen: "orders", sub: "orders" },
+          { key: "labels", label: "Shipping charges", screen: "orders", sub: "labels" },
+          { key: "drafts", label: "Draft carts", screen: "orders", sub: "drafts" },
+          { key: "abandoned", label: "Abandoned", screen: "orders", sub: "abandoned" },
+        ],
+      },
+      {
+        id: "catalog",
+        label: "Products",
+        icon: "tag",
+        children: [
+          { key: "catalog", label: "Products", screen: "catalog" },
+          { key: "inventory", label: "Inventory", screen: "inventory" },
+          { key: "po", label: "Purchase orders", screen: "products-po" },
+          { key: "transfers", label: "Transfers", screen: "products-transfers" },
+          { key: "collections", label: "Collections", screen: "collections" },
+          { key: "locations", label: "Locations", screen: "locations-settings" },
+        ],
+      },
+      {
+        id: "customers",
+        label: "Customers",
+        icon: "user",
+        children: [
+          { key: "directory", label: "Directory", screen: "customers", sub: "directory" },
+          { key: "segments", label: "Segments", screen: "customers", sub: "segments" },
+          { key: "weather", label: "Weather", screen: "customers", sub: "weather" },
+        ],
+      },
       { id: "shipping", label: "Shipping", icon: "truck" },
       { id: "payments", label: "Payments", icon: "card" },
     ],
   },
   {
     label: "Build",
-    items: [{ id: "storefront", label: "Store", icon: "store" }],
+    items: [
+      {
+        id: "storefront",
+        label: "Store",
+        icon: "store",
+        children: [
+          { key: "storefront", label: "Storefront", screen: "storefront" },
+          { key: "discover", label: "Discover", screen: "discover" },
+          { key: "preferences", label: "Preferences", screen: "search" },
+        ],
+      },
+    ],
   },
 ];
 
 const FOOT_NAV: NavItem[] = [
   { id: "alerts", label: "Alerts", icon: "bell" },
   { id: "audit", label: "History", icon: "clock" },
-  { id: "settings", label: "Settings", icon: "gear" },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: "gear",
+    children: [
+      { key: "general", label: "General", screen: "settings", sub: "general" },
+      { key: "connectors", label: "Connectors", screen: "settings", sub: "connectors" },
+      { key: "mcp", label: "MCP & CLI", screen: "settings", sub: "mcp" },
+      { key: "import", label: "Import from Shopify", screen: "import-shopify" },
+      { key: "golive", label: "Go live", screen: "cutover" },
+    ],
+  },
 ];
 
 const ALL_NAV_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...FOOT_NAV];
 
-// Screens that live under a nav item's umbrella keep that item highlighted
-// (subtab families, inner flows, and the Labs mask).
+// Screens that live under a nav item's umbrella keep that item highlighted and
+// its section expanded (subtab families, inner flows, the Labs mask, and the
+// Preferences / Search surface now nested under Store).
 const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   labs: "campaigns",
   "product-editor": "catalog",
@@ -123,7 +200,40 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   cutover: "settings",
   agentic: "analytics",
   discover: "storefront",
+  search: "storefront",
 };
+
+// Default subtab per screen — resolves which child reads active when the URL
+// carries no explicit sub (e.g. /dashboard/orders lights the "orders" child).
+const NAV_DEFAULT_SUB: Partial<Record<ScreenId, string>> = {
+  orders: "orders",
+  analytics: "perf",
+  customers: "directory",
+  settings: "general",
+};
+
+// Inner-flow screens that are not themselves a child map to the child that
+// should stay lit (the product editor lives under the Products list).
+const CHILD_SCREEN_ALIAS: Partial<Record<ScreenId, ScreenId>> = {
+  "product-editor": "catalog",
+};
+
+// Does `child` correspond to the current nav state? Sub-children match on
+// screen + resolved sub; screen-children match on the (alias-resolved) screen.
+function childIsActive(child: NavChild, nav: NavState): boolean {
+  if (child.sub != null) {
+    const activeSub = nav.sub ?? NAV_DEFAULT_SUB[child.screen] ?? null;
+    return nav.screen === child.screen && activeSub === child.sub;
+  }
+  const eff = CHILD_SCREEN_ALIAS[nav.screen] ?? nav.screen;
+  return eff === child.screen;
+}
+
+// Where a parent row navigates: its first child's view (the section default).
+function parentTarget(item: NavItem): { screen: ScreenId; sub: string | null } {
+  const first = item.children?.[0];
+  return first ? { screen: first.screen, sub: first.sub ?? null } : { screen: item.id, sub: null };
+}
 
 // On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
 // everything else lives behind "More".
@@ -1118,12 +1228,113 @@ export default function DashboardApp({
     .toUpperCase();
 
   // Bottom-tab-bar partition: the four primary tabs (in design order) + the rest
-  // behind "More". "More" reads active whenever a non-primary screen is open.
+  // behind "More". "More" reads active whenever a non-primary screen is open. A
+  // primary tab that owns sub-views (Orders) also rides the More sheet so those
+  // sub-views stay reachable on phones (the rail is hidden there).
   const primaryTabs = PRIMARY_TABS.map(
     (id) => ALL_NAV_ITEMS.find((n) => n.id === id)!,
   );
-  const moreItems = ALL_NAV_ITEMS.filter((n) => !PRIMARY_TABS.includes(n.id));
+  const moreItems = ALL_NAV_ITEMS.filter(
+    (n) => !PRIMARY_TABS.includes(n.id) || (n.children?.length ?? 0) > 0,
+  );
   const onMoreScreen = !PRIMARY_TABS.includes(activeNav);
+
+  // One rail row. Autopilot keeps its sibling kill-switch; sections with
+  // children become expandable (parent opens the default view + discloses the
+  // children indented beneath, accordion by active section); everything else is
+  // a single link, unchanged.
+  const renderNavItem = (item: NavItem) => {
+    if (item.id === "autopilot" && guardrails) {
+      return (
+        <div key={item.id} style={{ position: "relative" }}>
+          <button
+            className="cd-nav-item"
+            data-active={activeNav === item.id ? "1" : "0"}
+            style={{ width: "100%", paddingRight: 52 }}
+            onClick={() => navigate(item.id)}
+          >
+            <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+            <span>{item.label}</span>
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={guardrails.autopilot_enabled}
+            aria-label="Autopilot on/off"
+            title={guardrails.autopilot_enabled ? "Autopilot on" : "Autopilot off"}
+            className="cd-apswitch"
+            data-on={guardrails.autopilot_enabled ? "1" : "0"}
+            disabled={apSaving}
+            onClick={toggleAutopilot}
+            style={{
+              position: "absolute",
+              right: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: 0,
+              padding: 0,
+              cursor: "pointer",
+            }}
+          >
+            <i />
+          </button>
+        </div>
+      );
+    }
+
+    const kids = item.children;
+    if (kids && kids.length > 0) {
+      const expanded = activeNav === item.id;
+      const target = parentTarget(item);
+      return (
+        <div key={item.id} className="cd-nav-sec" data-expanded={expanded ? "1" : "0"}>
+          <button
+            type="button"
+            className="cd-nav-item cd-nav-parent"
+            data-active={activeNav === item.id ? "1" : "0"}
+            data-expanded={expanded ? "1" : "0"}
+            aria-expanded={expanded}
+            onClick={() => navigate(target.screen, null, target.sub)}
+          >
+            <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+            <span>{item.label}</span>
+            <CDIcon name="chevronDown" size={15} strokeWidth={2} className="cd-nav-caret" />
+          </button>
+          {expanded && (
+            <div className="cd-subnav" role="group" aria-label={item.label}>
+              {kids.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  className="cd-subnav-item"
+                  data-active={childIsActive(c, nav) ? "1" : "0"}
+                  onClick={() => navigate(c.screen, null, c.sub ?? null)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className="cd-nav-item"
+        data-active={activeNav === item.id ? "1" : "0"}
+        onClick={() => navigate(item.id)}
+      >
+        <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+        <span>{item.label}</span>
+        {item.id === "alerts" && openCount > 0 && (
+          <span className="cd-nav-count">{openCount}</span>
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className={"cd-root" + (t.dark ? " cd-dark" : "")} style={vars}>
@@ -1169,75 +1380,13 @@ export default function DashboardApp({
           {NAV_GROUPS.map((group) => (
             <div key={group.label} style={{ display: "contents" }}>
               <div className="cd-nav-group">{group.label}</div>
-              {group.items.map((item) =>
-                item.id === "autopilot" && guardrails ? (
-                  // The kill switch is a SIBLING button (absolutely positioned
-                  // over the row) — nesting it inside the nav button would be
-                  // invalid HTML and unreachable by keyboard.
-                  <div key={item.id} style={{ position: "relative" }}>
-                    <button
-                      className="cd-nav-item"
-                      data-active={activeNav === item.id ? "1" : "0"}
-                      style={{ width: "100%", paddingRight: 52 }}
-                      onClick={() => navigate(item.id)}
-                    >
-                      <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-                      <span>{item.label}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={guardrails.autopilot_enabled}
-                      aria-label="Autopilot on/off"
-                      title={guardrails.autopilot_enabled ? "Autopilot on" : "Autopilot off"}
-                      className="cd-apswitch"
-                      data-on={guardrails.autopilot_enabled ? "1" : "0"}
-                      disabled={apSaving}
-                      onClick={toggleAutopilot}
-                      style={{
-                        position: "absolute",
-                        right: 10,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        border: 0,
-                        padding: 0,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <i />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    key={item.id}
-                    className="cd-nav-item"
-                    data-active={activeNav === item.id ? "1" : "0"}
-                    onClick={() => navigate(item.id)}
-                  >
-                    <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-                    <span>{item.label}</span>
-                  </button>
-                ),
-              )}
+              {group.items.map((item) => renderNavItem(item))}
             </div>
           ))}
         </nav>
         <div className="cd-side-foot">
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {FOOT_NAV.map((item) => (
-              <button
-                key={item.id}
-                className="cd-nav-item"
-                data-active={activeNav === item.id ? "1" : "0"}
-                onClick={() => navigate(item.id)}
-              >
-                <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-                <span>{item.label}</span>
-                {item.id === "alerts" && openCount > 0 && (
-                  <span className="cd-nav-count">{openCount}</span>
-                )}
-              </button>
-            ))}
+            {FOOT_NAV.map((item) => renderNavItem(item))}
             <div className="cd-live-row">
               <CDIcon name="moon" size={15} strokeWidth={1.9} />
               <span className="flex-1">Night mode</span>
@@ -1340,18 +1489,37 @@ export default function DashboardApp({
           >
             <div className="cd-more-grab" aria-hidden="true" />
             <nav className="cd-more-nav" aria-label="More">
-              {moreItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="cd-more-item"
-                  data-active={nav.screen === item.id ? "1" : "0"}
-                  onClick={() => navigate(item.id)}
-                >
-                  <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-                  <span>{item.label}</span>
-                </button>
-              ))}
+              {moreItems.map((item) => {
+                const target = parentTarget(item);
+                return (
+                  <div key={item.id} className="cd-more-sec">
+                    <button
+                      type="button"
+                      className="cd-more-item"
+                      data-active={activeNav === item.id ? "1" : "0"}
+                      onClick={() => navigate(target.screen, null, target.sub)}
+                    >
+                      <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                      <span>{item.label}</span>
+                    </button>
+                    {item.children && (
+                      <div className="cd-more-subnav">
+                        {item.children.map((c) => (
+                          <button
+                            key={c.key}
+                            type="button"
+                            className="cd-more-subitem"
+                            data-active={childIsActive(c, nav) ? "1" : "0"}
+                            onClick={() => navigate(c.screen, null, c.sub ?? null)}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </nav>
             <div className="cd-more-group">
               <button

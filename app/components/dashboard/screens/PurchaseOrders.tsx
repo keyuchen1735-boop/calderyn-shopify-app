@@ -1,5 +1,4 @@
 import { Btn, Card, Pill, Placeholder } from "../ui";
-import { ProductsSubTabs } from "../subtabs";
 import { timeAgo } from "../format";
 import type { DashboardCtx } from "../context";
 import type { AuditVM } from "../view-models";
@@ -70,8 +69,6 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
           <p className="cd-sub">Purchase orders</p>
         </div>
       </header>
-
-      <ProductsSubTabs app={app} />
 
       <Card pad={false}>
         {loading ? (
