@@ -852,6 +852,43 @@ export default function DashboardApp({
         return { ok, receipt };
       }
 
+      // reallocate_budget: live endpoint — the transfer plan (source/dest
+      // campaign + amount) is derived server-side from the alert's evidence
+      // (weather_demand only), so failures (e.g. evidence without a concrete
+      // plan) surface as an error toast, never a fake resolution.
+      if (kind === "reallocate_budget") {
+        let receipt: ApproveReceipt | null = null;
+        let ok = false;
+        try {
+          const { outcome, acknowledged, calibration } = await client.executeAlertAction(alert.id, { type: kind });
+          const view = presentActionOutcome(outcome, label);
+          // Only a real success resolves the alert (P0-1); a platform failure
+          // arrives as an HTTP 502 → DashboardApiError (caught below).
+          if (view.succeeded) {
+            ok = true;
+            markResolved();
+            receipt = calibration ?? null;
+            if (receipt) refreshCalibration();
+          }
+          // Re-fetch audit so the server's authoritative row replaces our optimistic one.
+          client
+            .fetchAudit()
+            .then((au) => setAudit(au))
+            .catch(() => {});
+          if (view.succeeded) {
+            toast(view.message + (acknowledged ? "" : " Alert couldn't be acknowledged."), "check");
+          } else if (view.isError) {
+            toast(view.message, "warn", "critical");
+          } else {
+            toast(view.message, "clock");
+          }
+        } catch (err) {
+          const msg = err instanceof DashboardApiError ? err.message : "Action failed.";
+          toast(msg, "warn", "critical");
+        }
+        return { ok, receipt };
+      }
+
       // reallocate_spend_sku: live endpoint — the campaign pair and shift amount
       // are derived server-side by enrichRemediation (Task 7 route + Task 6
       // gateway). The client sends only the action kind; no campaign ids.
