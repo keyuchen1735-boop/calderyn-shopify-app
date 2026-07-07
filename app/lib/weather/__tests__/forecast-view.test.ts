@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildForecastView, conditionFor } from "../forecast-view";
+import { buildForecastView, conditionFor, sortMoves, type WeatherCondition } from "../forecast-view";
 import type { RegionCode } from "../../ads/actions";
 import type { RegionForecast } from "../score";
 
@@ -44,5 +44,45 @@ describe("conditionFor", () => {
     expect(conditionFor({ precipMm: 4, snowCm: 0 })).toBe("showers");
     expect(conditionFor({ precipMm: 22, snowCm: 0 })).toBe("rain");
     expect(conditionFor({ precipMm: 22, snowCm: 3 })).toBe("snow");
+  });
+});
+
+describe("sortMoves", () => {
+  const cond = new Map<string, WeatherCondition>([
+    ["us-east", "snow"],
+    ["us-south", "rain"],
+    ["us-central", "showers"],
+    ["us-west", "clear"],
+  ]);
+  const move = (over: Record<string, unknown>) => ({
+    id: "x",
+    expiresOn: "2026-07-10",
+    destRegion: "us-west",
+    amountCents: 100,
+    ...over,
+  });
+
+  it("orders by soonest day first, then harsher destination weather, then bigger moves", () => {
+    const out = sortMoves(
+      [
+        move({ id: "later-snow", expiresOn: "2026-07-11", destRegion: "us-east" }),
+        move({ id: "soon-clear", expiresOn: "2026-07-10", destRegion: "us-west" }),
+        move({ id: "soon-rain", expiresOn: "2026-07-10", destRegion: "us-south" }),
+        move({ id: "soon-rain-big", expiresOn: "2026-07-10", destRegion: "us-south", amountCents: 900 }),
+      ],
+      cond,
+    );
+    expect(out.map((m) => m.id)).toEqual(["soon-rain-big", "soon-rain", "soon-clear", "later-snow"]);
+  });
+
+  it("treats a region with no forecast as the mildest weather", () => {
+    const out = sortMoves(
+      [
+        move({ id: "unknown", destRegion: "us-nowhere" }),
+        move({ id: "showers", destRegion: "us-central" }),
+      ],
+      cond,
+    );
+    expect(out.map((m) => m.id)).toEqual(["showers", "unknown"]);
   });
 });

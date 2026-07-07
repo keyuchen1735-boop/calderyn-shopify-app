@@ -14,6 +14,7 @@ interface Point {
 
 interface OpenMeteoLocation {
   daily?: {
+    time?: string[];
     temperature_2m_max?: number[];
     temperature_2m_min?: number[];
     precipitation_sum?: number[];
@@ -38,12 +39,23 @@ function aggregate(loc: OpenMeteoLocation): RegionForecast {
   const tmax = d.temperature_2m_max ?? [];
   const tmin = d.temperature_2m_min ?? [];
   const dayMeans = tmax.map((mx, i) => (mx + (tmin[i] ?? mx)) / 2);
-  return {
+  const out: RegionForecast = {
     avgTempC: mean(dayMeans),
     precipMm: sum(d.precipitation_sum ?? []),
     snowCm: sum(d.snowfall_sum ?? []),
     avgDaylightH: mean((d.daylight_duration ?? []).map((s) => s / 3600)),
   };
+  // Per-day breakdown only when the provider dates the series — never
+  // fabricate dates for positional data.
+  if (d.time && d.time.length === dayMeans.length) {
+    out.days = d.time.map((date, i) => ({
+      date,
+      avgTempC: dayMeans[i],
+      precipMm: (d.precipitation_sum ?? [])[i] ?? 0,
+      snowCm: (d.snowfall_sum ?? [])[i] ?? 0,
+    }));
+  }
+  return out;
 }
 
 export async function fetchRegionForecasts(

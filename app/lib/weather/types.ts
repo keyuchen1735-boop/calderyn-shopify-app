@@ -21,6 +21,8 @@ export interface RegionForecastDTO {
   avgDaylightH: number;
   /** Demand favorability in [0,1] — higher = weather favors more budget. */
   score: number;
+  /** Per-day breakdown for the day chips; absent when the provider omits dates. */
+  days?: Array<{ date: string; avgTempC: number; precipMm: number; snowCm: number }>;
 }
 
 export interface WeatherForecastDTO {

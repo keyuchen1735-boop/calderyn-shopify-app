@@ -11,7 +11,7 @@ import {
   type WeatherForecastDTO,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
-import { conditionFor, type WeatherCondition } from "~/lib/weather/forecast-view";
+import { conditionFor, sortMoves, type WeatherCondition } from "~/lib/weather/forecast-view";
 import type { WeatherMode } from "~/lib/weather/types";
 
 const REGION_LABEL: Record<string, string> = {
@@ -133,10 +133,15 @@ export function WeatherSegments({
     );
   };
 
-  // Region → coarse condition, for the flow rows below the forecast grid.
+  // Region → coarse condition (3-day window), for the flow rows below.
   const condByRegion = new Map<string, WeatherCondition>(
     (forecast?.regions ?? []).map((r) => [r.region, conditionFor(r)]),
   );
+
+  // Day chips: "all" = the 3-day window; an index = that forecast day.
+  const [dayKey, setDayKey] = useState("all");
+  const days = forecast?.regions.find((r) => r.days && r.days.length > 0)?.days ?? [];
+  const dayIdx = dayKey === "all" ? null : Math.min(Number(dayKey), days.length - 1);
 
   // Off hides approvable offers immediately (matching the loader's contract);
   // armed rows are scheduled money and stay visible until the sweep disarms.
@@ -172,12 +177,25 @@ export function WeatherSegments({
 
       <Card pad={false}>
         <CardHead>
-          <div className="cd-row-title">Next 3 days</div>
-          {forecast?.homeRegion ? (
-            <Pill tone="accent" icon="mapPin">
-              {REGION_LABEL[forecast.homeRegion] ?? forecast.homeRegion}
-            </Pill>
-          ) : null}
+          <div className="cd-row-title">Forecast</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {forecast?.homeRegion ? (
+              <Pill tone="accent" icon="mapPin">
+                {REGION_LABEL[forecast.homeRegion] ?? forecast.homeRegion}
+              </Pill>
+            ) : null}
+            {days.length > 0 ? (
+              <Segmented
+                small
+                value={dayIdx === null ? "all" : String(dayIdx)}
+                onChange={setDayKey}
+                options={[
+                  { value: "all", label: "3 days" },
+                  ...days.map((d, i) => ({ value: String(i), label: shortDate(d.date) })),
+                ]}
+              />
+            ) : null}
+          </div>
         </CardHead>
         {forecastError ? (
           <div className="cd-caption" style={{ padding: "16px 20px" }}>
@@ -197,7 +215,10 @@ export function WeatherSegments({
             }}
           >
             {forecast.regions.map((r) => {
-              const cond = conditionFor(r);
+              // A selected day narrows the icon/temp/precip to that day; the
+              // demand meter stays window-level (scores are 3-day quantities).
+              const disp = dayIdx !== null ? r.days?.[dayIdx] ?? r : r;
+              const cond = conditionFor(disp);
               const home = forecast.homeRegion === r.region;
               return (
                 <div
@@ -212,7 +233,7 @@ export function WeatherSegments({
                     style={{ color: COND_COLOR[cond] }}
                   />
                   <div className="tabular-nums" style={{ fontSize: 25, fontWeight: 650, lineHeight: 1.2 }}>
-                    {fahrenheit(r.avgTempC)}°
+                    {fahrenheit(disp.avgTempC)}°
                   </div>
                   <div
                     className="cd-caption"
@@ -229,7 +250,9 @@ export function WeatherSegments({
                     {cond !== "clear" ? (
                       <>
                         <CDIcon name={cond === "snow" ? "snowflake" : "rain"} size={11} />{" "}
-                        {cond === "snow" ? `${Math.round(r.snowCm)}cm` : `${Math.round(r.precipMm)}mm`}
+                        {cond === "snow"
+                          ? `${Math.round(disp.snowCm)}cm`
+                          : `${Math.round(disp.precipMm)}mm`}
                       </>
                     ) : null}
                   </div>
@@ -282,7 +305,7 @@ export function WeatherSegments({
               : "No weather moves predicted — needs two active campaigns each targeting a single US region."}
           </div>
         ) : (
-          [...armed, ...pending].map((s) => (
+          sortMoves([...armed, ...pending], condByRegion).map((s) => (
             <div
               key={s.id}
               className="cd-trow"
@@ -305,13 +328,16 @@ export function WeatherSegments({
                   >
                     {money(s.amountCents)}/day
                   </div>
+                  <div className="cd-caption" style={{ whiteSpace: "nowrap" }}>
+                    thru {shortDate(s.expiresOn)}
+                  </div>
                 </div>
                 <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
               </div>
               {s.status === "armed" ? (
                 <>
                   <Pill tone="accent" icon="bolt">
-                    {auto ? "Auto" : "Armed"} · thru {shortDate(s.expiresOn)}
+                    {auto ? "Auto" : "Armed"}
                   </Pill>
                   <Btn small onClick={() => onIntent(s.id, "dismiss")}>
                     Disarm
