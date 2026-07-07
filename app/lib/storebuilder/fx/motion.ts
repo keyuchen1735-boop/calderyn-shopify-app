@@ -67,7 +67,10 @@ function validTargets(value: string): boolean {
   if (value.length === 0 || value.length > TARGETS_CAP) return false;
   if (value.trim().length === 0) return false;
   if (FORBIDDEN_SELECTOR.test(value)) return false;
-  return value.split(",").length <= 3;
+  // 6, not 3: real hero reveals target every hero child (eyebrow, h1, p, cta…)
+  // and models routinely list 4-5 — a tighter cap silently killed the page's
+  // most visible animation. The 40-matched-node cap still bounds the work.
+  return value.split(",").length <= 6;
 }
 
 function parseProps(raw: unknown): MotionProps | null {

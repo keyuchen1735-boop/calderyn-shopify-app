@@ -87,9 +87,11 @@ describe("parseMotionSpec", () => {
     expect(parseMotionSpec(JSON.stringify({ targets: `.${"a".repeat(120)}`, to: { opacity: 1 } }))).toBeNull();
   });
 
-  it("rejects a selector list beyond three selectors", () => {
-    expect(parseMotionSpec(JSON.stringify({ targets: ".a,.b,.c", to: { opacity: 1 } }))).not.toBeNull();
-    expect(parseMotionSpec(JSON.stringify({ targets: ".a,.b,.c,.d", to: { opacity: 1 } }))).toBeNull();
+  it("rejects a selector list beyond six selectors", () => {
+    // Four selectors is the canonical hero reveal (eyebrow, h1, p, cta) — it must pass.
+    expect(parseMotionSpec(JSON.stringify({ targets: ".a,.b,.c,.d", to: { opacity: 1 } }))).not.toBeNull();
+    expect(parseMotionSpec(JSON.stringify({ targets: ".a,.b,.c,.d,.e,.f", to: { opacity: 1 } }))).not.toBeNull();
+    expect(parseMotionSpec(JSON.stringify({ targets: ".a,.b,.c,.d,.e,.f,.g", to: { opacity: 1 } }))).toBeNull();
   });
 
   it("rejects repeat out of range and non-integer repeat", () => {
