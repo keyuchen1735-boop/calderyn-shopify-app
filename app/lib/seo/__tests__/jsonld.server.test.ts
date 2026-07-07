@@ -36,6 +36,11 @@ describe("jsonld builders", () => {
     expect(webSiteJsonLd({ name: "Ember", url: "https://ember.calderyncompany.com" }))
       .toMatchObject({ "@type": "WebSite", name: "Ember" });
   });
+  it("collectionJsonLd carries name and url", () => {
+    expect(collectionJsonLd({ name: "Soy Candles", url: URL0 })).toMatchObject({
+      "@context": "https://schema.org", "@type": "CollectionPage", name: "Soy Candles", url: URL0,
+    });
+  });
   it("breadcrumbJsonLd builds positioned ListItems", () => {
     const node = breadcrumbJsonLd([{ name: "Home", url: "https://x/" }, { name: "Cedar", url: URL0 }]);
     expect(node["@type"]).toBe("BreadcrumbList");
