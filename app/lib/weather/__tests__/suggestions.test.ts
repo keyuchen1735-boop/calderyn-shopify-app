@@ -11,6 +11,8 @@ interface Row {
   narrative: string;
   amount_cents: number;
   expires_on: string;
+  source_region: string;
+  dest_region: string;
 }
 
 // In-memory stand-in that honors the filters/orders/limit the loader applies,
@@ -75,6 +77,8 @@ const row = (over: Partial<Row>): Row => ({
   narrative: "shift",
   amount_cents: 3000,
   expires_on: "2026-07-09",
+  source_region: "us-west",
+  dest_region: "us-east",
   ...over,
 });
 
@@ -84,7 +88,15 @@ describe("loadWeatherSuggestions", () => {
     const sb = fakeSb({ sensitivity: 50, rows: [row({})] });
     const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-07T01:00:00Z"));
     expect(out).toEqual([
-      { id: "sg1", narrative: "shift", amountCents: 3000, status: "pending", expiresOn: "2026-07-09" },
+      {
+        id: "sg1",
+        narrative: "shift",
+        amountCents: 3000,
+        status: "pending",
+        expiresOn: "2026-07-09",
+        sourceRegion: "us-west",
+        destRegion: "us-east",
+      },
     ]);
   });
 

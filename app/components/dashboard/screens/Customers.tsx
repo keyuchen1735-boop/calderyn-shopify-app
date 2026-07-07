@@ -7,7 +7,6 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchCustomersPage,
   fetchCustomerDetail,
-  applyWeatherSuggestion,
   type CustomersPage,
   type CustomerDetail,
   type CustomerSegment,
@@ -15,6 +14,7 @@ import {
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { WeatherSegments } from "../WeatherSegments";
+import { isWeatherAuto } from "~/lib/weather/types";
 import type { DashboardCtx } from "../context";
 
 const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr";
@@ -405,28 +405,16 @@ export default function Customers({ app }: { app: DashboardCtx }) {
         ? wx.map((s) => (s.id === id ? { ...s, status: "armed" as const } : s))
         : wx.filter((s) => s.id !== id);
     setWx(next);
-    try {
-      await applyWeatherSuggestion(id, intent);
-      // Write through to the page object + session cache so a tab-switch
-      // doesn't reseed the stale pre-action list.
-      setPage((p) => {
-        if (!p) return p;
-        const updated = { ...p, weatherSuggestions: next };
-        cacheScreenData(SCREEN_CACHE_KEYS.customers, updated);
-        return updated;
-      });
-      toast(
-        intent === "apply"
-          ? "Budget shifted"
-          : intent === "arm"
-            ? "Armed — executes when the forecast confirms"
-            : "Suggestion dismissed",
-        "check",
-      );
-    } catch {
+    // weatherIntent owns the API call, the shared toasts, the mirrored-alert
+    // resolution, and the session-cache write-through.
+    const ok = await app.weatherIntent(id, intent);
+    if (!ok) {
       setWx(prev);
-      toast("Could not update suggestion", "x", "critical");
+      return;
     }
+    // Keep the live page object in step with what weatherIntent cached, so a
+    // tab-switch doesn't reseed the stale pre-action list.
+    setPage((p) => (p ? { ...p, weatherSuggestions: next } : p));
   };
 
   useEffect(() => {
@@ -593,7 +581,12 @@ export default function Customers({ app }: { app: DashboardCtx }) {
             )}
           </Card>
       ) : sub === "weather" ? (
-        <WeatherSegments suggestions={wx} onIntent={onWeather} toast={toast} />
+        <WeatherSegments
+          suggestions={wx}
+          onIntent={onWeather}
+          toast={toast}
+          auto={isWeatherAuto(app.guardrails?.weather_sensitivity ?? 0)}
+        />
       ) : (
         <>
           <div className="cd-stat-grid" style={{ marginBottom: 14 }}>

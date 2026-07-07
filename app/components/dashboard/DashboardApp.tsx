@@ -5,6 +5,8 @@ import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { applyWeatherSuggestion, type CustomersPage } from "~/lib/dashboard/customers-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { bootDashboardData } from "~/lib/dashboard/boot";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
@@ -980,6 +982,59 @@ export default function DashboardApp({
     [toast],
   );
 
+  // ----- act on a weather prediction (Weather tab or its mirrored alert) -----
+  const weatherIntent = useCallback(
+    async (suggestionId: string, intent: "apply" | "arm" | "dismiss") => {
+      try {
+        await applyWeatherSuggestion(suggestionId, intent);
+      } catch {
+        toast("Could not update the suggestion", "x", "critical");
+        return false;
+      }
+      // The server resolves the mirrored alert on every intent (an armed move
+      // lives on the Weather tab, with Disarm, until the trigger fires) —
+      // mirror that locally so both surfaces agree without a refetch.
+      setAlerts((as) =>
+        as.map((a) =>
+          a.evidence?.suggestion_id === suggestionId && a.status === "open"
+            ? { ...a, status: "resolved" }
+            : a,
+        ),
+      );
+      // Write through the Customers session cache so a tab-switch doesn't
+      // reseed the stale pre-action suggestion list.
+      const cached = cachedScreenData<CustomersPage>(SCREEN_CACHE_KEYS.customers);
+      if (cached?.weatherSuggestions) {
+        cacheScreenData(SCREEN_CACHE_KEYS.customers, {
+          ...cached,
+          weatherSuggestions:
+            intent === "arm"
+              ? cached.weatherSuggestions.map((s) =>
+                  s.id === suggestionId ? { ...s, status: "armed" as const } : s,
+                )
+              : cached.weatherSuggestions.filter((s) => s.id !== suggestionId),
+        });
+      }
+      if (intent === "apply") {
+        // Budget moved — pull the authoritative audit row in.
+        client
+          .fetchAudit()
+          .then((au) => setAudit(au))
+          .catch(() => {});
+      }
+      toast(
+        intent === "apply"
+          ? "Budget shifted"
+          : intent === "arm"
+            ? "Armed — executes when the forecast confirms"
+            : "Suggestion dismissed",
+        "check",
+      );
+      return true;
+    },
+    [toast],
+  );
+
   const pushAdDraft = useCallback(
     (name: string) => {
       const entry: AuditVM = {
@@ -1054,6 +1109,7 @@ export default function DashboardApp({
     setLiveOn,
     executeAction,
     undoAction,
+    weatherIntent,
     pushAdDraft,
     toast,
     relTime,

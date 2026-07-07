@@ -67,14 +67,15 @@ export async function action({ request }: ActionFunctionArgs) {
       return jsonError(500, "internal_error");
     }
     if (!data) return classifyMiss(sb, suggestionId, session.shopId);
-    if (intent === "dismiss") {
-      await resolveWeatherAlert(
-        sb,
-        session.shopId,
-        String(data.source_campaign_id),
-        String(data.dest_campaign_id),
-      );
-    }
+    // Both transitions retire the mirrored alert: dismiss kills the move, and
+    // arming means the merchant has acted — the scheduled move stays visible
+    // (with Disarm) on the Weather tab, not as an open alert.
+    await resolveWeatherAlert(
+      sb,
+      session.shopId,
+      String(data.source_campaign_id),
+      String(data.dest_campaign_id),
+    );
     return jsonOk({ ok: true, status: next });
   }
 

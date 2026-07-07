@@ -27,10 +27,18 @@ function fakeSb(opts: {
   };
   function builder(tableName: string) {
     const chain: Record<string, unknown> = {};
+    const filters: Array<(r: Record<string, unknown>) => boolean> = [];
     chain.select = vi.fn(() => chain);
-    chain.eq = vi.fn(() => chain);
-    chain.in = vi.fn(() => chain);
+    chain.eq = vi.fn((col: string, val: unknown) => {
+      filters.push((r) => r[col] === val);
+      return chain;
+    });
+    chain.in = vi.fn((col: string, vals: unknown[]) => {
+      filters.push((r) => vals.includes(r[col]));
+      return chain;
+    });
     chain.not = vi.fn(() => chain);
+    chain.limit = vi.fn(() => chain);
     chain.maybeSingle = vi.fn(async () =>
       tableName === "guardrail_config" && opts.sensitivity != null
         ? {
@@ -45,6 +53,12 @@ function fakeSb(opts: {
     );
     chain.then = (res: (v: { data: unknown; error: null }) => void) => {
       if (tableName === "ad_campaign_dim") return Promise.resolve({ data: opts.campaigns, error: null }).then(res);
+      if (tableName === "weather_suggestion") {
+        return Promise.resolve({
+          data: table.filter((r) => filters.every((f) => f(r))),
+          error: null,
+        }).then(res);
+      }
       return Promise.resolve({ data: null, error: null }).then(res);
     };
     chain.insert = vi.fn((row: unknown) => {
@@ -61,8 +75,9 @@ function fakeSb(opts: {
             // Conflict: DO NOTHING when ignoreDuplicates, else DO UPDATE.
             if (!upsertOpts?.ignoreDuplicates) Object.assign(existing, row);
           } else {
-            table.push({ ...row });
-            inserted.push({ ...row });
+            const stored = { id: `sg-${table.length + 1}`, ...row };
+            table.push(stored);
+            inserted.push(stored);
           }
         }
         const result = { data: inserted, error: null };
@@ -149,6 +164,37 @@ describe("runWeatherSuggestForShop", () => {
       status: "open",
     });
     expect(String(row.narrative)).toContain("weather");
+    // The Alerts detail acts on the prediction via this id.
+    expect((row.evidence as Record<string, unknown>).suggestion_id).toBe("sg-1");
+  });
+  it("does not open an actionable alert for an auto-armed (dial=100) prediction", async () => {
+    // All-auto merchants asked for no approvals: the armed move lives on the
+    // Weather tab until the trigger fires, never in the alerts feed.
+    const { sb, calls, table } = fakeSb({ sensitivity: 100, campaigns: TWO_REGION_CAMPAIGNS });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r.suggested).toBe(1);
+    expect(table[0]).toMatchObject({ status: "armed" });
+    expect(calls.inserts.filter((u) => u.table === "alerts")).toHaveLength(0);
+  });
+  it("does not re-propose a pair that already has a live armed row", async () => {
+    // A second live row for an armed pair would invite a manual apply next to
+    // the scheduled execution — two idempotency keys, budget moved twice.
+    const armed = {
+      shop_id: SHOP,
+      suggested_on: "2026-07-05",
+      source_campaign_id: "w1",
+      dest_campaign_id: "e1",
+      status: "armed",
+    };
+    const { sb, table, calls } = fakeSb({
+      sensitivity: 50,
+      campaigns: TWO_REGION_CAMPAIGNS,
+      existingSuggestions: [armed],
+    });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r).toEqual({ suggested: 0, skippedReason: "already_armed" });
+    expect(table).toHaveLength(1);
+    expect(calls.inserts.filter((u) => u.table === "alerts")).toHaveLength(0);
   });
   it("queries the merchant's exact point for their home region when location is set", async () => {
     const { sb } = fakeSb({

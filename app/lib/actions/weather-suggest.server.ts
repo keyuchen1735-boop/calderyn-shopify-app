@@ -13,6 +13,7 @@ import {
   type RegionCentroid,
 } from "../weather/regions";
 import { FORECAST_HORIZON_DAYS, fetchRegionForecasts } from "../weather/open-meteo.server";
+import { isWeatherAuto } from "../weather/types";
 import { executeReallocation } from "./reallocate.server";
 
 export const SCORE_GAP_FLOOR = 0.15;
@@ -166,6 +167,7 @@ export interface RunResult {
     | "sensitivity_off"
     | "no_eligible_campaigns"
     | "no_suggestion"
+    | "already_armed"
     | "already_suggested_today";
 }
 
@@ -207,7 +209,25 @@ export async function runWeatherSuggestForShop(
   const suggestion = buildSuggestion(campaigns, scores, sensitivity);
   if (!suggestion) return { suggested: 0, skippedReason: "no_suggestion" };
 
+  // A pair the merchant already armed (or that is mid-apply) must not be
+  // re-proposed: a second live row would invite a manual apply alongside the
+  // scheduled execution — two idempotency keys, one intended move, budget
+  // moved twice — and would re-open the alert the arm just resolved.
+  const { data: liveArmed, error: liveErr } = await sb
+    .from("weather_suggestion")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("source_campaign_id", suggestion.sourceCampaignId)
+    .eq("dest_campaign_id", suggestion.destCampaignId)
+    .in("status", ["armed", "applying"])
+    .limit(1);
+  if (liveErr) throw liveErr;
+  if ((liveArmed ?? []).length > 0) return { suggested: 0, skippedReason: "already_armed" };
+
   const today = deps.today ?? new Date().toISOString().slice(0, 10);
+  // Dial at 100 = merchant opted into all-auto: predictions arm themselves and
+  // execute unattended when the trigger verifies.
+  const status = isWeatherAuto(sensitivity) ? "armed" : "pending";
   const { data: inserted, error } = await sb
     .from("weather_suggestion")
     .upsert(
@@ -223,9 +243,7 @@ export async function runWeatherSuggestForShop(
           source_score: suggestion.sourceScore,
           dest_score: suggestion.destScore,
           narrative: suggestion.narrative,
-          // Dial at 100 = merchant opted into all-auto: predictions arm
-          // themselves and execute unattended when the trigger verifies.
-          status: sensitivity >= 100 ? "armed" : "pending",
+          status,
           expires_on: plusDays(today, FORECAST_HORIZON_DAYS),
         },
       ],
@@ -243,6 +261,9 @@ export async function runWeatherSuggestForShop(
   // Nothing inserted → nothing to mirror either; re-opening the alert here
   // would resurrect a feed entry for a row the merchant already actioned.
   if (count === 0) return { suggested: 0, skippedReason: "already_suggested_today" };
+  // Auto mode (born armed): the move needs no approval, so it must not open an
+  // actionable alert — it lives on the Weather tab until the trigger fires.
+  if (status === "armed") return { suggested: count };
 
   // Mirror the prediction into the alerts feed so it surfaces alongside the
   // other detectors. The active-alert dedup index (alerts_active_condition_key)
@@ -266,6 +287,9 @@ export async function runWeatherSuggestForShop(
       dest_score: suggestion.destScore,
       amount_cents_per_day: suggestion.amountCents,
       suggested_on: today,
+      // Lets the Alerts detail act on the underlying prediction directly
+      // (arm / apply / dismiss) instead of only deep-linking to the Weather tab.
+      suggestion_id: String((inserted![0] as { id: unknown }).id),
     },
     title: `Weather favors ${suggestion.destRegion} — shift ${dollars(suggestion.amountCents)}/day`,
     narrative: suggestion.narrative,
@@ -374,13 +398,24 @@ export async function runWeatherExecuteForShop(
 
   // Retire pending rows that outlived their forecast window; without this the
   // table (and the loader's result set) grows by one orphan per day forever.
-  const { error: staleErr } = await sb
+  // Resolve each row's mirrored alert too — an expired prediction must not
+  // keep an open, actionable alert in the feed (its buttons would 409).
+  const { data: staleRows, error: staleErr } = await sb
     .from("weather_suggestion")
     .update({ status: "expired" })
     .eq("shop_id", shopId)
     .eq("status", "pending")
-    .lt("expires_on", today);
+    .lt("expires_on", today)
+    .select("source_campaign_id, dest_campaign_id");
   if (staleErr) throw staleErr;
+  for (const r of (staleRows ?? []) as Array<Record<string, unknown>>) {
+    await resolveWeatherAlert(
+      sb,
+      shopId,
+      String(r.source_campaign_id),
+      String(r.dest_campaign_id),
+    );
+  }
 
   const { data: armedData, error: armedErr } = await sb
     .from("weather_suggestion")

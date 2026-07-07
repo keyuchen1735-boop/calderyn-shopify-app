@@ -1,9 +1,9 @@
-// Weather segments panel: live per-region forecast, the merchant's home
+// Weather segments panel: icon-led per-region forecast, the merchant's home
 // location ask, and forecast-driven budget predictions (arm to execute when
 // the weather trigger verifies, or apply immediately).
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Card, Btn } from "./ui";
-import { money } from "./format";
+import { Card, Btn, Pill } from "./ui";
+import { money, shortDate } from "./format";
 import { CDIcon } from "./icons";
 import {
   fetchWeatherForecast,
@@ -11,9 +11,7 @@ import {
   type WeatherForecastDTO,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
-import { REGION_STATES, US_STATE_NAMES, type UsState } from "~/lib/ads/geo-regions";
-import { REGION_CENTROIDS } from "~/lib/weather/regions";
-import type { RegionCode } from "~/lib/ads/actions";
+import { conditionFor, type WeatherCondition } from "~/lib/weather/forecast-view";
 
 const REGION_LABEL: Record<string, string> = {
   "us-west": "West",
@@ -22,9 +20,21 @@ const REGION_LABEL: Record<string, string> = {
   "us-east": "East",
 };
 
-const ALL_STATES = (Object.keys(US_STATE_NAMES) as UsState[]).sort((a, b) =>
-  US_STATE_NAMES[a].localeCompare(US_STATE_NAMES[b]),
-);
+const COND_ICON: Record<WeatherCondition, string> = {
+  clear: "sun",
+  showers: "cloudSun",
+  rain: "rain",
+  snow: "snowflake",
+};
+
+const COND_COLOR: Record<WeatherCondition, string> = {
+  clear: "var(--orange)",
+  showers: "var(--text-2)",
+  rain: "var(--accent)",
+  snow: "var(--accent)",
+};
+
+const fahrenheit = (c: number): number => Math.round((c * 9) / 5 + 32);
 
 function CardHead({ children }: { children: ReactNode }) {
   return (
@@ -42,24 +52,34 @@ function CardHead({ children }: { children: ReactNode }) {
   );
 }
 
-// State-picker fallback stores the state's REGION centroid — coarse on
-// purpose; the browser geolocation path is the precise one.
-function stateCentroid(st: UsState): { lat: number; lon: number } | null {
-  const region = (Object.keys(REGION_STATES) as RegionCode[]).find((r) =>
-    (REGION_STATES[r] as readonly string[]).includes(st),
+/** Compact icon+label glyph for one endpoint of a budget-move flow row. */
+function RegionGlyph({ region, cond }: { region: string; cond: WeatherCondition | null }) {
+  return (
+    <div style={{ textAlign: "center", minWidth: 52 }}>
+      <CDIcon
+        name={cond ? COND_ICON[cond] : "globe"}
+        size={22}
+        strokeWidth={1.6}
+        style={{ color: cond ? COND_COLOR[cond] : "var(--text-3)" }}
+      />
+      <div className="cd-caption" style={{ marginTop: 2 }}>
+        {REGION_LABEL[region] ?? region}
+      </div>
+    </div>
   );
-  const c = REGION_CENTROIDS.find((p) => p.region === region);
-  return c ? { lat: c.lat, lon: c.lon } : null;
 }
 
 export function WeatherSegments({
   suggestions,
   onIntent,
   toast,
+  auto,
 }: {
   suggestions: WeatherSuggestionDTO[];
   onIntent: (id: string, intent: "apply" | "arm" | "dismiss") => void;
   toast: (msg: string, icon?: string, tone?: string) => void;
+  /** Sensitivity dial at 100: predictions arm and execute unattended. */
+  auto: boolean;
 }) {
   const [forecast, setForecast] = useState<WeatherForecastDTO | null>(null);
   const [forecastError, setForecastError] = useState(false);
@@ -83,6 +103,7 @@ export function WeatherSegments({
     try {
       await saveMerchantLocation(lat, lon);
       toast("Location saved — local forecast enabled", "check");
+      setGeoDenied(false);
       loadForecast();
     } catch {
       toast("Could not save your location", "x", "critical");
@@ -107,6 +128,11 @@ export function WeatherSegments({
     );
   };
 
+  // Region → coarse condition, for the flow rows below the forecast grid.
+  const condByRegion = new Map<string, WeatherCondition>(
+    (forecast?.regions ?? []).map((r) => [r.region, conditionFor(r)]),
+  );
+
   const pending = suggestions.filter((s) => s.status === "pending");
   const armed = suggestions.filter((s) => s.status === "armed");
 
@@ -118,48 +144,33 @@ export function WeatherSegments({
       {forecastError || (forecast && !forecast.hasLocation) ? (
         <Card>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <CDIcon name="mapPin" size={20} style={{ color: "var(--accent)", flexShrink: 0 }} />
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="cd-row-title">Where are you based?</div>
-              <div className="cd-caption">
-                Your location sharpens the forecast for your home region, which sharpens budget
-                predictions.
-              </div>
+              <div className="cd-row-title">Set your location</div>
+              <div className="cd-caption">Sharpens your home-region forecast</div>
             </div>
             <Btn small kind="primary" onClick={askBrowserLocation} disabled={locating}>
-              {locating ? "Locating…" : "Use my location"}
+              <CDIcon name="locate" size={13} strokeWidth={2} />{" "}
+              {locating ? "Locating…" : geoDenied ? "Try again" : "Find my location"}
             </Btn>
-            {geoDenied ? (
-              <select
-                className="cd-input"
-                defaultValue=""
-                aria-label="Select your state"
-                onChange={(e) => {
-                  const c = stateCentroid(e.target.value as UsState);
-                  if (c) void saveLocation(c.lat, c.lon);
-                }}
-              >
-                <option value="" disabled>
-                  Or pick your state…
-                </option>
-                {ALL_STATES.map((st) => (
-                  <option key={st} value={st}>
-                    {US_STATE_NAMES[st]}
-                  </option>
-                ))}
-              </select>
-            ) : null}
           </div>
+          {geoDenied ? (
+            <div className="cd-caption" style={{ color: "var(--red)", marginTop: 8 }}>
+              Couldn&apos;t get your location — check location permissions in your browser and
+              OS, then try again.
+            </div>
+          ) : null}
         </Card>
       ) : null}
 
       <Card pad={false}>
         <CardHead>
-          <div>
-            <div className="cd-row-title">Next 3 days by region</div>
-            <div className="cd-caption">
-              Higher demand score = weather favors more budget in that region
-            </div>
-          </div>
+          <div className="cd-row-title">Next 3 days</div>
+          {auto ? (
+            <Pill tone="success" icon="bolt">
+              Auto
+            </Pill>
+          ) : null}
         </CardHead>
         {forecastError ? (
           <div className="cd-caption" style={{ padding: "16px 20px" }}>
@@ -173,95 +184,109 @@ export function WeatherSegments({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
               gap: 12,
               padding: "12px 16px 16px",
             }}
           >
-            {forecast.regions.map((r) => (
-              <div
-                key={r.region}
-                className="cd-trow"
-                style={{ display: "block", padding: 12, borderRadius: 10 }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div className="cd-row-title">{REGION_LABEL[r.region] ?? r.region}</div>
-                  {forecast.homeRegion === r.region ? (
-                    <span className="cd-caption" style={{ color: "var(--accent)" }}>
-                      · you
-                    </span>
-                  ) : null}
-                </div>
-                <div className="cd-caption" style={{ display: "flex", gap: 10, marginTop: 4 }}>
-                  <span>
-                    <CDIcon name="sun" size={12} /> {Math.round(r.avgTempC)}°C
-                  </span>
-                  <span>
-                    <CDIcon name="rain" size={12} /> {Math.round(r.precipMm)}mm
-                  </span>
-                </div>
+            {forecast.regions.map((r) => {
+              const cond = conditionFor(r);
+              const home = forecast.homeRegion === r.region;
+              return (
                 <div
-                  aria-hidden
-                  style={{
-                    marginTop: 8,
-                    height: 4,
-                    borderRadius: 2,
-                    background: "color-mix(in oklch, var(--accent) 12%, transparent)",
-                  }}
+                  key={r.region}
+                  className="cd-trow"
+                  style={{ display: "block", padding: "14px 12px", borderRadius: 10, textAlign: "center" }}
                 >
-                  <div
-                    style={{
-                      width: `${Math.round(r.score * 100)}%`,
-                      height: "100%",
-                      borderRadius: 2,
-                      background: "var(--accent)",
-                    }}
+                  <CDIcon
+                    name={COND_ICON[cond]}
+                    size={34}
+                    strokeWidth={1.5}
+                    style={{ color: COND_COLOR[cond] }}
                   />
+                  <div className="tabular-nums" style={{ fontSize: 25, fontWeight: 650, lineHeight: 1.2 }}>
+                    {fahrenheit(r.avgTempC)}°
+                  </div>
+                  <div
+                    className="cd-caption"
+                    style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4 }}
+                  >
+                    {home ? (
+                      <CDIcon name="mapPin" size={11} strokeWidth={2.2} style={{ color: "var(--accent)" }} />
+                    ) : null}
+                    {REGION_LABEL[r.region] ?? r.region}
+                  </div>
+                  {cond !== "clear" ? (
+                    <div className="cd-caption tabular-nums" style={{ marginTop: 4 }}>
+                      <CDIcon name={cond === "snow" ? "snowflake" : "rain"} size={11} />{" "}
+                      {cond === "snow" ? `${Math.round(r.snowCm)}cm` : `${Math.round(r.precipMm)}mm`}
+                    </div>
+                  ) : null}
+                  <div
+                    aria-hidden
+                    style={{
+                      marginTop: 8,
+                      height: 4,
+                      borderRadius: 2,
+                      background: "color-mix(in oklch, var(--accent) 12%, transparent)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.round(r.score * 100)}%`,
+                        height: "100%",
+                        borderRadius: 2,
+                        background: "var(--accent)",
+                      }}
+                    />
+                  </div>
+                  <div className="cd-caption tabular-nums" style={{ marginTop: 4 }}>
+                    {(r.score * 100).toFixed(0)} demand
+                  </div>
                 </div>
-                <div className="cd-caption tabular-nums" style={{ marginTop: 4 }}>
-                  Demand score {(r.score * 100).toFixed(0)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
 
       <Card pad={false}>
         <CardHead>
-          <div>
-            <div className="cd-row-title">Predicted budget moves</div>
-            <div className="cd-caption">
-              Arm a move and it executes on its own once the forecast holds up
-            </div>
-          </div>
+          <div className="cd-row-title">Budget moves</div>
+          {auto ? (
+            <span className="cd-caption">Executes on its own when the forecast confirms</span>
+          ) : (
+            <span className="cd-caption">Armed moves execute when the forecast confirms</span>
+          )}
         </CardHead>
         {pending.length === 0 && armed.length === 0 ? (
           <div className="cd-caption" style={{ padding: "16px 20px" }}>
-            No weather moves predicted right now. When the next 3 days&apos; forecast favors
-            shifting budget between regions, they&apos;ll appear here. Predictions need at
-            least two active campaigns that each target a single US region.
+            No weather moves predicted — needs two active campaigns each targeting a single US
+            region.
           </div>
         ) : (
           [...armed, ...pending].map((s) => (
             <div
               key={s.id}
               className="cd-trow"
-              style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}
+              title={s.narrative}
+              style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}
             >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div className="cd-row-title">{`${money(s.amountCents)}/day`}</div>
-                <div className="cd-caption">{s.narrative}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                <RegionGlyph region={s.sourceRegion} cond={condByRegion.get(s.sourceRegion) ?? null} />
+                <div style={{ textAlign: "center" }}>
+                  <div className="cd-row-title tabular-nums" style={{ whiteSpace: "nowrap" }}>
+                    {money(s.amountCents)}/day
+                  </div>
+                  <CDIcon name="arrowRight" size={16} strokeWidth={2} style={{ color: "var(--accent)" }} />
+                </div>
+                <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
               </div>
               {s.status === "armed" ? (
                 <>
-                  <span
-                    className="cd-caption"
-                    style={{ color: "var(--accent)", whiteSpace: "nowrap" }}
-                  >
-                    <CDIcon name="bolt" size={12} /> Armed · fires when the forecast confirms ·
-                    through {s.expiresOn}
-                  </span>
+                  <Pill tone="accent" icon="bolt">
+                    {auto ? "Auto" : "Armed"} · thru {shortDate(s.expiresOn)}
+                  </Pill>
                   <Btn small onClick={() => onIntent(s.id, "dismiss")}>
                     Disarm
                   </Btn>

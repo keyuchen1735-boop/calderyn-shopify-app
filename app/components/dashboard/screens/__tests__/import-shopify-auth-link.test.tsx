@@ -35,6 +35,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     liveOn: false,
     setLiveOn: () => {},
     executeAction: async () => ({ ok: true, receipt: null }),
+    weatherIntent: async () => true,
     undoAction: () => {},
     pushAdDraft: () => {},
     toast: () => {},

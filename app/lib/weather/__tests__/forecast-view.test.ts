@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildForecastView } from "../forecast-view";
+import { buildForecastView, conditionFor } from "../forecast-view";
 import type { RegionCode } from "../../ads/actions";
 import type { RegionForecast } from "../score";
 
@@ -35,5 +35,14 @@ describe("buildForecastView", () => {
     const view = buildForecastView(partial, null);
     expect(view.regions).toHaveLength(1);
     expect(view.regions[0].region).toBe("us-west");
+  });
+});
+
+describe("conditionFor", () => {
+  it("maps 3-day aggregates to a coarse sky condition", () => {
+    expect(conditionFor({ precipMm: 0, snowCm: 0 })).toBe("clear");
+    expect(conditionFor({ precipMm: 4, snowCm: 0 })).toBe("showers");
+    expect(conditionFor({ precipMm: 22, snowCm: 0 })).toBe("rain");
+    expect(conditionFor({ precipMm: 22, snowCm: 3 })).toBe("snow");
   });
 });
