@@ -159,7 +159,10 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     if (pageKey === "home") {
       const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), {
         model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
-        maxTokens: 8000,
+        // 12000, not 8000: with the fx channels in the prompt, Sonnet's full home
+        // pages regularly ran to exactly 8000 and truncated mid-section (verified
+        // against live generations); Opus finishes near 4000 either way.
+        maxTokens: 12000,
       });
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
