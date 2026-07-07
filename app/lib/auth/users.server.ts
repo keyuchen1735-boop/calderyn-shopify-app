@@ -92,7 +92,11 @@ export async function findUserByGoogleSub(
 export async function setGoogleSub(userId: string, sub: string): Promise<void> {
   const { error } = await getSupabase()
     .from("users")
-    .update({ google_sub: sub, updated_at: new Date().toISOString() })
+    // Linking a Google identity proves Google-verified mailbox ownership (the
+    // sign-in callback only links after asserting emailVerified), so mark the
+    // email verified — otherwise a password user who never clicked the verify
+    // link stays trapped at the verify gate even after signing in with Google.
+    .update({ google_sub: sub, email_verified: true, updated_at: new Date().toISOString() })
     .eq("id", userId);
   if (error) throw error;
 }
