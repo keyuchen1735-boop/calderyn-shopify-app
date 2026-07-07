@@ -115,6 +115,12 @@ export interface StudioState {
  *  request can never bill an arbitrary model. */
 export type StudioDesignModel = "sonnet" | "opus";
 
+/** Image media types the multipart generate path accepts (what the Anthropic
+ *  image API takes) — the single allowlist for BOTH sides: the composer screens
+ *  staged files against it, the route 422s anything else. One source of truth
+ *  so a type the client stages can never dead-end at the server. */
+export const STUDIO_IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
+
 /** One entry PER attached image on the add-as-products path — every image is
  *  accounted for, in attachment order:
  *  - `id` set, no error fields → created with its image.

@@ -16,11 +16,12 @@ import { createProduct } from "~/lib/catalog/catalog.server";
 import { uploadProductMedia } from "~/lib/catalog/media.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
-import type {
-  StudioDesignModel,
-  StudioVibe,
-  StudioGenerateReceipt,
-  StudioAddedProduct,
+import {
+  STUDIO_IMAGE_MEDIA_TYPES,
+  type StudioDesignModel,
+  type StudioVibe,
+  type StudioGenerateReceipt,
+  type StudioAddedProduct,
 } from "~/lib/storebuilder/studio-types";
 import { quotaTrusted } from "~/lib/ai-quota.server";
 import type { DashboardSession } from "~/lib/dashboard/session.server";
@@ -52,7 +53,8 @@ function heroText(v: unknown): string | null {
 // this raw size before buffering/encoding the body.
 const MAX_IMAGE_BYTES = 3_932_160;
 const MAX_IMAGES = 4;
-const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+// Shared with the composer's staging screen (studio-types.ts) — one allowlist.
+const IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set(STUDIO_IMAGE_MEDIA_TYPES);
 
 // Explicit intent override the needs_intent quick-reply resubmits: the merchant
 // already told us what to do, so map the choice straight to a decision and SKIP

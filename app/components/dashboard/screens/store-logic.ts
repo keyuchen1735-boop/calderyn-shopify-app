@@ -1,7 +1,7 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import { STUDIO_IMAGE_MEDIA_TYPES, type StudioVibe } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
   /** Live (active) products the storefront actually renders. */
@@ -206,8 +206,11 @@ export interface StagePlan {
  *  staged. Pure so the non-image / oversize / over-cap rules stay unit-testable
  *  apart from the object-URL + React state work the screen layers on top. */
 export function planStagedAttachments(files: File[], alreadyStaged: number): StagePlan {
-  const skipped = files.filter((f) => !f.type.startsWith("image/"));
-  const images = files.filter((f) => f.type.startsWith("image/"));
+  // Exact server allowlist (studio-types.ts), not image/* — a drag-dropped HEIC or
+  // SVG would otherwise chip up here and dead-end in a 422 at send.
+  const allowed: ReadonlySet<string> = new Set<string>(STUDIO_IMAGE_MEDIA_TYPES);
+  const skipped = files.filter((f) => !allowed.has(f.type));
+  const images = files.filter((f) => allowed.has(f.type));
   const oversize = images.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
   const withinSize = images.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
   const slots = Math.max(0, MAX_STAGED_ATTACHMENTS - alreadyStaged);

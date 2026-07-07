@@ -33,6 +33,23 @@ describe("planStagedAttachments", () => {
     expect(plan.skipped.map((f) => f.name)).toEqual(["notes.pdf"]);
   });
 
+  it("skips image types outside the server allowlist (image/* is not enough)", () => {
+    // HEIC/SVG pass an image/* check but the server 422s them — they must be
+    // rejected at staging, before the chips are cleared by a doomed send.
+    const plan = planStagedAttachments(
+      [
+        imageOfSize("photo.heic", 100, "image/heic"),
+        imageOfSize("logo.svg", 100, "image/svg+xml"),
+        imageOfSize("ok.webp", 100, "image/webp"),
+        imageOfSize("ok.gif", 100, "image/gif"),
+        imageOfSize("ok.jpg", 100, "image/jpeg"),
+      ],
+      0,
+    );
+    expect(plan.accepted.map((f) => f.name)).toEqual(["ok.webp", "ok.gif", "ok.jpg"]);
+    expect(plan.skipped.map((f) => f.name)).toEqual(["photo.heic", "logo.svg"]);
+  });
+
   it("rejects images over the byte cap into oversize", () => {
     const plan = planStagedAttachments(
       [imageOfSize("ok.png", MAX_ATTACHMENT_BYTES), imageOfSize("big.png", MAX_ATTACHMENT_BYTES + 1)],

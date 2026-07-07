@@ -116,6 +116,14 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setChatBusy(v);
   };
   const [attaching, setAttaching] = useState(false);
+  // Ref-paired like chatBusy: the "Add as products" quick-reply lives inside a
+  // chat message and can be clicked long after the render that created it, so
+  // its overlap guard must read a ref, not the closed-over state.
+  const attachingRef = useRef(false);
+  const setAttachingBoth = (v: boolean) => {
+    attachingRef.current = v;
+    setAttaching(v);
+  };
   const buildingRef = useRef(false);
   const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
   // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
@@ -281,11 +289,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // wide for the TopBar badge / canvas veil / welcome overlay).
   // Flip a build's working card to a failed phase and post the message; the
   // shared error path for both the JSON and the multipart generate calls.
-  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean }) => {
+  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean; actions?: ChatAction[] }) => {
     const failedPhase: BuildPhase = { kind: "failed", message };
     setBuildPhase(failedPhase);
     setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
-    pushMsg({ id: newId(), kind: "ai-text", text: message });
+    pushMsg({ id: newId(), kind: "ai-text", text: message, actions: opts?.actions });
     if (opts?.toast) toast(message, "warn", "critical");
   };
 
@@ -471,7 +479,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   const onComposerSend = () => {
-    if (chatBusyRef.current || buildingRef.current || attaching) return;
+    if (chatBusyRef.current || buildingRef.current || attachingRef.current) return;
     const text = prompt.trim();
     const staged = attachments;
     // No attachments → today's exact text-only path, untouched.
@@ -576,7 +584,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       pushMsg({
         id: newId(),
         kind: "ai-text",
-        text: `Skipped ${plan.skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use images right now.`,
+        text: `Skipped ${plan.skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use PNG, JPEG, WebP or GIF images right now.`,
       });
     }
     if (plan.oversize.length > 0) {
@@ -640,29 +648,33 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // Extracted from the old auto-convert path so its per-item messaging, partial-
   // failure toast and refresh live in one place — never silently drops an item.
   const runAddProductsFromImages = async (files: File[]) => {
-    if (attaching) {
+    if (attachingRef.current) {
       toast("Still adding the previous images. Try again in a moment.");
       return;
     }
     if (chatBusyRef.current || buildingRef.current) return;
-    setAttaching(true);
-    const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
-    if (!aliveRef.current) return;
-    const lines = results.map((r, i) => {
-      if (r.status === "fulfilled" && !r.value.imageError) return `Added "${r.value.title}" as a draft product.`;
-      if (r.status === "fulfilled") {
-        return `Added draft "${r.value.title}", but its image failed to upload. Add one in Products.`;
-      }
-      const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
-      return `Couldn't add "${files[i].name}": ${msg}.`;
-    });
-    pushMsg({ id: newId(), kind: "ai-text", text: lines.join(" ") });
-    const failedCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.imageError)).length;
-    if (failedCount > 0) toastProductFailures(failedCount, results.length);
+    setAttachingBoth(true);
+    // Everything after the guard sits in one try/finally so EVERY exit (the
+    // unmount early-return included) releases the ref — a stuck true would
+    // permanently dead-end the quick-reply.
     try {
+      const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
+      if (!aliveRef.current) return;
+      const lines = results.map((r, i) => {
+        if (r.status === "fulfilled" && !r.value.imageError) return `Added "${r.value.title}" as a draft product.`;
+        if (r.status === "fulfilled") {
+          return `Added draft "${r.value.title}", but its image failed to upload. Add one in Products.`;
+        }
+        const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
+        return `Couldn't add "${files[i].name}": ${msg}.`;
+      });
+      pushMsg({ id: newId(), kind: "ai-text", text: lines.join(" ") });
+      const failedCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.imageError)).length;
+      if (failedCount > 0) toastProductFailures(failedCount, results.length);
       await refresh();
       reloadPreview();
     } finally {
+      attachingRef.current = false;
       if (aliveRef.current) setAttaching(false);
     }
   };
@@ -748,7 +760,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
-      failBuild(workingId, msg, { toast: true });
+      // The chips were cleared at send, so a transient failure (429/network/502)
+      // must re-offer the held files — otherwise the merchant re-picks everything.
+      failBuild(workingId, msg, {
+        toast: true,
+        actions: [{ label: "Try again", kind: "primary", onClick: () => void runAttachmentBuild(brief, files, intent) }],
+      });
     } finally {
       buildingRef.current = false;
     }
