@@ -120,10 +120,12 @@ export async function listBuyerOrders(shopId: string, buyerId: string): Promise<
  * Order of operations:
  *  1. Delete the buyer's Stripe Customer (removes all vaulted PaymentMethods) — done FIRST, while
  *     the stripe_customer_id is still readable from buyer_dim. Best-effort (logged, not thrown).
- *  2. Delete the buyer_dim row. Its ON DELETE CASCADE composite FKs remove buyer_address,
- *     buyer_consent, buyer_magic_link, buyer_session (so every live session is gone — stronger
- *     than a revoke), and buyer_payment_method. The OLTP `orders` FK also cascades (its buyer_id
- *     is a PII link); the warehouse order_fact is NOT reachable from this cascade and is preserved.
+ *  2. Delete the buyer_dim row. Its ON DELETE CASCADE composite FKs remove the buyer's PII —
+ *     buyer_address, buyer_consent, buyer_magic_link, buyer_session (so every live session is gone —
+ *     stronger than a revoke), and buyer_payment_method. The OLTP `orders` FK is column-scoped
+ *     SET NULL (20260707120000): a delete NULLs only orders.buyer_id, DETACHING the buyer from their
+ *     captured sales while preserving the orders + order_line rows the merchant's revenue surfaces
+ *     read. So the account's PII is erased but past sales are never dropped from Analytics / Orders.
  */
 export async function deleteBuyerAccount(shopId: string, buyerId: string): Promise<void> {
   if (!shopId) throw new Error("shopId is required");
