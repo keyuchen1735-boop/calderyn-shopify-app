@@ -4,6 +4,7 @@ import type { StoreProduct } from "~/lib/storefront/catalog";
 import type { StoreSettings } from "~/lib/storefront/settings.server";
 import type { JsonLd, SeoDraft } from "./types";
 import { plainText, clampText, clampTitle } from "./text";
+import { sellableVariants, sellablePrice } from "./pricing";
 import {
   productJsonLd, offerNode, aggregateOfferNode, organizationJsonLd, webSiteJsonLd, collectionJsonLd, breadcrumbJsonLd,
 } from "./jsonld.server";
@@ -15,22 +16,23 @@ const DESC_MAX = 155;
 function productDescription(product: StoreProduct, store: StoreSettings): string {
   const body = plainText(product.description);
   if (body) return clampText(body, DESC_MAX);
-  return clampText(`${product.title} from ${store.storeName}.`, DESC_MAX);
+  // A brand-new product with no description still needs a natural, human-readable
+  // line that clears the 50-char health floor, so a fresh catalog reads healthy.
+  return clampText(
+    `${product.title} from ${store.storeName}. See the details, pricing, and current availability, then order online.`,
+    DESC_MAX,
+  );
 }
 
 function buildOffers(product: StoreProduct, url: string): JsonLd | null {
-  const sellable = product.variants.filter((v) => v.priceCents > 0);
+  const sellable = sellableVariants(product);
   if (sellable.length === 0) return null;
-  const currency = sellable[0].currency;
-  const anyAvailable = sellable.some((v) => v.available);
-  const prices = sellable.map((v) => v.priceCents);
-  const low = Math.min(...prices);
-  const high = Math.max(...prices);
+  const { priceCents: low, currency, available } = sellablePrice(product);
+  const high = Math.max(...sellable.map((v) => v.priceCents));
   if (low === high) {
-    const v = sellable[0];
-    return offerNode({ priceCents: v.priceCents, currency, available: anyAvailable, sku: v.sku, url });
+    return offerNode({ priceCents: low, currency, available, sku: sellable[0].sku, url });
   }
-  return aggregateOfferNode({ lowCents: low, highCents: high, currency, offerCount: sellable.length, anyAvailable });
+  return aggregateOfferNode({ lowCents: low, highCents: high, currency, offerCount: sellable.length, anyAvailable: available });
 }
 
 export function buildProductDraft(product: StoreProduct, store: StoreSettings, origin: string): SeoDraft {

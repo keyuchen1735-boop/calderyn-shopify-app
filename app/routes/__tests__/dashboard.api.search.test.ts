@@ -26,7 +26,7 @@ const {
     needsAttention: [],
     aiCrawls: [],
     aiCrawlTotal: 0,
-    settings: { allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null },
+    settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
   }),
   getProductSeoDetailMock: vi.fn().mockResolvedValue({
     id: "p1",
@@ -40,7 +40,7 @@ const {
   getShopStorefrontOriginMock: vi.fn().mockResolvedValue("https://ember.calderyncompany.com"),
   upsertSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   deleteSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
-  upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: false, allowAiTraining: false, orgName: "Ember", orgDescription: null }),
+  upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: false, orgName: "Ember", orgDescription: null }),
   createOAuthStateMock: vi.fn().mockResolvedValue("nonce-state"),
   buildConnectUrlMock: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?state=nonce-state"),
   disconnectGscMock: vi.fn().mockResolvedValue(undefined),

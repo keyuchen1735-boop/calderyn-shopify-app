@@ -39,7 +39,7 @@ vi.mock("../../storefront/settings.server", () => ({ getStoreSettings: async () 
 vi.mock("../seo-store.server", () => ({
   listSeoOverrides: async () => new Map(),
   getSeoOverride: async () => null,
-  getSeoSettings: async () => ({ allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null }),
+  getSeoSettings: async () => ({ allowAiCrawlers: true, orgName: null, orgDescription: null }),
 }));
 const { getGscStateMock, getRankingsSinceMock } = vi.hoisted(() => ({
   getGscStateMock: vi.fn(),
@@ -108,7 +108,7 @@ describe("buildSeoOverview", () => {
   it("averages product health and lists only sub-100 pages worst-first", async () => {
     const vm = await buildSeoOverview(SHOP, ORIGIN);
     expect(vm.productCount).toBe(2);
-    expect(vm.storeHealth).toBe(86); // round((100 + 71) / 2)
+    expect(vm.storeHealth).toBe(93); // round((100 + 86) / 2); the empty-body product now gets a healthy default description
     expect(vm.needsAttention.map((r) => r.id)).toEqual(["p2"]);
     expect(vm.needsAttention[0].score).toBeLessThan(100);
     expect(vm.needsAttention[0].topIssue).toBeTruthy();
@@ -138,6 +138,20 @@ describe("buildSeoOverview", () => {
     const slip = vm.needsAttention.find((r) => r.handle === "cedar-bloom");
     expect(slip).toBeTruthy();
     expect(slip?.topIssue).toMatch(/slipping on google/i);
+  });
+  it("merges a slip note into a page that also has a content issue, without dropping either or duplicating the row", async () => {
+    getGscStateMock.mockResolvedValue({ connected: true, siteUrl: "https://ember.calderyncompany.com/" });
+    // The weak product ("plain") already fails a content check (no share image);
+    // a slip on the same page must be merged into that one row, not dropped.
+    getRankingsSinceMock.mockResolvedValue([
+      { query: "plain candle", pageUrl: "https://ember.calderyncompany.com/storefront/products/plain", position: 4, impressions: 60, clicks: 3, ctr: 0.05, capturedDate: "2026-06-01" },
+      { query: "plain candle", pageUrl: "https://ember.calderyncompany.com/storefront/products/plain", position: 13, impressions: 40, clicks: 1, ctr: 0.02, capturedDate: "2026-06-20" },
+    ]);
+    const vm = await buildSeoOverview(SHOP, ORIGIN);
+    const plainRows = vm.needsAttention.filter((r) => r.handle === "plain");
+    expect(plainRows).toHaveLength(1); // one row per page
+    expect(plainRows[0].topIssue).toMatch(/slipping on google/i); // slip surfaced
+    expect(plainRows[0].topIssue).toMatch(/share image/i); // content issue preserved
   });
   it("falls back to an empty card and skips slip rows when the seo_ranking read fails", async () => {
     getGscStateMock.mockResolvedValue({ connected: true, siteUrl: "https://ember.calderyncompany.com/" });

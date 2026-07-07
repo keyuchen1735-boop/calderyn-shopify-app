@@ -38,7 +38,7 @@ const overview = {
     { botName: "PerplexityBot", hits: 40 },
   ],
   aiCrawlTotal: 1240,
-  settings: { allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null },
+  settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
   google: { connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
 };
 

@@ -5,6 +5,11 @@ vi.mock("../../storefront/catalog.server", () => ({
     listProducts: async () => [
       { id: "p1", handle: "cedar-bloom", title: "Cedar Bloom", description: "Soy candle", images: [], variants: [{ id: "v1", sku: null, title: "8oz", priceCents: 3200, currency: "EUR", available: true }], collections: [] },
       { id: "p2", handle: "vanilla", title: "Vanilla 8oz", description: "", images: [], variants: [{ id: "v2", sku: null, title: "8oz", priceCents: 2500, currency: "EUR", available: false }], collections: [] },
+      // Only in-stock variant is a $0 sample; the buyable price (40.00) is out of stock.
+      { id: "p3", handle: "sampler", title: "Sampler", description: "", images: [], variants: [
+        { id: "v3", sku: null, title: "sample", priceCents: 0, currency: "EUR", available: true },
+        { id: "v4", sku: null, title: "full", priceCents: 4000, currency: "EUR", available: false },
+      ], collections: [] },
     ],
     listCollections: async () => [{ handle: "soy", title: "Soy Candles" }],
     getProduct: async () => null,
@@ -13,6 +18,8 @@ vi.mock("../../storefront/catalog.server", () => ({
 
 // eslint-disable-next-line import/first
 import { buildRobotsTxt, buildSitemapXml, buildLlmsTxt } from "../site-files.server";
+// eslint-disable-next-line import/first
+import { AI_BOT_NAMES } from "../crawlers.server";
 // eslint-disable-next-line import/first
 import type { StoreSettings } from "~/lib/storefront/settings.server";
 
@@ -33,9 +40,18 @@ describe("buildRobotsTxt", () => {
     expect(txt).toContain(`Sitemap: ${ORIGIN}/sitemap.xml`);
   });
 
-  it("disallows the AI bots when allowAiCrawlers is false, keeping generic crawlers allowed", () => {
+  it("disallows EVERY detected AI bot when allowAiCrawlers is false, keeping generic crawlers allowed", () => {
     const txt = buildRobotsTxt(ORIGIN, false);
-    expect(txt).toContain("User-agent: GPTBot\nDisallow: /");
+    // The robots block and the UA detector share one canonical list: turning AI
+    // access off must block all of them, not just the well-known few.
+    expect(AI_BOT_NAMES.length).toBe(13);
+    for (const bot of AI_BOT_NAMES) {
+      expect(txt).toContain(`User-agent: ${bot}\nDisallow: /`);
+    }
+    // Bots that the old short list missed are now covered.
+    for (const bot of ["Bytespider", "CCBot", "Amazonbot", "cohere-ai", "anthropic-ai", "Claude-User", "Perplexity-User"]) {
+      expect(txt).toContain(`User-agent: ${bot}\nDisallow: /`);
+    }
     expect(txt).toContain("User-agent: *\nAllow: /");
     expect(txt).toContain(`Sitemap: ${ORIGIN}/sitemap.xml`);
   });
@@ -59,5 +75,12 @@ describe("buildLlmsTxt", () => {
     expect(txt).toContain("[Cedar Bloom](https://ember.calderyncompany.com/storefront/products/cedar-bloom)");
     expect(txt).toContain("32.00 EUR");
     expect(txt).toContain("Out of stock"); // vanilla is unavailable
+  });
+
+  it("reports a sellable price as out of stock when only a $0 sample is available", async () => {
+    const txt = await buildLlmsTxt("s1", store, ORIGIN);
+    // The paid variant (40.00) is out of stock; the free sample must not make the
+    // buyable price read as "In stock".
+    expect(txt).toContain("[Sampler](https://ember.calderyncompany.com/storefront/products/sampler): 40.00 EUR, Out of stock");
   });
 });

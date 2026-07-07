@@ -5,14 +5,12 @@
 // absence means the storefront serves the live engine draft. Non-uuid (demo)
 // shops never touch the DB (mirrors settings.server.ts / crawlers.server.ts).
 import { getSupabase } from "~/lib/supabase.server";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUuid } from "~/lib/ids";
 
 export type SeoEntityType = "product" | "home" | "collection";
 
 export interface SeoSettings {
   allowAiCrawlers: boolean;
-  allowAiTraining: boolean;
   orgName: string | null;
   orgDescription: string | null;
 }
@@ -26,16 +24,15 @@ export interface SeoOverride {
 
 const DEFAULT_SETTINGS: SeoSettings = {
   allowAiCrawlers: true,
-  allowAiTraining: false,
   orgName: null,
   orgDescription: null,
 };
 
 export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
-  if (!UUID_RE.test(shopId)) return { ...DEFAULT_SETTINGS };
+  if (!isUuid(shopId)) return { ...DEFAULT_SETTINGS };
   const { data, error } = await getSupabase()
     .from("seo_settings")
-    .select("allow_ai_crawlers, allow_ai_training, org_name, org_description")
+    .select("allow_ai_crawlers, org_name, org_description")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw error;
@@ -43,17 +40,15 @@ export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
   return {
     // Present-but-false must survive; only a truly missing column falls to default.
     allowAiCrawlers: data.allow_ai_crawlers !== false,
-    allowAiTraining: data.allow_ai_training === true,
     orgName: (data.org_name as string | null) ?? null,
     orgDescription: (data.org_description as string | null) ?? null,
   };
 }
 
 export async function upsertSeoSettings(shopId: string, patch: Partial<SeoSettings>): Promise<SeoSettings> {
-  if (!UUID_RE.test(shopId)) throw new Error(`upsertSeoSettings requires a real (uuid) shop_id, got ${shopId}`);
+  if (!isUuid(shopId)) throw new Error(`upsertSeoSettings requires a real (uuid) shop_id, got ${shopId}`);
   const row: Record<string, unknown> = { shop_id: shopId, updated_at: new Date().toISOString() };
   if (patch.allowAiCrawlers !== undefined) row.allow_ai_crawlers = patch.allowAiCrawlers;
-  if (patch.allowAiTraining !== undefined) row.allow_ai_training = patch.allowAiTraining;
   if (patch.orgName !== undefined) row.org_name = patch.orgName;
   if (patch.orgDescription !== undefined) row.org_description = patch.orgDescription;
   const { error } = await getSupabase().from("seo_settings").upsert(row, { onConflict: "shop_id" });
@@ -71,7 +66,7 @@ function mapOverride(row: Record<string, unknown>): SeoOverride {
 }
 
 export async function getSeoOverride(shopId: string, entityType: string, entityId: string): Promise<SeoOverride | null> {
-  if (!UUID_RE.test(shopId)) return null;
+  if (!isUuid(shopId)) return null;
   const { data, error } = await getSupabase()
     .from("seo_page")
     .select("entity_type, entity_id, meta_title, meta_description")
@@ -85,7 +80,7 @@ export async function getSeoOverride(shopId: string, entityType: string, entityI
 
 export async function listSeoOverrides(shopId: string): Promise<Map<string, SeoOverride>> {
   const out = new Map<string, SeoOverride>();
-  if (!UUID_RE.test(shopId)) return out;
+  if (!isUuid(shopId)) return out;
   const { data, error } = await getSupabase()
     .from("seo_page")
     .select("entity_type, entity_id, meta_title, meta_description")
@@ -102,7 +97,7 @@ export async function upsertSeoOverride(
   shopId: string,
   input: { entityType: string; entityId: string; metaTitle: string | null; metaDescription: string | null; updatedBy?: string | null },
 ): Promise<void> {
-  if (!UUID_RE.test(shopId)) throw new Error(`upsertSeoOverride requires a real (uuid) shop_id, got ${shopId}`);
+  if (!isUuid(shopId)) throw new Error(`upsertSeoOverride requires a real (uuid) shop_id, got ${shopId}`);
   const { error } = await getSupabase().from("seo_page").upsert(
     {
       shop_id: shopId,
@@ -119,7 +114,7 @@ export async function upsertSeoOverride(
 }
 
 export async function deleteSeoOverride(shopId: string, entityType: string, entityId: string): Promise<void> {
-  if (!UUID_RE.test(shopId)) return;
+  if (!isUuid(shopId)) return;
   const { error } = await getSupabase()
     .from("seo_page")
     .delete()

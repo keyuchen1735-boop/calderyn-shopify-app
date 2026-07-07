@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 // server-side); mock the data layer so no network is touched.
 const overview = {
   storeHealth: 90, productCount: 2, needsAttention: [], aiCrawls: [], aiCrawlTotal: 0,
-  settings: { allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null },
+  settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
   google: { connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
 };
 let seeded = overview;

@@ -2,8 +2,8 @@
 // Public per-tenant text/xml files. Generated from the owned catalog; failure-isolated by callers.
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import type { StoreSettings } from "~/lib/storefront/settings.server";
-
-const AI_BOTS_ALLOWED = ["GPTBot", "OAI-SearchBot", "ChatGPT-User", "ClaudeBot", "PerplexityBot", "Google-Extended"];
+import { AI_BOT_NAMES } from "./crawlers.server";
+import { sellablePrice } from "./pricing";
 
 function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -13,7 +13,7 @@ export function buildRobotsTxt(origin: string, allowAiCrawlers = true): string {
   // Standard search crawlers are always welcome (Allow: /). Only the AI-bot
   // blocks flip: allow => cite this store; deny => ask them not to crawl.
   const aiRule = allowAiCrawlers ? "Allow: /" : "Disallow: /";
-  const aiBlocks = AI_BOTS_ALLOWED.map((b) => `User-agent: ${b}\n${aiRule}`).join("\n\n");
+  const aiBlocks = AI_BOT_NAMES.map((b) => `User-agent: ${b}\n${aiRule}`).join("\n\n");
   const heading = allowAiCrawlers
     ? "# AI assistants are welcome to read and cite this store."
     : "# AI assistants are asked not to crawl this store.";
@@ -57,10 +57,7 @@ export async function buildLlmsTxt(shopId: string, store: StoreSettings, origin:
   ];
   for (const p of products) {
     const url = `${origin}/storefront/products/${p.handle}`;
-    const sellable = p.variants.filter((v) => v.priceCents > 0);
-    const priceCents = sellable.length ? Math.min(...sellable.map((v) => v.priceCents)) : 0;
-    const currency = sellable[0]?.currency ?? "";
-    const available = p.variants.some((v) => v.available);
+    const { priceCents, currency, available } = sellablePrice(p);
     const price = priceCents ? `${(priceCents / 100).toFixed(2)} ${currency}` : "Not for sale";
     const stock = available ? "In stock" : "Out of stock";
     lines.push(`- [${p.title}](${url}): ${price}, ${stock}`);

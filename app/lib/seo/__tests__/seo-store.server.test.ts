@@ -56,7 +56,7 @@ import {
 } from "../seo-store.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
-const DEFAULTS = { allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null };
+const DEFAULTS = { allowAiCrawlers: true, orgName: null, orgDescription: null };
 
 beforeEach(() => { store.seo_settings = []; store.seo_page = []; forcedError = null; });
 
@@ -67,16 +67,16 @@ describe("getSeoSettings", () => {
   it("returns defaults for a non-uuid (demo) shop without touching the DB", async () => {
     expect(await getSeoSettings("demo-shop")).toEqual(DEFAULTS);
   });
-  it("maps a stored row", async () => {
+  it("maps a stored row and ignores the dormant allow_ai_training column", async () => {
     store.seo_settings.push({ shop_id: SHOP, allow_ai_crawlers: false, allow_ai_training: true, org_name: "Ember", org_description: "Candles" });
-    expect(await getSeoSettings(SHOP)).toEqual({ allowAiCrawlers: false, allowAiTraining: true, orgName: "Ember", orgDescription: "Candles" });
+    expect(await getSeoSettings(SHOP)).toEqual({ allowAiCrawlers: false, orgName: "Ember", orgDescription: "Candles" });
   });
 });
 
 describe("upsertSeoSettings", () => {
   it("writes only the patched columns and returns the merged settings", async () => {
     const out = await upsertSeoSettings(SHOP, { allowAiCrawlers: false, orgName: "Ember" });
-    expect(out).toEqual({ allowAiCrawlers: false, allowAiTraining: false, orgName: "Ember", orgDescription: null });
+    expect(out).toEqual({ allowAiCrawlers: false, orgName: "Ember", orgDescription: null });
     const out2 = await upsertSeoSettings(SHOP, { orgDescription: "Small-batch candles" });
     expect(out2.orgDescription).toBe("Small-batch candles");
     expect(out2.allowAiCrawlers).toBe(false); // preserved from the first patch

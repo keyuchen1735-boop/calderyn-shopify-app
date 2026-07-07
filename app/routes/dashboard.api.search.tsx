@@ -22,7 +22,6 @@ interface SearchBody {
   metaTitle?: string;
   metaDescription?: string;
   allowAiCrawlers?: boolean;
-  allowAiTraining?: boolean;
   orgName?: string | null;
   orgDescription?: string | null;
 }
@@ -80,7 +79,6 @@ export async function action({ request }: ActionFunctionArgs) {
     case "updateSettings": {
       const patch: Record<string, unknown> = {};
       if (typeof body.allowAiCrawlers === "boolean") patch.allowAiCrawlers = body.allowAiCrawlers;
-      if (typeof body.allowAiTraining === "boolean") patch.allowAiTraining = body.allowAiTraining;
       if (body.orgName === null || typeof body.orgName === "string") patch.orgName = body.orgName;
       if (body.orgDescription === null || typeof body.orgDescription === "string") patch.orgDescription = body.orgDescription;
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");

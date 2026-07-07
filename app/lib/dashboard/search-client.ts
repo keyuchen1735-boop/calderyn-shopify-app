@@ -16,7 +16,6 @@ export interface NeedsAttentionRow {
 export interface AiCrawlRow { botName: string; hits: number; }
 export interface SeoSettings {
   allowAiCrawlers: boolean;
-  allowAiTraining: boolean;
   orgName: string | null;
   orgDescription: string | null;
 }

@@ -9,13 +9,13 @@ import { getSupabase } from "~/lib/supabase.server";
 import { encrypt, decrypt } from "~/lib/crypto.server";
 import { publicBaseUrl } from "~/lib/dashboard/http.server";
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
+import { isUuid } from "~/lib/ids";
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GSC_API_BASE = "https://www.googleapis.com/webmasters/v3";
 export const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WINDOW_DAYS = 30;   // pull window; wide enough to hold slip history
 const CARD_WINDOW_DAYS = 28;
 const SLIP_THRESHOLD = 5; // positions a query must drop to count as slipping
@@ -166,7 +166,7 @@ export async function disconnect(shopId: string): Promise<void> {
 
 // --- state reads -----------------------------------------------------------
 export async function getGscState(shopId: string): Promise<GscState> {
-  if (!UUID_RE.test(shopId)) return { connected: false, siteUrl: null };
+  if (!isUuid(shopId)) return { connected: false, siteUrl: null };
   const { data, error } = await getSupabase().from("seo_settings").select("gsc_connected, gsc_site_url").eq("shop_id", shopId).maybeSingle();
   if (error) throw error;
   return { connected: data?.gsc_connected === true, siteUrl: (data?.gsc_site_url as string | null) ?? null };
@@ -259,7 +259,7 @@ export async function syncRankings(shopId: string): Promise<{ upserted: number }
 }
 
 export async function getRankingsSince(shopId: string, sinceDate: string): Promise<RankingRow[]> {
-  if (!UUID_RE.test(shopId)) return [];
+  if (!isUuid(shopId)) return [];
   const { data, error } = await getSupabase()
     .from("seo_ranking")
     .select("query, page_url, position, impressions, clicks, ctr, captured_date")

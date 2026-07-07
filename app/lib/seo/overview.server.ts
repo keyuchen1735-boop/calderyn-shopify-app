@@ -13,9 +13,10 @@ import { scoreDraft } from "./score.server";
 import { applyOverride } from "./override";
 import { getSeoOverride, listSeoOverrides, getSeoSettings, type SeoSettings } from "./seo-store.server";
 import { getGscState, getRankingsSince, summariseGoogleCard, detectSlips, RANKING_CARD_WINDOW_DAYS, type GoogleCardVM } from "./google-search-console.server";
+import { sellablePrice } from "./pricing";
+import { isUuid } from "~/lib/ids";
 import type { HealthReport } from "./types";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CRAWL_WINDOW_DAYS = 28;
 const NEEDS_ATTENTION_CAP = 12;
 
@@ -58,7 +59,7 @@ export interface ProductSeoDetailVM {
  *  to a relative base ("") when the slug is unknown (e.g. an import-only Shopify
  *  shop): canonical/preview URLs then render relative, never with a wrong host. */
 export async function getShopStorefrontOrigin(shopId: string): Promise<string> {
-  if (!UUID_RE.test(shopId)) return "";
+  if (!isUuid(shopId)) return "";
   const { data, error } = await getSupabase().from("shops").select("org_slug").eq("id", shopId).maybeSingle();
   if (error) throw error;
   const slug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
@@ -66,7 +67,7 @@ export async function getShopStorefrontOrigin(shopId: string): Promise<string> {
 }
 
 async function summariseAiCrawls(shopId: string): Promise<{ rows: AiCrawlRow[]; total: number }> {
-  if (!UUID_RE.test(shopId)) return { rows: [], total: 0 };
+  if (!isUuid(shopId)) return { rows: [], total: 0 };
   const since = new Date(Date.now() - CRAWL_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
   const { data, error } = await getSupabase()
     .from("seo_ai_crawl_daily")
@@ -123,6 +124,9 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
   // when the shop isn't connected. Failure-isolated: a seo_ranking read error
   // must not take down the rest of the overview, so it falls back to the same
   // empty-card shape rather than throwing.
+  // Pages slipping on Google get priority billing below: they must never be
+  // hidden behind a healthy content score or pushed off the cap.
+  const slipHandles = new Set<string>();
   let google: GoogleCardVM = { connected: gsc.connected, clicks: 0, impressions: 0, topQuery: null, topPosition: null };
   if (gsc.connected) {
     try {
@@ -134,15 +138,25 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
         if (!handle) continue;
         const product = productByHandle.get(handle);
         if (!product) continue;
-        if (rows.some((r) => r.handle === handle)) continue; // already flagged for a content issue
-        rows.push({
-          id: product.id,
-          handle,
-          title: product.title,
-          score: scoreByHandle.get(handle) ?? 0,
-          topIssue: `Slipping on Google: "${slip.query}" moved to position ${Math.round(slip.toPosition)}`,
-          hasOverride: overrideByHandle.get(handle) ?? false,
-        });
+        slipHandles.add(handle);
+        const pos = Math.round(slip.toPosition);
+        const existing = rows.find((r) => r.handle === handle);
+        if (existing) {
+          // Page already has a content issue: merge the slip note into it rather
+          // than dropping the slip. Additional slips for the page append in turn.
+          existing.topIssue = existing.topIssue
+            ? `${existing.topIssue}. Also slipping on Google: "${slip.query}" is now position ${pos}`
+            : `Slipping on Google: "${slip.query}" moved to position ${pos}`;
+        } else {
+          rows.push({
+            id: product.id,
+            handle,
+            title: product.title,
+            score: scoreByHandle.get(handle) ?? 100,
+            topIssue: `Slipping on Google: "${slip.query}" moved to position ${pos}`,
+            hasOverride: overrideByHandle.get(handle) ?? false,
+          });
+        }
       }
     } catch (err) {
       console.error(`[seo/overview] seo_ranking read failed for shop ${shopId}`, err);
@@ -150,7 +164,14 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
     }
   }
 
-  rows.sort((a, b) => a.score - b.score);
+  // Slips first (never buried), then worst content score first. Cap + the
+  // one-row-per-page guarantee hold (the merge above prevents duplicate handles).
+  rows.sort((a, b) => {
+    const aSlip = slipHandles.has(a.handle) ? 0 : 1;
+    const bSlip = slipHandles.has(b.handle) ? 0 : 1;
+    if (aSlip !== bSlip) return aSlip - bSlip;
+    return a.score - b.score;
+  });
 
   return {
     storeHealth: products.length ? Math.round(scoreSum / products.length) : 0,
@@ -173,12 +194,9 @@ export async function getProductSeoDetail(shopId: string, handle: string, storef
   const draft = applyOverride(buildProductDraft(product, store, storefrontOrigin), override);
   const health = scoreDraft(draft);
 
-  const sellable = product.variants.filter((v) => v.priceCents > 0);
-  const priceCents = sellable.length ? Math.min(...sellable.map((v) => v.priceCents)) : 0;
-  const currency = sellable[0]?.currency ?? "";
-  const inStock = product.variants.some((v) => v.available);
+  const { priceCents, currency, available } = sellablePrice(product);
   const aiSummary = priceCents
-    ? `${product.title} from ${store.storeName}. Priced at ${(priceCents / 100).toFixed(2)} ${currency}, ${inStock ? "in stock" : "out of stock"}.`
+    ? `${product.title} from ${store.storeName}. Priced at ${(priceCents / 100).toFixed(2)} ${currency}, ${available ? "in stock" : "out of stock"}.`
     : `${product.title} from ${store.storeName}. Not currently for sale.`;
 
   return {

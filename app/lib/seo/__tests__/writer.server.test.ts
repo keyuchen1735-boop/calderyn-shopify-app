@@ -47,6 +47,13 @@ describe("buildProductDraft", () => {
     expect(d.imageAlts[0]).toBe("Cedar Bloom Candle, Ember House");
     expect(d.imageAlts[1]).toBe("existing alt");
   });
+  it("fills a natural default description that clears the 50-char health floor when the body is empty", () => {
+    const d = buildProductDraft(product({ description: "" }), store, ORIGIN);
+    expect(d.description.length).toBeGreaterThanOrEqual(50); // above the validator's DESC_MIN
+    expect(d.description).toContain("Cedar Bloom Candle");
+    expect(d.description).toContain("Ember House");
+    expect(d.description).not.toMatch(/[—–]/); // no em/en dashes in merchant-facing copy
+  });
   it("uses AggregateOffer for multiple distinct prices and skips $0 variants", () => {
     const d = buildProductDraft(product({
       variants: [
