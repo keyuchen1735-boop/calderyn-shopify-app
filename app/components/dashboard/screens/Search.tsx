@@ -208,25 +208,25 @@ export default function Search({ app }: { app: DashboardCtx }) {
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">
-                <div className="cd-seo__label">
-                  Store description
-                  <Tooltip content="Let Calderyn write one, tuned for Google and AI assistants.">
-                    <button
-                      type="button"
-                      className="cd-seo__ai"
-                      onClick={onSuggestDescription}
-                      disabled={suggesting}
-                      aria-label="Let Calderyn write a store description tuned for Google and AI assistants"
-                      aria-busy={suggesting}
-                    >
-                      <CDIcon name="sparkle" size={13} strokeWidth={1.9} />
-                    </button>
-                  </Tooltip>
-                </div>
+                <div className="cd-seo__label">Store description</div>
                 <div className="cd-seo__hint">One line about your store, used in search and AI answers.</div>
               </div>
               <div className="cd-seo__control">
                 <div className="cd-seo__inputwrap">
+                  <span className="cd-seo__ai-slot">
+                    <Tooltip content="Let Calderyn write one, tuned for Google and AI assistants.">
+                      <button
+                        type="button"
+                        className="cd-seo__ai"
+                        onClick={onSuggestDescription}
+                        disabled={suggesting}
+                        aria-label="Let Calderyn write a store description tuned for Google and AI assistants"
+                        aria-busy={suggesting}
+                      >
+                        <CDIcon name="sparkle" size={13} strokeWidth={1.9} />
+                      </button>
+                    </Tooltip>
+                  </span>
                   <input
                     className="cd-input cd-seo__input"
                     value={description}
