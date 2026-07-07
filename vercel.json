@@ -61,7 +61,6 @@
     { "path": "/cron/social-digest", "schedule": "0 14 * * 5" },
     { "path": "/cron/inventory-reaper", "schedule": "*/5 * * * *" },
     { "path": "/cron/sourcing", "schedule": "0 2 * * *" },
-    { "path": "/cron/assets", "schedule": "30 3 * * *" },
-    { "path": "/cron/seo-rankings", "schedule": "0 8 * * *" }
+    { "path": "/cron/assets", "schedule": "30 3 * * *" }
   ]
 }
