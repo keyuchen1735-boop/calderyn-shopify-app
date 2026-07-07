@@ -38,8 +38,11 @@ function nextAfterOnboarding(emailVerified: boolean): string {
   return emailVerified ? "/dashboard" : "/dashboard/verify-needed";
 }
 
-function onboardingHref(returnTo: string | null): string {
-  return returnTo ? `/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}` : "/dashboard/onboarding";
+function onboardingHref(returnTo: string | null, error?: string | null): string {
+  const parts: string[] = [];
+  if (error) parts.push(`error=${encodeURIComponent(error)}`);
+  if (returnTo) parts.push(`return_to=${encodeURIComponent(returnTo)}`);
+  return parts.length ? `/dashboard/onboarding?${parts.join("&")}` : "/dashboard/onboarding";
 }
 
 function dashboardLoginHref(): string {
@@ -67,8 +70,16 @@ export async function action({ request }: ActionFunctionArgs) {
   const badOrigin = checkSameOrigin(request);
   if (badOrigin) return badOrigin;
 
+  // Parse the body up front so every error branch can preserve the threaded
+  // return_to — otherwise a single validation slip (mistyped phone, a rate-limit)
+  // strips it and the interrupted deep-link / connector-consent flow never
+  // resumes. JSON callers get a code (return_to lives in the URL for them).
+  const fd = await request.formData().catch(() => new FormData());
+  const intent = String(fd.get("intent") ?? "");
+  const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
+
   const fail = (status: number, code: string) =>
-    wantsJson(request) ? jsonError(status, code) : redirect(`/dashboard/onboarding?error=${code}`);
+    wantsJson(request) ? jsonError(status, code) : redirect(onboardingHref(returnTo, code));
 
   const session = await getSessionFromRequest(request);
   if (!session) return wantsJson(request) ? jsonError(401, "unauthenticated") : redirect("/login");
@@ -80,10 +91,6 @@ export async function action({ request }: ActionFunctionArgs) {
       : redirect(nextAfterOnboarding(session.emailVerified));
   }
   if (!(await rateLimit(clientIpKey(request, "dash-onboarding"), 10, 60_000))) return fail(429, "rate_limited");
-
-  const fd = await request.formData().catch(() => new FormData());
-  const intent = String(fd.get("intent") ?? "");
-  const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
 
   if (intent !== "contact" && intent !== "connect" && intent !== "skip") {
     return fail(400, "invalid_intent");
