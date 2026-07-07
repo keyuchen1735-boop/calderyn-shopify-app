@@ -208,9 +208,25 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 <CDIcon name="search" size={17} strokeWidth={1.8} />
                 <span>On Google</span>
               </div>
-              <p className="cd-seo__card-sub">
-                See where your pages show up in Google search.
-              </p>
+              {data.google.connected ? (
+                data.google.impressions > 0 ? (
+                  <p className="cd-seo__card-sub">
+                    <b className="cd-seo__strong">{data.google.clicks.toLocaleString()}</b> clicks ·{" "}
+                    <b className="cd-seo__strong">{data.google.impressions.toLocaleString()}</b> impressions
+                    {data.google.topQuery ? (
+                      <>
+                        {" "}· top search{" "}
+                        <b className="cd-seo__strong">{data.google.topQuery}</b>
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                ) : (
+                  <p className="cd-seo__card-sub">Connected. Waiting for Google to report search data.</p>
+                )
+              ) : (
+                <p className="cd-seo__card-sub">See where your pages show up in Google search.</p>
+              )}
               <div className="cd-seo__card-foot">
                 {data.google.connected ? (
                   <>

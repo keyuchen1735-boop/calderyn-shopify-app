@@ -12,12 +12,18 @@ import { buildProductDraft } from "./writer.server";
 import { scoreDraft } from "./score.server";
 import { applyOverride } from "./override";
 import { getSeoOverride, listSeoOverrides, getSeoSettings, type SeoSettings } from "./seo-store.server";
-import { getGscState, type GoogleCardVM } from "./google-search-console.server";
+import { getGscState, getRankingsSince, summariseGoogleCard, detectSlips, RANKING_CARD_WINDOW_DAYS, type GoogleCardVM } from "./google-search-console.server";
 import type { HealthReport } from "./types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CRAWL_WINDOW_DAYS = 28;
 const NEEDS_ATTENTION_CAP = 12;
+
+/** The product handle behind a ranked storefront URL, or null for non-product pages. */
+function productHandleFromUrl(pageUrl: string): string | null {
+  const m = pageUrl.match(/\/storefront\/products\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 export interface NeedsAttentionRow {
   id: string;
@@ -97,15 +103,53 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
 
   let scoreSum = 0;
   const rows: NeedsAttentionRow[] = [];
+  const scoreByHandle = new Map<string, number>();
+  const overrideByHandle = new Map<string, boolean>();
+  const productByHandle = new Map<string, { id: string; title: string }>();
   for (const p of products) {
     const override = overrides.get(`product:${p.id}`) ?? null;
     const draft = applyOverride(buildProductDraft(p, store, storefrontOrigin), override);
     const report = scoreDraft(draft);
     scoreSum += report.score;
+    scoreByHandle.set(p.handle, report.score);
+    overrideByHandle.set(p.handle, override != null);
+    productByHandle.set(p.handle, { id: p.id, title: p.title });
     if (report.score < 100) {
       rows.push({ id: p.id, handle: p.handle, title: p.title, score: report.score, topIssue: topIssue(report), hasOverride: override != null });
     }
   }
+
+  // Google card + "slipping on Google" rows. Dormant-safe: zero ranking work
+  // when the shop isn't connected. Failure-isolated: a seo_ranking read error
+  // must not take down the rest of the overview, so it falls back to the same
+  // empty-card shape rather than throwing.
+  let google: GoogleCardVM = { connected: gsc.connected, clicks: 0, impressions: 0, topQuery: null, topPosition: null };
+  if (gsc.connected) {
+    try {
+      const since = new Date(Date.now() - RANKING_CARD_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+      const rankings = await getRankingsSince(shopId, since);
+      google = { connected: true, ...summariseGoogleCard(rankings) };
+      for (const slip of detectSlips(rankings)) {
+        const handle = productHandleFromUrl(slip.pageUrl);
+        if (!handle) continue;
+        const product = productByHandle.get(handle);
+        if (!product) continue;
+        if (rows.some((r) => r.handle === handle)) continue; // already flagged for a content issue
+        rows.push({
+          id: product.id,
+          handle,
+          title: product.title,
+          score: scoreByHandle.get(handle) ?? 0,
+          topIssue: `Slipping on Google: "${slip.query}" moved to position ${Math.round(slip.toPosition)}`,
+          hasOverride: overrideByHandle.get(handle) ?? false,
+        });
+      }
+    } catch (err) {
+      console.error(`[seo/overview] seo_ranking read failed for shop ${shopId}`, err);
+      google = { connected: gsc.connected, clicks: 0, impressions: 0, topQuery: null, topPosition: null };
+    }
+  }
+
   rows.sort((a, b) => a.score - b.score);
 
   return {
@@ -115,7 +159,7 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
     aiCrawls: crawls.rows,
     aiCrawlTotal: crawls.total,
     settings,
-    google: { connected: gsc.connected, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
+    google,
   };
 }
 

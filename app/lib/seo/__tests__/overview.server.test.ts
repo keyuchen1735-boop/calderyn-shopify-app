@@ -1,7 +1,8 @@
 // app/lib/seo/__tests__/overview.server.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import type { StoreSettings } from "~/lib/storefront/settings.server";
+import type * as GoogleSearchConsoleServer from "../google-search-console.server";
 
 const ORIGIN = "https://ember.calderyncompany.com";
 const store: StoreSettings = {
@@ -40,12 +41,34 @@ vi.mock("../seo-store.server", () => ({
   getSeoOverride: async () => null,
   getSeoSettings: async () => ({ allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null }),
 }));
-vi.mock("../google-search-console.server", () => ({
-  getGscState: async () => ({ connected: false, siteUrl: null }),
-  getRankingsSince: async () => [],
-  summariseGoogleCard: () => ({ clicks: 0, impressions: 0, topQuery: null, topPosition: null }),
-  detectSlips: () => [],
+const { getGscStateMock, getRankingsSinceMock } = vi.hoisted(() => ({
+  getGscStateMock: vi.fn(),
+  getRankingsSinceMock: vi.fn(),
 }));
+// Two captures of the same query on Product A ("cedar-bloom"): position 3 -> 11,
+// a slip (delta 8 >= the default threshold of 5).
+const rankingRows = [
+  { query: "cedar candle", pageUrl: "https://ember.calderyncompany.com/storefront/products/cedar-bloom", position: 3, impressions: 100, clicks: 8, ctr: 0.08, capturedDate: "2026-06-01" },
+  { query: "cedar candle", pageUrl: "https://ember.calderyncompany.com/storefront/products/cedar-bloom", position: 11, impressions: 90, clicks: 2, ctr: 0.02, capturedDate: "2026-06-20" },
+];
+vi.mock("../google-search-console.server", async () => {
+  const actual = await vi.importActual<typeof GoogleSearchConsoleServer>("../google-search-console.server");
+  return {
+    ...actual, // keep the REAL summariseGoogleCard / detectSlips so the math is exercised
+    getGscState: getGscStateMock,
+    getRankingsSince: getRankingsSinceMock,
+  };
+});
+// Most tests want the disconnected default set in beforeEach so they stay
+// unaffected by Google data; only the Google-card tests opt into this fixture.
+function connectGoogleFixture() {
+  getGscStateMock.mockResolvedValue({ connected: true, siteUrl: "https://ember.calderyncompany.com/" });
+  getRankingsSinceMock.mockResolvedValue(rankingRows);
+}
+beforeEach(() => {
+  getGscStateMock.mockReset().mockResolvedValue({ connected: false, siteUrl: null });
+  getRankingsSinceMock.mockReset().mockResolvedValue([]);
+});
 vi.mock("../../supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => {
@@ -96,9 +119,34 @@ describe("buildSeoOverview", () => {
     expect(vm.aiCrawls).toEqual([{ botName: "GPTBot", hits: 7 }, { botName: "PerplexityBot", hits: 2 }]);
     expect(vm.aiCrawlTotal).toBe(9);
   });
-  it("includes a disconnected Google card by default", async () => {
+  it("keeps the disconnected placeholder card and does zero ranking work when not connected", async () => {
     const vm = await buildSeoOverview(SHOP, ORIGIN);
     expect(vm.google).toEqual({ connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null });
+    expect(getRankingsSinceMock).not.toHaveBeenCalled();
+  });
+  it("populates the Google card from seo_ranking when connected", async () => {
+    connectGoogleFixture();
+    const vm = await buildSeoOverview(SHOP, ORIGIN);
+    expect(vm.google.connected).toBe(true);
+    expect(vm.google.clicks).toBe(10); // 8 + 2
+    expect(vm.google.impressions).toBe(190); // 100 + 90
+    expect(vm.google.topQuery).toBe("cedar candle");
+  });
+  it("adds a slipping product page to needsAttention", async () => {
+    connectGoogleFixture();
+    const vm = await buildSeoOverview(SHOP, ORIGIN);
+    const slip = vm.needsAttention.find((r) => r.handle === "cedar-bloom");
+    expect(slip).toBeTruthy();
+    expect(slip?.topIssue).toMatch(/slipping on google/i);
+  });
+  it("falls back to an empty card and skips slip rows when the seo_ranking read fails", async () => {
+    getGscStateMock.mockResolvedValue({ connected: true, siteUrl: "https://ember.calderyncompany.com/" });
+    getRankingsSinceMock.mockRejectedValue(new Error("seo_ranking: connection reset"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const vm = await buildSeoOverview(SHOP, ORIGIN);
+    expect(vm.google).toEqual({ connected: true, clicks: 0, impressions: 0, topQuery: null, topPosition: null });
+    expect(vm.needsAttention.some((r) => r.handle === "cedar-bloom")).toBe(false);
+    spy.mockRestore();
   });
 });
 
