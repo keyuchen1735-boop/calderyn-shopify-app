@@ -91,6 +91,10 @@ async function readWindowOrders(shopId: string, sinceIso: string): Promise<Order
         "id, buyer_id, state, total_cents, shipping_cents, tax_cents, attribution, channel, created_at",
       )
       .eq("shop_id", shopId)
+      // The go-live test probe originates a real 50c channel='test' order that
+      // reaches paid (then refunded) — both in SALE_STATES. Exclude it so the
+      // mandatory cutover probe never inflates gross / order count / channel mix.
+      .neq("channel", "test")
       .in("state", [...SALE_STATES])
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
@@ -111,6 +115,7 @@ async function readWindowEvents(shopId: string, sinceIso: string): Promise<Event
 }
 
 interface ImportedOrderWindowRow {
+  id: string;
   total_cents: number | null;
   shipping_cents: number | null;
   tax_cents: number | null;
@@ -130,7 +135,7 @@ async function readWindowImportedOrders(
   return readPaged<ImportedOrderWindowRow>("imported_order", shopId, ORDER_ROW_CAP, (from, to) =>
     getSupabase()
       .from("imported_order")
-      .select("total_cents, shipping_cents, tax_cents, processed_at")
+      .select("id, total_cents, shipping_cents, tax_cents, processed_at")
       .eq("shop_id", shopId)
       .gte("processed_at", sinceIso)
       .order("processed_at", { ascending: false })
@@ -138,22 +143,30 @@ async function readWindowImportedOrders(
   );
 }
 
-/** Sum of migrated refund amounts (imported_refund) processed in the window. */
-async function readWindowImportedRefundCents(shopId: string, sinceIso: string): Promise<number> {
-  const rows = await readPaged<{ subtotal_cents: number | null }>(
-    "imported_refund",
-    shopId,
-    ORDER_ROW_CAP,
-    (from, to) =>
-      getSupabase()
-        .from("imported_refund")
-        .select("subtotal_cents")
-        .eq("shop_id", shopId)
-        .gte("processed_at", sinceIso)
-        .order("processed_at", { ascending: false })
-        .range(from, to),
-  );
-  return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);
+/** Sum of migrated refund amounts (imported_refund) belonging to the given
+ *  in-window imported orders. Keyed off the parent order — NOT the refund's own
+ *  processed_at — so refunds net on the same time basis as their sale (mirroring
+ *  native orders, whose refund is attributed to the order's window). This keeps
+ *  Net = Gross − Refunds honest: a refund whose sale sits outside the window (or
+ *  an orphan refund with no parent) is excluded rather than subtracted from a
+ *  gross that never counted its sale. Read in bounded id chunks. */
+async function readImportedRefundCentsForOrders(
+  shopId: string,
+  orderIds: string[],
+): Promise<number> {
+  if (orderIds.length === 0) return 0;
+  const sb = getSupabase();
+  let total = 0;
+  for (let i = 0; i < orderIds.length; i += IN_CHUNK) {
+    const { data, error } = await sb
+      .from("imported_refund")
+      .select("subtotal_cents")
+      .eq("shop_id", shopId)
+      .in("imported_order_id", orderIds.slice(i, i + IN_CHUNK));
+    if (error) throw new Error(`imported_refund read failed: ${error.message}`);
+    for (const r of data ?? []) total += Number(r.subtotal_cents ?? 0);
+  }
+  return total;
 }
 
 /** Top products by line revenue (title_snapshot × unit_price_cents × quantity)
@@ -257,17 +270,25 @@ export async function loadCommerceAnalytics(
   const dayKeys: string[] = [];
   for (let i = 0; i < days; i++) dayKeys.push(utcDayKey(new Date(start + i * 86_400_000)));
 
-  const [orders, events, agentic, importedOrders, importedRefundCents] = await Promise.all([
+  const [orders, events, agentic, importedOrders] = await Promise.all([
     readWindowOrders(shopId, sinceIso),
     readWindowEvents(shopId, sinceIso),
     agenticStats(shopId, now, sinceIso),
     readWindowImportedOrders(shopId, sinceIso),
-    readWindowImportedRefundCents(shopId, sinceIso),
   ]);
+  // Refunds net against their parent order's window (see reader note), so this
+  // depends on the in-window imported-order ids and runs after that read.
+  const importedRefundCents = await readImportedRefundCentsForOrders(
+    shopId,
+    importedOrders.map((o) => String(o.id)),
+  );
 
   // --- per-day order aggregation ---
   const grossByDay = new Map<string, number>();
   const ordersByDay = new Map<string, number>();
+  // Native orders only — imported facts carry no storefront sessions, so they
+  // must not feed the per-day conversion ratio (see the daily map below).
+  const nativeOrdersByDay = new Map<string, number>();
   const fulfilledByDay = new Map<string, number>();
   const ordersByBuyer = new Map<string, number>();
   const byChannel = new Map<string, ChannelSalesRow>();
@@ -284,6 +305,7 @@ export async function loadCommerceAnalytics(
     tax += Number(o.tax_cents ?? 0);
     grossByDay.set(day, (grossByDay.get(day) ?? 0) + total);
     ordersByDay.set(day, (ordersByDay.get(day) ?? 0) + 1);
+    nativeOrdersByDay.set(day, (nativeOrdersByDay.get(day) ?? 0) + 1);
     if (o.state === "fulfilled") {
       fulfilled += 1;
       fulfilledByDay.set(day, (fulfilledByDay.get(day) ?? 0) + 1);
@@ -347,13 +369,17 @@ export async function loadCommerceAnalytics(
   const daily: CommerceDailyRow[] = dayKeys.map((date) => {
     const sessions = sessionsByDay.get(date)?.size ?? 0;
     const dayOrders = ordersByDay.get(date) ?? 0;
+    // Conversion is a storefront metric: divide native orders (the only ones
+    // that produce sessions) by sessions. Folding session-less imported orders
+    // into the numerator inflates it wildly (e.g. 40 imported / 10 sessions).
+    const nativeDayOrders = nativeOrdersByDay.get(date) ?? 0;
     return {
       date,
       grossCents: grossByDay.get(date) ?? 0,
       orders: dayOrders,
       fulfilled: fulfilledByDay.get(date) ?? 0,
       sessions,
-      conversionPct: sessions > 0 ? (dayOrders / sessions) * 100 : null,
+      conversionPct: sessions > 0 ? (nativeDayOrders / sessions) * 100 : null,
     };
   });
 
