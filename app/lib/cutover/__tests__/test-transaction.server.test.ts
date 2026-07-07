@@ -24,7 +24,6 @@ vi.mock("~/lib/supabase.server", () => ({
     }),
   }),
 }));
-
 describe("startTestTransaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -38,8 +37,8 @@ describe("startTestTransaction", () => {
     hoisted.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_1", url: "https://stripe/pay" });
   });
 
-  it("originates a channel='test' order at the Stripe minimum and returns the checkout url", async () => {
-    const res = await startTestTransaction("shop-1");
+  it("originates a channel='test' order at the Stripe minimum, returning the merchant to the Go live screen on THEIR origin", async () => {
+    const res = await startTestTransaction("shop-1", "https://calderyncompany.com");
     expect(res.url).toBe("https://stripe/pay");
     expect(TEST_CHARGE_CENTS).toBe(50);
     expect(hoisted.createCommerceCheckoutSession).toHaveBeenCalledWith("shop-1", {
@@ -47,17 +46,26 @@ describe("startTestTransaction", () => {
       totalCents: 50,
       currency: "usd",
       confirmationToken: "tok-abc",
+      returnUrls: {
+        success: "https://calderyncompany.com/dashboard/settings/golive?test_tx=success",
+        cancel: "https://calderyncompany.com/dashboard/settings/golive?test_tx=cancelled",
+      },
     });
+  });
+
+  it("rejects when the return origin is missing — a probe must never fall back to another host", async () => {
+    await expect(startTestTransaction("shop-1", "")).rejects.toThrow(/returnOrigin/);
+    expect(hoisted.createCommerceCheckoutSession).not.toHaveBeenCalled();
   });
 
   it("rejects when the shop is not in dual_run", async () => {
     hoisted.getOrgMode.mockResolvedValue("mirror");
-    await expect(startTestTransaction("shop-1")).rejects.toThrow(/dual_run/);
+    await expect(startTestTransaction("shop-1", "https://x.example")).rejects.toThrow(/dual_run/);
   });
 
   it("rejects with a clear message when Stripe is not connected", async () => {
     hoisted.getConnectedAccount.mockResolvedValue(null);
-    await expect(startTestTransaction("shop-1")).rejects.toThrow(/Connect Stripe/i);
+    await expect(startTestTransaction("shop-1", "https://x.example")).rejects.toThrow(/Connect Stripe/i);
   });
 });
 

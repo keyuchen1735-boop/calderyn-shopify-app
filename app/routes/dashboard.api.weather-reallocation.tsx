@@ -3,6 +3,7 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { jsonError, jsonOk, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { executeReallocation } from "~/lib/actions/reallocate.server";
+import { resolveWeatherAlert } from "~/lib/actions/weather-suggest.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 interface ClaimedRow {
@@ -37,40 +38,58 @@ export async function action({ request }: ActionFunctionArgs) {
     | { suggestionId?: unknown; intent?: unknown }
     | null;
   const suggestionId = typeof body?.suggestionId === "string" ? body.suggestionId : "";
-  const intent = body?.intent === "apply" || body?.intent === "dismiss" ? body.intent : "";
+  const intent =
+    body?.intent === "apply" || body?.intent === "dismiss" || body?.intent === "arm"
+      ? body.intent
+      : "";
   if (!suggestionId || !intent) return jsonError(422, "bad_request");
 
   const sb = getSupabase();
 
-  if (intent === "dismiss") {
-    // Only a still-pending row can be dismissed — conditional UPDATE, not
-    // read-then-write, so it can't clobber an already-applied row's bookkeeping.
+  if (intent === "dismiss" || intent === "arm") {
+    // Conditional UPDATE, not read-then-write, so it can't clobber an
+    // already-applied row's bookkeeping. Arm only from pending; dismiss from
+    // pending OR armed — an armed move must always be cancellable (disarm)
+    // right up until it executes. Arming moves no budget: the daily weather
+    // cron executes the row when the fresh forecast confirms the trigger.
+    const next = intent === "dismiss" ? "dismissed" : "armed";
+    const from = intent === "dismiss" ? ["pending", "armed"] : ["pending"];
     const { data, error } = await sb
       .from("weather_suggestion")
-      .update({ status: "dismissed" })
+      .update({ status: next })
       .eq("id", suggestionId)
       .eq("shop_id", session.shopId)
-      .eq("status", "pending")
-      .select("id")
+      .in("status", from)
+      .select("id, source_campaign_id, dest_campaign_id")
       .maybeSingle();
     if (error) {
-      console.error("[weather-reallocation] dismiss failed", error);
+      console.error(`[weather-reallocation] ${intent} failed`, error);
       return jsonError(500, "internal_error");
     }
     if (!data) return classifyMiss(sb, suggestionId, session.shopId);
-    return jsonOk({ ok: true, status: "dismissed" });
+    if (intent === "dismiss") {
+      await resolveWeatherAlert(
+        sb,
+        session.shopId,
+        String(data.source_campaign_id),
+        String(data.dest_campaign_id),
+      );
+    }
+    return jsonOk({ ok: true, status: next });
   }
 
   // Apply. Atomically CLAIM the row (pending → applying) so two concurrent
   // approvals cannot both reach executeReallocation and double-move budget. Only
   // the request that flips the row proceeds; a loser (or a non-pending/unknown
   // row) gets no row back.
+  // Apply is allowed from pending (approve now) or armed (fire early rather
+  // than wait for the weather trigger).
   const { data: claimedData, error: claimErr } = await sb
     .from("weather_suggestion")
     .update({ status: "applying" })
     .eq("id", suggestionId)
     .eq("shop_id", session.shopId)
-    .eq("status", "pending")
+    .in("status", ["pending", "armed"])
     .select("id, source_campaign_id, dest_campaign_id, amount_cents")
     .maybeSingle();
   if (claimErr) {
@@ -126,5 +145,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // 'succeeded' or 'retrying' (retry.server.ts drains the in-flight dest step).
   await setStatus("applied");
+  await resolveWeatherAlert(sb, session.shopId, row.source_campaign_id, row.dest_campaign_id);
   return jsonOk({ ok: true, status: "applied", outcome });
 }

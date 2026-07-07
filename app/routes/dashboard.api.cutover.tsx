@@ -7,7 +7,7 @@ import {
   isOrgMode,
   LEGAL_ORG_TRANSITIONS,
 } from "~/lib/cutover/org-mode.server";
-import { checkGoLiveGates } from "~/lib/cutover/go-live.server";
+import { checkGoLiveGates, paymentCleared } from "~/lib/cutover/go-live.server";
 import { CutoverBlockedError } from "~/lib/cutover/errors";
 
 // The cutover status envelope: current mode, where it can legally move next, and the
@@ -16,7 +16,13 @@ import { CutoverBlockedError } from "~/lib/cutover/errors";
 async function cutoverStatus(shopId: string) {
   const mode = await getOrgMode(shopId);
   const gates = await checkGoLiveGates(shopId);
-  return { mode, allowed: LEGAL_ORG_TRANSITIONS[mode], gates };
+  // The payment verdict ships with the report so the dashboard never re-derives it
+  // from hardcoded check names.
+  return {
+    mode,
+    allowed: LEGAL_ORG_TRANSITIONS[mode],
+    gates: { ...gates, paymentCleared: paymentCleared(gates.checks) },
+  };
 }
 
 // GET: cutover status for the signed-in shop.

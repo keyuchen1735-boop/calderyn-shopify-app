@@ -110,6 +110,11 @@ export interface StudioState {
   experiment: StudioExperiment | null;
 }
 
+/** Merchant-facing design-model choice for a generation run. The client only
+ *  ever sends this key; the server maps it to a concrete model id, so a
+ *  request can never bill an arbitrary model. */
+export type StudioDesignModel = "sonnet" | "opus";
+
 /** POST {action:"generate"} response. A hard failure (nothing produced at all)
  *  surfaces as a 502; "failed" here is a SOFT-degraded success — a publishable
  *  draft was written, but the AI was unavailable so every page fell back to a
