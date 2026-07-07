@@ -3,7 +3,7 @@ import { Card, Btn, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
-import { DashboardApiError } from "~/lib/dashboard/client";
+import { DashboardApiError, putGuardrails } from "~/lib/dashboard/client";
 import {
   fetchCustomersPage,
   fetchCustomerDetail,
@@ -14,7 +14,7 @@ import {
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { WeatherSegments } from "../WeatherSegments";
-import { isWeatherAuto } from "~/lib/weather/types";
+import { sensitivityForMode, weatherMode, type WeatherMode } from "~/lib/weather/types";
 import type { DashboardCtx } from "../context";
 
 const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr";
@@ -395,6 +395,37 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     setWx(page?.weatherSuggestions ?? []);
   }, [page]);
 
+  // Optimistic override for the weather-mode control; cleared once the shell's
+  // guardrails refresh lands so the dial stays the single source of truth.
+  const [wxModeOverride, setWxModeOverride] = useState<WeatherMode | null>(null);
+  const wxMode = wxModeOverride ?? weatherMode(app.guardrails?.weather_sensitivity ?? 0);
+  useEffect(() => {
+    setWxModeOverride(null);
+  }, [app.guardrails]);
+
+  const onWeatherMode = async (next: WeatherMode) => {
+    const prev = wxModeOverride;
+    setWxModeOverride(next);
+    try {
+      await putGuardrails({
+        weather_sensitivity: sensitivityForMode(next, app.guardrails?.weather_sensitivity ?? 0),
+      });
+      app.refresh();
+      toast(
+        next === "off"
+          ? "Weather moves off"
+          : next === "auto"
+            ? "Auto — moves execute unattended when the forecast confirms"
+            : "Approve — moves wait for your OK",
+        "check",
+      );
+    } catch (err) {
+      setWxModeOverride(prev);
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update weather mode.";
+      toast(msg, "x", "critical");
+    }
+  };
+
   const onWeather = async (id: string, intent: "apply" | "arm" | "dismiss") => {
     // Optimistic: arming flips the row to armed in place; apply/dismiss remove
     // it. Kept restorable — a 409 (e.g. dismissed in another tab) must not
@@ -585,7 +616,8 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           suggestions={wx}
           onIntent={onWeather}
           toast={toast}
-          auto={isWeatherAuto(app.guardrails?.weather_sensitivity ?? 0)}
+          mode={wxMode}
+          onMode={onWeatherMode}
         />
       ) : (
         <>
