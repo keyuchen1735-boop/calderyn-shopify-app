@@ -18,6 +18,8 @@ export interface StoreProduct {
   images: { url: string; alt: string | null }[];
   variants: StoreVariant[];
   collections: string[]; // collection handles
+  category?: string | null;
+  tags?: string[];
 }
 
 export interface StoreVariant {
