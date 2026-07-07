@@ -21,6 +21,24 @@ export async function createVerifyToken(userId: string): Promise<{ raw: string }
   return { raw };
 }
 
+/**
+ * Non-consuming validity check for a verify token. Used by the GET landing page
+ * so an email scanner/prefetcher that follows the link can't burn the single-use
+ * token before the human confirms with a POST. Returns true when the token is a
+ * live, unused, unexpired verify token.
+ */
+export async function peekVerifyToken(raw: string): Promise<boolean> {
+  if (!raw) return false;
+  const { data, error } = await getSupabase()
+    .from("password_reset_token")
+    .select("purpose, expires_at, used_at")
+    .eq("token_hash", hashSessionToken(raw))
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || data.purpose !== "verify" || data.used_at) return false;
+  return new Date(String(data.expires_at)).getTime() > Date.now();
+}
+
 export async function consumeVerifyToken(raw: string): Promise<{ userId: string } | null> {
   const sb = getSupabase();
   const { data, error } = await sb
