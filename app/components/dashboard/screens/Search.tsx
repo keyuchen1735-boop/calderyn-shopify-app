@@ -65,7 +65,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const [suggesting, setSuggesting] = useState(false);
   const [verifyCode, setVerifyCode] = useState(() => data?.settings.googleSiteVerification ?? "");
   const [savingVerify, setSavingVerify] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -176,12 +176,13 @@ export default function Search({ app }: { app: DashboardCtx }) {
     }
   }
 
-  async function onCopySitemap() {
-    if (!data?.sitemapUrl) return;
+  // Copy a link to the clipboard and flash "Copied" on the matching button
+  // (keyed so only the button that was pressed changes label).
+  async function copyLink(text: string, key: string) {
     try {
-      await navigator.clipboard.writeText(data.sitemapUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied((k) => (k === key ? null : k)), 1600);
     } catch {
       toast("Couldn't copy. Select the link and copy it manually.", "warn", "critical");
     }
@@ -202,6 +203,9 @@ export default function Search({ app }: { app: DashboardCtx }) {
   }
 
   const { settings } = data;
+  // The store's public web address (the sitemap URL minus the filename) — this is
+  // exactly what a merchant registers as their site in Google Search Console.
+  const siteUrl = data.sitemapUrl ? data.sitemapUrl.replace(/\/sitemap\.xml$/, "") : null;
 
   return (
     <div className="cd-screen cd-seo">
@@ -283,23 +287,27 @@ export default function Search({ app }: { app: DashboardCtx }) {
       <section className="cd-seo__section">
         <div className="cd-seo__head-text">
           <h2 className="cd-seo__h2">Get found on Google</h2>
-          <p className="cd-seo__lede">Three quick, one-time steps so your store shows up on Google. It&rsquo;s free.</p>
+          <p className="cd-seo__lede">
+            Follow these five steps once, in order, and Google will start showing your store. It&rsquo;s free and takes
+            about five minutes.
+          </p>
         </div>
         <Card pad={false}>
           <div className="cd-seo__set">
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">1</span>Open Google&rsquo;s free tool
+                  <span className="cd-seo__step">1</span>Open Google Search Console
                 </div>
                 <div className="cd-seo__hint">
-                  Click below, sign in with your Google account, and add your store when it asks.
+                  It opens in a new tab. If it asks you to sign in, use any Google account. If you&rsquo;re already
+                  signed in, you&rsquo;ll go straight in.
                 </div>
               </div>
               <div className="cd-seo__control">
                 <a
                   className="cd-btn cd-btn-primary cd-btn-sm"
-                  href="https://search.google.com/search-console"
+                  href="https://search.google.com/search-console/welcome"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -312,10 +320,48 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">2</span>Paste the code Google gives you
+                  <span className="cd-seo__step">2</span>Enter your store address
                 </div>
                 <div className="cd-seo__hint">
-                  Google shows a short code to check the store is yours. Paste it here and we add it for you. No code to edit.
+                  Google asks how to find your site. Click the box labelled <b>URL prefix</b>, paste the address below,
+                  then click <b>Continue</b>.
+                </div>
+              </div>
+              <div className="cd-seo__control">
+                {siteUrl ? (
+                  <>
+                    <code className="cd-seo__url">{siteUrl}</code>
+                    <Btn kind="secondary" small onClick={() => copyLink(siteUrl, "site")}>
+                      {copied === "site" ? "Copied" : "Copy"}
+                    </Btn>
+                  </>
+                ) : (
+                  <span className="cd-seo__hint">Publish your storefront first to get your address.</span>
+                )}
+              </div>
+            </div>
+
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">3</span>Choose &ldquo;HTML tag&rdquo; and copy the code
+                </div>
+                <div className="cd-seo__hint">
+                  Google shows a few ways to prove it&rsquo;s your store. Click <b>HTML tag</b>. It shows a line
+                  containing <code className="cd-seo__inline">content=&quot;&hellip;&quot;</code>. Copy just the text
+                  between those quotes.
+                </div>
+              </div>
+            </div>
+
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">4</span>Paste the code here, then verify
+                </div>
+                <div className="cd-seo__hint">
+                  Paste Google&rsquo;s code below and click Save. Calderyn adds it to your store instantly. Then go
+                  back to Google and click its blue <b>Verify</b> button.
                 </div>
               </div>
               <div className="cd-seo__control">
@@ -338,7 +384,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
               <div className="cd-seo__row cd-seo__row--slim">
                 <span className="cd-seo__ok">
                   <CDIcon name="check" size={14} strokeWidth={2} />
-                  Done. Google can now confirm your store.
+                  Saved and live on your store. Now click <b>Verify</b> back in Google.
                 </span>
               </div>
             ) : null}
@@ -346,18 +392,19 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">3</span>Give Google your page list
+                  <span className="cd-seo__step">5</span>Hand Google your page list
                 </div>
                 <div className="cd-seo__hint">
-                  Back in Google, find the &ldquo;Sitemaps&rdquo; box and paste this link. It&rsquo;s your whole store in one link.
+                  Once verified, open <b>Sitemaps</b> in Google&rsquo;s left menu, paste the link below, and click
+                  <b> Submit</b>. That&rsquo;s your whole store in one link.
                 </div>
               </div>
               <div className="cd-seo__control">
                 {data.sitemapUrl ? (
                   <>
                     <code className="cd-seo__url">{data.sitemapUrl}</code>
-                    <Btn kind="secondary" small onClick={onCopySitemap}>
-                      {copied ? "Copied" : "Copy"}
+                    <Btn kind="secondary" small onClick={() => copyLink(data.sitemapUrl!, "sitemap")}>
+                      {copied === "sitemap" ? "Copied" : "Copy"}
                     </Btn>
                   </>
                 ) : (
