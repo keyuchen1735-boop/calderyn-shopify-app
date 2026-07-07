@@ -11,7 +11,7 @@ import {
 import { decideExperiment, startExperiment } from "~/lib/experiments/store-experiment.server";
 import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
 import { classifyAttachmentIntent, type AttachmentImage } from "~/lib/storegen/attachment-intent.server";
-import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { assertCanGenerate, assertGeneratePrechecks, assertDesignerQuota } from "~/lib/storegen/guard.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { uploadProductMedia } from "~/lib/catalog/media.server";
 import { CalderynError } from "~/lib/calderyn.server";
@@ -75,12 +75,21 @@ function productTitleFromFilename(filename: string): string {
 }
 
 /** Turn one attachment into a draft catalog product: create the draft row, then
- *  attach the image. A media failure leaves the imageless draft and records
- *  `imageError` — never a rollback (a retry would mint a duplicate) and never
- *  hidden (rule 12). Mirrors the client's addProductFromImage semantics. */
+ *  attach the image. CONTAINED per item — this never throws, so one bad image
+ *  can't abort its siblings or hide the drafts already written (rule 12):
+ *  a failed create returns an `error` item (no id, nothing was written); a
+ *  failed upload leaves the imageless draft and records `imageError` — never a
+ *  rollback (a retry would mint a duplicate) and never hidden. Mirrors the
+ *  client's addProductFromImage semantics. */
 async function createDraftProductFromImage(shopId: string, img: BufferedImage): Promise<StudioAddedProduct> {
   const title = productTitleFromFilename(img.filename);
-  const { id } = await createProduct(shopId, { title, status: "draft", variants: [{}] });
+  let id: string;
+  try {
+    ({ id } = await createProduct(shopId, { title, status: "draft", variants: [{}] }));
+  } catch (err) {
+    console.error(`[dashboard.api.store] draft product create failed for "${title}"`, err);
+    return { title, error: err instanceof Error ? err.message : "product create failed" };
+  }
   try {
     await uploadProductMedia(shopId, id, { bytes: img.bytes, filename: img.filename, contentType: img.contentType });
   } catch (err) {
@@ -163,13 +172,20 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
   }
 
   return dashboardJson(async () => {
-    // Same guard order + shared budget as the JSON path (same-origin + session
-    // already run above) — BEFORE any paid model call.
-    await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
+    // Cheap guards first (brief cap, burst limit, mid-test refusal) — BEFORE any
+    // model spend. The daily designer quota is deliberately NOT consumed here:
+    // checkAiQuota records a hit at check time, so a needs_intent reply (and the
+    // merchant's follow-up retry) or a products-only outcome must not burn one of
+    // the day's generation slots. The classification call below is still model
+    // spend, but it is cheap (digest model, ~300 tokens) and bounded by the same
+    // burst limit — an accepted tradeoff, see guard.server.ts.
+    await assertGeneratePrechecks(session.shopId, rawBrief);
     const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
 
-    // Multipart with no attachments behaves exactly like the JSON generate path.
+    // Multipart with no attachments behaves exactly like the JSON generate path
+    // (identical guard order: prechecks above, then the daily quota).
     if (files.length === 0) {
+      await assertDesignerQuota(session.shopId, { trusted: quotaTrusted(session) });
       const result = await runGenerate(session.shopId, brief, designModel);
       return { runId: result.runId, status: result.status } satisfies StudioGenerateReceipt;
     }
@@ -185,27 +201,50 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
       images.map((i) => ({ mediaType: i.contentType, dataBase64: i.dataBase64 }));
 
     const intent = await classifyAttachmentIntent({ brief: brief ?? null, images: asAttachmentImages() });
-    // Couldn't tell what to do → ask the merchant. No generation, no products.
+    // Couldn't tell what to do → ask the merchant. No generation, no products —
+    // and no designer quota consumed.
     if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
+
+    // Generation is now certain when useAsReference, so consume the daily
+    // designer slot HERE — before any product rows are written, so a quota
+    // refusal is a clean 429 with no partial state. A products-only intent
+    // takes no designer slot at all: adding catalog drafts is not a generation.
+    if (intent.useAsReference) {
+      await assertDesignerQuota(session.shopId, { trusted: quotaTrusted(session) });
+    }
 
     // Create products FIRST (draft rows), THEN generate — the generator re-reads
     // the catalog, so the new drafts land in the snapshot it designs around.
-    const products: StudioAddedProduct[] = [];
-    if (intent.addAsProducts) {
-      for (const img of images) products.push(await createDraftProductFromImage(session.shopId, img));
-    }
+    // In PARALLEL (distinct rows, no contention) and contained per item (the
+    // helper never throws), so every attached image gets a receipt entry.
+    const products: StudioAddedProduct[] = intent.addAsProducts
+      ? await Promise.all(images.map((img) => createDraftProductFromImage(session.shopId, img)))
+      : [];
 
     if (intent.useAsReference) {
-      const result = await runGenerate(session.shopId, brief, designModel, asAttachmentImages());
+      let result: GenerateResult;
+      try {
+        result = await runGenerate(session.shopId, brief, designModel, asAttachmentImages());
+      } catch (err) {
+        // Products were already written; the shared 502 would discard that fact.
+        // Return an honest 200 receipt carrying both: the created products AND
+        // the failed generation (status "failed", no runId). The products-free
+        // reference path keeps the same 502 as the JSON path.
+        if (products.length > 0) {
+          return { status: "failed", intent, products } satisfies StudioGenerateReceipt;
+        }
+        throw err;
+      }
       return {
         runId: result.runId,
         status: result.status,
         intent,
         ...(products.length > 0 ? { products } : {}),
+        ...(result.referencesUnread ? { referencesUnread: true as const } : {}),
       } satisfies StudioGenerateReceipt;
     }
 
-    // Products only — no generation ran.
+    // Products only — no generation ran, no designer quota touched.
     return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
   });
 }

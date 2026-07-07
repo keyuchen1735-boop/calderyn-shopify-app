@@ -58,7 +58,17 @@ export interface GenerateInput {
   referenceImages?: AttachmentImage[];
 }
 export type GenerateStatus = "draft" | "no_products" | "failed";
-export interface GenerateResult { runId: string; status: GenerateStatus; tokenCost: number; docs: Record<string, BlockDocument> }
+export interface GenerateResult {
+  runId: string;
+  status: GenerateStatus;
+  tokenCost: number;
+  docs: Record<string, BlockDocument>;
+  /** Best-effort attribution (only ever set when referenceImages were provided):
+   *  every vision-bearing call (brand + home) errored while at least one
+   *  text-only call succeeded — the produced design never saw the references.
+   *  Absent on an all-calls-failed run (status "failed" is the stronger signal). */
+  referencesUnread?: true;
+}
 
 function textOf(msg: { content: { type: string; text?: string }[] }): string {
   return msg.content.map((b) => (b.type === "text" ? b.text ?? "" : "")).join("").trim();
@@ -86,6 +96,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // that merely returns junk still counts as a success (parsing handles it).
   let llmAttempts = 0;
   let llmOk = 0;
+  // Vision-bearing calls (the two that carry reference image blocks) tracked
+  // separately: when they all error but a text-only call succeeds, the design
+  // was produced WITHOUT ever seeing the references — surfaced as
+  // referencesUnread so the studio can tell the merchant (rule 12).
+  let visionAttempts = 0;
+  let visionOk = 0;
   // Style-reference image blocks the brand + home calls attach (see call()).
   // Built once here (a bad media type is dropped) so both calls share them and
   // the base64 is encoded a single time upstream.
@@ -106,10 +122,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     llmAttempts += 1;
+    const isVision = !!(opts?.images && opts.images.length > 0);
+    if (isVision) visionAttempts += 1;
     try {
       // Text-only stays a plain string (byte-identical to before); when images
       // are attached the content becomes a text block + the image blocks.
-      const content: Anthropic.MessageParam["content"] = opts?.images && opts.images.length > 0
+      const content: Anthropic.MessageParam["content"] = isVision && opts?.images
         ? [{ type: "text", text: user }, ...opts.images]
         : user;
       const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content }] });
@@ -117,6 +135,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
       llmOk += 1;
+      if (isVision) visionOk += 1;
       return textOf(msg);
     } catch (err) {
       console.error("[storegen] Claude call failed; using deterministic fallback", err);
@@ -223,7 +242,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // generic layout off as their design (rule 12).
   const degraded = llmAttempts > 0 && llmOk === 0;
   const status: GenerateStatus = degraded ? "failed" : products.length === 0 ? "no_products" : "draft";
+  // Best-effort attribution: references were attached and every call carrying
+  // them errored while a text-only call succeeded — the run "worked" but the
+  // design never saw the references. Not set on an all-failed run (status
+  // "failed" already tells the merchant the AI was unreachable).
+  const referencesUnread = hasReferences && visionAttempts > 0 && visionOk === 0 && llmOk > 0;
   await recordProposal(input.shopId, runId, proposals);
   await recordGeneration({ shopId: input.shopId, runId, source: input.mode, briefText: input.brief ?? null, model, status, tokenCost });
-  return { runId, status, tokenCost, docs };
+  return { runId, status, tokenCost, docs, ...(referencesUnread ? { referencesUnread: true as const } : {}) };
 }
