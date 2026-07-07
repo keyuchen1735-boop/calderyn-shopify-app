@@ -92,6 +92,24 @@ const CHECKOUT_POLICY_VERSION = "2026-06-29";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+// Stripe Tax + the shipping-rate engine require an ISO 3166-1 alpha-2 country (e.g. "US"). The
+// free-text field lets a browser autofill a full country name, which Stripe Tax rejects deep in
+// createCheckout -> quoteCart -> calculateTax, surfacing as an opaque 502 the buyer hits on every
+// retry. Normalise at the action boundary: accept a 2-letter code directly, or map a few common
+// full names; anything else is rejected with a friendly 400 BEFORE any Stripe call.
+const COUNTRY_ALIASES: Record<string, string> = {
+  "united states": "US",
+  usa: "US",
+  "united kingdom": "GB",
+  uk: "GB",
+  canada: "CA",
+};
+function toIsoCountry(raw: string): string | null {
+  const v = raw.trim();
+  if (/^[A-Za-z]{2}$/.test(v)) return v.toUpperCase();
+  return COUNTRY_ALIASES[v.toLowerCase()] ?? null;
+}
+
 export const meta: MetaFunction = ({ matches }) => {
   const title = `Checkout — ${storeNameFromMatches(matches)}`;
   return [
@@ -214,6 +232,15 @@ export async function action({ request }: ActionFunctionArgs) {
   if (missing.length > 0) {
     return json({ error: `Please provide ${missing.join(", ")}.` }, { status: 400 });
   }
+  // Reject a non-ISO country here (fail visibly, rule 12) so a full-name autofill can never reach
+  // Stripe Tax and 502 the buyer. countryIso is what flows into createCheckout from here on.
+  const countryIso = toIsoCountry(country);
+  if (!countryIso) {
+    return json(
+      { error: "Please enter a valid country as a two-letter code, e.g. US." },
+      { status: 400 },
+    );
+  }
   // Consent is mandatory and must be EXPLICIT — reject (fail visibly) if not accepted, never
   // silently proceed (the buyer helper records tos/privacy as accepted=true unconditionally, so
   // the gate is here at the boundary).
@@ -257,7 +284,7 @@ export async function action({ request }: ActionFunctionArgs) {
           city,
           region,
           postal,
-          country,
+          country: countryIso,
           phone: phone || null,
           isDefault: true,
         },
@@ -435,8 +462,16 @@ export default function StorefrontCheckout() {
             <input type="text" name="postal" autoComplete="postal-code" defaultValue={prefill?.postal} required />
           </label>
           <label className="cd-checkout__field">
-            <span>Country</span>
-            <input type="text" name="country" autoComplete="country-name" defaultValue={prefill?.country} required />
+            <span>Country (2-letter code, e.g. US)</span>
+            <input
+              type="text"
+              name="country"
+              autoComplete="country"
+              maxLength={2}
+              placeholder="US"
+              defaultValue={prefill?.country}
+              required
+            />
           </label>
           <label className="cd-checkout__field">
             <span>Phone (optional)</span>
