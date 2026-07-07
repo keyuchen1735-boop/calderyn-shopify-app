@@ -168,7 +168,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
   const intentField = form.get("intent");
   let explicitIntent: AttachmentIntent | undefined;
   if (intentField !== null) {
-    if (typeof intentField !== "string" || !(intentField in EXPLICIT_INTENTS)) {
+    if (typeof intentField !== "string" || !Object.hasOwn(EXPLICIT_INTENTS, intentField)) {
       return jsonError(422, "invalid_intent", "Intent must be products, reference or both.");
     }
     explicitIntent = EXPLICIT_INTENTS[intentField];

@@ -321,6 +321,10 @@ describe("dashboard.api.store multipart generate", () => {
     const res = await postMultipart({ brief: "hi", intent: "sometimes", images: [pngFile("a.png")] });
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("invalid_intent");
+    // Inherited Object.prototype keys must not pass the allowlist (own-key check).
+    const proto = await postMultipart({ brief: "hi", intent: "toString", images: [pngFile("a.png")] });
+    expect(proto.status).toBe(422);
+    expect((await proto.json()).error).toBe("invalid_intent");
     // 422 lands before the guards AND before any classification/generation/spend.
     expect(prechecksMock).not.toHaveBeenCalled();
     expect(designerQuotaMock).not.toHaveBeenCalled();

@@ -583,8 +583,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
       pushMsg({
         id: newId(),
         kind: "ai-text",
-        // "under 4 MB" is the merchant-facing phrasing of MAX_ATTACHMENT_BYTES.
-        text: `${plan.oversize.map((f) => `"${f.name}"`).join(", ")} ${plan.oversize.length === 1 ? "is" : "are"} too large — attach images under 4 MB.`,
+        // "under 3.75 MB" is the merchant-facing phrasing of MAX_ATTACHMENT_BYTES, matching the server's message.
+        text: `${plan.oversize.map((f) => `"${f.name}"`).join(", ")} ${plan.oversize.length === 1 ? "is" : "are"} too large — attach images under 3.75 MB.`,
       });
     }
     if (plan.overflow > 0) {
