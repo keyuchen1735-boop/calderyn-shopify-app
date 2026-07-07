@@ -123,11 +123,15 @@ describe("weather-reallocation action", () => {
     expect(suggestion!.status).toBe("failed");
   });
 
-  it("releases the row back to 'pending' when execution throws (retryable)", async () => {
+  it("marks the row 'failed' (terminal) when execution throws — a post-mutation throw is not safely retryable", async () => {
+    // executeReallocation moves the budget on-platform BEFORE writing its
+    // idempotency record, so a throw can leave the money moved with no record.
+    // Releasing to 'pending' would let a re-approval double-move it; the route
+    // must fail terminally instead and let the next cron re-suggest.
     executeReallocation.mockRejectedValueOnce(new Error("network"));
     const res = await post({ suggestionId: "sg1", intent: "apply" });
     expect(res.status).toBe(502);
-    expect(suggestion!.status).toBe("pending");
+    expect(suggestion!.status).toBe("failed");
   });
 
   it("marks 'applied' on a 'retrying' outcome (in-flight, drained by retry sweep)", async () => {

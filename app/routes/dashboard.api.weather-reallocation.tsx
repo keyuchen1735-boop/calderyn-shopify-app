@@ -103,10 +103,16 @@ export async function action({ request }: ActionFunctionArgs) {
     );
     outcome = res.outcome;
   } catch (err) {
-    // Threw before completing: no budget moved and (typically) no idempotency
-    // record written, so this is genuinely retryable — release back to pending.
+    // A throw can land AFTER the budgets were already moved on-platform but
+    // BEFORE the idempotency record was written: executeReallocation reduces the
+    // source and raises the dest budget first, then insertAuditWithIdempotency
+    // can still throw on the action_audit insert. Releasing back to `pending`
+    // would let a re-approval move the budget a SECOND time, because
+    // priorExecutionForKey finds no record. A post-mutation throw is not safely
+    // retryable — mark it terminal 'failed' (matching the outcome==='failed'
+    // branch below); a fresh suggestion comes from the next cron run.
     console.error("[weather-reallocation] execute threw", err);
-    await setStatus("pending");
+    await setStatus("failed");
     return jsonError(502, "reallocation_failed");
   }
 
