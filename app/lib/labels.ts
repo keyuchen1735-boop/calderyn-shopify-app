@@ -24,6 +24,7 @@ export const DETECTOR_LABELS: Record<DetectorId, string> = {
   priced_below_cost: "Selling below cost",
   thin_margin: "Barely making a profit",
   missing_cost: "Add product costs to track profit",
+  weather_demand: "Weather is shifting demand between regions",
 };
 
 // The technical term for each detector — shown as a tooltip/subtitle next to the
@@ -49,6 +50,7 @@ export const DETECTOR_TERMS: Record<DetectorId, string> = {
   priced_below_cost: "Priced below cost",
   thin_margin: "Thin margin",
   missing_cost: "Missing cost coverage",
+  weather_demand: "Weather demand signal",
 };
 
 // Title-case a raw detector id (e.g. "campaign_scaling_opportunity" → "Campaign
@@ -431,6 +433,7 @@ export const DETECTOR_TO_ACTIONS: Record<DetectorId, ActionKind[]> = {
   priced_below_cost: ["snooze_alert"],
   thin_margin: ["snooze_alert"],
   missing_cost: ["snooze_alert"],
+  weather_demand: ["reallocate_inventory", "reallocate_budget", "snooze_alert"],
 };
 
 // Campaign-scoped actions are meaningless on an alert with no campaign attached

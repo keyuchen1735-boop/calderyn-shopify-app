@@ -43,7 +43,8 @@ export type DetectorId =
   | "inventory_untracked"
   | "priced_below_cost"
   | "thin_margin"
-  | "missing_cost";
+  | "missing_cost"
+  | "weather_demand";
 
 export interface Alert {
   id: string;
