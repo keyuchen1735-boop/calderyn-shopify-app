@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as PasswordMod from "../password.server";
 
 // users.server computes a module-load DUMMY_HASH via scrypt; the pepper must be
 // set before the dynamic import("../users.server") inside the test bodies.
@@ -26,7 +27,7 @@ const { verifyPasswordSpy, ref } = vi.hoisted(() => {
   return { verifyPasswordSpy: vi.fn((pw: string, hash: string) => (ref.real ? ref.real(pw, hash) : false)), ref };
 });
 vi.mock("../password.server", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("../password.server")>();
+  const orig = await importOriginal<typeof PasswordMod>();
   ref.real = orig.verifyPassword;
   return { ...orig, verifyPassword: (pw: string, hash: string) => verifyPasswordSpy(pw, hash) };
 });
