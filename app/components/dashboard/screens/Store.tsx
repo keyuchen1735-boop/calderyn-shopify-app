@@ -45,6 +45,7 @@ import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
+import { StoreSubTabs } from "../subtabs";
 import { confettiFrom } from "../store/confetti";
 import type { ChatAction, ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
@@ -634,6 +635,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
   if (!data) {
     return (
       <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
+        <div style={{ padding: "14px 28px 0" }}>
+          <StoreSubTabs app={app} />
+        </div>
         <div className="cd-studio">
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Placeholder
@@ -664,6 +668,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
+      <div style={{ padding: "14px 28px 0" }}>
+        <StoreSubTabs app={app} />
+      </div>
       <div className="cd-studio">
         <ChatRail
           messages={messages}
