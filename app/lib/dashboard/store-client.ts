@@ -9,6 +9,7 @@ import type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioDesignModel,
   StudioVibe,
   StudioExperiment,
   StudioExperimentReport,
@@ -23,6 +24,7 @@ export type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioDesignModel,
   StudioVibe,
   StudioExperiment,
   StudioExperimentReport,
@@ -92,10 +94,11 @@ export async function decideStoreExperiment(
 
 /** Kick off a real store generation. An empty brief generates from the catalog
  *  alone. Awaits the full run — this can take several seconds. */
-export async function generateStudioStore(brief: string): Promise<StudioGenerateReceipt> {
+export async function generateStudioStore(brief: string, model?: StudioDesignModel): Promise<StudioGenerateReceipt> {
   return apiSend<StudioGenerateReceipt>("POST", "/dashboard/api/store", {
     action: "generate",
     brief,
+    ...(model ? { model } : {}),
   });
 }
 

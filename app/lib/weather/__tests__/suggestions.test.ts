@@ -10,6 +10,7 @@ interface Row {
   status: string;
   narrative: string;
   amount_cents: number;
+  expires_on: string;
 }
 
 // In-memory stand-in that honors the filters/orders/limit the loader applies,
@@ -73,6 +74,7 @@ const row = (over: Partial<Row>): Row => ({
   status: "pending",
   narrative: "shift",
   amount_cents: 3000,
+  expires_on: "2026-07-09",
   ...over,
 });
 
@@ -81,7 +83,9 @@ describe("loadWeatherSuggestions", () => {
     // Cron wrote it on the 6th; a merchant looks at 9pm ET = 01:00 UTC on the 7th.
     const sb = fakeSb({ sensitivity: 50, rows: [row({})] });
     const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-07T01:00:00Z"));
-    expect(out).toEqual([{ id: "sg1", narrative: "shift", amountCents: 3000 }]);
+    expect(out).toEqual([
+      { id: "sg1", narrative: "shift", amountCents: 3000, status: "pending", expiresOn: "2026-07-09" },
+    ]);
   });
 
   it("drops suggestions older than the forecast horizon", async () => {
@@ -142,5 +146,13 @@ describe("loadWeatherSuggestions", () => {
     expect(await loadWeatherSuggestions("shop-1", off, new Date("2026-07-06T12:00:00Z"))).toEqual([]);
     const noCfg = fakeSb({ sensitivity: null, rows: [row({})] });
     expect(await loadWeatherSuggestions("shop-1", noCfg, new Date("2026-07-06T12:00:00Z"))).toEqual([]);
+  });
+
+  it("keeps armed rows visible even when the dial is off (scheduled moves stay in sight)", async () => {
+    // The next cron sweep disarms them, but until then a scheduled money move
+    // (and its Disarm control) must not vanish from the panel.
+    const sb = fakeSb({ sensitivity: 0, rows: [row({ id: "armed1", status: "armed" })] });
+    const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-06T12:00:00Z"));
+    expect(out.map((s) => [s.id, s.status])).toEqual([["armed1", "armed"]]);
   });
 });

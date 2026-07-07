@@ -129,6 +129,19 @@ export function validateGuardrailPatch(patch: Partial<GuardrailConfig>): string 
     }
   }
 
+  if ("merchant_lat" in patch || "merchant_lon" in patch) {
+    const lat = patch.merchant_lat;
+    const lon = patch.merchant_lon;
+    // A location is a pair: both real coordinates, or both null (clear). A
+    // half-set pair is meaningless and rejected rather than half-stored.
+    const bothNull = lat === null && lon === null;
+    const bothValid =
+      isFiniteNum(lat) && lat >= -90 && lat <= 90 && isFiniteNum(lon) && lon >= -180 && lon <= 180;
+    if (!("merchant_lat" in patch) || !("merchant_lon" in patch) || (!bothNull && !bothValid)) {
+      return "invalid_merchant_location";
+    }
+  }
+
   if ("business_hours_only" in patch && typeof patch.business_hours_only !== "boolean") {
     return "invalid_business_hours_only";
   }

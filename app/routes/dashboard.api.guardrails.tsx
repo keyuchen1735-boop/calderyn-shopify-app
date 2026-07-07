@@ -31,6 +31,8 @@ const PATCHABLE_KEYS: (keyof GuardrailConfig)[] = [
   "autopilot_max_price_change_pct",
   "autopilot_max_inventory_units_per_move",
   "weather_sensitivity",
+  "merchant_lat",
+  "merchant_lon",
 ];
 
 export async function action({ request }: ActionFunctionArgs) {
