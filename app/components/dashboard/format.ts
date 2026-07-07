@@ -86,6 +86,7 @@ export const ACTION_LABELS: Record<string, string> = {
   increase_campaign_budget: "Scale campaign budget",
   exclude_geo: "Exclude geography",
   reallocate_inventory: "Reallocate inventory",
+  reallocate_budget: "Shift ad budget",
   create_po_draft: "Create PO draft",
   snooze_alert: "Snooze",
   // remediation move kinds (Phase 1 advisory)
