@@ -9,7 +9,12 @@ const h = vi.hoisted(() => ({
   rpc: vi.fn(),
   transitionOrder: vi.fn(),
   emitPaidOrder: vi.fn(),
+  commitReservation: vi.fn(),
   routedCreate: vi.fn(),
+  applyAccountUpdate: vi.fn(),
+  // Current orders.state the mock returns for the redelivery self-heal read. Default 'paid' so the
+  // ordinary duplicate delivery treats the order as already-advanced and does not re-transition.
+  orderState: "paid" as string,
 }));
 
 // Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks.
@@ -29,6 +34,9 @@ vi.mock("~/lib/supabase.server", () => ({
       insert: h.insert,
       upsert: h.upsert,
       update: () => ({ eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }),
+      // orders.state read for the redelivery self-heal (recoverStrandedPaidOrder): returns the
+      // configurable h.orderState so a test can simulate a still-stranded checkout_pending order.
+      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { state: h.orderState }, error: null }) }) }) }),
     }),
     rpc: h.rpc,
   }),
@@ -39,12 +47,16 @@ vi.mock("~/lib/supabase.server", () => ({
 // transition + emit on first delivery, and nothing on a duplicate.
 vi.mock("~/lib/order/order.server", () => ({ transitionOrder: h.transitionOrder }));
 vi.mock("~/lib/order/emit.server", () => ({ emitPaidOrder: h.emitPaidOrder }));
+// commitReservation turns the checkout's held reservations into on_hand decrements on payment
+// success; the engine RPCs are unit-tested in the inventory suite — here we assert the WIRING.
+vi.mock("~/lib/inventory/engine.server", () => ({ commitReservation: h.commitReservation }));
 
 // Routing + fallback + decline semantics are unit-tested against
 // createRoutedPaymentIntent in connect.server.test.ts; here we assert the WIRING —
 // the base params handed to the seam and the row stamping of its outcome.
 vi.mock("~/lib/payments/connect.server", () => ({
   createRoutedPaymentIntent: h.routedCreate,
+  applyAccountUpdate: h.applyAccountUpdate,
 }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the stripe + supabase fakes are registered before the module under test loads
@@ -70,7 +82,10 @@ beforeEach(() => {
     occurredAt: "2026-06-29T12:00:00.000Z",
   });
   h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
+  h.commitReservation.mockResolvedValue(undefined);
+  h.applyAccountUpdate.mockResolvedValue(true);
   h.upsert.mockResolvedValue({ error: null });
+  h.orderState = "paid";
 });
 
 describe("createPaymentIntent", () => {
@@ -253,6 +268,37 @@ describe("processStripeEvent", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
+  describe("account.updated (Connect async enablement re-sync)", () => {
+    const accountEvent = {
+      id: "evt_acct",
+      type: "account.updated",
+      created: 1_700_000_000,
+      account: "acct_1",
+      data: { object: { id: "acct_1", charges_enabled: true, payouts_enabled: true, details_submitted: true } },
+    };
+
+    it("syncs the stored connected-account row from the event and does no money work", async () => {
+      h.constructEvent.mockReturnValue(accountEvent);
+      const res = await processStripeEvent("raw-body", "sig");
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      // The routing row is re-synced from the event's account object (charges now enabled), so
+      // subsequent PaymentIntents route to the merchant account instead of the platform account.
+      expect(h.applyAccountUpdate).toHaveBeenCalledWith(accountEvent.data.object);
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+    });
+
+    it("ACKs (200, processed:false) for an account.updated we don't track", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.applyAccountUpdate.mockResolvedValueOnce(false); // no connected-account row matched
+      h.constructEvent.mockReturnValue({ ...accountEvent, id: "evt_acct_foreign" });
+      const res = await processStripeEvent("raw-body", "sig");
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/not linked to any shop/));
+      warn.mockRestore();
+    });
+  });
+
   it("ACKs (200) and writes nothing for a PI not created by us (no shop_id metadata)", async () => {
     // A foreign PaymentIntent on the same Stripe account must NOT 500-loop forever.
     h.constructEvent.mockReturnValue({
@@ -404,6 +450,68 @@ describe("processStripeEvent", () => {
       await processStripeEvent("raw-body", "sig");
       expect(h.transitionOrder).not.toHaveBeenCalled();
       expect(h.emitPaidOrder).not.toHaveBeenCalled();
+      expect(h.commitReservation).not.toHaveBeenCalled(); // holds are NOT released on failure (PI retries)
+    });
+
+    it("commits the checkout's inventory reservation on a confirmed capture, keyed to the order", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+
+      await processStripeEvent("raw-body", "sig");
+
+      // reserve-at-checkout / commit-on-payment: the held reservation (keyed on the order id) is
+      // turned into a real on_hand decrement so the storefront path stops overselling.
+      expect(h.commitReservation).toHaveBeenCalledTimes(1);
+      expect(h.commitReservation).toHaveBeenCalledWith("shop-1", "order-1");
+    });
+
+    it("re-runs the (idempotent) inventory commit on a duplicate delivery (self-heal)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+
+      await processStripeEvent("raw-body", "sig"); // first
+      await processStripeEvent("raw-body", "sig"); // redelivery
+
+      // inventory_commit only flips still-held rows, so re-running it every succeeded delivery is a
+      // safe self-heal (a redelivery finds nothing held and no-ops).
+      expect(h.commitReservation).toHaveBeenCalledTimes(2);
+    });
+
+    it("self-heals a stranded checkout_pending order: first-delivery transition throws, redelivery recovers it to paid", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      // The order is still checkout_pending throughout the stranding window.
+      h.orderState = "checkout_pending";
+      // First delivery: event recorded, then the paid transition throws (transient) -> handler throws.
+      // Only the FIRST call rejects; the recovery call on redelivery uses the default resolve.
+      h.transitionOrder.mockRejectedValueOnce(new Error("transient transition blip"));
+
+      await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/transient transition blip/);
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1);
+
+      // Stripe redelivers: record_stripe_event returns false (duplicate), but because the order is
+      // STILL checkout_pending the recovery re-drives the transition to paid instead of skipping it
+      // forever (the bug: a captured order stranded as "Abandoned", never fulfilled).
+      const redelivery = await processStripeEvent("raw-body", "sig");
+      expect(redelivery).toEqual({ status: 200, processed: false, duplicate: true });
+      expect(h.transitionOrder).toHaveBeenCalledTimes(2);
+      expect(h.transitionOrder).toHaveBeenLastCalledWith(
+        "shop-1",
+        "order-1",
+        "paid",
+        expect.stringMatching(/recovery/),
+      );
+    });
+
+    it("does NOT recover on a duplicate delivery once the order already reached paid", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+
+      await processStripeEvent("raw-body", "sig"); // first: transitions to paid
+      h.orderState = "paid"; // the order is now paid (ordinary duplicate)
+      await processStripeEvent("raw-body", "sig"); // redelivery: recovery must be a no-op
+
+      expect(h.transitionOrder).toHaveBeenCalledTimes(1); // never re-transitioned
     });
 
     it("skips the transition (with a warning) when a succeeded PI carries no order_ref", async () => {

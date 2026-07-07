@@ -15,16 +15,21 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
   const [rows, setRows] = useState<client.VariantBalanceVM[]>([]);
   const [pending, setPending] = useState<client.PendingTransferVM[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [moving, setMoving] = useState(false);
   const [damaging, setDamaging] = useState<string | null>(null);
   const [damageQty, setDamageQty] = useState(1);
   const [history, setHistory] = useState<client.LedgerEntryVM[] | null>(null);
 
+  // Track load failure so a transient API/DB error is NOT rendered as the "No stock locations yet"
+  // empty state (which would make a fully-stocked variant look empty, inviting a double-count).
   const reload = () =>
     Promise.all([
       client.fetchVariantInventory(variantId).then(setRows),
       client.fetchPendingTransfers(variantId).then(setPending),
-    ]).then(() => undefined).catch(() => {});
+    ])
+      .then(() => setLoadError(false))
+      .catch(() => setLoadError(true));
   useEffect(() => {
     setLoading(true);
     reload().finally(() => setLoading(false));
@@ -59,7 +64,15 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
   };
 
   if (loading) return <div className="cd-caption">Loading stock…</div>;
-  if (!rows.length) return <div className="cd-caption">No stock locations yet.</div>;
+  if (!rows.length) {
+    // Distinguish a genuinely empty variant from a failed load: showing "no stock" for a stocked
+    // variant that merely failed to load would mislead the merchant into re-adding stock.
+    return loadError ? (
+      <div className="cd-caption">Couldn&apos;t load stock. Please try again.</div>
+    ) : (
+      <div className="cd-caption">No stock locations yet.</div>
+    );
+  }
 
   return (
     <div>
@@ -88,8 +101,16 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
               </span>
               <span style={{ width: 92 }}>
                 <input
+                  // Value-derived key so the input REMOUNTS (and re-reads defaultValue) whenever the
+                  // server on-hand changes — e.g. after receiving a transfer — instead of keeping a
+                  // stale uncontrolled value. Combined with the blur dirty-check, this prevents a
+                  // no-edit blur from committing the pre-reload number and silently reverting stock.
+                  key={`onhand:${r.locationId}:${r.onHand}`}
                   className="cd-input tabular-nums" type="number" min={0} defaultValue={r.onHand}
-                  onBlur={(e) => onSetOnHand(r.locationId, Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
+                  onBlur={(e) => {
+                    const next = Math.max(0, Math.trunc(Number(e.target.value)) || 0);
+                    if (next !== r.onHand) onSetOnHand(r.locationId, next); // only commit a real change
+                  }}
                 />
               </span>
               <span className="cd-caption tabular-nums" style={{ width: 70, textAlign: "right" }}>{r.reserved}</span>
@@ -97,8 +118,13 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
               <span className="tabular-nums" style={{ width: 78, textAlign: "right", fontWeight: 600, color: low ? "var(--red)" : "var(--text-1)" }}>{r.available}</span>
               <span style={{ width: 96 }}>
                 <input
+                  // Same stale-value guard as on-hand: remount when the server reorder point changes.
+                  key={`reorder:${r.locationId}:${r.reorderPoint ?? ""}`}
                   className="cd-input tabular-nums" type="number" min={0} defaultValue={r.reorderPoint ?? ""} placeholder="—"
-                  onBlur={(e) => onSetReorder(r.locationId, e.target.value === "" ? null : Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
+                  onBlur={(e) => {
+                    const next = e.target.value === "" ? null : Math.max(0, Math.trunc(Number(e.target.value)) || 0);
+                    if (next !== r.reorderPoint) onSetReorder(r.locationId, next); // only commit a real change
+                  }}
                 />
               </span>
               <span style={{ width: 96 }}>

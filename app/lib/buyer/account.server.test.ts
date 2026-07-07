@@ -9,6 +9,7 @@ const store = vi.hoisted(() => {
   class Builder {
     private op: "select" | "delete" = "select";
     private filters: Array<[string, unknown]> = [];
+    private inFilters: Array<[string, unknown[]]> = [];
     private nullFilters: string[] = [];
     private wantSingle = false;
     private readonly table: string;
@@ -26,6 +27,10 @@ const store = vi.hoisted(() => {
       this.filters.push([col, val]);
       return this;
     }
+    in(col: string, vals: unknown[]) {
+      this.inFilters.push([col, vals]);
+      return this;
+    }
     is(col: string, _val: null) {
       this.nullFilters.push(col);
       return this;
@@ -41,7 +46,11 @@ const store = vi.hoisted(() => {
       return Promise.resolve(this.run()).then(resolve, reject);
     }
     private match(r: Row) {
-      return this.filters.every(([c, v]) => r[c] === v) && this.nullFilters.every((c) => r[c] == null);
+      return (
+        this.filters.every(([c, v]) => r[c] === v) &&
+        this.inFilters.every(([c, vals]) => vals.includes(r[c])) &&
+        this.nullFilters.every((c) => r[c] == null)
+      );
     }
     private run(): { data: unknown; error: unknown } {
       const t = db[this.table];
@@ -80,6 +89,17 @@ describe("listBuyerOrders", () => {
     const orders = await listBuyerOrders("shop-1", "buyer-1");
     expect(orders).toHaveLength(1);
     expect(orders[0]).toMatchObject({ orderId: "o1", state: "paid", totalCents: 4957, confirmationToken: "tok1" });
+  });
+
+  it("excludes abandoned checkout_pending (and cart) orders so they don't show as 'Payment processing' forever", async () => {
+    store.db.orders.push(
+      { id: "op", shop_id: "shop-1", buyer_id: "buyer-1", state: "checkout_pending", financial_status: "pending", total_cents: 2500, currency: "usd", created_at: "2026-07-02T00:00:00Z", confirmation_token: "tokp" },
+      { id: "ok", shop_id: "shop-1", buyer_id: "buyer-1", state: "paid", financial_status: "paid", total_cents: 4957, currency: "usd", created_at: "2026-07-01T00:00:00Z", confirmation_token: "tok1" },
+      { id: "opr", shop_id: "shop-1", buyer_id: "buyer-1", state: "partially_refunded", financial_status: "partially_refunded", total_cents: 3000, currency: "usd", created_at: "2026-07-03T00:00:00Z", confirmation_token: "tokr" },
+    );
+    const orders = await listBuyerOrders("shop-1", "buyer-1");
+    // The abandoned checkout is gone; the paid + partially_refunded orders remain.
+    expect(orders.map((o) => o.orderId).sort()).toEqual(["ok", "opr"]);
   });
 });
 

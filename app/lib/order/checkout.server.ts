@@ -24,6 +24,24 @@ import {
 } from "~/lib/buyer/identity.server";
 import { createPaymentIntent, isSupportedCurrency } from "~/lib/payments/stripe.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
+import { reserveStock, releaseReservation } from "~/lib/inventory/engine.server";
+import { transitionOrder } from "./order.server";
+
+/**
+ * Thrown by createCheckout when one or more TRACKED cart lines can no longer be reserved because
+ * their physical stock ran out between add-to-cart and checkout. Before this is thrown the order
+ * is cancelled and any partial holds it took are released, so no orphan hold or lingering
+ * checkout_pending order is left behind. The checkout route maps it to a 409 (not the generic 502)
+ * with an actionable "one or more items just sold out" message. `variantIds` are the sold-out lines.
+ */
+export class OutOfStockError extends Error {
+  readonly variantIds: string[];
+  constructor(variantIds: string[]) {
+    super(`out of stock: ${variantIds.join(", ")}`);
+    this.name = "OutOfStockError";
+    this.variantIds = variantIds;
+  }
+}
 
 export interface CheckoutBuyer {
   email: string;
@@ -193,6 +211,42 @@ export async function createCheckout(
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) throw lineIns.error;
+
+  // --- Oversell protection: reserve physical stock before charging -----------
+  // Reserve stock for TRACKED lines against the owned inventory ledger BEFORE opening the
+  // PaymentIntent, so a sale can never be captured for stock that no longer physically exists.
+  // The reservation is keyed on the ORDER id: the Stripe webhook commits it by that same key on
+  // payment success (turning holds into on_hand decrements), and the reaper releases it if the
+  // checkout is abandoned. Untracked/digital lines (inventory_tracked false/null) hold no ledger
+  // balance, so they are skipped — reserving them would 422 a perfectly valid sale. Runs here,
+  // after the order + lines are persisted, so the checkout_ref (= orderId) is a stable key.
+  const trackedRes = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked")
+    .eq("shop_id", shopId)
+    .in("id", priced.lines.map((l) => l.variantId));
+  if (trackedRes.error) throw trackedRes.error;
+  const tracked = new Set(
+    ((trackedRes.data ?? []) as Record<string, unknown>[])
+      .filter((r) => r.inventory_tracked === true)
+      .map((r) => String(r.id)),
+  );
+  if (tracked.size > 0) {
+    const soldOut: string[] = [];
+    for (const line of priced.lines) {
+      if (!tracked.has(line.variantId)) continue;
+      const res = await reserveStock(shopId, line.variantId, line.quantity, orderId, null);
+      if (!res.ok) soldOut.push(line.variantId);
+    }
+    if (soldOut.length > 0) {
+      // Free any partial holds this order already took (release settles the whole checkout_ref),
+      // then cancel the just-born order so it never lingers as an abandoned checkout_pending, and
+      // surface the sold-out variants (rule 12: fail visibly, don't charge for absent stock).
+      await releaseReservation(shopId, orderId);
+      await transitionOrder(shopId, orderId, "cancelled", "checkout:out_of_stock");
+      throw new OutOfStockError(soldOut);
+    }
+  }
 
   // Mark the source cart consumed (cart → checkout_pending, the shared state
   // vocabulary) so open-basket surfaces (Orders → Draft carts, Customers →

@@ -43,6 +43,7 @@ interface SbCfg {
 function makeSb(cfg: SbCfg) {
   const refundFactUpserts: Array<Record<string, unknown>> = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const ordersUpdates: Array<Record<string, unknown>> = [];
   const sb = {
     from(table: string) {
       if (table === "refund_fact") {
@@ -55,6 +56,10 @@ function makeSb(cfg: SbCfg) {
       }
       const builder: Record<string, unknown> = {
         select: () => builder,
+        update: (vals: Record<string, unknown>) => {
+          if (table === "orders") ordersUpdates.push(vals);
+          return builder;
+        },
         eq: () => builder,
         maybeSingle: () => {
           if (table === "orders") return Promise.resolve(cfg.order ?? { data: null, error: null });
@@ -79,7 +84,7 @@ function makeSb(cfg: SbCfg) {
       );
     },
   };
-  return { sb: sb as unknown as Parameters<typeof executeRefundAction>[2], refundFactUpserts, rpcCalls };
+  return { sb: sb as unknown as Parameters<typeof executeRefundAction>[2], refundFactUpserts, rpcCalls, ordersUpdates };
 }
 
 const CAPTURE_2500 = [{ kind: "capture", amount_cents: 2500 }];
@@ -103,7 +108,7 @@ function baseCfg(overrides: SbCfg = {}): SbCfg {
 
 describe("executeRefundAction — happy paths", () => {
   it("full refund: Stripe refund, negative ledger, native refund_fact, paid->refunded, audit", async () => {
-    const { sb, refundFactUpserts, rpcCalls } = makeSb(baseCfg());
+    const { sb, refundFactUpserts, rpcCalls, ordersUpdates } = makeSb(baseCfg());
     const res = await executeRefundAction(
       "shop-1",
       { orderId: "order-1", idempotencyKey: "k1" },
@@ -137,6 +142,9 @@ describe("executeRefundAction — happy paths", () => {
     });
     // Full refund -> refunded.
     expect(h.transitionOrder).toHaveBeenCalledWith("shop-1", "order-1", "refunded", "refund:re_1");
+    // financial_status is stamped 'refunded' so live "Sales today" (counts financial_status='paid')
+    // stops counting this order at its full captured value.
+    expect(ordersUpdates).toContainEqual({ financial_status: "refunded" });
     const audit = h.insertAudit.mock.calls[0][2];
     expect(audit.action_kind).toBe("issue_refund");
     expect(audit.outcome).toBe("succeeded");
@@ -161,7 +169,7 @@ describe("executeRefundAction — happy paths", () => {
   });
 
   it("second partial on an already partially_refunded order that stays partial does NOT re-transition", async () => {
-    const { sb } = makeSb(
+    const { sb, ordersUpdates } = makeSb(
       baseCfg({
         order: { data: { state: "partially_refunded", currency: "usd" }, error: null },
         ledgerRows: [
@@ -180,6 +188,9 @@ describe("executeRefundAction — happy paths", () => {
     // target == current (partially_refunded) -> identity move skipped.
     expect(h.transitionOrder).not.toHaveBeenCalled();
     expect(res.orderState).toBe("partially_refunded");
+    // financial_status is still stamped even though `state` did not transition (so a 2nd partial
+    // keeps the label accurate).
+    expect(ordersUpdates).toContainEqual({ financial_status: "partially_refunded" });
   });
 
   it("partial that reaches the captured total on a partially_refunded order transitions to refunded", async () => {

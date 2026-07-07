@@ -3,13 +3,14 @@
 // read the signed cart cookie, price the cart purely from the line snapshots.
 // Checkout (payment + PII capture) is #2c-2 — the Checkout link points at its
 // future route, which 404s until that module lands.
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { Form, useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
-import { priceCart } from "~/lib/order/cart.server";
+import { priceCart, removeCartLine, clearCart } from "~/lib/order/cart.server";
+import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 
@@ -26,25 +27,80 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
   // hold its sentinel id) — always an empty cart, never a DB read.
-  if (shopId === DEMO_SHOP_ID) return json({ cart: null });
+  if (shopId === DEMO_SHOP_ID) return json({ cart: null, error: null });
   const track = await trackStorefrontEvent(request, shopId, "page_view");
   const cartId = await readCartId(request);
   // No cookie yet -> empty cart, no DB read.
-  if (!cartId) return json({ cart: null }, { headers: track });
-  // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines.
-  const cart = await priceCart(shopId, cartId);
-  return json({ cart }, { headers: track });
+  if (!cartId) return json({ cart: null, error: null }, { headers: track });
+  // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines. A cart whose
+  // lines somehow mix currencies would otherwise throw here and make the page un-viewable (the only
+  // route from which a buyer could remove the offending line), so degrade to a null cart + notice
+  // instead of a 500 — the empty-cart control below is still reachable to recover.
+  try {
+    const cart = await priceCart(shopId, cartId);
+    return json({ cart, cartId, error: null }, { headers: track });
+  } catch (err) {
+    console.error(`[cart] could not price cart ${cartId} for shop ${shopId}:`, err);
+    return json({ cart: null, cartId, error: "unpriceable" as const }, { headers: track });
+  }
+}
+
+/**
+ * Cart mutations (#2c-1): remove a single line or empty the whole cart. This is the buyer's only
+ * in-app recovery when a cart holds a now-unavailable / archived variant — without it that cart
+ * dead-ends checkout in a permanent 502 with no way to drop the offending item. Shop + cart scoped
+ * (the cart id comes from the signed cookie, never the body), throttled, redirect-after-POST.
+ */
+export async function action({ request }: ActionFunctionArgs) {
+  const shopId = await resolveStorefrontShop(request);
+  // The demo shell owns no cart row; bounce a crafted POST instead of 500ing on the uuid tables.
+  if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
+  if (!(await rateLimit(clientIpKey(request, "cart-edit"), 30, 60_000))) {
+    throw new Response("Too many requests", { status: 429 });
+  }
+  const cartId = await readCartId(request);
+  if (!cartId) return redirect("/storefront/cart");
+
+  const form = await request.formData();
+  const intent = form.get("intent");
+  if (intent === "clear") {
+    await clearCart(shopId, cartId);
+  } else if (intent === "remove") {
+    const lineId = form.get("lineId");
+    if (typeof lineId !== "string" || lineId.length === 0) {
+      throw new Response("lineId is required", { status: 400 });
+    }
+    await removeCartLine(shopId, cartId, lineId);
+  } else {
+    throw new Response("unknown cart action", { status: 400 });
+  }
+  // Redirect after the mutation to avoid a double-submit on refresh.
+  return redirect("/storefront/cart");
 }
 
 
 export default function StorefrontCart() {
-  const { cart } = useLoaderData<typeof loader>();
+  const { cart, error } = useLoaderData<typeof loader>();
 
   if (!cart || cart.lines.length === 0) {
     return (
       <section className="cd-cart cd-cart--empty">
         <h1>Your cart</h1>
-        <p className="cd-cart__empty">Your cart is empty.</p>
+        {error === "unpriceable" ? (
+          <>
+            <p className="cd-cart__empty">
+              We couldn&apos;t load your cart. You can empty it and start again.
+            </p>
+            <Form method="post">
+              <input type="hidden" name="intent" value="clear" />
+              <button type="submit" className="cd-cart__empty-btn">
+                Empty cart
+              </button>
+            </Form>
+          </>
+        ) : (
+          <p className="cd-cart__empty">Your cart is empty.</p>
+        )}
         <a className="cd-cart__continue" href="/storefront">
           Continue shopping
         </a>
@@ -64,6 +120,13 @@ export default function StorefrontCart() {
             <span className="cd-cart__line-total">
               {money(line.unitPriceCents * line.quantity, line.currency)}
             </span>
+            <Form method="post" className="cd-cart__line-remove">
+              <input type="hidden" name="intent" value="remove" />
+              <input type="hidden" name="lineId" value={line.id} />
+              <button type="submit" className="cd-cart__remove-btn" aria-label={`Remove ${line.titleSnapshot}`}>
+                Remove
+              </button>
+            </Form>
           </li>
         ))}
       </ul>
@@ -71,10 +134,17 @@ export default function StorefrontCart() {
         <span className="cd-cart__subtotal-label">Subtotal</span>
         <span className="cd-cart__subtotal-value">{money(cart.subtotalCents, cart.currency)}</span>
       </div>
-      {/* Checkout route ships in #2c-2; this link 404s until then. */}
-      <a className="cd-cart__checkout" href="/storefront/checkout">
-        Checkout
-      </a>
+      <div className="cd-cart__actions">
+        <Form method="post">
+          <input type="hidden" name="intent" value="clear" />
+          <button type="submit" className="cd-cart__empty-btn">
+            Empty cart
+          </button>
+        </Form>
+        <a className="cd-cart__checkout" href="/storefront/checkout">
+          Checkout
+        </a>
+      </div>
     </section>
   );
 }

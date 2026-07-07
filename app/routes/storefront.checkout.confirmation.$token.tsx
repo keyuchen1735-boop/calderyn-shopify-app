@@ -9,9 +9,10 @@ import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
-import { clearCartId } from "~/lib/storefront/cart-cookie.server";
+import { clearCartId, readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
+import { getCartState } from "~/lib/order/cart.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 
@@ -37,10 +38,21 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const captured =
     order.state === "paid" || order.state === "fulfilled" || order.state === "refunded";
 
-  // Clear the cart cookie ONLY once payment is captured — never for an unpaid `checkout_pending`
-  // order, so a buyer who reaches this URL without paying keeps their cart. Idempotent on refresh.
+  // Clear the cart cookie ONLY when payment is captured AND the cookie still points at the CONSUMED
+  // cart (the one this checkout marked 'checkout_pending'). The order carries no cart_id, so we tell
+  // the just-purchased cart from a fresh ACTIVE basket by its state: without this guard, viewing ANY
+  // past paid order from account history wiped the buyer's in-progress cart cookie. A fresh cart is
+  // in 'cart' state, so it is never cleared; an unpaid (webhook-lagged) order keeps the cart too.
   const headers = new Headers();
-  if (captured) headers.append("Set-Cookie", await clearCartId());
+  if (captured) {
+    const cookieCartId = await readCartId(request);
+    const cookieCartState = cookieCartId ? await getCartState(shopId, cookieCartId) : null;
+    // Only a consumed cart (or a stale cookie whose cart no longer exists) is safe to clear; an
+    // active 'cart' basket the buyer is building must survive viewing an old receipt.
+    if (cookieCartState === "checkout_pending" || cookieCartState === null) {
+      headers.append("Set-Cookie", await clearCartId());
+    }
+  }
 
   // Funnel terminal: the buyer's browser is back from Stripe with a captured
   // payment. Refresh duplicates are harmless — the funnel counts distinct

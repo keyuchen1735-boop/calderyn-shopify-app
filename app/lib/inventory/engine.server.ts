@@ -54,7 +54,13 @@ export async function releaseReservation(shopId: string, checkoutRef: string): P
 // commit changes on_hand; re-project each touched (variant, location). release
 // only touches reserved, so its re-projection is a harmless no-op refresh.
 async function reprojectCheckout(shopId: string, checkoutRef: string): Promise<void> {
-  const { data } = await getSupabase().from("inventory_reservation").select("variant_id, location_id").eq("shop_id", shopId).eq("checkout_ref", checkoutRef);
+  // Surface the SELECT error (rule 12) instead of swallowing it: a transient failure here left the
+  // loop empty, so no projectLevelFact ran and inventory_level_fact stayed at its stale pre-sale
+  // (higher) available value while the balance had already decremented. Throwing lets the caller
+  // retry (commit is idempotent; the reaper isolates each release) so the engine's observation stays
+  // consistent with the authoritative balance.
+  const { data, error } = await getSupabase().from("inventory_reservation").select("variant_id, location_id").eq("shop_id", shopId).eq("checkout_ref", checkoutRef);
+  if (error) throw error;
   const seen = new Set<string>();
   for (const r of data ?? []) {
     const key = `${r.variant_id}:${r.location_id}`;

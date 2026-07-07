@@ -353,6 +353,27 @@ export async function executeRefundAction(
     }
   }
 
+  // 8b. Stamp orders.financial_status to match the refund. `state` and `financial_status` are
+  // independent columns: the paid webhook set financial_status='paid', but nothing moved it off
+  // 'paid' on a refund — so live "Sales today" (which counts financial_status='paid' at GROSS
+  // total_cents) kept counting a fully-refunded order at full value. Update on EVERY refund
+  // (including a 2nd partial that does not change `state`). Best-effort with a loud log: the ledger
+  // is the money truth; a stale label reconciles and never fails an already-committed refund.
+  try {
+    const finUpd = await sb
+      .from("orders")
+      .update({ financial_status: resolvedState }) // 'refunded' | 'partially_refunded'
+      .eq("shop_id", shopId)
+      .eq("id", input.orderId);
+    if (finUpd.error) throw finUpd.error;
+  } catch (err) {
+    params.financial_status_error = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[refund] order ${input.orderId} refund ${refund.refundId}: financial_status update to ${resolvedState} failed — reconcile`,
+      err,
+    );
+  }
+
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
   // (a refund is money OUT, not clawed-back waste) — recoveredCentsFromStates returns 0 for it.
   // Loud-log before rethrow: after a FULL refund the order is already 'refunded', so a retry is
