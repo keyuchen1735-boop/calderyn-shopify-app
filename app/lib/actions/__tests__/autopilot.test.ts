@@ -1809,6 +1809,99 @@ describe("runAutopilotForShop", () => {
     });
   });
 
+  // ─── autonomous weather-budget reallocate_budget ─────────────────
+  // weather_demand budget alerts (no sku_id, no transfer plan, but a
+  // reallocationPlan in evidence) route through tryWeatherBudgetReallocation,
+  // NOT the legacy reduce_campaign_budget branch (weather_demand is not in any
+  // legacy campaign detector set). Phase 1b: this is the autonomous execution
+  // path for the graduated (weather_demand, reallocate_budget) pair.
+
+  describe("autonomous weather-budget reallocate_budget", () => {
+    const weatherBudgetCandidate = {
+      alert_id: "al-weather-budget-2",
+      detector_id: "weather_demand",
+      dollar_impact: 150, // dollars
+      campaign_id: "camp-weather-src",
+      campaign_spend_cents: 30000,
+      daily_budget_cents: 12000,
+      evidence: {
+        region: "midwest",
+        source_campaign_id: "camp-weather-src",
+        dest_campaign_id: "camp-weather-dest",
+        amount_cents: 3000,
+      },
+      sku: null,
+      sku_id: null,
+    };
+
+    it("graduated + guardrails allow: reallocates budget autonomously via executeReallocation", async () => {
+      isGraduated.mockResolvedValue(true);
+      checkGuardrails.mockResolvedValue({ allowed: true });
+      const sb = fakeSb({ enabled: true, alerts: [weatherBudgetCandidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(isGraduated).toHaveBeenCalledWith(SHOP, "weather_demand", "reallocate_budget", sb);
+      expect(checkGuardrails).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({
+          kind: "reallocate_budget",
+          campaignId: "camp-weather-src",
+          destCampaignId: "camp-weather-dest",
+          dollarImpactCents: 3000,
+          campaignSpendCents: 30000,
+          currentBudgetCents: 12000,
+          newBudgetCents: 9000,
+        }),
+        sb,
+        { forceBypassOff: true, autonomous: true },
+      );
+      expect(executeReallocation).toHaveBeenCalledWith(
+        SHOP,
+        expect.objectContaining({
+          sourceCampaignId: "camp-weather-src",
+          destCampaignId: "camp-weather-dest",
+          amountCents: 3000,
+          actor: "autopilot",
+          alertId: "al-weather-budget-2",
+          idempotencyKey: "autopilot:al-weather-budget-2:reallocate_budget",
+        }),
+        sb,
+      );
+      const dec = r.decisions.find((d) => d.alertId === "al-weather-budget-2");
+      expect(dec?.outcome).toBe("acted");
+      expect(r.acted).toBe(1);
+      expect(r.blocked).toBe(0);
+      expect(r.skippedMoves).toBe(0);
+    });
+
+    it("pair NOT graduated → skipped (skippedMoves), executeReallocation NOT called", async () => {
+      isGraduated.mockResolvedValue(false);
+      const sb = fakeSb({ enabled: true, alerts: [weatherBudgetCandidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(executeReallocation).not.toHaveBeenCalled();
+      const dec = r.decisions.find((d) => d.alertId === "al-weather-budget-2");
+      expect(dec?.outcome).toBe("skipped");
+      expect(r.skippedMoves).toBe(1);
+      expect(r.blocked).toBe(0);
+      expect(r.acted).toBe(0);
+    });
+
+    it("graduated but guardrails block → blocked, executeReallocation NOT called", async () => {
+      isGraduated.mockResolvedValue(true);
+      checkGuardrails.mockResolvedValue({ allowed: false, reason: "destination campaign in cooldown" });
+      const sb = fakeSb({ enabled: true, alerts: [weatherBudgetCandidate] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(executeReallocation).not.toHaveBeenCalled();
+      const dec = r.decisions.find((d) => d.alertId === "al-weather-budget-2");
+      expect(dec?.outcome).toBe("blocked");
+      expect(r.blocked).toBe(1);
+      expect(r.blockedReasons["destination campaign in cooldown"]).toBe(1);
+      expect(r.acted).toBe(0);
+    });
+  });
+
   // ─── Remediation-path hardening: the engine-recommended pause/reduce cut runs
   // the SAME autonomous gauntlet as the legacy campaign path — I1/I2 guardrail
   // flags, learned calibration_rule enforcement, the I4 freshness re-check, a

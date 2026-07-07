@@ -29,6 +29,7 @@ import { suggestAdjustPrice } from "../remediation/price";
 import { readVariantPrice } from "../shopify/price.server";
 import { getCurrentUnitCostCents } from "../po/draft.server";
 import { transferPlanFromEvidence } from "../shopify/inventory.server";
+import { reallocationPlanFromEvidence } from "../weather/reallocation-plan";
 import { campaignSpend7dCents, resolveDedicatedCampaign } from "./dedicated-campaign.server";
 import { calderynClient } from "../calderyn.server";
 import type { Alert, DetectorId } from "../types";
@@ -767,6 +768,112 @@ async function tryInventoryRelocation(
   return { outcome: "acted", reason: triggerReason };
 }
 
+/** Try to autonomously execute the ad-budget reallocation a weather cron
+ *  proposed. weather_demand alerts are EITHER a campaign-scoped budget move
+ *  (a reallocationPlan carried verbatim in evidence) OR an inventory move —
+ *  tryInventoryRelocation above handles the inventory case and falls through
+ *  for the budget case, which lands here. Mirrors tryInventoryRelocation's
+ *  guard→graduation→guardrail→execute→notify→decide shape, and reuses the
+ *  SAME checkGuardrails/executeReallocation call shape as the autonomous
+ *  reallocation nested in the legacy reduce_campaign_budget branch. Returns
+ *  "fell_through" for any non-weather detector, or a weather alert whose
+ *  evidence carries no budget plan, so the caller can defer to the rest of
+ *  the chain. */
+async function tryWeatherBudgetReallocation(
+  shopId: string,
+  c: Candidate,
+  sb: SupabaseClient,
+  merchantEmail: string | null,
+  notifyPromises: Promise<void>[],
+): Promise<RemediationResult> {
+  if (c.detector_id !== "weather_demand") {
+    return { outcome: "fell_through", reason: "not a weather-budget detector" };
+  }
+
+  // Concrete reallocation plan from the alert's own evidence (never the
+  // request) — the weather cron carries source/dest/amount verbatim.
+  const plan = reallocationPlanFromEvidence(c.evidence ?? {});
+  // An inventory-shaped weather alert (sku_id, transfer plan) has no budget
+  // plan — that case is already handled by tryInventoryRelocation above.
+  // Defer rather than block: "no budget plan" is not an actionable data gap
+  // for this alert.
+  if (!plan) {
+    return { outcome: "fell_through", reason: "weather_demand: no budget plan (defer)" };
+  }
+
+  // Graduation gate (same safety model as every other autonomous path).
+  // isGraduated is fail-safe (false on any read error), so a DB hiccup can
+  // never grant autonomy.
+  if (!(await isGraduated(shopId, c.detector_id, "reallocate_budget", sb))) {
+    console.info(
+      `[autopilot] weather budget reallocation skip on alert ${c.alert_id}: pair (${c.detector_id}/reallocate_budget) not graduated`,
+    );
+    return { outcome: "skipped", reason: "weather budget pair not graduated" };
+  }
+
+  // The budget alert's entity_ref.campaign_id IS the source campaign, so the
+  // candidate row's own daily_budget_cents/campaign_spend_cents describe the
+  // source campaign's current budget and 7d spend.
+  const currentBudgetCents = c.daily_budget_cents ?? 0;
+  const newBudgetCents = currentBudgetCents - plan.amountCents;
+  const verdict = await checkGuardrails(
+    shopId,
+    {
+      kind: "reallocate_budget",
+      campaignId: plan.sourceCampaignId,
+      destCampaignId: plan.destCampaignId,
+      dollarImpactCents: plan.amountCents,
+      campaignSpendCents: c.campaign_spend_cents ?? 0,
+      currentBudgetCents,
+      newBudgetCents,
+    },
+    sb,
+    { forceBypassOff: true, autonomous: true },
+  );
+  if (!verdict.allowed) {
+    console.info(`[autopilot] weather budget reallocation block on alert ${c.alert_id}: ${verdict.reason}`);
+    return { outcome: "blocked", reason: verdict.reason ?? "blocked by guardrails" };
+  }
+
+  const triggerReason = autopilotReason("Auto reallocate budget", c.detector_id, c.dollar_impact);
+  const res = await executeReallocation(
+    shopId,
+    {
+      alertId: c.alert_id,
+      sourceCampaignId: plan.sourceCampaignId,
+      destCampaignId: plan.destCampaignId,
+      amountCents: plan.amountCents,
+      idempotencyKey: `autopilot:${c.alert_id}:reallocate_budget`,
+      actor: "autopilot",
+      triggerReason,
+    },
+    sb,
+  );
+  // Mirror tryInventoryRelocation exactly: only a landed "succeeded" counts as
+  // acted. "retrying" (transient, parked for the retry cron) and "failed"
+  // (permanent) both resolve here as "failed" — never notify or count a
+  // non-landed budget move as acted — but only a terminal "failed" is a
+  // negative calibration signal (a "retrying" outcome may still land later).
+  if (res.outcome !== "succeeded") {
+    if (res.outcome === "failed") {
+      notifyPromises.push(
+        recordActionFailure(shopId, c.detector_id, "reallocate_budget", sb, {
+          auditId: res.id,
+          alertId: c.alert_id,
+        }),
+      );
+    }
+    return { outcome: "failed", reason: `executor outcome: ${res.outcome}` };
+  }
+  notifyPromises.push(
+    notifyAutonomousAction(
+      { shopId, actionDescription: `Reallocated budget from campaign ${plan.sourceCampaignId}` },
+      merchantEmail,
+    ).catch((e) => console.error("[autopilot-notify] unexpected error (weather reallocate_budget)", e)),
+  );
+  return { outcome: "acted", reason: triggerReason };
+}
+
 function autopilotReason(
   verb: string,
   detectorId: string,
@@ -1055,6 +1162,37 @@ export async function runAutopilotForShop(
         continue;
       }
       // relocation.outcome === "fell_through": not an inventory move — proceed.
+
+      // 1.5th branch: a weather-driven budget alert (weather_demand carrying a
+      // reallocationPlan) routes to its own dedicated autonomous-reallocation
+      // seam, mirroring tryInventoryRelocation's shape and reusing the SAME
+      // checkGuardrails/executeReallocation call shape as the legacy
+      // reduce_campaign_budget reallocation sub-branch below. A candidate that
+      // ACTS / BLOCKS / SKIPS / FAILS here is fully resolved (`continue`) so it
+      // can never also reach tryRemediation or the legacy path — one decision
+      // per alert. Only a "fell_through" (a non-weather detector, or a weather
+      // alert with no budget plan — e.g. the inventory-shaped case
+      // tryInventoryRelocation already handled above) proceeds below.
+      const weatherRealloc = await tryWeatherBudgetReallocation(shopId, c, sb, merchantEmail, notifyPromises);
+      if (weatherRealloc.outcome === "acted") {
+        decide(c, null, "acted", weatherRealloc.reason);
+        continue;
+      }
+      if (weatherRealloc.outcome === "blocked") {
+        decide(c, null, "blocked", weatherRealloc.reason);
+        continue;
+      }
+      if (weatherRealloc.outcome === "skipped") {
+        skippedMoves += 1;
+        decide(c, null, "skipped", weatherRealloc.reason, "none");
+        continue;
+      }
+      if (weatherRealloc.outcome === "failed") {
+        decide(c, null, "failed", weatherRealloc.reason);
+        continue;
+      }
+      // weatherRealloc.outcome === "fell_through": not a weather-budget move —
+      // proceed.
 
       // SECOND branch: route product-economics detectors through the engine's
       // recommended remediation move (discontinue / reallocate / cut a SKU or
