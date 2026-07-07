@@ -12,13 +12,17 @@ vi.mock("~/lib/dashboard/search-client", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search from "../screens/Search";
+import Search, { loadSearchOverview, loadSearchProductDetail, ProductLoadError } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
 import { parsePath, pathFor } from "../routes";
 // eslint-disable-next-line import/first
 import type { DashboardCtx } from "../context";
+// eslint-disable-next-line import/first
+import { fetchSearch, loadProductDetail } from "~/lib/dashboard/search-client";
+// eslint-disable-next-line import/first
+import type { ProductSeoDetailVM, SeoOverviewVM } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
 const overview = {
@@ -59,6 +63,97 @@ describe("Search screen (smoke)", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, { ...overview, productCount: 0, needsAttention: [] });
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("automatically optimized for search and AI");
+  });
+
+  it("keeps Settings reachable even with zero products", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, { ...overview, productCount: 0, needsAttention: [] });
+    const html = renderToStaticMarkup(<Search app={app} />);
+    // The empty-catalog placeholder still shows...
+    expect(html).toContain("automatically optimized for search and AI");
+    // ...and a brand-new merchant can still reach the AI-crawler toggle and
+    // store description fields without adding a product first.
+    expect(html).toContain("Let AI assistants read and cite my store");
+    expect(html).toContain("Store name");
+    expect(html).toContain("One-line description");
+  });
+
+  it("shows the current store name and description in Settings", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, {
+      ...overview,
+      settings: { ...overview.settings, orgName: "Cedar Bloom Co", orgDescription: "Hand-poured candles for home." },
+    });
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain('value="Cedar Bloom Co"');
+    expect(html).toContain('value="Hand-poured candles for home."');
+  });
+});
+
+describe("Search overview load/retry", () => {
+  it("flags a friendly load error when the fetch fails, and clears it on a successful retry", async () => {
+    const data: SeoOverviewVM[] = [];
+    const errors: boolean[] = [];
+    const setData = (state: SeoOverviewVM) => data.push(state);
+    const setLoadError = (failed: boolean) => errors.push(failed);
+
+    vi.mocked(fetchSearch).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchOverview(setData, setLoadError);
+    expect(errors).toEqual([true]);
+    expect(data).toEqual([]);
+
+    // The Retry button re-calls the exact same function; a successful retry
+    // must clear the error and deliver the fresh overview.
+    vi.mocked(fetchSearch).mockResolvedValueOnce(overview);
+    await loadSearchOverview(setData, setLoadError);
+    expect(errors).toEqual([true, false]);
+    expect(data).toEqual([overview]);
+  });
+});
+
+describe("Search product editor load/retry", () => {
+  const productDetail: ProductSeoDetailVM = {
+    id: "p1",
+    handle: "cedar",
+    title: "Cedar Bloom",
+    googlePreview: {
+      title: "Cedar Bloom",
+      url: "https://example.com/products/cedar",
+      description: "A cedar bloom candle.",
+    },
+    health: { score: 71, checks: [] },
+    override: null,
+    aiSummary: "",
+  };
+
+  it("reports a load error when the detail fetch fails, and loads on a successful retry", async () => {
+    const loaded: ProductSeoDetailVM[] = [];
+    let errored = 0;
+
+    vi.mocked(loadProductDetail).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchProductDetail(
+      "cedar",
+      (d) => loaded.push(d),
+      () => errored++,
+    );
+    expect(errored).toBe(1);
+    expect(loaded).toEqual([]);
+
+    // The Try again button re-calls the exact same function.
+    vi.mocked(loadProductDetail).mockResolvedValueOnce(productDetail);
+    await loadSearchProductDetail(
+      "cedar",
+      (d) => loaded.push(d),
+      () => errored++,
+    );
+    expect(errored).toBe(1);
+    expect(loaded).toEqual([productDetail]);
+  });
+
+  it("renders a calm message with Back and Try again controls", () => {
+    const html = renderToStaticMarkup(<ProductLoadError onBack={() => {}} onRetry={() => {}} />);
+    // JSX text content HTML-escapes the apostrophe.
+    expect(html).toContain("We couldn&#x27;t load this page.");
+    expect(html).toContain("Back");
+    expect(html).toContain("Try again");
   });
 });
 

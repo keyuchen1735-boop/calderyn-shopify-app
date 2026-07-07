@@ -69,38 +69,64 @@ function assistantList(crawls: SeoOverviewVM["aiCrawls"], max = 3): string {
   return seen.join(", ");
 }
 
+// Shared by the initial mount and the Retry button, so a failed load and a
+// successful retry both funnel through one place: cache and show the fresh
+// overview on success, or flag the friendly error state on failure.
+export async function loadSearchOverview(
+  setData: (state: SeoOverviewVM) => void,
+  setLoadError: (failed: boolean) => void,
+): Promise<void> {
+  try {
+    const state = await fetchSearch();
+    cacheScreenData(SCREEN_CACHE_KEYS.search, state);
+    setData(state);
+    setLoadError(false);
+  } catch {
+    setLoadError(true);
+  }
+}
+
 export default function Search({ app }: { app: DashboardCtx }) {
   const [data, setData] = useState<SeoOverviewVM | null>(() =>
     cachedScreenData<SeoOverviewVM>(SCREEN_CACHE_KEYS.search),
   );
+  const [loadError, setLoadError] = useState(false);
   const [editing, setEditing] = useState<string | null>(null); // product handle
 
   useEffect(() => {
     let live = true;
-    fetchSearch()
-      .then((state) => {
+    loadSearchOverview(
+      (state) => {
         if (!live) return;
-        cacheScreenData(SCREEN_CACHE_KEYS.search, state);
         setData(state);
-      })
-      .catch(() => {
-        /* the skeleton / empty state covers a failed first fetch */
-      });
+      },
+      (failed) => {
+        if (!live) return;
+        setLoadError(failed);
+      },
+    );
     return () => {
       live = false;
     };
   }, []);
 
   function refresh() {
-    fetchSearch()
-      .then((state) => {
-        cacheScreenData(SCREEN_CACHE_KEYS.search, state);
-        setData(state);
-      })
-      .catch(() => {});
+    loadSearchOverview(setData, setLoadError);
   }
 
-  if (!data) return <TableSkeleton />;
+  if (!data) {
+    if (loadError) {
+      return (
+        <Placeholder
+          icon="warn"
+          title="We couldn't load your Search data right now."
+          actionLabel="Try again"
+          onAction={refresh}
+        />
+      );
+    }
+    return <TableSkeleton />;
+  }
 
   if (editing) {
     return (
@@ -215,10 +241,50 @@ export default function Search({ app }: { app: DashboardCtx }) {
               </Card>
             )}
           </section>
-
-          <SettingsPanel app={app} settings={data.settings} onSaved={refresh} />
         </>
       )}
+
+      <SettingsPanel app={app} settings={data.settings} onSaved={refresh} />
+    </div>
+  );
+}
+
+// Shared by ProductEditor's initial mount and its Retry button, mirroring
+// loadSearchOverview above: the caller decides what a successful load or a
+// failure means for its own state.
+export async function loadSearchProductDetail(
+  handle: string,
+  onLoaded: (detail: ProductSeoDetailVM) => void,
+  onError: () => void,
+): Promise<void> {
+  try {
+    onLoaded(await loadProductDetail(handle));
+  } catch {
+    onError();
+  }
+}
+
+// The product editor's failed-load state: a calm explanation plus a way back
+// and a way to try the same page again, instead of stranding a merchant on an
+// endless skeleton.
+export function ProductLoadError({
+  onBack,
+  onRetry,
+}: {
+  onBack: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="cd-screen cd-seo cd-seo--editor">
+      <Placeholder icon="warn" title="We couldn't load this page." />
+      <div className="cd-seo__actions justify-center">
+        <Btn kind="secondary" onClick={onBack}>
+          Back
+        </Btn>
+        <Btn kind="primary" onClick={onRetry}>
+          Try again
+        </Btn>
+      </div>
     </div>
   );
 }
@@ -235,6 +301,7 @@ function ProductEditor({
   onSaved: () => void;
 }) {
   const [detail, setDetail] = useState<ProductSeoDetailVM | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -243,20 +310,46 @@ function ProductEditor({
 
   useEffect(() => {
     let live = true;
-    loadProductDetail(handle)
-      .then((d) => {
+    loadSearchProductDetail(
+      handle,
+      (d) => {
         if (!live) return;
         setDetail(d);
         setTitle(d.override?.metaTitle ?? d.googlePreview.title);
         setDescription(d.override?.metaDescription ?? d.googlePreview.description);
-      })
-      .catch(() => toast("Could not load that page", "warn", "critical"));
+        setLoadError(false);
+      },
+      () => {
+        if (!live) return;
+        setLoadError(true);
+        toast("Could not load that page", "warn", "critical");
+      },
+    );
     return () => {
       live = false;
     };
   }, [handle, toast]);
 
-  if (!detail) return <TableSkeleton rows={4} />;
+  function retry() {
+    loadSearchProductDetail(
+      handle,
+      (d) => {
+        setDetail(d);
+        setTitle(d.override?.metaTitle ?? d.googlePreview.title);
+        setDescription(d.override?.metaDescription ?? d.googlePreview.description);
+        setLoadError(false);
+      },
+      () => {
+        setLoadError(true);
+        toast("Could not load that page", "warn", "critical");
+      },
+    );
+  }
+
+  if (!detail) {
+    if (loadError) return <ProductLoadError onBack={onBack} onRetry={retry} />;
+    return <TableSkeleton rows={4} />;
+  }
 
   const preview =
     mode === "edit"
@@ -423,6 +516,14 @@ function SettingsPanel({
   const [orgDescription, setOrgDescription] = useState(settings.orgDescription ?? "");
   const [savingCrawl, setSavingCrawl] = useState(false);
   const [savingOrg, setSavingOrg] = useState(false);
+
+  // Re-seed the editable fields whenever a fresh settings prop arrives (e.g.
+  // after a refresh elsewhere on the screen), so a stale value from the first
+  // mount never lingers in the form.
+  useEffect(() => {
+    setOrgName(settings.orgName ?? "");
+    setOrgDescription(settings.orgDescription ?? "");
+  }, [settings.orgName, settings.orgDescription]);
 
   async function toggleCrawlers(next: boolean) {
     setSavingCrawl(true);
