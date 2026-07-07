@@ -8,6 +8,9 @@ const STATUSES: ProductStatus[] = ["draft", "active", "archived"];
 const MAX_OPTIONS = 3;
 const MAX_VALUES_PER_OPTION = 100;
 const MAX_VARIANTS = 250;
+// retail_price_cents / unit_cost_cents / inventory_on_hand are Postgres int4;
+// values past this ceiling overflow the column and surface as an opaque 500.
+const INT4_MAX = 2147483647;
 
 export function validateProductInput(
   raw: unknown,
@@ -48,6 +51,18 @@ export function validateProductInput(
   for (const v of variants) {
     if (v.retailPriceCents != null && v.retailPriceCents < 0) return { ok: false, code: "negative_price" };
     if (v.unitCostCents != null && v.unitCostCents < 0) return { ok: false, code: "negative_cost" };
+    // An ACTIVE variant that carries an explicit price must be sellable above $0.
+    // The storefront treats only a NULL price as "unpriced/unavailable", so a 0
+    // would be sold for free; drafts may still hold a 0 while in progress.
+    if (status === "active" && v.retailPriceCents != null && v.retailPriceCents <= 0) return { ok: false, code: "zero_price" };
+    // Reject values that would overflow the int4 columns before the INSERT does.
+    if (
+      (v.retailPriceCents != null && v.retailPriceCents > INT4_MAX) ||
+      (v.unitCostCents != null && v.unitCostCents > INT4_MAX) ||
+      (v.inventoryOnHand != null && v.inventoryOnHand > INT4_MAX)
+    ) {
+      return { ok: false, code: "value_too_large" };
+    }
     if (v.restrictedCountries?.some((c) => !ISO2.test(c))) return { ok: false, code: "invalid_country" };
     // Only ACTIVE products must ship-complete; drafts may be incomplete.
     const physical = v.requiresShipping !== false;
