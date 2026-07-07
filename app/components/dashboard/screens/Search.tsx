@@ -168,9 +168,6 @@ export default function Search({ app }: { app: DashboardCtx }) {
       <header className="cd-seo__head">
         <div className="cd-seo__head-text">
           <h1 className="cd-seo__title">Search</h1>
-          <p className="cd-seo__lede">
-            How your store shows up on Google and in AI assistants like ChatGPT.
-          </p>
         </div>
         <div className="cd-seo__live" role="status">
           <span className="cd-seo__live-dot" aria-hidden="true" />
@@ -179,41 +176,34 @@ export default function Search({ app }: { app: DashboardCtx }) {
       </header>
 
       <section className="cd-seo__section">
-        <h2 className="cd-seo__h2">How you appear</h2>
         <Card>
           {sample ? (
-            <>
-              <div className="cd-seo__panels">
-                <div className="cd-seo__panel">
-                  <div className="cd-seo__panel-head">
-                    <CDIcon name="search" size={15} strokeWidth={1.9} />
-                    On Google
-                  </div>
-                  <div className="cd-serp">
-                    <div className="cd-serp__url">{breadcrumbUrl(sample.url)}</div>
-                    <div className="cd-serp__title">{sample.title}</div>
-                    <div className="cd-serp__desc">{sample.description}</div>
-                  </div>
+            <div className="cd-seo__panels">
+              <div className="cd-seo__panel">
+                <div className="cd-seo__panel-head">
+                  <CDIcon name="search" size={15} strokeWidth={1.9} />
+                  On Google
                 </div>
-                <div className="cd-seo__panel">
-                  <div className="cd-seo__panel-head">
-                    <CDIcon name="assist" size={15} strokeWidth={1.9} />
-                    On AI assistants
-                  </div>
-                  <div className="cd-seo__chat">
-                    <div className="cd-seo__ask">Where can I buy {productName(sample.title)}?</div>
-                    <div className="cd-seo__answer">
-                      <span className="cd-seo__answer-store">{preview.storeName}</span> sells{" "}
-                      {productName(sample.title)}. You can order it directly from their online store.
-                    </div>
+                <div className="cd-serp">
+                  <div className="cd-serp__url">{breadcrumbUrl(sample.url)}</div>
+                  <div className="cd-serp__title">{sample.title}</div>
+                  <div className="cd-serp__desc">{sample.description}</div>
+                </div>
+              </div>
+              <div className="cd-seo__panel">
+                <div className="cd-seo__panel-head">
+                  <CDIcon name="assist" size={15} strokeWidth={1.9} />
+                  On AI assistants
+                </div>
+                <div className="cd-seo__chat">
+                  <div className="cd-seo__ask">Where can I buy {productName(sample.title)}?</div>
+                  <div className="cd-seo__answer">
+                    <span className="cd-seo__answer-store">{preview.storeName}</span> sells{" "}
+                    {productName(sample.title)}.
                   </div>
                 </div>
               </div>
-              <p className="cd-seo__note">
-                Every page on your store is written this way automatically when you publish it.
-                Nothing to set up.
-              </p>
-            </>
+            </div>
           ) : (
             <div className="cd-seo__empty">
               <span className="cd-seo__empty-ic">
@@ -236,20 +226,18 @@ export default function Search({ app }: { app: DashboardCtx }) {
           <div className="cd-seo__set">
             <div className="cd-seo__row">
               <div className="cd-seo__info">
-                <div className="cd-seo__label">Let AI assistants read and cite your store</div>
-                <div className="cd-seo__hint">ChatGPT, Perplexity, and Google AI. On by default.</div>
+                <div className="cd-seo__label">Let AI assistants read my store</div>
               </div>
               <Toggle
                 value={settings.allowAiCrawlers}
                 onChange={onToggleCrawlers}
                 disabled={savingCrawlers}
-                ariaLabel="Let AI assistants read and cite your store"
+                ariaLabel="Let AI assistants read my store"
               />
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">Store description</div>
-                <div className="cd-seo__hint">A one-line summary Google and AI can use.</div>
               </div>
               <div className="cd-seo__control">
                 <div className="cd-seo__inputwrap">

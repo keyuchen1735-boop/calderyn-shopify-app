@@ -46,16 +46,13 @@ describe("Search screen (smoke)", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Search");
-    expect(html).toContain("How your store shows up on Google");
     expect(html).toContain("Optimizing 3 pages");
     // Google snippet + AI-answer previews, both built from the real sample product.
     expect(html).toContain("On Google");
     expect(html).toContain("On AI assistants");
     expect(html).toContain("Cedar Jacket");
     expect(html).toContain("Where can I buy Cedar Jacket");
-    expect(html).toContain("You can order it directly from their online store");
-    expect(html).toContain("written this way automatically when you publish it");
-    expect(html).toContain("Let AI assistants read and cite your store");
+    expect(html).toContain("Let AI assistants read my store");
     expect(html).toContain('role="switch"');
   });
 
