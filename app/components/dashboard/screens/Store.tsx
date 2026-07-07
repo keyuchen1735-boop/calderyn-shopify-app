@@ -702,6 +702,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setBuildPhase(runningPhase);
     const workingId = newId();
     pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
+    // Once the server has answered, drafts may already be written — a retry from
+    // that point would re-classify and mint duplicates, so "Try again" is only
+    // offered while the failure is provably pre-receipt.
+    let gotReceipt = false;
     try {
       const receipt: StudioGenerateReceipt = await generateStudioStoreWithImages(
         brief.trim(),
@@ -709,6 +713,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
         designModelRef.current,
         intent,
       );
+      gotReceipt = true;
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
@@ -764,7 +769,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
       // must re-offer the held files — otherwise the merchant re-picks everything.
       failBuild(workingId, msg, {
         toast: true,
-        actions: [{ label: "Try again", kind: "primary", onClick: () => void runAttachmentBuild(brief, files, intent) }],
+        ...(gotReceipt
+          ? {}
+          : { actions: [{ label: "Try again", kind: "primary", onClick: () => void runAttachmentBuild(brief, files, intent) }] }),
       });
     } finally {
       buildingRef.current = false;
