@@ -91,6 +91,13 @@ export async function deleteBuyerAddress(shopId: string, buyerId: string, addres
   if (error) throw error;
 }
 
+// States that represent a real, money-captured order the buyer should see in their history. A
+// checkout_pending row is born BEFORE payment (createCheckout) and nothing transitions an abandoned
+// one to cancelled, so without this filter every abandoned checkout showed forever as a "Payment
+// processing" order at full total, with no money captured. cart/checkout_pending/cancelled are
+// excluded; a genuinely paid-then-cancelled path does not exist for owned orders.
+const BUYER_HISTORY_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"];
+
 /** Order history: the buyer's OLTP orders at this shop, newest first. PII-free by construction. */
 export async function listBuyerOrders(shopId: string, buyerId: string): Promise<BuyerOrderSummary[]> {
   if (!shopId) throw new Error("shopId is required");
@@ -99,6 +106,7 @@ export async function listBuyerOrders(shopId: string, buyerId: string): Promise<
     .select("id, state, financial_status, total_cents, currency, created_at, confirmation_token")
     .eq("shop_id", shopId)
     .eq("buyer_id", buyerId)
+    .in("state", BUYER_HISTORY_STATES)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return ((data ?? []) as Record<string, unknown>[]).map((o) => ({

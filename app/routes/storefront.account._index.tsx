@@ -25,6 +25,7 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
   fulfilled: "Shipped",
   cancelled: "Cancelled",
   refunded: "Refunded",
+  partially_refunded: "Partially refunded",
 };
 
 export async function loader({ request }: LoaderFunctionArgs) {
