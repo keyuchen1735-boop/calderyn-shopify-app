@@ -363,25 +363,13 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     };
   }, [range]);
 
-  // The Performance ↔ Live subtab switch, present in every header state so the
-  // Live view stays reachable while Performance is still loading or errored.
-  // The Agentic channel button rides along here — it lost its top-level nav
-  // item in the grouped IA, and Analytics is its entry point.
+  // The Performance / Live switch now lives in the sidebar rail (Analytics
+  // children), so the header only carries the Agentic channel button — its
+  // entry point, present in every header state (loading / error / loaded).
   const viewSwitch = (
-    <>
-      <Segmented
-        small
-        value={view}
-        onChange={(v) => app.navigate("analytics", null, v === "live" ? "live" : "perf")}
-        options={[
-          { value: "performance", label: "Performance" },
-          { value: "live", label: "Live" },
-        ]}
-      />
-      <Btn small icon="bot" onClick={() => app.navigate("agentic")}>
-        Agentic channel
-      </Btn>
-    </>
+    <Btn small icon="bot" onClick={() => app.navigate("agentic")}>
+      Agentic channel
+    </Btn>
   );
 
   // The Live subtab is fully independent of the performance fetch — bail out

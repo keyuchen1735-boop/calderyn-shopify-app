@@ -43,7 +43,6 @@ import {
 } from "~/lib/mcp-connect-guide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
-import { SettingsSubTabs } from "../subtabs";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -644,8 +643,6 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen" style={{ maxWidth: 760 }}>
       <ScreenHeader title="Settings" />
-
-      <SettingsSubTabs app={app} />
 
       {sub === "general" && (
         <SettingsCard>
