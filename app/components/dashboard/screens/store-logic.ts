@@ -165,22 +165,44 @@ const HERO_QUOTE_RE = /headline (?:to say|to|says?|reading) ["']?([^"']{4,60})["
 const HEX_RE = /#[0-9a-f]{6}\b/i;
 const EXPERIMENT_RE = /\b(test|optimi[sz]e|experiment|a\/b)\b/i;
 const EXPERIMENT_VIBE_HINT_RE = /\b(vibe|look|style|design)\b/i;
+// An explicit build verb is a rebuild ask no matter what adjectives ride along.
+const BUILD_VERB_RE = /\b(rebuild|redesign|regenerate|redo|build|generate|create)\b/i;
+// Vibe/accent word-matches only apply to short imperative tweaks ("make it
+// bolder", "use blue"). Sentence-length briefs routinely contain the same
+// adjectives ("a bold alpine brand — dark, dramatic") and must reach the real
+// generator instead of silently flipping a setting.
+const MAX_TOGGLE_WORDS = 6;
 
-/** Parse a chat (or markup-note) message into the one real action it maps to. */
-export function parseChatIntent(text: string): ChatIntent {
+/**
+ * Parse a chat (or markup-note) message into the one real action it maps to.
+ * The build-verb and word-count gates exist to stop sentence-length briefs in
+ * the composer from being hijacked into cheap toggles; the markup channel
+ * never generates (its unmatched fallback is "noted"), so it keeps the
+ * permissive matching — gating it would only turn working edits into no-ops.
+ */
+export function parseChatIntent(text: string, channel: "composer" | "note" = "composer"): ChatIntent {
   const t = text.trim();
+  const permissive = channel === "note";
 
   const heroMatch = t.match(HERO_QUOTE_RE);
   if (heroMatch) return { kind: "hero", headline: heroMatch[1].trim() };
 
-  for (const vibe of VIBE_PRIORITY) {
-    if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
-  }
+  if (!permissive && BUILD_VERB_RE.test(t)) return { kind: "generate", brief: t };
 
+  // A raw #rrggbb is machine-readable and unambiguous at any message length.
   const hex = t.match(HEX_RE);
   if (hex) return { kind: "accent", color: hex[0].toLowerCase() };
-  for (const word of Object.keys(ACCENT_WORDS)) {
-    if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
+
+  // Count word-bearing tokens only, so spaced punctuation ("dark — moodier")
+  // does not eat into the toggle budget.
+  const words = t.split(/\s+/).filter((w) => /\w/.test(w)).length;
+  if (permissive || words <= MAX_TOGGLE_WORDS) {
+    for (const vibe of VIBE_PRIORITY) {
+      if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
+    }
+    for (const word of Object.keys(ACCENT_WORDS)) {
+      if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
+    }
   }
 
   if (EXPERIMENT_RE.test(t)) {

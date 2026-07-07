@@ -582,7 +582,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const note = noteText.trim();
     if (!note) return;
     const pageLabel = PAGE_LABEL[page] ?? "store";
-    const intent = parseChatIntent(note);
+    const intent = parseChatIntent(note, "note");
     pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
     exitMarkup();
     if (isDeterministicChatIntent(intent)) {

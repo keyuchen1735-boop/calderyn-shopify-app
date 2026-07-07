@@ -123,6 +123,54 @@ describe("parseChatIntent", () => {
       brief: "Rebuild it around our new fall collection",
     });
   });
+
+  it("does not let a vibe adjective hijack a sentence-length brief", () => {
+    const brief = "A cozy outdoor gear store with dark autumn tones and big photography";
+    expect(parseChatIntent(brief)).toEqual({ kind: "generate", brief });
+  });
+
+  it("does not let a color word hijack a sentence-length brief", () => {
+    const brief = "An heirloom stationery shop with deep green wax-seal details throughout";
+    expect(parseChatIntent(brief)).toEqual({ kind: "generate", brief });
+  });
+
+  it("treats an explicit build verb as a generate ask even with vibe words", () => {
+    const brief = "Rebuild the home page as a bold alpine brand — dark, dramatic, cinematic.";
+    expect(parseChatIntent(brief)).toEqual({ kind: "generate", brief });
+    expect(parseChatIntent("Redesign it warm")).toEqual({ kind: "generate", brief: "Redesign it warm" });
+  });
+
+  it("still toggles vibe and accent for short style tweaks", () => {
+    expect(parseChatIntent("go dark")).toEqual({ kind: "vibe", vibe: "bold" });
+    expect(parseChatIntent("use blue")).toEqual({ kind: "accent", color: "#2D7FF9" });
+    expect(parseChatIntent("change the accent color to blue")).toEqual({ kind: "accent", color: "#2D7FF9" });
+  });
+
+  it("keeps an explicit hex accent working at any message length", () => {
+    expect(parseChatIntent("set the accent color to #7C5CFC please")).toEqual({
+      kind: "accent",
+      color: "#7c5cfc",
+    });
+  });
+
+  it("keeps sentence-length experiment asks as experiments", () => {
+    expect(parseChatIntent("run an a/b test on the hero headline")).toEqual({
+      kind: "experiment",
+      expKind: "headline",
+    });
+  });
+
+  it("does not count spaced punctuation against the toggle budget", () => {
+    expect(parseChatIntent("make it more dark — moodier")).toEqual({ kind: "vibe", vibe: "bold" });
+  });
+
+  it("keeps permissive matching for markup notes, which never generate", () => {
+    expect(parseChatIntent("give this page a warm cozy earthy feeling please", "note")).toEqual({
+      kind: "vibe",
+      vibe: "warm",
+    });
+    expect(parseChatIntent("redesign it warm", "note")).toEqual({ kind: "vibe", vibe: "warm" });
+  });
 });
 
 describe("isDeterministicChatIntent", () => {

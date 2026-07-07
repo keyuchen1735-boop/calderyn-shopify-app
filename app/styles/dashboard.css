@@ -1851,8 +1851,10 @@
 .cd-composer-tool { border: 0; background: transparent; color: var(--text-3); cursor: pointer; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
 .cd-composer-tool:hover { color: var(--text-1); background: var(--hairline); }
 .cd-composer-tool:disabled { opacity: 0.45; cursor: default; }
-.cd-composer-model { border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 11.5px; height: 28px; padding: 0 4px; border-radius: 8px; cursor: pointer; }
-.cd-composer-model:hover { color: var(--text-1); background: var(--hairline); }
+/* appearance:none — Safari otherwise paints its own bezel button; the caret is
+   drawn with two gradient squares so it follows currentColor in both themes. */
+.cd-composer-model { -webkit-appearance: none; appearance: none; border: 0; background-color: transparent; color: var(--text-3); font: inherit; font-size: 11.5px; height: 28px; padding: 0 20px 0 6px; border-radius: 8px; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 11px) 55%, calc(100% - 7px) 55%; background-size: 4px 4px; background-repeat: no-repeat; }
+.cd-composer-model:hover { color: var(--text-1); background-color: var(--hairline); }
 .cd-rail[data-drop="1"] .cd-composer { box-shadow: var(--shadow-pop), 0 0 0 2px var(--accent); }
 .cd-composer-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
 .cd-composer-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 168px; height: 26px; padding: 0 4px; border-radius: 8px; background: var(--gray-bg); }
