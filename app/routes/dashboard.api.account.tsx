@@ -6,6 +6,7 @@ import {
 import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { rateLimit } from "~/lib/rate-limit.server";
 import { deleteAccount } from "~/lib/auth/delete-account.server";
+import { isShowcaseShop } from "~/lib/demo/showcase.server";
 
 // POST { intent: "delete", confirm: "DELETE" }: permanently delete the signed-in
 // first-party account. Frees the email for re-registration and, when the user is
@@ -25,6 +26,15 @@ export async function action({ request }: ActionFunctionArgs) {
   // users row to delete and manage their store through the embedded admin.
   if (session.userId == null) {
     return jsonError(400, "not_first_party", "This account type can't be deleted here.");
+  }
+
+  // Never let a demo/showcase store be self-destructed. It is reached through a
+  // SHARED public login (the sole member), so deleting "the account" would free
+  // that shared email and cascade-delete the demo store for everyone. Deletion is
+  // never the right op on a demo shop — resetDemoShowcase is (409 not_demo_shop
+  // guards the reverse). Mirrors resetDemoShowcase's demo_mode hard gate.
+  if (await isShowcaseShop(session.shopId)) {
+    return jsonError(403, "demo_shop_protected", "The demo account can't be deleted.");
   }
 
   const body = (await request.json().catch(() => null)) as { confirm?: unknown } | null;
