@@ -202,8 +202,16 @@ const collectionList: BlockMeta<CollectionListProps> = {
   Component: ({ props, ctx }) =>
     createElement("nav", { className: "cd-block cd-block--collections" },
       props.heading ? createElement("h2", { className: "cd-collections__heading" }, props.heading) : null,
-      ctx.data.collections.map((c) =>
-        createElement("a", { key: c.handle, href: (ctx.links ?? STOREFRONT_LINKS).collection(c.handle) }, c.title))),
+      createElement("div", { className: "cd-collections__cards" },
+        ctx.data.collections.map((c) => {
+          const count = ctx.data.productsByCollection[c.handle]?.length;
+          return createElement("a", { key: c.handle, className: "cd-collection-card", href: (ctx.links ?? STOREFRONT_LINKS).collection(c.handle) },
+            createElement("span", { className: "cd-collection-card__title" }, c.title),
+            // Count only when this page's data actually loaded the collection's
+            // products — an absent entry means unknown, not zero.
+            count !== undefined ? createElement("span", { className: "cd-collection-card__count" }, `${count} item${count === 1 ? "" : "s"}`) : null,
+            createElement("span", { className: "cd-collection-card__arrow", "aria-hidden": true }, "→"));
+        }))),
 };
 
 // Exported as a plain array; the registry indexes it by type (Task 3).

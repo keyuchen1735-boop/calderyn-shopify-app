@@ -17,6 +17,7 @@ import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUs
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 import { assembleDocument } from "./sanitize";
+import { spliceCatalogBlocks } from "./hybrid";
 import { fallbackDoc, type FallbackContext } from "./fallback";
 import { recordGeneration, recordProposal } from "./audit.server";
 
@@ -85,6 +86,11 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
   };
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  // Real catalog numbers for the home prompt: copy grounded on these can be concrete
+  // ("Explore 21 certified devices") without the model inventing figures.
+  const byCollection: Record<string, number> = {};
+  for (const p of products) for (const h of p.collections) byCollection[h] = (byCollection[h] ?? 0) + 1;
+  const counts = { products: products.length, byCollection };
   // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
   // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
   const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
@@ -197,7 +203,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences), {
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences, counts), {
         model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
         // 12000, not 8000: with the fx channels in the prompt, Sonnet's full home
         // pages regularly ran to exactly 8000 and truncated mid-section (verified
@@ -209,10 +215,16 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
       const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";
       const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped, { links: linkSet }) : "";
-      const doc: BlockDocument = clean
-        ? { kind: "singleton", pageKey: "home", blocks: [{ id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: clean } }] }
-        : fallbackDoc(pageKey, fbBrand, fallbackContext);
-      return { pageKey, doc, proposal: clean ? { rawHtml: true } : { fallback: true } };
+      // Splice catalog markers into REAL productGrid/collectionList blocks — live
+      // photos, prices and add-to-cart from the storefront renderer, so the home
+      // has genuine commerce substance, not a typographic poster alone.
+      const blocks = clean ? spliceCatalogBlocks(clean, valid) : [];
+      const doc: BlockDocument = blocks.length > 0 ? { kind: "singleton", pageKey: "home", blocks } : fallbackDoc(pageKey, fbBrand, fallbackContext);
+      return {
+        pageKey,
+        doc,
+        proposal: blocks.length > 0 ? { rawHtml: true, catalogBlocks: blocks.filter((b) => b.type !== "rawHtml").length } : { fallback: true },
+      };
     }
     const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand: brandPlan, brief: briefArg, menu }));
     const plan = text ? parseBlockPlan(text) : null;
