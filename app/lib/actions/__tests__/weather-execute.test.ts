@@ -142,7 +142,7 @@ describe("runWeatherExecuteForShop", () => {
     expect(rows[0].status).toBe("armed");
   });
 
-  it("releases the row back to armed when execution throws (retryable)", async () => {
+  it("marks the row failed (terminal) when execution throws — post-mutation throws are not retryable", async () => {
     rows = [armedRow()];
     execute.mockRejectedValueOnce(new Error("network"));
     const r = await runWeatherExecuteForShop(SHOP, fakeSb(), {
@@ -151,7 +151,10 @@ describe("runWeatherExecuteForShop", () => {
       execute,
     });
     expect(r).toMatchObject({ executed: 0, failed: 1 });
-    expect(rows[0].status).toBe("armed");
+    // executeReallocation moves budget on-platform before writing its
+    // idempotency record; releasing back to armed would let tomorrow's sweep
+    // double-move it. A post-mutation throw is not safely retryable.
+    expect(rows[0].status).toBe("failed");
   });
 
   it("disarms (expires) armed rows without executing when the dial is turned to 0", async () => {

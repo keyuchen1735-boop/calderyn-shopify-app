@@ -35,6 +35,13 @@ export type {
 // does not net it out (previously the whole order silently vanished instead).
 const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
 
+// Shopify `financial_status` values that represent captured money (a real sale),
+// mirroring SALE_STATES for the migrated-order vocabulary. Excludes pending /
+// authorized / voided / expired — money never captured — which would otherwise
+// inflate migrated gross, per-day gross, order count and the Shopify channel
+// total with no offsetting sale (the native reader already filters SALE_STATES).
+const IMPORTED_SALE_STATES = ["paid", "partially_paid", "partially_refunded", "refunded"] as const;
+
 // Caps on window reads. Far above pilot volume; if a shop ever exceeds them the
 // aggregates degrade to a floor rather than failing the screen (and the warn
 // below says so). At that size this belongs in a SQL aggregate.
@@ -132,8 +139,12 @@ async function readWindowImportedOrders(
       .from("imported_order")
       .select("total_cents, shipping_cents, tax_cents, processed_at")
       .eq("shop_id", shopId)
+      .in("financial_status", [...IMPORTED_SALE_STATES])
       .gte("processed_at", sinceIso)
       .order("processed_at", { ascending: false })
+      // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+      // skip or double-count rows that share a processed_at at a page boundary.
+      .order("id", { ascending: true })
       .range(from, to),
   );
 }

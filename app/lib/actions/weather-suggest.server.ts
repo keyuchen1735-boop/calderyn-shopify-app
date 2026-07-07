@@ -86,11 +86,19 @@ export function buildSuggestion(
   }
   if (byRegion.size < 2) return null;
 
-  const ranked = [...byRegion.keys()].sort((a, b) => (scores.get(a) ?? 0) - (scores.get(b) ?? 0));
+  // Rank only regions we actually have a forecast score for. A campaign region
+  // with no forecast entry (Open-Meteo returned fewer locations than points, or
+  // the location was skipped for a missing daily series) would otherwise default
+  // to score 0 — the minimum — and be chosen as the source whose budget is cut,
+  // moving real money on a forecast we do not have.
+  const ranked = [...byRegion.keys()]
+    .filter((r) => scores.has(r))
+    .sort((a, b) => scores.get(a)! - scores.get(b)!);
+  if (ranked.length < 2) return null;
   const sourceRegion = ranked[0];
   const destRegion = ranked[ranked.length - 1];
-  const sourceScore = scores.get(sourceRegion) ?? 0;
-  const destScore = scores.get(destRegion) ?? 0;
+  const sourceScore = scores.get(sourceRegion)!;
+  const destScore = scores.get(destRegion)!;
   if (destScore - sourceScore < SCORE_GAP_FLOOR) return null;
 
   const pickBiggest = (r: RegionCode): EligibleCampaign =>
@@ -470,9 +478,14 @@ export async function runWeatherExecuteForShop(
       );
       outcome = res.outcome;
     } catch (err) {
-      // Threw before completing → nothing moved; release for the next sweep.
+      // A throw can land AFTER the budgets were already moved on-platform but
+      // BEFORE the idempotency record was written (executeReallocation mutates
+      // budgets first, then insertAuditWithIdempotency can still throw).
+      // Releasing back to 'armed' would let tomorrow's sweep re-claim and move
+      // the budget a SECOND time — priorExecutionForKey finds no record. Not
+      // safely retryable: terminal 'failed', same as the manual-apply route.
       console.error(`[weather-execute] execute threw for ${row.id}`, err);
-      await setStatus("armed");
+      await setStatus("failed");
       result.failed += 1;
       continue;
     }
