@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("~/lib/dashboard/search-client", () => ({
   fetchSearchOverview: vi.fn().mockResolvedValue(null),
   updateSettings: vi.fn(),
+  suggestDescription: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -22,8 +23,8 @@ import { fetchSearchOverview, updateSettings } from "~/lib/dashboard/search-clie
 import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
-const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null };
-const overview: SearchOverviewVM = { settings };
+const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null, googleSiteVerification: null };
+const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml" };
 
 beforeEach(() => {
   clearScreenCache();
@@ -45,6 +46,33 @@ describe("Search screen (smoke)", () => {
   it("shows the skeleton before any data is cached", () => {
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("cd-skel");
+  });
+
+  it("offers a Calderyn 'write it for me' control beside the store description", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Store description");
+    // Sparkle affordance + its tooltip copy naming Google + AI.
+    expect(html).toContain("Let Calderyn write");
+    expect(html).toContain("Google and AI assistants");
+  });
+
+  it("renders the Get-found-on-Google helper with the live sitemap URL and a verify field", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Get found on Google");
+    expect(html).toContain("https://demo.calderyncompany.com/sitemap.xml");
+    expect(html).toContain("Paste verification code");
+    expect(html).toContain("Open Search Console");
+  });
+
+  it("shows the verified-tag confirmation once a code is saved", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, {
+      ...overview,
+      settings: { ...settings, googleSiteVerification: "google-xyz" },
+    });
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Verification tag is live");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {

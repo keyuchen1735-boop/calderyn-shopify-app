@@ -5,9 +5,10 @@
 // description. Seeds from the screen cache for instant paint, then refetches.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Card, Btn, Toggle, Placeholder, TableSkeleton } from "../ui";
+import { Card, Btn, Toggle, Tooltip, Placeholder, TableSkeleton } from "../ui";
+import { CDIcon } from "../icons";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { fetchSearchOverview, updateSettings, type SearchOverviewVM } from "~/lib/dashboard/search-client";
+import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 // Store-description hard cap: mirrors the server's own bound (see
 // dashboard.api.search.tsx), so a save can never be rejected for length.
@@ -61,6 +62,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
   // what renderToStaticMarkup produces server-side (effects never run there).
   const [description, setDescription] = useState(() => data?.settings.orgDescription ?? "");
   const [savingDescription, setSavingDescription] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [verifyCode, setVerifyCode] = useState(() => data?.settings.googleSiteVerification ?? "");
+  const [savingVerify, setSavingVerify] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -84,6 +89,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     setDescription(data?.settings.orgDescription ?? "");
   }, [data?.settings.orgDescription]);
+
+  useEffect(() => {
+    setVerifyCode(data?.settings.googleSiteVerification ?? "");
+  }, [data?.settings.googleSiteVerification]);
 
   function refresh() {
     // A background refresh (after a toggle/save) keeps the last-known data on
@@ -135,6 +144,46 @@ export default function Search({ app }: { app: DashboardCtx }) {
       toast("Could not save", "warn", "critical");
     } finally {
       setSavingDescription(false);
+    }
+  }
+
+  // Draft a description from the store's own catalog + identity and drop it into
+  // the field for review. It is not saved until the merchant clicks Save.
+  async function onSuggestDescription() {
+    setSuggesting(true);
+    try {
+      const { description: draft } = await suggestDescription();
+      setDescription(draft);
+    } catch {
+      toast("Couldn't write one just now. Try again.", "warn", "critical");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  // Persist the Google verification token. Once saved, the storefront home serves
+  // the matching <meta> tag so Google's ownership check passes on its next crawl.
+  async function onSaveVerification() {
+    setSavingVerify(true);
+    try {
+      await updateSettings({ googleSiteVerification: verifyCode.trim() || null });
+      toast(verifyCode.trim() ? "Verification tag is live on your store." : "Verification tag removed.", "check");
+      refresh();
+    } catch {
+      toast("Could not save", "warn", "critical");
+    } finally {
+      setSavingVerify(false);
+    }
+  }
+
+  async function onCopySitemap() {
+    if (!data?.sitemapUrl) return;
+    try {
+      await navigator.clipboard.writeText(data.sitemapUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast("Couldn't copy. Select the link and copy it manually.", "warn", "critical");
     }
   }
 
@@ -197,6 +246,20 @@ export default function Search({ app }: { app: DashboardCtx }) {
               </div>
               <div className="cd-seo__control">
                 <div className="cd-seo__inputwrap">
+                  <span className="cd-seo__ai-slot">
+                    <Tooltip content="Let Calderyn write one, tuned for Google and AI assistants.">
+                      <button
+                        type="button"
+                        className="cd-seo__ai"
+                        onClick={onSuggestDescription}
+                        disabled={suggesting}
+                        aria-label="Let Calderyn write a store description tuned for Google and AI assistants"
+                        aria-busy={suggesting}
+                      >
+                        <CDIcon name="sparkle" size={13} strokeWidth={1.9} />
+                      </button>
+                    </Tooltip>
+                  </span>
                   <input
                     className="cd-input cd-seo__input"
                     value={description}
@@ -211,6 +274,96 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 <Btn kind="primary" small onClick={onSaveDescription} disabled={savingDescription}>
                   {savingDescription ? "Saving..." : "Save"}
                 </Btn>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <section className="cd-seo__section">
+        <div className="cd-seo__head-text">
+          <h2 className="cd-seo__h2">Get found on Google</h2>
+          <p className="cd-seo__lede">Verify your store with Google once, then hand it your sitemap. Google does the rest.</p>
+        </div>
+        <Card pad={false}>
+          <div className="cd-seo__set">
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">1</span>Verify your store
+                </div>
+                <div className="cd-seo__hint">
+                  In Google Search Console, add your store and pick the &ldquo;HTML tag&rdquo; method. Paste the code
+                  here and Calderyn places it on your storefront for you.
+                </div>
+              </div>
+              <div className="cd-seo__control">
+                <div className="cd-seo__inputwrap">
+                  <input
+                    className="cd-input cd-seo__tinput"
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value)}
+                    placeholder="Paste verification code"
+                    aria-label="Google verification code"
+                  />
+                </div>
+                <Btn kind="primary" small onClick={onSaveVerification} disabled={savingVerify}>
+                  {savingVerify ? "Saving..." : "Save"}
+                </Btn>
+              </div>
+            </div>
+
+            {settings.googleSiteVerification ? (
+              <div className="cd-seo__row cd-seo__row--slim">
+                <span className="cd-seo__ok">
+                  <CDIcon name="check" size={14} strokeWidth={2} />
+                  Verification tag is live on your storefront.
+                </span>
+              </div>
+            ) : null}
+
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">2</span>Submit your sitemap
+                </div>
+                <div className="cd-seo__hint">
+                  In Search Console, open Sitemaps and add this link. It lists every page for Google to index.
+                </div>
+              </div>
+              <div className="cd-seo__control">
+                {data.sitemapUrl ? (
+                  <>
+                    <code className="cd-seo__url">{data.sitemapUrl}</code>
+                    <Btn kind="secondary" small onClick={onCopySitemap}>
+                      {copied ? "Copied" : "Copy"}
+                    </Btn>
+                  </>
+                ) : (
+                  <span className="cd-seo__hint">Publish your storefront to get a sitemap link.</span>
+                )}
+              </div>
+            </div>
+
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">3</span>Open Google Search Console
+                </div>
+                <div className="cd-seo__hint">
+                  Google&rsquo;s free tool. Do steps 1 and 2 there and it starts listing your store.
+                </div>
+              </div>
+              <div className="cd-seo__control">
+                <a
+                  className="cd-btn cd-btn-primary cd-btn-sm"
+                  href="https://search.google.com/search-console"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <CDIcon name="external" size={14} strokeWidth={1.9} />
+                  Open Search Console
+                </a>
               </div>
             </div>
           </div>

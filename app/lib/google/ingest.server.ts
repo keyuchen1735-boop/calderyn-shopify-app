@@ -34,7 +34,16 @@ const CAMPAIGN_GAQL = `
   WHERE campaign.status IN ('ENABLED', 'PAUSED')
 `;
 
-const REPORT_GAQL_90D = `
+// Google Ads has no `LAST_90_DAYS` DURING literal — the predefined ranges stop
+// at LAST_30_DAYS (a longer range returns INVALID_VALUE_WITH_DURING_OPERATOR).
+// The 90-day backfill therefore uses an explicit inclusive BETWEEN range
+// computed from today. Dates are UTC YYYY-MM-DD; a boundary day either side is
+// immaterial for a 90-day historical pull.
+export function reportGaql90d(): string {
+  const end = new Date();
+  const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const ymd = (d: Date): string => d.toISOString().slice(0, 10);
+  return `
   SELECT
     campaign.id,
     metrics.cost_micros,
@@ -44,8 +53,9 @@ const REPORT_GAQL_90D = `
     metrics.conversions_value,
     segments.date
   FROM campaign
-  WHERE segments.date DURING LAST_90_DAYS
+  WHERE segments.date BETWEEN '${ymd(start)}' AND '${ymd(end)}'
 `;
+}
 
 function reportGaqlForDay(day: string): string {
   return `
@@ -95,7 +105,7 @@ export function googleSource(
       return (snakeKeysDeep(raw) as GoogleCampaignPayload[]).map((r) => transformCampaign(r, shopId));
     },
     async fetchBackfillSpend() {
-      const raw = await client.search(REPORT_GAQL_90D);
+      const raw = await client.search(reportGaql90d());
       await insertRawPoll(shopId, "report", { data: raw }, sb);
       return (snakeKeysDeep(raw) as GoogleReportRow[]).map((r) => transformReportRow(r, shopId));
     },

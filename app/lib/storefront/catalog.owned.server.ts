@@ -7,6 +7,7 @@
 // and only `active` products are exposed (draft/archived stay private).
 import { getSupabase } from "../supabase.server";
 import { signMediaPaths } from "../catalog/sign-media.server";
+import { boostByWeather, WEATHER_CONDITIONS, type WeatherCondition } from "../weather/affinity";
 import type {
   StorefrontCatalog,
   StoreProduct,
@@ -185,8 +186,54 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
       images: imagesByProduct.get(id) ?? [],
       variants: variantsByProduct.get(id) ?? [],
       collections: handlesByProduct.get(id) ?? [],
+      category: (p.category as string | null) ?? null,
+      tags: (p.tags as string[] | null) ?? [],
     };
   });
+}
+
+// Current weather condition for a shop's active location, memoized in-process for
+// WEATHER_CACHE_TTL_MS so a busy storefront doesn't re-query region_weather on
+// every product-list render. Fully fail-safe: any read error (missing location,
+// missing region_weather row, a DB hiccup) falls back to "neutral" — a broken
+// weather signal must never break or slow the public storefront.
+const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
+const weatherConditionCache = new Map<string, { condition: WeatherCondition; expiresAt: number }>();
+
+async function shopWeatherCondition(shopId: string): Promise<WeatherCondition> {
+  const cached = weatherConditionCache.get(shopId);
+  if (cached && cached.expiresAt > Date.now()) return cached.condition;
+
+  let condition: WeatherCondition = "neutral";
+  try {
+    const sb = getSupabase();
+    const { data: location } = await sb
+      .from("location_dim")
+      .select("region")
+      .eq("shop_id", shopId)
+      .eq("active", true)
+      .not("region", "is", null)
+      .limit(1)
+      .maybeSingle();
+    const region = (location as Row | null)?.region as string | undefined;
+    if (region) {
+      const { data: weather } = await sb
+        .from("region_weather")
+        .select("condition")
+        .eq("region", region)
+        .maybeSingle();
+      const stored = (weather as Row | null)?.condition as string | undefined;
+      if (stored && (WEATHER_CONDITIONS as readonly string[]).includes(stored)) {
+        condition = stored as WeatherCondition;
+      }
+    }
+  } catch (err) {
+    console.error("[catalog.owned] shopWeatherCondition failed, defaulting to neutral", err);
+    condition = "neutral";
+  }
+
+  weatherConditionCache.set(shopId, { condition, expiresAt: Date.now() + WEATHER_CACHE_TTL_MS });
+  return condition;
 }
 
 export const ownedCatalog: StorefrontCatalog = {
@@ -216,13 +263,15 @@ export const ownedCatalog: StorefrontCatalog = {
 
     let q = sb
       .from("product_dim")
-      .select("id, handle, title, description")
+      .select("id, handle, title, description, category, tags")
       .eq("shop_id", shopId)
       .eq("status", "active");
     if (restrictToIds) q = q.in("id", restrictToIds);
     const { data: products, error } = await q.order("title").limit(MAX_STOREFRONT_PRODUCTS);
     if (error) throw error;
-    return assemble(sb, shopId, (products ?? []) as Row[]);
+    const assembled = await assemble(sb, shopId, (products ?? []) as Row[]);
+    const condition = await shopWeatherCondition(shopId);
+    return boostByWeather(assembled, condition);
   },
 
   async getProduct(shopId, handle) {

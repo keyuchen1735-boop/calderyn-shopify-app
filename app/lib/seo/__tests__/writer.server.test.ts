@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildProductDraft, buildHomeDraft, buildCollectionDraft, plainText, clampText } from "../writer.server";
+import { buildProductDraft, buildHomeDraft, buildCollectionDraft, buildStoreDescription, plainText, clampText } from "../writer.server";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import type { StoreSettings } from "~/lib/storefront/settings.server";
 
@@ -89,5 +89,32 @@ describe("buildHomeDraft / buildCollectionDraft", () => {
     expect(d.canonical).toBe("https://ember.calderyncompany.com/storefront/collections/soy");
     expect(d.title).toBe("Soy Candles · Ember House");
     expect(d.jsonLd.some((n) => n["@type"] === "CollectionPage")).toBe(true);
+  });
+});
+
+describe("buildStoreDescription", () => {
+  it("names the store, lists up to three subjects as prose, then folds in the tagline", () => {
+    const out = buildStoreDescription(store, ["Soy Candles", "Wax Melts", "Gift Sets", "Diffusers"]);
+    expect(out).toBe(
+      "Ember House sells Soy Candles, Wax Melts, and Gift Sets. Small-batch soy candles from Amsterdam.",
+    );
+  });
+  it("falls back to an online-store opener when there are no subjects", () => {
+    expect(buildStoreDescription(store, [])).toBe(
+      "Ember House is an online store. Small-batch soy candles from Amsterdam.",
+    );
+  });
+  it("dedupes subjects case-insensitively and trims blanks", () => {
+    expect(buildStoreDescription(store, ["Soy", "  soy ", "", "Wax"])).toBe(
+      "Ember House sells Soy and Wax. Small-batch soy candles from Amsterdam.",
+    );
+  });
+  it("uses a generic closer when the tagline merely repeats the store name", () => {
+    const s = { ...store, voiceTagline: "Welcome to Ember House" };
+    expect(buildStoreDescription(s, ["Candles"])).toBe("Ember House sells Candles. Shop the full range online.");
+  });
+  it("never exceeds the 200-char store-description bound", () => {
+    const long = Array.from({ length: 3 }, (_, i) => "X".repeat(90) + i);
+    expect(buildStoreDescription(store, long).length).toBeLessThanOrEqual(200);
   });
 });

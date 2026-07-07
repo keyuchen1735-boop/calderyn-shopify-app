@@ -3,6 +3,8 @@
 // the unauthenticated, multi-tenant entry posture; the resolved shopId is then
 // passed as the first argument of every catalog read (manual scoping).
 import { getSupabase } from "~/lib/supabase.server";
+import { isUuid } from "~/lib/ids";
+import { tenantDomain } from "./vercel-domain.server";
 
 export const DEMO_SHOP_ID = "demo-shop";
 
@@ -24,6 +26,17 @@ const slugCache = new Map<string, { id: string | null; expiresAt: number }>();
 /** Drop every cached slug resolution (shop uninstall/rename hooks, tests). */
 export function clearStorefrontShopCache(): void {
   slugCache.clear();
+}
+
+/** This shop's public storefront origin (https://<slug>.calderyncompany.com), or
+ *  "" for a demo/non-uuid shop or one with no org_slug yet (no live storefront).
+ *  Used by the dashboard to show a merchant their real sitemap/robots URLs. */
+export async function getShopStorefrontOrigin(shopId: string): Promise<string> {
+  if (!isUuid(shopId)) return "";
+  const { data, error } = await getSupabase().from("shops").select("org_slug").eq("id", shopId).maybeSingle();
+  if (error) throw error;
+  const slug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
+  return slug ? `https://${tenantDomain(slug)}` : "";
 }
 
 /** Derive the tenant slug: ?shop= (dev fallback) wins, else the host subdomain. */

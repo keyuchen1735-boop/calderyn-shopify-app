@@ -322,17 +322,19 @@
   }
 
   /* ============ controls ============ */
+  /* One switch size everywhere — matches the sidebar autopilot kill switch
+     (.cd-apswitch: 34x20, 16px knob). Do not add per-context size overrides. */
   .cd-toggle {
-    width: 42px; height: 26px; border-radius: 13px; border: none; cursor: pointer;
+    width: 34px; height: 20px; border-radius: 999px; border: none; cursor: pointer;
     background: rgba(120, 120, 128, 0.22); position: relative; transition: background 0.2s ease; flex-shrink: 0; padding: 0;
   }
   .cd-toggle[data-on="1"] { background: #34C759; }
   .cd-dark .cd-toggle[data-on="1"] { background: #30D158; }
   .cd-toggle-knob {
-    position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%;
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
     background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 0 0 0.5px rgba(0,0,0,0.04); transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.64, 1);
   }
-  .cd-toggle[data-on="1"] .cd-toggle-knob { transform: translateX(16px); }
+  .cd-toggle[data-on="1"] .cd-toggle-knob { transform: translateX(14px); }
   .cd-seg { display: inline-flex; background: var(--gray-bg); border-radius: 9px; padding: 2px; gap: 0; }
   .cd-seg-btn {
     border: none; background: none; cursor: pointer; font-family: inherit;
@@ -1443,10 +1445,8 @@
 .cd-apfeat-name { flex: 1; min-width: 0; font-size: calc(13px * var(--type-scale)); font-weight: 550; letter-spacing: -0.006em; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cd-apfeat[data-locked="1"] .cd-apfeat-name { color: var(--text-3); }
 .cd-apfeat-lock { width: 15px; height: 15px; color: var(--text-3); flex-shrink: 0; }
-.cd-apfeat .cd-toggle { width: 32px; height: 19px; border-radius: 999px; }
+/* Size inherits the unified .cd-toggle; only the on-state accent differs here. */
 .cd-apfeat .cd-toggle[data-on="1"] { background: var(--accent); }
-.cd-apfeat .cd-toggle .cd-toggle-knob { width: 15px; height: 15px; }
-.cd-apfeat .cd-toggle[data-on="1"] .cd-toggle-knob { transform: translateX(13px); }
 
 /* ---- Inspector panel (rail, on demand) ---- */
 .cd-insp-head { display: flex; align-items: center; gap: 10px; padding: calc(15px * var(--density)) calc(20px * var(--density)); position: relative; }
@@ -2394,17 +2394,37 @@
 
 /* Section = a plain heading + its card. */
 .cd-seo__section { display: flex; flex-direction: column; gap: calc(10px * var(--density)); }
+.cd-seo__h2 { font-size: calc(15px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); margin: 0; }
 
 /* Settings: divided rows in one card, never a box per control. */
 .cd-seo__set { display: flex; flex-direction: column; }
 .cd-seo__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: calc(16px * var(--density)) calc(22px * var(--density)); }
 .cd-seo__row + .cd-seo__row { border-top: 1px solid var(--hairline); }
+.cd-seo__row--slim { padding-top: calc(9px * var(--density)); padding-bottom: calc(9px * var(--density)); }
 .cd-seo__info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cd-seo__label { font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__label { display: inline-flex; align-items: center; gap: 8px; font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+/* Numbered step badge for the "Get found on Google" flow. */
+.cd-seo__step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 19px; height: 19px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: calc(11px * var(--type-scale)); font-weight: 640; }
+/* "Verification tag is live" confirmation line. */
+.cd-seo__ok { display: inline-flex; align-items: center; gap: 6px; font-size: calc(12.5px * var(--type-scale)); font-weight: 520; color: var(--green); letter-spacing: -0.003em; }
+/* The sitemap link, shown as a monospace chip that truncates gracefully. */
+.cd-seo__url { max-width: min(360px, 46vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); font-size: calc(11.5px * var(--type-scale)); color: var(--text-2); background: var(--gray-bg); padding: 5px 9px; border-radius: 7px; }
+.cd-seo__tinput { width: min(320px, 44vw); }
 .cd-seo__hint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.45; max-width: 54ch; letter-spacing: -0.003em; }
+/* "Let Calderyn write it" affordance INSIDE the store-description field, left-aligned:
+   a small accent sparkle button that drafts the line for review. Pulses while working. */
+.cd-seo__ai-slot { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); display: inline-flex; }
+.cd-seo__ai { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; }
+.cd-seo__ai:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.cd-seo__ai:active { transform: scale(0.94); }
+.cd-seo__ai:disabled { cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  .cd-seo__ai[aria-busy="true"] svg { animation: cd-seo-ai-pulse 1s ease-in-out infinite; }
+}
+@keyframes cd-seo-ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .cd-seo__control { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .cd-seo__inputwrap { position: relative; display: inline-flex; align-items: center; }
-.cd-seo__input { width: min(320px, 44vw); padding-right: 54px; }
+.cd-seo__input { width: min(320px, 44vw); padding-left: 37px; padding-right: 54px; }
 .cd-seo__count { position: absolute; right: 11px; font-size: calc(10.5px * var(--type-scale)); color: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; }
 
 @media (max-width: 560px) {
