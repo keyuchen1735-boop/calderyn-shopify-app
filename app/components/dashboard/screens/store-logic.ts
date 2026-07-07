@@ -1,7 +1,8 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import { STUDIO_IMAGE_MEDIA_TYPES, type StudioVibe } from "~/lib/storebuilder/studio-types";
+import { BUILD_STAGES, STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe } from "~/lib/storebuilder/studio-types";
+export { parseBuildEvent, type BuildEvent, type BuildStage } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
   /** Live (active) products the storefront actually renders. */
@@ -22,7 +23,7 @@ export interface MissingPiece {
 }
 
 export type BuildPhase =
-  | { kind: "running" }
+  | { kind: "running"; stage?: BuildStage }
   | { kind: "done"; status: "draft" | "no_products" | "failed" }
   | { kind: "failed"; message: string };
 
@@ -31,6 +32,25 @@ export interface BuildStepView {
   dotColor?: string;
   title: string;
   sub: string;
+}
+
+const STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "brand", title: "Reading your catalog", sub: "Naming the brand and picking its palette." },
+  { stage: "designing", title: "Designing your pages", sub: "Home, collection and product pages." },
+  { stage: "checking", title: "Verifying links & layout", sub: "Every link checked against your catalog." },
+];
+
+/** Multi-row live progress for the streaming build: each row is a REAL stage the
+ *  server reported. Without a stage (the non-streaming fallback) and for terminal
+ *  phases, this collapses to the single legacy row. */
+export function buildSteps(phase: BuildPhase): BuildStepView[] {
+  if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
+  const at = BUILD_STAGES.indexOf(phase.stage);
+  return STAGE_ROWS.map((r, i) => ({
+    dot: i < at ? "done" : i === at ? "run" : "wait",
+    title: r.title,
+    sub: r.sub,
+  }));
 }
 
 /** Progress copy for the floating build step. A no-products run still drafted

@@ -43,3 +43,30 @@ describe("ChatRail attachment chips", () => {
     expect(render([])).not.toContain("cd-composer-chips");
   });
 });
+
+describe("live build progress card", () => {
+  it("renders one row per real stage with the current stage running", () => {
+    const html = renderToStaticMarkup(
+      h(ChatRail, {
+        messages: [{ id: 1, kind: "ai-working", phase: { kind: "running", stage: "designing" } }],
+        prompt: "",
+        onPromptChange: () => {},
+        onSend: () => {},
+        busy: true,
+        attaching: false,
+        onAttachFiles: () => {},
+        attachments: [],
+        onRemoveAttachment: () => {},
+        model: "sonnet",
+        onModelChange: () => {},
+      }),
+    );
+    expect(html).toContain("Reading your catalog");
+    expect(html).toContain("Designing your pages");
+    expect(html).toContain("Verifying links");
+    // brand finished, designing running, checking pending
+    expect(html).toContain('data-st="done"');
+    expect(html).toContain('data-st="run"');
+    expect(html).toContain('data-st="wait"');
+  });
+});

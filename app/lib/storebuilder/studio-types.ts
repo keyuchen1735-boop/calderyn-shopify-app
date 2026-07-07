@@ -170,4 +170,45 @@ export interface StudioGenerateReceipt {
    *  merchant's reference images failed while text-only calls succeeded — the
    *  produced design never saw the references. */
   referencesUnread?: true;
+  /** Pre-present verification results from the streaming generate path: links
+   *  re-checked against the live catalog, runtime-rejected fx stripped. */
+  verification?: {
+    checkedLinks: number;
+    fixedLinks: number;
+    externalLinks: number;
+    strippedMotion: number;
+    warnings: string[];
+  };
+}
+
+// ---- streaming build events (chat progress) ---------------------------------------------------
+
+/** Real generation stages, streamed by the server as they happen (mirrors
+ *  generate.server.ts BuildStage — a server-only module clients can't import). */
+export type BuildStage = "brand" | "designing" | "checking";
+export const BUILD_STAGES: readonly BuildStage[] = ["brand", "designing", "checking"];
+
+/** One NDJSON line from the streaming generate endpoint. */
+export type BuildEvent =
+  | { stage: BuildStage }
+  | { stage: "done"; receipt: StudioGenerateReceipt }
+  | { stage: "error"; message: string };
+
+/** Strict parse of one stream line — junk, unknown stages and malformed terminal
+ *  lines are null (callers treat an unparseable stream as a failed stream). */
+export function parseBuildEvent(line: string): BuildEvent | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as { stage?: unknown; receipt?: unknown; message?: unknown };
+  if ((BUILD_STAGES as readonly unknown[]).includes(o.stage)) return { stage: o.stage as BuildStage };
+  if (o.stage === "done" && typeof o.receipt === "object" && o.receipt !== null) {
+    return { stage: "done", receipt: o.receipt as StudioGenerateReceipt };
+  }
+  if (o.stage === "error" && typeof o.message === "string") return { stage: "error", message: o.message };
+  return null;
 }

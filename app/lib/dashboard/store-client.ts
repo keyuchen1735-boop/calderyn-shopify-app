@@ -1,20 +1,22 @@
 // Client fetchers for the Store studio surface. Kept in its own module (not
 // client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend, apiSendForm, saveProduct, uploadProductImage } from "./client";
-import type {
-  StudioState,
-  StudioSettings,
-  StudioHero,
-  StudioProduct,
-  StudioGeneration,
-  StudioGenerationStatus,
-  StudioGenerateReceipt,
-  StudioAddedProduct,
-  StudioDesignModel,
-  StudioVibe,
-  StudioExperiment,
-  StudioExperimentReport,
-  StudioExperimentState,
+import { apiGet, apiSend, apiSendForm, DashboardApiError, saveProduct, uploadProductImage } from "./client";
+import {
+  parseBuildEvent,
+  type BuildStage,
+  type StudioState,
+  type StudioSettings,
+  type StudioHero,
+  type StudioProduct,
+  type StudioGeneration,
+  type StudioGenerationStatus,
+  type StudioGenerateReceipt,
+  type StudioAddedProduct,
+  type StudioDesignModel,
+  type StudioVibe,
+  type StudioExperiment,
+  type StudioExperimentReport,
+  type StudioExperimentState,
 } from "~/lib/storebuilder/studio-types";
 
 export type {
@@ -165,4 +167,89 @@ export async function addProductFromImage(file: File): Promise<AddedProduct> {
     return { id, title, imageError: msg };
   }
   return { id, title };
+}
+
+/** Transport/parse failure of the streaming generate path — the caller may fall
+ *  back to the non-streaming endpoint. Guard refusals and generation failures
+ *  arrive as DashboardApiError instead and are FINAL (a fallback would re-bill). */
+export class StudioStreamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StudioStreamError";
+  }
+}
+
+/** Streaming twin of generateStudioStore: POSTs to the NDJSON endpoint, forwards
+ *  each real build stage to `onStage`, resolves with the final receipt. */
+export async function generateStudioStoreStream(
+  brief: string,
+  model: StudioDesignModel,
+  onStage: (stage: BuildStage) => void,
+): Promise<StudioGenerateReceipt> {
+  let res: Response;
+  try {
+    res = await fetch("/dashboard/api/store/generate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
+      },
+      body: JSON.stringify({ ...(brief.trim() ? { brief: brief.trim() } : {}), model }),
+    });
+  } catch (err) {
+    throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
+  }
+  if (!res.ok) {
+    let code = "generation_failed";
+    let message = "Store generation failed.";
+    try {
+      const body = (await res.json()) as { error?: string; message?: string };
+      if (typeof body.error === "string") code = body.error;
+      if (typeof body.message === "string") message = body.message;
+    } catch {
+      // keep the generic mapping; the status code still tells the story
+    }
+    throw new DashboardApiError(res.status, code, message);
+  }
+  if (!res.body) throw new StudioStreamError("response had no stream body");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const handleLine = (line: string): StudioGenerateReceipt | undefined => {
+    const ev = parseBuildEvent(line);
+    if (!ev) return undefined; // tolerate unknown lines (forward compatibility)
+    if (ev.stage === "done") return ev.receipt;
+    if (ev.stage === "error") throw new DashboardApiError(502, "generation_failed", ev.message);
+    onStage(ev.stage);
+    return undefined;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const receipt = handleLine(line);
+        if (receipt) {
+          reader.cancel().catch(() => {});
+          return receipt;
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof DashboardApiError) throw err;
+    throw new StudioStreamError(err instanceof Error ? err.message : "stream read failed");
+  }
+  const rest = buf.trim();
+  if (rest) {
+    const receipt = handleLine(rest);
+    if (receipt) return receipt;
+  }
+  throw new StudioStreamError("stream ended without a result");
 }

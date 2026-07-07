@@ -17,6 +17,8 @@ import {
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   addProductFromImage,
+  generateStudioStoreStream,
+  StudioStreamError,
   decideStoreExperiment,
   fetchStudio,
   generateStudioStore,
@@ -43,6 +45,7 @@ import {
   shouldShowWelcome,
   showPromptCanvas,
   type BuildPhase,
+  type BuildStage,
   type ChatIntent,
   type MissingPiece,
 } from "./store-logic";
@@ -344,21 +347,42 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setBuildPhase(runningPhase);
     const workingId = newId();
     pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
+    // Live progress: each streamed stage is a REAL server boundary; the working
+    // card advances only when the server says so.
+    const setStage = (stage: BuildStage) => {
+      if (!aliveRef.current) return;
+      const phase: BuildPhase = { kind: "running", stage };
+      setBuildPhase(phase);
+      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase } : x)));
+    };
     try {
-      const receipt = await generateStudioStore(brief.trim(), designModelRef.current);
+      let receipt: StudioGenerateReceipt;
+      try {
+        receipt = await generateStudioStoreStream(brief.trim(), designModelRef.current, setStage);
+      } catch (err) {
+        // Transport/parse trouble only — guard refusals and generation failures
+        // arrive as DashboardApiError and must NOT retry (a fallback re-bills).
+        if (!(err instanceof StudioStreamError)) throw err;
+        receipt = await generateStudioStore(brief.trim(), designModelRef.current);
+      }
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
-      // The JSON generate path only ever returns a terminal generation status
+      // The generate paths only ever return a terminal generation status
       // (draft/no_products/failed). The multipart-only intent statuses can't
       // arrive here, but handle them honestly instead of coercing to "draft".
       if (receipt.status === "needs_intent" || receipt.status === "products_added") {
         failBuild(workingId, "That didn't produce a design. Try Build again.");
         return;
       }
-      settleGeneration(workingId, receipt.status, { firstBuild: opts?.firstBuild });
+      const v = receipt.verification;
+      const extraLines =
+        v && v.checkedLinks > 0
+          ? [v.fixedLinks > 0 ? `Checked ${v.checkedLinks} links, fixed ${v.fixedLinks} dead one${v.fixedLinks === 1 ? "" : "s"}.` : `All ${v.checkedLinks} links verified.`]
+          : [];
+      settleGeneration(workingId, receipt.status, { firstBuild: opts?.firstBuild, extraLines });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";

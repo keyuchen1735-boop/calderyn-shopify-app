@@ -5,7 +5,7 @@
 // can never be flipped back to "running" by a later, unrelated build.
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
 import { CDIcon } from "../icons";
-import { buildStep, canSendComposer } from "../screens/store-logic";
+import { buildSteps, canSendComposer } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 import type { ChatMsg } from "./chat-types";
 import type { StudioDesignModel } from "~/lib/dashboard/store-client";
@@ -28,7 +28,8 @@ function RailMark() {
 }
 
 function WorkingCard({ msg }: { msg: Extract<ChatMsg, { kind: "ai-working" }> }) {
-  return <BuildStepsCard rows={[buildStep(msg.phase)]} />;
+  const rows = buildSteps(msg.phase);
+  return <BuildStepsCard rows={rows} dimPending={rows.length > 1} />;
 }
 
 function Bubble({ msg }: { msg: ChatMsg }) {

@@ -3,11 +3,52 @@
 // without object URLs or React state.
 import { describe, it, expect } from "vitest";
 import {
+  buildSteps,
   canSendComposer,
   MAX_ATTACHMENT_BYTES,
   MAX_STAGED_ATTACHMENTS,
+  parseBuildEvent,
   planStagedAttachments,
 } from "./store-logic";
+
+describe("parseBuildEvent", () => {
+  it("parses stage lines and the terminal done line with its receipt", () => {
+    expect(parseBuildEvent('{"stage":"brand"}')).toEqual({ stage: "brand" });
+    expect(parseBuildEvent('{"stage":"checking"}')).toEqual({ stage: "checking" });
+    const done = parseBuildEvent('{"stage":"done","receipt":{"runId":"r1","status":"draft"}}');
+    expect(done).toEqual({ stage: "done", receipt: { runId: "r1", status: "draft" } });
+  });
+  it("parses the in-band error line", () => {
+    expect(parseBuildEvent('{"stage":"error","message":"boom"}')).toEqual({ stage: "error", message: "boom" });
+  });
+  it("returns null for junk, unknown stages, and a done line missing its receipt", () => {
+    expect(parseBuildEvent("not json")).toBeNull();
+    expect(parseBuildEvent('{"stage":"reticulating"}')).toBeNull();
+    expect(parseBuildEvent('{"stage":"done"}')).toBeNull();
+  });
+});
+
+describe("buildSteps", () => {
+  it("renders the three real stages with run/done/wait dots as the build advances", () => {
+    const atBrand = buildSteps({ kind: "running", stage: "brand" });
+    expect(atBrand.map((r) => r.dot)).toEqual(["run", "wait", "wait"]);
+    const atDesign = buildSteps({ kind: "running", stage: "designing" });
+    expect(atDesign.map((r) => r.dot)).toEqual(["done", "run", "wait"]);
+    const atCheck = buildSteps({ kind: "running", stage: "checking" });
+    expect(atCheck.map((r) => r.dot)).toEqual(["done", "done", "run"]);
+    // the verification step is named for what it really does
+    expect(atCheck[2].title).toMatch(/verify|check/i);
+  });
+  it("falls back to the single legacy row when no stage is known (non-streaming path)", () => {
+    const rows = buildSteps({ kind: "running" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].dot).toBe("run");
+  });
+  it("keeps the existing single-row semantics for done and failed phases", () => {
+    expect(buildSteps({ kind: "failed", message: "x" })).toHaveLength(1);
+    expect(buildSteps({ kind: "done", status: "draft" })).toHaveLength(1);
+  });
+});
 
 // Fabricate a File with a controlled reported size so tests never allocate
 // multi-MB buffers just to cross the byte cap.
