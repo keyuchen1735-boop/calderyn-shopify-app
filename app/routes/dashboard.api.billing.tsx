@@ -4,7 +4,7 @@
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, requireSameOrigin, rateLimit } from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import {
   billingStatus,
@@ -23,6 +23,13 @@ export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
+
+  // Bound live Stripe account/link creation per shop: start-onboarding hits the
+  // billable Stripe API on every POST, so an authenticated client must not be able
+  // to loop it (sibling write routes rate-limit for the same reason).
+  if (!(await rateLimit(`billing:${session.shopId}`, 10, 60_000))) {
+    return jsonError(429, "rate_limited");
+  }
 
   let body: Record<string, unknown>;
   try {
