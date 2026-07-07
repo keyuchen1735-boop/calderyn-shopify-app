@@ -3,6 +3,9 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getSeoSettings, upsertSeoSettings } from "~/lib/seo/seo-store.server";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
+import { buildStoreDescription } from "~/lib/seo/writer.server";
 
 // The Preferences screen (see Search.tsx) exposes only the controls a merchant
 // has — search-engine access, AI-assistant access, and an optional store
@@ -52,6 +55,22 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");
       return dashboardJson(async () => ({ settings: await upsertSeoSettings(session.shopId, patch) }));
+    }
+    case "suggestDescription": {
+      // Compose (never persist) a one-line store description from this shop's own
+      // identity + catalog, tuned for search + AI answers. Deterministic, so it
+      // works without any AI spend; the merchant reviews and saves it themselves.
+      return dashboardJson(async () => {
+        const [store, collections, products] = await Promise.all([
+          getStoreSettings(session.shopId),
+          getCatalog().listCollections(session.shopId),
+          getCatalog().listProducts(session.shopId),
+        ]);
+        const subjects = collections.length
+          ? collections.map((c) => c.title)
+          : products.slice(0, 3).map((p) => p.title);
+        return { description: buildStoreDescription(store, subjects) };
+      });
     }
     default:
       return jsonError(422, "bad_request", `unknown action: ${body.action}`);

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("~/lib/dashboard/search-client", () => ({
   fetchSearchOverview: vi.fn().mockResolvedValue(null),
   updateSettings: vi.fn(),
+  suggestDescription: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -45,6 +46,15 @@ describe("Search screen (smoke)", () => {
   it("shows the skeleton before any data is cached", () => {
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("cd-skel");
+  });
+
+  it("offers a Calderyn 'write it for me' control beside the store description", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Store description");
+    // Sparkle affordance + its tooltip copy naming Google + AI.
+    expect(html).toContain("Let Calderyn write");
+    expect(html).toContain("Google and AI assistants");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {

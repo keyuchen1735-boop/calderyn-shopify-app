@@ -5,9 +5,10 @@
 // description. Seeds from the screen cache for instant paint, then refetches.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Card, Btn, Toggle, Placeholder, TableSkeleton } from "../ui";
+import { Card, Btn, Toggle, Tooltip, Placeholder, TableSkeleton } from "../ui";
+import { CDIcon } from "../icons";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { fetchSearchOverview, updateSettings, type SearchOverviewVM } from "~/lib/dashboard/search-client";
+import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 // Store-description hard cap: mirrors the server's own bound (see
 // dashboard.api.search.tsx), so a save can never be rejected for length.
@@ -61,6 +62,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   // what renderToStaticMarkup produces server-side (effects never run there).
   const [description, setDescription] = useState(() => data?.settings.orgDescription ?? "");
   const [savingDescription, setSavingDescription] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -138,6 +140,20 @@ export default function Search({ app }: { app: DashboardCtx }) {
     }
   }
 
+  // Draft a description from the store's own catalog + identity and drop it into
+  // the field for review. It is not saved until the merchant clicks Save.
+  async function onSuggestDescription() {
+    setSuggesting(true);
+    try {
+      const { description: draft } = await suggestDescription();
+      setDescription(draft);
+    } catch {
+      toast("Couldn't write one just now. Try again.", "warn", "critical");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
   if (!data) {
     if (loadError) {
       return (
@@ -192,7 +208,21 @@ export default function Search({ app }: { app: DashboardCtx }) {
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">
-                <div className="cd-seo__label">Store description</div>
+                <div className="cd-seo__label">
+                  Store description
+                  <Tooltip content="Let Calderyn write one, tuned for Google and AI assistants.">
+                    <button
+                      type="button"
+                      className="cd-seo__ai"
+                      onClick={onSuggestDescription}
+                      disabled={suggesting}
+                      aria-label="Let Calderyn write a store description tuned for Google and AI assistants"
+                      aria-busy={suggesting}
+                    >
+                      <CDIcon name="sparkle" size={13} strokeWidth={1.9} />
+                    </button>
+                  </Tooltip>
+                </div>
                 <div className="cd-seo__hint">One line about your store, used in search and AI answers.</div>
               </div>
               <div className="cd-seo__control">
