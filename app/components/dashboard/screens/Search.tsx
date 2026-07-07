@@ -1,4 +1,4 @@
-// Search - the merchant SEO/AIO surface (Store > Preferences). Every storefront
+// Search - the merchant SEO/AIO surface (Store > Search Optimization). Every storefront
 // page is already optimized live (the engine writes meta + structured data on
 // each render), so this screen shows the proof instead of asserting it: a real
 // Google result and an example AI answer for one of the store's own products,
@@ -31,11 +31,6 @@ function breadcrumbUrl(url: string): string {
   if (parts.length === 0) return url;
   const [host, ...rest] = parts;
   return rest.length ? `${host} › ${rest.join(" › ")}` : host;
-}
-
-function optimizingLabel(count: number): string {
-  if (count <= 0) return "Ready for your first page";
-  return `Optimizing ${count} ${count === 1 ? "page" : "pages"}`;
 }
 
 // Shared by the initial mount and the Retry button, so a failed load and a
@@ -167,11 +162,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
     <div className="cd-screen cd-seo">
       <header className="cd-seo__head">
         <div className="cd-seo__head-text">
-          <h1 className="cd-seo__title">Search</h1>
-        </div>
-        <div className="cd-seo__live" role="status">
-          <span className="cd-seo__live-dot" aria-hidden="true" />
-          <span>{optimizingLabel(preview.productCount)}</span>
+          <h1 className="cd-seo__title">Search Optimization</h1>
         </div>
       </header>
 
@@ -221,7 +212,6 @@ export default function Search({ app }: { app: DashboardCtx }) {
       </section>
 
       <section className="cd-seo__section">
-        <h2 className="cd-seo__h2">Settings</h2>
         <Card pad={false}>
           <div className="cd-seo__set">
             <div className="cd-seo__row">

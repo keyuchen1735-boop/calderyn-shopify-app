@@ -45,8 +45,7 @@ describe("Search screen (smoke)", () => {
   it("renders the header, both live previews, and the AI-access toggle without crashing", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("Search");
-    expect(html).toContain("Optimizing 3 pages");
+    expect(html).toContain("Search Optimization");
     // Google snippet + AI-answer previews, both built from the real sample product.
     expect(html).toContain("On Google");
     expect(html).toContain("On AI assistants");
@@ -68,7 +67,6 @@ describe("Search screen (smoke)", () => {
     });
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("exactly how it appears here");
-    expect(html).toContain("Ready for your first page");
     expect(html).not.toContain("On Google");
   });
 

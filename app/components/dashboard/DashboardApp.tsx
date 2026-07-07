@@ -159,7 +159,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         children: [
           { key: "storefront", label: "Storefront", screen: "storefront" },
           { key: "discover", label: "Discover", screen: "discover" },
-          { key: "preferences", label: "Preferences", screen: "search" },
+          { key: "preferences", label: "Search Optimization", screen: "search" },
         ],
       },
     ],
@@ -187,7 +187,7 @@ const ALL_NAV_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...FOOT
 
 // Screens that live under a nav item's umbrella keep that item highlighted and
 // its section expanded (subtab families, inner flows, the Labs mask, and the
-// Preferences / Search surface now nested under Store).
+// Search Optimization surface now nested under Store).
 const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   labs: "campaigns",
   "product-editor": "catalog",
