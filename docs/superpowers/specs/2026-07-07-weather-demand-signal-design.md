@@ -61,6 +61,15 @@ whether the score needs correcting, so we measure before we rewrite.
 
 ### Non-goals (deferred)
 
+- **Autonomous / graduated ad reallocation (Phase 1b).** Verification (section 12)
+  showed `reallocate_budget` has no alert-driven execution path in either the deck or
+  autopilot: the only autonomous reallocation is a sub-branch of the ad_tax_overload
+  reduce path that auto-picks its destination. Making weather ad moves autonomous
+  requires a new dispatch branch inside the core autopilot loop, which is the app's
+  most safety-critical code. In Phase 1 the ad mover gets **deck visibility plus
+  human approval only**; its autonomous, dollar-proven path is deferred. The
+  inventory nudge, which rides a fully existing execution contract, carries the full
+  visibility + activation + dollar-proof story this phase.
 - Rewriting the favorability score for the research-backed asymmetry. Deferred until
   outcome data justifies it.
 - Storefront merchandising / weather product-boosting (Phase 2).
@@ -281,9 +290,69 @@ These are confirmed enough to design against but must be nailed down in the plan
 
 ## 11. Phasing beyond this spec
 
+- Phase 1b: autonomous, outcome-gated ad reallocation. A new dispatch branch in
+  `runAutopilotForShop` that reads the weather alert's specified source/dest campaign
+  and amount and calls `executeReallocation` directly (the existing call site
+  auto-picks the dest, so it cannot honor a weather-specified move). This is what
+  gives the ad mover graduation and dollar-proof.
 - Phase 2: storefront merchandising (weather product-boost at the
   `catalog.owned.server.ts` `listProducts` ordering choke point, driven by a
   per-product category-relevance signal from `product_dim.category` / `tags`).
 - Phase 3 (conditional on outcome data): rewrite the favorability score for the
   research-backed asymmetry (good weather as the strong suppressor) and per-store
   direction.
+
+## 12. Verified wiring (2026-07-07) — supersedes optimistic assumptions above
+
+Three verification passes settled the exact contracts. Where this section differs
+from earlier prose, this section is authoritative.
+
+**Alert insert.** Required columns are `shop_id`, `detector_id`, `entity_ref`,
+`day_bucket`; `evidence` is a separate `alert_context` row. The live dedup key is a
+PARTIAL unique index `alerts_active_condition_key (shop_id, detector_id, entity_ref)
+WHERE status IN ('open','acknowledged','snoozed')`. PostgREST `.upsert()` cannot
+target a partial index, and the one existing TS alert writer
+(`detect-free-ship-leakage.server.ts`) is buggy (sends non-columns, omits
+`day_bucket`). Therefore the alert writer is a **Postgres RPC** that mirrors
+`engine/calderyn_engine/alerts_repo.py` UPSERT_SQL + UPSERT_CTX_SQL exactly, called
+from TS via `sb.rpc(...)`.
+
+**Registration is smaller than assumed.** `GRADUATABLE` and `HAS_UNDO_BRANCH` are
+keyed by `ActionKind` (not detector) and already contain `reallocate_inventory` and
+`reallocate_budget`. So neither needs editing. What DOES need editing, because
+routing is hardcoded by `detector_id`:
+
+- `app/lib/types.ts`: add `weather_demand` to the `DetectorId` union.
+- `app/lib/labels.ts`: add `weather_demand` to `DETECTOR_TO_ACTIONS`
+  (`["reallocate_inventory","reallocate_budget","snooze_alert"]`), `DETECTOR_LABELS`,
+  `DETECTOR_TERMS`.
+- `supabase/migrations/*`: add `'weather_demand'` to the `v_autopilot_candidates`
+  detector IN-list (for the inventory nudge to become an autopilot candidate).
+- `app/lib/actions/autopilot.server.ts`: add `"weather_demand"` to
+  `INVENTORY_RELOCATION_DETECTORS` (so `tryInventoryRelocation` handles it).
+
+**Inventory nudge evidence template = `regional_spend_starved_stock`, NOT
+`regional_shortage_risk`.** The executor `executeInventoryAlertAction` reads the
+transfer plan from `alert_context.evidence` via `transferPlanFromEvidence`, which
+requires `inventory_item_id`, `from_location_id`, `to_location_id`, and a nonzero
+`recommended_delta`. `regional_shortage_risk` does NOT emit these; only
+`regional_spend_starved_stock` does. The weather detector must emit that exact
+evidence shape (plus `entity_ref = {sku_id, region, sku}`). The physical
+source/dest/quantity are resolved the same way `suggestedTransferFromRow`
+(`app/lib/inventory-demand.ts`) already computes them from `v_sku_regional_demand`.
+
+**Ad mover deck visibility (Phase 1, human-approve).** `reallocate_budget` is not in
+`ONE_CLICK_KINDS` and not accepted by `dashboard.api.alerts.$id.action.tsx`. Phase 1
+adds a contained branch to that route: for a `weather_demand` alert with a
+`reallocate_budget` action, read `source_campaign_id` / `dest_campaign_id` /
+`amount_cents` from `alert_context.evidence` and call the existing
+`executeReallocation` (`app/lib/actions/reallocate.server.ts`) with `actor:
+'merchant'`. No autopilot changes. Because the action is merchant-executed, it earns
+trust signals but no `reward_signal` (that awaits Phase 1b), which is the intended
+Phase 1 boundary.
+
+**Execution contracts (verbatim inputs).**
+- `executeReallocation(shopId, { alertId, sourceCampaignId, destCampaignId,
+  amountCents, idempotencyKey, actor?, triggerReason? }, sb)`.
+- `reallocate_inventory` runs via `executeInventoryAlertAction`, deriving everything
+  from the alert; no caller params beyond the alert id + idempotency key.
