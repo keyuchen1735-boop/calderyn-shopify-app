@@ -9,6 +9,10 @@ import { regionForGeoTargets } from "../ads/geo-regions";
 import { favorability, type RegionForecast } from "../weather/score";
 import { REGION_CENTROIDS } from "../weather/regions";
 import { fetchRegionForecasts } from "../weather/open-meteo.server";
+import { budgetDraft } from "../weather/drafts";
+import { inventoryDraft } from "../weather/inventory-signal";
+import { writeWeatherAlert } from "../weather/alert-writer.server";
+import type { SkuDemandViewRow } from "../inventory-demand";
 
 export const SCORE_GAP_FLOOR = 0.15;
 export const MAX_CUT_FRACTION = 0.9;
@@ -111,16 +115,24 @@ export async function loadGeoSegmentedCampaigns(
 export interface RunDeps {
   fetchForecasts?: (points: typeof REGION_CENTROIDS) => Promise<Map<RegionCode, RegionForecast>>;
   today?: string;
+  writeAlert?: typeof writeWeatherAlert;
 }
 
 export interface RunResult {
   suggested: number;
-  skippedReason?: "sensitivity_off" | "no_eligible_campaigns" | "no_suggestion";
+  skippedReason?: "sensitivity_off" | "no_suggestion";
+}
+
+/** Look up a campaign's display name by id, falling back to the id itself. */
+function campaignName(campaigns: EligibleCampaign[], id: string): string {
+  return campaigns.find((c) => c.campaignId === id)?.name ?? id;
 }
 
 /**
- * Compute and upsert today's weather suggestion for one shop. Idempotent via the
- * unique (shop_id, suggested_on, source_campaign_id, dest_campaign_id) constraint.
+ * Compute today's weather signal for one shop and emit it as `weather_demand`
+ * alerts via the alert spine: a budget-reallocation nudge when the shop has
+ * >=2 geo-segmented ad campaigns, and per-SKU inventory-transfer nudges
+ * (always evaluated — this is the only signal for shops without geo campaigns).
  */
 export async function runWeatherSuggestForShop(
   shopId: string,
@@ -135,37 +147,52 @@ export async function runWeatherSuggestForShop(
   const sensitivity = Number((cfg as { weather_sensitivity?: unknown } | null)?.weather_sensitivity ?? 0);
   if (!(sensitivity > 0)) return { suggested: 0, skippedReason: "sensitivity_off" };
 
-  const campaigns = await loadGeoSegmentedCampaigns(shopId, sb);
-  const regions = new Set(campaigns.map((c) => c.region));
-  if (regions.size < 2) return { suggested: 0, skippedReason: "no_eligible_campaigns" };
-
   const fetchForecasts = deps.fetchForecasts ?? ((pts) => fetchRegionForecasts(pts));
   const forecasts = await fetchForecasts(REGION_CENTROIDS);
   const scores = new Map<RegionCode, number>();
   for (const [region, f] of forecasts) scores.set(region, favorability(f));
 
-  const suggestion = buildSuggestion(campaigns, scores, sensitivity);
-  if (!suggestion) return { suggested: 0, skippedReason: "no_suggestion" };
-
   const today = deps.today ?? new Date().toISOString().slice(0, 10);
-  const { error } = await sb.from("weather_suggestion").upsert(
-    [
-      {
-        shop_id: shopId,
-        suggested_on: today,
-        source_region: suggestion.sourceRegion,
-        dest_region: suggestion.destRegion,
-        source_campaign_id: suggestion.sourceCampaignId,
-        dest_campaign_id: suggestion.destCampaignId,
-        amount_cents: suggestion.amountCents,
-        source_score: suggestion.sourceScore,
-        dest_score: suggestion.destScore,
-        narrative: suggestion.narrative,
-        status: "pending",
-      },
-    ],
-    { onConflict: "shop_id,suggested_on,source_campaign_id,dest_campaign_id" },
-  );
-  if (error) throw error;
-  return { suggested: 1 };
+  const writeAlert = deps.writeAlert ?? writeWeatherAlert;
+  let written = 0;
+
+  const campaigns = await loadGeoSegmentedCampaigns(shopId, sb);
+  const regions = new Set(campaigns.map((c) => c.region));
+  if (regions.size >= 2) {
+    const suggestion = buildSuggestion(campaigns, scores, sensitivity);
+    if (suggestion) {
+      await writeAlert(
+        sb,
+        shopId,
+        today,
+        budgetDraft({
+          sourceCampaignId: suggestion.sourceCampaignId,
+          destCampaignId: suggestion.destCampaignId,
+          sourceName: campaignName(campaigns, suggestion.sourceCampaignId),
+          destName: campaignName(campaigns, suggestion.destCampaignId),
+          amountCents: suggestion.amountCents,
+          sourceRegion: suggestion.sourceRegion,
+          destRegion: suggestion.destRegion,
+          sourceScore: suggestion.sourceScore,
+          destScore: suggestion.destScore,
+          narrative: suggestion.narrative,
+        }),
+      );
+      written++;
+    }
+  }
+
+  const { data: demandRows } = await sb
+    .from("v_sku_regional_demand")
+    .select("*")
+    .eq("shop_id", shopId);
+  for (const row of (demandRows ?? []) as SkuDemandViewRow[]) {
+    const draft = inventoryDraft(row, scores);
+    if (draft) {
+      await writeAlert(sb, shopId, today, draft);
+      written++;
+    }
+  }
+
+  return written > 0 ? { suggested: written } : { suggested: 0, skippedReason: "no_suggestion" };
 }
