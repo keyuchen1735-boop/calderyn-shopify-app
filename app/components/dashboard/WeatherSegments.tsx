@@ -138,10 +138,12 @@ export function WeatherSegments({
     (forecast?.regions ?? []).map((r) => [r.region, conditionFor(r)]),
   );
 
-  // Day chips: "all" = the 3-day window; an index = that forecast day.
-  const [dayKey, setDayKey] = useState("all");
+  // Day chips: Today, then the following forecast dates. Cards show the
+  // selected day; the demand meter stays window-level (scores are 3-day
+  // quantities). Undated series → window aggregates, no chips.
+  const [dayKey, setDayKey] = useState("0");
   const days = forecast?.regions.find((r) => r.days && r.days.length > 0)?.days ?? [];
-  const dayIdx = dayKey === "all" ? null : Math.min(Number(dayKey), days.length - 1);
+  const dayIdx = days.length > 0 ? Math.min(Number(dayKey), days.length - 1) : null;
 
   // Off hides approvable offers immediately (matching the loader's contract);
   // armed rows are scheduled money and stay visible until the sweep disarms.
@@ -187,12 +189,12 @@ export function WeatherSegments({
             {days.length > 0 ? (
               <Segmented
                 small
-                value={dayIdx === null ? "all" : String(dayIdx)}
+                value={String(dayIdx ?? 0)}
                 onChange={setDayKey}
-                options={[
-                  { value: "all", label: "3 days" },
-                  ...days.map((d, i) => ({ value: String(i), label: shortDate(d.date) })),
-                ]}
+                options={days.map((d, i) => ({
+                  value: String(i),
+                  label: i === 0 ? "Today" : shortDate(d.date),
+                }))}
               />
             ) : null}
           </div>
