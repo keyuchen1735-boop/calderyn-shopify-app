@@ -1811,6 +1811,12 @@
 .cd-composer-model { border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 11.5px; height: 28px; padding: 0 4px; border-radius: 8px; cursor: pointer; }
 .cd-composer-model:hover { color: var(--text-1); background: var(--hairline); }
 .cd-rail[data-drop="1"] .cd-composer { box-shadow: var(--shadow-pop), 0 0 0 2px var(--accent); }
+.cd-composer-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.cd-composer-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 168px; height: 26px; padding: 0 4px; border-radius: 8px; background: var(--gray-bg); }
+.cd-composer-chip img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; flex: 0 0 auto; }
+.cd-composer-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-2); }
+.cd-composer-chip-x { border: 0; background: transparent; color: var(--text-3); cursor: pointer; display: inline-flex; align-items: center; padding: 2px; border-radius: 5px; flex: 0 0 auto; }
+.cd-composer-chip-x:hover { color: var(--text-1); background: var(--hairline); }
 
 .cd-bub { max-width: 94%; font-size: 13px; line-height: 1.55; }
 .cd-bub-user { align-self: flex-end; background: var(--accent); color: var(--on-accent); padding: 9px 14px; border-radius: 15px 15px 4px 15px; font-weight: 500; }

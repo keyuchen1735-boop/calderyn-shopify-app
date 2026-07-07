@@ -97,12 +97,14 @@ async function postMultipart(fields: {
   action?: string;
   brief?: string;
   model?: string;
+  intent?: string;
   images?: File[];
 }): Promise<Response> {
   const form = new FormData();
   form.set("action", fields.action ?? "generate");
   if (fields.brief !== undefined) form.set("brief", fields.brief);
   if (fields.model !== undefined) form.set("model", fields.model);
+  if (fields.intent !== undefined) form.set("intent", fields.intent);
   for (const f of fields.images ?? []) form.append("image", f);
   const request = new Request(URL, { method: "POST", body: form });
   return (await action({ request } as ActionFunctionArgs)) as Response;
@@ -275,6 +277,56 @@ describe("dashboard.api.store multipart generate", () => {
     // Same guard pair as the JSON path: prechecks then the daily quota.
     expect(prechecksMock).toHaveBeenCalledTimes(1);
     expect(designerQuotaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the classifier when an explicit reference intent is sent, and generates", async () => {
+    const res = await postMultipart({ brief: "here you go", intent: "reference", images: [pngFile("board.png")] });
+    const body = await res.json();
+    expect(body.status).toBe("draft");
+    expect(body.runId).toBe("run-1");
+    expect(body.intent).toEqual({ addAsProducts: false, useAsReference: true });
+    // The whole point: the ambiguous brief is NOT re-classified (that would
+    // return null again and loop the merchant back to the same question).
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(createProductMock).not.toHaveBeenCalled();
+    // Generation is certain here, so the daily designer slot IS consumed.
+    expect(designerQuotaMock).toHaveBeenCalledTimes(1);
+    expect(generateMock.mock.calls[0][0].referenceImages).toHaveLength(1);
+  });
+
+  it("skips the classifier for an explicit products intent and adds drafts only", async () => {
+    const res = await postMultipart({ intent: "products", images: [pngFile("red-mug.png")] });
+    const body = await res.json();
+    expect(body.status).toBe("products_added");
+    expect(body.intent).toEqual({ addAsProducts: true, useAsReference: false });
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(createProductMock).toHaveBeenCalledTimes(1);
+    expect(generateMock).not.toHaveBeenCalled();
+    // Catalog work, not generation — no designer slot consumed.
+    expect(designerQuotaMock).not.toHaveBeenCalled();
+  });
+
+  it("skips the classifier for an explicit both intent (drafts then generate)", async () => {
+    const res = await postMultipart({ brief: "add and match", intent: "both", images: [pngFile("mug.png")] });
+    const body = await res.json();
+    expect(body.status).toBe("draft");
+    expect(body.intent).toEqual({ addAsProducts: true, useAsReference: true });
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(createProductMock).toHaveBeenCalledTimes(1);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(body.products).toHaveLength(1);
+  });
+
+  it("rejects an invalid explicit intent with 422 before any spend", async () => {
+    const res = await postMultipart({ brief: "hi", intent: "sometimes", images: [pngFile("a.png")] });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_intent");
+    // 422 lands before the guards AND before any classification/generation/spend.
+    expect(prechecksMock).not.toHaveBeenCalled();
+    expect(designerQuotaMock).not.toHaveBeenCalled();
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(createProductMock).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it("leaves the JSON generate path unchanged (no intent classification)", async () => {

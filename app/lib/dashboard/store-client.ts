@@ -1,6 +1,6 @@
 // Client fetchers for the Store studio surface. Kept in its own module (not
 // client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend, saveProduct, uploadProductImage } from "./client";
+import { apiGet, apiSend, apiSendForm, saveProduct, uploadProductImage } from "./client";
 import type {
   StudioState,
   StudioSettings,
@@ -9,6 +9,7 @@ import type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioAddedProduct,
   StudioDesignModel,
   StudioVibe,
   StudioExperiment,
@@ -24,6 +25,7 @@ export type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioGenerateReceipt,
+  StudioAddedProduct,
   StudioDesignModel,
   StudioVibe,
   StudioExperiment,
@@ -100,6 +102,28 @@ export async function generateStudioStore(brief: string, model?: StudioDesignMod
     brief,
     ...(model ? { model } : {}),
   });
+}
+
+/** Generate a store with the merchant's attached images travelling in the SAME
+ *  request as the brief (multipart). The server decides what the images are for
+ *  (add-as-products / design reference / both) UNLESS `intent` is given — the
+ *  needs_intent quick-reply passes it to skip re-classification. An empty brief
+ *  generates from the catalog alone. Returns the full receipt, which may be
+ *  needs_intent (nothing done), products_added (drafts only, no run), a
+ *  soft-degraded generation, or a partial failure carrying created drafts. */
+export async function generateStudioStoreWithImages(
+  brief: string,
+  files: File[],
+  model: StudioDesignModel,
+  intent?: "products" | "reference" | "both",
+): Promise<StudioGenerateReceipt> {
+  const form = new FormData();
+  form.set("action", "generate");
+  if (brief) form.set("brief", brief);
+  form.set("model", model);
+  if (intent) form.set("intent", intent);
+  for (const file of files) form.append("image", file);
+  return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form);
 }
 
 /** Publish every drafted storefront page (the server seeds and publishes the

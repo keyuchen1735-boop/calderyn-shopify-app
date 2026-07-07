@@ -20,12 +20,15 @@ import {
   decideStoreExperiment,
   fetchStudio,
   generateStudioStore,
+  generateStudioStoreWithImages,
   publishStudioStore,
   saveStudioHero,
   setStudioAccent,
   setStudioVibe,
   startStoreExperiment,
+  type StudioAddedProduct,
   type StudioDesignModel,
+  type StudioGenerateReceipt,
   type StudioHero,
   type StudioState,
   type StudioVibe,
@@ -36,6 +39,7 @@ import {
   missingPieces,
   parseChatIntent,
   parseProductLine,
+  planStagedAttachments,
   shouldShowWelcome,
   showPromptCanvas,
   type BuildPhase,
@@ -122,6 +126,22 @@ export default function Store({ app }: { app: DashboardCtx }) {
     designModelRef.current = m;
     setDesignModel(m);
   };
+
+  // --- composer attachments (staged with the prompt) -------------------------
+  // Images picked/dropped are STAGED as chips, not auto-converted; they travel
+  // with the next send. Each carries an object URL for its thumbnail, revoked on
+  // removal / send / unmount so a staging session leaks no blobs.
+  const [attachments, setAttachments] = useState<{ id: string; file: File; url: string }[]>([]);
+  const attachmentsRef = useRef<typeof attachments>([]);
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+  useEffect(
+    () => () => {
+      for (const a of attachmentsRef.current) URL.revokeObjectURL(a.url);
+    },
+    [],
+  );
 
   // --- preview / canvas -------------------------------------------------------
   const [previewVersion, setPreviewVersion] = useState(0);
@@ -259,6 +279,56 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // state — otherwise a later, unrelated build would flip an older, already-
   // finished card in the thread back to "running" (buildPhase is shared app-
   // wide for the TopBar badge / canvas veil / welcome overlay).
+  // Flip a build's working card to a failed phase and post the message; the
+  // shared error path for both the JSON and the multipart generate calls.
+  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean }) => {
+    const failedPhase: BuildPhase = { kind: "failed", message };
+    setBuildPhase(failedPhase);
+    setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
+    pushMsg({ id: newId(), kind: "ai-text", text: message });
+    if (opts?.toast) toast(message, "warn", "critical");
+  };
+
+  // Drop a transient working card when the outcome wasn't a generation at all
+  // (needs_intent / products-only): the card said "Generating", but nothing was
+  // — so remove it rather than flip it to a "done" that would misreport (rule 12).
+  const clearBuildCard = (workingId: number) => {
+    setBuildPhase(null);
+    setMessages((m) => m.filter((x) => x.id !== workingId));
+  };
+
+  // Post-receipt handling for a generation that actually RAN (draft/no_products/
+  // soft-degraded failed-with-runId). Shared by the JSON path and the multipart
+  // reference/both paths; `extraLines` append the multipart-only notes (added
+  // drafts, unread references) to the same completion message.
+  const settleGeneration = (
+    workingId: number,
+    status: "draft" | "no_products" | "failed",
+    opts?: { firstBuild?: boolean; extraLines?: string[] },
+  ) => {
+    const donePhase: BuildPhase = { kind: "done", status };
+    setBuildPhase(donePhase);
+    setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
+    const base =
+      status === "failed"
+        ? // Honest failure (rule 12): the AI designer was unreachable, so this
+          // is a deterministic starter layout, not the prompted design.
+          "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
+        : opts?.firstBuild
+          ? "Here's your first draft: home, product and collection pages, built from your catalog. Tell me what to change, or publish when it feels right."
+          : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
+    const reply = [base, ...(opts?.extraLines ?? [])].join(" ");
+    const actions: ChatAction[] | undefined =
+      status !== "failed" && opts?.firstBuild
+        ? [
+            { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
+            { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
+            { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
+          ]
+        : undefined;
+    pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
+  };
+
   const runBuild = async (brief: string, opts?: { firstBuild?: boolean }) => {
     if (buildingRef.current) return;
     buildingRef.current = true;
@@ -273,40 +343,18 @@ export default function Store({ app }: { app: DashboardCtx }) {
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
-      // This JSON generate path only ever returns a terminal generation status;
-      // the multipart intent statuses (needs_intent/products_added) never reach here.
-      const doneStatus =
-        receipt.status === "needs_intent" || receipt.status === "products_added"
-          ? "draft"
-          : receipt.status;
-      const donePhase: BuildPhase = { kind: "done", status: doneStatus };
-      setBuildPhase(donePhase);
-      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
-      const reply =
-        receipt.status === "failed"
-          ? // Honest failure (rule 12): the AI designer was unreachable, so this
-            // is a deterministic starter layout, not the prompted design.
-            "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
-          : opts?.firstBuild
-            ? "Here's your first draft: home, product and collection pages, built from your catalog. Tell me what to change, or publish when it feels right."
-            : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
-      const actions: ChatAction[] | undefined =
-        receipt.status !== "failed" && opts?.firstBuild
-          ? [
-              { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
-              { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
-              { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
-            ]
-          : undefined;
-      pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
+      // The JSON generate path only ever returns a terminal generation status
+      // (draft/no_products/failed). The multipart-only intent statuses can't
+      // arrive here, but handle them honestly instead of coercing to "draft".
+      if (receipt.status === "needs_intent" || receipt.status === "products_added") {
+        failBuild(workingId, "That didn't produce a design. Try Build again.");
+        return;
+      }
+      settleGeneration(workingId, receipt.status, { firstBuild: opts?.firstBuild });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
-      const failedPhase: BuildPhase = { kind: "failed", message: msg };
-      setBuildPhase(failedPhase);
-      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
-      pushMsg({ id: newId(), kind: "ai-text", text: msg });
-      toast(msg, "warn", "critical");
+      failBuild(workingId, msg, { toast: true });
     } finally {
       buildingRef.current = false;
     }
@@ -423,11 +471,38 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   const onComposerSend = () => {
+    if (chatBusyRef.current || buildingRef.current || attaching) return;
     const text = prompt.trim();
-    if (!text || chatBusyRef.current || buildingRef.current) return;
+    const staged = attachments;
+    // No attachments → today's exact text-only path, untouched.
+    if (staged.length === 0) {
+      if (!text) return;
+      setPrompt("");
+      pushMsg({ id: newId(), kind: "user-text", text });
+      runChatIntent(parseChatIntent(text));
+      return;
+    }
+    // Attachments present → they travel with the prompt via the multipart route;
+    // deterministic vibe/accent/hero parsing does NOT apply. Show one image
+    // bubble per file, then the text, then clear the composer + chips. The File
+    // refs are captured in `files` so a needs_intent quick-reply can resubmit them.
+    const files = staged.map((a) => a.file);
+    for (const f of files) pushMsg({ id: newId(), kind: "user-image", imageUrl: URL.createObjectURL(f), caption: f.name });
+    if (text) pushMsg({ id: newId(), kind: "user-text", text });
     setPrompt("");
-    pushMsg({ id: newId(), kind: "user-text", text });
-    runChatIntent(parseChatIntent(text));
+    clearStagedAttachments();
+    if (text) {
+      // Text + images → let the model decide what the images are for.
+      void runAttachmentBuild(text, files);
+    } else {
+      // Image-only → never spend without knowing intent; ask first.
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: "Want me to add these as products, or use them as a design reference?",
+        actions: attachmentIntentActions("", files),
+      });
+    }
   };
 
   // --- markup: draw on the preview, note it, send to chat ---------------------
@@ -492,28 +567,85 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
-  // --- chat-box attachments -> draft products ----------------------------------
-  const onAttachFiles = async (allFiles: File[]) => {
+  // --- composer attachments: stage, then route on send ------------------------
+  // Screen picks against the mirrored server caps (pure planStagedAttachments),
+  // report every rejection in chat (rule 12), and stage the survivors as chips.
+  const onAttachFiles = (allFiles: File[]) => {
+    const plan = planStagedAttachments(allFiles, attachments.length);
+    if (plan.skipped.length > 0) {
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: `Skipped ${plan.skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use images right now.`,
+      });
+    }
+    if (plan.oversize.length > 0) {
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        // "under 4 MB" is the merchant-facing phrasing of MAX_ATTACHMENT_BYTES.
+        text: `${plan.oversize.map((f) => `"${f.name}"`).join(", ")} ${plan.oversize.length === 1 ? "is" : "are"} too large — attach images under 4 MB.`,
+      });
+    }
+    if (plan.overflow > 0) {
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text:
+          plan.accepted.length > 0
+            ? `You can attach up to 4 images at a time, so I kept the first ${plan.accepted.length}.`
+            : "You already have 4 images attached. Remove one to add another.",
+      });
+    }
+    if (plan.accepted.length === 0) return;
+    const staged = plan.accepted.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) }));
+    setAttachments((prev) => [...prev, ...staged]);
+  };
+
+  const onRemoveAttachment = (id: string) => {
+    setAttachments((prev) => {
+      const found = prev.find((a) => a.id === id);
+      if (found) URL.revokeObjectURL(found.url);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  // Revoke the staged chips' thumbnail URLs and clear them. The user-image
+  // bubbles get their OWN long-lived URLs at send time, so this never touches
+  // anything the thread is still showing.
+  const clearStagedAttachments = () => {
+    setAttachments((prev) => {
+      for (const a of prev) URL.revokeObjectURL(a.url);
+      return [];
+    });
+  };
+
+  // One honest chat line per server-created product entry (StudioAddedProduct):
+  // created / image-attach failed / create failed.
+  const productLine = (p: StudioAddedProduct): string => {
+    if (p.error) return `Couldn't add "${p.title}": ${p.error}.`;
+    if (p.imageError) return `Added draft "${p.title}", but its image failed to upload. Add one in Products.`;
+    return `Added "${p.title}" as a draft product.`;
+  };
+
+  const toastProductFailures = (failedCount: number, total: number) => {
+    const shortSummary =
+      failedCount === total
+        ? "Couldn't add those images. See chat for details."
+        : `${failedCount} of ${total} images had a problem. See chat for details.`;
+    toast(shortSummary, "warn", "critical");
+  };
+
+  // Add held images as draft products, client-side (the "Add as products" reply).
+  // Extracted from the old auto-convert path so its per-item messaging, partial-
+  // failure toast and refresh live in one place — never silently drops an item.
+  const runAddProductsFromImages = async (files: File[]) => {
     if (attaching) {
       toast("Still adding the previous images. Try again in a moment.");
       return;
     }
-    // Drag-and-drop bypasses the file input's accept filter, so screen non-images
-    // here — and say so, never silently drop them (rule 12).
-    const files = allFiles.filter((f) => f.type.startsWith("image/"));
-    const skipped = allFiles.filter((f) => !f.type.startsWith("image/"));
-    if (skipped.length > 0) {
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        text: `Skipped ${skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use images right now.`,
-      });
-    }
-    if (files.length === 0) return;
+    if (chatBusyRef.current || buildingRef.current) return;
     setAttaching(true);
-    for (const f of files) {
-      pushMsg({ id: newId(), kind: "user-image", imageUrl: URL.createObjectURL(f), caption: f.name });
-    }
     const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
     if (!aliveRef.current) return;
     const lines = results.map((r, i) => {
@@ -526,18 +658,99 @@ export default function Store({ app }: { app: DashboardCtx }) {
     });
     pushMsg({ id: newId(), kind: "ai-text", text: lines.join(" ") });
     const failedCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.imageError)).length;
-    if (failedCount > 0) {
-      const shortSummary =
-        failedCount === results.length
-          ? "Couldn't add those images. See chat for details."
-          : `${failedCount} of ${results.length} images had a problem. See chat for details.`;
-      toast(shortSummary, "warn", "critical");
-    }
+    if (failedCount > 0) toastProductFailures(failedCount, results.length);
     try {
       await refresh();
       reloadPreview();
     } finally {
       if (aliveRef.current) setAttaching(false);
+    }
+  };
+
+  // The two quick-reply buttons shown when intent is unresolved (an image-only
+  // send, or a needs_intent receipt). Reference resubmits WITH the original brief
+  // and an explicit intent, so the server skips re-classification (no loop).
+  const attachmentIntentActions = (brief: string, files: File[]): ChatAction[] => [
+    { label: "Add as products", kind: "primary", onClick: () => void runAddProductsFromImages(files) },
+    { label: "Use as design reference", onClick: () => void runAttachmentBuild(brief, files, "reference") },
+  ];
+
+  // Multipart generate: images travel WITH the brief. Reuses runBuild's lifecycle
+  // (working card + veil + settleGeneration), but the receipt can also be
+  // needs_intent (ask), products_added (drafts only), or products-then-generation-
+  // failure — each handled honestly rather than faked as a finished build.
+  const runAttachmentBuild = async (
+    brief: string,
+    files: File[],
+    intent?: "products" | "reference" | "both",
+  ) => {
+    if (buildingRef.current || chatBusyRef.current) return;
+    buildingRef.current = true;
+    const runningPhase: BuildPhase = { kind: "running" };
+    setBuildPhase(runningPhase);
+    const workingId = newId();
+    pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
+    try {
+      const receipt: StudioGenerateReceipt = await generateStudioStoreWithImages(
+        brief.trim(),
+        files,
+        designModelRef.current,
+        intent,
+      );
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+
+      // Nothing ran — the model couldn't tell what the images were for. Drop the
+      // working card and ask, holding the same files for the quick-reply resubmit.
+      if (receipt.status === "needs_intent") {
+        clearBuildCard(workingId);
+        pushMsg({
+          id: newId(),
+          kind: "ai-text",
+          text: "I couldn't tell what to do with those images. Add them as products, or use them as a design reference?",
+          actions: attachmentIntentActions(brief, files),
+        });
+        return;
+      }
+
+      const products = receipt.products ?? [];
+      const productLines = products.map(productLine);
+      const failedCount = products.filter((p) => p.error || p.imageError).length;
+
+      // Drafts added, no generation ran.
+      if (receipt.status === "products_added") {
+        clearBuildCard(workingId);
+        if (productLines.length > 0) pushMsg({ id: newId(), kind: "ai-text", text: productLines.join(" ") });
+        if (failedCount > 0) toastProductFailures(failedCount, products.length);
+        return;
+      }
+
+      // Products were written, THEN generation threw (no runId): report both facts.
+      if (receipt.status === "failed" && !receipt.runId) {
+        failBuild(
+          workingId,
+          productLines.length > 0
+            ? `${productLines.join(" ")} But the design generation failed — try Build again.`
+            : "The design generation failed — try Build again.",
+          { toast: true },
+        );
+        return;
+      }
+
+      // A generation ran (draft / no_products / soft-degraded failed-with-runId).
+      const extraLines = [...productLines];
+      if (receipt.referencesUnread) {
+        extraLines.push("I couldn't read the attached reference images, so the design was generated without them.");
+      }
+      settleGeneration(workingId, receipt.status, { extraLines });
+      if (failedCount > 0) toastProductFailures(failedCount, products.length);
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
+      failBuild(workingId, msg, { toast: true });
+    } finally {
+      buildingRef.current = false;
     }
   };
 
@@ -707,6 +920,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
           busy={chatBusy || building}
           attaching={attaching}
           onAttachFiles={onAttachFiles}
+          attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
+          onRemoveAttachment={onRemoveAttachment}
           model={designModel}
           onModelChange={setDesignModelBoth}
         />

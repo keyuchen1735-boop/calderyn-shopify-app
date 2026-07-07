@@ -10,7 +10,7 @@ import {
 } from "~/lib/storebuilder/studio.server";
 import { decideExperiment, startExperiment } from "~/lib/experiments/store-experiment.server";
 import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
-import { classifyAttachmentIntent, type AttachmentImage } from "~/lib/storegen/attachment-intent.server";
+import { classifyAttachmentIntent, type AttachmentImage, type AttachmentIntent } from "~/lib/storegen/attachment-intent.server";
 import { assertCanGenerate, assertGeneratePrechecks, assertDesignerQuota } from "~/lib/storegen/guard.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { uploadProductMedia } from "~/lib/catalog/media.server";
@@ -53,6 +53,17 @@ function heroText(v: unknown): string | null {
 const MAX_IMAGE_BYTES = 3_932_160;
 const MAX_IMAGES = 4;
 const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+// Explicit intent override the needs_intent quick-reply resubmits: the merchant
+// already told us what to do, so map the choice straight to a decision and SKIP
+// classifyAttachmentIntent — re-running the classifier on the same ambiguous
+// brief would return null again and loop the merchant back to the same question.
+// Any other value is a client bug → 422 invalid_intent.
+const EXPLICIT_INTENTS: Record<string, AttachmentIntent> = {
+  products: { addAsProducts: true, useAsReference: false },
+  reference: { addAsProducts: false, useAsReference: true },
+  both: { addAsProducts: true, useAsReference: true },
+};
 
 /** An attachment buffered once and reused for classification, the vision
  *  reference blocks, and the draft-product upload. */
@@ -152,6 +163,17 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
   const designModel = (typeof modelField === "string" ? modelField : undefined) as StudioDesignModel | undefined;
   const rawBrief = typeof briefField === "string" ? briefField : undefined;
 
+  // Optional explicit intent (the needs_intent quick-reply resubmission). Valid
+  // → bypass the classifier below; invalid → 422 before any spend.
+  const intentField = form.get("intent");
+  let explicitIntent: AttachmentIntent | undefined;
+  if (intentField !== null) {
+    if (typeof intentField !== "string" || !(intentField in EXPLICIT_INTENTS)) {
+      return jsonError(422, "invalid_intent", "Intent must be products, reference or both.");
+    }
+    explicitIntent = EXPLICIT_INTENTS[intentField];
+  }
+
   // Validate every attachment BEFORE any model spend (rule: never trust body shapes).
   const entries = form.getAll("image");
   if (entries.length > MAX_IMAGES) {
@@ -200,9 +222,11 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     const asAttachmentImages = (): AttachmentImage[] =>
       images.map((i) => ({ mediaType: i.contentType, dataBase64: i.dataBase64 }));
 
-    const intent = await classifyAttachmentIntent({ brief: brief ?? null, images: asAttachmentImages() });
+    // An explicit intent skips classification entirely (the quick-reply already
+    // resolved the ambiguity); otherwise the model decides what the images are for.
+    const intent = explicitIntent ?? (await classifyAttachmentIntent({ brief: brief ?? null, images: asAttachmentImages() }));
     // Couldn't tell what to do → ask the merchant. No generation, no products —
-    // and no designer quota consumed.
+    // and no designer quota consumed. (Unreachable when intent was explicit.)
     if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
 
     // Generation is now certain when useAsReference, so consume the daily

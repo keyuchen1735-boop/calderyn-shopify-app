@@ -179,6 +179,54 @@ export function isDeterministicChatIntent(
   return intent.kind === "vibe" || intent.kind === "accent" || intent.kind === "hero";
 }
 
+// ---- composer attachments (staging) -----------------------------------------
+//
+// Images picked/dropped in the chat composer are STAGED as chips, not converted
+// on the spot — they travel with the next message. The rules below mirror the
+// server's multipart caps (app/routes/dashboard.api.store.tsx) so an over-limit
+// pick is rejected in chat before it can fail at the API boundary.
+
+export const MAX_STAGED_ATTACHMENTS = 4;
+// Mirrors the route's MAX_IMAGE_BYTES: 3,932,160 raw bytes (~3.75 MiB) stays
+// under Anthropic's per-image ceiling once base64-inflated.
+export const MAX_ATTACHMENT_BYTES = 3_932_160;
+
+export interface StagePlan {
+  /** Files accepted for staging, in order (image, within size, within the cap). */
+  accepted: File[];
+  /** Non-image files, rejected with the "images only" message. */
+  skipped: File[];
+  /** Images over the byte cap, rejected by name. */
+  oversize: File[];
+  /** How many within-size images were dropped because the 4-image cap was hit. */
+  overflow: number;
+}
+
+/** Decide which picked/dropped files can be staged, given how many are already
+ *  staged. Pure so the non-image / oversize / over-cap rules stay unit-testable
+ *  apart from the object-URL + React state work the screen layers on top. */
+export function planStagedAttachments(files: File[], alreadyStaged: number): StagePlan {
+  const skipped = files.filter((f) => !f.type.startsWith("image/"));
+  const images = files.filter((f) => f.type.startsWith("image/"));
+  const oversize = images.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
+  const withinSize = images.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
+  const slots = Math.max(0, MAX_STAGED_ATTACHMENTS - alreadyStaged);
+  const accepted = withinSize.slice(0, slots);
+  return { accepted, skipped, oversize, overflow: withinSize.length - accepted.length };
+}
+
+/** Whether the composer's send button (and Enter) fires: some text OR at least
+ *  one staged attachment, and not mid-build (busy) or mid-add (attaching). */
+export function canSendComposer(input: {
+  prompt: string;
+  attachmentCount: number;
+  busy: boolean;
+  attaching: boolean;
+}): boolean {
+  if (input.busy || input.attaching) return false;
+  return input.prompt.trim().length > 0 || input.attachmentCount > 0;
+}
+
 // ---- welcome overlay (first run) --------------------------------------------
 
 export type WelcomeBranch = { kind: "importing" } | { kind: "empty" } | { kind: "ready" };
