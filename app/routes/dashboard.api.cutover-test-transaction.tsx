@@ -8,12 +8,14 @@ import { startTestTransaction } from "~/lib/cutover/test-transaction.server";
 // startTestTransaction and throw plain Errors; we map them to a 400 carrying the message
 // verbatim so the dashboard can show it (dashboardJson would otherwise lose it in a 500).
 export async function action({ request }: ActionFunctionArgs) {
-  requireSameOrigin(request);
+  // The validated origin doubles as the Stripe return host — the Go live screen on
+  // the host the merchant's session cookie lives on.
+  const origin = requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
 
   try {
-    const { url } = await startTestTransaction(session.shopId);
+    const { url } = await startTestTransaction(session.shopId, origin);
     return dashboardJson(async () => ({ url }));
   } catch (err) {
     const message = err instanceof Error ? err.message : "could not start test transaction";

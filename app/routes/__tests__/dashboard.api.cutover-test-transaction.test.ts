@@ -18,6 +18,7 @@ describe("POST /dashboard/api/cutover-test-transaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.requireDashboardSession.mockResolvedValue({ shopId: "shop-1" });
+    h.requireSameOrigin.mockReturnValue("https://calderyncompany.com");
     h.startTestTransaction.mockResolvedValue({ url: "https://stripe/pay" });
   });
 
@@ -25,6 +26,12 @@ describe("POST /dashboard/api/cutover-test-transaction", () => {
     const req = new Request("http://x/dashboard/api/cutover-test-transaction", { method: "POST" });
     const res = await action({ request: req } as never);
     expect(await res.json()).toEqual({ url: "https://stripe/pay" });
+  });
+
+  it("threads the validated origin through so Stripe returns the merchant to their own host", async () => {
+    const req = new Request("http://x/dashboard/api/cutover-test-transaction", { method: "POST" });
+    await action({ request: req } as never);
+    expect(h.startTestTransaction).toHaveBeenCalledWith("shop-1", "https://calderyncompany.com");
   });
 
   it("returns 405 for non-POST", async () => {

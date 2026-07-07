@@ -40,8 +40,10 @@ export interface GoLiveReport {
 const PAYMENT_CHECK_NAMES = ["paid_order", "captured_charge"] as const;
 
 /** True iff both payment-cleared checks passed (a test order reached paid AND a Stripe
- *  charge captured). Missing checks read as not-ok — never assume payment on absence. */
-function paymentCleared(checks: GateCheck[]): boolean {
+ *  charge captured). Missing checks read as not-ok — never assume payment on absence.
+ *  Exported so the cutover status API can ship the verdict to the dashboard — the client
+ *  must never re-derive it from hardcoded check names. */
+export function paymentCleared(checks: GateCheck[]): boolean {
   return PAYMENT_CHECK_NAMES.every((name) => checks.find((c) => c.name === name)?.pass === true);
 }
 

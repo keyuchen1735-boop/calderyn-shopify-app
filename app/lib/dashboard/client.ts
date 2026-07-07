@@ -1456,7 +1456,7 @@ export interface GateCheckVM {
 export interface CutoverStatusVM {
   mode: CutoverMode;
   allowed: CutoverMode[];
-  gates: { pass: boolean; checks: GateCheckVM[] };
+  gates: { pass: boolean; paymentCleared: boolean; checks: GateCheckVM[] };
 }
 
 export async function fetchCutoverStatus(): Promise<CutoverStatusVM> {
