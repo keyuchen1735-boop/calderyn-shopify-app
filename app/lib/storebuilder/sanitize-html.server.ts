@@ -78,11 +78,27 @@ export function sanitizeStoreHtml(html: unknown, opts?: { links?: StorefrontLink
       },
     },
   });
-  // sanitize-html passes <style> CSS through verbatim; strip the two CSS vectors it does not:
-  // @import (external fetch / privacy leak) and the legacy IE expression() JS sink. External url()
-  // loads are separately blocked by the storefront CSP. The @import class excludes `<` so a rule
-  // missing its `;` cannot greedily delete across a tag boundary and corrupt following markup.
-  return cleaned.replace(/@import\b[^;<]*;?/gi, "").replace(/expression\s*\(/gi, "(");
+  // sanitize-html passes <style> CSS through verbatim, so neutralize the vectors it leaves —
+  // SCOPED to the <style> blocks so ordinary document text is never rewritten (a global strip
+  // turned copy like "freedom of expression (…)" into "freedom of (…)"). Per block:
+  //  - @import      → external fetch / privacy leak (the `<`-excluding class stops a `;`-less rule
+  //                   from greedily eating across a tag boundary); external url() loads are CSP-bound.
+  //  - expression(  → the legacy IE-only JS sink.
+  //  - </style not immediately closed by `>` → a parser-differential XSS: sanitize-html's parser
+  //    (htmlparser2) only ends a <style> block at the exact token "</style>", but the HTML5 parser
+  //    in every browser also ends it at "</style/" or "</style " (solidus / whitespace). A body such
+  //    as "</style/><img onerror=…>" therefore survives here as inert CSS yet re-parses in the
+  //    browser as a live element that runs its handler. Encoding the leading `<` makes it unclosable.
+  return cleaned.replace(
+    /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (_m: string, open: string, body: string, close: string) =>
+      open +
+      body
+        .replace(/@import\b[^;<]*;?/gi, "")
+        .replace(/expression\s*\(/gi, "(")
+        .replace(/<\/style(?=[\t\n\f\r /])/gi, "&lt;/style") +
+      close,
+  );
 }
 
 /**
