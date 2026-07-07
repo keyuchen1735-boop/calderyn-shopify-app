@@ -12,6 +12,7 @@ import { buildProductDraft } from "./writer.server";
 import { scoreDraft } from "./score.server";
 import { applyOverride } from "./override";
 import { getSeoOverride, listSeoOverrides, getSeoSettings, type SeoSettings } from "./seo-store.server";
+import { getGscState, type GoogleCardVM } from "./google-search-console.server";
 import type { HealthReport } from "./types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -34,6 +35,7 @@ export interface SeoOverviewVM {
   aiCrawls: AiCrawlRow[];
   aiCrawlTotal: number;
   settings: SeoSettings;
+  google: GoogleCardVM;
 }
 export interface GooglePreview { title: string; url: string; description: string; }
 export interface ProductSeoDetailVM {
@@ -84,12 +86,13 @@ function topIssue(report: HealthReport): string | null {
 }
 
 export async function buildSeoOverview(shopId: string, storefrontOrigin: string): Promise<SeoOverviewVM> {
-  const [products, overrides, settings, crawls, store] = await Promise.all([
+  const [products, overrides, settings, crawls, store, gsc] = await Promise.all([
     getCatalog().listProducts(shopId),
     listSeoOverrides(shopId),
     getSeoSettings(shopId),
     summariseAiCrawls(shopId),
     getStoreSettings(shopId),
+    getGscState(shopId),
   ]);
 
   let scoreSum = 0;
@@ -112,6 +115,7 @@ export async function buildSeoOverview(shopId: string, storefrontOrigin: string)
     aiCrawls: crawls.rows,
     aiCrawlTotal: crawls.total,
     settings,
+    google: { connected: gsc.connected, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
   };
 }
 

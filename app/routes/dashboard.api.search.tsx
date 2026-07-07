@@ -4,6 +4,9 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { buildSeoOverview, getProductSeoDetail, getShopStorefrontOrigin } from "~/lib/seo/overview.server";
 import { upsertSeoOverride, deleteSeoOverride, upsertSeoSettings } from "~/lib/seo/seo-store.server";
+import { getSupabase } from "~/lib/supabase.server";
+import { createOAuthState } from "~/lib/meta/oauth-state.server";
+import { buildConnectUrl, disconnect as disconnectGsc } from "~/lib/seo/google-search-console.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request); // auth gate; overview is this shop's own data
@@ -82,6 +85,19 @@ export async function action({ request }: ActionFunctionArgs) {
       if (body.orgDescription === null || typeof body.orgDescription === "string") patch.orgDescription = body.orgDescription;
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");
       return dashboardJson(async () => ({ settings: await upsertSeoSettings(session.shopId, patch) }));
+    }
+    case "connectGoogle": {
+      // Mint a single-use CSRF nonce bound to this shop; the callback consumes it.
+      const state = await createOAuthState(getSupabase(), session.shopId, { dashboard: true });
+      const url = buildConnectUrl(session.shopId, state);
+      if (!url) return jsonError(503, "google_unavailable", "Google connection is not configured");
+      return dashboardJson(async () => ({ url }));
+    }
+    case "disconnectGoogle": {
+      return dashboardJson(async () => {
+        await disconnectGsc(session.shopId);
+        return { ok: true };
+      });
     }
     default:
       return jsonError(422, "bad_request", `unknown action: ${body.action}`);

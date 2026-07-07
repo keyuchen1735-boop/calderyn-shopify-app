@@ -8,12 +8,15 @@ import type { DashboardCtx } from "../context";
 import { Card, Btn, Toggle, Pill, Placeholder, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchSearch,
   loadProductDetail,
   saveOverride,
   resetOverride,
   updateSettings,
+  connectGoogleSearchConsole,
+  disconnectGoogleSearchConsole,
   type SeoOverviewVM,
   type ProductSeoDetailVM,
   type SeoSettings,
@@ -92,6 +95,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   );
   const [loadError, setLoadError] = useState(false);
   const [editing, setEditing] = useState<string | null>(null); // product handle
+  const [gscBusy, setGscBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -112,6 +116,34 @@ export default function Search({ app }: { app: DashboardCtx }) {
 
   function refresh() {
     loadSearchOverview(setData, setLoadError);
+  }
+
+  async function onConnectGoogle() {
+    setGscBusy(true);
+    try {
+      const { url } = await connectGoogleSearchConsole();
+      window.location.assign(url); // leave the SPA for Google's consent screen
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Could not start the Google connection",
+        "warn",
+        "critical",
+      );
+      setGscBusy(false);
+    }
+  }
+
+  async function onDisconnectGoogle() {
+    setGscBusy(true);
+    try {
+      await disconnectGoogleSearchConsole();
+      app.toast("Disconnected from Google.", "check");
+      refresh();
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Could not disconnect", "warn", "critical");
+    } finally {
+      setGscBusy(false);
+    }
   }
 
   if (!data) {
@@ -180,10 +212,18 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 See where your pages show up in Google search.
               </p>
               <div className="cd-seo__card-foot">
-                <Btn kind="secondary" small disabled>
-                  Connect Google
-                </Btn>
-                <span className="cd-seo__soon">Coming soon</span>
+                {data.google.connected ? (
+                  <>
+                    <span className="cd-seo__soon">Connected</span>
+                    <Btn kind="secondary" small onClick={onDisconnectGoogle} disabled={gscBusy}>
+                      Disconnect
+                    </Btn>
+                  </>
+                ) : (
+                  <Btn kind="secondary" small onClick={onConnectGoogle} disabled={gscBusy}>
+                    Connect Google
+                  </Btn>
+                )}
               </div>
             </Card>
 

@@ -20,6 +20,13 @@ export interface SeoSettings {
   orgName: string | null;
   orgDescription: string | null;
 }
+export interface GoogleCardVM {
+  connected: boolean;
+  clicks: number;
+  impressions: number;
+  topQuery: string | null;
+  topPosition: number | null;
+}
 export interface SeoOverviewVM {
   storeHealth: number;
   productCount: number;
@@ -27,6 +34,7 @@ export interface SeoOverviewVM {
   aiCrawls: AiCrawlRow[];
   aiCrawlTotal: number;
   settings: SeoSettings;
+  google: GoogleCardVM;
 }
 export interface GooglePreview { title: string; url: string; description: string; }
 export interface HealthCheckVM { id: string; label: string; status: "pass" | "warn" | "fail"; hint?: string; }
@@ -53,3 +61,9 @@ export const resetOverride = (entityId: string) =>
 
 export const updateSettings = (patch: Partial<SeoSettings>) =>
   apiSend<{ settings: SeoSettings }>("POST", "/dashboard/api/search", { action: "updateSettings", ...patch });
+
+export const connectGoogleSearchConsole = () =>
+  apiSend<{ url: string }>("POST", "/dashboard/api/search", { action: "connectGoogle" });
+
+export const disconnectGoogleSearchConsole = () =>
+  apiSend<{ ok: true }>("POST", "/dashboard/api/search", { action: "disconnectGoogle" });

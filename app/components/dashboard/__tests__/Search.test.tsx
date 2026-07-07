@@ -9,6 +9,8 @@ vi.mock("~/lib/dashboard/search-client", () => ({
   saveOverride: vi.fn(),
   resetOverride: vi.fn(),
   updateSettings: vi.fn(),
+  connectGoogleSearchConsole: vi.fn(),
+  disconnectGoogleSearchConsole: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -37,6 +39,7 @@ const overview = {
   ],
   aiCrawlTotal: 1240,
   settings: { allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null },
+  google: { connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
 };
 
 beforeEach(() => clearScreenCache());

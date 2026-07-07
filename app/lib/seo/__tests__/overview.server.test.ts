@@ -40,6 +40,12 @@ vi.mock("../seo-store.server", () => ({
   getSeoOverride: async () => null,
   getSeoSettings: async () => ({ allowAiCrawlers: true, allowAiTraining: false, orgName: null, orgDescription: null }),
 }));
+vi.mock("../google-search-console.server", () => ({
+  getGscState: async () => ({ connected: false, siteUrl: null }),
+  getRankingsSince: async () => [],
+  summariseGoogleCard: () => ({ clicks: 0, impressions: 0, topQuery: null, topPosition: null }),
+  detectSlips: () => [],
+}));
 vi.mock("../../supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => {
@@ -89,6 +95,10 @@ describe("buildSeoOverview", () => {
     const vm = await buildSeoOverview(SHOP, ORIGIN);
     expect(vm.aiCrawls).toEqual([{ botName: "GPTBot", hits: 7 }, { botName: "PerplexityBot", hits: 2 }]);
     expect(vm.aiCrawlTotal).toBe(9);
+  });
+  it("includes a disconnected Google card by default", async () => {
+    const vm = await buildSeoOverview(SHOP, ORIGIN);
+    expect(vm.google).toEqual({ connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null });
   });
 });
 

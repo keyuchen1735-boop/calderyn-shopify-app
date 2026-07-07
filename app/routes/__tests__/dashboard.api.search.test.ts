@@ -14,6 +14,9 @@ const {
   upsertSeoOverrideMock,
   deleteSeoOverrideMock,
   upsertSeoSettingsMock,
+  createOAuthStateMock,
+  buildConnectUrlMock,
+  disconnectGscMock,
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
@@ -38,6 +41,9 @@ const {
   upsertSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   deleteSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: false, allowAiTraining: false, orgName: "Ember", orgDescription: null }),
+  createOAuthStateMock: vi.fn().mockResolvedValue("nonce-state"),
+  buildConnectUrlMock: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?state=nonce-state"),
+  disconnectGscMock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: requireDashboardSessionMock }));
@@ -56,6 +62,9 @@ vi.mock("~/lib/seo/seo-store.server", () => ({
   deleteSeoOverride: deleteSeoOverrideMock,
   upsertSeoSettings: upsertSeoSettingsMock,
 }));
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({}) }));
+vi.mock("~/lib/meta/oauth-state.server", () => ({ createOAuthState: createOAuthStateMock }));
+vi.mock("~/lib/seo/google-search-console.server", () => ({ buildConnectUrl: buildConnectUrlMock, disconnect: disconnectGscMock }));
 
 function req(body?: unknown, method = "POST") {
   return new Request("https://app.x/dashboard/api/search", {
@@ -113,5 +122,21 @@ describe("dashboard.api.search action", () => {
   it("422s an unknown action", async () => {
     const res = (await action({ request: req({ action: "nope" }) } as never)) as Response;
     expect(res.status).toBe(422);
+  });
+  it("connectGoogle mints a CSRF state and returns the consent URL", async () => {
+    const res = (await action({ request: req({ action: "connectGoogle" }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(createOAuthStateMock).toHaveBeenCalledWith(expect.anything(), "shop1", { dashboard: true });
+    expect((await res.json()).url).toContain("accounts.google.com");
+  });
+  it("connectGoogle 503s when Google is not configured (buildConnectUrl null)", async () => {
+    buildConnectUrlMock.mockReturnValueOnce(null);
+    const res = (await action({ request: req({ action: "connectGoogle" }) } as never)) as Response;
+    expect(res.status).toBe(503);
+  });
+  it("disconnectGoogle clears the connection for the session shop", async () => {
+    const res = (await action({ request: req({ action: "disconnectGoogle" }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(disconnectGscMock).toHaveBeenCalledWith("shop1");
   });
 });
