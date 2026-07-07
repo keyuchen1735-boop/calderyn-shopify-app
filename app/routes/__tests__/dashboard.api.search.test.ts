@@ -11,6 +11,7 @@ const {
   getSeoSettingsMock,
   getProductSeoDetailMock,
   getShopStorefrontOriginMock,
+  buildSearchPreviewMock,
   upsertSeoOverrideMock,
   deleteSeoOverrideMock,
   upsertSeoSettingsMock,
@@ -32,6 +33,15 @@ const {
     aiSummary: "s",
   }),
   getShopStorefrontOriginMock: vi.fn().mockResolvedValue("https://ember.calderyncompany.com"),
+  buildSearchPreviewMock: vi.fn().mockResolvedValue({
+    storeName: "Ember",
+    productCount: 2,
+    sample: {
+      title: "Cedar Jacket · Ember",
+      url: "https://ember.calderyncompany.com/storefront/products/cedar",
+      description: "A warm cedar jacket from Ember.",
+    },
+  }),
   upsertSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   deleteSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: false, orgName: "Ember", orgDescription: null }),
@@ -51,6 +61,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 vi.mock("~/lib/seo/overview.server", () => ({
   getProductSeoDetail: getProductSeoDetailMock,
   getShopStorefrontOrigin: getShopStorefrontOriginMock,
+  buildSearchPreview: buildSearchPreviewMock,
 }));
 vi.mock("~/lib/seo/seo-store.server", () => ({
   getSeoSettings: getSeoSettingsMock,
@@ -76,11 +87,22 @@ function req(body?: unknown, method = "POST") {
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("dashboard.api.search loader", () => {
-  it("returns this shop's SEO settings", async () => {
+  it("returns this shop's SEO settings plus the live preview", async () => {
     const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
     expect(res.status).toBe(200);
     expect(getSeoSettingsMock).toHaveBeenCalledWith("shop1");
-    expect((await res.json()).settings).toEqual({ allowAiCrawlers: true, orgName: null, orgDescription: null });
+    expect(buildSearchPreviewMock).toHaveBeenCalledWith("shop1");
+    const body = await res.json();
+    expect(body.settings).toEqual({ allowAiCrawlers: true, orgName: null, orgDescription: null });
+    expect(body.preview).toEqual({
+      storeName: "Ember",
+      productCount: 2,
+      sample: {
+        title: "Cedar Jacket · Ember",
+        url: "https://ember.calderyncompany.com/storefront/products/cedar",
+        description: "A warm cedar jacket from Ember.",
+      },
+    });
   });
 });
 

@@ -4,12 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 // No real network: renderToStaticMarkup does not run effects, but mock anyway so
 // an accidental call is inert.
 vi.mock("~/lib/dashboard/search-client", () => ({
-  fetchSearchSettings: vi.fn().mockResolvedValue(null),
+  fetchSearchOverview: vi.fn().mockResolvedValue(null),
   updateSettings: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search, { loadSearchSettings, saveAllowAiCrawlers } from "../screens/Search";
+import Search, { loadSearchOverview, saveAllowAiCrawlers } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
@@ -17,12 +17,24 @@ import { parsePath, pathFor } from "../routes";
 // eslint-disable-next-line import/first
 import type { DashboardCtx } from "../context";
 // eslint-disable-next-line import/first
-import { fetchSearchSettings, updateSettings } from "~/lib/dashboard/search-client";
+import { fetchSearchOverview, updateSettings } from "~/lib/dashboard/search-client";
 // eslint-disable-next-line import/first
-import type { SeoSettings } from "~/lib/dashboard/search-client";
+import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
 const settings: SeoSettings = { allowAiCrawlers: true, orgName: null, orgDescription: null };
+const overview: SearchOverviewVM = {
+  settings,
+  preview: {
+    storeName: "Ember",
+    productCount: 3,
+    sample: {
+      title: "Cedar Jacket · Ember",
+      url: "https://ember.calderyncompany.com/storefront/products/cedar-jacket",
+      description: "A warm cedar jacket from Ember, in stock now.",
+    },
+  },
+};
 
 beforeEach(() => {
   clearScreenCache();
@@ -30,16 +42,20 @@ beforeEach(() => {
 });
 
 describe("Search screen (smoke)", () => {
-  it("renders the auto-optimized status and the AI-access toggle without crashing", () => {
-    cacheScreenData(SCREEN_CACHE_KEYS.search, settings);
+  it("renders the header, both live previews, and the AI-access toggle without crashing", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Search");
-    expect(html).toContain("How your store looks to Google and AI assistants.");
-    expect(html).toContain("Your store is optimized, automatically.");
-    expect(html).toContain(
-      "Every product page is written for Google and AI assistants the moment you publish it. There is nothing to set up.",
-    );
-    expect(html).toContain("Let AI assistants read and cite my store");
+    expect(html).toContain("How your store shows up on Google");
+    expect(html).toContain("Optimizing 3 pages");
+    // Google snippet + AI-answer previews, both built from the real sample product.
+    expect(html).toContain("On Google");
+    expect(html).toContain("On AI assistants");
+    expect(html).toContain("Cedar Jacket");
+    expect(html).toContain("Where can I buy Cedar Jacket");
+    expect(html).toContain("You can order it directly from their online store");
+    expect(html).toContain("written this way automatically when you publish it");
+    expect(html).toContain("Let AI assistants read and cite your store");
     expect(html).toContain('role="switch"');
   });
 
@@ -48,35 +64,46 @@ describe("Search screen (smoke)", () => {
     expect(html).toContain("cd-skel");
   });
 
-  it("seeds the optional description field from settings.orgDescription", () => {
+  it("teaches an empty state (no Google snippet) when the catalog has no products yet", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, {
-      ...settings,
-      orgDescription: "Hand-poured candles for home.",
+      settings,
+      preview: { storeName: "Ember", productCount: 0, sample: null },
     });
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("How your store is described to Google (optional)");
+    expect(html).toContain("exactly how it appears here");
+    expect(html).toContain("Ready for your first page");
+    expect(html).not.toContain("On Google");
+  });
+
+  it("seeds the optional store-description field from settings.orgDescription", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, {
+      ...overview,
+      settings: { ...settings, orgDescription: "Hand-poured candles for home." },
+    });
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Store description");
     expect(html).toContain('value="Hand-poured candles for home."');
   });
 });
 
-describe("Search settings load/retry", () => {
+describe("Search overview load/retry", () => {
   it("flags a friendly load error when the fetch fails, and clears it on a successful retry", async () => {
-    const data: SeoSettings[] = [];
+    const data: SearchOverviewVM[] = [];
     const errors: boolean[] = [];
-    const setData = (state: SeoSettings) => data.push(state);
+    const setData = (state: SearchOverviewVM) => data.push(state);
     const setLoadError = (failed: boolean) => errors.push(failed);
 
-    vi.mocked(fetchSearchSettings).mockRejectedValueOnce(new Error("network down"));
-    await loadSearchSettings(setData, setLoadError);
+    vi.mocked(fetchSearchOverview).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchOverview(setData, setLoadError);
     expect(errors).toEqual([true]);
     expect(data).toEqual([]);
 
     // The Retry button re-calls the exact same function; a successful retry
-    // must clear the error and deliver the fresh settings.
-    vi.mocked(fetchSearchSettings).mockResolvedValueOnce(settings);
-    await loadSearchSettings(setData, setLoadError);
+    // must clear the error and deliver the fresh payload.
+    vi.mocked(fetchSearchOverview).mockResolvedValueOnce(overview);
+    await loadSearchOverview(setData, setLoadError);
     expect(errors).toEqual([true, false]);
-    expect(data).toEqual([settings]);
+    expect(data).toEqual([overview]);
   });
 
   it("invokes onError on a failed background refresh, but not on success", async () => {
@@ -85,12 +112,12 @@ describe("Search settings load/retry", () => {
       onErrorCalls++;
     };
 
-    vi.mocked(fetchSearchSettings).mockRejectedValueOnce(new Error("network down"));
-    await loadSearchSettings(() => {}, () => {}, onError);
+    vi.mocked(fetchSearchOverview).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchOverview(() => {}, () => {}, onError);
     expect(onErrorCalls).toBe(1); // a stale-data refresh failure surfaces to the caller
 
-    vi.mocked(fetchSearchSettings).mockResolvedValueOnce(settings);
-    await loadSearchSettings(() => {}, () => {}, onError);
+    vi.mocked(fetchSearchOverview).mockResolvedValueOnce(overview);
+    await loadSearchOverview(() => {}, () => {}, onError);
     expect(onErrorCalls).toBe(1); // not called again on a successful refresh
   });
 });

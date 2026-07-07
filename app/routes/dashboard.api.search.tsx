@@ -2,19 +2,26 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { getProductSeoDetail, getShopStorefrontOrigin } from "~/lib/seo/overview.server";
+import { getProductSeoDetail, getShopStorefrontOrigin, buildSearchPreview } from "~/lib/seo/overview.server";
 import { getSeoSettings, upsertSeoOverride, deleteSeoOverride, upsertSeoSettings } from "~/lib/seo/seo-store.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { createOAuthState } from "~/lib/meta/oauth-state.server";
 import { buildConnectUrl, disconnect as disconnectGsc } from "~/lib/seo/google-search-console.server";
 
-// The Search screen is a status confirmation + settings form now (see
-// Search.tsx): the loader hands back just this shop's SEO settings, not the
-// full health-score/per-product overview.
+// The Search screen shows how the store already appears in search + the two real
+// controls (see Search.tsx): the loader hands back this shop's SEO settings plus
+// a small live preview (store name, product count, one sample product's
+// auto-written SEO), not the full health-score/per-product overview.
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await requireDashboardSession(request); // auth gate; settings are this shop's own data
-  return dashboardJson(async () => ({ settings: await getSeoSettings(session.shopId) }));
+  const session = await requireDashboardSession(request); // auth gate; settings + preview are this shop's own data
+  return dashboardJson(async () => {
+    const [settings, preview] = await Promise.all([
+      getSeoSettings(session.shopId),
+      buildSearchPreview(session.shopId),
+    ]);
+    return { settings, preview };
+  });
 }
 
 interface SearchBody {

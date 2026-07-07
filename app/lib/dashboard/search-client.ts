@@ -49,10 +49,28 @@ export interface ProductSeoDetailVM {
 
 export const fetchSearch = () => apiGet<SeoOverviewVM>("/dashboard/api/search");
 
-// The dead-simple Search screen's own read: settings only (no health score,
-// no per-product rows). The loader now returns { settings } for a GET.
-export const fetchSearchSettings = (): Promise<SeoSettings> =>
-  apiGet<{ settings: SeoSettings }>("/dashboard/api/search").then((r) => r.settings);
+// Browser-safe mirror of SearchPreview in overview.server.ts (a .server module
+// cannot be imported into the client bundle) — keep in sync by hand.
+export interface SearchPreviewSample {
+  title: string;
+  url: string;
+  description: string;
+}
+export interface SearchPreview {
+  storeName: string;
+  productCount: number;
+  sample: SearchPreviewSample | null;
+}
+export interface SearchOverviewVM {
+  settings: SeoSettings;
+  preview: SearchPreview;
+}
+
+// The Search screen's own read: this shop's settings plus a small live preview
+// (store name, product count, one sample product's auto-written SEO). The loader
+// returns { settings, preview } for a GET; the whole payload is cached as-is.
+export const fetchSearchOverview = (): Promise<SearchOverviewVM> =>
+  apiGet<SearchOverviewVM>("/dashboard/api/search");
 
 export const loadProductDetail = (handle: string) =>
   apiSend<ProductSeoDetailVM>("POST", "/dashboard/api/search", { action: "detail", handle });
