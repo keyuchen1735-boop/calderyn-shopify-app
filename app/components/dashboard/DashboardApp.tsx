@@ -1028,8 +1028,8 @@ export default function DashboardApp({
         intent === "apply"
           ? "Budget shifted"
           : intent === "arm"
-            ? "Armed — executes when the forecast confirms"
-            : "Suggestion dismissed",
+            ? "Scheduled — runs when the forecast confirms"
+            : "Move rejected",
         "check",
       );
       return true;
