@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as PasswordMod from "../password.server";
 
 // users.server computes a module-load DUMMY_HASH via scrypt; the pepper must be
 // set before the dynamic import("../users.server") inside the test bodies.
@@ -19,11 +20,24 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
+// Count verifyPassword calls (proving scrypt CPU is spent) while still delegating
+// to the real implementation so correctness assertions stay meaningful.
+const { verifyPasswordSpy, ref } = vi.hoisted(() => {
+  const ref: { real: ((pw: string, hash: string) => boolean) | null } = { real: null };
+  return { verifyPasswordSpy: vi.fn((pw: string, hash: string) => (ref.real ? ref.real(pw, hash) : false)), ref };
+});
+vi.mock("../password.server", async (importOriginal) => {
+  const orig = await importOriginal<typeof PasswordMod>();
+  ref.real = orig.verifyPassword;
+  return { ...orig, verifyPassword: (pw: string, hash: string) => verifyPasswordSpy(pw, hash) };
+});
+
 beforeEach(() => {
   maybeSingle.mockReset();
   single.mockReset();
   deleteEq.mockReset().mockResolvedValue({ error: null });
   deleteFn.mockClear();
+  verifyPasswordSpy.mockClear();
 });
 
 describe("users data layer", () => {
@@ -49,6 +63,16 @@ describe("users data layer", () => {
     const { verifyUserCredentials } = await import("../users.server");
     expect(await verifyUserCredentials("a@b.co", "hunter2")).toEqual({ id: "u1" });
     expect(await verifyUserCredentials("a@b.co", "wrong")).toBeNull();
+  });
+
+  it("verifyUserCredentials burns scrypt for a passwordless (Google-only) account", async () => {
+    // password_hash NULL => Google-only. Must spend the same CPU as an unknown
+    // email (verifyPassword against the dummy hash), not skip it, so timing can't
+    // enumerate which addresses are Google accounts.
+    maybeSingle.mockResolvedValue({ data: { id: "u-g", password_hash: null }, error: null });
+    const { verifyUserCredentials } = await import("../users.server");
+    expect(await verifyUserCredentials("g@x.co", "whatever")).toBeNull();
+    expect(verifyPasswordSpy).toHaveBeenCalledTimes(1);
   });
 
   it("deleteUser calls delete().eq(id) and resolves without error", async () => {

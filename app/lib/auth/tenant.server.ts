@@ -63,6 +63,23 @@ export async function linkMembership(
   if (error) throw error;
 }
 
+/**
+ * Link a user to a shop, treating an already-linked membership as success.
+ * Used when a first-party user connects a Shopify store during onboarding: a
+ * re-connect must not 500 on the unique(user_id, shop_id) constraint, and the
+ * user must never be left without the membership that makes the store reachable.
+ */
+export async function linkMembershipIdempotent(
+  userId: string,
+  shopId: string,
+  role: string = "owner",
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from("membership")
+    .insert({ user_id: userId, shop_id: shopId, role });
+  if (error && (error as { code?: string }).code !== "23505") throw error;
+}
+
 export async function resolveShopForUser(userId: string): Promise<string | null> {
   const { data, error } = await getSupabase()
     .from("membership")

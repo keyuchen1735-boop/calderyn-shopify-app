@@ -74,6 +74,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (accounts.error) throw new Response(`Meta error: ${accounts.error.message}`, { status: 502 });
   const accountId = accounts.data?.[0]?.account_id;
   const adAccountId = accountId ? `act_${accountId}` : null;
+  // A Facebook user with zero ad accounts returns 200 with an empty data array
+  // (no error). Storing that as "connected" produces a silently broken pairing
+  // (null ad account) that renders as Connected but can never sync — bail with a
+  // clear message instead of persisting it.
+  if (!adAccountId) {
+    throw new Response(
+      "This Facebook login has no ad account. Create one in Meta Ads Manager, then reconnect.",
+      { status: 400 },
+    );
+  }
 
   const now = new Date().toISOString();
   const expiresAt = expiresInSec ? new Date(Date.now() + expiresInSec * 1000).toISOString() : null;

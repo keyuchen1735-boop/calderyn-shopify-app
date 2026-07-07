@@ -9,6 +9,7 @@ import { hasTransferPlan } from "~/lib/inventory-alerts";
 
 export const ONE_CLICK_KINDS: ActionKind[] = [
   "pause_campaign",
+  "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
   "exclude_geo",
@@ -23,6 +24,7 @@ export function oneClickKind(k: string): k is ActionKind {
 
 export const CAMPAIGN_KINDS: ReadonlySet<string> = new Set([
   "pause_campaign",
+  "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
   "exclude_geo",

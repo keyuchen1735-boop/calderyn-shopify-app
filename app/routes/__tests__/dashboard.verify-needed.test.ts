@@ -9,13 +9,9 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   publicBaseUrl: () => "https://app.calderyncompany.com",
 }));
 const revokeSession = vi.fn().mockResolvedValue(undefined);
+const getSessionFromRequest = vi.fn();
 vi.mock("~/lib/dashboard/session.server", () => ({
-  getDashboardSessionAllowUnverified: vi
-    .fn()
-    .mockResolvedValue({ sessionId: "sess-1", userId: "u1", shopId: "shop1", emailVerified: false }),
-  getSessionFromRequest: vi
-    .fn()
-    .mockResolvedValue({ sessionId: "sess-1", userId: "u1", shopId: "shop1", emailVerified: false }),
+  getSessionFromRequest: (...a: unknown[]) => getSessionFromRequest(...a),
   revokeSession,
   clearSessionCookieHeader: () => "__Host-calderyn_dash=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
 }));
@@ -23,12 +19,18 @@ const sendVerificationEmail = vi.fn();
 vi.mock("~/lib/auth/verify.server", () => ({
   sendVerificationEmail: (...a: unknown[]) => sendVerificationEmail(...a),
 }));
+const rlUpdate = vi.fn(() => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({
+    from: (table: string) => ({
       select: () => ({
-        eq: () => ({ maybeSingle: async () => ({ data: { email: "u@example.com" } }) }),
+        eq: () => ({
+          maybeSingle: async () =>
+            table === "rate_limit_hits" ? { data: { window_start: "w1", count: 2 } } : { data: { email: "u@example.com" } },
+          order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: { window_start: "w1", count: 2 } }) }) }),
+        }),
       }),
+      update: rlUpdate,
     }),
   }),
 }));
@@ -36,6 +38,8 @@ vi.mock("~/lib/supabase.server", () => ({
 beforeEach(() => {
   sendVerificationEmail.mockReset().mockResolvedValue({ sent: true });
   revokeSession.mockClear();
+  rlUpdate.mockClear();
+  getSessionFromRequest.mockReset().mockResolvedValue({ sessionId: "sess-1", userId: "u1", shopId: "shop1", emailVerified: false });
 });
 
 function post(body?: URLSearchParams, accept?: string) {
@@ -64,12 +68,23 @@ describe("verify-needed action", () => {
     expect(res.headers.get("Location")).toBe("/dashboard/verify-needed?notice=sent");
   });
 
-  it("surfaces send_failed instead of claiming success when delivery fails", async () => {
+  it("surfaces send_failed AND refunds the resend token when delivery fails", async () => {
     sendVerificationEmail.mockResolvedValue({ sent: false });
     const { action } = await import("../dashboard.verify-needed");
     const res = (await action({ request: post(new URLSearchParams()), params: {}, context: {} } as never)) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/dashboard/verify-needed?error=send_failed");
+    // Failed send must not burn the budget: the current window row is decremented.
+    expect(rlUpdate).toHaveBeenCalledWith({ count: 1 });
+  });
+
+  it("redirects a signed-out POST to /login instead of a 401 (matches the loader)", async () => {
+    getSessionFromRequest.mockResolvedValue(null);
+    const { action } = await import("../dashboard.verify-needed");
+    const res = (await action({ request: post(new URLSearchParams()), params: {}, context: {} } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/login");
+    expect(sendVerificationEmail).not.toHaveBeenCalled();
   });
 
   it("intent=signout revokes the session and lands on /login with cookies cleared", async () => {

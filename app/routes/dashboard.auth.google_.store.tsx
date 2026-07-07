@@ -9,7 +9,7 @@ import { verifyGoogleSignup } from "~/lib/auth/google-signup-token.server";
 import { createGoogleUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson } from "~/lib/dashboard/http.server";
+import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 import { AuthShell, AuthError, AuthForm, AuthSubmit } from "~/components/auth/AuthCard";
 
 export const meta: MetaFunction = () => [{ title: "Name your store — Calderyn" }];
@@ -22,6 +22,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     t,
     expired: !t || !verifyGoogleSignup(t),
     error: url.searchParams.get("error"),
+    // Carried from the sign-in callback so an interrupted deep-link (connector
+    // consent) resumes after the store is named and onboarding completes.
+    returnTo: safeDashboardReturnTo(url.searchParams.get("return_to")),
   };
 }
 
@@ -32,11 +35,15 @@ export async function action({ request }: ActionFunctionArgs) {
   const fd = await request.formData();
   const t = String(fd.get("t") ?? "");
   const store = String(fd.get("store") ?? "").trim();
+  const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
 
   const fail = (status: number, code: string) =>
     wantsJson(request)
       ? jsonError(status, code)
-      : redirect(`/dashboard/auth/google/store?t=${encodeURIComponent(t)}&error=${code}`);
+      : redirect(
+          `/dashboard/auth/google/store?t=${encodeURIComponent(t)}&error=${code}` +
+            (returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : ""),
+        );
 
   if (!(await rateLimit(clientIpKey(request, "google-store"), 10, 60_000))) {
     return fail(429, "rate_limited");
@@ -46,28 +53,44 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!id) return fail(400, "invalid_or_expired_token");
   if (!store) return fail(422, "missing_store");
 
-  // Atomic creation: if shop provisioning or membership fails, roll back the
-  // user row so the email is not permanently locked and a retry can succeed.
-  const { id: userId } = await createGoogleUser(id.email, id.sub);
+  // New Google users go through onboarding (phone + how-heard, optional Shopify
+  // port) before the dashboard — same gate as email signups. return_to rides
+  // through onboarding so an interrupted deep-link resumes at the end.
+  const onboardingDest = returnTo
+    ? `/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}`
+    : "/dashboard/onboarding";
+
+  // Atomic creation. createGoogleUser is INSIDE the try so a replayed/double-
+  // submitted signup token (the JWT is stateless, not single-use) doesn't 500 on
+  // the unique(email/google_sub) violation from the first submit's account.
+  let userId: string | null = null;
   try {
+    ({ id: userId } = await createGoogleUser(id.email, id.sub));
     const { shopId } = await provisionOwnedShop(store);
     await linkMembership(userId, shopId, "owner");
     const { raw } = await createSessionForUser(userId, shopId);
-    // New Google users go through onboarding (phone + how-heard, optional Shopify
-    // port) before the dashboard — same gate as email signups. Google emails are
-    // pre-verified, so onboarding-finish lands them straight on /dashboard.
-    return redirect("/dashboard/onboarding", { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
+    return redirect(onboardingDest, { headers: { "Set-Cookie": sessionCookieHeader(raw) } });
   } catch (err) {
+    if (userId == null) {
+      // createGoogleUser itself failed. A duplicate means the token was replayed
+      // after the first submit already created the account — send them to sign in
+      // rather than 500; anything else is a genuine error.
+      if ((err as { code?: string }).code === "23505") {
+        return wantsJson(request) ? jsonError(409, "account_exists") : redirect("/dashboard/signin");
+      }
+      console.error("[google-store] user creation failed", err);
+      return fail(500, "account_creation_failed");
+    }
+    // The user was created but a later step failed — roll it back so the email
+    // isn't locked and a retry can succeed.
     await deleteUser(userId).catch(() => {});
-    // The rollback leaves a retry able to succeed, so surface a retryable
-    // error page instead of a raw 500.
     console.error("[google-store] account creation failed", err);
     return fail(500, "account_creation_failed");
   }
 }
 
 export default function GoogleStoreRoute() {
-  const { t, expired, error } = useLoaderData<typeof loader>();
+  const { t, expired, error, returnTo } = useLoaderData<typeof loader>();
   if (expired) {
     return (
       <AuthShell>
@@ -86,6 +109,7 @@ export default function GoogleStoreRoute() {
       <AuthError code={error} />
       <AuthForm action="/dashboard/auth/google/store">
         <input type="hidden" name="t" value={t} />
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <label className="cd-auth-label" htmlFor="store">
           Store name
         </label>

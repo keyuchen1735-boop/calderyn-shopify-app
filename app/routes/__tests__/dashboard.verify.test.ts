@@ -2,48 +2,71 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const consumeVerifyToken = vi.fn();
 const markEmailVerified = vi.fn().mockResolvedValue(undefined);
-vi.mock("~/lib/auth/verify.server", () => ({ consumeVerifyToken, markEmailVerified }));
+const peekVerifyToken = vi.fn();
+vi.mock("~/lib/auth/verify.server", () => ({ consumeVerifyToken, markEmailVerified, peekVerifyToken }));
 const getSessionFromRequest = vi.fn();
 vi.mock("~/lib/dashboard/session.server", () => ({
   getSessionFromRequest: (...a: unknown[]) => getSessionFromRequest(...a),
 }));
+vi.mock("~/lib/dashboard/http.server", () => ({ checkSameOrigin: () => null }));
 
 beforeEach(() => {
   getSessionFromRequest.mockReset().mockResolvedValue(null);
+  consumeVerifyToken.mockReset();
+  peekVerifyToken.mockReset();
+  markEmailVerified.mockClear();
 });
 
 function get(t: string) { return new Request(`https://app.x/dashboard/verify?t=${t}`); }
+function post(token: string) {
+  return new Request("https://app.x/dashboard/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token }).toString(),
+  });
+}
 
-describe("verify consume route", () => {
-  it("redirects to /dashboard on a valid token and marks verified", async () => {
-    consumeVerifyToken.mockResolvedValue({ userId: "u1" });
+describe("verify route (POST-confirm, scanner-safe)", () => {
+  it("GET only PEEKS a valid token (never consumes) and renders a confirm page", async () => {
+    peekVerifyToken.mockResolvedValue(true);
     const { loader } = await import("../dashboard.verify");
-    const res = (await loader({ request: get("good") } as never)) as Response;
+    const res = await loader({ request: get("good") } as never);
+    expect(res).toEqual({ ok: true, token: "good", hasSession: false });
+    expect(consumeVerifyToken).not.toHaveBeenCalled();
+  });
+
+  it("POST consumes the token, marks verified, and redirects to /dashboard", async () => {
+    consumeVerifyToken.mockResolvedValue({ userId: "u1" });
+    const { action } = await import("../dashboard.verify");
+    const res = (await action({ request: post("good") } as never)) as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/dashboard");
+    expect(consumeVerifyToken).toHaveBeenCalledWith("good");
     expect(markEmailVerified).toHaveBeenCalledWith("u1");
   });
 
-  it("renders an error (no redirect) for an invalid token", async () => {
-    consumeVerifyToken.mockResolvedValue(null);
-    const { loader } = await import("../dashboard.verify");
-    const res = await loader({ request: get("bad") } as never);
-    expect((res as { ok?: boolean }) && (res as Response).status).not.toBe(302);
-  });
-
-  it("reports hasSession:false for an expired link opened with no session (cross-device)", async () => {
-    consumeVerifyToken.mockResolvedValue(null);
+  it("GET on an expired link with no session reports hasSession:false (cross-device)", async () => {
+    peekVerifyToken.mockResolvedValue(false);
     getSessionFromRequest.mockResolvedValue(null);
     const { loader } = await import("../dashboard.verify");
-    const res = (await loader({ request: get("bad") } as never)) as { ok: boolean; hasSession: boolean };
-    expect(res).toEqual({ ok: false, hasSession: false });
+    const res = await loader({ request: get("bad") } as never);
+    expect(res).toEqual({ ok: false, token: "", hasSession: false });
   });
 
-  it("reports hasSession:true for an expired link opened in a signed-in browser", async () => {
-    consumeVerifyToken.mockResolvedValue(null);
+  it("GET on an expired link in a signed-in browser reports hasSession:true", async () => {
+    peekVerifyToken.mockResolvedValue(false);
     getSessionFromRequest.mockResolvedValue({ sessionId: "s1", userId: "u1", shopId: "sh1", emailVerified: false });
     const { loader } = await import("../dashboard.verify");
-    const res = (await loader({ request: get("bad") } as never)) as { ok: boolean; hasSession: boolean };
-    expect(res).toEqual({ ok: false, hasSession: true });
+    const res = await loader({ request: get("bad") } as never);
+    expect(res).toEqual({ ok: false, token: "", hasSession: true });
+  });
+
+  it("POST on an already-consumed token does not redirect or re-verify", async () => {
+    consumeVerifyToken.mockResolvedValue(null);
+    getSessionFromRequest.mockResolvedValue(null);
+    const { action } = await import("../dashboard.verify");
+    const res = await action({ request: post("bad") } as never);
+    expect((res as Response).status ?? 0).not.toBe(302);
+    expect(markEmailVerified).not.toHaveBeenCalled();
   });
 });

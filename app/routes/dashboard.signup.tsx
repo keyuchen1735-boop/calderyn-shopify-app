@@ -3,7 +3,7 @@
 // owned shop, the membership link, and a session (no Shopify involved).
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl } from "~/lib/dashboard/http.server";
+import { rateLimit, clientIpKey, checkSameOrigin, jsonError, wantsJson, publicBaseUrl, safeDashboardReturnTo } from "~/lib/dashboard/http.server";
 import { isValidEmail, normalizeEmail, findUserByEmail, createUser, deleteUser } from "~/lib/auth/users.server";
 import { provisionOwnedShop, linkMembership } from "~/lib/auth/tenant.server";
 import { createSessionForUser, sessionCookieHeader } from "~/lib/dashboard/session.server";
@@ -25,14 +25,17 @@ export async function action({ request }: ActionFunctionArgs) {
   const email = String(fd.get("email") ?? "");
   const password = String(fd.get("password") ?? "");
   const store = String(fd.get("store") ?? "").trim();
+  const returnTo = safeDashboardReturnTo(fd.get("return_to") == null ? null : String(fd.get("return_to")));
 
   // JSON for programmatic clients; plain form posts bounce back to /signup
-  // with the error code and the non-secret fields preserved.
+  // with the error code and the non-secret fields preserved (return_to included
+  // so a corrected retry still resumes the threaded deep-link).
   const fail = (status: number, code: string, message?: string) =>
     wantsJson(request)
       ? jsonError(status, code, message)
       : redirect(
-          `/signup?error=${code}&email=${encodeURIComponent(email)}&store=${encodeURIComponent(store)}`,
+          `/signup?error=${code}&email=${encodeURIComponent(email)}&store=${encodeURIComponent(store)}` +
+            (returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : ""),
         );
 
   if (!(await rateLimit(clientIpKey(request, "dash-signup"), 10, 60_000))) {
@@ -76,10 +79,12 @@ export async function action({ request }: ActionFunctionArgs) {
     // (reached after onboarding) is the recovery path and surfaces the send error.
     await sendVerificationEmail(userId, normalizeEmail(email), baseUrl).catch(() => {});
     // Onboarding (phone + how-heard, optional Shopify port) runs right after signup,
-    // before the verify gate.
-    return redirect("/dashboard/onboarding", {
-      headers: { "Set-Cookie": sessionCookieHeader(raw) },
-    });
+    // before the verify gate. return_to rides through it so an interrupted deep-link
+    // (connector consent) resumes once onboarding completes.
+    return redirect(
+      returnTo ? `/dashboard/onboarding?return_to=${encodeURIComponent(returnTo)}` : "/dashboard/onboarding",
+      { headers: { "Set-Cookie": sessionCookieHeader(raw) } },
+    );
   } catch (err) {
     await deleteUser(userId).catch(() => {});
     // The rollback leaves a retry able to succeed, so bounce back to the form

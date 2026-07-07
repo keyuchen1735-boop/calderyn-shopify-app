@@ -8,6 +8,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   wantsJson: (req: Request) => (req.headers.get("Accept") ?? "").includes("application/json"),
   jsonError: (s: number, e: string) => new Response(JSON.stringify({ error: e }), { status: s }),
   publicBaseUrl: () => "https://app.calderyncompany.com",
+  safeDashboardReturnTo: (v: unknown) => (typeof v === "string" && v.startsWith("/dashboard") ? v : null),
 }));
 const findUserByEmail = vi.fn();
 const createUser = vi.fn();
@@ -96,6 +97,16 @@ describe("signup action", () => {
     // before the verify gate.
     expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
     expect(res.headers.get("Set-Cookie")).toContain("__Host-calderyn_dash=");
+  });
+
+  it("threads a validated return_to through to the onboarding redirect", async () => {
+    findUserByEmail.mockResolvedValue(null);
+    createUser.mockResolvedValue({ id: "u1" });
+    const { action } = await import("../dashboard.signup");
+    const res = (await action({
+      request: form({ email: "a@b.co", password: "longenough12", store: "Acme", return_to: "/dashboard/connect?t=abc" }),
+    } as never)) as Response;
+    expect(res.headers.get("Location")).toBe(`/dashboard/onboarding?return_to=${encodeURIComponent("/dashboard/connect?t=abc")}`);
   });
 
   it("still lands on onboarding when the verification email does not go out (best-effort send)", async () => {

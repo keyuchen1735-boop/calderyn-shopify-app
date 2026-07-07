@@ -145,6 +145,13 @@ describe("onboarding action — contact step", () => {
     const res = (await action({ request: form({ intent: "contact", phone: "4155550123", referral_source: "google_search", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard/onboarding?return_to=" + encodeURIComponent("/dashboard/connect?t=abc"));
   });
+  it("preserves the threaded return_to on a validation error so the flow can resume", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request: form({ intent: "contact", phone: "123", referral_source: "google_search", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding?error=invalid_phone&return_to=" + encodeURIComponent("/dashboard/connect?t=abc"));
+  });
   it("forwards the 'other' free-text to saveOnboardingContact", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     const { action } = await import("../dashboard.onboarding");

@@ -266,6 +266,17 @@ describe("buildActionQueue runnability gate", () => {
     expect(build({ ...base, evidence: { campaign_id: "c9", region: "europe" } })).toHaveLength(0);
   });
 
+  it("falls back to reallocate_inventory when exclude_geo is non-runnable but a transfer plan exists", () => {
+    // regional_spend_starved_stock -> recommendedAction = exclude_geo, but with no
+    // campaign it's non-runnable. reallocate_inventory (next in the detector's list)
+    // IS runnable via the transfer plan, so the alert must surface THAT instead of
+    // being dropped — matching the Alerts screen, which falls back the same way.
+    const plan = { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 55 };
+    const q = build({ id: "gg1", detector_id: "regional_spend_starved_stock", campaign_id: null, evidence: plan });
+    expect(q).toHaveLength(1);
+    expect(q[0].action_kind).toBe("reallocate_inventory");
+  });
+
   it("keeps reallocate_inventory only when evidence carries a complete transfer plan", () => {
     const base = { id: "i1", detector_id: "wrong_location_concentration", campaign_id: null };
     const plan = { inventory_item_id: "ii1", from_location_id: "l1", to_location_id: "l2", recommended_delta: 12 };

@@ -4,7 +4,6 @@ import { useLoaderData } from "@remix-run/react";
 import { useEffect, useState } from "react";
 import dashboard from "~/styles/dashboard.css?url";
 import {
-  getDashboardSessionAllowUnverified,
   getSessionFromRequest,
   revokeSession,
   clearSessionCookieHeader,
@@ -35,10 +34,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return { email: (data?.email as string | null) ?? null, ...params };
 }
 
+// Compensating decrement of a just-consumed rate-limit token when the action it
+// gated failed. Targets the current window row (rate_limit_touch upserts the
+// newest window_start for a bucket), so only successful sends net-count against
+// the resend limit. Best-effort and never throws — the limiter fails open.
+async function refundResendHit(bucket: string): Promise<void> {
+  try {
+    const sb = getSupabase();
+    const { data } = await sb
+      .from("rate_limit_hits")
+      .select("window_start, count")
+      .eq("bucket", bucket)
+      .order("window_start", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return;
+    await sb
+      .from("rate_limit_hits")
+      .update({ count: Math.max(0, Number(data.count) - 1) })
+      .eq("bucket", bucket)
+      .eq("window_start", data.window_start as string);
+  } catch (err) {
+    console.error("[verify-resend] rate-limit refund failed", err);
+  }
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   const badOrigin = checkSameOrigin(request);
   if (badOrigin) return badOrigin;
-  const session = await getDashboardSessionAllowUnverified(request);
+  // A signed-out visitor (expired session) should land on /login for a form POST,
+  // matching the loader — not a raw 401 JSON that paints into the tab.
+  const session = await getSessionFromRequest(request);
+  if (!session) return wantsJson(request) ? jsonError(401, "unauthenticated") : redirect("/login");
   // Tolerate bodyless/non-form POSTs (fetch clients): formData() throws a
   // TypeError on a missing content type, which surfaced as a 500.
   const fd = await request.formData().catch(() => new FormData());
@@ -60,7 +87,8 @@ export async function action({ request }: ActionFunctionArgs) {
       : redirect(`/dashboard/verify-needed?error=${code}`);
 
   if (session.userId == null) return fail(400, "not_first_party");
-  if (!(await rateLimit(`verify-resend:${session.userId}`, 3, 15 * 60_000))) return fail(429, "rate_limited");
+  const resendBucket = `verify-resend:${session.userId}`;
+  if (!(await rateLimit(resendBucket, 3, 15 * 60_000))) return fail(429, "rate_limited");
   const { data } = await getSupabase().from("users").select("email").eq("id", session.userId).maybeSingle();
   const email = data?.email as string | null;
   const baseUrl = publicBaseUrl();
@@ -68,7 +96,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const delivery = email
     ? await sendVerificationEmail(session.userId, email, baseUrl).catch(() => ({ sent: false }))
     : { sent: false };
-  if (!delivery.sent) return fail(502, "send_failed");
+  if (!delivery.sent) {
+    // A failed send must NOT consume the resend budget — otherwise a transient
+    // mailer outage locks a new merchant out of the gate with no recovery.
+    // Refund the token so the merchant can retry once the mailer recovers.
+    await refundResendHit(resendBucket);
+    return fail(502, "send_failed");
+  }
   if (wantsJson(request)) {
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
