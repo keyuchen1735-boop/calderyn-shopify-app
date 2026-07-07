@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { SeoOverviewVM } from "~/lib/dashboard/search-client";
 
 // Seed the screen cache so the SSR render paints the overview (effects don't run
 // server-side); mock the data layer so no network is touched.
-const overview = {
+const overview: SeoOverviewVM = {
   storeHealth: 90, productCount: 2, needsAttention: [], aiCrawls: [], aiCrawlTotal: 0,
   settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
   google: { connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
 };
-let seeded = overview;
+let seeded: SeoOverviewVM = overview;
 vi.mock("~/lib/dashboard/screen-cache", () => ({
   cachedScreenData: () => seeded,
   cacheScreenData: () => {},
@@ -46,5 +47,11 @@ describe("Search 'On Google' card", () => {
     seeded = { ...overview, google: { ...overview.google, connected: true } };
     const html = renderToStaticMarkup(h(Search, { app: makeApp() }));
     expect(html).toContain("Disconnect");
+  });
+  it("shows the average position in plain language when Google reports data", () => {
+    seeded = { ...overview, google: { connected: true, clicks: 12, impressions: 340, topQuery: "candles", topPosition: 7.3 } };
+    const html = renderToStaticMarkup(h(Search, { app: makeApp() }));
+    expect(html).toContain("avg position");
+    expect(html).toContain("7"); // 7.3 rounded to a whole position
   });
 });

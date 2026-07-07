@@ -78,6 +78,7 @@ function assistantList(crawls: SeoOverviewVM["aiCrawls"], max = 3): string {
 export async function loadSearchOverview(
   setData: (state: SeoOverviewVM) => void,
   setLoadError: (failed: boolean) => void,
+  onError?: () => void,
 ): Promise<void> {
   try {
     const state = await fetchSearch();
@@ -86,10 +87,12 @@ export async function loadSearchOverview(
     setLoadError(false);
   } catch {
     setLoadError(true);
+    onError?.();
   }
 }
 
 export default function Search({ app }: { app: DashboardCtx }) {
+  const { toast } = app;
   const [data, setData] = useState<SeoOverviewVM | null>(() =>
     cachedScreenData<SeoOverviewVM>(SCREEN_CACHE_KEYS.search),
   );
@@ -114,8 +117,37 @@ export default function Search({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
+  // One-shot Google Search Console connect result. The OAuth callback lands the
+  // browser on /dashboard/search?search=connected|error&reason=... Surface it and
+  // strip the params so a reload doesn't re-announce. Idempotent: once the params
+  // are stripped a re-run finds nothing (safe under StrictMode double-invoke).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("search");
+    if (result !== "connected" && result !== "error") return;
+    const reason = params.get("reason");
+    params.delete("search");
+    params.delete("reason");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+    if (result === "connected") {
+      toast("Connected to Google Search Console.", "check");
+      loadSearchOverview(setData, setLoadError); // flip the card to Connected
+    } else {
+      toast(reason ? `Couldn't connect Google (${reason})` : "Couldn't connect Google", "warn", "critical");
+    }
+  }, [toast]);
+
   function refresh() {
-    loadSearchOverview(setData, setLoadError);
+    // A background refresh (after a save/toggle) keeps the last-known data on
+    // screen; surface a toast on failure so a merchant knows the values are stale.
+    loadSearchOverview(setData, setLoadError, () =>
+      toast("Couldn't refresh your Search data. Reload to see the latest.", "warn", "critical"),
+    );
   }
 
   async function onConnectGoogle() {
@@ -217,6 +249,12 @@ export default function Search({ app }: { app: DashboardCtx }) {
                       <>
                         {" "}· top search{" "}
                         <b className="cd-seo__strong">{data.google.topQuery}</b>
+                      </>
+                    ) : null}
+                    {data.google.topPosition != null ? (
+                      <>
+                        {" "}· avg position{" "}
+                        <b className="cd-seo__strong">{Math.round(data.google.topPosition)}</b>
                       </>
                     ) : null}
                     .

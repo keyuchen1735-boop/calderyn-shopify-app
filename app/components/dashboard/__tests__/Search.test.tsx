@@ -110,6 +110,19 @@ describe("Search overview load/retry", () => {
     expect(errors).toEqual([true, false]);
     expect(data).toEqual([overview]);
   });
+
+  it("invokes onError on a failed background refresh, but not on success", async () => {
+    let onErrorCalls = 0;
+    const onError = () => { onErrorCalls++; };
+
+    vi.mocked(fetchSearch).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchOverview(() => {}, () => {}, onError);
+    expect(onErrorCalls).toBe(1); // a stale-data refresh failure surfaces to the caller
+
+    vi.mocked(fetchSearch).mockResolvedValueOnce(overview);
+    await loadSearchOverview(() => {}, () => {}, onError);
+    expect(onErrorCalls).toBe(1); // not called again on a successful refresh
+  });
 });
 
 describe("Search product editor load/retry", () => {
