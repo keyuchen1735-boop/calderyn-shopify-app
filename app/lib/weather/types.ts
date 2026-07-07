@@ -34,3 +34,19 @@ export interface WeatherForecastDTO {
 export const WEATHER_AUTO_THRESHOLD = 100;
 export const isWeatherAuto = (sensitivity: number): boolean =>
   sensitivity >= WEATHER_AUTO_THRESHOLD;
+
+/** The three merchant-facing automation modes the dial collapses to. */
+export type WeatherMode = "off" | "approve" | "auto";
+
+export function weatherMode(sensitivity: number): WeatherMode {
+  if (!(sensitivity > 0)) return "off";
+  return isWeatherAuto(sensitivity) ? "auto" : "approve";
+}
+
+/** Dial value for a chosen mode; approve keeps a mid-range dial the merchant
+ *  already set rather than clobbering it. */
+export function sensitivityForMode(mode: WeatherMode, current: number): number {
+  if (mode === "off") return 0;
+  if (mode === "auto") return WEATHER_AUTO_THRESHOLD;
+  return current > 0 && current < WEATHER_AUTO_THRESHOLD ? current : 50;
+}
