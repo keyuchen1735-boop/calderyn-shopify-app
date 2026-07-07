@@ -2401,6 +2401,8 @@
 .cd-seo__ok { display: inline-flex; align-items: center; gap: 6px; font-size: calc(12.5px * var(--type-scale)); font-weight: 520; color: var(--green); letter-spacing: -0.003em; }
 /* The sitemap link, shown as a monospace chip that truncates gracefully. */
 .cd-seo__url { max-width: min(360px, 46vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); font-size: calc(11.5px * var(--type-scale)); color: var(--text-2); background: var(--gray-bg); padding: 5px 9px; border-radius: 7px; }
+/* Inline code reference inside a hint sentence (e.g. content="..."). */
+.cd-seo__inline { font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em; background: var(--gray-bg); padding: 1px 5px; border-radius: 5px; color: var(--text-1); }
 .cd-seo__tinput { width: min(320px, 44vw); }
 .cd-seo__hint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.45; max-width: 54ch; letter-spacing: -0.003em; }
 /* "Let Calderyn write it" affordance INSIDE the store-description field, left-aligned:

@@ -61,7 +61,11 @@ describe("Search screen (smoke)", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Get found on Google");
+    // Step 2 shows the site address to register; step 5 shows the sitemap link.
     expect(html).toContain("https://demo.calderyncompany.com/sitemap.xml");
+    expect(html).toContain("https://demo.calderyncompany.com<"); // site URL chip (no /sitemap.xml)
+    expect(html).toContain("URL prefix");
+    expect(html).toContain("HTML tag");
     expect(html).toContain("Paste code here");
     expect(html).toContain("Open Google");
   });
@@ -72,7 +76,7 @@ describe("Search screen (smoke)", () => {
       settings: { ...settings, googleSiteVerification: "google-xyz" },
     });
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("Google can now confirm your store");
+    expect(html).toContain("Saved and live on your store");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {
