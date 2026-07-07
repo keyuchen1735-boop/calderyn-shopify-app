@@ -59,14 +59,15 @@ describe("recomputeShopCalibration", () => {
       },
     ];
 
-    // raw is 35 with the full executor catalog (exclude_geo/push_creative_draft
-    // pairs are real now, not zeros); prev 34 keeps the smoothed move inside the
-    // dead-band so the forced path is what makes it visible.
+    // raw is 34 across the full executor catalog (the weather_demand detector's
+    // reallocate pairs now participate in the weight universe, diluting each
+    // detector's share by a seed amount); prev 33 keeps the smoothed move inside
+    // the dead-band so the forced path is what makes it visible.
     const normal = await recomputeShopCalibration("shop-visible-1", {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 34,
+        prevPct: 33,
         onShopUpdate: (patch) => normalUpdates.push(patch),
       }),
     }, { skipPeerPrior: true });
@@ -75,16 +76,16 @@ describe("recomputeShopCalibration", () => {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 34,
+        prevPct: 33,
         onShopUpdate: (patch) => forcedUpdates.push(patch),
       }),
     }, { skipPeerPrior: true, forceVisibleStep: true });
 
-    expect(normal.raw).toBe(35);
-    expect(normal.display).toBe(34);
-    expect(forced.raw).toBe(35);
-    expect(forced.display).toBe(35);
-    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 35);
+    expect(normal.raw).toBe(34);
+    expect(normal.display).toBe(33);
+    expect(forced.raw).toBe(34);
+    expect(forced.display).toBe(34);
+    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 34);
   });
 });
 
