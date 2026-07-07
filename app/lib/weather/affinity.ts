@@ -36,12 +36,16 @@ function countCues(haystack: string, cues: string[]): number {
   return n;
 }
 
-/** Classify a product by its category + tags; stronger cue wins, else neutral. */
+/** Classify a product by its title + category + tags; stronger cue wins, else
+ *  neutral. The TITLE is included because real catalogs carry the weather signal
+ *  in the product name ("Cascade Rain Shell", "Switchback Cap") while their
+ *  category/tags are often generic taxonomy ("outerwear", "accessories"). */
 export function productAffinity(
   category: string | null | undefined,
   tags: readonly string[] | null | undefined,
+  title?: string | null,
 ): WeatherCondition {
-  const haystack = [category ?? "", ...(tags ?? [])].join(" ").toLowerCase();
+  const haystack = [title ?? "", category ?? "", ...(tags ?? [])].join(" ").toLowerCase();
   if (!haystack.trim()) return "neutral";
   const sun = countCues(haystack, SUN_CUES);
   const storm = countCues(haystack, STORM_CUES);
@@ -51,6 +55,7 @@ export function productAffinity(
 }
 
 export interface WeatherSortable {
+  title?: string | null;
   category?: string | null;
   tags?: readonly string[] | null;
 }
@@ -64,7 +69,7 @@ export function boostByWeather<T extends WeatherSortable>(
   const matches: T[] = [];
   const rest: T[] = [];
   for (const p of products) {
-    if (productAffinity(p.category, p.tags) === condition) matches.push(p);
+    if (productAffinity(p.category, p.tags, p.title) === condition) matches.push(p);
     else rest.push(p);
   }
   return [...matches, ...rest];

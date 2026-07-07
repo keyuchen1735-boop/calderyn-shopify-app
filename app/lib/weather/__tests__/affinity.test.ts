@@ -44,6 +44,14 @@ describe("productAffinity", () => {
   it("classifies a tie between sun and storm cues as neutral", () => {
     expect(productAffinity(null, ["sun", "rain"])).toBe("neutral");
   });
+
+  it("reads the product TITLE when the category/tags are generic (real catalogs)", () => {
+    // Peak & Pine-style catalog: weather signal is in the title, taxonomy is generic.
+    expect(productAffinity("outerwear", ["outerwear"], "Cascade Rain Shell")).toBe("storm");
+    expect(productAffinity("accessories", ["accessories"], "Switchback Cap")).toBe("sun");
+    expect(productAffinity("apparel", ["apparel"], "Ridgeline Hoodie")).toBe("storm");
+    expect(productAffinity("gear", ["gear"], "Basecamp Duffel 45L")).toBe("neutral");
+  });
 });
 
 describe("boostByWeather", () => {
@@ -73,5 +81,17 @@ describe("boostByWeather", () => {
     const original = [...products];
     boostByWeather(products, "storm");
     expect(products).toEqual(original);
+  });
+
+  it("floats title-matched products even when categories are generic", () => {
+    // The real-catalog case: generic categories, weather signal only in the title.
+    const catalog = [
+      { id: "cap", title: "Switchback Cap", category: "accessories", tags: [] as string[] },
+      { id: "tee", title: "Summit Logo Tee", category: "apparel", tags: [] as string[] },
+      { id: "rain", title: "Cascade Rain Shell", category: "outerwear", tags: [] as string[] },
+      { id: "duffel", title: "Basecamp Duffel", category: "gear", tags: [] as string[] },
+    ];
+    // Sunny weather → the cap + tee (sun cues in their titles) lead, rest keep order.
+    expect(boostByWeather(catalog, "sun").map((p) => p.id)).toEqual(["cap", "tee", "rain", "duffel"]);
   });
 });
