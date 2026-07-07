@@ -28,11 +28,10 @@ export type {
   TopProductSalesRow,
 };
 
-// Order states that count as a sale (order/state.ts vocabulary). `refunded`
-// stays in gross (the sale happened) and is subtracted again as the refund
-// line — net = gross − refunds. `partially_refunded` also stays in gross; its
-// refunded portion lives in refund_fact, not on the order row, so this read
-// does not net it out (previously the whole order silently vanished instead).
+// Order states that count as a sale (order/state.ts vocabulary). Both `refunded` and
+// `partially_refunded` stay in gross (the sale happened); their refunded cents are subtracted from
+// net separately via refund_fact (readWindowNativeRefundCents) — net = gross − refunds — so a
+// partial refund nets exactly its refunded amount instead of its whole order total or nothing.
 const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
 
 // Caps on window reads. Far above pilot volume; if a shop ever exceeds them the
@@ -156,6 +155,37 @@ async function readWindowImportedRefundCents(shopId: string, sinceIso: string): 
   return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);
 }
 
+/**
+ * Sum of NATIVE refund amounts (refund_fact.subtotal_cents) processed in the window — the
+ * counterpart to readWindowImportedRefundCents for owned Calderyn-checkout refunds. This nets refunds
+ * by the ACTUAL refunded amount (partial OR full), so a partially-refunded order is no longer
+ * overstated: previously net only subtracted a full refund via the order's whole total_cents and a
+ * PARTIAL refund's cents (which live in refund_fact, never on the order row) leaked into net. Keyed
+ * by processed_at like imported_refund, so a refund reduces net in the window it actually occurred.
+ *
+ * SCOPED to native refunds (external_id gid://calderyn/…). Migrated Shopify refunds also live in
+ * refund_fact but are already netted via imported_refund (the promote step copies them there), so
+ * counting them here too would DOUBLE-count a migrated shop's refunds. Native refunds are never in
+ * imported_refund (they post-date promotion), so the two sums are disjoint.
+ */
+async function readWindowNativeRefundCents(shopId: string, sinceIso: string): Promise<number> {
+  const rows = await readPaged<{ subtotal_cents: number | null }>(
+    "refund_fact",
+    shopId,
+    ORDER_ROW_CAP,
+    (from, to) =>
+      getSupabase()
+        .from("refund_fact")
+        .select("subtotal_cents")
+        .eq("shop_id", shopId)
+        .like("external_id", "gid://calderyn/%")
+        .gte("processed_at", sinceIso)
+        .order("processed_at", { ascending: false })
+        .range(from, to),
+  );
+  return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);
+}
+
 /** Top products by line revenue (title_snapshot × unit_price_cents × quantity)
  *  across the window's sale orders, read in bounded id chunks. */
 async function topProductsForOrders(
@@ -257,13 +287,15 @@ export async function loadCommerceAnalytics(
   const dayKeys: string[] = [];
   for (let i = 0; i < days; i++) dayKeys.push(utcDayKey(new Date(start + i * 86_400_000)));
 
-  const [orders, events, agentic, importedOrders, importedRefundCents] = await Promise.all([
-    readWindowOrders(shopId, sinceIso),
-    readWindowEvents(shopId, sinceIso),
-    agenticStats(shopId, now, sinceIso),
-    readWindowImportedOrders(shopId, sinceIso),
-    readWindowImportedRefundCents(shopId, sinceIso),
-  ]);
+  const [orders, events, agentic, importedOrders, importedRefundCents, nativeRefundCents] =
+    await Promise.all([
+      readWindowOrders(shopId, sinceIso),
+      readWindowEvents(shopId, sinceIso),
+      agenticStats(shopId, now, sinceIso),
+      readWindowImportedOrders(shopId, sinceIso),
+      readWindowImportedRefundCents(shopId, sinceIso),
+      readWindowNativeRefundCents(shopId, sinceIso),
+    ]);
 
   // --- per-day order aggregation ---
   const grossByDay = new Map<string, number>();
@@ -288,7 +320,9 @@ export async function loadCommerceAnalytics(
       fulfilled += 1;
       fulfilledByDay.set(day, (fulfilledByDay.get(day) ?? 0) + 1);
     }
-    if (o.state === "refunded") refund += total;
+    // Refunds (full AND partial) are netted from refund_fact by their ACTUAL refunded amount below
+    // (readWindowNativeRefundCents), NOT by the order's whole total here — otherwise a partial refund
+    // (whose cents live only in refund_fact) leaked into net, and a full refund would double-count.
     if (o.buyer_id) {
       const key = String(o.buyer_id);
       ordersByBuyer.set(key, (ordersByBuyer.get(key) ?? 0) + 1);
@@ -318,8 +352,10 @@ export async function loadCommerceAnalytics(
     acc.grossCents += total;
     byChannel.set("Shopify", acc);
   }
-  // Real migrated refund amounts (imported_refund), the counterpart to the
-  // order-state refund signal used for native orders above.
+  // Refund netting: native refunds (refund_fact, full + partial by actual amount) plus migrated
+  // refunds (imported_refund). Both are keyed by the refund's processed_at window, so net =
+  // gross − refunds and a partial refund reduces net by exactly its refunded cents.
+  refund += nativeRefundCents;
   refund += importedRefundCents;
 
   // --- distinct-session aggregation (page views per day + funnel stages) ---
