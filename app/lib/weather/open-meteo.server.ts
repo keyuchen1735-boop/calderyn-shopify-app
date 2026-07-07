@@ -33,6 +33,27 @@ const DAILY = "temperature_2m_max,temperature_2m_min,precipitation_sum,snowfall_
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
+/**
+ * A 200 response can still omit (or rename) the daily arrays the score consumes.
+ * Aggregating that would fabricate a 0 °C / 0-daylight forecast — which scores as
+ * spuriously HIGH demand and could misdirect a real budget move — so a location
+ * missing the temperature/daylight series is treated as "no forecast" and skipped
+ * by the caller, honouring the file's never-fabricate contract. Precipitation and
+ * snowfall may legitimately be absent (dry days), so they are not required here.
+ */
+function hasForecast(loc: OpenMeteoLocation): boolean {
+  const d = loc.daily;
+  return (
+    !!d &&
+    Array.isArray(d.temperature_2m_max) &&
+    d.temperature_2m_max.length > 0 &&
+    Array.isArray(d.temperature_2m_min) &&
+    d.temperature_2m_min.length > 0 &&
+    Array.isArray(d.daylight_duration) &&
+    d.daylight_duration.length > 0
+  );
+}
+
 function aggregate(loc: OpenMeteoLocation): RegionForecast {
   const d = loc.daily ?? {};
   const tmax = d.temperature_2m_max ?? [];
@@ -70,7 +91,8 @@ export async function fetchRegionForecasts(
   const locations = Array.isArray(json) ? json : [json];
   const out = new Map<RegionCode, RegionForecast>();
   points.forEach((p, i) => {
-    if (locations[i]) out.set(p.region, aggregate(locations[i]));
+    const loc = locations[i];
+    if (loc && hasForecast(loc)) out.set(p.region, aggregate(loc));
   });
   return out;
 }

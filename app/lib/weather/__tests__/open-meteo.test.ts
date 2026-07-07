@@ -37,6 +37,22 @@ describe("fetchRegionForecasts", () => {
     expect(out.get("us-central")!.snowCm).toBe(9);
   });
 
+  it("skips a location whose 200 response omits the daily series (never fabricates a 0 forecast)", async () => {
+    const body = [
+      { daily: {} }, // present but empty — must NOT become a 0°C / 0-daylight forecast
+      fakeLocation([5, 5, 5], [-1, -1, -1], [4, 4, 4], [1, 1, 1], [34200, 34200, 34200]),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+
+    const out = await fetchRegionForecasts([
+      { region: "us-west", lat: 1, lon: 1 },
+      { region: "us-east", lat: 2, lon: 2 },
+    ]);
+
+    expect(out.has("us-west")).toBe(false);
+    expect(out.get("us-east")!.avgTempC).toBeCloseTo(2, 6);
+  });
+
   it("throws on a non-200 response (caller skips the shop, never fabricates)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 503 })));
     await expect(
