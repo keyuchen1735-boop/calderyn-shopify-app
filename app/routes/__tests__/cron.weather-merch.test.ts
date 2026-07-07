@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader } from "../cron.weather-merch";
 
 const isAuthorizedCron = vi.fn();
 const upsert = vi.fn();
@@ -13,8 +14,6 @@ vi.mock("~/lib/supabase.server", () => ({
 vi.mock("~/lib/weather/open-meteo.server", () => ({
   fetchRegionForecasts: (...a: unknown[]) => fetchRegionForecasts(...a),
 }));
-
-import { loader } from "../cron.weather-merch";
 
 const req = () =>
   new Request("https://calderyncompany.com/cron/weather-merch", {
