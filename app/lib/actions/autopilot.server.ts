@@ -815,6 +815,13 @@ async function tryWeatherBudgetReallocation(
   // candidate row's own daily_budget_cents/campaign_spend_cents describe the
   // source campaign's current budget and 7d spend.
   const currentBudgetCents = c.daily_budget_cents ?? 0;
+  // A source with no positive budget can't be cut. The candidate view coalesces a
+  // null budget to 0; without this guard, currentBudgetCents=0 would skip the
+  // maxBudgetCutPct check and yield a negative newBudgetCents. Match the legacy
+  // reduce-branch's budget>0 precondition — skip (fail safe), never reallocate.
+  if (currentBudgetCents <= 0) {
+    return { outcome: "skipped", reason: "source campaign has no budget to reallocate" };
+  }
   const newBudgetCents = currentBudgetCents - plan.amountCents;
   const verdict = await checkGuardrails(
     shopId,

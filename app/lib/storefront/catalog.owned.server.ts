@@ -194,6 +194,14 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
 
 const WEATHER_CONDITIONS: readonly WeatherCondition[] = ["sun", "storm", "neutral"];
 
+// Short-TTL in-process cache. A single storefront render calls listProducts
+// several times for the SAME shop (all-products grid + one per collection), and
+// region_weather only changes on the cron's ~6h cadence, so resolving the
+// condition once and reusing it for a few minutes avoids repeated identical
+// lookups without any meaningful staleness. Cleared naturally by process recycling.
+const CONDITION_TTL_MS = 5 * 60_000;
+const conditionCache = new Map<string, { condition: WeatherCondition; expires: number }>();
+
 // Resolve the shop's current weather-merchandising condition from its active
 // location's region + the cron-refreshed region_weather table. This backs a
 // PUBLIC, unauthenticated buyer path, so it must never throw or block a render:
@@ -201,6 +209,14 @@ const WEATHER_CONDITIONS: readonly WeatherCondition[] = ["sun", "storm", "neutra
 // "neutral" (boostByWeather is then a no-op and listProducts falls back to its
 // normal order).
 async function shopWeatherCondition(shopId: string): Promise<WeatherCondition> {
+  const cached = conditionCache.get(shopId);
+  if (cached && cached.expires > Date.now()) return cached.condition;
+  const condition = await resolveShopWeatherCondition(shopId);
+  conditionCache.set(shopId, { condition, expires: Date.now() + CONDITION_TTL_MS });
+  return condition;
+}
+
+async function resolveShopWeatherCondition(shopId: string): Promise<WeatherCondition> {
   try {
     const sb = getSupabase();
     const { data: loc, error: locErr } = await sb

@@ -70,9 +70,11 @@ describe("ownedCatalog.listProducts weather boost", () => {
       region_weather: { condition: "storm" },
     };
     const { ownedCatalog } = await import("../catalog.owned.server");
-    const out = await ownedCatalog.listProducts("shop-1");
+    // Distinct shopId per case: shopWeatherCondition is memoized per shop, so
+    // reusing one id would bleed a cached condition across cases.
+    const out = await ownedCatalog.listProducts("shop-storm");
     expect(out.map((p) => p.handle)).toEqual(["umbrellas", "mugs"]);
-    expect(eqCalls.location_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.location_dim).toContainEqual(["shop_id", "shop-storm"]);
     expect(eqCalls.location_dim).toContainEqual(["active", true]);
     expect(eqCalls.region_weather).toContainEqual(["region", "us-east"]);
   });
@@ -84,7 +86,7 @@ describe("ownedCatalog.listProducts weather boost", () => {
       // region_weather.maybeSingle() -> null (no row for this region)
     };
     const { ownedCatalog } = await import("../catalog.owned.server");
-    const out = await ownedCatalog.listProducts("shop-1");
+    const out = await ownedCatalog.listProducts("shop-neutral-norow");
     expect(out.map((p) => p.handle)).toEqual(["mugs", "umbrellas"]);
   });
 
@@ -92,7 +94,7 @@ describe("ownedCatalog.listProducts weather boost", () => {
     seedProducts();
     tableSingle = {}; // location_dim.maybeSingle() -> null
     const { ownedCatalog } = await import("../catalog.owned.server");
-    const out = await ownedCatalog.listProducts("shop-1");
+    const out = await ownedCatalog.listProducts("shop-neutral-noloc");
     expect(out.map((p) => p.handle)).toEqual(["mugs", "umbrellas"]);
   });
 });
