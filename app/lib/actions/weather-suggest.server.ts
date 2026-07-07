@@ -49,11 +49,19 @@ export function buildSuggestion(
   }
   if (byRegion.size < 2) return null;
 
-  const ranked = [...byRegion.keys()].sort((a, b) => (scores.get(a) ?? 0) - (scores.get(b) ?? 0));
+  // Rank only regions we actually have a forecast score for. A campaign region
+  // with no forecast entry (Open-Meteo returned fewer locations than points, or
+  // the location was skipped for a missing daily series) would otherwise default
+  // to score 0 — the minimum — and be chosen as the source whose budget is cut,
+  // moving real money on a forecast we do not have.
+  const ranked = [...byRegion.keys()]
+    .filter((r) => scores.has(r))
+    .sort((a, b) => scores.get(a)! - scores.get(b)!);
+  if (ranked.length < 2) return null;
   const sourceRegion = ranked[0];
   const destRegion = ranked[ranked.length - 1];
-  const sourceScore = scores.get(sourceRegion) ?? 0;
-  const destScore = scores.get(destRegion) ?? 0;
+  const sourceScore = scores.get(sourceRegion)!;
+  const destScore = scores.get(destRegion)!;
   if (destScore - sourceScore < SCORE_GAP_FLOOR) return null;
 
   const pickBiggest = (r: RegionCode): EligibleCampaign =>
@@ -133,11 +141,15 @@ export async function runWeatherSuggestForShop(
   sb: SupabaseClient,
   deps: RunDeps = {},
 ): Promise<RunResult> {
-  const { data: cfg } = await sb
+  const { data: cfg, error: cfgErr } = await sb
     .from("guardrail_config")
     .select("weather_sensitivity")
     .eq("shop_id", shopId)
     .maybeSingle();
+  // Surface a config-store read failure instead of silently defaulting to
+  // sensitivity 0 (which would skip the shop as `sensitivity_off` and hide an
+  // outage). The cron isolates per-shop, so this fails just this shop's run.
+  if (cfgErr) throw cfgErr;
   const sensitivity = Number((cfg as { weather_sensitivity?: unknown } | null)?.weather_sensitivity ?? 0);
   if (!(sensitivity > 0)) return { suggested: 0, skippedReason: "sensitivity_off" };
 

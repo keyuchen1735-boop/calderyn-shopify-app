@@ -43,4 +43,24 @@ describe("buildSuggestion", () => {
     const s = buildSuggestion([camp("w1", "us-west", 4000, "Small"), camp("w2", "us-west", 12000, "Big"), camp("e1", "us-east", 5000, "E")], scores, 50);
     expect(s!.sourceCampaignId).toBe("w2");
   });
+  it("excludes a campaign region that has no forecast score (never cuts budget on missing data)", () => {
+    // us-west has an eligible campaign but no score entry (Open-Meteo skipped it):
+    // it must NOT default to 0 and be chosen as the source. Only scored regions rank.
+    const partial = new Map<RegionCode, number>([["us-central", 0.2], ["us-east", 0.8]]);
+    const s = buildSuggestion(
+      [camp("w1", "us-west", 20000, "West"), camp("c1", "us-central", 8000, "Central"), camp("e1", "us-east", 5000, "East")],
+      partial,
+      50,
+    );
+    expect(s).not.toBeNull();
+    expect(s!.sourceRegion).toBe("us-central");
+    expect(s!.sourceCampaignId).toBe("c1");
+    expect(s!.destRegion).toBe("us-east");
+  });
+  it("returns null when fewer than two campaign regions have a forecast score", () => {
+    const partial = new Map<RegionCode, number>([["us-east", 0.8]]);
+    expect(
+      buildSuggestion([camp("w1", "us-west", 10000, "W"), camp("e1", "us-east", 5000, "E")], partial, 50),
+    ).toBeNull();
+  });
 });
