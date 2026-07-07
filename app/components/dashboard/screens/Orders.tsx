@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
-import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
@@ -298,13 +297,10 @@ export default function Orders({ app }: { app: DashboardCtx }) {
 
   const sub = app.nav.sub ?? "orders";
 
-  // Lists are capped server-side at 100 rows — past the cap the true total is
-  // unknown here, so the badge says "100+" instead of posing as a count.
-  const count = (n: number | undefined) => (n == null ? null : n >= 100 ? "100+" : String(n));
-  // Unified order count = native rows shown + the true migrated total.
+  // Unified order count = native rows shown + the true migrated total. The
+  // subtab navigation lives in the sidebar rail; this screen renders the view
+  // for the active sub only.
   const ordersTotal = (page?.orders.length ?? 0) + (imported?.totalCount ?? 0);
-  const ordersCount =
-    page || imported ? ordersTotal.toLocaleString("en-US") : null;
 
   return (
     <div className="cd-screen">
@@ -313,17 +309,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           <h1 className="cd-h1">Orders</h1>
         </div>
       </header>
-
-      <SubTabs
-        app={app}
-        activeKey={sub}
-        tabs={[
-          { key: "orders", label: "Orders", screen: "orders", sub: "orders", count: ordersCount },
-          { key: "labels", label: "Shipping charges", screen: "orders", sub: "labels", count: count(page?.shipCharges.length) },
-          { key: "drafts", label: "Draft carts", screen: "orders", sub: "drafts", count: count(page?.drafts.length) },
-          { key: "abandoned", label: "Abandoned", screen: "orders", sub: "abandoned", count: count(page?.abandoned.length) },
-        ]}
-      />
 
       {sub === "orders" ? (
         <UnifiedOrdersList

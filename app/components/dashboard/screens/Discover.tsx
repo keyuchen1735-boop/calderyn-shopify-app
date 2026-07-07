@@ -5,7 +5,6 @@
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, Btn, Pill, Placeholder, TableSkeleton } from "../ui";
-import { StoreSubTabs } from "../subtabs";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   fetchDiscover,
@@ -57,7 +56,6 @@ export default function Discover({ app }: { app: DashboardCtx }) {
 
   return (
     <div className="cd-screen" data-screen-label="Discover">
-      <StoreSubTabs app={app} />
       {!data ? (
         <TableSkeleton />
       ) : !data.items.length ? (

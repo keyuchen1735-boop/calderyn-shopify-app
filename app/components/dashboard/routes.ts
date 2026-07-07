@@ -40,7 +40,9 @@ function seg(nav: NavState): string {
       return `products/${encodeURIComponent(param ?? "new")}`;
     case "customers":
       if (param) return `customers/${encodeURIComponent(param)}`;
-      return sub === "segments" ? "customers/segments" : "customers";
+      if (sub === "segments") return "customers/segments";
+      if (sub === "weather") return "customers/weather";
+      return "customers";
     case "shipping":
       return "shipping";
     case "payments":
@@ -117,6 +119,7 @@ export function parsePath(pathname: string): NavState | null {
     case "customers":
       if (!b) return { screen: "customers", param: null, sub: "directory" };
       if (b === "segments") return { screen: "customers", param: null, sub: "segments" };
+      if (b === "weather") return { screen: "customers", param: null, sub: "weather" };
       return { screen: "customers", param: b, sub: null };
     case "shipping":
       return b ? null : { screen: "shipping", param: null, sub: null };

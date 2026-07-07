@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Card, Pill, Placeholder, TableSkeleton } from "../ui";
-import { ProductsSubTabs } from "../subtabs";
 import { fetchSkus, DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
@@ -64,8 +63,6 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           </p>
         </div>
       </header>
-
-      <ProductsSubTabs app={app} />
 
       <Card pad={false}>
         {loading ? (
