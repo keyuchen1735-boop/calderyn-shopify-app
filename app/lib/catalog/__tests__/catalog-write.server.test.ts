@@ -3,6 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const project = vi.fn().mockResolvedValue(undefined);
 vi.mock("../project-sku-dim.server", () => ({ projectProductToSkuDim: project }));
 
+// The ledger seed is exercised in inventory-seed.server.test.ts; here we only
+// assert createProduct wires the variant's starting stock through to it.
+const seedInitialStock = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../inventory/engine.server", () => ({ seedInitialStock }));
+
 const single = vi.fn().mockResolvedValue({ data: { id: "p1" }, error: null });
 // One insert mock that supports both `.insert(x).select("id").single()` (product /
 // option / variant) and `await .insert(x)` (link tables), so the create path's
@@ -17,7 +22,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
-beforeEach(() => { project.mockClear(); insert.mockClear(); });
+beforeEach(() => { project.mockClear(); insert.mockClear(); seedInitialStock.mockClear(); });
 
 describe("validateProductInput", () => {
   it("rejects a product with no variants", async () => {
@@ -35,5 +40,14 @@ describe("createProduct", () => {
     });
     expect(res.id).toBe("p1");
     expect(project).toHaveBeenCalledWith("p1");
+  });
+
+  it("seeds the new variant's starting stock into the owned inventory ledger", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active", variants: [{ sku: "T-S", retailPriceCents: 1999, inventoryOnHand: 5 }],
+    });
+    // The variant insert mock returns id "p1"; its starting stock must flow to the ledger.
+    expect(seedInitialStock).toHaveBeenCalledWith("shop1", "p1", 5);
   });
 });

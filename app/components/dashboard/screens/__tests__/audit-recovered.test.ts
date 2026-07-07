@@ -46,6 +46,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     t: {},
     shopDomain: "test.myshopify.com",
     storeLabel: "test.myshopify.com",
+    orgSlug: null,
     demoMode: false,
     canDeleteAccount: false,
     hasCatalog: true,

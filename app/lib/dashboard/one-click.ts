@@ -5,6 +5,7 @@
 // quantity/cost) — those review steps live on the alert's own detail.
 import type { ActionKind } from "~/components/dashboard/context";
 import type { AlertVM } from "~/components/dashboard/view-models";
+import { hasTransferPlan } from "~/lib/inventory-alerts";
 
 export const ONE_CLICK_KINDS: ActionKind[] = [
   "pause_campaign",
@@ -36,5 +37,8 @@ export function canOneClickAlert(alert: AlertVM | undefined, kind: string): bool
   if (!alert) return false;
   if (CAMPAIGN_KINDS.has(kind) && !alert.campaign_id) return false;
   if (kind === "exclude_geo" && !alert.region) return false;
+  // reallocate_inventory 422s without a complete transfer plan in evidence, so
+  // it can never be a one-click here — it routes to Review instead (rule 12).
+  if (kind === "reallocate_inventory" && !hasTransferPlan(alert.evidence)) return false;
   return true;
 }

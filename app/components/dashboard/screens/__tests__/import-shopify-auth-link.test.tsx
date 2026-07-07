@@ -13,6 +13,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
     t: {},
     shopDomain: null,
     storeLabel: "Acme",
+    orgSlug: null,
     demoMode: false,
     canDeleteAccount: false,
     hasCatalog: false,
