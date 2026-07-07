@@ -15,6 +15,8 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { buildProductDraft } from "~/lib/seo/writer.server";
 import { metaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
+import { getSeoOverride } from "~/lib/seo/seo-store.server";
+import { applyOverride } from "~/lib/seo/override";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
@@ -40,7 +42,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   let seoMeta: MetaDescriptor[];
   try {
     const settings = await getStoreSettings(shopId);
-    seoMeta = metaFromDraft(buildProductDraft(product, settings, storefrontOrigin(request)));
+    const draft = buildProductDraft(product, settings, storefrontOrigin(request));
+    const override = await getSeoOverride(shopId, "product", product.id);
+    seoMeta = metaFromDraft(applyOverride(draft, override));
   } catch (err) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title: product.title }];

@@ -9,13 +9,19 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-export function buildRobotsTxt(origin: string): string {
-  const aiBlocks = AI_BOTS_ALLOWED.map((b) => `User-agent: ${b}\nAllow: /`).join("\n\n");
+export function buildRobotsTxt(origin: string, allowAiCrawlers = true): string {
+  // Standard search crawlers are always welcome (Allow: /). Only the AI-bot
+  // blocks flip: allow => cite this store; deny => ask them not to crawl.
+  const aiRule = allowAiCrawlers ? "Allow: /" : "Disallow: /";
+  const aiBlocks = AI_BOTS_ALLOWED.map((b) => `User-agent: ${b}\n${aiRule}`).join("\n\n");
+  const heading = allowAiCrawlers
+    ? "# AI assistants are welcome to read and cite this store."
+    : "# AI assistants are asked not to crawl this store.";
   return [
     "User-agent: *",
     "Allow: /",
     "",
-    "# AI assistants are welcome to read and cite this store.",
+    heading,
     aiBlocks,
     "",
     `Sitemap: ${origin}/sitemap.xml`,
