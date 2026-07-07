@@ -48,4 +48,21 @@ describe("DashboardErrorBoundary", () => {
     expect(html).toContain("Something went wrong");
     expect(html.toLowerCase()).toContain("reload");
   });
+
+  it("clears a caught error on back/forward navigation so the SPA recovers", () => {
+    // The self-driven SPA unmounts its own popstate handler when the fallback
+    // shows, so the boundary must reset itself on navigation. Drive the
+    // instance the way React would: derive error state, then fire popstate.
+    const boundary = new DashboardErrorBoundary({});
+    boundary.state = DashboardErrorBoundary.getDerivedStateFromError(
+      new Error("render exploded"),
+    );
+    const patched: { error?: Error | null } = {};
+    // Stub React's setState so we can observe the reset without a renderer.
+    (boundary as unknown as { setState: (u: { error: null }) => void }).setState =
+      (update) => Object.assign(patched, update);
+
+    boundary.handlePopState();
+    expect(patched.error).toBeNull();
+  });
 });
