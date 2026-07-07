@@ -2392,11 +2392,12 @@
 .cd-seo__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: calc(16px * var(--density)) calc(22px * var(--density)); }
 .cd-seo__row + .cd-seo__row { border-top: 1px solid var(--hairline); }
 .cd-seo__info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cd-seo__label { display: inline-flex; align-items: center; gap: 7px; font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__label { font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
 .cd-seo__hint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.45; max-width: 54ch; letter-spacing: -0.003em; }
-/* "Let Calderyn write it" affordance beside the store-description label: a small
-   accent sparkle button that drafts the line for review. Pulses while working. */
-.cd-seo__ai { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 7px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; }
+/* "Let Calderyn write it" affordance INSIDE the store-description field, left-aligned:
+   a small accent sparkle button that drafts the line for review. Pulses while working. */
+.cd-seo__ai-slot { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); display: inline-flex; }
+.cd-seo__ai { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; }
 .cd-seo__ai:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .cd-seo__ai:active { transform: scale(0.94); }
 .cd-seo__ai:disabled { cursor: default; }
@@ -2406,7 +2407,7 @@
 @keyframes cd-seo-ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .cd-seo__control { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .cd-seo__inputwrap { position: relative; display: inline-flex; align-items: center; }
-.cd-seo__input { width: min(320px, 44vw); padding-right: 54px; }
+.cd-seo__input { width: min(320px, 44vw); padding-left: 37px; padding-right: 54px; }
 .cd-seo__count { position: absolute; right: 11px; font-size: calc(10.5px * var(--type-scale)); color: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; }
 
 @media (max-width: 560px) {
