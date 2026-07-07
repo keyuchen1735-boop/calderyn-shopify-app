@@ -1730,6 +1730,40 @@ describe("runAutopilotForShop", () => {
       expect(dec?.reason).toContain("invalid inventory evidence");
     });
 
+    it("weather_demand budget alert (no sku_id, no transfer plan) falls through instead of blocking, even when the pair is graduated", async () => {
+      // Regression: weather_demand is EITHER a campaign-scoped budget move (no
+      // sku_id, no transfer plan) OR an inventory move. Before the fix, a budget
+      // alert fell into the generic "no plan" block below and produced
+      // `blocked: 'reallocate_inventory: invalid inventory evidence'` on EVERY
+      // tick once (weather_demand, reallocate_inventory) graduated — flooding the
+      // blocked bucket for an alert that was never an inventory candidate.
+      transferPlanFromEvidence.mockReturnValue(null);
+      isGraduated.mockResolvedValue(true); // the inventory pair IS graduated
+      const weatherBudgetAlert = {
+        alert_id: "al-weather-budget",
+        detector_id: "weather_demand",
+        dollar_impact: 120,
+        campaign_id: "camp-uuid",
+        campaign_spend_cents: 20000,
+        daily_budget_cents: 8000,
+        evidence: { region: "midwest" }, // no transfer-plan fields, no plan
+        sku: null,
+        sku_id: null,
+      };
+      const sb = fakeSb({ enabled: true, alerts: [weatherBudgetAlert] });
+      const r = await runAutopilotForShop(SHOP, sb);
+
+      expect(executeInventoryAlertAction).not.toHaveBeenCalled();
+      const dec = r.decisions.find((d) => d.alertId === "al-weather-budget");
+      expect(dec?.outcome).not.toBe("blocked");
+      expect(dec?.reason).not.toContain("invalid inventory evidence");
+      // weather_demand is not in any legacy campaign detector set either, so the
+      // candidate falls all the way through to a benign, non-blocking skip.
+      expect(dec?.outcome).toBe("skipped");
+      expect(r.blocked).toBe(0);
+      expect(r.blockedReasons["reallocate_inventory: invalid inventory evidence"]).toBeUndefined();
+    });
+
     it("non-inventory detector → fell_through (handled by the existing pause path)", async () => {
       // campaign_below_breakeven is not an inventory detector — tryInventoryRelocation
       // must defer so the legacy pause path still acts on it.
