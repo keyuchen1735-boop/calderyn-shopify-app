@@ -39,6 +39,17 @@ const ORG_NAME_MAX = 80;
 const ORG_DESC_MAX = 200;
 const GOOGLE_TOKEN_MAX = 200;
 
+// Accept whatever a merchant copies from Google Search Console — the full
+// <meta name="google-site-verification" content="TOKEN" /> tag, a bare
+// content="TOKEN" attribute, or just the token itself — and return the clean
+// token. Without this, pasting the whole tag would nest a tag inside the emitted
+// tag's content attribute, producing malformed HTML that fails Google's check.
+function extractVerificationToken(raw: string): string {
+  const s = raw.trim();
+  const m = s.match(/content\s*=\s*["']([^"']+)["']/i);
+  return (m ? m[1] : s).trim();
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request); // throws a 403 Response on a cross-origin post
   const session = await requireDashboardSession(request);
@@ -65,9 +76,12 @@ export async function action({ request }: ActionFunctionArgs) {
         patch.orgDescription = body.orgDescription;
       }
       if (body.googleSiteVerification === null || typeof body.googleSiteVerification === "string") {
-        // Trim and normalize an empty string to null so clearing the field removes
+        // Extract the bare token from whatever was pasted (full tag, attribute, or
+        // token); an empty result normalizes to null so clearing the field removes
         // the meta tag rather than emitting an empty content="".
-        const token = typeof body.googleSiteVerification === "string" ? body.googleSiteVerification.trim() : null;
+        const token = typeof body.googleSiteVerification === "string"
+          ? extractVerificationToken(body.googleSiteVerification)
+          : null;
         if (token && token.length > GOOGLE_TOKEN_MAX) {
           return jsonError(422, "bad_request", `verification code must be ${GOOGLE_TOKEN_MAX} characters or fewer`);
         }

@@ -94,6 +94,17 @@ describe("dashboard.api.search action", () => {
     expect(res.status).toBe(200);
     expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "google-abc123" });
   });
+  it("updateSettings extracts the bare token when the merchant pastes Google's whole meta tag", async () => {
+    const tag = '<meta name="google-site-verification" content="dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA" />';
+    const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: tag }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA" });
+  });
+  it("updateSettings extracts the token from a bare content=\"...\" attribute too", async () => {
+    const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: 'content="abc-123_XYZ"' }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "abc-123_XYZ" });
+  });
   it("updateSettings normalizes a blank verification token to null (clears the tag)", async () => {
     await action({ request: req({ action: "updateSettings", googleSiteVerification: "   " }) } as never);
     expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: null });
