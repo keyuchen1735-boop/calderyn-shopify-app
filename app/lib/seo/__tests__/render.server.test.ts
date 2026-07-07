@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { metaFromDraft } from "../render.server";
+import { metaFromDraft, safeMetaFromDraft } from "../render.server";
 import type { SeoDraft } from "../types";
 
 function draft(over: Partial<SeoDraft> = {}): SeoDraft {
@@ -28,5 +28,28 @@ describe("metaFromDraft", () => {
     const m = metaFromDraft(draft({ ogImage: null }));
     expect(m.some((d) => (d as { property?: string }).property === "og:image")).toBe(false);
     expect(m).toContainEqual({ name: "twitter:card", content: "summary" });
+  });
+});
+
+describe("safeMetaFromDraft", () => {
+  it("leaves a draft with valid structured data unchanged", () => {
+    const d = draft({ description: "Hand-poured cedar and bergamot soy candle from Amsterdam." });
+    expect(safeMetaFromDraft(d)).toEqual(metaFromDraft(d));
+  });
+  it("drops only the invalid JSON-LD node (empty Product.name) but still serves meta tags + valid schema", () => {
+    const d = draft({
+      jsonLd: [
+        { "@context": "https://schema.org", "@type": "Product", name: "" }, // invalid: Product.name required
+        { "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [] }, // valid
+      ],
+    });
+    const m = safeMetaFromDraft(d);
+    const ldTypes = m
+      .filter((x) => "script:ld+json" in (x as object))
+      .map((x) => (x as Record<string, { "@type": string }>)["script:ld+json"]["@type"]);
+    expect(ldTypes).toEqual(["BreadcrumbList"]); // the bad Product node is stripped
+    // The human-facing meta tags always ship (title/description are advisory, not gated).
+    expect(m).toContainEqual({ title: d.title });
+    expect(m).toContainEqual({ tagName: "link", rel: "canonical", href: d.canonical });
   });
 });

@@ -8,10 +8,8 @@ import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { buildCollectionDraft } from "~/lib/seo/writer.server";
-import { metaFromDraft } from "~/lib/seo/render.server";
+import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
-import { getSeoOverride } from "~/lib/seo/seo-store.server";
-import { applyOverride } from "~/lib/seo/override";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
@@ -42,13 +40,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // SEO/AIO meta + CollectionPage JSON-LD. Failure-isolated (see the PDP/home routes):
   // a settings-fetch hiccup must never 500 a collection page that would otherwise render
   // fine. StoreCollection carries no description field today, so the writer always falls
-  // back to its own "<title> from <store>" template.
+  // back to its own "<title> from <store>" template. Collections have no merchant
+  // override (only product overrides are written), so there is nothing to layer here.
   let seoMeta: MetaDescriptor[];
   try {
     const settings = await getStoreSettings(shopId);
     const draft = buildCollectionDraft({ handle, title, description: null }, settings, storefrontOrigin(request));
-    const override = await getSeoOverride(shopId, "collection", handle);
-    seoMeta = metaFromDraft(applyOverride(draft, override));
+    seoMeta = safeMetaFromDraft(draft);
   } catch (err) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title }];

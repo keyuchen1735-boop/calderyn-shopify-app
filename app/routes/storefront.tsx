@@ -62,8 +62,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // every downstream read by this shopId (no Postgres RLS on this surface).
   const shopId = await resolveStorefrontShop(request);
   // AIO signal: record when a known AI assistant crawler reads any storefront page.
+  // logAiCrawl is fire-and-forget and never throws; waitUntil keeps the serverless
+  // function alive until the RPC resolves so the write survives function freeze on
+  // Vercel, and no-ops locally (mirrors tenant.server / import/run.server).
   const aiBot = detectAiBot(request.headers.get("user-agent"));
-  if (aiBot) void logAiCrawl(shopId, aiBot);
+  if (aiBot) {
+    const crawlLog = logAiCrawl(shopId, aiBot);
+    try {
+      const { waitUntil } = await import("@vercel/functions");
+      waitUntil(crawlLog);
+    } catch {
+      void crawlLog;
+    }
+  }
   const settings = await getStoreSettings(shopId);
   const experimentVibe = await resolveLayoutExperimentVibe(shopId, request);
   const collections = await loadNavCollections(shopId);

@@ -13,7 +13,9 @@ function isAbsoluteHttpUrl(value: string): boolean {
   }
 }
 
-function jsonLdIssues(node: JsonLd): string[] {
+/** Per-node schema.org problems. Exported so the serve path can drop exactly the
+ *  invalid node(s) rather than shipping malformed structured data. */
+export function jsonLdNodeIssues(node: JsonLd): string[] {
   const out: string[] = [];
   if (node["@context"] !== "https://schema.org") out.push("missing @context https://schema.org");
   if (typeof node["@type"] !== "string" || !node["@type"]) out.push("missing @type");
@@ -42,7 +44,7 @@ export function validateDraft(draft: SeoDraft): SeoIssue[] {
   if (!isAbsoluteHttpUrl(draft.canonical)) issues.push({ field: "canonical", message: "canonical must be an absolute http(s) URL" });
   if (draft.jsonLd.length === 0) issues.push({ field: "jsonLd", message: "at least one schema.org node is required" });
   for (const node of draft.jsonLd) {
-    for (const msg of jsonLdIssues(node)) issues.push({ field: "jsonLd", message: msg });
+    for (const msg of jsonLdNodeIssues(node)) issues.push({ field: "jsonLd", message: msg });
   }
   return issues;
 }

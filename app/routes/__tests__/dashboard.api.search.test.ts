@@ -17,6 +17,7 @@ const {
   createOAuthStateMock,
   buildConnectUrlMock,
   disconnectGscMock,
+  listProductsMock,
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
@@ -44,6 +45,8 @@ const {
   createOAuthStateMock: vi.fn().mockResolvedValue("nonce-state"),
   buildConnectUrlMock: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?state=nonce-state"),
   disconnectGscMock: vi.fn().mockResolvedValue(undefined),
+  // saveOverride confirms the entityId is a real product of the shop; p1 is owned.
+  listProductsMock: vi.fn().mockResolvedValue([{ id: "p1", handle: "cedar", title: "Cedar", description: "", images: [], variants: [], collections: [] }]),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: requireDashboardSessionMock }));
@@ -61,6 +64,9 @@ vi.mock("~/lib/seo/seo-store.server", () => ({
   upsertSeoOverride: upsertSeoOverrideMock,
   deleteSeoOverride: deleteSeoOverrideMock,
   upsertSeoSettings: upsertSeoSettingsMock,
+}));
+vi.mock("~/lib/storefront/catalog.server", () => ({
+  getCatalog: () => ({ listProducts: listProductsMock, getProduct: async () => null, listCollections: async () => [] }),
 }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({}) }));
 vi.mock("~/lib/meta/oauth-state.server", () => ({ createOAuthState: createOAuthStateMock }));
@@ -109,6 +115,12 @@ describe("dashboard.api.search action", () => {
     expect(res.status).toBe(422);
     expect(upsertSeoOverrideMock).not.toHaveBeenCalled();
   });
+  it("saveOverride 422s an entityId that is not a product of this shop, without touching the store", async () => {
+    const res = (await action({ request: req({ action: "saveOverride", entityId: "ghost", metaTitle: "T", metaDescription: "D" }) } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect(listProductsMock).toHaveBeenCalledWith("shop1");
+    expect(upsertSeoOverrideMock).not.toHaveBeenCalled();
+  });
   it("resetOverride deletes the product override", async () => {
     const res = (await action({ request: req({ action: "resetOverride", entityId: "p1" }) } as never)) as Response;
     expect(res.status).toBe(200);
@@ -118,6 +130,16 @@ describe("dashboard.api.search action", () => {
     const res = (await action({ request: req({ action: "updateSettings", allowAiCrawlers: false }) } as never)) as Response;
     expect(res.status).toBe(200);
     expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { allowAiCrawlers: false });
+  });
+  it("updateSettings 422s an over-long store name without writing", async () => {
+    const res = (await action({ request: req({ action: "updateSettings", orgName: "x".repeat(81) }) } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect(upsertSeoSettingsMock).not.toHaveBeenCalled();
+  });
+  it("updateSettings 422s an over-long description without writing", async () => {
+    const res = (await action({ request: req({ action: "updateSettings", orgDescription: "x".repeat(201) }) } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect(upsertSeoSettingsMock).not.toHaveBeenCalled();
   });
   it("422s an unknown action", async () => {
     const res = (await action({ request: req({ action: "nope" }) } as never)) as Response;

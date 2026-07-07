@@ -13,7 +13,7 @@ import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { buildProductDraft } from "~/lib/seo/writer.server";
-import { metaFromDraft } from "~/lib/seo/render.server";
+import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
 import { getSeoOverride } from "~/lib/seo/seo-store.server";
 import { applyOverride } from "~/lib/seo/override";
@@ -44,7 +44,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     const settings = await getStoreSettings(shopId);
     const draft = buildProductDraft(product, settings, storefrontOrigin(request));
     const override = await getSeoOverride(shopId, "product", product.id);
-    seoMeta = metaFromDraft(applyOverride(draft, override));
+    seoMeta = safeMetaFromDraft(applyOverride(draft, override));
   } catch (err) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title: product.title }];

@@ -4,6 +4,7 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { buildSeoOverview, getProductSeoDetail, getShopStorefrontOrigin } from "~/lib/seo/overview.server";
 import { upsertSeoOverride, deleteSeoOverride, upsertSeoSettings } from "~/lib/seo/seo-store.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { createOAuthState } from "~/lib/meta/oauth-state.server";
 import { buildConnectUrl, disconnect as disconnectGsc } from "~/lib/seo/google-search-console.server";
@@ -30,6 +31,10 @@ interface SearchBody {
 // validator uses tighter SERP limits for scoring, not gating).
 const TITLE_MAX = 70;
 const DESC_MAX = 200;
+// Store-identity bounds. Clamp at the boundary so a crafted request can't persist
+// an unbounded org name/description into seo_settings.
+const ORG_NAME_MAX = 80;
+const ORG_DESC_MAX = 200;
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request); // throws a 403 Response on a cross-origin post
@@ -57,6 +62,11 @@ export async function action({ request }: ActionFunctionArgs) {
       if (!metaTitle || metaTitle.length > TITLE_MAX) return jsonError(422, "bad_request", `title must be 1 to ${TITLE_MAX} characters`);
       if (!metaDescription || metaDescription.length > DESC_MAX) return jsonError(422, "bad_request", `description must be 1 to ${DESC_MAX} characters`);
       const entityId = body.entityId;
+      // Confirm the entity is a real product of THIS shop before writing a seo_page
+      // row: a crafted entityId must never create an override for another tenant's
+      // (or a non-existent) product. Resolve against the shop-scoped catalog.
+      const products = await getCatalog().listProducts(session.shopId);
+      if (!products.some((p) => p.id === entityId)) return jsonError(422, "bad_request", "unknown product");
       return dashboardJson(async () => {
         await upsertSeoOverride(session.shopId, {
           entityType: "product",
@@ -79,8 +89,18 @@ export async function action({ request }: ActionFunctionArgs) {
     case "updateSettings": {
       const patch: Record<string, unknown> = {};
       if (typeof body.allowAiCrawlers === "boolean") patch.allowAiCrawlers = body.allowAiCrawlers;
-      if (body.orgName === null || typeof body.orgName === "string") patch.orgName = body.orgName;
-      if (body.orgDescription === null || typeof body.orgDescription === "string") patch.orgDescription = body.orgDescription;
+      if (body.orgName === null || typeof body.orgName === "string") {
+        if (typeof body.orgName === "string" && body.orgName.length > ORG_NAME_MAX) {
+          return jsonError(422, "bad_request", `store name must be ${ORG_NAME_MAX} characters or fewer`);
+        }
+        patch.orgName = body.orgName;
+      }
+      if (body.orgDescription === null || typeof body.orgDescription === "string") {
+        if (typeof body.orgDescription === "string" && body.orgDescription.length > ORG_DESC_MAX) {
+          return jsonError(422, "bad_request", `description must be ${ORG_DESC_MAX} characters or fewer`);
+        }
+        patch.orgDescription = body.orgDescription;
+      }
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");
       return dashboardJson(async () => ({ settings: await upsertSeoSettings(session.shopId, patch) }));
     }

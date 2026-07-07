@@ -13,10 +13,8 @@ import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { buildHomeDraft } from "~/lib/seo/writer.server";
-import { metaFromDraft } from "~/lib/seo/render.server";
+import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
-import { getSeoOverride } from "~/lib/seo/seo-store.server";
-import { applyOverride } from "~/lib/seo/override";
 import type { BlockDocument } from "~/lib/storebuilder/types";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
@@ -90,13 +88,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }, visitor);
   // SEO/AIO meta + Organization/WebSite JSON-LD. Failure-isolated like the experiment
   // lookup above: a settings-fetch hiccup must never 500 a home page that would
-  // otherwise render fine.
+  // otherwise render fine. The home page has no merchant override (only product
+  // overrides are written), so there is nothing to layer here.
   let seoMeta: MetaDescriptor[];
   try {
     const settings = await getStoreSettings(shopId);
     const draft = buildHomeDraft(settings, storefrontOrigin(request));
-    const override = await getSeoOverride(shopId, "home", "home");
-    seoMeta = metaFromDraft(applyOverride(draft, override));
+    seoMeta = safeMetaFromDraft(draft);
   } catch (err) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title: "Store" }];

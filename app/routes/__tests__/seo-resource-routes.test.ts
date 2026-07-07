@@ -5,10 +5,14 @@ vi.mock("~/lib/storefront/shop.server", () => ({ resolveStorefrontShop: async ()
 vi.mock("~/lib/storefront/settings.server", () => ({
   getStoreSettings: async () => ({ shopId: "s1", storeName: "Ember House", logoUrl: null, palette: { primary: "#111", background: "#fff", text: "#111" }, voiceTagline: "Candles.", vibe: "classic", typeStyle: "classic", density: "standard" }),
 }));
+const { buildSitemapXmlMock, buildLlmsTxtMock } = vi.hoisted(() => ({
+  buildSitemapXmlMock: vi.fn(async () => '<?xml version="1.0" encoding="UTF-8"?><urlset></urlset>'),
+  buildLlmsTxtMock: vi.fn(async () => "# Ember House\n"),
+}));
 vi.mock("~/lib/seo/site-files.server", () => ({
   buildRobotsTxt: (origin: string) => `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n`,
-  buildSitemapXml: async () => '<?xml version="1.0" encoding="UTF-8"?><urlset></urlset>',
-  buildLlmsTxt: async () => "# Ember House\n",
+  buildSitemapXml: buildSitemapXmlMock,
+  buildLlmsTxt: buildLlmsTxtMock,
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -37,5 +41,25 @@ describe("seo resource routes", () => {
     const res = await llms(req() as never);
     expect(res.headers.get("content-type")).toContain("text/plain");
     expect(await res.text()).toContain("# Ember House");
+  });
+
+  it("sitemap.xml degrades to a valid empty urlset when the catalog read fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    buildSitemapXmlMock.mockRejectedValueOnce(new Error("db down"));
+    const res = await sitemap(req() as never);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<urlset");
+    expect(body).toContain("</urlset>");
+    spy.mockRestore();
+  });
+
+  it("llms.txt degrades to a minimal valid document when the settings/catalog read fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    buildLlmsTxtMock.mockRejectedValueOnce(new Error("db down"));
+    const res = await llms(req() as never);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Store:");
+    spy.mockRestore();
   });
 });

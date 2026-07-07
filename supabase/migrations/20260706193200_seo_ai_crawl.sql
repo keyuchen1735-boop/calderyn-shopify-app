@@ -10,6 +10,7 @@ create table public.seo_ai_crawl_daily (
 create index seo_ai_crawl_daily_shop_idx on public.seo_ai_crawl_daily (shop_id);
 
 alter table public.seo_ai_crawl_daily enable row level security;
+drop policy if exists seo_ai_crawl_daily_shop_scope on public.seo_ai_crawl_daily;
 create policy seo_ai_crawl_daily_shop_scope on public.seo_ai_crawl_daily
   for all
   using (shop_id = public.current_shop_id())
