@@ -17,6 +17,8 @@ export type Screen =
   | "campaigns"
   | "analytics"
   | "inventory"
+  // Search - the merchant SEO/AIO surface (storefront discoverability on Google + AI).
+  | "search"
   | "locations-settings"
   | "audit"
   | "agentic"

@@ -22,6 +22,9 @@ function seg(nav: NavState): string {
       return param ? `campaigns/${encodeURIComponent(param)}` : "campaigns";
     case "analytics":
       return sub === "live" ? "analytics/live" : "analytics";
+    case "search":
+      // Merchant SEO/AIO surface, nested under Store as "Preferences".
+      return "store/preferences";
     case "orders":
       return sub && sub !== "orders" ? `orders/${sub}` : "orders";
     case "catalog":
@@ -128,6 +131,8 @@ export function parsePath(pathname: string): NavState | null {
     case "store":
       if (!b) return { screen: "storefront", param: null, sub: null };
       if (b === "discover") return { screen: "discover", param: null, sub: null };
+      // Preferences hosts the merchant SEO/AIO (Search) surface.
+      if (b === "preferences") return { screen: "search", param: null, sub: null };
       return null;
     case "alerts":
       return { screen: "alerts", param: b ?? null, sub: null };

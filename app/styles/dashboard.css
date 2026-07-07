@@ -2373,3 +2373,35 @@
 @media (prefers-reduced-motion: reduce) {
   .cd-su-3dcard, .cd-su-row:hover .cd-su-3dcard { transition: none; transform: perspective(220px) rotateX(16deg) rotateY(-18deg); }
 }
+
+/* ============ Preferences (SEO / AIO) screen ============
+   Calm, text-forward settings surface: a short lede, then the controls a merchant
+   actually has as a divided settings group (search-engine access, AI-assistant
+   access, store description). Composes the shared cd-card / cd-input / cd-toggle
+   primitives; every color resolves from the theme tokens. */
+.cd-seo__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.cd-seo__head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cd-seo__title { font-size: calc(22px * var(--type-scale)); font-weight: 640; letter-spacing: -0.02em; color: var(--text-1); margin: 0; }
+.cd-seo__lede { font-size: calc(13.5px * var(--type-scale)); color: var(--text-2); margin: 0; letter-spacing: -0.006em; max-width: 62ch; }
+
+/* Section = a plain heading + its card. */
+.cd-seo__section { display: flex; flex-direction: column; gap: calc(10px * var(--density)); }
+
+/* Settings: divided rows in one card, never a box per control. */
+.cd-seo__set { display: flex; flex-direction: column; }
+.cd-seo__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: calc(16px * var(--density)) calc(22px * var(--density)); }
+.cd-seo__row + .cd-seo__row { border-top: 1px solid var(--hairline); }
+.cd-seo__info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cd-seo__label { font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__hint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.45; max-width: 54ch; letter-spacing: -0.003em; }
+.cd-seo__control { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.cd-seo__inputwrap { position: relative; display: inline-flex; align-items: center; }
+.cd-seo__input { width: min(320px, 44vw); padding-right: 54px; }
+.cd-seo__count { position: absolute; right: 11px; font-size: calc(10.5px * var(--type-scale)); color: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; }
+
+@media (max-width: 560px) {
+  .cd-seo__row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .cd-seo__control { justify-content: space-between; }
+  .cd-seo__inputwrap { flex: 1 1 auto; }
+  .cd-seo__input { width: 100%; }
+}

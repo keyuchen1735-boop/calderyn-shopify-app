@@ -64,6 +64,7 @@ import ScreenShipping from "./screens/Shipping";
 import ScreenPayments from "./screens/Payments";
 import ScreenStore from "./screens/Store";
 import ScreenDiscover from "./screens/Discover";
+import ScreenSearch from "./screens/Search";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
 
@@ -158,6 +159,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         children: [
           { key: "storefront", label: "Storefront", screen: "storefront" },
           { key: "discover", label: "Discover", screen: "discover" },
+          { key: "preferences", label: "Preferences", screen: "search" },
         ],
       },
     ],
@@ -184,7 +186,8 @@ const FOOT_NAV: NavItem[] = [
 const ALL_NAV_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...FOOT_NAV];
 
 // Screens that live under a nav item's umbrella keep that item highlighted and
-// its section expanded (subtab families, inner flows, and the Labs mask).
+// its section expanded (subtab families, inner flows, the Labs mask, and the
+// Preferences surface now nested under Store).
 const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   labs: "campaigns",
   "product-editor": "catalog",
@@ -197,6 +200,7 @@ const NAV_HIGHLIGHT: Partial<Record<ScreenId, ScreenId>> = {
   cutover: "settings",
   agentic: "analytics",
   discover: "storefront",
+  search: "storefront",
 };
 
 // Default subtab per screen — resolves which child reads active when the URL
@@ -255,6 +259,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   alerts: ScreenAlerts,
   campaigns: ScreenCampaigns,
   analytics: ScreenAnalytics,
+  search: ScreenSearch,
   inventory: ScreenInventory,
   catalog: ScreenCatalog,
   collections: ScreenCollections,
