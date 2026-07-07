@@ -14,7 +14,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return dashboardJson(async () => {
     const [page, weatherSuggestions] = await Promise.all([
       loadCustomersPage(session.shopId),
-      loadWeatherSuggestions(session.shopId, getSupabase()),
+      // The weather panel is a secondary, opt-in surface: a transient error or
+      // schema drift on it must degrade to "no suggestions", never take down the
+      // whole Customers screen (headline stats + buyer list).
+      loadWeatherSuggestions(session.shopId, getSupabase()).catch((err) => {
+        console.error("[customers] weather suggestions load failed; showing none", err);
+        return [];
+      }),
     ]);
     return { ...page, weatherSuggestions };
   });
