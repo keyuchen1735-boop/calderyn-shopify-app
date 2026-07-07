@@ -49,6 +49,11 @@ export interface ProductSeoDetailVM {
 
 export const fetchSearch = () => apiGet<SeoOverviewVM>("/dashboard/api/search");
 
+// The dead-simple Search screen's own read: settings only (no health score,
+// no per-product rows). The loader now returns { settings } for a GET.
+export const fetchSearchSettings = (): Promise<SeoSettings> =>
+  apiGet<{ settings: SeoSettings }>("/dashboard/api/search").then((r) => r.settings);
+
 export const loadProductDetail = (handle: string) =>
   apiSend<ProductSeoDetailVM>("POST", "/dashboard/api/search", { action: "detail", handle });
 

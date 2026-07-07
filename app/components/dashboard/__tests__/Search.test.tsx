@@ -4,17 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 // No real network: renderToStaticMarkup does not run effects, but mock anyway so
 // an accidental call is inert.
 vi.mock("~/lib/dashboard/search-client", () => ({
-  fetchSearch: vi.fn().mockResolvedValue(null),
-  loadProductDetail: vi.fn(),
-  saveOverride: vi.fn(),
-  resetOverride: vi.fn(),
+  fetchSearchSettings: vi.fn().mockResolvedValue(null),
   updateSettings: vi.fn(),
-  connectGoogleSearchConsole: vi.fn(),
-  disconnectGoogleSearchConsole: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search, { loadSearchOverview, loadSearchProductDetail, ProductLoadError } from "../screens/Search";
+import Search, { loadSearchSettings, saveAllowAiCrawlers } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
@@ -22,39 +17,30 @@ import { parsePath, pathFor } from "../routes";
 // eslint-disable-next-line import/first
 import type { DashboardCtx } from "../context";
 // eslint-disable-next-line import/first
-import { fetchSearch, loadProductDetail } from "~/lib/dashboard/search-client";
+import { fetchSearchSettings, updateSettings } from "~/lib/dashboard/search-client";
 // eslint-disable-next-line import/first
-import type { ProductSeoDetailVM, SeoOverviewVM } from "~/lib/dashboard/search-client";
+import type { SeoSettings } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
-const overview = {
-  storeHealth: 82,
-  productCount: 3,
-  needsAttention: [
-    { id: "p1", handle: "cedar", title: "Cedar Bloom", score: 71, topIssue: "Meta description", hasOverride: false },
-  ],
-  aiCrawls: [
-    { botName: "GPTBot", hits: 1200 },
-    { botName: "PerplexityBot", hits: 40 },
-  ],
-  aiCrawlTotal: 1240,
-  settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
-  google: { connected: false, clicks: 0, impressions: 0, topQuery: null, topPosition: null },
-};
+const settings: SeoSettings = { allowAiCrawlers: true, orgName: null, orgDescription: null };
 
-beforeEach(() => clearScreenCache());
+beforeEach(() => {
+  clearScreenCache();
+  vi.clearAllMocks();
+});
 
 describe("Search screen (smoke)", () => {
-  it("renders the seeded overview without crashing", () => {
-    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
+  it("renders the auto-optimized status and the AI-access toggle without crashing", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, settings);
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Search");
-    expect(html).toContain("82"); // store health
-    expect(html).toContain("Cedar Bloom"); // needs-attention row
-    expect(html).toContain("Meta description"); // plain top issue
-    expect(html).toContain("Fix it"); // row action
-    expect(html).toContain("ChatGPT"); // friendly assistant name for GPTBot
-    expect(html).toContain("1,240"); // AI-visit total
+    expect(html).toContain("How your store looks to Google and AI assistants.");
+    expect(html).toContain("Your store is optimized, automatically.");
+    expect(html).toContain(
+      "Every product page is written for Google and AI assistants the moment you publish it. There is nothing to set up.",
+    );
+    expect(html).toContain("Let AI assistants read and cite my store");
+    expect(html).toContain('role="switch"');
   });
 
   it("shows the skeleton before any data is cached", () => {
@@ -62,114 +48,81 @@ describe("Search screen (smoke)", () => {
     expect(html).toContain("cd-skel");
   });
 
-  it("shows the empty-catalog copy at zero products", () => {
-    cacheScreenData(SCREEN_CACHE_KEYS.search, { ...overview, productCount: 0, needsAttention: [] });
-    const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("automatically optimized for search and AI");
-  });
-
-  it("keeps Settings reachable even with zero products", () => {
-    cacheScreenData(SCREEN_CACHE_KEYS.search, { ...overview, productCount: 0, needsAttention: [] });
-    const html = renderToStaticMarkup(<Search app={app} />);
-    // The empty-catalog placeholder still shows...
-    expect(html).toContain("automatically optimized for search and AI");
-    // ...and a brand-new merchant can still reach the AI-crawler toggle and
-    // store description fields without adding a product first.
-    expect(html).toContain("Let AI assistants read and cite my store");
-    expect(html).toContain("Store name");
-    expect(html).toContain("One-line description");
-  });
-
-  it("shows the current store name and description in Settings", () => {
+  it("seeds the optional description field from settings.orgDescription", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, {
-      ...overview,
-      settings: { ...overview.settings, orgName: "Cedar Bloom Co", orgDescription: "Hand-poured candles for home." },
+      ...settings,
+      orgDescription: "Hand-poured candles for home.",
     });
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain('value="Cedar Bloom Co"');
+    expect(html).toContain("How your store is described to Google (optional)");
     expect(html).toContain('value="Hand-poured candles for home."');
   });
 });
 
-describe("Search overview load/retry", () => {
+describe("Search settings load/retry", () => {
   it("flags a friendly load error when the fetch fails, and clears it on a successful retry", async () => {
-    const data: SeoOverviewVM[] = [];
+    const data: SeoSettings[] = [];
     const errors: boolean[] = [];
-    const setData = (state: SeoOverviewVM) => data.push(state);
+    const setData = (state: SeoSettings) => data.push(state);
     const setLoadError = (failed: boolean) => errors.push(failed);
 
-    vi.mocked(fetchSearch).mockRejectedValueOnce(new Error("network down"));
-    await loadSearchOverview(setData, setLoadError);
+    vi.mocked(fetchSearchSettings).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchSettings(setData, setLoadError);
     expect(errors).toEqual([true]);
     expect(data).toEqual([]);
 
     // The Retry button re-calls the exact same function; a successful retry
-    // must clear the error and deliver the fresh overview.
-    vi.mocked(fetchSearch).mockResolvedValueOnce(overview);
-    await loadSearchOverview(setData, setLoadError);
+    // must clear the error and deliver the fresh settings.
+    vi.mocked(fetchSearchSettings).mockResolvedValueOnce(settings);
+    await loadSearchSettings(setData, setLoadError);
     expect(errors).toEqual([true, false]);
-    expect(data).toEqual([overview]);
+    expect(data).toEqual([settings]);
   });
 
   it("invokes onError on a failed background refresh, but not on success", async () => {
     let onErrorCalls = 0;
-    const onError = () => { onErrorCalls++; };
+    const onError = () => {
+      onErrorCalls++;
+    };
 
-    vi.mocked(fetchSearch).mockRejectedValueOnce(new Error("network down"));
-    await loadSearchOverview(() => {}, () => {}, onError);
+    vi.mocked(fetchSearchSettings).mockRejectedValueOnce(new Error("network down"));
+    await loadSearchSettings(() => {}, () => {}, onError);
     expect(onErrorCalls).toBe(1); // a stale-data refresh failure surfaces to the caller
 
-    vi.mocked(fetchSearch).mockResolvedValueOnce(overview);
-    await loadSearchOverview(() => {}, () => {}, onError);
+    vi.mocked(fetchSearchSettings).mockResolvedValueOnce(settings);
+    await loadSearchSettings(() => {}, () => {}, onError);
     expect(onErrorCalls).toBe(1); // not called again on a successful refresh
   });
 });
 
-describe("Search product editor load/retry", () => {
-  const productDetail: ProductSeoDetailVM = {
-    id: "p1",
-    handle: "cedar",
-    title: "Cedar Bloom",
-    googlePreview: {
-      title: "Cedar Bloom",
-      url: "https://example.com/products/cedar",
-      description: "A cedar bloom candle.",
-    },
-    health: { score: 71, checks: [] },
-    override: null,
-    aiSummary: "",
-  };
-
-  it("reports a load error when the detail fetch fails, and loads on a successful retry", async () => {
-    const loaded: ProductSeoDetailVM[] = [];
-    let errored = 0;
-
-    vi.mocked(loadProductDetail).mockRejectedValueOnce(new Error("network down"));
-    await loadSearchProductDetail(
-      "cedar",
-      (d) => loaded.push(d),
-      () => errored++,
+describe("Search AI-access toggle", () => {
+  it("toggling calls updateSettings with the new allowAiCrawlers flag and reports success", async () => {
+    vi.mocked(updateSettings).mockResolvedValueOnce({
+      settings: { ...settings, allowAiCrawlers: false },
+    });
+    let saved = 0;
+    await saveAllowAiCrawlers(
+      false,
+      () => {
+        saved++;
+      },
+      () => {},
     );
-    expect(errored).toBe(1);
-    expect(loaded).toEqual([]);
-
-    // The Try again button re-calls the exact same function.
-    vi.mocked(loadProductDetail).mockResolvedValueOnce(productDetail);
-    await loadSearchProductDetail(
-      "cedar",
-      (d) => loaded.push(d),
-      () => errored++,
-    );
-    expect(errored).toBe(1);
-    expect(loaded).toEqual([productDetail]);
+    expect(updateSettings).toHaveBeenCalledWith({ allowAiCrawlers: false });
+    expect(saved).toBe(1);
   });
 
-  it("renders a calm message with Back and Try again controls", () => {
-    const html = renderToStaticMarkup(<ProductLoadError onBack={() => {}} onRetry={() => {}} />);
-    // JSX text content HTML-escapes the apostrophe.
-    expect(html).toContain("We couldn&#x27;t load this page.");
-    expect(html).toContain("Back");
-    expect(html).toContain("Try again");
+  it("reports an error instead of saved when the request fails", async () => {
+    vi.mocked(updateSettings).mockRejectedValueOnce(new Error("network down"));
+    let errored = 0;
+    await saveAllowAiCrawlers(
+      true,
+      () => {},
+      () => {
+        errored++;
+      },
+    );
+    expect(errored).toBe(1);
   });
 });
 

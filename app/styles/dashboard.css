@@ -2339,6 +2339,14 @@
 .cd-seo__title { font-size: calc(22px * var(--type-scale)); font-weight: 600; letter-spacing: -0.02em; color: var(--text-1); margin: 0; }
 .cd-seo__lede { font-size: calc(13.5px * var(--type-scale)); color: var(--text-2); margin: 0; letter-spacing: -0.006em; }
 
+/* Status card: confirms the engine already optimizes every page, so it is the
+   one thing a merchant needs to trust before leaving the screen. Icon sits
+   beside a bold headline, with a calmer explanation line below. */
+.cd-seo__status { display: flex; align-items: flex-start; gap: 12px; }
+.cd-seo__status-ic { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: var(--green-bg); color: var(--green); flex: 0 0 auto; margin-top: 1px; }
+.cd-seo__status-title { font-size: calc(14.5px * var(--type-scale)); font-weight: 650; color: var(--text-1); letter-spacing: -0.01em; margin: 0 0 5px; }
+.cd-seo__status-sub { font-size: calc(13px * var(--type-scale)); color: var(--text-2); line-height: 1.5; margin: 0; letter-spacing: -0.004em; max-width: 62ch; }
+
 /* Store-health metric: number-forward, tone driven by score. */
 .cd-seo__health { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: 0 0 auto; }
 .cd-seo__health-lab { font-size: calc(11.5px * var(--type-scale)); color: var(--text-3); font-weight: 500; letter-spacing: -0.002em; }

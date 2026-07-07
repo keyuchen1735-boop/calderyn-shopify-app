@@ -8,7 +8,7 @@ import { loader, action } from "../dashboard.api.search";
 const {
   requireDashboardSessionMock,
   requireSameOriginMock,
-  buildSeoOverviewMock,
+  getSeoSettingsMock,
   getProductSeoDetailMock,
   getShopStorefrontOriginMock,
   upsertSeoOverrideMock,
@@ -21,14 +21,7 @@ const {
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
-  buildSeoOverviewMock: vi.fn().mockResolvedValue({
-    storeHealth: 82,
-    productCount: 3,
-    needsAttention: [],
-    aiCrawls: [],
-    aiCrawlTotal: 0,
-    settings: { allowAiCrawlers: true, orgName: null, orgDescription: null },
-  }),
+  getSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: true, orgName: null, orgDescription: null }),
   getProductSeoDetailMock: vi.fn().mockResolvedValue({
     id: "p1",
     handle: "cedar",
@@ -56,11 +49,11 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   jsonError: (s: number, e: string, m?: string) => new Response(JSON.stringify({ error: e, message: m }), { status: s }),
 }));
 vi.mock("~/lib/seo/overview.server", () => ({
-  buildSeoOverview: buildSeoOverviewMock,
   getProductSeoDetail: getProductSeoDetailMock,
   getShopStorefrontOrigin: getShopStorefrontOriginMock,
 }));
 vi.mock("~/lib/seo/seo-store.server", () => ({
+  getSeoSettings: getSeoSettingsMock,
   upsertSeoOverride: upsertSeoOverrideMock,
   deleteSeoOverride: deleteSeoOverrideMock,
   upsertSeoSettings: upsertSeoSettingsMock,
@@ -83,11 +76,11 @@ function req(body?: unknown, method = "POST") {
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("dashboard.api.search loader", () => {
-  it("returns the overview for the session shop + resolved origin", async () => {
+  it("returns this shop's SEO settings", async () => {
     const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(buildSeoOverviewMock).toHaveBeenCalledWith("shop1", "https://ember.calderyncompany.com");
-    expect((await res.json()).storeHealth).toBe(82);
+    expect(getSeoSettingsMock).toHaveBeenCalledWith("shop1");
+    expect((await res.json()).settings).toEqual({ allowAiCrawlers: true, orgName: null, orgDescription: null });
   });
 });
 
