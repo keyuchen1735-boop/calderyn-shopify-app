@@ -2413,3 +2413,34 @@
   .cd-seo__inputwrap { flex: 1 1 auto; }
   .cd-seo__input { width: 100%; }
 }
+
+/* ---- mapcn (MapLibre map primitives, app/components/ui/mapcn-map.tsx) ---- */
+.mapcn { position: relative; height: 100%; width: 100%; }
+.mapcn-loader { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: var(--card); backdrop-filter: blur(2px); }
+.mapcn-loader-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: mapcn-pulse 1s ease-in-out infinite; }
+@keyframes mapcn-pulse { 50% { opacity: 0.35; } }
+.mapcn-marker { position: relative; cursor: pointer; }
+.mapcn-pin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+.mapcn-popup { position: relative; max-width: 248px; border-radius: 10px; border: 0.5px solid var(--hairline-strong); background: var(--card-solid); color: var(--text-1); padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); animation: mapcn-in 0.2s ease-out; }
+.mapcn-tooltip { pointer-events: none; border-radius: 8px; padding: 4px 8px; font-size: 11.5px; background: var(--card-solid); color: var(--text-1); border: 0.5px solid var(--hairline-strong); box-shadow: 0 4px 14px rgba(0,0,0,0.16); text-wrap: balance; animation: mapcn-in 0.2s ease-out; }
+@keyframes mapcn-in { from { opacity: 0; transform: scale(0.95); } }
+.mapcn-label { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 10px; font-weight: 600; color: var(--text-1); text-shadow: 0 0 3px var(--card-solid); }
+.mapcn-label-top { bottom: 100%; margin-bottom: 4px; }
+.mapcn-label-bottom { top: 100%; margin-top: 4px; }
+.mapcn-close { position: absolute; top: 4px; right: 4px; z-index: 10; display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: none; color: var(--text-1); cursor: pointer; }
+.mapcn-close:hover { background: var(--hairline); }
+.mapcn-controls { position: absolute; z-index: 10; display: flex; flex-direction: column; gap: 6px; }
+.mapcn-controls-tl { top: 8px; left: 8px; }
+.mapcn-controls-tr { top: 8px; right: 8px; }
+.mapcn-controls-bl { bottom: 8px; left: 8px; }
+.mapcn-controls-br { bottom: 40px; right: 8px; }
+.mapcn-ctlgroup { display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; border: 0.5px solid var(--hairline-strong); background: var(--card-solid); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.mapcn-ctlgroup > button:not(:last-child) { border-bottom: 0.5px solid var(--hairline-strong); }
+.mapcn-ctlbtn { display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; border: 0; background: none; color: var(--text-1); cursor: pointer; transition: background 0.15s ease; }
+.mapcn-ctlbtn:hover { background: var(--hairline); }
+.mapcn-ctlbtn:disabled { pointer-events: none; opacity: 0.5; }
+.mapcn-spin { animation: cd-spin 1s linear infinite; }
+/* Weather region badge rendered inside map markers. */
+.mapcn-region { display: flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; border: 1.5px solid var(--hairline-strong); background: var(--card-solid); color: var(--text-1); font-size: 12px; font-weight: 650; box-shadow: 0 3px 10px rgba(0,0,0,0.18); }
+.mapcn-region[data-demand="high"] { border-color: var(--green); }
+.mapcn-region[data-demand="up"] { border-color: var(--orange); }

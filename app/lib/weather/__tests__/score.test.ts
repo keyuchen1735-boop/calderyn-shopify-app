@@ -24,6 +24,11 @@ describe("favorability", () => {
   it("is monotonic: shorter daylight scores higher", () => {
     expect(favorability({ ...base, avgDaylightH: 8 })).toBeGreaterThan(favorability({ ...base, avgDaylightH: 11 }));
   });
+  it("a plainly rainy window reads as elevated demand even when warm", () => {
+    // 10mm+/window is the "rain" condition threshold; the card label turns
+    // at 0.2, so rain alone must clear it without help from cold/darkness.
+    expect(favorability({ ...base, precipMm: 10 })).toBeGreaterThanOrEqual(0.2);
+  });
   it("cold+rain beats warm+clear (the core hypothesis)", () => {
     const coldRain = favorability({ avgTempC: 2, precipMm: 25, snowCm: 3, avgDaylightH: 9 });
     const warmClear = favorability({ avgTempC: 28, precipMm: 0, snowCm: 0, avgDaylightH: 14 });
