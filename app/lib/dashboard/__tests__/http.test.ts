@@ -56,6 +56,18 @@ describe("requireSameOrigin", () => {
     expect(() => requireSameOrigin(req("https://ok.example.com"))).not.toThrow();
     expect(() => requireSameOrigin(req("https://app.calderyncompany.com"))).not.toThrow();
   });
+  it("returns the validated origin (redirect base for merchant flows)", () => {
+    expect(requireSameOrigin(req("https://app.calderyncompany.com"))).toBe(
+      "https://app.calderyncompany.com",
+    );
+  });
+  it("fails closed on a present-but-empty Origin header even with an allowlisted Referer", () => {
+    const r = new Request("https://calderyncompany.com/dashboard/api/x", {
+      method: "POST",
+      headers: { Origin: "", Referer: "https://calderyncompany.com/dashboard" },
+    });
+    expect(() => requireSameOrigin(r)).toThrow();
+  });
 });
 
 describe("checkSameOrigin (non-throwing form for page routes)", () => {

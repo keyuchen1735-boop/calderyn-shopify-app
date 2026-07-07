@@ -36,7 +36,10 @@ export function jsonError(status: number, error: string, message?: string): Resp
 function allowedOrigins(): string[] {
   // DASHBOARD_ALLOWED_ORIGINS: comma-separated extra origins that may submit
   // state-changing requests — e.g. the marketing apex, whose /dashboard/* proxy
-  // forwards auth posts here with its own Origin header.
+  // forwards auth posts here with its own Origin header. NOTE: every origin here
+  // is also a host merchant-flow redirects may return to (requireSameOrigin's
+  // return value seeds e.g. the Stripe test-transaction return URLs) — only list
+  // origins that actually serve the dashboard.
   const candidates = [
     process.env.DASHBOARD_PUBLIC_URL,
     process.env.SHOPIFY_APP_URL,
@@ -77,26 +80,40 @@ export function publicBaseUrl(): string {
  * ErrorBoundary and surfaces as a 500 error page instead of the 403 JSON).
  */
 export function checkSameOrigin(request: Request): Response | null {
-  const origin =
-    request.headers.get("Origin") ??
-    (() => {
-      const ref = request.headers.get("Referer");
-      try {
-        return ref ? new URL(ref).origin : null;
-      } catch {
-        return null;
-      }
-    })();
-  if (!origin || !allowedOrigins().includes(origin)) {
-    return jsonError(403, "bad_origin");
-  }
-  return null;
+  return validatedOrigin(request) ? null : jsonError(403, "bad_origin");
 }
 
-/** Throwing form of checkSameOrigin for resource routes (no page to render). */
-export function requireSameOrigin(request: Request): void {
-  const bad = checkSameOrigin(request);
-  if (bad) throw bad;
+/**
+ * The browser origin this request came from (Origin header when PRESENT — even
+ * empty, which then fails the allowlist rather than falling through — else the
+ * Referer's origin), or null when neither is present/parseable.
+ */
+function requestOrigin(request: Request): string | null {
+  const origin = request.headers.get("Origin");
+  if (origin !== null) return origin;
+  const ref = request.headers.get("Referer");
+  try {
+    return ref ? new URL(ref).origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The request's origin iff it is on the allowlist, else null. */
+function validatedOrigin(request: Request): string | null {
+  const origin = requestOrigin(request);
+  return origin && allowedOrigins().includes(origin) ? origin : null;
+}
+
+/**
+ * Throwing form of checkSameOrigin for resource routes (no page to render).
+ * Returns the validated origin — an allowlisted dashboard host, the right base for
+ * redirect URLs that must land where the caller's session cookie lives.
+ */
+export function requireSameOrigin(request: Request): string {
+  const origin = validatedOrigin(request);
+  if (!origin) throw jsonError(403, "bad_origin");
+  return origin;
 }
 
 /**
