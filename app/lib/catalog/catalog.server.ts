@@ -381,13 +381,41 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   if (error) throw error;
   if (!updated?.length) notFound();
 
+  // Guard BEFORE any destructive child write: inventory_balance.variant_id (and
+  // buyer holds) reference variant_dim ON DELETE CASCADE, so removing a variant
+  // that still has on-hand or reserved units would silently wipe live stock and
+  // orphan held reservations. Refuse the edit and tell the merchant to clear that
+  // stock first. Runs first so a block leaves options/collections/variants intact.
+  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
+  const removedSel = sb.from("variant_dim").select("id").eq("shop_id", shopId).eq("product_id", productId);
+  const { data: removedRows, error: remErr } = keepIds.length ? await removedSel.notIn("id", keepIds) : await removedSel;
+  if (remErr) throw remErr;
+  const removedIds = (removedRows ?? []).map((r: Record<string, unknown>) => String(r.id));
+  if (removedIds.length) {
+    const { data: balances, error: balErr } = await sb
+      .from("inventory_balance")
+      .select("variant_id, on_hand, reserved")
+      .eq("shop_id", shopId)
+      .in("variant_id", removedIds);
+    if (balErr) throw balErr;
+    const hasLiveStock = (balances ?? []).some(
+      (b: Record<string, unknown>) => Number(b.on_hand ?? 0) > 0 || Number(b.reserved ?? 0) > 0,
+    );
+    if (hasLiveStock) {
+      throw new CalderynError({
+        code: "variant_has_stock",
+        status: 409,
+        message: "Clear on-hand and reserved stock before removing a variant.",
+      });
+    }
+  }
+
   // Options/values + collections: safe to wipe + rewrite (no external refs).
   await sb.from("product_option").delete().eq("product_id", productId); // cascades option_values
   await sb.from("product_collection").delete().eq("product_id", productId);
   const perOption = await writeOptions(sb, productId, input.options ?? []);
 
   // Variants: delete only the ones the merchant removed; keep the rest by id.
-  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
   const baseDel = sb.from("variant_dim").delete().eq("product_id", productId);
   const { error: delErr } = keepIds.length ? await baseDel.notIn("id", keepIds) : await baseDel;
   if (delErr) throw delErr;
@@ -461,10 +489,18 @@ export async function listCollections(shopId: string): Promise<Array<{ id: strin
 }
 
 export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {
-  const handle = collectionHandle(title);
-  const { data, error } = await getSupabase().from("collection_dim").insert({ shop_id: shopId, title: title.trim(), handle }).select("id").single();
-  if (error) throw error;
-  return { id: String(data.id) };
+  const sb = getSupabase();
+  const base = collectionHandle(title);
+  // Distinct titles can slugify to the same handle (e.g. "Summer Sale" and
+  // "summer sale!"), which collides with unique(shop_id, handle). Retry with a
+  // random suffix on 23505 (mirroring productHandle) instead of an opaque 500.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const handle = attempt === 0 ? base : `${base}-${randomBytes(3).toString("hex")}`;
+    const { data, error } = await sb.from("collection_dim").insert({ shop_id: shopId, title: title.trim(), handle }).select("id").single();
+    if (!error) return { id: String(data.id) };
+    if ((error as { code?: string }).code !== "23505" || attempt === 2) throw error;
+  }
+  throw new CalderynError({ code: "handle_conflict", status: 409, message: "could not allocate a unique collection handle" });
 }
 
 export async function setVariantPrice(
