@@ -63,25 +63,56 @@ export async function consumeResetToken(raw: string): Promise<{ userId: string }
 export async function requestPasswordReset(email: string, baseUrl: string): Promise<void> {
   const user = await findUserByEmail(email);
   if (!user) return; // silent: never reveal whether the email exists
-  const { raw } = await createResetToken(user.id, "reset");
-  const link = `${baseUrl}/dashboard/reset/confirm?t=${encodeURIComponent(raw)}`;
-  await sendEmail({
-    apiKey: process.env.RESEND_API_KEY ?? "",
-    from: process.env.PILOT_FROM ?? "Calderyn <onboarding@calderyncompany.com>",
-    to: email,
-    subject: "Reset your Calderyn password",
-    text: `Use this link to set a new password (valid for 1 hour):\n\n${link}\n\nIf you didn't request this, ignore this email.`,
-  });
+
+  // Anti-enumeration also covers TIMING: awaiting the token INSERT + the network
+  // email POST made a registered address respond ~200ms slower than an unknown
+  // one. Mint + send off the response path so the caller returns after the same
+  // single lookup either way. waitUntil keeps the task alive after the response
+  // on Vercel; locally/in tests it's awaited so the mail still goes out. A send
+  // failure is logged, never surfaced — the response must look identical whether
+  // or not the account exists.
+  const deliver = (async () => {
+    const { raw } = await createResetToken(user.id, "reset");
+    const link = `${baseUrl}/dashboard/reset/confirm?t=${encodeURIComponent(raw)}`;
+    await sendEmail({
+      apiKey: process.env.RESEND_API_KEY ?? "",
+      from: process.env.PILOT_FROM ?? "Calderyn <onboarding@calderyncompany.com>",
+      to: email,
+      subject: "Reset your Calderyn password",
+      text: `Use this link to set a new password (valid for 1 hour):\n\n${link}\n\nIf you didn't request this, ignore this email.`,
+    });
+  })().catch((err) => console.error("[reset] delivery failed", err));
+
+  try {
+    const { waitUntil } = await import("@vercel/functions");
+    waitUntil(deliver);
+  } catch {
+    await deliver;
+  }
 }
 
 export async function setPasswordWithToken(raw: string, newPassword: string): Promise<boolean> {
   const consumed = await consumeResetToken(raw);
   if (!consumed) return false;
-  const { error } = await getSupabase()
+  const sb = getSupabase();
+  const { error } = await sb
     .from("users")
-    .update({ password_hash: hashPassword(newPassword), updated_at: new Date().toISOString() })
+    // Setting the password proves control of the mailbox the reset link was sent
+    // to, so mark the email verified — otherwise a user who never clicked the
+    // verify link but did "Forgot password" stays stuck at the verify gate.
+    .update({ password_hash: hashPassword(newPassword), email_verified: true, updated_at: new Date().toISOString() })
     .eq("id", consumed.userId);
   if (error) throw error;
+  // Void every OTHER outstanding reset/set-password token for this user: a second
+  // live link (a double "send reset", or one captured during brief mailbox
+  // access) must not remain a usable ATO primitive after the account is secured.
+  const { error: voidErr } = await sb
+    .from("password_reset_token")
+    .update({ used_at: new Date().toISOString() })
+    .eq("user_id", consumed.userId)
+    .in("purpose", ["reset", "set_password"])
+    .is("used_at", null);
+  if (voidErr) throw voidErr;
   // Security: a password reset must kill every existing session for this user,
   // so a stolen or forgotten login cannot survive the reset.
   // If revocation throws, we surface a 500 rather than swallowing it: the
