@@ -5,6 +5,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 // verifies the actual expiring Set-Cookie the confirmation page emits.
 const resolveStorefrontShop = vi.fn();
 const findOrderByConfirmationToken = vi.fn();
+const getCartState = vi.fn();
 
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
@@ -14,23 +15,47 @@ vi.mock("~/lib/order/checkout.server", () => ({
   // real-ish ref formatter so the loader payload is exercised end to end
   formatOrderRef: (id: string) => `#${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`,
 }));
+vi.mock("~/lib/order/cart.server", () => ({
+  getCartState: (...a: unknown[]) => getCartState(...a),
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
+import { commitCartId } from "~/lib/storefront/cart-cookie.server";
+// eslint-disable-next-line import/first
 import { loader } from "../storefront.checkout.confirmation.$token";
 
 const SECRET = "test-app-secret-0000000000000000000000000000";
 
-const args = (token: string | undefined) =>
+const args = (token: string | undefined, cookie?: string) =>
   ({
-    request: new Request(`https://shop.example/storefront/checkout/confirmation/${token ?? ""}`),
+    request: new Request(`https://shop.example/storefront/checkout/confirmation/${token ?? ""}`, {
+      headers: cookie ? { Cookie: cookie } : {},
+    }),
     params: { token },
     context: {},
   }) as unknown as LoaderFunctionArgs;
+
+const PAID_ORDER = {
+  orderId: "11112222-3333-4444-5555-666677778888",
+  state: "paid",
+  subtotalCents: 3998,
+  shippingCents: 0,
+  taxCents: 0,
+  totalCents: 3998,
+  currency: "usd",
+  createdAt: "2026-06-29T00:00:00Z",
+  lines: [{ title: "Tee", quantity: 2, unitPriceCents: 1999 }],
+};
+
+async function cartCookie(id: string): Promise<string> {
+  return (await commitCartId(id)).split(";")[0];
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.SHOPIFY_API_SECRET = SECRET;
   resolveStorefrontShop.mockResolvedValue("shop-1");
+  getCartState.mockResolvedValue(null);
 });
 
 describe("confirmation loader — IDOR safety", () => {
@@ -76,7 +101,27 @@ describe("confirmation loader — IDOR safety", () => {
     expect(body.totalCents).toBe(3998);
     expect(body.lines).toEqual([{ title: "Tee", quantity: 2 }]);
 
-    // Cart cookie is cleared on successful confirmation.
+    // Cart cookie is cleared on successful confirmation (no cart cookie here -> safe to clear).
+    const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
+    expect(setCookie).toContain("cd_cart=");
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  it("does NOT wipe the buyer's ACTIVE cart when viewing a past paid order's confirmation", async () => {
+    // Buyer has an in-progress cart (state 'cart') and opens an old paid receipt from account history.
+    findOrderByConfirmationToken.mockResolvedValue(PAID_ORDER);
+    getCartState.mockResolvedValue("cart"); // active basket, NOT the purchased (consumed) cart
+    const res = await loader(args("good-token", await cartCookie("active-cart-B")));
+    // The confirmation renders, but the active cart cookie is preserved (no clearing Set-Cookie).
+    const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
+    expect(setCookie).not.toContain("Max-Age=0");
+    expect(getCartState).toHaveBeenCalledWith("shop-1", "active-cart-B");
+  });
+
+  it("clears the cookie when it points at the CONSUMED (checkout_pending) cart that was purchased", async () => {
+    findOrderByConfirmationToken.mockResolvedValue(PAID_ORDER);
+    getCartState.mockResolvedValue("checkout_pending"); // the just-purchased cart
+    const res = await loader(args("good-token", await cartCookie("purchased-cart-A")));
     const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
     expect(setCookie).toContain("cd_cart=");
     expect(setCookie).toContain("Max-Age=0");

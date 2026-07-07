@@ -258,6 +258,25 @@ export async function removeCartLine(shopId: string, cartId: string, lineId: str
   if (error) throw error;
 }
 
+/**
+ * The lifecycle state of a cart ('cart' | 'checkout_pending'), or null if the cart doesn't exist
+ * for this shop. Used by the confirmation page to tell a CONSUMED cart (checkout_pending — the one
+ * that was just purchased) from a fresh ACTIVE basket ('cart'), so it only clears the former's
+ * cookie and never wipes an in-progress cart the buyer is building.
+ */
+export async function getCartState(shopId: string, cartId: string): Promise<string | null> {
+  if (!shopId || !cartId) return null;
+  assertPersistableShop(shopId);
+  const { data, error } = await getSupabase()
+    .from("cart")
+    .select("state")
+    .eq("shop_id", shopId)
+    .eq("id", cartId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? String((data as Record<string, unknown>).state) : null;
+}
+
 /** Empty a cart: delete every line. Shop + cart scoped; an already-empty cart is a harmless no-op. */
 export async function clearCart(shopId: string, cartId: string): Promise<void> {
   if (!shopId) throw new Error("shopId is required");
