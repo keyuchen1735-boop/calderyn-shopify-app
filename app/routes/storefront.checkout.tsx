@@ -15,7 +15,7 @@ import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
 import { priceCart } from "~/lib/order/cart.server";
-import { createCheckout } from "~/lib/order/checkout.server";
+import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { getBuyerSession } from "~/lib/buyer/session.server";
 import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.server";
@@ -280,6 +280,15 @@ export async function action({ request }: ActionFunctionArgs) {
       currency: result.currency,
     });
   } catch (err) {
+    // One or more items sold out between add-to-cart and checkout: surface an actionable 409 so
+    // the buyer knows to remove the sold-out line, rather than an opaque "try again" 502 they'd
+    // hit forever. The order was already cancelled + holds released inside createCheckout.
+    if (err instanceof OutOfStockError) {
+      return json(
+        { error: "One or more items in your cart just sold out. Please remove them and try again." },
+        { status: 409 },
+      );
+    }
     console.error(`[checkout] failed to originate checkout for shop ${shopId}, cart ${cartId}:`, err);
     return json({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
   }

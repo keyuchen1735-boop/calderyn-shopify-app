@@ -3,6 +3,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
 import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
+import { commitReservation } from "~/lib/inventory/engine.server";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
 import { getStripe } from "./stripe-client.server";
@@ -184,12 +185,11 @@ export async function processStripeEvent(
       // rather than silently dropping the paid signal.
       console.warn(`[stripe] PI ${pi.id} succeeded but carries no order_ref metadata; no order transitioned`);
     } else {
-      // STATE TRANSITION — first delivery ONLY (gated on record_stripe_event==true, the unique
-      // stripe_event row). Only checkout_pending -> paid is legal; the state machine REJECTS
-      // (throws) a force-pay of any other state, so an already-paid/cancelled order is never
-      // silently re-paid. The hard invariant: an order reaches `paid` ONLY here, after Stripe
-      // confirms capture. We do NOT re-transition on a redelivery (idempotency of the SoT).
+      // STATE TRANSITION — an order reaches `paid` ONLY here, after Stripe confirms capture. Only
+      // checkout_pending -> paid is legal; the state machine REJECTS (throws) a force-pay of any
+      // other state, so an already-paid/cancelled order is never silently re-paid.
       if (processed) {
+        // First delivery: perform the SoT transition + at-most-once confirmation email.
         await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
 
         // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
@@ -197,6 +197,15 @@ export async function processStripeEvent(
         // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
         // can never break payment processing or trigger a Stripe retry storm.
         await sendOrderConfirmation(shopId, orderRef);
+      } else {
+        // REDELIVERY SELF-HEAL (rule 12): a first-delivery TRANSIENT failure AFTER
+        // record_stripe_event committed but BEFORE the paid transition leaves the event recorded
+        // yet the order still checkout_pending. Because the event is now dedup-gated, the
+        // transition would otherwise be skipped FOREVER — stranding a captured (money-in) order in
+        // checkout_pending, shown as "Abandoned", never fulfilled, no confirmation email. Re-drive
+        // the transition on Stripe's redelivery, but ONLY while the order is still checkout_pending;
+        // an already-paid order (the ordinary duplicate) is a guarded no-op.
+        await recoverStrandedPaidOrder(shopId, orderRef);
       }
 
       // Keep the OLTP money table consistent with order_fact: stamp financial_status='paid'. This
@@ -227,7 +236,35 @@ export async function processStripeEvent(
       // record_stripe_event security-definer RPC; gating-on-first-delivery + self-healing emit is
       // the pilot guard.
       await emitPaidOrder(shopId, orderRef, new Date(event.created * 1000).toISOString());
+
+      // COMMIT INVENTORY — turn the checkout's held reservations (keyed on the order id) into real
+      // on_hand decrements. Runs on ANY succeeded delivery like emitPaidOrder: inventory_commit
+      // only flips still-`held` rows to `committed`, so a redelivery finds nothing held and no-ops
+      // (idempotent + self-healing). Untracked/digital orders simply have no held rows to commit.
+      // This is the counterpart to createCheckout's reserveStock — reserve at checkout, commit on
+      // payment — that makes the storefront path actually decrement stock instead of overselling.
+      await commitReservation(shopId, orderRef);
     }
   }
   return { status: 200, processed, duplicate: !processed };
+}
+
+/**
+ * Re-drive a stranded checkout_pending order to `paid` on a Stripe REDELIVERY. Only acts while the
+ * order is still checkout_pending — the fingerprint of a first-delivery transient failure that
+ * recorded the event but never transitioned the order. An order that already reached paid (the
+ * ordinary duplicate delivery) or any other state is a no-op, so this never re-pays. The
+ * confirmation email is sent exactly once: only on the redelivery that actually recovers the order.
+ */
+async function recoverStrandedPaidOrder(shopId: string, orderRef: string): Promise<void> {
+  const cur = await getSupabase()
+    .from("orders")
+    .select("state")
+    .eq("shop_id", shopId)
+    .eq("id", orderRef)
+    .maybeSingle();
+  if (cur.error) throw cur.error;
+  if (!cur.data || String((cur.data as Record<string, unknown>).state) !== "checkout_pending") return;
+  await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded:recovery");
+  await sendOrderConfirmation(shopId, orderRef);
 }
