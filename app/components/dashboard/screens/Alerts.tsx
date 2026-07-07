@@ -249,10 +249,10 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
       </div>
       {resolved ? (
         isWeather ? (
-          // Arm/dismiss write no audit row, and an armed move's control
-          // (Disarm) lives on the Weather tab — don't point at Audit.
+          // Schedule/reject write no audit row, and a scheduled move's control
+          // (Cancel) lives on the Weather tab — don't point at Audit.
           <p className="cd-caption" style={{ marginTop: 10 }}>
-            Handled. Armed moves stay visible — and can be disarmed — on the Weather tab.
+            Handled. Scheduled moves stay visible — and can be cancelled — on the Weather tab.
           </p>
         ) : (
           <p className="cd-caption" style={{ marginTop: 10 }}>
@@ -272,7 +272,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                 onClick={() => runWeather("arm")}
               >
                 <CDIcon name="bolt" size={16} strokeWidth={1.9} />
-                <span className="flex-1 text-left">Arm — executes when the forecast confirms</span>
+                <span className="flex-1 text-left">Schedule — runs when the forecast confirms</span>
                 <span className="cd-rec-tag">Recommended</span>
               </button>
               <button
@@ -283,7 +283,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
               >
                 <CDIcon name="swap" size={16} strokeWidth={1.9} />
                 <span className="flex-1 text-left">
-                  Shift {money(alert.dollar_impact)}/day now
+                  Approve — shift {money(alert.dollar_impact)}/day now
                 </span>
               </button>
               <button
@@ -292,7 +292,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                 onClick={() => runWeather("dismiss")}
               >
                 <CDIcon name="x" size={16} strokeWidth={1.9} />
-                <span className="flex-1 text-left">Dismiss</span>
+                <span className="flex-1 text-left">Reject</span>
               </button>
             </>
           ) : (

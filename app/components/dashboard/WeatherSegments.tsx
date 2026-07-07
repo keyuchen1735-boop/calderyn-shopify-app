@@ -12,6 +12,7 @@ import {
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
 import { conditionFor, sortMoves, type WeatherCondition } from "~/lib/weather/forecast-view";
+import { explainMove } from "~/lib/weather/explain";
 import type { WeatherMode } from "~/lib/weather/types";
 
 const REGION_LABEL: Record<string, string> = {
@@ -149,6 +150,10 @@ export function WeatherSegments({
   // armed rows are scheduled money and stay visible until the sweep disarms.
   const pending = mode === "off" ? [] : suggestions.filter((s) => s.status === "pending");
   const armed = suggestions.filter((s) => s.status === "armed");
+
+  // Clicked-open move showing its plain-English justification.
+  const [openId, setOpenId] = useState<string | null>(null);
+  const fcByRegion = new Map((forecast?.regions ?? []).map((r) => [r.region, r]));
 
   return (
     <>
@@ -307,59 +312,112 @@ export function WeatherSegments({
               : "No weather moves predicted — needs two active campaigns each targeting a single US region."}
           </div>
         ) : (
-          sortMoves([...armed, ...pending], condByRegion).map((s) => (
-            <div
-              key={s.id}
-              className="cd-trow"
-              title={s.narrative}
-              style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}
-            >
-              {/* flex-start + a fixed 22px arrow row keeps the arrow on the same
-                  line as the two region icons, and the $/day on the label line. */}
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0, flex: 1 }}>
-                <RegionGlyph region={s.sourceRegion} cond={condByRegion.get(s.sourceRegion) ?? null} />
-                <div style={{ textAlign: "center" }}>
-                  <div
-                    style={{ height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}
+          sortMoves([...armed, ...pending], condByRegion).map((s) => {
+            const open = openId === s.id;
+            const why = explainMove({
+              sourceName: REGION_LABEL[s.sourceRegion] ?? s.sourceRegion,
+              destName: REGION_LABEL[s.destRegion] ?? s.destRegion,
+              source: fcByRegion.get(s.sourceRegion) ?? null,
+              dest: fcByRegion.get(s.destRegion) ?? null,
+            });
+            return (
+              <div key={s.id} className="cd-trow" style={{ display: "block" }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                  {/* The flow cluster is the click target for the justification;
+                      flex-start + a fixed 22px arrow row keeps the arrow on the
+                      icon line and the $/day on the label line. */}
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    onClick={() => setOpenId(open ? null : s.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      minWidth: 0,
+                      flex: 1,
+                      background: "none",
+                      border: 0,
+                      padding: 0,
+                      cursor: "pointer",
+                      color: "inherit",
+                      font: "inherit",
+                      textAlign: "inherit",
+                    }}
                   >
-                    <CDIcon name="arrowRight" size={16} strokeWidth={2} style={{ color: "var(--accent)" }} />
-                  </div>
-                  <div
-                    className="cd-caption tabular-nums"
-                    style={{ marginTop: 2, whiteSpace: "nowrap", fontWeight: 600 }}
-                  >
-                    {money(s.amountCents)}/day
-                  </div>
-                  <div className="cd-caption" style={{ whiteSpace: "nowrap" }}>
-                    thru {shortDate(s.expiresOn)}
-                  </div>
+                    <RegionGlyph region={s.sourceRegion} cond={condByRegion.get(s.sourceRegion) ?? null} />
+                    <div style={{ textAlign: "center" }}>
+                      <div
+                        style={{ height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}
+                      >
+                        <CDIcon name="arrowRight" size={16} strokeWidth={2} style={{ color: "var(--accent)" }} />
+                      </div>
+                      <div
+                        className="cd-caption tabular-nums"
+                        style={{ marginTop: 2, whiteSpace: "nowrap", fontWeight: 600 }}
+                      >
+                        {money(s.amountCents)}/day
+                      </div>
+                      <div className="cd-caption" style={{ whiteSpace: "nowrap" }}>
+                        thru {shortDate(s.expiresOn)}
+                      </div>
+                    </div>
+                    <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
+                    <CDIcon
+                      name="chevronRight"
+                      size={14}
+                      style={{
+                        color: "var(--text-3)",
+                        marginTop: 4,
+                        flexShrink: 0,
+                        transition: "transform 0.18s ease",
+                        transform: open ? "rotate(90deg)" : "none",
+                      }}
+                    />
+                  </button>
+                  {s.status === "armed" ? (
+                    <>
+                      <Pill tone="accent" icon="bolt">
+                        {auto ? "Auto" : "Scheduled"}
+                      </Pill>
+                      <Btn small onClick={() => onIntent(s.id, "dismiss")}>
+                        Cancel
+                      </Btn>
+                    </>
+                  ) : (
+                    <>
+                      <Btn small kind="primary" onClick={() => onIntent(s.id, "arm")}>
+                        Schedule
+                      </Btn>
+                      <Btn small onClick={() => onIntent(s.id, "apply")}>
+                        Approve
+                      </Btn>
+                      <Btn small onClick={() => onIntent(s.id, "dismiss")}>
+                        Reject
+                      </Btn>
+                    </>
+                  )}
                 </div>
-                <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
+                {open ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="cd-row-title">{why.headline}</div>
+                    {why.factors.length > 0 ? (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                        {why.factors.map((f) => (
+                          <Pill key={f.label} icon={f.icon}>
+                            {f.label}
+                          </Pill>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="cd-caption" style={{ marginTop: 8, maxWidth: "60ch" }}>
+                      {s.narrative}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              {s.status === "armed" ? (
-                <>
-                  <Pill tone="accent" icon="bolt">
-                    {auto ? "Auto" : "Armed"}
-                  </Pill>
-                  <Btn small onClick={() => onIntent(s.id, "dismiss")}>
-                    Disarm
-                  </Btn>
-                </>
-              ) : (
-                <>
-                  <Btn small kind="primary" onClick={() => onIntent(s.id, "arm")}>
-                    Arm
-                  </Btn>
-                  <Btn small onClick={() => onIntent(s.id, "apply")}>
-                    Apply now
-                  </Btn>
-                  <Btn small onClick={() => onIntent(s.id, "dismiss")}>
-                    Dismiss
-                  </Btn>
-                </>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
       </Card>
     </>
