@@ -696,7 +696,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     files: File[],
     intent?: "products" | "reference" | "both",
   ) => {
-    if (buildingRef.current || chatBusyRef.current) return;
+    if (buildingRef.current || chatBusyRef.current || attachingRef.current) return;
     buildingRef.current = true;
     const runningPhase: BuildPhase = { kind: "running" };
     setBuildPhase(runningPhase);
