@@ -36,10 +36,13 @@ const LIST_LIMIT = 200;
 const ORDER_WINDOW = 2000;
 const CONSENT_WINDOW = 5000;
 
-/** Order states that count as a completed purchase (a refund was still a sale). */
-const PURCHASE_STATES = ["paid", "fulfilled", "refunded"];
+// Order states that count as a completed purchase (a refund was still a sale). `partially_refunded`
+// is included on the SAME basis as `refunded` (mirrors analytics/commerce.server SALE_STATES) —
+// omitting it made a buyer whose only order was partially refunded show orders:0, spentCents:0,
+// segment 'Prospect', a strict inversion of a FULLY-refunded order counting full spend.
+const PURCHASE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"];
 /** Real orders shown on the detail timeline — everything past checkout. */
-const DISPLAY_STATES = ["paid", "fulfilled", "cancelled", "refunded"];
+const DISPLAY_STATES = ["paid", "fulfilled", "cancelled", "refunded", "partially_refunded"];
 
 const VIP_SPEND_CENTS = 500_000; // > $5,000 lifetime spend
 const DAY_MS = 24 * 60 * 60 * 1000;
