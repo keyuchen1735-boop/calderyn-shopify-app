@@ -681,6 +681,7 @@ export default function DashboardApp({
       const campId = opts?.campaignId ?? alert.campaign_id;
       if (
         (kind === "pause_campaign" ||
+          kind === "resume_campaign" ||
           kind === "reduce_campaign_budget" ||
           kind === "increase_campaign_budget") &&
         campId
@@ -733,6 +734,7 @@ export default function DashboardApp({
               cs.map((c) => {
                 if (c.id !== campId) return c;
                 if (kind === "pause_campaign") return { ...c, status: "paused" };
+                if (kind === "resume_campaign") return { ...c, status: "active" };
                 return { ...c, daily_budget_cents: targetBudget ?? c.daily_budget_cents };
               }),
             );

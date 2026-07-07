@@ -68,6 +68,7 @@ export interface DashboardTheme {
 /** Action kinds an alert can be resolved with (mirrors the prototype). */
 export type ActionKind =
   | "pause_campaign"
+  | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
   | "exclude_geo"
