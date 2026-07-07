@@ -3,6 +3,14 @@
 // to 1 and every factor is clamped to [0,1], so the output is inherently in
 // [0,1] with no cross-region normalization needed.
 
+/** One forecast day, for day-by-day display; scoring stays window-level. */
+export interface DayForecast {
+  date: string;
+  avgTempC: number;
+  precipMm: number;
+  snowCm: number;
+}
+
 export interface RegionForecast {
   /** Mean daily temperature over the forecast horizon, °C. */
   avgTempC: number;
@@ -12,6 +20,8 @@ export interface RegionForecast {
   snowCm: number;
   /** Mean daylight hours per day over the horizon. */
   avgDaylightH: number;
+  /** Per-day breakdown when the provider dates the series. */
+  days?: DayForecast[];
 }
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);

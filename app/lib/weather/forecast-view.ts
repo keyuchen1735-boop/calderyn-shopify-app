@@ -28,6 +28,31 @@ export function conditionFor(f: Pick<RegionForecast, "precipMm" | "snowCm">): We
   return "clear";
 }
 
+// Harsher weather ranks first; a region with no forecast ranks mildest.
+const CONDITION_RANK: Record<WeatherCondition, number> = {
+  snow: 3,
+  rain: 2,
+  showers: 1,
+  clear: 0,
+};
+
+/** Order budget moves for the panel: soonest day first, then harsher
+ *  destination weather, then bigger moves. Pure — does not mutate. */
+export function sortMoves<
+  T extends { expiresOn: string; destRegion: string; amountCents: number },
+>(moves: readonly T[], cond: ReadonlyMap<string, WeatherCondition>): T[] {
+  const rank = (m: T): number => {
+    const c = cond.get(m.destRegion);
+    return c ? CONDITION_RANK[c] : -1;
+  };
+  return [...moves].sort(
+    (a, b) =>
+      a.expiresOn.localeCompare(b.expiresOn) ||
+      rank(b) - rank(a) ||
+      b.amountCents - a.amountCents,
+  );
+}
+
 export function buildForecastView(
   forecasts: Map<RegionCode, RegionForecast>,
   merchant: MerchantLocation | null,
