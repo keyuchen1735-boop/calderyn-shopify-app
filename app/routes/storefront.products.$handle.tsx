@@ -1,5 +1,5 @@
 // app/routes/storefront.products.$handle.tsx
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
@@ -11,21 +11,17 @@ import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { buildCart, addCartLine, VariantUnavailableError } from "~/lib/order/cart.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
-import { storeNameFromMatches } from "~/lib/storefront/meta";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { buildProductDraft } from "~/lib/seo/writer.server";
+import { safeMetaFromDraft } from "~/lib/seo/render.server";
+import { storefrontOrigin } from "~/lib/seo/origin.server";
+import { getSeoOverride } from "~/lib/seo/seo-store.server";
+import { applyOverride } from "~/lib/seo/override";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 
-export const meta: MetaFunction<typeof loader> = ({ data, matches }) => {
-  const store = storeNameFromMatches(matches);
-  const title = data ? `${data.product.title} — ${store}` : `Product — ${store}`;
-  const description = data?.product.description || "Product detail.";
-  return [
-    { title },
-    { name: "description", content: description },
-    { property: "og:title", content: title },
-  ];
-};
+export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
@@ -40,12 +36,25 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     productId: product.id,
   });
+  // SEO/AIO meta + Product JSON-LD, computed server-side so it is present on first paint.
+  // Failure-isolated (mirrors the storefront layout's own settings/experiment reads): a
+  // settings-fetch hiccup must never 500 a PDP that would otherwise render fine.
+  let seoMeta: MetaDescriptor[];
+  try {
+    const settings = await getStoreSettings(shopId);
+    const draft = buildProductDraft(product, settings, storefrontOrigin(request));
+    const override = await getSeoOverride(shopId, "product", product.id);
+    seoMeta = safeMetaFromDraft(applyOverride(draft, override));
+  } catch (err) {
+    console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
+    seoMeta = [{ title: product.title }];
+  }
   // `unavailable` is set when the add-to-cart action bounced back here because the variant sold out
   // / was archived (read from the URL in the loader, not useSearchParams, so a static render without
   // a Router context still works). The demo shell has no shop row behind it, so carts (uuid shop_id)
   // can't exist for it — the PDP renders browse-only instead of offering a cart that 500s.
   const unavailable = new URL(request.url).searchParams.get("unavailable") === "1";
-  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID, unavailable }, { headers: track });
+  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID, seoMeta, unavailable }, { headers: track });
 }
 
 export async function action({ request }: ActionFunctionArgs) {

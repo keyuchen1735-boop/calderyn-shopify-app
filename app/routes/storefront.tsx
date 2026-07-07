@@ -9,6 +9,7 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
 import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
+import { detectAiBot, logAiCrawl } from "~/lib/seo/crawlers.server";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
@@ -60,6 +61,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Public, multi-tenant entry: resolve the tenant from the request, then scope
   // every downstream read by this shopId (no Postgres RLS on this surface).
   const shopId = await resolveStorefrontShop(request);
+  // AIO signal: record when a known AI assistant crawler reads any storefront page.
+  // logAiCrawl is fire-and-forget and never throws; waitUntil keeps the serverless
+  // function alive until the RPC resolves so the write survives function freeze on
+  // Vercel, and no-ops locally (mirrors tenant.server / import/run.server).
+  const aiBot = detectAiBot(request.headers.get("user-agent"));
+  if (aiBot) {
+    const crawlLog = logAiCrawl(shopId, aiBot);
+    try {
+      const { waitUntil } = await import("@vercel/functions");
+      waitUntil(crawlLog);
+    } catch {
+      void crawlLog;
+    }
+  }
   const settings = await getStoreSettings(shopId);
   const experimentVibe = await resolveLayoutExperimentVibe(shopId, request);
   const collections = await loadNavCollections(shopId);
