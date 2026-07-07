@@ -526,7 +526,8 @@ export async function runWeatherExecuteForShop(
     const setStatus = async (status: string) => {
       const { error } = await sb
         .from("weather_suggestion")
-        .update({ status })
+        // applied_at feeds the panel's executed history (what ran, when).
+        .update({ status, ...(status === "applied" ? { applied_at: new Date().toISOString() } : {}) })
         .eq("id", row.id)
         .eq("shop_id", shopId);
       // Budget may already have moved — a stranded 'applying' row is invisible

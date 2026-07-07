@@ -101,7 +101,12 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!row) return classifyMiss(sb, suggestionId, session.shopId);
 
   const setStatus = (status: string) =>
-    sb.from("weather_suggestion").update({ status }).eq("id", row.id).eq("shop_id", session.shopId);
+    sb
+      .from("weather_suggestion")
+      // applied_at feeds the panel's executed history (what ran, when).
+      .update({ status, ...(status === "applied" ? { applied_at: new Date().toISOString() } : {}) })
+      .eq("id", row.id)
+      .eq("shop_id", session.shopId);
 
   // Mirrors app.campaigns._index.tsx: human-approved → NO checkGuardrails (those
   // caps require autopilot_enabled). executeReallocation re-validates ownership

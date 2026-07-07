@@ -146,14 +146,127 @@ export function WeatherSegments({
   const days = forecast?.regions.find((r) => r.days && r.days.length > 0)?.days ?? [];
   const dayIdx = days.length > 0 ? Math.min(Number(dayKey), days.length - 1) : null;
 
-  // Off hides approvable offers immediately (matching the loader's contract);
-  // armed rows are scheduled money and stay visible until the sweep disarms.
-  const pending = mode === "off" ? [] : suggestions.filter((s) => s.status === "pending");
-  const armed = suggestions.filter((s) => s.status === "armed");
+  // Manual: pending moves wait for approve/reject/schedule. Auto: moves run
+  // unattended; executed ones surface below with when and why.
+  const active = suggestions.filter((s) => s.status === "pending" || s.status === "armed");
+  const executed = suggestions.filter((s) => s.status === "applied");
 
   // Clicked-open move showing its plain-English justification.
   const [openId, setOpenId] = useState<string | null>(null);
   const fcByRegion = new Map((forecast?.regions ?? []).map((r) => [r.region, r]));
+
+  const renderMove = (s: WeatherSuggestionDTO) => {
+    const open = openId === s.id;
+    const why = explainMove({
+      sourceName: REGION_LABEL[s.sourceRegion] ?? s.sourceRegion,
+      destName: REGION_LABEL[s.destRegion] ?? s.destRegion,
+      source: fcByRegion.get(s.sourceRegion) ?? null,
+      dest: fcByRegion.get(s.destRegion) ?? null,
+    });
+    return (
+      <div key={s.id} className="cd-trow" style={{ display: "block" }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          {/* The flow cluster is the click target for the justification;
+              flex-start + a fixed 22px arrow row keeps the arrow on the
+              icon line and the $/day on the label line. */}
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpenId(open ? null : s.id)}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 12,
+              minWidth: 0,
+              flex: 1,
+              background: "none",
+              border: 0,
+              padding: 0,
+              cursor: "pointer",
+              color: "inherit",
+              font: "inherit",
+              textAlign: "inherit",
+            }}
+          >
+            <RegionGlyph region={s.sourceRegion} cond={condByRegion.get(s.sourceRegion) ?? null} />
+            <div style={{ textAlign: "center" }}>
+              <div style={{ height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <CDIcon name="arrowRight" size={16} strokeWidth={2} style={{ color: "var(--accent)" }} />
+              </div>
+              <div
+                className="cd-caption tabular-nums"
+                style={{ marginTop: 2, whiteSpace: "nowrap", fontWeight: 600 }}
+              >
+                {money(s.amountCents)}/day
+              </div>
+              {s.status !== "applied" ? (
+                <div className="cd-caption" style={{ whiteSpace: "nowrap" }}>
+                  thru {shortDate(s.expiresOn)}
+                </div>
+              ) : null}
+            </div>
+            <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
+            <CDIcon
+              name="chevronRight"
+              size={14}
+              style={{
+                color: "var(--text-3)",
+                marginTop: 4,
+                flexShrink: 0,
+                transition: "transform 0.18s ease",
+                transform: open ? "rotate(90deg)" : "none",
+              }}
+            />
+          </button>
+          {s.status === "applied" ? (
+            <Pill tone="success" icon="check">
+              Ran{s.executedAt ? ` ${shortDate(s.executedAt.slice(0, 10))}` : ""}
+            </Pill>
+          ) : s.status === "armed" ? (
+            <>
+              <Pill tone="accent" icon="bolt">
+                {auto ? "Auto" : "Scheduled"}
+              </Pill>
+              <Btn small onClick={() => onIntent(s.id, "dismiss")}>
+                Cancel
+              </Btn>
+            </>
+          ) : (
+            <>
+              <Btn small kind="primary" onClick={() => onIntent(s.id, "arm")}>
+                Schedule
+              </Btn>
+              <Btn small onClick={() => onIntent(s.id, "apply")}>
+                Approve
+              </Btn>
+              <Btn small onClick={() => onIntent(s.id, "dismiss")}>
+                Reject
+              </Btn>
+            </>
+          )}
+        </div>
+        {open ? (
+          <div style={{ marginTop: 10 }}>
+            <div className="cd-row-title">{why.headline}</div>
+            {why.factors.length > 0 ? (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                {why.factors.map((f) => (
+                  <Pill key={f.label} icon={f.icon}>
+                    {f.label}
+                  </Pill>
+                ))}
+              </div>
+            ) : null}
+            {why.note ? (
+              <div className="cd-caption" style={{ marginTop: 8, maxWidth: "60ch" }}>
+                {why.note}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -293,127 +406,38 @@ export function WeatherSegments({
             value={mode}
             onChange={(v) => onMode(v as WeatherMode)}
             options={[
-              { value: "off", label: "Off" },
-              { value: "approve", label: "Approve" },
+              { value: "manual", label: "Manual" },
               { value: "auto", label: "Auto" },
             ]}
           />
         </CardHead>
-        {pending.length === 0 && armed.length === 0 ? (
+        {active.length === 0 && executed.length === 0 ? (
           <div className="cd-caption" style={{ padding: "16px 20px" }}>
-            {mode === "off"
-              ? "Off — switch to Approve or Auto to get weather budget moves."
+            {mode === "auto"
+              ? "Moves run on their own — what ran shows up here with when and why."
               : "No weather moves predicted — needs two active campaigns each targeting a single US region."}
           </div>
         ) : (
-          sortMoves([...armed, ...pending], condByRegion).map((s) => {
-            const open = openId === s.id;
-            const why = explainMove({
-              sourceName: REGION_LABEL[s.sourceRegion] ?? s.sourceRegion,
-              destName: REGION_LABEL[s.destRegion] ?? s.destRegion,
-              source: fcByRegion.get(s.sourceRegion) ?? null,
-              dest: fcByRegion.get(s.destRegion) ?? null,
-            });
-            return (
-              <div key={s.id} className="cd-trow" style={{ display: "block" }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-                  {/* The flow cluster is the click target for the justification;
-                      flex-start + a fixed 22px arrow row keeps the arrow on the
-                      icon line and the $/day on the label line. */}
-                  <button
-                    type="button"
-                    aria-expanded={open}
-                    onClick={() => setOpenId(open ? null : s.id)}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 12,
-                      minWidth: 0,
-                      flex: 1,
-                      background: "none",
-                      border: 0,
-                      padding: 0,
-                      cursor: "pointer",
-                      color: "inherit",
-                      font: "inherit",
-                      textAlign: "inherit",
-                    }}
-                  >
-                    <RegionGlyph region={s.sourceRegion} cond={condByRegion.get(s.sourceRegion) ?? null} />
-                    <div style={{ textAlign: "center" }}>
-                      <div
-                        style={{ height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}
-                      >
-                        <CDIcon name="arrowRight" size={16} strokeWidth={2} style={{ color: "var(--accent)" }} />
-                      </div>
-                      <div
-                        className="cd-caption tabular-nums"
-                        style={{ marginTop: 2, whiteSpace: "nowrap", fontWeight: 600 }}
-                      >
-                        {money(s.amountCents)}/day
-                      </div>
-                      <div className="cd-caption" style={{ whiteSpace: "nowrap" }}>
-                        thru {shortDate(s.expiresOn)}
-                      </div>
-                    </div>
-                    <RegionGlyph region={s.destRegion} cond={condByRegion.get(s.destRegion) ?? null} />
-                    <CDIcon
-                      name="chevronRight"
-                      size={14}
-                      style={{
-                        color: "var(--text-3)",
-                        marginTop: 4,
-                        flexShrink: 0,
-                        transition: "transform 0.18s ease",
-                        transform: open ? "rotate(90deg)" : "none",
-                      }}
-                    />
-                  </button>
-                  {s.status === "armed" ? (
-                    <>
-                      <Pill tone="accent" icon="bolt">
-                        {auto ? "Auto" : "Scheduled"}
-                      </Pill>
-                      <Btn small onClick={() => onIntent(s.id, "dismiss")}>
-                        Cancel
-                      </Btn>
-                    </>
-                  ) : (
-                    <>
-                      <Btn small kind="primary" onClick={() => onIntent(s.id, "arm")}>
-                        Schedule
-                      </Btn>
-                      <Btn small onClick={() => onIntent(s.id, "apply")}>
-                        Approve
-                      </Btn>
-                      <Btn small onClick={() => onIntent(s.id, "dismiss")}>
-                        Reject
-                      </Btn>
-                    </>
-                  )}
+          <>
+            {sortMoves(active, condByRegion).map(renderMove)}
+            {executed.length > 0 ? (
+              <>
+                <div
+                  className="cd-caption"
+                  style={{
+                    padding: "12px 20px 2px",
+                    fontWeight: 650,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    fontSize: 10.5,
+                  }}
+                >
+                  Executed
                 </div>
-                {open ? (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="cd-row-title">{why.headline}</div>
-                    {why.factors.length > 0 ? (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                        {why.factors.map((f) => (
-                          <Pill key={f.label} icon={f.icon}>
-                            {f.label}
-                          </Pill>
-                        ))}
-                      </div>
-                    ) : null}
-                    {why.note ? (
-                      <div className="cd-caption" style={{ marginTop: 8, maxWidth: "60ch" }}>
-                        {why.note}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })
+                {executed.map(renderMove)}
+              </>
+            ) : null}
+          </>
         )}
       </Card>
     </>

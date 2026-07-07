@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Card, Btn, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
@@ -403,6 +403,27 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     setWxModeOverride(null);
   }, [app.guardrails]);
 
+  // "Off" no longer exists: a legacy dial at 0 would show Manual while the
+  // cron silently skips the shop. Migrate it to the manual default once,
+  // the first time the Weather tab is viewed.
+  const healedRef = useRef(false);
+  useEffect(() => {
+    if (
+      app.nav.sub === "weather" &&
+      !healedRef.current &&
+      app.guardrails &&
+      app.guardrails.weather_sensitivity === 0
+    ) {
+      healedRef.current = true;
+      putGuardrails({ weather_sensitivity: sensitivityForMode("manual", 0) })
+        .then(() => app.refresh())
+        .catch(() => {
+          // Surface next interaction; the toggle write path reports errors.
+          healedRef.current = false;
+        });
+    }
+  });
+
   const onWeatherMode = async (next: WeatherMode) => {
     const prev = wxModeOverride;
     setWxModeOverride(next);
@@ -412,11 +433,9 @@ export default function Customers({ app }: { app: DashboardCtx }) {
       });
       app.refresh();
       toast(
-        next === "off"
-          ? "Weather moves off"
-          : next === "auto"
-            ? "Auto — moves execute unattended when the forecast confirms"
-            : "Approve — moves wait for your OK",
+        next === "auto"
+          ? "Auto — moves run on their own when the forecast confirms"
+          : "Manual — you approve, reject or schedule each move",
         "check",
       );
     } catch (err) {

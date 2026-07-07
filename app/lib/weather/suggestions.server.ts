@@ -28,7 +28,10 @@ export async function loadWeatherSuggestions(
   const windowStart = new Date(now.getTime() - (FORECAST_HORIZON_DAYS - 1) * DAY_MS)
     .toISOString()
     .slice(0, 10);
-  const [cfgRes, pendingRes, armedRes] = await Promise.all([
+  // Executed history: what auto (or an approval) actually ran, shown with
+  // when and why. A rolling week keeps the list short and current.
+  const executedSince = new Date(now.getTime() - 7 * DAY_MS).toISOString();
+  const [cfgRes, pendingRes, armedRes, ranRes] = await Promise.all([
     sb.from("guardrail_config").select("weather_sensitivity").eq("shop_id", shopId).maybeSingle(),
     sb
       .from("weather_suggestion")
@@ -45,16 +48,28 @@ export async function loadWeatherSuggestions(
       .eq("shop_id", shopId)
       .eq("status", "armed")
       .order("amount_cents", { ascending: false }),
+    sb
+      .from("weather_suggestion")
+      .select("id, narrative, amount_cents, expires_on, source_region, dest_region, applied_at")
+      .eq("shop_id", shopId)
+      .eq("status", "applied")
+      .gte("applied_at", executedSince)
+      .order("applied_at", { ascending: false })
+      .limit(5),
   ]);
   if (cfgRes.error) throw cfgRes.error;
   if (pendingRes.error) throw pendingRes.error;
   if (armedRes.error) throw armedRes.error;
+  if (ranRes.error) throw ranRes.error;
 
   const sensitivity = Number(
     (cfgRes.data as { weather_sensitivity?: unknown } | null)?.weather_sensitivity ?? 0,
   );
 
-  const toDto = (r: Record<string, unknown>, status: "pending" | "armed"): WeatherSuggestionDTO => ({
+  const toDto = (
+    r: Record<string, unknown>,
+    status: WeatherSuggestionDTO["status"],
+  ): WeatherSuggestionDTO => ({
     id: String(r.id),
     narrative: String(r.narrative),
     amountCents: Number(r.amount_cents),
@@ -62,10 +77,12 @@ export async function loadWeatherSuggestions(
     expiresOn: String(r.expires_on),
     sourceRegion: String(r.source_region),
     destRegion: String(r.dest_region),
+    ...(r.applied_at ? { executedAt: String(r.applied_at) } : {}),
   });
 
   return [
     ...(armedRes.data ?? []).map((r) => toDto(r, "armed")),
     ...(sensitivity > 0 ? (pendingRes.data ?? []).map((r) => toDto(r, "pending")) : []),
+    ...(ranRes.data ?? []).map((r) => toDto(r, "applied")),
   ];
 }

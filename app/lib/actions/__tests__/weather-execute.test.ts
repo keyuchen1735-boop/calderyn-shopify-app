@@ -119,6 +119,8 @@ describe("runWeatherExecuteForShop", () => {
       expect.anything(),
     );
     expect(rows[0].status).toBe("applied");
+    // The panel's executed history shows WHEN a move ran — stamp it.
+    expect(rows[0].applied_at).toBeTruthy();
   });
 
   it("expires an armed prediction past its window without moving budget", async () => {
