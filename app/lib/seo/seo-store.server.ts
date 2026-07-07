@@ -14,6 +14,7 @@ export interface SeoSettings {
   allowAiCrawlers: boolean;
   orgName: string | null;
   orgDescription: string | null;
+  googleSiteVerification: string | null;
 }
 
 export interface SeoOverride {
@@ -28,13 +29,14 @@ const DEFAULT_SETTINGS: SeoSettings = {
   allowAiCrawlers: true,
   orgName: null,
   orgDescription: null,
+  googleSiteVerification: null,
 };
 
 export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
   if (!isUuid(shopId)) return { ...DEFAULT_SETTINGS };
   const { data, error } = await getSupabase()
     .from("seo_settings")
-    .select("allow_search_engines, allow_ai_crawlers, org_name, org_description")
+    .select("allow_search_engines, allow_ai_crawlers, org_name, org_description, google_site_verification")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw error;
@@ -45,6 +47,7 @@ export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
     allowAiCrawlers: data.allow_ai_crawlers !== false,
     orgName: (data.org_name as string | null) ?? null,
     orgDescription: (data.org_description as string | null) ?? null,
+    googleSiteVerification: (data.google_site_verification as string | null) ?? null,
   };
 }
 
@@ -55,6 +58,7 @@ export async function upsertSeoSettings(shopId: string, patch: Partial<SeoSettin
   if (patch.allowAiCrawlers !== undefined) row.allow_ai_crawlers = patch.allowAiCrawlers;
   if (patch.orgName !== undefined) row.org_name = patch.orgName;
   if (patch.orgDescription !== undefined) row.org_description = patch.orgDescription;
+  if (patch.googleSiteVerification !== undefined) row.google_site_verification = patch.googleSiteVerification;
   const { error } = await getSupabase().from("seo_settings").upsert(row, { onConflict: "shop_id" });
   if (error) throw error;
   return getSeoSettings(shopId);

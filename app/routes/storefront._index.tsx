@@ -12,6 +12,7 @@ import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { getSeoSettings } from "~/lib/seo/seo-store.server";
 import { buildHomeDraft } from "~/lib/seo/writer.server";
 import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
@@ -92,9 +93,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // overrides are written), so there is nothing to layer here.
   let seoMeta: MetaDescriptor[];
   try {
-    const settings = await getStoreSettings(shopId);
+    const [settings, seo] = await Promise.all([getStoreSettings(shopId), getSeoSettings(shopId)]);
     const draft = buildHomeDraft(settings, storefrontOrigin(request));
     seoMeta = safeMetaFromDraft(draft);
+    // Google Search Console HTML-tag verification: only the home page needs it, and
+    // only when the merchant has pasted a token in Preferences (see Search.tsx).
+    if (seo.googleSiteVerification) {
+      seoMeta.push({ name: "google-site-verification", content: seo.googleSiteVerification });
+    }
   } catch (err) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title: "Store" }];

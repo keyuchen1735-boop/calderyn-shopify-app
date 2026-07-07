@@ -5,14 +5,22 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { getSeoSettings, upsertSeoSettings } from "~/lib/seo/seo-store.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { buildStoreDescription } from "~/lib/seo/writer.server";
 
-// The Preferences screen (see Search.tsx) exposes only the controls a merchant
-// has — search-engine access, AI-assistant access, and an optional store
-// description. The loader hands back just this shop's SEO settings.
+// The Preferences screen (see Search.tsx) exposes the controls a merchant has —
+// search-engine access, AI-assistant access, a store description, and the
+// "Get found on Google" helper. The loader hands back this shop's SEO settings
+// plus its live sitemap URL (null until the shop has a storefront slug).
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request); // auth gate; settings are this shop's own data
-  return dashboardJson(async () => ({ settings: await getSeoSettings(session.shopId) }));
+  return dashboardJson(async () => {
+    const [settings, origin] = await Promise.all([
+      getSeoSettings(session.shopId),
+      getShopStorefrontOrigin(session.shopId),
+    ]);
+    return { settings, sitemapUrl: origin ? `${origin}/sitemap.xml` : null };
+  });
 }
 
 interface SearchBody {
@@ -21,12 +29,15 @@ interface SearchBody {
   allowAiCrawlers?: boolean;
   orgName?: string | null;
   orgDescription?: string | null;
+  googleSiteVerification?: string | null;
 }
 
 // Store-identity bounds. Clamp at the boundary so a crafted request can't persist
-// an unbounded org name/description into seo_settings.
+// an unbounded value into seo_settings. The Google token is short (~40-100 chars);
+// 200 is generous headroom without being unbounded.
 const ORG_NAME_MAX = 80;
 const ORG_DESC_MAX = 200;
+const GOOGLE_TOKEN_MAX = 200;
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request); // throws a 403 Response on a cross-origin post
@@ -52,6 +63,15 @@ export async function action({ request }: ActionFunctionArgs) {
           return jsonError(422, "bad_request", `description must be ${ORG_DESC_MAX} characters or fewer`);
         }
         patch.orgDescription = body.orgDescription;
+      }
+      if (body.googleSiteVerification === null || typeof body.googleSiteVerification === "string") {
+        // Trim and normalize an empty string to null so clearing the field removes
+        // the meta tag rather than emitting an empty content="".
+        const token = typeof body.googleSiteVerification === "string" ? body.googleSiteVerification.trim() : null;
+        if (token && token.length > GOOGLE_TOKEN_MAX) {
+          return jsonError(422, "bad_request", `verification code must be ${GOOGLE_TOKEN_MAX} characters or fewer`);
+        }
+        patch.googleSiteVerification = token || null;
       }
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");
       return dashboardJson(async () => ({ settings: await upsertSeoSettings(session.shopId, patch) }));

@@ -2386,13 +2386,22 @@
 
 /* Section = a plain heading + its card. */
 .cd-seo__section { display: flex; flex-direction: column; gap: calc(10px * var(--density)); }
+.cd-seo__h2 { font-size: calc(15px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); margin: 0; }
 
 /* Settings: divided rows in one card, never a box per control. */
 .cd-seo__set { display: flex; flex-direction: column; }
 .cd-seo__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: calc(16px * var(--density)) calc(22px * var(--density)); }
 .cd-seo__row + .cd-seo__row { border-top: 1px solid var(--hairline); }
+.cd-seo__row--slim { padding-top: calc(9px * var(--density)); padding-bottom: calc(9px * var(--density)); }
 .cd-seo__info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cd-seo__label { font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__label { display: inline-flex; align-items: center; gap: 8px; font-size: calc(13.5px * var(--type-scale)); font-weight: 560; color: var(--text-1); letter-spacing: -0.006em; }
+/* Numbered step badge for the "Get found on Google" flow. */
+.cd-seo__step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 19px; height: 19px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: calc(11px * var(--type-scale)); font-weight: 640; }
+/* "Verification tag is live" confirmation line. */
+.cd-seo__ok { display: inline-flex; align-items: center; gap: 6px; font-size: calc(12.5px * var(--type-scale)); font-weight: 520; color: var(--green); letter-spacing: -0.003em; }
+/* The sitemap link, shown as a monospace chip that truncates gracefully. */
+.cd-seo__url { max-width: min(360px, 46vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); font-size: calc(11.5px * var(--type-scale)); color: var(--text-2); background: var(--gray-bg); padding: 5px 9px; border-radius: 7px; }
+.cd-seo__tinput { width: min(320px, 44vw); }
 .cd-seo__hint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.45; max-width: 54ch; letter-spacing: -0.003em; }
 /* "Let Calderyn write it" affordance INSIDE the store-description field, left-aligned:
    a small accent sparkle button that drafts the line for review. Pulses while working. */
