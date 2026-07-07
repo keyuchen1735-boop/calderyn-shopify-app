@@ -169,7 +169,9 @@ a { color: inherit; }
 
 /* ---- product cards + grids (shared by productGrid, collectionGrid, legacy collection) -------- */
 .cd-store__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--cd-gap); padding: var(--cd-gap) 0; }
-.cd-grid__heading, .cd-collections__heading { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); letter-spacing: var(--cd-tracking-display); font-size: 1.35rem; margin: 0 0 0.75rem; }
+.cd-grid__heading, .cd-collections__heading { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); letter-spacing: var(--cd-tracking-display); font-size: clamp(1.4rem, 1.1rem + 1.2vw, 1.9rem); margin: 0 0 1.1rem; }
+/* Spliced next to full-bleed AI sections, the catalog bands need their own breathing room. */
+.cd-block--grid { padding: 2.25rem 0 1rem; }
 .cd-product-card {
   display: flex; flex-direction: column; gap: 6px; text-decoration: none;
   background: var(--cd-surface); border: 1px solid var(--cd-surface-border); border-radius: var(--cd-radius);
@@ -183,15 +185,21 @@ a { color: inherit; }
   .cd-product-card:hover { transform: translateY(-3px); box-shadow: var(--cd-shadow-card-hover); }
 }
 
-/* ---- collection chips (home collectionList block) -------------------------------------------- */
-.cd-block--collections { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
-.cd-collections__heading { width: 100%; }
-.cd-block--collections a {
-  display: inline-flex; align-items: center; text-decoration: none; padding: 0.5rem 1.1rem;
+/* ---- collection cards (home collectionList block) -------------------------------------------- */
+.cd-block--collections { padding: 2.25rem 0 2.75rem; }
+.cd-collections__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--cd-gap); }
+.cd-collection-card {
+  display: flex; flex-direction: column; gap: 0.55rem; text-decoration: none; padding: 1.4rem 1.5rem;
   border: 1px solid var(--cd-surface-border); background: var(--cd-surface); color: var(--cd-card-ink);
-  border-radius: 999px; font-size: 0.88rem; font-weight: 600; transition: border-color 0.15s ease;
+  border-radius: var(--cd-radius); transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.cd-block--collections a:hover { border-color: var(--cd-card-ink); }
+.cd-collection-card:hover { border-color: var(--cd-card-ink); transform: translateY(-2px); }
+.cd-collection-card__title { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); font-size: 1.12rem; }
+.cd-collection-card__count {
+  align-self: flex-start; font-size: 0.78rem; font-weight: 600; padding: 0.2rem 0.65rem;
+  border-radius: 999px; background: color-mix(in srgb, var(--cd-card-ink) 8%, transparent);
+}
+.cd-collection-card__arrow { margin-top: auto; font-size: 1rem; opacity: 0.55; }
 
 /* ---- PDP ------------------------------------------------------------------------------------- */
 .cd-pdp { display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--cd-gap) * 2); padding: var(--cd-gap) var(--cd-canvas-pad); background: var(--cd-canvas); border-radius: var(--cd-canvas-radius); }

@@ -124,6 +124,55 @@ describe("generateStore", () => {
     expect(html).not.toMatch(/<script/i); // sanitized at the generator boundary
   });
 
+  it("reports real build stages in order through onStage", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
+      .mockResolvedValue(reply("junk"));
+    const stages: string[] = [];
+    await generateStore({ shopId: realShop, mode: "catalog", onStage: (s) => stages.push(s) });
+    expect(stages).toEqual(["brand", "designing", "checking"]);
+  });
+
+  it("verification strips runtime-rejected motion specs before drafts are saved and reports it", async () => {
+    const badMotion = "{&quot;trigger&quot;:&quot;inview&quot;,&quot;targets&quot;:&quot;.x&quot;,&quot;from&quot;:{&quot;bogus&quot;:1}}";
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
+      .mockResolvedValueOnce(reply(`<div class="ai-store"><style>.ai-store .h{color:#fff}</style><section class="h" data-fx-motion="${badMotion}"><h1>A designed page with a good amount of copy for the sparse check</h1></section></div>`))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    const result = await generateStore({ shopId: realShop, mode: "brief", brief: "b" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    expect(homeDraft.blocks[0].props.html).not.toContain("data-fx-motion");
+    expect(result.verification?.strippedMotion).toBe(1);
+  });
+
+  it("splices home catalog markers into real productGrid blocks between rawHtml segments", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand
+      .mockResolvedValueOnce(reply('<div class="ai-store"><style>.ai-store .hero{color:#fff}</style><section class="hero"><h1>Yo</h1></section><div data-cd-products="summer" data-cd-heading="Shop summer"></div><section class="closer"><p>end</p></section></div>')) // home
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}'))
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "summer things" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    expect(homeDraft.blocks.map((b: { type: string }) => b.type)).toEqual(["rawHtml", "productGrid", "rawHtml"]);
+    expect(homeDraft.blocks[1].props.source).toEqual({ kind: "collection", handle: "summer" });
+    expect(homeDraft.blocks[1].props.heading).toBe("Shop summer");
+    // segments each remain scoped fragments so the model's CSS survives the split
+    expect(homeDraft.blocks[0].props.html).toContain('<div class="ai-store"><style>');
+    expect(homeDraft.blocks[2].props.html).toContain("closer");
+  });
+
+  it("grounds the home call with real catalog counts", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
+      .mockResolvedValue(reply("junk"));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const homeCall = createMock.mock.calls[1][0];
+    const userText = typeof homeCall.messages[0].content === "string" ? homeCall.messages[0].content : JSON.stringify(homeCall.messages[0].content);
+    expect(userText).toContain('"counts"');
+    expect(userText).toContain('"summer":1'); // one mock product lives in "summer"
+  });
+
   it("honors the merchant's design-model choice on the home HTML call only", async () => {
     createMock
       .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand

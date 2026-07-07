@@ -2,7 +2,8 @@
 // titled from the filename) OR travel with the prompt to the multipart generate
 // endpoint — the two client paths this suite covers.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { addProductFromImage, generateStudioStoreWithImages, productTitleFromFilename } from "./store-client";
+import { addProductFromImage, generateStudioStoreStream, generateStudioStoreWithImages, productTitleFromFilename, StudioStreamError } from "./store-client";
+import { DashboardApiError } from "./client";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // client mock still applies even though it is written below them.
@@ -96,5 +97,63 @@ describe("productTitleFromFilename", () => {
   it("falls back to a generic title for unusable names", () => {
     expect(productTitleFromFilename("...jpg")).toBe("New product");
     expect(productTitleFromFilename("")).toBe("New product");
+  });
+});
+
+// ---- streaming generate ------------------------------------------------------
+
+const ndjsonResponse = (lines: string[], status = 200) => {
+  const text = lines.map((l) => `${l}\n`).join("");
+  const mid = Math.floor(text.length / 2);
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    start(c) {
+      // two chunks split mid-line so the reader's buffering is exercised
+      c.enqueue(enc.encode(text.slice(0, mid)));
+      c.enqueue(enc.encode(text.slice(mid)));
+      c.close();
+    },
+  });
+  return new Response(stream, { status, headers: { "content-type": "application/x-ndjson" } });
+};
+
+describe("generateStudioStoreStream", () => {
+  it("forwards each stage in order and resolves the final receipt", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"brand"}',
+      '{"stage":"designing"}',
+      '{"stage":"checking"}',
+      '{"stage":"done","receipt":{"runId":"r1","status":"draft","verification":{"checkedLinks":4,"fixedLinks":0,"externalLinks":0,"strippedMotion":0,"warnings":[]}}}',
+    ])));
+    const stages: string[] = [];
+    const receipt = await generateStudioStoreStream("a brief", "sonnet", (s) => stages.push(s));
+    expect(stages).toEqual(["brand", "designing", "checking"]);
+    expect(receipt.runId).toBe("r1");
+    expect(receipt.verification?.checkedLinks).toBe(4);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects with the server's in-band error message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse(['{"stage":"brand"}', '{"stage":"error","message":"Store generation failed."}'])));
+    await expect(generateStudioStoreStream("b", "sonnet", () => {})).rejects.toBeInstanceOf(DashboardApiError);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects with DashboardApiError on an HTTP guard refusal (never falls through as transport)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"rate_limited","message":"slow down"}', { status: 429, headers: { "content-type": "application/json" } })));
+    await expect(generateStudioStoreStream("b", "sonnet", () => {})).rejects.toBeInstanceOf(DashboardApiError);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects with StudioStreamError when the stream dies without a terminal line", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse(['{"stage":"brand"}'])));
+    await expect(generateStudioStoreStream("b", "sonnet", () => {})).rejects.toBeInstanceOf(StudioStreamError);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects with StudioStreamError when fetch itself fails (network)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+    await expect(generateStudioStoreStream("b", "sonnet", () => {})).rejects.toBeInstanceOf(StudioStreamError);
+    vi.unstubAllGlobals();
   });
 });

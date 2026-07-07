@@ -17,6 +17,8 @@ import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUs
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 import { assembleDocument } from "./sanitize";
+import { spliceCatalogBlocks } from "./hybrid";
+import { verifyGeneratedDocs, type VerificationReport } from "./verify";
 import { fallbackDoc, type FallbackContext } from "./fallback";
 import { recordGeneration, recordProposal } from "./audit.server";
 
@@ -56,7 +58,11 @@ export interface GenerateInput {
    *  (stage 1) and home-HTML calls only — palette/mood/type direction, never embedded; the
    *  block-plan collection/pdp calls stay text-only. */
   referenceImages?: AttachmentImage[];
+  /** Real build-stage callback for live progress UI. Fires at actual boundaries
+   *  (never simulated): brand call → page design calls → pre-save verification. */
+  onStage?: (stage: BuildStage) => void;
 }
+export type BuildStage = "brand" | "designing" | "checking";
 export type GenerateStatus = "draft" | "no_products" | "failed";
 export interface GenerateResult {
   runId: string;
@@ -68,6 +74,8 @@ export interface GenerateResult {
    *  text-only call succeeded — the produced design never saw the references.
    *  Absent on an all-calls-failed run (status "failed" is the stronger signal). */
   referencesUnread?: true;
+  /** Pre-save verification results (links re-checked, dead fx stripped). */
+  verification?: VerificationReport;
 }
 
 function textOf(msg: { content: { type: string; text?: string }[] }): string {
@@ -85,6 +93,11 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
   };
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  // Real catalog numbers for the home prompt: copy grounded on these can be concrete
+  // ("Explore 21 certified devices") without the model inventing figures.
+  const byCollection: Record<string, number> = {};
+  for (const p of products) for (const h of p.collections) byCollection[h] = (byCollection[h] ?? 0) + 1;
+  const counts = { products: products.length, byCollection };
   // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
   // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
   const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
@@ -145,6 +158,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   // Stage 1 — brand. The brief (when present) drives the store's identity here, not just the
   // per-doc copy below — otherwise a free-text prompt could only ever change page text.
+  input.onStage?.("brand");
   const brandText = await call(BRAND_SYSTEM_PROMPT, buildBrandUserMessage(menu, input.mode === "brief" ? input.brief : undefined, hasReferences), { images: refImageBlocks });
   let brand: BrandPlan | null = (brandText && parseBrandPlan(brandText)) || null;
   if (!brand) {
@@ -197,7 +211,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences), {
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences, counts), {
         model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
         // 12000, not 8000: with the fx channels in the prompt, Sonnet's full home
         // pages regularly ran to exactly 8000 and truncated mid-section (verified
@@ -209,10 +223,16 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
       const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";
       const clean = /<[a-z]/i.test(stripped) ? sanitizeStoreHtml(stripped, { links: linkSet }) : "";
-      const doc: BlockDocument = clean
-        ? { kind: "singleton", pageKey: "home", blocks: [{ id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: clean } }] }
-        : fallbackDoc(pageKey, fbBrand, fallbackContext);
-      return { pageKey, doc, proposal: clean ? { rawHtml: true } : { fallback: true } };
+      // Splice catalog markers into REAL productGrid/collectionList blocks — live
+      // photos, prices and add-to-cart from the storefront renderer, so the home
+      // has genuine commerce substance, not a typographic poster alone.
+      const blocks = clean ? spliceCatalogBlocks(clean, valid) : [];
+      const doc: BlockDocument = blocks.length > 0 ? { kind: "singleton", pageKey: "home", blocks } : fallbackDoc(pageKey, fbBrand, fallbackContext);
+      return {
+        pageKey,
+        doc,
+        proposal: blocks.length > 0 ? { rawHtml: true, catalogBlocks: blocks.filter((b) => b.type !== "rawHtml").length } : { fallback: true },
+      };
     }
     const text = await call(docSystemPrompt(pageKey), buildDocUserMessage(pageKey, { brand: brandPlan, brief: briefArg, menu }));
     const plan = text ? parseBlockPlan(text) : null;
@@ -231,13 +251,21 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     }
   }
 
+  input.onStage?.("designing");
   const built = await Promise.all(PAGES.map(({ pageKey, kind }) => buildPage(pageKey, kind)));
   for (const { pageKey, doc, proposal } of built) {
     docs[pageKey] = doc;
     proposals[pageKey] = proposal;
   }
+  // Pre-present verification (rule 12): re-check every link against the live
+  // catalog and strip fx specs the runtime would reject — the merchant is only
+  // ever shown drafts that passed, and the report is recorded, not discarded.
+  input.onStage?.("checking");
+  const { docs: verifiedDocs, report: verification } = verifyGeneratedDocs(docs, linkSet);
+  for (const key of Object.keys(docs)) docs[key] = verifiedDocs[key];
+  proposals.verification = verification;
   // Persist concurrently — distinct draft keys, home first in PAGES so it lands earliest.
-  await Promise.all(built.map(({ pageKey, doc }) => saveDraft(input.shopId, pageKey, doc)));
+  await Promise.all(built.map(({ pageKey }) => saveDraft(input.shopId, pageKey, docs[pageKey])));
 
   // The AI was reached but produced nothing (every call errored) → the docs
   // above are all deterministic fallbacks that ignore the brief. Surface that as
@@ -252,5 +280,5 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const referencesUnread = hasReferences && visionAttempts > 0 && visionOk === 0 && llmOk > 0;
   await recordProposal(input.shopId, runId, proposals);
   await recordGeneration({ shopId: input.shopId, runId, source: input.mode, briefText: input.brief ?? null, model, status, tokenCost });
-  return { runId, status, tokenCost, docs, ...(referencesUnread ? { referencesUnread: true as const } : {}) };
+  return { runId, status, tokenCost, docs, verification, ...(referencesUnread ? { referencesUnread: true as const } : {}) };
 }
