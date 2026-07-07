@@ -133,6 +133,27 @@ const DEFAULT_DEPS: SyncDeps = {
  * poll. Per-platform failures are recorded and the integration is marked
  * `error`, but the sweep continues to the next platform.
  */
+/**
+ * Best-effort immediate ingest right after an OAuth connect, so a freshly
+ * connected ad platform shows its campaigns/spend without waiting for the hourly
+ * cron. NEVER throws: a per-platform backfill failure is already recorded as
+ * sync_status='error' by syncShopAds (surfaced in Settings, retried by the
+ * cron), and an unexpected error must not break the connect redirect — the
+ * credential is already stored. Returns the SyncResult for logging, or null if
+ * the sweep itself blew up.
+ */
+export async function ingestOnConnect(
+  sb: SupabaseClient,
+  shopId: string,
+): Promise<SyncResult | null> {
+  try {
+    return await syncShopAds(sb, shopId);
+  } catch (err) {
+    console.error(`[ingestOnConnect] connect-time backfill failed for ${shopId}`, err);
+    return null;
+  }
+}
+
 export async function syncShopAds(
   sb: SupabaseClient,
   shopId: string,

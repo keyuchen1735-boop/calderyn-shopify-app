@@ -14,6 +14,7 @@ import {
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
 import { grantedScopesFromPermissions } from "~/lib/integration-status";
+import { ingestOnConnect } from "~/lib/ads/manual-sync.server";
 
 const GRAPH_VERSION = "v21.0";
 
@@ -119,7 +120,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     {
       shop_id: shopId,
       kind: "meta_ads",
-      sync_status: "ready",
+      // 'pending' (not 'ready') so the connect-time backfill below AND the
+      // ongoing cron pick this row up — adaptersForShops selects
+      // pending/live/error, so a 'ready' row would never ingest. ingestOnConnect
+      // flips it to 'live' on success.
+      sync_status: "pending",
       // Clear any sync_error from a prior failed sync so Settings doesn't keep
       // showing a stale failure message for this fresh pairing (mirrors
       // auth.google.$.tsx).
@@ -131,6 +136,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { onConflict: "shop_id,kind" },
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
+
+  // Backfill campaigns + spend immediately so the merchant lands on a Connected
+  // integration with data (see auth.google.$.tsx). Best-effort: a failure is
+  // recorded as sync_status='error' and never blocks the connect redirect.
+  await ingestOnConnect(sb, shopId);
 
   if (returnCtx.popup) return redirect(popupResultUrl({ provider: "Meta Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { meta: "connected" }, returnCtx));
