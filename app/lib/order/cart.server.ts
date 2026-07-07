@@ -238,6 +238,39 @@ export async function priceLines(
   return { lines: priced, subtotalCents, currency };
 }
 
+/**
+ * Remove a single line from a cart (buyer cart editing, #2c-1). Shop + cart scoped so a crafted
+ * request can only touch the buyer's own cart; a line id not in this cart is an idempotent no-op.
+ * This is the recovery path for a cart holding a now-unavailable variant: without it a sold-out /
+ * archived line dead-ends checkout in a permanent 502 with no way to drop the offending item.
+ */
+export async function removeCartLine(shopId: string, cartId: string, lineId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  if (!lineId) throw new Error("lineId is required");
+  const { error } = await getSupabase()
+    .from("cart_line")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId)
+    .eq("id", lineId);
+  if (error) throw error;
+}
+
+/** Empty a cart: delete every line. Shop + cart scoped; an already-empty cart is a harmless no-op. */
+export async function clearCart(shopId: string, cartId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  const { error } = await getSupabase()
+    .from("cart_line")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId);
+  if (error) throw error;
+}
+
 function mapCart(row: Record<string, unknown>): Cart {
   return {
     id: String(row.id),
