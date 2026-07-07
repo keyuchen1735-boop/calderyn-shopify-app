@@ -31,7 +31,7 @@ const recorded: Recorded[] = [];
 function chain(table: string, result: { data?: unknown; error?: unknown }) {
   const rec: Recorded = { table, filters: [] };
   const c: Record<string, unknown> = {};
-  for (const m of ["select", "is", "not", "lt", "order", "limit", "in", "eq", "update", "delete"]) {
+  for (const m of ["select", "is", "not", "lt", "order", "limit", "range", "in", "eq", "update", "delete"]) {
     c[m] = vi.fn((...args: unknown[]) => {
       if (m === "update") rec.update = args[0] as Record<string, unknown>;
       if (m === "delete") rec.delete = true;

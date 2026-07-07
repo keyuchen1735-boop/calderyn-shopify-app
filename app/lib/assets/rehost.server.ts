@@ -13,6 +13,7 @@
 // consuming budget), and every skip class is counted in the returned summary.
 import { getSupabase } from "~/lib/supabase.server";
 import { mapWithConcurrency } from "~/lib/ads/concurrency";
+import { readPaged } from "~/lib/db/read-paged.server";
 import { mirrorShopifyImage, SHOP_ASSETS_BUCKET } from "./persist.server";
 
 /** Substring of every owned public URL (any Supabase host) — the "already ours" predicate. */
@@ -23,9 +24,9 @@ export const MAX_REHOST_ATTEMPTS = 5;
  *  CONCURRENCY-parallel 15s fetches); a backlog drains across nightly runs. */
 const SWEEP_LIMIT = 50;
 const CONCURRENCY = 5;
-/** Sibling-read bound; pending products are ≤SWEEP_LIMIT with a handful of
- *  images each, so this is generous — but never trust PostgREST's silent
- *  1000-row clamp to be "enough" (rule 12: bound it ourselves, visibly). */
+/** Sibling-read cap, walked in .range() pages by readPaged so it is a real
+ *  bound (never PostgREST's silent 1000-row clamp). Pending products are
+ *  ≤SWEEP_LIMIT with a handful of images each, so this is generous. */
 const SIBLING_READ_LIMIT = 2000;
 
 export interface SweepResult {
@@ -77,16 +78,25 @@ export async function sweepPendingMedia(limit = SWEEP_LIMIT): Promise<SweepResul
 
   // Dedup pass: a pending hotlink equal to a sibling row's source_url is a
   // re-insert of an image we already own — delete it instead of re-persisting.
+  // Paged through readPaged: PostgREST clamps any single response at 1000 rows
+  // regardless of .limit(), so a bare .limit(2000) would silently drop siblings
+  // past row 1000 and re-mint a duplicate owned copy of an image we already own.
   const pendingProducts = [...new Set(rows.map((r) => r.product_id))];
-  const siblings = await sb
-    .from("product_media")
-    .select("product_id, source_url")
-    .in("product_id", pendingProducts)
-    .not("source_url", "is", null)
-    .limit(SIBLING_READ_LIMIT);
-  if (siblings.error) throw siblings.error;
+  const siblingRows = await readPaged<{ product_id: string; source_url: string }>(
+    "product_media siblings",
+    "(rehost sweep)",
+    SIBLING_READ_LIMIT,
+    (from, to) =>
+      sb
+        .from("product_media")
+        .select("product_id, source_url")
+        .in("product_id", pendingProducts)
+        .not("source_url", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
   const rehostedByProduct = new Map<string, Set<string>>();
-  for (const m of (siblings.data ?? []) as Array<{ product_id: string; source_url: string }>) {
+  for (const m of siblingRows) {
     const set = rehostedByProduct.get(m.product_id) ?? new Set<string>();
     set.add(m.source_url);
     rehostedByProduct.set(m.product_id, set);
@@ -136,6 +146,16 @@ export async function sweepPendingMedia(limit = SWEEP_LIMIT): Promise<SweepResul
       .eq("id", row.id);
     if (upd.error) {
       console.error(`[assets] rehost stored but row update failed for media ${row.id}`, upd.error);
+      // The blob is stored but the row could not be advanced (source_url stays
+      // null). Without bounding attempts here, a persistently-unwritable row is
+      // re-selected every sweep and re-mirrors a fresh owned copy each time — an
+      // unbounded orphaned-blob leak. Bump attempts like the fetch-failure branch
+      // so a sticky failure eventually hits MAX_REHOST_ATTEMPTS and stops.
+      const bump = await sb
+        .from("product_media")
+        .update({ rehost_attempts: row.rehost_attempts + 1 })
+        .eq("id", row.id);
+      if (bump.error) console.error(`[assets] attempts bump failed for media ${row.id}`, bump.error);
       return "failed" as const;
     }
     return "rehosted" as const;
