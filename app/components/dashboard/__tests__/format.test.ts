@@ -20,6 +20,17 @@ describe("money", () => {
     expect(money(undefined as unknown as number)).toBe("$0");
     expect(money(null as unknown as number)).toBe("$0");
   });
+
+  it("renders a non-USD order/refund in its own currency instead of a wrong '$'", () => {
+    // USD (and no currency) keeps the existing custom "$" format — no dashboard-wide regression.
+    expect(money(10000, "usd")).toBe("$100");
+    expect(money(10000, "USD")).toBe("$100");
+    // Non-USD uses the correct symbol via Intl (was previously "$100" — the bug).
+    expect(money(10000, "eur")).toBe("€100");
+    expect(money(10050, "gbp")).toBe("£100.50");
+    // A malformed (non 3-letter ISO) currency code degrades to the legacy "$" format, never throws.
+    expect(money(100, "US")).toBe("$1");
+  });
 });
 
 describe("moneyK", () => {

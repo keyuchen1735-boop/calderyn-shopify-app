@@ -43,7 +43,7 @@ export default function RefundModal({
 
   const submit = async () => {
     if (invalidPartial) {
-      app.toast(`Enter a partial amount between $0 and ${money(refundableCents)}.`, "warn");
+      app.toast(`Enter a partial amount between $0 and ${money(refundableCents, order.currency)}.`, "warn");
       return;
     }
     setBusy(true);
@@ -53,7 +53,7 @@ export default function RefundModal({
         idempotencyKey,
       });
       app.toast(
-        `Refunded ${money(res.amountCents)} — order is now ${res.orderState.replace("_", " ")}.`,
+        `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.`,
         "check",
       );
       onDone();
@@ -91,8 +91,8 @@ export default function RefundModal({
           <div className="cd-h2" style={{ marginBottom: 4 }}>Refund {order.ref}</div>
           <div className="cd-caption" style={{ marginBottom: 12 }}>
             {refundableCents < order.totalCents
-              ? `Order total ${money(order.totalCents)} · ${money(refundableCents)} still refundable. `
-              : `Order total ${money(order.totalCents)}. `}
+              ? `Order total ${money(order.totalCents, order.currency)} · ${money(refundableCents, order.currency)} still refundable. `
+              : `Order total ${money(order.totalCents, order.currency)}. `}
             A refund is sent back through Stripe and cannot be undone.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -103,7 +103,7 @@ export default function RefundModal({
                 value={full ? "full" : "partial"}
                 onChange={(e) => setFull(e.target.value === "full")}
               >
-                <option value="full">Full refund ({money(refundableCents)})</option>
+                <option value="full">Full refund ({money(refundableCents, order.currency)})</option>
                 <option value="partial">Partial refund</option>
               </select>
             </label>
