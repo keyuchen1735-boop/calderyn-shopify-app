@@ -217,6 +217,21 @@ describe("emitPaidOrder", () => {
     await expect(emitPaidOrder("shop-1", "ghost", PAID_AT)).rejects.toThrow(/not found for shop/);
   });
 
+  it("skips emission (no facts written) for a go-live test probe (channel='test')", async () => {
+    // The 50c cutover probe reaches 'paid' but must never land in the warehouse
+    // facts (order_fact has no channel column, so the analytics test-exclusion
+    // cannot reach an emitted row).
+    seedOrder();
+    store.db.orders[0].channel = "test";
+    store.db.sku_dim.push({ id: "sku-1", shop_id: "shop-1", external_id: "v-tee-s" });
+
+    const res = await emitPaidOrder("shop-1", "ord-1", PAID_AT);
+
+    expect(res).toMatchObject({ skipped: true, lineCount: 0, clickRefCount: 0 });
+    expect(store.db.order_fact).toHaveLength(0);
+    expect(store.db.order_line_fact).toHaveLength(0);
+  });
+
   it("skips emission (no facts written) when the order is not currently paid — never re-asserts paid", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     seedOrder({}, "refunded"); // a stale succeeded redelivery for an order that has since refunded
