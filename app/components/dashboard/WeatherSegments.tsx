@@ -11,7 +11,7 @@ import {
   type WeatherForecastDTO,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
-import { conditionFor, sortMoves, type WeatherCondition } from "~/lib/weather/forecast-view";
+import { conditionFor, demandLabel, sortMoves, type WeatherCondition } from "~/lib/weather/forecast-view";
 import { explainMove } from "~/lib/weather/explain";
 import type { WeatherMode } from "~/lib/weather/types";
 
@@ -157,6 +157,18 @@ export function WeatherSegments({
 
   return (
     <>
+      <Card>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <CDIcon name="cloudSun" size={26} strokeWidth={1.6} style={{ color: "var(--accent)", flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div className="cd-row-title">Weather-smart ads</div>
+            <div className="cd-caption">
+              Rain and cold push shoppers online — your ad budget follows them.
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* Reachable even when the forecast fetch fails (saving a location
           doesn't depend on Open-Meteo), but hidden while loading so located
           merchants don't see the ask flash. */}
@@ -263,26 +275,8 @@ export function WeatherSegments({
                       </>
                     ) : null}
                   </div>
-                  <div
-                    aria-hidden
-                    style={{
-                      marginTop: 8,
-                      height: 4,
-                      borderRadius: 2,
-                      background: "color-mix(in oklch, var(--accent) 12%, transparent)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.round(r.score * 100)}%`,
-                        height: "100%",
-                        borderRadius: 2,
-                        background: "var(--accent)",
-                      }}
-                    />
-                  </div>
-                  <div className="cd-caption tabular-nums" style={{ marginTop: 4 }}>
-                    {(r.score * 100).toFixed(0)} demand
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+                    <Pill tone={demandLabel(r.score).tone}>{demandLabel(r.score).label}</Pill>
                   </div>
                 </div>
               );
@@ -410,9 +404,11 @@ export function WeatherSegments({
                         ))}
                       </div>
                     ) : null}
-                    <div className="cd-caption" style={{ marginTop: 8, maxWidth: "60ch" }}>
-                      {s.narrative}
-                    </div>
+                    {why.note ? (
+                      <div className="cd-caption" style={{ marginTop: 8, maxWidth: "60ch" }}>
+                        {why.note}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
