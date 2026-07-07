@@ -1,6 +1,6 @@
 // Client fetchers for the customer-directory dashboard surface. Kept in its
 // own module (not client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend } from "./client";
+import { apiGet } from "./client";
 import type {
   CustomerSegment,
   CustomerStats,
@@ -26,7 +26,6 @@ export type {
   CustomerCart,
   CustomerDetail,
 };
-export type { WeatherSuggestionDTO } from "../weather/types";
 
 export async function fetchCustomersPage(): Promise<CustomersPage> {
   return apiGet<CustomersPage>("/dashboard/api/customers");
@@ -34,12 +33,4 @@ export async function fetchCustomersPage(): Promise<CustomersPage> {
 
 export async function fetchCustomerDetail(id: string): Promise<CustomerDetail> {
   return apiGet<CustomerDetail>(`/dashboard/api/customers/${encodeURIComponent(id)}`);
-}
-
-/** Approve or dismiss a weather-reallocation suggestion. */
-export async function applyWeatherSuggestion(
-  suggestionId: string,
-  intent: "apply" | "dismiss",
-): Promise<{ ok: boolean; status: string }> {
-  return apiSend("POST", "/dashboard/api/weather-reallocation", { suggestionId, intent });
 }

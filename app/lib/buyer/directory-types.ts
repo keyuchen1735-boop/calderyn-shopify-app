@@ -2,8 +2,6 @@
 // and the dashboard client/screen. Plain types only — safe to import from the
 // browser.
 
-import type { WeatherSuggestionDTO } from "../weather/types";
-
 /** One bucket per buyer, priority VIP > At risk > Repeat > New > One-time;
  *  buyers with zero purchases are "Prospect". */
 export type CustomerSegment =
@@ -51,8 +49,6 @@ export interface CustomersPage {
   stats: CustomerStats;
   customers: CustomerRow[];
   segments: SegmentDef[];
-  /** Pending weather-reallocation suggestions for the Segments → Weather panel. Empty for opted-out shops. */
-  weatherSuggestions: WeatherSuggestionDTO[];
 }
 
 export interface CustomerAddress {

@@ -288,9 +288,7 @@ export async function loadCustomersPage(shopId: string): Promise<CustomersPage> 
     },
   ];
 
-  // weatherSuggestions is attached by the route (a separate, unrelated read
-  // model) — this loader stays scoped to the buyer directory itself.
-  return { stats, customers, segments, weatherSuggestions: [] };
+  return { stats, customers, segments };
 }
 
 interface OrderLineRow {
