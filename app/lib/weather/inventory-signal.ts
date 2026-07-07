@@ -3,9 +3,12 @@ import { suggestedTransferFromRow } from "../inventory-demand";
 import { isValidRegion, type RegionCode } from "../ads/actions";
 import type { WeatherAlertDraft } from "./drafts";
 
-// Only nudge when the demand region's weather is meaningfully demand-favorable;
-// mild forecasts must not manufacture inventory moves (weather is a secondary signal).
-export const WEATHER_DEMAND_SCORE_FLOOR = 0.35;
+// Only nudge when the demand region's weather predicts CLEARLY elevated demand.
+// favorability() is 0.5 at neutral weather and rises toward ~0.7 only for clearly
+// bad (cold/wet/dark) weather, so the floor sits above the neutral midpoint —
+// mild or good weather must never manufacture an inventory move (weather is a
+// secondary, occasional signal, per the asymmetric demand model in score.ts).
+export const WEATHER_DEMAND_SCORE_FLOOR = 0.55;
 
 export function inventoryDraft(
   row: SkuDemandViewRow,

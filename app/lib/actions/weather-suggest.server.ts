@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RegionCode } from "../ads/actions";
 import { regionForGeoTargets } from "../ads/geo-regions";
-import { favorability, type RegionForecast } from "../weather/score";
+import { favorability, demandConfidence, type RegionForecast } from "../weather/score";
 import { REGION_CENTROIDS } from "../weather/regions";
 import { fetchRegionForecasts } from "../weather/open-meteo.server";
 import { budgetDraft } from "../weather/drafts";
@@ -17,6 +17,9 @@ import type { SkuDemandViewRow } from "../inventory-demand";
 export const SCORE_GAP_FLOOR = 0.15;
 export const MAX_CUT_FRACTION = 0.9;
 export const MIN_MOVE_CENTS = 100;
+// Minimum demandConfidence for the SOURCE (best-weather) region before a budget
+// move is emitted — the good-weather-suppression signal must be clear, not mild.
+export const WEATHER_CONFIDENCE_FLOOR = 0.5;
 
 export interface EligibleCampaign {
   campaignId: string;
@@ -150,7 +153,11 @@ export async function runWeatherSuggestForShop(
   const fetchForecasts = deps.fetchForecasts ?? ((pts) => fetchRegionForecasts(pts));
   const forecasts = await fetchForecasts(REGION_CENTROIDS);
   const scores = new Map<RegionCode, number>();
-  for (const [region, f] of forecasts) scores.set(region, favorability(f));
+  const confidences = new Map<RegionCode, number>();
+  for (const [region, f] of forecasts) {
+    scores.set(region, favorability(f));
+    confidences.set(region, demandConfidence(f));
+  }
 
   const today = deps.today ?? new Date().toISOString().slice(0, 10);
   const writeAlert = deps.writeAlert ?? writeWeatherAlert;
@@ -160,7 +167,13 @@ export async function runWeatherSuggestForShop(
   const regions = new Set(campaigns.map((c) => c.region));
   if (regions.size >= 2) {
     const suggestion = buildSuggestion(campaigns, scores, sensitivity);
-    if (suggestion) {
+    // Only emit the budget move when the SOURCE (best-weather) region carries a
+    // confident signal. Good-weather suppression is the reliable half of the
+    // asymmetry (score.ts), so cutting a clearly-nice region is well-justified;
+    // a source region whose weather is only mild is noise, not a demand shift.
+    const sourceConfident =
+      !!suggestion && (confidences.get(suggestion.sourceRegion) ?? 0) >= WEATHER_CONFIDENCE_FLOOR;
+    if (suggestion && sourceConfident) {
       await writeAlert(
         sb,
         shopId,

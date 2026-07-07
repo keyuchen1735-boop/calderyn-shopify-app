@@ -89,6 +89,32 @@ describe("runWeatherSuggestForShop", () => {
     expect(budget!.entityRef.campaign_id).toBe("w1");
   });
 
+  it("suppresses the budget alert when the source (best-weather) region's signal is only mild", async () => {
+    // Both regions are mild: there IS a favorability gap (buildSuggestion would
+    // emit) but the source region's demandConfidence is below the floor, so the
+    // asymmetric model treats it as noise, not a demand shift — no budget alert.
+    const mild = new Map<RegionCode, RegionForecast>([
+      ["us-west", { avgTempC: 16, precipMm: 5, snowCm: 0, avgDaylightH: 12 }], // fav 0.31, conf 0.39 (< 0.5)
+      ["us-east", { avgTempC: 4, precipMm: 20, snowCm: 2, avgDaylightH: 9 }], //  fav 0.60, conf 0.25
+    ]);
+    const { sb } = fakeSb({
+      sensitivity: 50,
+      campaigns: [
+        { id: "w1", name: "West", status: "active", daily_budget_cents: 10000, geo_targets: ["us-west"] },
+        { id: "e1", name: "East", status: "active", daily_budget_cents: 5000, geo_targets: ["us-east"] },
+      ],
+      demandRows: [],
+    });
+    const writeAlert = vi.fn<typeof writeWeatherAlert>(async () => "alert-id");
+    const r = await runWeatherSuggestForShop(SHOP, sb, {
+      fetchForecasts: vi.fn(async () => mild),
+      today: "2026-07-06",
+      writeAlert,
+    });
+    expect(r.suggested).toBe(0);
+    expect(writeAlert).not.toHaveBeenCalled();
+  });
+
   it("writes an inventory alert for a single-campaign shop with an eligible demand row (regression guard)", async () => {
     const { sb } = fakeSb({
       sensitivity: 50,
