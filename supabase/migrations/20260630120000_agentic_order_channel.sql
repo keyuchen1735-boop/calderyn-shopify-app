@@ -4,7 +4,7 @@
 -- (P4) and attribution can distinguish a chat sale from a storefront sale. These are ADDITIVE
 -- columns on the existing system-of-record table (20260629110000_order_spine.sql) — adding a
 -- column to public.orders does NOT drop its existing orders_shop_scope RLS policy, and the new
--- columns inherit it (same as 20260629120000_order_confirmation_token.sql). channel/protocol/
+-- columns inherit it (same as 20260629120001_order_confirmation_token.sql). channel/protocol/
 -- client_id are text (free strings, not a Postgres enum — convention: the codebase models
 -- bounded sets as text + an app-level vocabulary). channel is NOT NULL with a 'storefront'
 -- default so every pre-existing order back-fills as a storefront sale.
@@ -14,7 +14,7 @@ alter table public.orders add column if not exists client_id text;        -- ext
 create index if not exists idx_orders_channel on public.orders (shop_id, channel, created_at desc);
 
 -- Per-client commerce authorization + deterministic spend cap. mcp_oauth_clients
--- (20260608120000_mcp_oauth_clients.sql) already registers external AI clients; these columns
+-- (20260608120001_mcp_oauth_clients.sql) already registers external AI clients; these columns
 -- add whether a client may transact at all (commerce_scope) and a hard per-order ceiling
 -- (spend_cap_cents, integer cents). Spend authority is DETERMINISTIC code, never a model
 -- decision (rule 5): assertWithinCommerceCap() reads these and refuses an over-cap order BEFORE

@@ -1,4 +1,4 @@
--- supabase/migrations/20260610120000_image_gen_event.sql
+-- supabase/migrations/20260610120001_image_gen_event.sql
 -- Cost guardrail for image generation: one row per generated image, used to
 -- enforce per-shop and global daily caps on the shared Higgsfield account.
 create table if not exists image_gen_event (

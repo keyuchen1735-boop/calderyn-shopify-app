@@ -1,4 +1,4 @@
--- supabase/migrations/20260629130000_store_builder_page_document.sql
+-- supabase/migrations/20260629130003_store_builder_page_document.sql
 -- Visual store builder (#16/#8) spine: persisted block documents. One row per (shop_id,
 -- page_key). draft_json is the editable/in-progress doc; published_json is what the public
 -- storefront renders. RLS modeled on buyer_identity (20260629100000): own shop_id + a

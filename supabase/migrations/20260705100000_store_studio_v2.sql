@@ -51,7 +51,7 @@ create index if not exists storefront_event_experiment_idx
   on public.storefront_event (shop_id, experiment_id, created_at desc)
   where experiment_id is not null;
 
--- Corrective for 20260629140000_store_generator.sql, which described 'failed'
+-- Corrective for 20260629140002_store_generator.sql, which described 'failed'
 -- as "reserved for a hard-failure path not yet emitted": the generator now
 -- emits 'failed' as a SOFT degradation (deterministic fallback docs were still
 -- written; the AI was unreachable). Comment only — no constraint change.

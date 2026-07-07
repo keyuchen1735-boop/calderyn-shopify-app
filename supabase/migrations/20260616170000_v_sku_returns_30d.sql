@@ -13,7 +13,7 @@
 -- windowed to an order date.
 --
 -- DEPENDENCY: this view references v_sku_sales_30d (migration
--- 20260616150000_v_sku_sales_30d.sql, feature F3). On a fresh DB, F3 must be
+-- 20260616150001_v_sku_sales_30d.sql, feature F3). On a fresh DB, F3 must be
 -- applied first. security_invoker like every view in this schema; the app scopes
 -- reads with an explicit .eq('shop_id', ...).
 create or replace view public.v_sku_returns_30d as

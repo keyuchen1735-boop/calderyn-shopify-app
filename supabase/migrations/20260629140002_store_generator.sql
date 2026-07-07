@@ -1,4 +1,4 @@
--- supabase/migrations/20260629140000_store_generator.sql
+-- supabase/migrations/20260629140002_store_generator.sql
 -- Store generator (#16): promoted chrome settings + generation audit. RLS modeled on
 -- buyer_identity (20260629100000): uuid shop_id, shop-scoped policy,
 -- anon/authenticated grants revoked. The app reaches these via the service-role key only.

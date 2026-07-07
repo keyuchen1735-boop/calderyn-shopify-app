@@ -1,7 +1,7 @@
 -- v_skus_flat (Phase 2): expose sku_dim.do_not_reorder (the discontinue flag) and
 -- product_id (Shopify Product GID, needed by the discontinue executor) on the
 -- inventory view. Re-creates the view verbatim from
--- 20260616150000_v_skus_flat_ship_pnl_real_cost_only.sql, adding only the two
+-- 20260616150002_v_skus_flat_ship_pnl_real_cost_only.sql, adding only the two
 -- trailing columns. security_invoker preserved (see 20260604140000). RLS via the
 -- base tables is unchanged.
 
