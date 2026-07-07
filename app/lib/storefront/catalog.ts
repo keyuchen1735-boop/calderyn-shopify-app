@@ -18,6 +18,11 @@ export interface StoreProduct {
   images: { url: string; alt: string | null }[];
   variants: StoreVariant[];
   collections: string[]; // collection handles
+  // Merchandising metadata used to weather-boost listProducts ordering (see
+  // catalog.owned.server.ts). Optional so fixture/other implementations are
+  // unaffected.
+  category?: string | null;
+  tags?: string[];
 }
 
 export interface StoreVariant {
