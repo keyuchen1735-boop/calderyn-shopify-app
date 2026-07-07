@@ -61,9 +61,17 @@ function fakeSb(opts: {
       }
       return Promise.resolve({ data: null, error: null }).then(res);
     };
+    chain.contains = vi.fn(() => chain);
     chain.insert = vi.fn((row: unknown) => {
       calls.inserts.push({ table: tableName, row });
-      return Promise.resolve({ data: null, error: null });
+      const result = { data: { id: `al-${calls.inserts.length}` }, error: null };
+      const ret: Record<string, unknown> = {
+        select: vi.fn(() => ret),
+        single: vi.fn(async () => result),
+        then: (res: (v: { data: null; error: null }) => unknown) =>
+          Promise.resolve({ data: null, error: null }).then(res),
+      };
+      return ret;
     });
     chain.upsert = vi.fn(
       (rows: Array<Record<string, unknown>>, upsertOpts?: { ignoreDuplicates?: boolean }) => {
@@ -153,7 +161,9 @@ describe("runWeatherSuggestForShop", () => {
     await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
     // No active alert exists in the fake → the mirror inserts a fresh one.
     // (Plain insert, not upsert: the alerts dedup index is partial and can't
-    // be targeted by ON CONFLICT.)
+    // be targeted by ON CONFLICT.) The row must match the BASE alerts table —
+    // narrative lives in claude_narrative, the display title rides entity_ref,
+    // and day_bucket is NOT NULL (v_alerts_view shapes them for the UI).
     const alerts = calls.inserts.filter((u) => u.table === "alerts");
     expect(alerts).toHaveLength(1);
     const row = alerts[0].row as Record<string, unknown>;
@@ -162,10 +172,22 @@ describe("runWeatherSuggestForShop", () => {
       detector_id: "weather_reallocation",
       severity: "low",
       status: "open",
+      day_bucket: "2026-07-06",
+      claude_rank: 500,
     });
-    expect(String(row.narrative)).toContain("weather");
-    // The Alerts detail acts on the prediction via this id.
-    expect((row.evidence as Record<string, unknown>).suggestion_id).toBe("sg-1");
+    expect(String(row.claude_narrative)).toContain("weather");
+    const ref = row.entity_ref as Record<string, unknown>;
+    expect(ref.kind).toBe("weather_move");
+    expect(String(ref.title)).toContain("Weather favors");
+    // The view's campaign join reads entity_ref.campaign_id.
+    expect(ref.campaign_id).toBe(ref.source_campaign_id);
+    // Evidence (incl. the actionable suggestion_id) lives in alert_context.
+    const ctx = calls.inserts.filter((u) => u.table === "alert_context");
+    expect(ctx).toHaveLength(1);
+    const ctxRow = ctx[0].row as Record<string, unknown>;
+    expect(ctxRow.shop_id).toBe(SHOP);
+    expect(ctxRow.alert_id).toBeTruthy();
+    expect((ctxRow.evidence as Record<string, unknown>).suggestion_id).toBe("sg-1");
   });
   it("does not open an actionable alert for an auto-armed (dial=100) prediction", async () => {
     // All-auto merchants asked for no approvals: the armed move lives on the
