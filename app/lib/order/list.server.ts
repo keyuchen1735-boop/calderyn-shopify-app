@@ -145,7 +145,7 @@ export async function listDraftCarts(shopId: string): Promise<DraftCartRow[]> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("cart")
-    .select("id, buyer_id, created_at, cart_line(quantity, unit_price_cents)")
+    .select("id, buyer_id, created_at, cart_line(quantity, unit_price_cents, currency)")
     .eq("shop_id", shopId)
     .eq("state", "cart")
     .order("created_at", { ascending: false })
@@ -159,7 +159,7 @@ export async function listDraftCarts(shopId: string): Promise<DraftCartRow[]> {
     rows.map((r) => String(r.buyer_id ?? "")),
   );
   return rows.map((c) => {
-    const lines = (c.cart_line ?? []) as { quantity: number; unit_price_cents: number }[];
+    const lines = (c.cart_line ?? []) as { quantity: number; unit_price_cents: number; currency?: string }[];
     return {
       id: String(c.id),
       ref: formatOrderRef(String(c.id)),
@@ -169,6 +169,7 @@ export async function listDraftCarts(shopId: string): Promise<DraftCartRow[]> {
         (a, l) => a + Number(l.quantity ?? 0) * Number(l.unit_price_cents ?? 0),
         0,
       ),
+      currency: String(lines[0]?.currency ?? "usd"),
       createdAt: String(c.created_at),
     };
   });
@@ -183,7 +184,7 @@ export async function listAbandonedCheckouts(
   const cutoff = new Date(Date.now() - ABANDON_AFTER_MS).toISOString();
   const { data, error } = await getSupabase()
     .from("orders")
-    .select("id, buyer_id, total_cents, created_at")
+    .select("id, buyer_id, total_cents, currency, created_at")
     .eq("shop_id", shopId)
     .eq("state", "checkout_pending")
     .lt("created_at", cutoff)
@@ -200,6 +201,7 @@ export async function listAbandonedCheckouts(
     ref: formatOrderRef(String(s.id)),
     buyerEmail: emails.get(String(s.buyer_id)) ?? null,
     totalCents: Number(s.total_cents ?? 0),
+    currency: String(s.currency ?? "usd"),
     createdAt: String(s.created_at),
   }));
 }

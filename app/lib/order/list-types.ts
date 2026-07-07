@@ -27,6 +27,7 @@ export interface DraftCartRow {
   buyerEmail: string | null;
   itemCount: number;
   valueCents: number;
+  currency: string;
   createdAt: string;
 }
 
@@ -35,6 +36,7 @@ export interface AbandonedCheckoutRow {
   ref: string;
   buyerEmail: string | null;
   totalCents: number;
+  currency: string;
   createdAt: string;
 }
 

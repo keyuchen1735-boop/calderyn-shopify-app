@@ -86,6 +86,7 @@ type DisplayOrder = {
   createdAt: string | null;
   customer: string | null;
   totalCents: number;
+  currency: string;
   state: string;
   source: "calderyn" | "shopify";
   // The native OrderRow (for the refund modal) when this row is a Calderyn
@@ -102,6 +103,7 @@ function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | n
       createdAt: o.createdAt,
       customer: o.buyerEmail,
       totalCents: o.totalCents,
+      currency: o.currency,
       state: o.state,
       source: "calderyn",
       refundRow: o,
@@ -114,6 +116,7 @@ function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | n
       createdAt: o.processedAt,
       customer: null,
       totalCents: o.totalCents,
+      currency: o.currency,
       state: o.financialStatus,
       source: "shopify",
       refundRow: null,
@@ -193,7 +196,7 @@ function UnifiedOrdersList({
               {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
             </div>
             <div className="truncate">{r.customer ?? (r.source === "shopify" ? "" : "Guest")}</div>
-            <div className="cd-row-num tabular-nums">{money(r.totalCents)}</div>
+            <div className="cd-row-num tabular-nums">{money(r.totalCents, r.currency)}</div>
             <div className="cd-caption">{r.createdAt ? timeAgo(r.createdAt) : ""}</div>
             <div>
               {r.source === "shopify" ? (
@@ -406,7 +409,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
                   <div className="cd-caption">{r.itemCount} items</div>
                   <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {money(r.valueCents)}
+                    {money(r.valueCents, r.currency)}
                   </div>
                   <div className="cd-caption">{timeAgo(r.createdAt)}</div>
                 </div>
@@ -436,7 +439,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   <div className="cd-row-title tabular-nums">{r.ref}</div>
                   <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
                   <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {money(r.totalCents)}
+                    {money(r.totalCents, r.currency)}
                   </div>
                   <div className="cd-caption">Payment</div>
                   <div className="cd-caption">{timeAgo(r.createdAt)}</div>
