@@ -23,6 +23,7 @@ grant select on table public.seo_ai_crawl_daily to app_web;
 create or replace function public.log_ai_crawl(p_shop_id uuid, p_bot text)
 returns void
 language sql
+set search_path = public
 as $$
   insert into public.seo_ai_crawl_daily (shop_id, bot_name, day, hits)
   values (p_shop_id, p_bot, current_date, 1)
