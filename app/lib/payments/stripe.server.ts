@@ -7,7 +7,7 @@ import { commitReservation } from "~/lib/inventory/engine.server";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
 import { getStripe } from "./stripe-client.server";
-import { createRoutedPaymentIntent } from "./connect.server";
+import { createRoutedPaymentIntent, applyAccountUpdate } from "./connect.server";
 
 export { getStripe };
 
@@ -139,6 +139,20 @@ export async function processStripeEvent(
       );
     if (upsertErr) throw upsertErr;
     return { status: 200, processed: true, duplicate: false };
+  }
+
+  // Stripe Connect account status changes (async enablement). A connected account whose
+  // charges/payouts flip to enabled AFTER the merchant returns from onboarding emits
+  // account.updated; without handling it the stored row stays charges_enabled=false forever and
+  // destinationParamsFor keeps routing every PaymentIntent to the platform account. Sync the stored
+  // row from the event's account object. ACK regardless (rule 12: a foreign account is not ours).
+  if (event.type === "account.updated") {
+    const account = event.data.object as Stripe.Account;
+    const applied = await applyAccountUpdate(account);
+    if (!applied) {
+      console.warn(`[stripe] account.updated ${event.id}: account ${account.id} not linked to any shop; skipped`);
+    }
+    return { status: 200, processed: applied, duplicate: false };
   }
 
   // Only money-moving / status events touch the DB; ack everything else so Stripe stops retrying.

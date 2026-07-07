@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   emitPaidOrder: vi.fn(),
   commitReservation: vi.fn(),
   routedCreate: vi.fn(),
+  applyAccountUpdate: vi.fn(),
   // Current orders.state the mock returns for the redelivery self-heal read. Default 'paid' so the
   // ordinary duplicate delivery treats the order as already-advanced and does not re-transition.
   orderState: "paid" as string,
@@ -55,6 +56,7 @@ vi.mock("~/lib/inventory/engine.server", () => ({ commitReservation: h.commitRes
 // the base params handed to the seam and the row stamping of its outcome.
 vi.mock("~/lib/payments/connect.server", () => ({
   createRoutedPaymentIntent: h.routedCreate,
+  applyAccountUpdate: h.applyAccountUpdate,
 }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the stripe + supabase fakes are registered before the module under test loads
@@ -81,6 +83,7 @@ beforeEach(() => {
   });
   h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
   h.commitReservation.mockResolvedValue(undefined);
+  h.applyAccountUpdate.mockResolvedValue(true);
   h.upsert.mockResolvedValue({ error: null });
   h.orderState = "paid";
 });
@@ -263,6 +266,37 @@ describe("processStripeEvent", () => {
     const res = await processStripeEvent("raw-body", "sig");
     expect(res).toEqual({ status: 200, processed: false, duplicate: false });
     expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  describe("account.updated (Connect async enablement re-sync)", () => {
+    const accountEvent = {
+      id: "evt_acct",
+      type: "account.updated",
+      created: 1_700_000_000,
+      account: "acct_1",
+      data: { object: { id: "acct_1", charges_enabled: true, payouts_enabled: true, details_submitted: true } },
+    };
+
+    it("syncs the stored connected-account row from the event and does no money work", async () => {
+      h.constructEvent.mockReturnValue(accountEvent);
+      const res = await processStripeEvent("raw-body", "sig");
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      // The routing row is re-synced from the event's account object (charges now enabled), so
+      // subsequent PaymentIntents route to the merchant account instead of the platform account.
+      expect(h.applyAccountUpdate).toHaveBeenCalledWith(accountEvent.data.object);
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+    });
+
+    it("ACKs (200, processed:false) for an account.updated we don't track", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.applyAccountUpdate.mockResolvedValueOnce(false); // no connected-account row matched
+      h.constructEvent.mockReturnValue({ ...accountEvent, id: "evt_acct_foreign" });
+      const res = await processStripeEvent("raw-body", "sig");
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/not linked to any shop/));
+      warn.mockRestore();
+    });
   });
 
   it("ACKs (200) and writes nothing for a PI not created by us (no shop_id metadata)", async () => {
