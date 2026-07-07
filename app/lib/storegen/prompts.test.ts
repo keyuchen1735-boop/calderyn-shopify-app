@@ -50,6 +50,9 @@ describe("generator prompts", () => {
     expect(p).toContain("2000"); // motion JSON cap
     expect(p).toContain("Max 2 shader hosts");
     expect(p).toContain("Max 8 motion hosts");
+    // the prelude the runtime prepends — a drifted uniform name/type here would make
+    // every model-emitted shader fail to compile (fx/shader.ts FRAGMENT_PRELUDE)
+    expect(p).toContain("uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_color1");
   });
   it("the AI-HTML home prompt encodes the quoting, fallback and reserved-attribute rules", () => {
     const p = HOME_HTML_SYSTEM_PROMPT;
