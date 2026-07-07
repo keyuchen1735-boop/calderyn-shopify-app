@@ -39,7 +39,8 @@ import type {
 } from "~/components/dashboard/view-models";
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
-import { DETECTOR_TO_ACTIONS } from "~/lib/labels";
+import { DETECTOR_TO_ACTIONS, recommendedAction } from "~/lib/labels";
+import { hasTransferPlan } from "~/lib/inventory-alerts";
 import { collectionHandle } from "~/lib/catalog/handle";
 import { hasActionDeepLink } from "~/lib/action-deeplinks";
 import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
@@ -161,39 +162,60 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // Prefer the campaign dim id resolved by v_alerts_view (robust against two
   // campaigns sharing a name); fall back to a name match only for older rows
   // that predate the campaign_id column.
+  // The campaign this alert is *scoped* to: the dim id from v_alerts_view (robust
+  // against two campaigns sharing a name), or a name match for older rows. Drives
+  // whether the alert counts as campaign-scoped when picking the recommended
+  // action — parity with the Autopilot queue's hasCampaign.
   const campaign_id =
     a.campaign_id ??
     (a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null);
+
+  // A SKU-scoped alert (e.g. sku_stockout_vs_spend) can still name the offending
+  // campaign in its evidence — a real ad_campaign_dim id. Use it to make the
+  // campaign fix executable without treating the alert as campaign-scoped.
+  const evRaw = (a.evidence as Record<string, unknown> | null) ?? {};
+  const evidenceCampaignId =
+    typeof evRaw.campaign_id === "string" && evRaw.campaign_id ? evRaw.campaign_id : null;
+  const execCampaignId = campaign_id ?? evidenceCampaignId;
 
   // exclude_geo drops one of the four internal region buckets from a campaign's
   // targeting (executor contract). The engine also emits finer state-form regions
   // (e.g. "US-TX") in some evidence; those are NOT buckets, so a non-bucket value
   // leaves exclude_geo as the Ads-Manager deep-link rather than a button that 422s.
-  const regionRaw = (a.evidence as Record<string, unknown> | null)?.region;
+  const regionRaw = evRaw.region;
   const region = isValidRegion(regionRaw) ? regionRaw : undefined;
 
   // Live-executable kinds render as buttons: campaign kinds (incl. exclude_geo)
   // go through /dashboard/api/campaigns/:id/action, reallocate_inventory through
   // /dashboard/api/alerts/:id/action.
   const detectorActions = DETECTOR_TO_ACTIONS[a.detector_id] ?? [];
-  // exclude_geo is executable only with a resolved campaign AND a valid bucket;
+  // exclude_geo is executable only with a resolvable campaign AND a valid bucket;
   // otherwise it stays a deep-link (below).
-  const canExcludeGeo = Boolean(campaign_id) && detectorActions.includes("exclude_geo") && Boolean(region);
-  // Campaign kinds need a resolved campaign AND must be valid for the detector —
+  const canExcludeGeo =
+    Boolean(execCampaignId) && detectorActions.includes("exclude_geo") && Boolean(region);
+  // reallocate_inventory 422s without a complete transfer plan in evidence, so it
+  // is offered only when the evidence can actually drive the mutation — never a
+  // dead button (rule 12). Same gate the inventory page and Autopilot queue use.
+  const canReallocate = detectorActions.includes("reallocate_inventory") && hasTransferPlan(evRaw);
+  // Campaign kinds need a resolvable campaign AND must be valid for the detector —
   // a winning-campaign (scaling) alert offers increase, never pause/reduce.
   const actions: string[] = [
-    ...(campaign_id && detectorActions.includes("pause_campaign") ? ["pause_campaign"] : []),
-    ...(campaign_id && detectorActions.includes("reduce_campaign_budget") ? ["reduce_campaign_budget"] : []),
-    ...(campaign_id && detectorActions.includes("increase_campaign_budget") ? ["increase_campaign_budget"] : []),
+    ...(execCampaignId && detectorActions.includes("pause_campaign") ? ["pause_campaign"] : []),
+    ...(execCampaignId && detectorActions.includes("reduce_campaign_budget") ? ["reduce_campaign_budget"] : []),
+    ...(execCampaignId && detectorActions.includes("increase_campaign_budget") ? ["increase_campaign_budget"] : []),
     ...(canExcludeGeo ? ["exclude_geo"] : []),
-    ...(detectorActions.includes("reallocate_inventory") ? ["reallocate_inventory"] : []),
+    ...(canReallocate ? ["reallocate_inventory"] : []),
     ...(detectorActions.includes("create_po_draft") ? ["create_po_draft"] : []),
     "snooze_alert",
   ];
 
-  // recommended is the first concrete action; if all we can do is snooze there
-  // is no recommendation to surface.
-  const recommended = actions.length > 1 ? actions[0] : null;
+  // The recommended action is the detector's calibrated default (the same source
+  // the Autopilot queue uses via recommendedAction), narrowed to what is actually
+  // runnable on THIS alert. If the default can't run here, recommend nothing so
+  // the UI shows "Review" — never a dead button, never a cross-surface
+  // disagreement where Alerts recommends a move Autopilot would not (rule 12).
+  const defaultAction = recommendedAction(a.detector_id, { hasCampaign: Boolean(campaign_id) });
+  const recommended = defaultAction && actions.includes(defaultAction) ? defaultAction : null;
 
   // Detector kinds with no executor but a manual destination (e.g. free-shipping
   // → Shopify Shipping settings) surface as deep-links, not dead buttons (rule 12).
@@ -223,7 +245,9 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
     campaign: a.campaign,
     sku: a.sku,
     evidence,
-    campaign_id,
+    // The executable campaign for this alert's campaign actions — the scoped
+    // campaign, or the one named in evidence for a SKU-scoped alert.
+    campaign_id: execCampaignId,
     region,
     actions,
     deepLinkKinds,
