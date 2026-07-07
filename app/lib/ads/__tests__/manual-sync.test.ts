@@ -3,6 +3,7 @@ import {
   MANUAL_SYNC_COOLDOWN_MS,
   manualSyncCooldown,
   syncShopAds,
+  ingestOnConnect,
   formatSyncToast,
 } from "../manual-sync.server";
 import type { AdWorkItem } from "../registry.server";
@@ -207,5 +208,35 @@ describe("formatSyncToast — merchant-facing result message", () => {
     const t = formatSyncToast({ synced: [], skipped: [], errors: ["google: x"] });
     expect(t.isError).toBe(true);
     expect(t.message).toMatch(/couldn.t sync/i);
+  });
+});
+
+// --- ingestOnConnect: fire the backfill the moment a platform is connected ---
+
+describe("ingestOnConnect", () => {
+  // adaptersForShops reads shop_integrations via sb.from().select().in().in();
+  // an empty result means no work and the sweep completes cleanly.
+  function sbNoWork() {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.in = vi.fn(() => chain);
+    chain.then = (resolve: (r: { data: unknown; error: null }) => unknown) =>
+      resolve({ data: [], error: null });
+    return { from: vi.fn(() => chain) } as unknown as SupabaseClient;
+  }
+
+  it("returns the sync result on success", async () => {
+    const res = await ingestOnConnect(sbNoWork(), "shop-1");
+    expect(res).toEqual({ synced: [], skipped: [], errors: [] });
+  });
+
+  it("swallows an unexpected error and returns null so the connect never breaks", async () => {
+    const sb = {
+      from: () => {
+        throw new Error("db down");
+      },
+    } as unknown as SupabaseClient;
+    const res = await ingestOnConnect(sb, "shop-1");
+    expect(res).toBeNull();
   });
 });

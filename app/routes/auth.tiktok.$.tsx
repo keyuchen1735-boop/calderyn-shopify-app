@@ -13,6 +13,7 @@ import {
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
+import { ingestOnConnect } from "~/lib/ads/manual-sync.server";
 
 // TikTok Business OAuth callback. Mirrors app/routes/auth.meta.$.tsx:
 //   1. consume the single-use `state` nonce (CSRF + resolves the shop),
@@ -102,6 +103,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { onConflict: "shop_id,kind" },
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
+
+  // Backfill the advertiser's campaigns + spend immediately so the merchant
+  // lands on a Connected integration with data (see auth.google.$.tsx).
+  // Best-effort: a failure is recorded as sync_status='error' and never blocks
+  // the connect redirect.
+  await ingestOnConnect(sb, shopId);
 
   if (returnCtx.popup) return redirect(popupResultUrl({ provider: "TikTok Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { tiktok: "connected" }, returnCtx));
