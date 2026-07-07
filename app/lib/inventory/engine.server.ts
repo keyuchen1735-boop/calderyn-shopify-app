@@ -54,7 +54,13 @@ export async function releaseReservation(shopId: string, checkoutRef: string): P
 // commit changes on_hand; re-project each touched (variant, location). release
 // only touches reserved, so its re-projection is a harmless no-op refresh.
 async function reprojectCheckout(shopId: string, checkoutRef: string): Promise<void> {
-  const { data } = await getSupabase().from("inventory_reservation").select("variant_id, location_id").eq("shop_id", shopId).eq("checkout_ref", checkoutRef);
+  // Surface the SELECT error (rule 12) instead of swallowing it: a transient failure here left the
+  // loop empty, so no projectLevelFact ran and inventory_level_fact stayed at its stale pre-sale
+  // (higher) available value while the balance had already decremented. Throwing lets the caller
+  // retry (commit is idempotent; the reaper isolates each release) so the engine's observation stays
+  // consistent with the authoritative balance.
+  const { data, error } = await getSupabase().from("inventory_reservation").select("variant_id, location_id").eq("shop_id", shopId).eq("checkout_ref", checkoutRef);
+  if (error) throw error;
   const seen = new Set<string>();
   for (const r of data ?? []) {
     const key = `${r.variant_id}:${r.location_id}`;
@@ -62,6 +68,52 @@ async function reprojectCheckout(shopId: string, checkoutRef: string): Promise<v
     seen.add(key);
     await projectLevelFact(shopId, String(r.variant_id), String(r.location_id));
   }
+}
+
+// A new owned shop starts with no location_dim row (locations arrive via import
+// or the demo seed), so a dashboard-created product needs one before its stock
+// can live in the ledger. Returns the shop's primary location — lowest priority,
+// then oldest — creating a default "Primary" one when the shop has none.
+export async function ensurePrimaryLocation(shopId: string): Promise<string> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("location_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(1);
+  if (error) throw error;
+  if (data && data.length) return String(data[0].id);
+  const { data: created, error: cErr } = await sb
+    .from("location_dim")
+    .insert({ shop_id: shopId, name: "Primary", active: true, priority: 0 })
+    .select("id")
+    .single();
+  if (cErr) throw cErr;
+  return String(created.id);
+}
+
+// Seed a newly created variant's starting on-hand into the owned ledger so the
+// cannot-oversell engine (and checkout) can actually reserve against it. The
+// product editor writes only the flat variant_dim.inventory_on_hand column;
+// without this a "live" product has no balance row and every sale 422s. Idempotent:
+// skips zero quantities and any (variant, location) that already has a balance
+// row, so a re-save or a later hand-adjusted count is never stomped.
+export async function seedInitialStock(shopId: string, variantId: string, onHand: number): Promise<void> {
+  const qty = Math.max(0, Math.trunc(onHand));
+  if (qty <= 0) return;
+  const locationId = await ensurePrimaryLocation(shopId);
+  const { data: existing, error } = await getSupabase()
+    .from("inventory_balance")
+    .select("variant_id")
+    .eq("shop_id", shopId)
+    .eq("variant_id", variantId)
+    .eq("location_id", locationId)
+    .limit(1);
+  if (error) throw error;
+  if (existing && existing.length) return;
+  await adjustStock(shopId, variantId, locationId, qty, "initial");
 }
 
 export async function adjustStock(shopId: string, variantId: string, locationId: string, newOnHand: number, reason?: string): Promise<void> {

@@ -24,16 +24,52 @@ function makeAlert(overrides: Partial<Alert> = {}): Alert {
 
 const CAMPAIGNS = [{ id: "c1", name: "Summer Sale" } as CampaignVM];
 
+const TRANSFER_PLAN = {
+  inventory_item_id: "inv-1",
+  from_location_id: "loc-a",
+  to_location_id: "loc-b",
+  recommended_delta: "12",
+};
+
 describe("adaptAlert action list", () => {
-  it("offers reallocate_inventory for detectors that expose it, and recommends it", () => {
-    const vm = adaptAlert(makeAlert(), CAMPAIGNS);
-    expect(vm.actions).toContain("reallocate_inventory");
+  it("drops reallocate_inventory (and any recommendation) when the evidence has no transfer plan", () => {
+    // reallocate_inventory 422s without inventory_item + source/dest + delta.
+    // A detector that only exposes reallocate must therefore offer nothing but
+    // snooze here — never a dead button, never a broken recommendation (rule 12).
+    const vm = adaptAlert(makeAlert({ detector_id: "wrong_location_concentration" }), CAMPAIGNS);
+    expect(vm.actions).not.toContain("reallocate_inventory");
     expect(vm.actions).toContain("snooze_alert");
-    // exclude_geo needs both a campaign and a valid region bucket; this alert has
-    // neither, so it stays a deep-link rather than an execute button.
-    expect(vm.actions).not.toContain("exclude_geo");
-    expect(vm.actions).not.toContain("pause_campaign");
+    expect(vm.recommended).toBeNull();
+  });
+
+  it("offers and recommends reallocate_inventory when the evidence carries a complete transfer plan", () => {
+    const vm = adaptAlert(
+      makeAlert({ detector_id: "wrong_location_concentration", evidence: TRANSFER_PLAN }),
+      CAMPAIGNS,
+    );
+    expect(vm.actions).toContain("reallocate_inventory");
     expect(vm.recommended).toBe("reallocate_inventory");
+  });
+
+  it("recommends the runnable exclude_geo (never a dead reallocate) when a sku_stockout_vs_spend alert's campaign lives in evidence", () => {
+    // The exact prod bug: sku_stockout_vs_spend carries campaign_id + region in
+    // evidence (ad-spend evidence, no transfer plan). The Alerts detail must
+    // recommend the executable exclude_geo — the same action the Autopilot queue
+    // picks — not reallocate_inventory, which would 422.
+    const vm = adaptAlert(
+      makeAlert({
+        detector_id: "sku_stockout_vs_spend",
+        campaign: null,
+        sku: "PP-SUMMIT-LOGO-TEE-M",
+        evidence: { campaign_id: "camp-643", region: "us-east", spend_7d_usd: "410" },
+      }),
+      CAMPAIGNS,
+    );
+    expect(vm.actions).toContain("exclude_geo");
+    expect(vm.actions).not.toContain("reallocate_inventory");
+    expect(vm.recommended).toBe("exclude_geo");
+    // The campaign from evidence must drive the executable button's target.
+    expect(vm.campaign_id).toBe("camp-643");
   });
 
   it("offers exclude_geo as an executable action when the alert has a campaign and a valid region bucket", () => {

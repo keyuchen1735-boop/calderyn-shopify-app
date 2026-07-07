@@ -37,7 +37,7 @@ export function openAlertsBySku<T extends { status: string; sku: string | null }
  * Client-safe twin of transferPlanFromEvidence (app/lib/shopify/
  * inventory.server.ts) — the .server boundary forbids importing it here.
  * KEEP THE TWO GATES IN SYNC or the UI renders buttons the server 422s. */
-function hasTransferPlan(evidence: Record<string, unknown>): boolean {
+export function hasTransferPlan(evidence: Record<string, unknown>): boolean {
   const delta = Number(evidence.recommended_delta ?? evidence.delta ?? 0);
   return Boolean(
     evidence.inventory_item_id &&

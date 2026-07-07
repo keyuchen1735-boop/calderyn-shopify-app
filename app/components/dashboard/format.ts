@@ -7,11 +7,26 @@ import {
   INTERNAL_EVIDENCE_ID_KEYS,
 } from "~/lib/labels";
 
-export function money(cents: number): string {
-  // Guard non-finite input (null/undefined/NaN coerced from partial live rows)
-  // so a missing value renders "$0" instead of "$NaN". moneyK delegates here on
-  // NaN (its `>= 1000` branch is false), so this covers both formatters.
-  if (!Number.isFinite(cents)) return "$0";
+export function money(cents: number, currency?: string): string {
+  // Guard non-finite input (null/undefined/NaN coerced from partial live rows) so a missing value
+  // renders a zero, not "$NaN". moneyK delegates here on NaN (its `>= 1000` branch is false).
+  if (!Number.isFinite(cents)) cents = 0;
+  const cur = currency?.toUpperCase();
+  // Currency-aware path for non-USD amounts: Intl handles the correct symbol + grouping, so an
+  // order/refund in EUR/GBP/CAD/AUD renders "€100,00"/"£100.00" instead of a wrong "$100.00". USD
+  // (and no currency) keeps the existing custom "$" format so the rest of the dashboard is unchanged.
+  if (cur && cur !== "USD") {
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: cur,
+        minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+        maximumFractionDigits: 2,
+      }).format(cents / 100);
+    } catch {
+      // Unknown/invalid currency code — fall through to the legacy "$" format rather than throw.
+    }
+  }
   return (
     (cents < 0 ? "-$" : "$") +
     Math.abs(cents / 100).toLocaleString("en-US", {
@@ -59,6 +74,17 @@ export function absTime(iso: string): string {
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  });
+}
+
+/** "2026-07-02" → "Jul 2" (UTC — date-only strings are UTC days). */
+export function shortDate(date: string): string {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(t)) return date;
+  return new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
   });
 }
 

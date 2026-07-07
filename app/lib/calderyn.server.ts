@@ -347,6 +347,8 @@ function rowToGuardrails(r: Record<string, unknown>, usedCents = 0): GuardrailCo
         ? null
         : Number(r.autopilot_max_inventory_units_per_move),
     weather_sensitivity: Number(r.weather_sensitivity ?? 0),
+    merchant_lat: r.merchant_lat == null ? null : Number(r.merchant_lat),
+    merchant_lon: r.merchant_lon == null ? null : Number(r.merchant_lon),
   };
 }
 
@@ -1359,12 +1361,18 @@ export function calderynClient(shop: string) {
           // null is meaningful (clear the unit cap), so test `!== undefined`.
           if (patch.autopilot_max_inventory_units_per_move !== undefined) updates.autopilot_max_inventory_units_per_move = patch.autopilot_max_inventory_units_per_move;
           if (patch.weather_sensitivity !== undefined) updates.weather_sensitivity = patch.weather_sensitivity;
+          // null is meaningful (clear the stored location), so test `!== undefined`.
+          if (patch.merchant_lat !== undefined) updates.merchant_lat = patch.merchant_lat;
+          if (patch.merchant_lon !== undefined) updates.merchant_lon = patch.merchant_lon;
 
           if (Object.keys(updates).length > 0) {
+            // Upsert, not update: owned-signup shops may have no
+            // guardrail_config row yet (see demo/reset.server.ts) — an update
+            // matching zero rows would silently drop the patch and the
+            // follow-up .single() read would 500.
             const { error } = await supabase
               .from("guardrail_config")
-              .update(updates)
-              .eq("shop_id", shopId);
+              .upsert({ shop_id: shopId, ...updates }, { onConflict: "shop_id" });
             if (error) throw error;
           }
 

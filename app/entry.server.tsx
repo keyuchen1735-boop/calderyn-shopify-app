@@ -59,7 +59,9 @@ export function applySecurityHeaders(headers: Headers, pathname?: string): void 
   }
   headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), browsing-topics=(), usb=(), interest-cohort=()",
+    // geolocation=(self): the Weather tab's "Use my location" runs the browser
+    // geolocation prompt on our own origin; everything else stays denied.
+    "camera=(), microphone=(), geolocation=(self), browsing-topics=(), usb=(), interest-cohort=()",
   );
   headers.set("X-Permitted-Cross-Domain-Policies", "none");
   headers.set("X-DNS-Prefetch-Control", "off");

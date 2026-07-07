@@ -7,13 +7,14 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchCustomersPage,
   fetchCustomerDetail,
-  applyWeatherSuggestion,
   type CustomersPage,
   type CustomerDetail,
   type CustomerSegment,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { WeatherSegments } from "../WeatherSegments";
+import { isWeatherAuto } from "~/lib/weather/types";
 import type { DashboardCtx } from "../context";
 
 const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr";
@@ -394,14 +395,26 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     setWx(page?.weatherSuggestions ?? []);
   }, [page]);
 
-  const onWeather = async (id: string, intent: "apply" | "dismiss") => {
-    setWx((cur) => cur.filter((s) => s.id !== id));
-    try {
-      await applyWeatherSuggestion(id, intent);
-      toast(intent === "apply" ? "Budget shifted" : "Suggestion dismissed", "check");
-    } catch {
-      toast("Could not update suggestion", "x", "critical");
+  const onWeather = async (id: string, intent: "apply" | "arm" | "dismiss") => {
+    // Optimistic: arming flips the row to armed in place; apply/dismiss remove
+    // it. Kept restorable — a 409 (e.g. dismissed in another tab) must not
+    // leave the UI claiming a move is armed when it isn't.
+    const prev = wx;
+    const next =
+      intent === "arm"
+        ? wx.map((s) => (s.id === id ? { ...s, status: "armed" as const } : s))
+        : wx.filter((s) => s.id !== id);
+    setWx(next);
+    // weatherIntent owns the API call, the shared toasts, the mirrored-alert
+    // resolution, and the session-cache write-through.
+    const ok = await app.weatherIntent(id, intent);
+    if (!ok) {
+      setWx(prev);
+      return;
     }
+    // Keep the live page object in step with what weatherIntent cached, so a
+    // tab-switch doesn't reseed the stale pre-action list.
+    setPage((p) => (p ? { ...p, weatherSuggestions: next } : p));
   };
 
   useEffect(() => {
@@ -568,40 +581,12 @@ export default function Customers({ app }: { app: DashboardCtx }) {
             )}
           </Card>
       ) : sub === "weather" ? (
-        <Card pad={false}>
-          <CardHead>
-            <div>
-              <div className="cd-row-title">Weather segments</div>
-              <div className="cd-caption">Forecast-driven budget shifts across regions</div>
-            </div>
-          </CardHead>
-          {wx.length === 0 ? (
-            <div className="cd-caption" style={{ padding: "16px 20px" }}>
-              No weather suggestions right now. When the next 3 days&apos; forecast favors
-              shifting budget between regions, they&apos;ll appear here. Suggestions need at
-              least two active campaigns that each target a single US region.
-            </div>
-          ) : (
-            wx.map((s) => (
-              <div
-                key={s.id}
-                className="cd-trow"
-                style={{ display: "flex", gap: 12, alignItems: "center" }}
-              >
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="cd-row-title">{`${money(s.amountCents)}/day`}</div>
-                  <div className="cd-caption">{s.narrative}</div>
-                </div>
-                <Btn small kind="primary" onClick={() => onWeather(s.id, "apply")}>
-                  Approve
-                </Btn>
-                <Btn small onClick={() => onWeather(s.id, "dismiss")}>
-                  Dismiss
-                </Btn>
-              </div>
-            ))
-          )}
-        </Card>
+        <WeatherSegments
+          suggestions={wx}
+          onIntent={onWeather}
+          toast={toast}
+          auto={isWeatherAuto(app.guardrails?.weather_sensitivity ?? 0)}
+        />
       ) : (
         <>
           <div className="cd-stat-grid" style={{ marginBottom: 14 }}>

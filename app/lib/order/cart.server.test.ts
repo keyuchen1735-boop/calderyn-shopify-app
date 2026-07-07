@@ -187,7 +187,8 @@ describe("addCartLine", () => {
 
   it("rejects a variant that does not exist in the catalog (fail visibly)", async () => {
     const cart = await buildCart("shop-1");
-    await expect(addCartLine("shop-1", cart.id, "v-missing", 1)).rejects.toThrow(/not found in catalog/);
+    // Typed VariantUnavailableError (the add-to-cart route maps it to a sold-out redirect, not a 500).
+    await expect(addCartLine("shop-1", cart.id, "v-missing", 1)).rejects.toThrow(/not found/);
     expect(store.db.cart_line).toHaveLength(0);
   });
 

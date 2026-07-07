@@ -18,7 +18,7 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
 import { dollarsToCents, nonNegInt, parseOptionRows, posInt } from "~/lib/catalog/product-form";
-import { productHandleBase } from "~/lib/catalog/handle";
+import { storefrontListingUrl } from "~/lib/storefront/listing-url";
 import {
   draftPlanFromPrompt,
   parseListingPrompt,
@@ -650,8 +650,9 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const sizeValues = sizeOpt ? sizeOpt.values.split(",").map((s) => s.trim()).filter(Boolean) : [];
   const priceText = Number(price) > 0 ? `$${Number(price).toFixed(2)}` : "$0.00";
   const stepIdx = STEP_ORDER.findIndex((s) => s.id === step);
-  const storeSlug = (app.storeLabel || "your store").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const listingUrl = `${storeSlug}.calderyncompany.com/products/${productHandleBase(title)}`;
+  // The tenant's real storefront listing URL — real org_slug + /storefront path,
+  // so the previewed link resolves to the live store (not a re-derived slug).
+  const listingUrl = storefrontListingUrl(app.orgSlug, app.storeLabel, title);
 
   const readiness = [
     { label: "Title", done: Boolean(title.trim()) },

@@ -10,13 +10,28 @@ import { getConnectedAccount } from "~/lib/payments/connect.server";
 import { upsertGuestBuyer } from "~/lib/buyer/identity.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 import { executeRefundAction } from "~/lib/actions/refund.server";
+import { GOLIVE_PATH, TEST_TX_PARAM, TEST_TX_SUCCESS, TEST_TX_CANCELLED } from "./test-tx-return";
 
 /** Stripe's minimum chargeable amount (USD). ponytail: fixed 50c/usd; per-currency
  *  minimums if a non-USD test store ever needs it. */
 export const TEST_CHARGE_CENTS = 50;
 
-export async function startTestTransaction(shopId: string): Promise<{ url: string }> {
+/**
+ * `returnOrigin` is the merchant's validated browser origin (requireSameOrigin's
+ * return value). The probe is a MERCHANT flow: Stripe must send them back to the
+ * Go live screen on the host their session cookie lives on — not the buyer
+ * storefront, where the platform host resolves to the demo shell and the
+ * confirmation dead-ends. Required so no caller can fall back to a host the
+ * merchant may not be signed in on. (Sibling resolver for the other Stripe-hosted
+ * merchant flow: onboardingOrigin in ~/lib/payments/connect.server — env-first;
+ * consolidate if these ever need to agree.)
+ */
+export async function startTestTransaction(
+  shopId: string,
+  returnOrigin: string,
+): Promise<{ url: string }> {
   if (!shopId) throw new Error("shopId is required");
+  if (!returnOrigin) throw new Error("returnOrigin is required");
 
   const mode = await getOrgMode(shopId);
   if (mode !== "dual_run") {
@@ -49,11 +64,18 @@ export async function startTestTransaction(shopId: string): Promise<{ url: strin
   if (error) throw error;
   const row = data as { id: string; confirmation_token: string };
 
+  const golive = `${returnOrigin}${GOLIVE_PATH}`;
   const session = await createCommerceCheckoutSession(shopId, {
     orderId: row.id,
     totalCents: TEST_CHARGE_CENTS,
     currency: "usd",
     confirmationToken: row.confirmation_token,
+    // The Cutover screen reads the return marker to confirm the payment (success) or
+    // note the abandoned checkout (cancelled) without the merchant hunting for Re-check.
+    returnUrls: {
+      success: `${golive}?${TEST_TX_PARAM}=${TEST_TX_SUCCESS}`,
+      cancel: `${golive}?${TEST_TX_PARAM}=${TEST_TX_CANCELLED}`,
+    },
   });
   return { url: session.url };
 }

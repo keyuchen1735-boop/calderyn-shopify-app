@@ -230,6 +230,45 @@ export async function syncAccountStatus(
   };
 }
 
+/**
+ * Apply a fresh Stripe Account snapshot (from an `account.updated` webhook) to the stored
+ * connected-account row, keyed by the Stripe account id. This is the async-enablement path: a
+ * Stripe Express account whose charges/payouts flip to enabled AFTER the buyer returns from
+ * onboarding emits account.updated, and without handling it the stored row stays
+ * charges_enabled=false forever — so destinationParamsFor keeps routing every storefront/ACP
+ * PaymentIntent to the PLATFORM account instead of the merchant's now-live account, and Settings
+ * shows "Onboarding incomplete" indefinitely. Trusts the event's account object (its current flags)
+ * rather than an extra accounts.retrieve. Returns true if a connected-account row was updated,
+ * false if no row matched the account id (the event is for an account we don't track — not ours).
+ */
+export async function applyAccountUpdate(account: Stripe.Account): Promise<boolean> {
+  const flags = {
+    charges_enabled: Boolean(account.charges_enabled),
+    payouts_enabled: Boolean(account.payouts_enabled),
+    details_submitted: Boolean(account.details_submitted),
+  };
+  const existing = await getSupabase()
+    .from("stripe_connected_account")
+    .select("shop_id, onboarded_at")
+    .eq("stripe_account_id", account.id)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) return false; // account not linked to any shop — not ours to sync
+  const fullyEnabled = flags.charges_enabled && flags.payouts_enabled && flags.details_submitted;
+  const alreadyOnboarded = (existing.data as { onboarded_at: string | null }).onboarded_at;
+  const upd = await getSupabase()
+    .from("stripe_connected_account")
+    .update({
+      ...flags,
+      updated_at: new Date().toISOString(),
+      // Stamp onboarded_at the first time the account becomes fully enabled (mirrors syncAccountStatus).
+      ...(fullyEnabled && !alreadyOnboarded ? { onboarded_at: new Date().toISOString() } : {}),
+    })
+    .eq("stripe_account_id", account.id);
+  if (upd.error) throw upd.error;
+  return true;
+}
+
 export interface BillingDTO {
   connected: boolean;
   chargesEnabled: boolean;

@@ -80,7 +80,7 @@ export async function emitPaidOrder(
   // fact row is written (mirrors applyOrder's read-first ordering).
   const orderRead = await sb
     .from("orders")
-    .select("id, state, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, attribution, created_at")
+    .select("id, state, channel, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, attribution, created_at")
     .eq("shop_id", shopId)
     .eq("id", orderId)
     .maybeSingle();
@@ -100,6 +100,16 @@ export async function emitPaidOrder(
   const state = String(order.state);
   if (state !== "paid") {
     console.warn(`[order] warehouse emit skipped for order ${orderId}: state is '${state}', not 'paid'`);
+    return { externalId, sourceVersion, lineCount: 0, clickRefCount: 0, skipped: true };
+  }
+
+  // The go-live test probe (channel='test') is a real 50c order that reaches
+  // 'paid' then is refunded after cutover. It must never land in the warehouse
+  // facts: order_fact has no channel column, so the commerce-analytics
+  // channel='test' exclusion cannot reach an emitted row and it would inflate
+  // warehouse revenue / order count / AOV permanently (the refund emits a
+  // refund_fact but leaves the order_fact row). Skip the emit for test orders.
+  if (String(order.channel ?? "") === "test") {
     return { externalId, sourceVersion, lineCount: 0, clickRefCount: 0, skipped: true };
   }
 

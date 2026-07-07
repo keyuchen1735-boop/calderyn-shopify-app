@@ -11,29 +11,60 @@ const CONFLICT_KEY = ["shop_id", "suggested_on", "source_campaign_id", "dest_cam
 // Minimal chainable Supabase stub. weather_suggestion is modelled as a real
 // in-memory table with the unique-key conflict semantics of the migration, so
 // tests assert what ends up stored — including that ON CONFLICT DO NOTHING
-// (ignoreDuplicates) never touches an existing row.
+// (ignoreDuplicates) never touches an existing row. alerts writes are recorded
+// (select-for-active always misses, so the mirror takes the insert path).
 function fakeSb(opts: {
   /** null = shop has no guardrail_config row at all. */
   sensitivity: number | null;
   campaigns: Array<Record<string, unknown>>;
+  merchant?: { lat: number; lon: number };
   existingSuggestions?: Array<Record<string, unknown>>;
 }) {
   const table: Array<Record<string, unknown>> = (opts.existingSuggestions ?? []).map((r) => ({ ...r }));
-  const calls = { upserts: [] as unknown[] };
+  const calls = {
+    upserts: [] as unknown[],
+    inserts: [] as Array<{ table: string; row: unknown }>,
+  };
   function builder(tableName: string) {
     const chain: Record<string, unknown> = {};
+    const filters: Array<(r: Record<string, unknown>) => boolean> = [];
     chain.select = vi.fn(() => chain);
-    chain.eq = vi.fn(() => chain);
+    chain.eq = vi.fn((col: string, val: unknown) => {
+      filters.push((r) => r[col] === val);
+      return chain;
+    });
+    chain.in = vi.fn((col: string, vals: unknown[]) => {
+      filters.push((r) => vals.includes(r[col]));
+      return chain;
+    });
     chain.not = vi.fn(() => chain);
+    chain.limit = vi.fn(() => chain);
     chain.maybeSingle = vi.fn(async () =>
       tableName === "guardrail_config" && opts.sensitivity != null
-        ? { data: { weather_sensitivity: opts.sensitivity }, error: null }
+        ? {
+            data: {
+              weather_sensitivity: opts.sensitivity,
+              merchant_lat: opts.merchant?.lat ?? null,
+              merchant_lon: opts.merchant?.lon ?? null,
+            },
+            error: null,
+          }
         : { data: null, error: null },
     );
     chain.then = (res: (v: { data: unknown; error: null }) => void) => {
       if (tableName === "ad_campaign_dim") return Promise.resolve({ data: opts.campaigns, error: null }).then(res);
+      if (tableName === "weather_suggestion") {
+        return Promise.resolve({
+          data: table.filter((r) => filters.every((f) => f(r))),
+          error: null,
+        }).then(res);
+      }
       return Promise.resolve({ data: null, error: null }).then(res);
     };
+    chain.insert = vi.fn((row: unknown) => {
+      calls.inserts.push({ table: tableName, row });
+      return Promise.resolve({ data: null, error: null });
+    });
     chain.upsert = vi.fn(
       (rows: Array<Record<string, unknown>>, upsertOpts?: { ignoreDuplicates?: boolean }) => {
         calls.upserts.push(rows);
@@ -44,8 +75,9 @@ function fakeSb(opts: {
             // Conflict: DO NOTHING when ignoreDuplicates, else DO UPDATE.
             if (!upsertOpts?.ignoreDuplicates) Object.assign(existing, row);
           } else {
-            table.push({ ...row });
-            inserted.push({ ...row });
+            const stored = { id: `sg-${table.length + 1}`, ...row };
+            table.push(stored);
+            inserted.push(stored);
           }
         }
         const result = { data: inserted, error: null };
@@ -104,7 +136,77 @@ describe("runWeatherSuggestForShop", () => {
     const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
     expect(r.suggested).toBe(1);
     expect(table).toHaveLength(1);
-    expect(table[0]).toMatchObject({ shop_id: SHOP, suggested_on: "2026-07-06", status: "pending" });
+    expect(table[0]).toMatchObject({
+      shop_id: SHOP,
+      suggested_on: "2026-07-06",
+      status: "pending",
+      expires_on: "2026-07-09", // suggested_on + 3-day forecast horizon
+    });
+  });
+  it("auto-arms the suggestion when the sensitivity dial is at 100 (all-auto)", async () => {
+    const { sb, table } = fakeSb({ sensitivity: 100, campaigns: TWO_REGION_CAMPAIGNS });
+    await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(table[0]).toMatchObject({ status: "armed" });
+  });
+  it("surfaces the prediction as an alert in the same run", async () => {
+    const { sb, calls } = fakeSb({ sensitivity: 50, campaigns: TWO_REGION_CAMPAIGNS });
+    await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    // No active alert exists in the fake → the mirror inserts a fresh one.
+    // (Plain insert, not upsert: the alerts dedup index is partial and can't
+    // be targeted by ON CONFLICT.)
+    const alerts = calls.inserts.filter((u) => u.table === "alerts");
+    expect(alerts).toHaveLength(1);
+    const row = alerts[0].row as Record<string, unknown>;
+    expect(row).toMatchObject({
+      shop_id: SHOP,
+      detector_id: "weather_reallocation",
+      severity: "low",
+      status: "open",
+    });
+    expect(String(row.narrative)).toContain("weather");
+    // The Alerts detail acts on the prediction via this id.
+    expect((row.evidence as Record<string, unknown>).suggestion_id).toBe("sg-1");
+  });
+  it("does not open an actionable alert for an auto-armed (dial=100) prediction", async () => {
+    // All-auto merchants asked for no approvals: the armed move lives on the
+    // Weather tab until the trigger fires, never in the alerts feed.
+    const { sb, calls, table } = fakeSb({ sensitivity: 100, campaigns: TWO_REGION_CAMPAIGNS });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r.suggested).toBe(1);
+    expect(table[0]).toMatchObject({ status: "armed" });
+    expect(calls.inserts.filter((u) => u.table === "alerts")).toHaveLength(0);
+  });
+  it("does not re-propose a pair that already has a live armed row", async () => {
+    // A second live row for an armed pair would invite a manual apply next to
+    // the scheduled execution — two idempotency keys, budget moved twice.
+    const armed = {
+      shop_id: SHOP,
+      suggested_on: "2026-07-05",
+      source_campaign_id: "w1",
+      dest_campaign_id: "e1",
+      status: "armed",
+    };
+    const { sb, table, calls } = fakeSb({
+      sensitivity: 50,
+      campaigns: TWO_REGION_CAMPAIGNS,
+      existingSuggestions: [armed],
+    });
+    const r = await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts, today: "2026-07-06" });
+    expect(r).toEqual({ suggested: 0, skippedReason: "already_armed" });
+    expect(table).toHaveLength(1);
+    expect(calls.inserts.filter((u) => u.table === "alerts")).toHaveLength(0);
+  });
+  it("queries the merchant's exact point for their home region when location is set", async () => {
+    const { sb } = fakeSb({
+      sensitivity: 50,
+      merchant: { lat: 47.61, lon: -122.33 }, // Seattle → us-west
+      campaigns: TWO_REGION_CAMPAIGNS,
+    });
+    const ff = vi.fn(async (_points: readonly { region: string; lat: number; lon: number }[]) => forecasts);
+    await runWeatherSuggestForShop(SHOP, sb, { fetchForecasts: ff, today: "2026-07-06" });
+    const points = ff.mock.calls[0][0];
+    expect(points.find((p) => p.region === "us-west")).toMatchObject({ lat: 47.61, lon: -122.33 });
+    expect(points).toHaveLength(4);
   });
   it("skips a shop with no geo-segmented campaigns", async () => {
     const { sb, calls } = fakeSb({
@@ -123,7 +225,7 @@ describe("runWeatherSuggestForShop", () => {
       dest_campaign_id: "e1",
       status: "dismissed",
     };
-    const { sb, table } = fakeSb({
+    const { sb, table, calls } = fakeSb({
       sensitivity: 50,
       campaigns: TWO_REGION_CAMPAIGNS,
       existingSuggestions: [dismissed],
@@ -132,6 +234,9 @@ describe("runWeatherSuggestForShop", () => {
     expect(r.suggested).toBe(0);
     expect(table).toHaveLength(1);
     expect(table[0].status).toBe("dismissed");
+    // No insert → no alert mirror either; re-opening the feed entry would
+    // resurrect the dismissed suggestion in another surface.
+    expect(calls.inserts.filter((u) => u.table === "alerts")).toHaveLength(0);
   });
   it("leaves an existing pending suggestion in place without duplicating", async () => {
     const pending = {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
@@ -6,6 +6,7 @@ import { SettingsSubTabs } from "../subtabs";
 import { money } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { TEST_TX_PARAM, TEST_TX_SUCCESS, TEST_TX_CANCELLED } from "~/lib/cutover/test-tx-return";
 
 // Go live (platform pivot Step 9, slice 3): the merchant-facing cutover surface.
 // Shows where the store is on the mirror -> importing -> dual run -> live path, the
@@ -48,6 +49,34 @@ const MOVES: Record<string, MoveMeta> = {
   "dual_run->live": { label: "Go live on Calderyn", primary: true, confirm: true },
   "dual_run->mirror": { label: "Cancel and stay on Shopify", primary: false, confirm: true },
   "live->dual_run": { label: "Roll back to dual run", primary: false, confirm: true },
+};
+
+// After the test transaction's Stripe redirect, the webhook that flips the gates can
+// lag the browser by up to ~a minute — poll the checklist instead of racing it once.
+// Fixed 5s x 24 = a 2-minute budget; note each poll runs the full server-side gate
+// evaluation, so if this ever needs to be cheaper, add a payment-only status endpoint.
+const PROBE_POLL_MS = 5_000;
+const PROBE_POLL_MAX = 24;
+
+type ProbeState = "waiting" | "timeout" | "cancelled";
+
+// The waiting flag survives screen swaps (component state does not): a merchant who
+// hops to another tab mid-confirmation must find the wait still running on return.
+const PROBE_WAIT_KEY = "cd-test-tx-waiting";
+
+const PROBE_NOTE: Record<ProbeState, { icon: string; text: string }> = {
+  waiting: {
+    icon: "rotate",
+    text: "Waiting for Stripe to confirm the test payment — this usually takes under a minute.",
+  },
+  timeout: {
+    icon: "clock",
+    text: "Stripe hasn't confirmed the payment yet. Give it a minute, then use Re-check.",
+  },
+  cancelled: {
+    icon: "x",
+    text: "Test checkout cancelled — you haven't been charged.",
+  },
 };
 
 function DriftList({
@@ -100,23 +129,43 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
   const [driftError, setDriftError] = useState<string | null>(null);
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  // Return leg of the test transaction (marker set by its Stripe return URLs):
+  // "waiting" = back from checkout, polling until the webhook flips the payment checks.
+  const [probe, setProbe] = useState<ProbeState | null>(null);
+
+  // A back/forward-cache restore (browser Back from Stripe) keeps component state;
+  // re-enable the button so returning that way never strands it at "Starting…".
+  useEffect(() => {
+    const onPageShow = () => setTestBusy(false);
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   const runTestTransaction = useCallback(async () => {
     setTestBusy(true);
     setTestError(null);
+    setProbe(null);
+    window.sessionStorage.removeItem(PROBE_WAIT_KEY);
     try {
       const { url } = await client.startTestTransaction();
-      window.open(url, "_blank", "noopener");
+      // Same-tab on purpose: window.open after an await is outside the user-gesture
+      // stack and Safari popup-blocks it (returning null, silently). The Stripe
+      // return URLs bring the merchant straight back to this screen.
+      window.location.assign(url);
     } catch (e) {
       setTestError(e instanceof Error ? e.message : "Could not start test transaction");
-    } finally {
       setTestBusy(false);
     }
   }, []);
 
+  // Monotonic fetch guard: concurrent load() calls (poll tick, Re-check, a move)
+  // resolve out of order; only the newest response may win.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
-      setStatus(await client.fetchCutoverStatus());
+      const next = await client.fetchCutoverStatus();
+      if (seq === loadSeq.current) setStatus(next);
     } catch {
       /* transient fetch failure; keep the last known state */
     }
@@ -125,6 +174,72 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Read (and strip) the test transaction's return marker once on mount, so a refresh
+  // or a re-mount never replays it. Preserve the router's history state and the hash —
+  // same as the one-shot notice strip in DashboardApp — so back/forward and scroll
+  // restoration keep working.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get(TEST_TX_PARAM);
+    if (!outcome) {
+      // No marker, but a wait was in flight when this screen last unmounted
+      // (tab switch mid-confirmation): resume it.
+      if (window.sessionStorage.getItem(PROBE_WAIT_KEY)) setProbe("waiting");
+      return;
+    }
+    params.delete(TEST_TX_PARAM);
+    const qs = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash,
+    );
+    if (outcome === TEST_TX_SUCCESS) {
+      window.sessionStorage.setItem(PROBE_WAIT_KEY, "1");
+      setProbe("waiting");
+    } else if (outcome === TEST_TX_CANCELLED) {
+      window.sessionStorage.removeItem(PROBE_WAIT_KEY);
+      setProbe("cancelled");
+    }
+  }, []);
+
+  // While waiting on the webhook, re-check the gates on a bounded cadence. Deps are
+  // deliberately just [probe, load] (both stable): the interval must survive parent
+  // re-renders and status churn, or the budget never trips. One tick in flight at a
+  // time; the verdict itself is consumed by the effect below.
+  useEffect(() => {
+    if (probe !== "waiting") return;
+    let polls = 0;
+    let inFlight = false;
+    const id = window.setInterval(async () => {
+      if (inFlight) return;
+      if (polls >= PROBE_POLL_MAX) {
+        window.sessionStorage.removeItem(PROBE_WAIT_KEY);
+        setProbe("timeout");
+        return;
+      }
+      polls += 1;
+      inFlight = true;
+      try {
+        await load();
+      } finally {
+        inFlight = false;
+      }
+    }, PROBE_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [probe, load]);
+
+  // The payment checks flipped while we were waiting (or even after the waiting
+  // budget timed out): clear the note and confirm. Early-returns make the unstable
+  // `app` identity harmless here.
+  useEffect(() => {
+    if (probe !== "waiting" && probe !== "timeout") return;
+    if (!status?.gates.paymentCleared) return;
+    window.sessionStorage.removeItem(PROBE_WAIT_KEY);
+    setProbe(null);
+    app.toast("Test payment confirmed.", "check");
+  }, [app, probe, status]);
 
   const move = useCallback(
     async (to: client.CutoverMode) => {
@@ -137,7 +252,10 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
       setBusy(true);
       setBlocked(null);
       try {
-        setStatus(await client.requestCutoverTransition(to));
+        const next = await client.requestCutoverTransition(to);
+        // Invalidate any status GET still in flight — it predates this transition.
+        loadSeq.current += 1;
+        setStatus(next);
         // A COMPLETED mode move invalidates any drift comparison shown so far — never
         // let a pre-move "Everything matches" survive into the new mode as if current.
         // A blocked move changed nothing, so its comparison stays (it may be the very
@@ -289,6 +407,20 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
             ? "Everything checks out. Your store is ready to go live."
             : `${failing.length} item${failing.length === 1 ? "" : "s"} still need${failing.length === 1 ? "s" : ""} attention.`}
         </p>
+        {probe && (
+          <p
+            className="cd-caption"
+            style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0 0" }}
+          >
+            <CDIcon
+              name={PROBE_NOTE[probe].icon}
+              size={14}
+              strokeWidth={2}
+              style={{ marginTop: 1, flexShrink: 0 }}
+            />
+            <span>{PROBE_NOTE[probe].text}</span>
+          </p>
+        )}
         <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0 }}>
           {status.gates.checks.map((c) => (
             <li
@@ -314,30 +446,28 @@ export default function Cutover({ app }: { app: DashboardCtx }) {
             </li>
           ))}
         </ul>
-        {status.mode === "dual_run" &&
-          status.gates.checks.some(
-            (c) => !c.pass && (c.name === "paid_order" || c.name === "captured_charge"),
-          ) && (
-            <div style={{ marginTop: 14 }}>
-              <button
-                type="button"
-                className="cd-btn cd-btn-secondary"
-                onClick={runTestTransaction}
-                disabled={testBusy}
-              >
-                <span>{testBusy ? "Starting…" : "Run a test transaction"}</span>
-              </button>
+        {status.mode === "dual_run" && !status.gates.paymentCleared && (
+          <div style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="cd-btn cd-btn-secondary"
+              onClick={runTestTransaction}
+              disabled={testBusy}
+            >
+              <span>{testBusy ? "Starting…" : "Run a test transaction"}</span>
+            </button>
+            <p className="cd-caption" style={{ marginTop: 8 }}>
+              Takes you to a secure Stripe checkout for a 50¢ charge to prove your payment
+              setup, then brings you back here. It's automatically refunded when you go
+              live.
+            </p>
+            {testError && (
               <p className="cd-caption" style={{ marginTop: 8 }}>
-                Opens a secure Stripe checkout for a 50¢ charge to prove your payment setup.
-                It's automatically refunded when you go live.
+                {testError}
               </p>
-              {testError && (
-                <p className="cd-caption" style={{ marginTop: 8 }}>
-                  {testError}
-                </p>
-              )}
-            </div>
-          )}
+            )}
+          </div>
+        )}
       </Card>
 
       {status.mode === "dual_run" && (

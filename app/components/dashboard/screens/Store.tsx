@@ -25,6 +25,7 @@ import {
   setStudioAccent,
   setStudioVibe,
   startStoreExperiment,
+  type StudioDesignModel,
   type StudioHero,
   type StudioState,
   type StudioVibe,
@@ -113,6 +114,14 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const [attaching, setAttaching] = useState(false);
   const buildingRef = useRef(false);
   const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
+  // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
+  // closures created long before the click, so they must read the current pick.
+  const [designModel, setDesignModel] = useState<StudioDesignModel>("sonnet");
+  const designModelRef = useRef<StudioDesignModel>("sonnet");
+  const setDesignModelBoth = (m: StudioDesignModel) => {
+    designModelRef.current = m;
+    setDesignModel(m);
+  };
 
   // --- preview / canvas -------------------------------------------------------
   const [previewVersion, setPreviewVersion] = useState(0);
@@ -258,7 +267,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const workingId = newId();
     pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
     try {
-      const receipt = await generateStudioStore(brief.trim());
+      const receipt = await generateStudioStore(brief.trim(), designModelRef.current);
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
       await refresh();
@@ -478,11 +487,23 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   // --- chat-box attachments -> draft products ----------------------------------
-  const onAttachFiles = async (files: File[]) => {
+  const onAttachFiles = async (allFiles: File[]) => {
     if (attaching) {
       toast("Still adding the previous images. Try again in a moment.");
       return;
     }
+    // Drag-and-drop bypasses the file input's accept filter, so screen non-images
+    // here — and say so, never silently drop them (rule 12).
+    const files = allFiles.filter((f) => f.type.startsWith("image/"));
+    const skipped = allFiles.filter((f) => !f.type.startsWith("image/"));
+    if (skipped.length > 0) {
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: `Skipped ${skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use images right now.`,
+      });
+    }
+    if (files.length === 0) return;
     setAttaching(true);
     for (const f of files) {
       pushMsg({ id: newId(), kind: "user-image", imageUrl: URL.createObjectURL(f), caption: f.name });
@@ -680,6 +701,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
           busy={chatBusy || building}
           attaching={attaching}
           onAttachFiles={onAttachFiles}
+          model={designModel}
+          onModelChange={setDesignModelBoth}
         />
 
         <div className="cd-stage">

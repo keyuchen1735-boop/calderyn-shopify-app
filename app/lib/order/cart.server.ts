@@ -14,6 +14,22 @@ import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
 
+/**
+ * Thrown by addCartLine when a variant can't be added because it no longer resolves in the catalog
+ * or is unavailable (sold out / archived) — the common race of a buyer clicking Add after stock ran
+ * out while the PDP was open. The add-to-cart route catches it and redirects back to the PDP with a
+ * friendly "sold out" notice instead of surfacing a raw 500. Extends Error so existing catch-alls
+ * still handle it.
+ */
+export class VariantUnavailableError extends Error {
+  readonly variantId: string;
+  constructor(variantId: string, reason: "not_found" | "unavailable") {
+    super(`variant ${variantId} ${reason === "not_found" ? "not found" : "is not available"}`);
+    this.name = "VariantUnavailableError";
+    this.variantId = variantId;
+  }
+}
+
 /** The demo shell has no shop row; its sentinel id can never key the uuid cart
  *  tables. Fail with a named error here (defense in depth) so any cart entry
  *  point that forgets its route-level browse-only guard surfaces a clear
@@ -126,10 +142,10 @@ export async function addCartLine(
 
   const resolved = await resolveVariant(shopId, variantId);
   if (!resolved) {
-    throw new Error(`variant ${variantId} not found in catalog for shop ${shopId}`);
+    throw new VariantUnavailableError(variantId, "not_found");
   }
   if (!resolved.variant.available) {
-    throw new Error(`variant ${variantId} is not available and cannot be added to a cart`);
+    throw new VariantUnavailableError(variantId, "unavailable");
   }
 
   const sb = getSupabase();
@@ -236,6 +252,58 @@ export async function priceLines(
   const subtotalCents = priced.reduce((s, l) => s + l.unitPriceCents * l.quantity, 0);
   const currency = currencies.values().next().value ?? "usd";
   return { lines: priced, subtotalCents, currency };
+}
+
+/**
+ * Remove a single line from a cart (buyer cart editing, #2c-1). Shop + cart scoped so a crafted
+ * request can only touch the buyer's own cart; a line id not in this cart is an idempotent no-op.
+ * This is the recovery path for a cart holding a now-unavailable variant: without it a sold-out /
+ * archived line dead-ends checkout in a permanent 502 with no way to drop the offending item.
+ */
+export async function removeCartLine(shopId: string, cartId: string, lineId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  if (!lineId) throw new Error("lineId is required");
+  const { error } = await getSupabase()
+    .from("cart_line")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId)
+    .eq("id", lineId);
+  if (error) throw error;
+}
+
+/**
+ * The lifecycle state of a cart ('cart' | 'checkout_pending'), or null if the cart doesn't exist
+ * for this shop. Used by the confirmation page to tell a CONSUMED cart (checkout_pending — the one
+ * that was just purchased) from a fresh ACTIVE basket ('cart'), so it only clears the former's
+ * cookie and never wipes an in-progress cart the buyer is building.
+ */
+export async function getCartState(shopId: string, cartId: string): Promise<string | null> {
+  if (!shopId || !cartId) return null;
+  assertPersistableShop(shopId);
+  const { data, error } = await getSupabase()
+    .from("cart")
+    .select("state")
+    .eq("shop_id", shopId)
+    .eq("id", cartId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? String((data as Record<string, unknown>).state) : null;
+}
+
+/** Empty a cart: delete every line. Shop + cart scoped; an already-empty cart is a harmless no-op. */
+export async function clearCart(shopId: string, cartId: string): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  const { error } = await getSupabase()
+    .from("cart_line")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId);
+  if (error) throw error;
 }
 
 function mapCart(row: Record<string, unknown>): Cart {
