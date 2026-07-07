@@ -283,18 +283,39 @@ export default function Search({ app }: { app: DashboardCtx }) {
       <section className="cd-seo__section">
         <div className="cd-seo__head-text">
           <h2 className="cd-seo__h2">Get found on Google</h2>
-          <p className="cd-seo__lede">Verify your store with Google once, then hand it your sitemap. Google does the rest.</p>
+          <p className="cd-seo__lede">Three quick, one-time steps so your store shows up on Google. It&rsquo;s free.</p>
         </div>
         <Card pad={false}>
           <div className="cd-seo__set">
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">1</span>Verify your store
+                  <span className="cd-seo__step">1</span>Open Google&rsquo;s free tool
                 </div>
                 <div className="cd-seo__hint">
-                  In Google Search Console, add your store and pick the &ldquo;HTML tag&rdquo; method. Paste the code
-                  here and Calderyn places it on your storefront for you.
+                  Click below, sign in with your Google account, and add your store when it asks.
+                </div>
+              </div>
+              <div className="cd-seo__control">
+                <a
+                  className="cd-btn cd-btn-primary cd-btn-sm"
+                  href="https://search.google.com/search-console"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <CDIcon name="external" size={14} strokeWidth={1.9} />
+                  Open Google
+                </a>
+              </div>
+            </div>
+
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">
+                  <span className="cd-seo__step">2</span>Paste the code Google gives you
+                </div>
+                <div className="cd-seo__hint">
+                  Google shows a short code to check the store is yours. Paste it here and we add it for you. No code to edit.
                 </div>
               </div>
               <div className="cd-seo__control">
@@ -303,7 +324,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
                     className="cd-input cd-seo__tinput"
                     value={verifyCode}
                     onChange={(e) => setVerifyCode(e.target.value)}
-                    placeholder="Paste verification code"
+                    placeholder="Paste code here"
                     aria-label="Google verification code"
                   />
                 </div>
@@ -317,7 +338,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
               <div className="cd-seo__row cd-seo__row--slim">
                 <span className="cd-seo__ok">
                   <CDIcon name="check" size={14} strokeWidth={2} />
-                  Verification tag is live on your storefront.
+                  Done. Google can now confirm your store.
                 </span>
               </div>
             ) : null}
@@ -325,10 +346,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">2</span>Submit your sitemap
+                  <span className="cd-seo__step">3</span>Give Google your page list
                 </div>
                 <div className="cd-seo__hint">
-                  In Search Console, open Sitemaps and add this link. It lists every page for Google to index.
+                  Back in Google, find the &ldquo;Sitemaps&rdquo; box and paste this link. It&rsquo;s your whole store in one link.
                 </div>
               </div>
               <div className="cd-seo__control">
@@ -340,30 +361,8 @@ export default function Search({ app }: { app: DashboardCtx }) {
                     </Btn>
                   </>
                 ) : (
-                  <span className="cd-seo__hint">Publish your storefront to get a sitemap link.</span>
+                  <span className="cd-seo__hint">Publish your storefront first to get this link.</span>
                 )}
-              </div>
-            </div>
-
-            <div className="cd-seo__row">
-              <div className="cd-seo__info">
-                <div className="cd-seo__label">
-                  <span className="cd-seo__step">3</span>Open Google Search Console
-                </div>
-                <div className="cd-seo__hint">
-                  Google&rsquo;s free tool. Do steps 1 and 2 there and it starts listing your store.
-                </div>
-              </div>
-              <div className="cd-seo__control">
-                <a
-                  className="cd-btn cd-btn-primary cd-btn-sm"
-                  href="https://search.google.com/search-console"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <CDIcon name="external" size={14} strokeWidth={1.9} />
-                  Open Search Console
-                </a>
               </div>
             </div>
           </div>
