@@ -22,6 +22,8 @@ import {
 import { executeReallocateSpendSku } from "~/lib/actions/reallocate-sku.server";
 import { executeAdjustPriceAlertAction } from "~/lib/actions/adjust-price.server";
 import { executeCreatePoDraft } from "~/lib/actions/po-action.server";
+import { executeReallocation } from "~/lib/actions/reallocate.server";
+import { reallocationPlanFromEvidence } from "~/lib/weather/reallocation-plan";
 import { getSupabase } from "~/lib/supabase.server";
 import type { ActionKind } from "~/lib/types";
 import { recordApproval } from "~/lib/calibration/approval.server";
@@ -29,7 +31,7 @@ import { recordActionFailure } from "~/lib/calibration/failure.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
 
 const INVENTORY_KINDS: InventoryAlertActionKind[] = ["reallocate_inventory", "snooze_alert"];
-const KINDS = [...INVENTORY_KINDS, "reallocate_spend_sku", "discontinue_sku", "adjust_price", "create_po_draft"] as const satisfies readonly ActionKind[];
+const KINDS = [...INVENTORY_KINDS, "reallocate_spend_sku", "discontinue_sku", "adjust_price", "create_po_draft", "reallocate_budget"] as const satisfies readonly ActionKind[];
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -107,6 +109,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
       const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
+    }
+    if (kind === "reallocate_budget") {
+      // weather_demand carries a concrete reallocation plan (source/dest
+      // campaign + amount) in its evidence; other reallocate_budget-listing
+      // detectors (e.g. ad_tax_overload) don't, so the one-click gate on the
+      // client already filters those out — this 422 is the server-side
+      // backstop for a direct/replayed request without a real plan.
+      const alert = await client.alerts.get(alertId).catch(() => null);
+      const plan = reallocationPlanFromEvidence(alert?.evidence ?? null);
+      if (!plan) return jsonError(422, "invalid_reallocation_evidence");
+      const result = await executeReallocation(
+        session.shopId,
+        {
+          alertId,
+          sourceCampaignId: plan.sourceCampaignId,
+          destCampaignId: plan.destCampaignId,
+          amountCents: plan.amountCents,
+          idempotencyKey,
+          actor: "merchant:web-dashboard",
+          triggerReason: "weather",
+        },
+        sb,
+      );
+      const calibration = await recordCalibration(kind, result.outcome, result.id);
+      return { audit_id: result.id, outcome: result.outcome, acknowledged: false, calibration };
     }
     // reallocate_inventory and adjust_price route by the shop's cutover mode: at
     // `live` the write lands in Calderyn's own engine and needs no Shopify admin,

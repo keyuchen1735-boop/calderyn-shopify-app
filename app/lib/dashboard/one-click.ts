@@ -5,6 +5,7 @@
 // quantity/cost) — those review steps live on the alert's own detail.
 import type { ActionKind } from "~/components/dashboard/context";
 import type { AlertVM } from "~/components/dashboard/view-models";
+import { reallocationPlanFromEvidence } from "~/lib/weather/reallocation-plan";
 
 export const ONE_CLICK_KINDS: ActionKind[] = [
   "pause_campaign",
@@ -14,6 +15,7 @@ export const ONE_CLICK_KINDS: ActionKind[] = [
   "reallocate_inventory",
   "discontinue_sku",
   "reallocate_spend_sku",
+  "reallocate_budget",
 ];
 
 export function oneClickKind(k: string): k is ActionKind {
@@ -36,5 +38,6 @@ export function canOneClickAlert(alert: AlertVM | undefined, kind: string): bool
   if (!alert) return false;
   if (CAMPAIGN_KINDS.has(kind) && !alert.campaign_id) return false;
   if (kind === "exclude_geo" && !alert.region) return false;
+  if (kind === "reallocate_budget" && !reallocationPlanFromEvidence(alert?.evidence)) return false;
   return true;
 }
