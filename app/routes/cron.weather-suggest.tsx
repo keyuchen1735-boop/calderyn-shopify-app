@@ -36,6 +36,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shops: 0,
     suggested: 0,
     skipped: 0,
+    // Why shops were skipped, keyed by RunResult.skippedReason. A wall of
+    // "no_eligible_campaigns" looks very different from calm-weather
+    // "no_suggestion" days — the flat skipped count alone can't tell an outage
+    // from a sunny week.
+    skippedReasons: {} as Record<string, number>,
     failed: 0,
     executed: 0,
     expired: 0,
@@ -86,7 +91,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { exec, suggest } = r.value;
     if (suggest.status === "fulfilled") {
       summary.suggested += suggest.value.suggested;
-      if (suggest.value.suggested === 0) summary.skipped += 1;
+      if (suggest.value.suggested === 0) {
+        summary.skipped += 1;
+        const reason = suggest.value.skippedReason ?? "unknown";
+        summary.skippedReasons[reason] = (summary.skippedReasons[reason] ?? 0) + 1;
+      }
     } else {
       summary.failed += 1;
       summary.errors.push(`${shopIds[i]} suggest: ${String(suggest.reason)}`);

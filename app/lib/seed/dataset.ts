@@ -179,6 +179,7 @@ export const SANDBOX_CAMPAIGN_IDS = {
   googleBrand: "20871450391",
   googlePmax: "20871450884",
   googleHydrationWest: "20871451307",
+  googleWinterEast: "20871451892",
   tiktokSpark: "1786366759456785",
 } as const;
 
@@ -236,6 +237,14 @@ const CAMPAIGNS: CampaignSpec[] = [
       { fromDaysAgo: 45, toDaysAgo: 7, spendCents: 6700, roas: 1.6 },
       { fromDaysAgo: 6, toDaysAgo: 0, spendCents: 6700, roas: 0.3 },
     ], ctr: 0.012, cvr: 0.026, cpmCents: 1100,
+  },
+  {
+    // East-coast counterpart to the Hydration Push: a second single-region
+    // campaign so region-vs-region budget moves (weather reallocation) have a
+    // live source and destination in the demo store.
+    key: "googleWinterEast", platform: "google", name: "Search — Cold-Weather Gear — East",
+    objective: "conversions", dailyBudgetCents: 6500, geoTargets: ["us-east"],
+    phases: [{ fromDaysAgo: 60, toDaysAgo: 0, spendCents: 6100, roas: 3.4 }], ctr: 0.028, cvr: 0.045, cpmCents: 4200,
   },
   {
     // TikTok Spark ads on the pack: spend ramping into a thin stock position.

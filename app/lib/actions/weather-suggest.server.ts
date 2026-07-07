@@ -12,14 +12,12 @@ import {
   merchantLocationFrom,
   type RegionCentroid,
 } from "../weather/regions";
-import { fetchRegionForecasts } from "../weather/open-meteo.server";
+import { FORECAST_HORIZON_DAYS, fetchRegionForecasts } from "../weather/open-meteo.server";
 import { executeReallocation } from "./reallocate.server";
 
 export const SCORE_GAP_FLOOR = 0.15;
 export const MAX_CUT_FRACTION = 0.9;
 export const MIN_MOVE_CENTS = 100;
-/** Days a prediction stays armed before expiring — the forecast horizon. */
-export const FORECAST_HORIZON_DAYS = 3;
 
 const plusDays = (isoDate: string, n: number): string => {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -105,7 +103,7 @@ export function buildSuggestion(
   if (capped < MIN_MOVE_CENTS) return null;
 
   const narrative =
-    `Next 3 days: ${destRegion} weather favors demand (score ${destScore.toFixed(2)}) ` +
+    `Next ${FORECAST_HORIZON_DAYS} days: ${destRegion} weather favors demand (score ${destScore.toFixed(2)}) ` +
     `vs ${sourceRegion} (${sourceScore.toFixed(2)}). Shift ${dollars(capped)}/day from ` +
     `"${source.name}" to "${dest.name}".`;
 
@@ -139,7 +137,9 @@ export async function loadGeoSegmentedCampaigns(
 
   const out: EligibleCampaign[] = [];
   for (const c of (data ?? []) as CampaignRow[]) {
-    if (c.daily_budget_cents == null) continue;
+    // A $0/day campaign must not become a region's representative: as the
+    // source giver it would zero out the whole move for the day.
+    if (c.daily_budget_cents == null || c.daily_budget_cents <= 0) continue;
     const region = regionForGeoTargets(c.geo_targets ?? []);
     if (!region) continue;
     out.push({ campaignId: c.id, region, dailyBudgetCents: c.daily_budget_cents, name: c.name });
@@ -154,7 +154,11 @@ export interface RunDeps {
 
 export interface RunResult {
   suggested: number;
-  skippedReason?: "sensitivity_off" | "no_eligible_campaigns" | "no_suggestion";
+  skippedReason?:
+    | "sensitivity_off"
+    | "no_eligible_campaigns"
+    | "no_suggestion"
+    | "already_suggested_today";
 }
 
 /**
@@ -196,30 +200,41 @@ export async function runWeatherSuggestForShop(
   if (!suggestion) return { suggested: 0, skippedReason: "no_suggestion" };
 
   const today = deps.today ?? new Date().toISOString().slice(0, 10);
-  const { error } = await sb.from("weather_suggestion").upsert(
-    [
+  const { data: inserted, error } = await sb
+    .from("weather_suggestion")
+    .upsert(
+      [
+        {
+          shop_id: shopId,
+          suggested_on: today,
+          source_region: suggestion.sourceRegion,
+          dest_region: suggestion.destRegion,
+          source_campaign_id: suggestion.sourceCampaignId,
+          dest_campaign_id: suggestion.destCampaignId,
+          amount_cents: suggestion.amountCents,
+          source_score: suggestion.sourceScore,
+          dest_score: suggestion.destScore,
+          narrative: suggestion.narrative,
+          // Dial at 100 = merchant opted into all-auto: predictions arm
+          // themselves and execute unattended when the trigger verifies.
+          status: sensitivity >= 100 ? "armed" : "pending",
+          expires_on: plusDays(today, FORECAST_HORIZON_DAYS),
+        },
+      ],
       {
-        shop_id: shopId,
-        suggested_on: today,
-        source_region: suggestion.sourceRegion,
-        dest_region: suggestion.destRegion,
-        source_campaign_id: suggestion.sourceCampaignId,
-        dest_campaign_id: suggestion.destCampaignId,
-        amount_cents: suggestion.amountCents,
-        source_score: suggestion.sourceScore,
-        dest_score: suggestion.destScore,
-        narrative: suggestion.narrative,
-        // Dial at 100 = merchant opted into all-auto: predictions arm
-        // themselves and execute unattended when the trigger verifies.
-        status: sensitivity >= 100 ? "armed" : "pending",
-        expires_on: plusDays(today, FORECAST_HORIZON_DAYS),
+        onConflict: "shop_id,suggested_on,source_campaign_id,dest_campaign_id",
+        // ON CONFLICT DO NOTHING: a same-day re-run must never resurrect a row
+        // the merchant already actioned (dismissed/applied/failed) or clobber a
+        // live pending/armed one back to a fresh state.
+        ignoreDuplicates: true,
       },
-    ],
-    // Insert-only: a same-day cron re-run must never overwrite the row's
-    // status and resurrect a dismissed suggestion or reset an armed one.
-    { onConflict: "shop_id,suggested_on,source_campaign_id,dest_campaign_id", ignoreDuplicates: true },
-  );
+    )
+    .select("id");
   if (error) throw error;
+  const count = (inserted ?? []).length;
+  // Nothing inserted → nothing to mirror either; re-opening the alert here
+  // would resurrect a feed entry for a row the merchant already actioned.
+  if (count === 0) return { suggested: 0, skippedReason: "already_suggested_today" };
 
   // Mirror the prediction into the alerts feed so it surfaces alongside the
   // other detectors. The active-alert dedup index (alerts_active_condition_key)
@@ -274,7 +289,7 @@ export async function runWeatherSuggestForShop(
     // but must not roll back the prediction itself.
     console.error("[weather-suggest] alert mirror write failed", alertErr);
   }
-  return { suggested: 1 };
+  return { suggested: count };
 }
 
 /**

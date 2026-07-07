@@ -239,7 +239,8 @@ export function WeatherSegments({
         {pending.length === 0 && armed.length === 0 ? (
           <div className="cd-caption" style={{ padding: "16px 20px" }}>
             No weather moves predicted right now. When the next 3 days&apos; forecast favors
-            shifting budget between regions, they&apos;ll appear here.
+            shifting budget between regions, they&apos;ll appear here. Predictions need at
+            least two active campaigns that each target a single US region.
           </div>
         ) : (
           [...armed, ...pending].map((s) => (
