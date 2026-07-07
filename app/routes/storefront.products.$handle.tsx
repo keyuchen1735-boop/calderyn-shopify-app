@@ -1,7 +1,7 @@
 // app/routes/storefront.products.$handle.tsx
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData, useSearchParams } from "@remix-run/react";
+import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -40,9 +40,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     productId: product.id,
   });
-  // The demo shell has no shop row behind it, so carts (uuid shop_id) can't exist
-  // for it — the PDP renders browse-only instead of offering a cart that 500s.
-  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID }, { headers: track });
+  // `unavailable` is set when the add-to-cart action bounced back here because the variant sold out
+  // / was archived (read from the URL in the loader, not useSearchParams, so a static render without
+  // a Router context still works). The demo shell has no shop row behind it, so carts (uuid shop_id)
+  // can't exist for it — the PDP renders browse-only instead of offering a cart that 500s.
+  const unavailable = new URL(request.url).searchParams.get("unavailable") === "1";
+  return json({ product, doc, data, record, demo: shopId === DEMO_SHOP_ID, unavailable }, { headers: track });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -100,10 +103,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function StorefrontProduct() {
-  const { product, doc, data, record, demo } = useLoaderData<typeof loader>();
-  const [searchParams] = useSearchParams();
-  // Set by the action when an add-to-cart hit a now-unavailable variant (sold out / archived).
-  const unavailable = searchParams.get("unavailable") === "1";
+  const { product, doc, data, record, demo, unavailable } = useLoaderData<typeof loader>();
   const firstVariantId = product.variants[0]?.id ?? "";
   const [selectedVariantId, setSelectedVariantId] = useState(firstVariantId);
 
