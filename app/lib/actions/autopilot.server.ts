@@ -66,12 +66,13 @@ const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
 // (reallocate_inventory). These are NOT product-economics detectors, so they
 // never reach tryRemediation; tryInventoryRelocation handles them via the
 // dedicated executeInventoryAlertAction seam.
-const INVENTORY_RELOCATION_DETECTORS = new Set<DetectorId>([
+export const INVENTORY_RELOCATION_DETECTORS = new Set<DetectorId>([
   "sku_stockout_vs_spend",
   "regional_shortage_risk",
   "regional_spend_starved_stock",
   "scaling_sku_fulfillment_risk",
   "wrong_location_concentration",
+  "weather_demand",
 ]);
 
 /** Per-candidate decision outcome. "skipped" = a pre-flight refusal (no
