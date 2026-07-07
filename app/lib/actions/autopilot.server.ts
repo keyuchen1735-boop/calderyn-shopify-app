@@ -654,6 +654,14 @@ async function tryInventoryRelocation(
   if (!plan && c.detector_id === "sku_stockout_vs_spend") {
     return { outcome: "fell_through", reason: "reallocate_inventory: no transfer plan (defer to pause path)" };
   }
+  // A weather_demand alert is EITHER a budget move (campaign-scoped: has a
+  // campaign_id, no sku_id, no transfer plan) OR an inventory move. A budget one
+  // is not an inventory candidate at all — fall through (autonomous ad
+  // reallocation is a separate, deferred path) rather than block every tick on
+  // "missing transfer evidence" once the inventory pair graduates.
+  if (!plan && c.detector_id === "weather_demand" && !c.sku_id) {
+    return { outcome: "fell_through", reason: "weather_demand budget alert: not an inventory move" };
+  }
 
   // Graduation gate (same safety model as every other autonomous path). Keyed on
   // the executor kind reallocate_inventory. isGraduated is fail-safe (false on any

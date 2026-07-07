@@ -25,6 +25,7 @@ import { executeCreatePoDraft } from "~/lib/actions/po-action.server";
 import { executeReallocation } from "~/lib/actions/reallocate.server";
 import { reallocationPlanFromEvidence } from "~/lib/weather/reallocation-plan";
 import { getSupabase } from "~/lib/supabase.server";
+import { acknowledgeAlert } from "~/lib/alerts.server";
 import type { ActionKind } from "~/lib/types";
 import { recordApproval } from "~/lib/calibration/approval.server";
 import { recordActionFailure } from "~/lib/calibration/failure.server";
@@ -132,8 +133,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
         },
         sb,
       );
+      // Resolve the alert out of the open queue on success, exactly as the
+      // other executors do (their own executeAlertAction calls acknowledgeAlert).
+      // Without this the alert stays 'open' and re-approving it runs a SECOND
+      // budget move (each click mints a fresh idempotency key).
+      const acknowledged =
+        result.outcome === "succeeded" || result.outcome === "retrying"
+          ? await acknowledgeAlert(sb, session.shopId, alertId)
+          : false;
       const calibration = await recordCalibration(kind, result.outcome, result.id);
-      return { audit_id: result.id, outcome: result.outcome, acknowledged: false, calibration };
+      return { audit_id: result.id, outcome: result.outcome, acknowledged, calibration };
     }
     // reallocate_inventory and adjust_price route by the shop's cutover mode: at
     // `live` the write lands in Calderyn's own engine and needs no Shopify admin,

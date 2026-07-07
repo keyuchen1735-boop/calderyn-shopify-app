@@ -21,7 +21,12 @@ export function inventoryDraft(
 
   const skuId = row.sku_id;
   return {
-    entityRef: { sku_id: skuId, region, sku: skuId, title: `Move stock to ${region}` },
+    // No `sku` key: v_sku_regional_demand only exposes sku_id (the sku_dim uuid).
+    // v_alerts_view / v_autopilot_candidates resolve the human SKU code from
+    // sku_id via their sku_dim join, and executeInventoryAlertAction backfills
+    // the reward loop's sku_id from that resolved code. Putting the uuid in `sku`
+    // would show a raw uuid AND break that sku-code -> sku_id lookup.
+    entityRef: { sku_id: skuId, region, title: `Move stock to ${region}` },
     severity: "medium",
     dollarImpact: 0,
     rank: 45,
@@ -36,7 +41,6 @@ export function inventoryDraft(
       recommended_delta: plan.recommended_delta,
       region,
       weather_score: score,
-      sku_title: skuId,
     },
   };
 }
