@@ -127,4 +127,20 @@ describe("POST /dashboard/api/alerts/:id/action — reallocate_budget acknowledg
     expect(body.acknowledged).toBe(false);
     expect(acknowledgeAlert).not.toHaveBeenCalled();
   });
+
+  it("422s (never 200) when the alert carries no reallocation plan — the throw backstop", async () => {
+    // ad_tax_overload also lists reallocate_budget but carries no plan in evidence.
+    // The backstop must throw (a returned Response inside dashboardJson wraps as
+    // 200); a thrown Response rejects the action promise, which Remix turns into
+    // the real HTTP response — so capture it from the rejection here.
+    alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "ad_tax_overload", evidence: {} });
+
+    const res = (await call({ type: "reallocate_budget", idempotency_key: "krb-4" }).catch(
+      (e: unknown) => e,
+    )) as Response;
+    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(422);
+    expect(executeReallocation).not.toHaveBeenCalled();
+    expect(acknowledgeAlert).not.toHaveBeenCalled();
+  });
 });

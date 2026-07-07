@@ -119,7 +119,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       // backstop for a direct/replayed request without a real plan.
       const alert = await client.alerts.get(alertId).catch(() => null);
       const plan = reallocationPlanFromEvidence(alert?.evidence ?? null);
-      if (!plan) return jsonError(422, "invalid_reallocation_evidence");
+      // throw (not return): inside dashboardJson a returned Response is wrapped
+      // as 200; only a thrown Response propagates as the real 422.
+      if (!plan) throw jsonError(422, "invalid_reallocation_evidence");
       const result = await executeReallocation(
         session.shopId,
         {
