@@ -16,6 +16,7 @@ import {
   cachedScreenData,
   catalogCacheKey,
   prefetchScreenData,
+  SCREEN_CACHE_KEYS,
 } from "~/lib/dashboard/screen-cache";
 import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
 import { actionTier } from "~/lib/calibration/confidence";
@@ -23,7 +24,7 @@ import { recoveredWithin } from "~/lib/recovered";
 import { sparklinePath } from "~/lib/sparkline";
 import { useLiveAnalytics } from "../use-live-analytics";
 import type { DashboardCtx } from "../context";
-import type { ProductSummaryVM } from "~/lib/dashboard/client";
+import type { BillingStatus, ProductSummaryVM } from "~/lib/dashboard/client";
 import type { QueueProposalVM } from "../view-models";
 
 // How many queue items get their own deck card per session; the reversible
@@ -128,6 +129,50 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     };
   }, []);
   const freshStore = catalogTotal !== null ? catalogTotal === 0 : !app.hasCatalog;
+  const hasProduct = !freshStore;
+
+  // Payouts state powers the setup checklist's "Connect payouts" step and keeps
+  // the whole guide open until money can actually move — a store with products
+  // but no live Stripe isn't set up yet. Seeded from the shared billing cache
+  // (the same key Payments/Settings write) so a return visit knows instantly;
+  // the mount fetch revalidates. Until billing is known we never force the guide
+  // open on an established store, so a fully set-up shop can't flash the guide.
+  const seededBilling = cachedScreenData<BillingStatus>(SCREEN_CACHE_KEYS.billing);
+  const [billing, setBilling] = useState<BillingStatus | null>(() => seededBilling ?? null);
+  useEffect(() => {
+    let alive = true;
+    client
+      .fetchBilling()
+      .then((b) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.billing, b);
+        if (alive) setBilling(b);
+      })
+      .catch(() => {
+        // An unreadable billing state stays "not yet known" — never a reason to
+        // pop the setup guide onto an established store.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const payoutsActive =
+    billing != null &&
+    billing.connected &&
+    billing.chargesEnabled &&
+    billing.payoutsEnabled &&
+    billing.detailsSubmitted;
+  const payoutsKnown = billing != null;
+
+  // The setup checklist tracks the three milestones that gate selling: account
+  // (done at signup), a first product, and live payouts. It stays until all
+  // three are met — the old gate hid the whole card the instant a product
+  // existed, stranding a merchant who hadn't connected payouts yet. A brand-new
+  // store shows it on first paint via the catalog hint (freshStore); a store
+  // that already has products only reopens it once we KNOW payouts aren't live.
+  const setupSteps = 3;
+  const setupDone = 1 + (hasProduct ? 1 : 0) + (payoutsActive ? 1 : 0);
+  const setupComplete = hasProduct && payoutsActive;
+  const showSetup = !setupComplete && (freshStore || (payoutsKnown && !payoutsActive));
 
   // ---- prompt bar (the front door to Ask Calderyn) ----
   const [ask, setAsk] = useState("");
@@ -409,18 +454,16 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Card>
       )}
 
-      {freshStore && (
+      {showSetup && (
         <Card className="cd-su-card" pad={false}>
           <div className="cd-su-head">
             <span className="cd-su-title">Set up your store</span>
             <div className="cd-su-meter" aria-hidden="true">
               <i className="on" />
-              <i />
-              <i />
-              <i />
-              <i />
+              <i className={hasProduct ? "on" : undefined} />
+              <i className={payoutsActive ? "on" : undefined} />
             </div>
-            <span className="cd-caption tabular-nums">1 of 5</span>
+            <span className="cd-caption tabular-nums">{`${setupDone} of ${setupSteps}`}</span>
           </div>
           <div className="cd-su-row cd-su-done">
             <span className="cd-su-ic cd-su-ic-done">
@@ -430,18 +473,29 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               <div className="cd-su-t">Create your account</div>
             </div>
           </div>
-          <div className="cd-su-row">
-            <span className="cd-su-ic cd-su-ic-live">
-              <CDIcon name="sparkle" size={17} strokeWidth={1.8} />
-            </span>
-            <div className="cd-su-body">
-              <div className="cd-su-t">Describe your first product</div>
-              <div className="cd-su-s">One sentence. Calderyn drafts the listing, price and page.</div>
+          {hasProduct ? (
+            <div className="cd-su-row cd-su-done">
+              <span className="cd-su-ic cd-su-ic-done">
+                <CDIcon name="check" size={17} strokeWidth={2.2} />
+              </span>
+              <div className="cd-su-body">
+                <div className="cd-su-t">Add your first product</div>
+              </div>
             </div>
-            <Btn kind="primary" small onClick={() => app.navigate("product-editor", "new")}>
-              Create
-            </Btn>
-          </div>
+          ) : (
+            <div className="cd-su-row">
+              <span className="cd-su-ic cd-su-ic-live">
+                <CDIcon name="sparkle" size={17} strokeWidth={1.8} />
+              </span>
+              <div className="cd-su-body">
+                <div className="cd-su-t">Describe your first product</div>
+                <div className="cd-su-s">One sentence. Calderyn drafts the listing, price and page.</div>
+              </div>
+              <Btn kind="primary" small onClick={() => app.navigate("product-editor", "new")}>
+                Create
+              </Btn>
+            </div>
+          )}
           <div className="cd-su-row">
             <span className="cd-su-ic cd-su-ic-shopify">
               {/* Shopify brand mark — labels the real import integration. */}
@@ -468,16 +522,27 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               Import
             </Btn>
           </div>
-          <div className="cd-su-row">
-            <span className="cd-su-3dcard" aria-hidden="true" />
-            <div className="cd-su-body">
-              <div className="cd-su-t">Connect payouts</div>
-              <div className="cd-su-s">Stripe, about two minutes.</div>
+          {payoutsActive ? (
+            <div className="cd-su-row cd-su-done">
+              <span className="cd-su-ic cd-su-ic-done">
+                <CDIcon name="check" size={17} strokeWidth={2.2} />
+              </span>
+              <div className="cd-su-body">
+                <div className="cd-su-t">Connect payouts</div>
+              </div>
             </div>
-            <Btn small onClick={() => app.navigate("payments")}>
-              Connect
-            </Btn>
-          </div>
+          ) : (
+            <div className="cd-su-row">
+              <span className="cd-su-3dcard" aria-hidden="true" />
+              <div className="cd-su-body">
+                <div className="cd-su-t">Connect payouts</div>
+                <div className="cd-su-s">Stripe, about two minutes.</div>
+              </div>
+              <Btn small onClick={() => app.navigate("payments")}>
+                Connect
+              </Btn>
+            </div>
+          )}
           <div className="cd-su-row">
             <span className="cd-su-ic cd-su-ic-muted">
               <CDIcon name="store" size={17} strokeWidth={1.8} />
