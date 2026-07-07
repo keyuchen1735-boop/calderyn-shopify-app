@@ -15,6 +15,28 @@ import type {
 // Helpers
 // --------------------------------------------------------------------------
 
+/**
+ * Recursively rewrite object keys from camelCase to snake_case. The Google Ads
+ * REST searchStream endpoint returns camelCase field names (metrics.costMicros,
+ * campaign.startDateTime, campaignBudget.amountMicros), while the transforms
+ * below read snake_case. Normalizing at the ingest boundary lets one transform
+ * serve both the real API shape and the snake_case unit-test fixtures. Applied
+ * to already-snake_case input it is a no-op (no uppercase letters to convert),
+ * so it is safe regardless of the exact casing the wire delivers.
+ */
+export function snakeKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeKeysDeep);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      const snake = key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+      out[snake] = snakeKeysDeep(val);
+    }
+    return out;
+  }
+  return value;
+}
+
 function normalizeStatus(s: string | undefined): AdCampaignDim["status"] {
   const v = (s ?? "").toUpperCase();
   if (v === "ENABLED") return "active";
@@ -74,7 +96,8 @@ export function transformCampaign(c: GoogleCampaignPayload, shopId: string): AdC
     daily_budget_cents: dailyBudgetCents,
     currency: c.customer?.currency_code ?? "USD",
     geo_targets: c.geo_target_constants ?? [],
-    created_at_source: c.campaign?.start_date ?? null,
+    // v23 renamed campaign.start_date -> campaign.start_date_time.
+    created_at_source: c.campaign?.start_date_time ?? null,
   };
 }
 
